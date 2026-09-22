@@ -205,7 +205,7 @@ def addedByFile (diff : String) : Array (String × Array String) := Id.run do
 re-parsing is how md→PDF and tex→HTML would decay into N×M special cases. -/
 def backendFiles : List String :=
   ["LeanTex/Core/Layout.lean", "LeanTex/Core/Pdf.lean", "LeanTex/Core/PdfContent.lean",
-   "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
+   "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
    "LeanTex/Core/MathMl.lean"]
 
 /-- `IO` named outside a comment. A string literal naming IO still matches,

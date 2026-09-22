@@ -4,6 +4,7 @@ import LeanTex.Core.Font
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.PdfContent
+import LeanTex.Core.PdfStruct
 
 namespace LeanTex.Core.Pdf
 
@@ -202,13 +203,6 @@ theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut
   rw [ite_eq_left hp]
   exact html_fonts_cover_pdf fs pages h
 
-/-- One page's content stream: the typed operators (`contentOps`)
-rendered (`render`). The construction decides pen moves, `TJ` arrays and
-graphics-state changes; the spelling is the renderer's alone. -/
-private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : String :=
-  render (contentOps geom remap imgMap page)
-
 /-- Link rectangles for one page, in PDF user space. Adjacent runs with the
 same destination merge, so a hyphenated or multi-font link is one annotation
 per line rather than one per glyph run. -/
@@ -347,14 +341,26 @@ def langEntry : Option String → String
   | some tag => s!" /Lang ({pdfString tag})"
   | none => ""
 
+/-- The catalog's tagging entries: `/MarkInfo << /Marked true >>` (§14.7.1
+— the file's content is marked) and the structure tree root. Spelled
+unconditionally: every PDF this writer ships is tagged, whatever the
+document declares — tagging is a fact of the artifact, the profile claim
+(`pdfuaid`) is a separate, withheld statement. -/
+def markedEntry (structTreeRoot : Nat) : String :=
+  " /MarkInfo << /Marked true >> /StructTreeRoot " ++ toString structTreeRoot ++ " 0 R"
+
 /-- The document catalog (ISO 32000-2 §7.7.2): the page tree, an outline
 when the layout carried one, the XMP metadata stream, the declared
-language, and `/ViewerPreferences /DisplayDocTitle` — the reader's window
-titles from the document's own metadata title rather than its file name
-(§12.2; PDF/UA requires it). -/
-def catalogDict (outlinesRef : String) (xmpId : Nat) (lang : Option String) : String :=
-  s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R\
-{langEntry lang} /ViewerPreferences << /DisplayDocTitle true >> >>"
+language, the mark information and structure tree root, and
+`/ViewerPreferences /DisplayDocTitle` — the reader's window titles from
+the document's own metadata title rather than its file name (§12.2;
+PDF/UA requires it). -/
+def viewerEntry : String := " /ViewerPreferences << /DisplayDocTitle true >> >>"
+
+def catalogDict (outlinesRef : String) (xmpId : Nat) (lang : Option String)
+    (structTreeRoot : Nat) : String :=
+  s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R"
+    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry
 
 /-- The PDF twin of `emit_lang_declared`: the catalog is the language
 entry of the document's declared tag between two fixed dictionary halves,
@@ -362,11 +368,29 @@ by construction — so `/Lang` appears exactly when the document declares a
 language, reading the same `Ir.Meta` field as the HTML root's `lang`.
 The webMetaChecks census in Tests/Backends is the wiring witness that
 `write` ships this dictionary. -/
-theorem pdf_lang_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String) :
+theorem pdf_lang_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String)
+    (structTreeRoot : Nat) :
     ∃ pre post,
-      catalogDict outlinesRef xmpId lang = pre ++ langEntry lang ++ post :=
+      catalogDict outlinesRef xmpId lang structTreeRoot = pre ++ langEntry lang ++ post :=
   ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R",
-   " /ViewerPreferences << /DisplayDocTitle true >> >>", rfl⟩
+   markedEntry structTreeRoot ++ viewerEntry, by
+    simp only [catalogDict, String.append_assoc]⟩
+
+/-- **`pdf_marked_declared`** (the `pdf_lang_declared` shape): the catalog
+carries `/MarkInfo << /Marked true >>` and `/StructTreeRoot` between two
+fixed halves, whatever the language, the outline, or the document declares
+— tagging is unconditional. The structTreeChecks round trip in
+Tests/Backends is the wiring witness that `write` ships this dictionary
+with a tree behind the reference. -/
+theorem pdf_marked_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String)
+    (structTreeRoot : Nat) :
+    ∃ pre post,
+      catalogDict outlinesRef xmpId lang structTreeRoot
+        = pre ++ " /MarkInfo << /Marked true >> /StructTreeRoot "
+          ++ toString structTreeRoot ++ " 0 R" ++ post :=
+  ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R" ++ langEntry lang,
+   viewerEntry, by
+    simp only [catalogDict, markedEntry, String.append_assoc]⟩
 
 /-- Face index → resource number, over the faces `keepFaces` embeds. -/
 private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
@@ -394,13 +418,21 @@ private def imgMapOf (imgs : Image.Store) (used : Array Nat) : Array (Option Nat
     m := m.set! k (some n)
   return m
 
+/-- The structure type each leaf's marked content is tagged with, read off
+the tree's skeleton (`leafTags`): the one answer both the content streams
+and the structure elements are built from. -/
+def tagsOf (tree : Struct.Tree) : Array (Option String) :=
+  leafTags (skeleton tree) tree.leaves.size
+
 /-- Each page's typed operators, resolved against the faces and images the
-document actually uses: what `pageStreams` renders, before spelling. -/
+document actually uses and the structure tree's leaf tags: what
+`pageStreams` renders, before spelling. -/
 def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (imgs : Image.Store := {}) : Array (Array ContentOp) :=
+    (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩) : Array (Array ContentOp) :=
   let remap := remapOf fs (keepFaces fs pages)
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
-  pages.map (contentOps geom remap imgMap)
+  let tags := tagsOf tree
+  pages.map (contentOps geom remap imgMap tags)
 
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
@@ -408,8 +440,8 @@ through its content-hash cache (the font files' shape — a page whose
 content is unchanged since the last build reads its stream instead of
 compressing it) and hand them back as `write`'s `streams`. -/
 def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (imgs : Image.Store := {}) : Array ByteArray :=
-  (pageOps geom fs pages imgs).map fun ops => (render ops).toUTF8
+    (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩) : Array ByteArray :=
+  (pageOps geom fs pages imgs tree).map fun ops => (render ops).toUTF8
 
 -- ## The object table
 
@@ -483,9 +515,16 @@ structure ObjTable where
   /-- OutputIntent and its ICC stream: filled by the colour plan. -/
   outputIntent : Option Nat := none
   icc : Option Nat := none
-  /-- The structure tree root and its parent tree: filled by the tag skeleton. -/
-  structTreeRoot : Option Nat := none
-  parentTree : Option Nat := none
+  /-- The structure block, after the outline: the structure tree root, its
+  parent tree, the one PDF 2.0 namespace dictionary, then one object per
+  structure element from `structBase` — every PDF is tagged, so the block
+  is unconditional (empty of elements only for a tree with no root, which
+  `skeleton` never yields). -/
+  nElems : Nat
+  structTreeRoot : Nat
+  parentTree : Nat
+  namespaceId : Nat
+  structBase : Nat
   deriving Repr
 
 namespace ObjTable
@@ -498,6 +537,7 @@ def fileId (t : ObjTable) (k : Nat) : Nat := 3 + 4 * t.nf + k
 def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
 def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
 def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
+def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
 
 /-- Every allocated id, in emission order — each block spelled from its
 own slot function, so `objTable_inj` and `objTable_covers` are facts about
@@ -511,6 +551,8 @@ def ids (t : ObjTable) : Array Nat :=
   ++ #[t.infoId]
   ++ (if t.nOut == 0 then #[]
       else #[t.outlineRootId] ++ (Array.range t.nOut).map t.outlineItemId)
+  ++ #[t.structTreeRoot, t.parentTree, t.namespaceId]
+  ++ (Array.range t.nElems).map t.structElemId
   ++ #[t.xmpId, t.objStmId, t.xrefId]
 
 /-- The cross-reference row kind of an id, given where the object stream
@@ -527,16 +569,17 @@ def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Opti
 end ObjTable
 
 /-- The table for `keep` faces, the placed images `usedImgs` of `imgs`,
-`np` pages and `nOut` outline entries. -/
+`np` pages, `nOut` outline entries and `nElems` structure elements. -/
 def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) : ObjTable :=
+    (np nOut nElems : Nat) : ObjTable :=
   let nf := keep.size
   let extras := usedImgs.map (imgExtraOf imgs)
   let spans := extras.map ImgExtra.span
   let imgIds := (blockStarts (3 + 5 * nf) spans.toList).toArray
   let pageBase := 3 + 5 * nf + spans.toList.sum
   let infoId := pageBase + 2 * np
-  let xmpId := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
+  let structTreeRoot := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
+  let xmpId := structTreeRoot + 3 + nElems
   { nf, ni := usedImgs.size, np, nOut, imgIds, imgSpans := spans
     smaskIds := (imgIds.zip extras).map fun (id, e) => match e with
       | .alpha => some (id + 1)
@@ -551,14 +594,17 @@ def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
       | .plain => 0
       | .alpha => 0
     pageBase, infoId, outlineRootId := infoId + 1, xmpId
-    objStmId := xmpId + 1, xrefId := xmpId + 2, size := xmpId + 3 }
+    objStmId := xmpId + 1, xrefId := xmpId + 2, size := xmpId + 3
+    nElems, structTreeRoot, parentTree := structTreeRoot + 1, namespaceId := structTreeRoot + 2
+    structBase := structTreeRoot + 3 }
 
 /-- The table `write` reads for these inputs: the faces it embeds
 (`keepFaces`), the images it places (`usedImagesOf`), the page and outline
-counts. -/
+counts, and the structure tree's element count. -/
 def tableOf (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
-    (outline : Array OutlineEntry) : ObjTable :=
+    (outline : Array OutlineEntry) (tree : Struct.Tree := ⟨#[]⟩) : ObjTable :=
   objTable (keepFaces fs pages) imgs (usedImagesOf imgs pages) pages.size outline.size
+    (skeleton tree).size
 
 /-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
 the range from `base` of the spans' total, exactly. -/
@@ -585,13 +631,6 @@ theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
     simp only [Nat.one_mul] at this
     rw [this, Nat.mul_succ]
 
-/-- Two adjacent ranges are one, however the second's start is spelled. -/
-theorem range'_append_of (s m s' n : Nat) (h : s' = s + m) :
-    List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
-  subst h
-  have := @List.range'_append s m n 1
-  simpa only [Nat.one_mul] using this
-
 /-- **`ObjTable.ids_exact`**: a table whose fields stand in the relations
 `objTable` writes has ids that tile `[1, size)` — each block, spelled from
 its slot function, is a range, and the ranges abut. Stated over the fields
@@ -602,7 +641,9 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (hpb : t.pageBase = 3 + 5 * t.nf + spans.sum)
     (hinfo : t.infoId = t.pageBase + 2 * t.np)
     (hroot : t.outlineRootId = t.infoId + 1)
-    (hxmp : t.xmpId = if t.nOut == 0 then t.infoId + 1 else t.infoId + 2 + t.nOut)
+    (hsr : t.structTreeRoot = if t.nOut == 0 then t.infoId + 1 else t.infoId + 2 + t.nOut)
+    (hpt : t.parentTree = t.structTreeRoot + 1) (hns : t.namespaceId = t.structTreeRoot + 2)
+    (hsb : t.structBase = t.structTreeRoot + 3) (hxmp : t.xmpId = t.structBase + t.nElems)
     (hstm : t.objStmId = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 2)
     (hsize : t.size = t.xmpId + 3) :
     t.ids.toList = List.range' 1 (t.size - 1) := by
@@ -619,25 +660,30 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
   have hinfo1 : [t.infoId] = List.range' t.infoId 1 := rfl
   have htail : [t.xmpId, t.objStmId, t.xrefId] = List.range' t.xmpId 3 := by
     rw [hstm, hxref]; rfl
+  have hstruct : [t.structTreeRoot, t.parentTree, t.namespaceId] = List.range' t.structTreeRoot 3 := by
+    rw [hpt, hns]; rfl
+  have helems : List.map t.structElemId (List.range t.nElems)
+      = List.range' t.structBase t.nElems := by
+    rw [List.range'_eq_map_range]; rfl
   simp only [ObjTable.ids, Array.toList_append, Array.toList_flatMap, Array.toList_map,
     Array.toList_range, Array.toList_zip, Array.toList_range', himg, hsp]
   rw [blockIds_exact, flatMap_range_exact 3 4 t.nf _ hfont,
-    flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail]
+    flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail, hstruct, helems]
   by_cases h0 : t.nOut = 0
-  · simp only [h0, beq_self_eq_true, ite_true, Array.toList_empty, List.append_nil] at hxmp ⊢
+  · simp only [h0, beq_self_eq_true, ite_true, Array.toList_empty, List.append_nil] at hsr ⊢
     simp (disch := omega) only [range'_append_of]
-    rw [hsize, hxmp, hinfo, hpb]
+    rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
     congr 1
     omega
   · have hne : (t.nOut == 0) = false := by simpa using h0
     simp only [hne, Bool.false_eq_true, ite_false, Array.toList_append, Array.toList_map,
-      Array.toList_range, hitems] at hxmp ⊢
+      Array.toList_range, hitems] at hsr ⊢
     have hout : [t.outlineRootId] ++ List.range' (t.infoId + 2) t.nOut
         = List.range' (t.infoId + 1) (1 + t.nOut) := by
       rw [hroot]; exact range'_append_of _ 1 _ _ rfl
     rw [hout]
     simp (disch := omega) only [range'_append_of]
-    rw [hsize, hxmp, hinfo, hpb]
+    rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
     congr 1
     omega
 
@@ -645,16 +691,16 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
 project): the table's ids, block by block from its slot functions, are the
 range `[1, size)` — the allocation is a tiling. -/
 theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) :
-    (objTable keep imgs usedImgs np nOut).ids.toList
-      = List.range' 1 ((objTable keep imgs usedImgs np nOut).size - 1) :=
+    (np nOut nElems : Nat) :
+    (objTable keep imgs usedImgs np nOut nElems).ids.toList
+      = List.range' 1 ((objTable keep imgs usedImgs np nOut nElems).size - 1) :=
   ObjTable.ids_exact _ ((usedImgs.map (imgExtraOf imgs)).map ImgExtra.span).toList
-    (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl
+    (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
 
 /-- **`objTable_inj`** (the `_inj` statement): no two slots of the table
 share an id — the allocation is injective. -/
 theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) : (objTable keep imgs usedImgs np nOut).ids.toList.Nodup := by
+    (np nOut nElems : Nat) : (objTable keep imgs usedImgs np nOut nElems).ids.toList.Nodup := by
   rw [objTable_ids_exact]
   exact List.nodup_range' 1
 
@@ -662,9 +708,9 @@ theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array N
 trailer's `/Size`, other than the free-list head 0, is allocated — no row
 of the cross-reference is left to a default. -/
 theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) :
-    ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut).size →
-      id ∈ (objTable keep imgs usedImgs np nOut).ids := by
+    (np nOut nElems : Nat) :
+    ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut nElems).size →
+      id ∈ (objTable keep imgs usedImgs np nOut nElems).ids := by
   intro id h1 h2
   rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1]
   omega
@@ -673,12 +719,12 @@ theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Arra
 lies in `[1, size)` — the converse of `objTable_covers`, and what makes
 `kindOf` answer on every id `write` iterates. -/
 theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) :
-    ∀ id ∈ (objTable keep imgs usedImgs np nOut).ids,
-      1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut).size := by
+    (np nOut nElems : Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
+      1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut nElems).size := by
   intro id h
   rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1] at h
-  have : 3 ≤ (objTable keep imgs usedImgs np nOut).size := by
+  have : 3 ≤ (objTable keep imgs usedImgs np nOut nElems).size := by
     simp only [objTable]
     omega
   omega
@@ -686,11 +732,11 @@ theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Arr
 /-- `kindOf` is defined on every id the table allocates: the `none` arm of
 the match in `write` is dead by this theorem, not by a default. -/
 theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut : Nat) (compressedIdx : Nat → Option Nat) :
-    ∀ id ∈ (objTable keep imgs usedImgs np nOut).ids,
-      ((objTable keep imgs usedImgs np nOut).kindOf compressedIdx id).isSome = true := by
+    (np nOut nElems : Nat) (compressedIdx : Nat → Option Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
+      ((objTable keep imgs usedImgs np nOut nElems).kindOf compressedIdx id).isSome = true := by
   intro id h
-  have hb := objTable_between keep imgs usedImgs np nOut id h
+  have hb := objTable_between keep imgs usedImgs np nOut nElems id h
   unfold ObjTable.kindOf
   rw [ite_eq_right (by simp only [Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]; omega)]
   split
@@ -810,7 +856,8 @@ def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.S
   | .iccBased => (tableOf fs pages imgs outline).icc.isSome
   | .tabs => false
   | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
-  | .structTree => (tableOf fs pages imgs outline).structTreeRoot.isSome
+  -- every PDF is tagged: the structure block is unconditional (pdf-tag-skeleton)
+  | .structTree => true
   | .transparencyGroup => false
   | .brotli => false
   | .jpx => false
@@ -852,12 +899,15 @@ theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually
-placed, and the document information the source declared (Info dictionary
-plus XMP). -/
+placed, the structure tree projected from `tree`, and the document
+information the source declared (Info dictionary plus XMP). `streams` and
+`ops` are the driver's cache path: the page operators it built through
+`pageOps` (one walk, not two) and their rendered and deflated bytes. -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
-    (streams : Array (ByteArray × Option ByteArray) := #[]) : ByteArray := Id.run do
+    (streams : Array (ByteArray × Option ByteArray) := #[])
+    (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[]) : ByteArray := Id.run do
   let np := pages.size
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
   -- the very function `html_fonts_cover_pdf` quantifies over, so the
@@ -873,17 +923,30 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs
   let nOut := outline.size
+  -- The structure tree: the skeleton once, its leaf tags into every page's
+  -- operators, the pages' marks back into the skeleton (`fill`), and the
+  -- parent tree as the same map read from the page side. One walk decides
+  -- the tag a sequence carries and the element that lists it.
+  let sk := skeleton tree
+  let nLeaves := tree.leaves.size
+  let tags := leafTags sk nLeaves
+  -- The typed operators: the caller's when it built them (`pageOps`, the
+  -- same walk — `streams` are their render), else built here.
+  let ops := if ops.size == np then ops else pages.map (contentOps geom remap imgMap tags)
+  let marks := ops.map pageMarks
+  let es := fill sk (leafPagesOf nLeaves marks)
+  let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
   -- Every object id, from the one table: `objTable_ids_exact` says its
   -- ids tile `[1, size)`, so the cross-reference can be built without a
   -- second pass and no row is left to a default.
-  let t := objTable keep imgs usedImgs np nOut
+  let t := objTable keep imgs usedImgs np nOut es.size
 
   -- compressed (non-stream) objects, serialized bare
   let kids := String.intercalate " " ((List.range np).map fun i => s!"{t.pageId i} 0 R")
   let outlinesRef := if nOut == 0 then "" else s!" /Outlines {t.outlineRootId} 0 R"
   -- The catalog: `catalogDict`, whose `/Lang` is `pdf_lang_declared`'s
   -- statement — present exactly when the document declares a language.
-  let catalog := catalogDict outlinesRef t.xmpId info.language
+  let catalog := catalogDict outlinesRef t.xmpId info.language t.structTreeRoot
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let fontResources := String.intercalate " "
     ((List.range nf).map fun k => s!"/F{k + 1} {ObjTable.type0Id k} 0 R")
@@ -941,7 +1004,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let xobj := if ni == 0 then "" else
       " /XObject << " ++ String.intercalate " "
         (t.imgIds.toList.zipIdx.map fun (id, n) => s!"/Im{n + 1} {id} 0 R") ++ " >>"
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {t.contentId i} 0 R >>"
+    -- `/StructParents` (§14.7.5.4): the page's key in the parent tree,
+    -- under which its marked-content identifiers map back to elements.
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {t.contentId i} 0 R /StructParents {i} >>"
   -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
   -- with the BOM past ASCII — never raw UTF-8 bytes, which a reader
   -- decodes as PDFDocEncoding.
@@ -971,9 +1036,52 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           | none, none => ""
         (t.outlineItemId k,
           s!"<< /Title {pdfTextString e.title} /Parent {t.outlineRootId} 0 R{prev}{next}{target} >>")
+  -- The structure tree (§14.7): the root over the `Document` element, the
+  -- parent tree as one number-tree node keyed by page (`/StructParents`),
+  -- the PDF 2.0 namespace the elements name (§14.7.4 — `Title`, `FENote`,
+  -- `Hn` past 6 are 2.0 types; a type 2.0 dropped stays in the default
+  -- 1.7 namespace by naming none), and one dictionary per element:
+  -- its type, parent, kids as marked-content references (`/MCR`, §14.7.5.3
+  -- — the page travels with the identifier, so an element may span
+  -- pages), and the alternative or language it carries.
+  let elemRef (i : Nat) : String := s!"{t.structElemId i} 0 R"
+  let structRoot :=
+    s!"<< /Type /StructTreeRoot /K [{elemRef 0}] /ParentTree {t.parentTree} 0 R \
+/ParentTreeNextKey {np} /Namespaces [{t.namespaceId} 0 R] >>"
+  let parentEntry (i : Nat) : String :=
+    let refs := (parentTree[i]?.getD #[]).toList.map fun o => match o with
+      | some e => elemRef e
+      | none => "null"
+    s!"{i} [{String.intercalate " " refs}]"
+  let parentTreeObj :=
+    "<< /Nums [" ++ String.intercalate " " ((List.range np).map parentEntry) ++ "] >>"
+  let namespaceObj := "<< /Type /Namespace /NS (http://iso.org/pdf2/ssn) >>"
+  let kidRef (k : StructKid) : String := match k with
+    | .elem i => elemRef i
+    | .mcid p m => s!"<< /Type /MCR /Pg {t.pageId p} 0 R /MCID {m} >>"
+    -- a placeholder `fill` did not replace: none remain after `fill`, and
+    -- one would be a leaf with no marked content, which lists nothing
+    | .leaf _ => ""
+  let optText (key : String) : Option String → String
+    | some v => s!" /{key} {pdfTextString v}"
+    | none => ""
+  let structElemObj (e : StructElem) : String :=
+    let parentRef := match e.parent with
+      | some p => elemRef p
+      | none => s!"{t.structTreeRoot} 0 R"
+    let kids := (e.kids.toList.map kidRef).filter (· != "")
+    let kidsEntry := if kids.isEmpty then "" else s!" /K [{String.intercalate " " kids}]"
+    let attrsEntry := if e.attrs.isEmpty then "" else
+      " /A << " ++ String.intercalate " " (e.attrs.toList.map fun (k, v) => s!"/{k} {v}") ++ " >>"
+    let nsEntry := if e.ns20 then s!" /NS {t.namespaceId} 0 R" else ""
+    s!"<< /Type /StructElem /S /{e.s} /P {parentRef}{nsEntry}{kidsEntry}\
+{optText "Alt" e.alt}{optText "Lang" e.lang}{optText "ActualText" e.actualText}{attrsEntry} >>"
+  let structObjs : List (Nat × String) :=
+    [(t.structTreeRoot, structRoot), (t.parentTree, parentTreeObj), (t.namespaceId, namespaceObj)]
+    ++ es.toList.zipIdx.map fun (e, i) => (t.structElemId i, structElemObj e)
   let compressed : List (Nat × String) :=
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
-    (List.range np).map fun i => (t.pageId i, pageDict i)
+    (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs
 
   -- object stream payload
   let mut header := ""
@@ -1017,9 +1125,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- (`pageStreams`): the choice of spelling is `putZ`'s either way, so a
   -- cache hit and a recomputation write the same bytes.
   for i in [0:np] do
-    let (data, z?) := match streams[i]? with
-      | some s => s
-      | none => ((contentStream geom remap imgMap pages[i]!).toUTF8, none)
+    let (data, z?) := match streams[i]?, ops[i]? with
+      | some s, _ => s
+      | none, some o => ((render o).toUTF8, none)
+      | none, none => (ByteArray.empty, none)
     let (w', off) := match z? with
       | some z => putZ w (t.contentId i) "" data z
       | none => putFlate w (t.contentId i) "" data
@@ -1173,7 +1282,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         rows := rows ++ ⟨#[0, 0, 0, 0, 0, 0, 0]⟩
     | none =>
       have hs : (t.kindOf compressedIdx id).isSome = true :=
-        objTable_kindOf_some keep imgs usedImgs np nOut compressedIdx id h
+        objTable_kindOf_some keep imgs usedImgs np nOut es.size compressedIdx id h
       rows := absurd hs (by rw [hk]; exact Bool.false_ne_true)
   let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 w.out)
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 w.out)

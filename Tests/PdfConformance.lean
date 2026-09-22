@@ -34,6 +34,10 @@ inductive Role where
   | xobject
   | outlineNode
   | annot
+  /-- A structure tree node: the root or an element (ISO 32000-2 §14.7.2). -/
+  | structNode
+  /-- The parent tree's number tree (§14.7.5.4). -/
+  | parentTree
   | leaf
   deriving BEq, Repr
 
@@ -45,6 +49,8 @@ def Role.name : Role → String
   | .xobject => "XObject"
   | .outlineNode => "outline"
   | .annot => "annotation"
+  | .structNode => "structure element"
+  | .parentTree => "parent tree"
   | .leaf => "stream"
 
 /-- The references a resources dictionary names, one level: its `/Font`
@@ -78,6 +84,7 @@ def edgesOf (es : Array Entry) (role : Role) (o : Obj) : Array (Role × Nat) := 
     out := push .pagesNode (o.get? "Pages") out
     out := push .leaf (o.get? "Metadata") out
     out := push .outlineNode (o.get? "Outlines") out
+    out := push .structNode (o.get? "StructTreeRoot") out
   | .pagesNode =>
     out := pushAll .pagesNode (o.get? "Kids") out
     out := push .pagesNode (o.get? "Parent") out
@@ -106,6 +113,32 @@ def edgesOf (es : Array Entry) (role : Role) (o : Obj) : Array (Role × Nat) := 
   | .annot =>
     if let some (.arr xs) := o.get? "Dest" then
       out := push .pagesNode xs[0]? out
+  | .structNode =>
+    -- Kids: element references, or marked-content references naming a page.
+    match o.get? "K" with
+    | some (.arr xs) =>
+      for x in xs do
+        match x with
+        | .ref n _ => out := out.push (.structNode, n)
+        | .dict _ => out := push .pagesNode (x.get? "Pg") out
+        | _ => pure ()
+    | some k => out := push .structNode (some k) out
+    | none => pure ()
+    out := push .structNode (o.get? "P") out
+    out := push .pagesNode (o.get? "Pg") out
+    out := push .leaf (o.get? "NS") out
+    out := push .parentTree (o.get? "ParentTree") out
+    out := pushAll .leaf (o.get? "Namespaces") out
+  | .parentTree =>
+    match o.get? "Nums" with
+    | some (.arr xs) =>
+      for x in xs do
+        match x with
+        | .arr refs => for r in refs do out := push .structNode (some r) out
+        | .ref n _ => out := out.push (.structNode, n)
+        | _ => pure ()
+    | _ => pure ()
+    out := pushAll .parentTree (o.get? "Kids") out
   | .leaf => pure ()
   return out
 
@@ -294,7 +327,8 @@ def featureSpellings : List (Pdf.Feature × String) := [
   (.outlines, "/Type /Outlines"),
   (.xmp, "/Type /Metadata"),
   (.trimBox, "/TrimBox"),
-  (.markedContent, "\nEMC")]
+  (.markedContent, "\nEMC"),
+  (.structTree, "/Type /StructTreeRoot")]
 
 /-- The features a produced PDF reaches, by spelling. -/
 def emittedFeatures (pdf : ByteArray) : List Pdf.Feature :=
@@ -382,7 +416,8 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
     (.outlines, has .outlines),
     (.xmp, has .metadata),
     (.trimBox, anyVal fun o => (o.get? "TrimBox").isSome),
-    (.markedContent, markedContent)]
+    (.markedContent, markedContent),
+    (.structTree, anyVal fun o => nameIs (o.get? "Type") "StructTreeRoot")]
   return feats.filterMap fun (f, b) => if b then some f else none
 
 /-- The parsed reading of a file's bytes, as matrix row names. -/

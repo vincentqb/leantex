@@ -753,6 +753,10 @@ structure PathOut where
   path : PagePath
   stroke : Option Ir.Pic.Stroke := none
   fill : Option Ir.Color := none
+  /-- The picture leaf this path paints (`LineOut.leaf`'s contract, on
+  ink): a picture's paths all carry its leaf, so the PDF writer groups
+  them under one figure. `none` only where no picture placed the path. -/
+  leaf : Option Nat := none
   deriving Repr, Inhabited
 
 structure PageOut where
@@ -6318,11 +6322,11 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     | .circle sx sy r st fl =>
       let (pcx, pcy) := place.toPage (sx, sy)
       paths := paths.push { path := .circle pcx pcy (max r (-r))
-                            stroke := st, fill := fl }
+                            stroke := st, fill := fl, leaf := leaf }
     | .frame fx fy fw fh st fl =>
       let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
       paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
-                            stroke := st, fill := fl }
+                            stroke := st, fill := fl, leaf := leaf }
     | .edge segs st tip =>
       let pt := place.toPage
       let mapped := segs.map fun sg => match sg with
@@ -6336,13 +6340,13 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
           let (u2, v2) := pt (c2x, c2y)
           let (a2, b2) := pt (x2, y2)
           Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
-      paths := paths.push { path := .segs mapped, stroke := some st }
+      paths := paths.push { path := .segs mapped, stroke := some st, leaf := leaf }
       if let some t := tip then
         let (a1, b1) := pt (t.x1, t.y1)
         let (a2, b2) := pt (t.x2, t.y2)
         let (a3, b3) := pt (t.x3, t.y3)
         paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
-                              fill := some st.color }
+                              fill := some st.color, leaf := leaf }
     | .label lx ly content color scale align =>
       let size := b.geom.fontSize * (scale : Int) / 1000
       let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}

@@ -68,9 +68,14 @@ inductive ArtifactKind where
 /-- The tag a marked-content sequence opens with (§14.6.2). An artifact
 carries its type when the emission site knows it; a page fill carries
 none, because the layout ships backgrounds, bars and cut marks in one
-array and the writer will not guess between `/Layout` and `/Page`. -/
+array and the writer will not guess between `/Layout` and `/Page`. Real
+content carries the structure type of the element that lists it, its
+marked-content identifier on the page (§14.7.5.1: unique per page), and
+the structure leaf it paints — the last is data for the structure walk,
+never spelled. -/
 inductive MarkTag where
   | artifact (kind : Option ArtifactKind)
+  | content (s : String) (mcid : Nat) (leaf : Nat)
   deriving Repr, BEq, Inhabited
 
 /-- The line that opens the sequence: the tag and its property dictionary
@@ -84,6 +89,38 @@ def MarkTag.opener : MarkTag → String
   | .artifact (some .pagination) => "/Artifact << /Type /Pagination >> BDC"
   | .artifact (some .layout) => "/Artifact << /Type /Layout >> BDC"
   | .artifact (some .page) => "/Artifact << /Type /Page >> BDC"
+  | .content s mcid _ => s!"/{s} << /MCID {mcid} >> BDC"
+
+/-- What a line's ink stands for, read off the layout: running furniture;
+a structure leaf, under the structure type the structure walk gave the
+element holding that leaf; or ink no leaf owns (a rules-only line, the
+generated heading of an abstract), which is an artifact of no stated
+type. Decided once per line and once per image — the origin is known at
+the line and lost after. -/
+inductive Origin where
+  | furniture
+  | unattributed
+  | leaf (k : Nat) (tag : String)
+  deriving Repr, BEq, Inhabited
+
+/-- A line's origin: `tags` is the structure walk's answer per leaf id
+(`PdfStruct.leafTags`), `none` for a leaf no element holds. -/
+def Origin.of (tags : Array (Option String)) (l : LineOut) : Origin :=
+  if l.furniture then .furniture else
+  match l.leaf with
+  | some k =>
+    match (tags[k]?).join with
+    | some s => .leaf k s
+    | none => .unattributed
+  | none => .unattributed
+
+/-- The tag an origin's operators sit under. The marked-content identifier
+is a placeholder here: `numberMarks` assigns them in stream order once the
+page's operators are all built. -/
+def Origin.mark : Origin → MarkTag
+  | .furniture => .artifact (some .pagination)
+  | .unattributed => .artifact none
+  | .leaf k tag => .content tag 0 k
 
 /-- Text-object operators (§9.3–9.4): horizontal scale in per-mille,
 text matrix, font resource and size, fill colour, and one `TJ` array;
@@ -214,6 +251,19 @@ def render (ops : Array ContentOp) : String := (ops.foldl renderStep none).getD 
 
 /-! ## Construction: the layout walk -/
 
+/-- An image the text walk gathered for painting after `ET`: its box, its
+XObject resource when it loaded, and the origin of the line it stood in
+— a loaded image is real content under its line's leaf, a furniture
+line's image (a logo) a pagination artifact. -/
+structure ImgOut where
+  x : Sp
+  y : Sp
+  w : Sp
+  h : Sp
+  res : Option Nat
+  origin : Origin
+  deriving Repr, BEq, Inhabited
+
 /-- The text object's walk state. `items` is the open `TJ` array — empty
 exactly when no array is open. `font` is the layout face index in force
 (`-1` before the first `Tf`), `size` and `color` likewise; `tz` the live
@@ -231,7 +281,7 @@ structure TextSt where
   x : Sp := 0
   pen : Option (Sp × Sp) := none
   rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
-  images : Array (Sp × Sp × Sp × Sp × Option Nat) := #[]
+  images : Array ImgOut := #[]
 
 def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st.ops.push o }
 
@@ -291,11 +341,13 @@ def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
             pen := some (st.x + w, runY) }
 
 def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
-    (st : TextSt) : Seg → TextSt
+    (og : Origin) (st : TextSt) : Seg → TextSt
   | .rule w thickness raise color =>
     { st with rules := st.rules.push (color, st.x, ypdf + raise, w, thickness), x := st.x + w }
   | .image idx w h =>
-    { st with images := st.images.push (st.x, ypdf, w, h, idx.bind fun k => imgMap[k]?.getD none),
+    { st with images := st.images.push { x := st.x, y := ypdf, w, h,
+                                         res := idx.bind fun k => imgMap[k]?.getD none,
+                                         origin := og },
               x := st.x + w }
   | .gap w => { st with x := st.x + w }
   | .run idx color _ w glyphs segSize _ raise _ =>
@@ -306,36 +358,49 @@ expansion factor when it changes (`Tz`, §9.3.4, scales shapes and
 advances alike — exactly hz-style expansion, and the run widths layout
 emitted are already rescaled by the same factor), then the segments from
 the line's left edge with no pen, then the array closed. The result's
-`ops` are the line's own, for `stepLine` to append or to wrap. The bleed
-shifts everything: layout works in trim coordinates and the trim box sits
-`bleed` in from the medium's corner. -/
-def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (st : TextSt)
-    (l : LineOut) : TextSt :=
+`ops` are the line's own, for `stepLine` to append or to wrap; the images
+it gathers carry the line's origin. The bleed shifts everything: layout
+works in trim coordinates and the trim box sits `bleed` in from the
+medium's corner. -/
+def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (og : Origin)
+    (st : TextSt) (l : LineOut) : TextSt :=
   let ypdf := geom.bleed + geom.pageH - l.y
   let st : TextSt := { st with ops := #[] }
   let st := if l.expand != st.tz then { st.op (.scale (1000 + l.expand)) with tz := l.expand }
     else st
   let st := { st with x := geom.bleed + l.x, pen := none }
-  (l.segs.foldl (stepSeg remap imgMap l.size ypdf) st).closeTJ
+  (l.segs.foldl (stepSeg remap imgMap l.size ypdf og) st).closeTJ
 
 /-- The tag every furniture line's operators sit under: running heads,
 feet and page numbers are pagination artifacts (Table 363). -/
 def furnitureTag : MarkTag := .artifact (some .pagination)
 
-/-- One line onto the text object: a furniture line's operators as one
-pagination artifact, a flow line's operators as they are. The origin is
-known here and lost after — the line is the unit the layout marks. -/
-def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (st : TextSt)
-    (l : LineOut) : TextSt :=
-  let s := lineSt geom remap imgMap st l
-  { s with ops := if l.furniture then st.ops.push (.marked furnitureTag s.ops) else st.ops ++ s.ops }
+/-- One line onto the text object, under the wrapper its origin names: a
+furniture line's operators as one pagination artifact; a line painting a
+structure leaf as one marked-content sequence of that leaf's structure
+type (identifier assigned later by `numberMarks`); a line no leaf owns as
+one artifact of no type. A line whose operators are empty (an image-only
+line, whose ink paints after `ET`) adds nothing — a sequence around
+nothing would be an identifier with no content. A furniture line is
+wrapped whatever it holds: the furniture census counts lines. -/
+def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
+  let og := Origin.of tags l
+  let s := lineSt geom remap imgMap og st l
+  match og with
+  | .furniture => { s with ops := st.ops.push (.marked furnitureTag s.ops) }
+  | .unattributed =>
+    { s with ops := if s.ops.isEmpty then st.ops else st.ops.push (.marked (.artifact none) s.ops) }
+  | .leaf k tag =>
+    { s with ops := if s.ops.isEmpty then st.ops
+                    else st.ops.push (.marked (.content tag 0 k) s.ops) }
 
 /-- The specification twin of `stepLine`: the same line, nothing wrapped —
 what the writer emitted before marked content existed. `mark_ink_exact`
 is stated against it. -/
-def stepLinePlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (st : TextSt)
-    (l : LineOut) : TextSt :=
-  let s := lineSt geom remap imgMap st l
+def stepLinePlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
+  let s := lineSt geom remap imgMap (Origin.of tags l) st l
   { s with ops := st.ops ++ s.ops }
 
 /-- A picture path in PDF space: the circle as four cubic Bézier arcs (the
@@ -392,46 +457,146 @@ writing time for no reader's benefit. -/
 def artifactBlock (kind : Option ArtifactKind) (ops : Array ContentOp) : Array ContentOp :=
   if ops.isEmpty then #[] else #[.marked (.artifact kind) ops]
 
-/-- An image that loaded is real content and stays bare (the structure
-slice tags it); the placeholder box of one that did not is decoration —
-a layout artifact, the diagnostic having already said why. -/
-def imageOp (x y w h : Sp) : Option Nat → ContentOp
-  | some n => .image x y w h n
-  | none => artifact (some .layout) (.imageMissing x y w h)
+/-- An image that loaded is real content under its line's origin; the
+placeholder box of one that did not is decoration — a layout artifact,
+the diagnostic having already said why. -/
+def imageOp (i : ImgOut) : ContentOp :=
+  match i.res with
+  | some n => .marked i.origin.mark #[.image i.x i.y i.w i.h n]
+  | none => artifact (some .layout) (.imageMissing i.x i.y i.w i.h)
 
-def imageOpPlain (x y w h : Sp) : Option Nat → ContentOp
-  | some n => .image x y w h n
-  | none => .imageMissing x y w h
+def imageOpPlain (i : ImgOut) : ContentOp :=
+  match i.res with
+  | some n => .image i.x i.y i.w i.h n
+  | none => .imageMissing i.x i.y i.w i.h
+
+/-- The tag a picture's paths sit under: the structure type the walk gave
+the picture's leaf, or — for a path no leaf owns, which the layout never
+ships (`placePicture` stamps every path with its picture's leaf) — an
+artifact of no type. -/
+def groupTag (tags : Array (Option String)) : Option Nat → MarkTag
+  | some k =>
+    match (tags[k]?).join with
+    | some s => .content s 0 k
+    | none => .artifact none
+  | none => .artifact none
+
+/-- An open group of paths closed onto the stream as one sequence. -/
+def flushGroup (tags : Array (Option String)) (out : Array ContentOp) :
+    Option (Option Nat × Array ContentOp) → Array ContentOp
+  | none => out
+  | some (lf, ops) => out.push (.marked (groupTag tags lf) ops)
+
+/-- Picture paths grouped per picture: consecutive paths stamped with the
+same leaf are one picture's ink and sit under one sequence (the layout
+pushes a picture's paths together, `placePicture`). Structural on the
+list; the open group travels as state so the walk needs no lookahead. -/
+def pathGroupsList (geom : Geom) (tags : Array (Option String)) (out : Array ContentOp)
+    (cur : Option (Option Nat × Array ContentOp)) : List PathOut → Array ContentOp
+  | [] => flushGroup tags out cur
+  | p :: rest =>
+    let op := ContentOp.path p.fill p.stroke (pathSegs geom p.path)
+    match cur with
+    | some (lf, ops) =>
+      if lf == p.leaf then pathGroupsList geom tags out (some (lf, ops.push op)) rest
+      else pathGroupsList geom tags (flushGroup tags out cur) (some (p.leaf, #[op])) rest
+    | none => pathGroupsList geom tags out (some (p.leaf, #[op])) rest
+
+def pathGroups (geom : Geom) (tags : Array (Option String)) (paths : Array PathOut) :
+    Array ContentOp :=
+  pathGroupsList geom tags #[] none paths.toList
+
+mutual
+
+/-- Marked-content identifiers assigned in stream order from `n`: every
+`content` tag takes the next number, artifacts take none, and the walk
+descends every body — so identifiers are unique per page whatever the
+construction nested (`numberMarks_mcids_exact`). The tag's type and leaf
+are kept; only the identifier changes. -/
+def TextOp.number (n : Nat) : TextOp → TextOp × Nat
+  | o@(.scale _) => (o, n)
+  | o@(.move _ _) => (o, n)
+  | o@(.font _ _) => (o, n)
+  | o@(.color _) => (o, n)
+  | o@(.show _) => (o, n)
+  | .marked (.artifact a) body =>
+    let r := TextOp.numberList n #[] body.toList
+    (.marked (.artifact a) r.1, r.2)
+  | .marked (.content s _ k) body =>
+    let r := TextOp.numberList (n + 1) #[] body.toList
+    (.marked (.content s n k) r.1, r.2)
+
+def TextOp.numberList (n : Nat) (acc : Array TextOp) : List TextOp → Array TextOp × Nat
+  | [] => (acc, n)
+  | o :: rest =>
+    let r := TextOp.number n o
+    TextOp.numberList r.2 (acc.push r.1) rest
+
+end
+
+mutual
+
+def ContentOp.number (n : Nat) : ContentOp → ContentOp × Nat
+  | o@(.fill _ _ _ _ _) => (o, n)
+  | o@(.path _ _ _) => (o, n)
+  | .text ops =>
+    let r := TextOp.numberList n #[] ops.toList
+    (.text r.1, r.2)
+  | o@(.image _ _ _ _ _) => (o, n)
+  | o@(.imageMissing _ _ _ _) => (o, n)
+  | .marked (.artifact a) body =>
+    let r := ContentOp.numberList n #[] body.toList
+    (.marked (.artifact a) r.1, r.2)
+  | .marked (.content s _ k) body =>
+    let r := ContentOp.numberList (n + 1) #[] body.toList
+    (.marked (.content s n k) r.1, r.2)
+
+def ContentOp.numberList (n : Nat) (acc : Array ContentOp) :
+    List ContentOp → Array ContentOp × Nat
+  | [] => (acc, n)
+  | o :: rest =>
+    let r := ContentOp.number n o
+    ContentOp.numberList r.2 (acc.push r.1) rest
+
+end
+
+/-- A page's operators with their marked-content identifiers assigned in
+stream order from 0. -/
+def numberMarks (ops : Array ContentOp) : Array ContentOp :=
+  (ContentOp.numberList 0 #[] ops.toList).1
 
 /-- One page's operations: fills first, in order (the page background,
 then any bars), as one artifact of no stated type — the layout ships
-backgrounds, bars and cut marks in one array; then picture paths bare (a
-diagram is real content: the structure slice tags it as a figure, and
-wrapping it as an artifact would hide it to pass a rule); then the text
-object, with each furniture line a pagination artifact; then the images
-the text walk gathered, a placeholder a layout artifact; then the rules
-it gathered, as one layout artifact. -/
+backgrounds, bars and cut marks in one array; then picture paths, one
+sequence per picture under its figure's type; then the text object, each
+line under its origin's wrapper; then the images the text walk gathered,
+each under its line's origin, a placeholder a layout artifact; then the
+rules it gathered, as one layout artifact. Identifiers in stream order
+over the middle — paths, text, images; the two artifact blocks hold fills
+only and carry none, and a rule-heavy page would pay their rebuild for
+nothing. Every painting operator sits under exactly one wrapper
+(`mcids_partition_covers`). -/
 def contentOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : Array ContentOp :=
+    (tags : Array (Option String)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
-  let paths := page.paths.map fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)
-  let st := page.lines.foldl (stepLine geom remap imgMap) {}
-  let images := st.images.map fun (x, y, w, h, res) => imageOp x y w h res
+  let paths := pathGroups geom tags page.paths
+  let st := page.lines.foldl (stepLine geom remap imgMap tags) {}
+  let images := st.images.map imageOp
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
-  let body := (artifactBlock none fills ++ paths).push (.text st.ops)
-  (body ++ images) ++ artifactBlock (some .layout) rules
+  let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
+  (artifactBlock none fills ++ middle) ++ artifactBlock (some .layout) rules
 
 /-- The specification twin of `contentOps`: the same operations with no
 marked content — the writer before this layer, kept so `mark_ink_exact`
 can name the stream it must reproduce. -/
 def contentOpsPlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : Array ContentOp :=
+    (tags : Array (Option String)) (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let paths := page.paths.map fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)
-  let st := page.lines.foldl (stepLinePlain geom remap imgMap) {}
-  let images := st.images.map fun (x, y, w, h, res) => imageOpPlain x y w h res
+  let st := page.lines.foldl (stepLinePlain geom remap imgMap tags) {}
+  let images := st.images.map imageOpPlain
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let body := (fills ++ paths).push (.text st.ops)
   (body ++ images) ++ rules
@@ -804,8 +969,8 @@ theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (
     · rw [setFace_runs, toPen_runs]
     · rw [toPen_runs]
 
-theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp) (st : TextSt)
-    (seg : Seg) : (stepSeg remap imgMap ls y st seg).runs = st.runs ++ segRuns seg := by
+theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp) (og : Origin)
+    (st : TextSt) (seg : Seg) : (stepSeg remap imgMap ls y og st seg).runs = st.runs ++ segRuns seg := by
   cases seg with
   | rule => simp [stepSeg, TextSt.runs, segRuns]
   | image => simp [stepSeg, TextSt.runs, segRuns]
@@ -813,8 +978,8 @@ theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : S
   | run => exact stepRun_runs ..
 
 theorem foldl_segs_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
-    (segs : List Seg) (st : TextSt) :
-    (segs.foldl (stepSeg remap imgMap ls y) st).runs = st.runs ++ segs.flatMap segRuns := by
+    (og : Origin) (segs : List Seg) (st : TextSt) :
+    (segs.foldl (stepSeg remap imgMap ls y og) st).runs = st.runs ++ segs.flatMap segRuns := by
   induction segs generalizing st with
   | nil => simp
   | cons s rest ih => simp [ih, stepSeg_runs, List.append_assoc]
@@ -831,8 +996,8 @@ theorem ContentOp.runsList_eq (l : List ContentOp) :
   | cons o rest ih => simp [ContentOp.runsList, ih]
 
 theorem lineSt_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) :
-    (lineSt geom remap imgMap st l).runs
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    (lineSt geom remap imgMap og st l).runs
       = st.items.toList.flatMap TextItem.runs ++ l.segs.toList.flatMap segRuns := by
   unfold lineSt
   simp only []
@@ -843,46 +1008,125 @@ theorem lineSt_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Na
   · simp [TextSt.runs]
 
 theorem lineSt_items (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) : (lineSt geom remap imgMap st l).items = #[] := by
+    (og : Origin) (st : TextSt) (l : LineOut) : (lineSt geom remap imgMap og st l).items = #[] := by
   unfold lineSt
   exact closeTJ_items _
 
+/-- The runs of a text object's operators after one line: the line's runs
+in segment order appended, whatever wrapper the origin chose — a wrapper
+ships its body's runs, and an empty line ships none. -/
 theorem stepLine_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) :
-    (stepLine geom remap imgMap st l).runs = st.runs ++ l.segs.toList.flatMap segRuns := by
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    (stepLine geom remap imgMap tags st l).runs = st.runs ++ l.segs.toList.flatMap segRuns := by
   unfold stepLine
-  have hs := lineSt_runs geom remap imgMap st l
-  have hi := lineSt_items geom remap imgMap st l
+  have hs := lineSt_runs geom remap imgMap (Origin.of tags l) st l
+  have hi := lineSt_items geom remap imgMap (Origin.of tags l) st l
   simp only [TextSt.runs] at hs ⊢
   rw [hi] at hs ⊢
   simp only [List.flatMap_nil, List.append_nil] at hs ⊢
+  have hempty : (lineSt geom remap imgMap (Origin.of tags l) st l).ops.isEmpty = true →
+      List.flatMap TextItem.runs st.items.toList = []
+        ∧ List.flatMap segRuns l.segs.toList = [] := by
+    intro he
+    rw [← List.append_eq_nil_iff, ← hs, Array.isEmpty_iff.mp he]
+    simp
   split
   · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
       List.append_assoc]
-  · simp [Array.toList_append, List.flatMap_append, hs, List.append_assoc]
+  · split
+    · rename_i he
+      simp [(hempty he).1, (hempty he).2]
+    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
+        List.append_assoc]
+  · split
+    · rename_i he
+      simp [(hempty he).1, (hempty he).2]
+    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
+        List.append_assoc]
 
 theorem stepLine_items (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) : (stepLine geom remap imgMap st l).items = #[] := by
-  unfold stepLine
-  exact lineSt_items ..
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    (stepLine geom remap imgMap tags st l).items = #[] := by
+  simp only [stepLine]
+  split <;> exact lineSt_items ..
 
 theorem foldl_lines_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (lines : List LineOut) (st : TextSt) :
-    (lines.foldl (stepLine geom remap imgMap) st).runs
+    (tags : Array (Option String)) (lines : List LineOut) (st : TextSt) :
+    (lines.foldl (stepLine geom remap imgMap tags) st).runs
       = st.runs ++ lines.flatMap (fun l => l.segs.toList.flatMap segRuns) := by
   induction lines generalizing st with
   | nil => simp
   | cons l rest ih => simp [ih, stepLine_runs, List.append_assoc]
 
 theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (lines : List LineOut) (st : TextSt) (h : st.items = #[]) :
-    (lines.foldl (stepLine geom remap imgMap) st).items = #[] := by
+    (tags : Array (Option String)) (lines : List LineOut) (st : TextSt) (h : st.items = #[]) :
+    (lines.foldl (stepLine geom remap imgMap tags) st).items = #[] := by
   induction lines generalizing st with
   | nil => exact h
   | cons l rest ih => exact ih _ (stepLine_items ..)
 
-theorem imageOp_runs (x y w h : Sp) (r : Option Nat) : (imageOp x y w h r).runs = [] := by
-  cases r <;> simp [imageOp, artifact, ContentOp.runs, ContentOp.runsList]
+theorem imageOp_runs (i : ImgOut) : (imageOp i).runs = [] := by
+  unfold imageOp
+  split <;> simp [artifact, ContentOp.runs, ContentOp.runsList]
+
+theorem flushGroup_runs (tags : Array (Option String)) (out : Array ContentOp)
+    (cur : Option (Option Nat × Array ContentOp)) (hc : ∀ g ∈ cur, ∀ o ∈ g.2, o.runs = [])
+    (ho : ∀ o ∈ out, o.runs = []) : ∀ o ∈ flushGroup tags out cur, o.runs = [] := by
+  intro o h
+  cases cur with
+  | none => exact ho o h
+  | some g =>
+    simp only [flushGroup, Array.mem_push] at h
+    rcases h with h | rfl
+    · exact ho o h
+    · simp only [ContentOp.runs, ContentOp.runsList_eq]
+      exact List.flatMap_eq_nil_iff.mpr fun o' h' => hc g rfl o' (Array.mem_def.mpr h')
+
+/-- A picture's paths paint no glyph run, however grouped. -/
+theorem pathGroupsList_runs (geom : Geom) (tags : Array (Option String)) (paths : List PathOut)
+    (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp))
+    (hc : ∀ g ∈ cur, ∀ o ∈ g.2, o.runs = []) (ho : ∀ o ∈ out, o.runs = []) :
+    ∀ o ∈ pathGroupsList geom tags out cur paths, o.runs = [] := by
+  induction paths generalizing out cur with
+  | nil => exact flushGroup_runs tags out cur hc ho
+  | cons p rest ih =>
+    simp only [pathGroupsList]
+    have hop : ∀ o ∈ #[ContentOp.path p.fill p.stroke (pathSegs geom p.path)], o.runs = [] := by
+      intro o h
+      simp only [Array.mem_singleton] at h
+      subst h
+      rfl
+    split
+    · rename_i lf ops
+      split
+      · apply ih
+        · intro g hg o h
+          simp only [Option.mem_def, Option.some.injEq] at hg
+          subst hg
+          simp only [Array.mem_push] at h
+          rcases h with h | rfl
+          · exact hc _ rfl o h
+          · rfl
+        · exact ho
+      · apply ih
+        · intro g hg o h
+          simp only [Option.mem_def, Option.some.injEq] at hg
+          subst hg
+          exact hop o h
+        · exact flushGroup_runs tags out _ hc ho
+    · apply ih
+      · intro g hg o h
+        simp only [Option.mem_def, Option.some.injEq] at hg
+        subst hg
+        exact hop o h
+      · exact ho
+
+theorem pathGroups_runs (geom : Geom) (tags : Array (Option String)) (paths : Array PathOut) :
+    (pathGroups geom tags paths).toList.flatMap ContentOp.runs = [] := by
+  apply List.flatMap_eq_nil_iff.mpr
+  intro o h
+  exact pathGroupsList_runs geom tags paths.toList #[] none (by simp) (by simp) o
+    (Array.mem_def.mpr h)
 
 theorem artifact_runs (k : Option ArtifactKind) (o : ContentOp) :
     (artifact k o).runs = o.runs := by
@@ -896,23 +1140,91 @@ theorem artifactBlock_runs (k : Option ArtifactKind) (ops : Array ContentOp) :
     simp [Array.isEmpty_iff.mp h]
   · simp [ContentOp.runs, ContentOp.runsList_eq]
 
+mutual
+
+/-- Numbering the marked-content identifiers touches no glyph run. -/
+theorem TextOp.number_runs : ∀ (o : TextOp) (n : Nat), (TextOp.number n o).1.runs = o.runs
+  | .scale _, _ => rfl
+  | .move _ _, _ => rfl
+  | .font _ _, _ => rfl
+  | .color _, _ => rfl
+  | .show _, _ => rfl
+  | .marked (.artifact a) body, n => by
+    have h := TextOp.numberList_runs body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [TextOp.number, TextOp.runs, TextOp.runsList_eq, h]
+  | .marked (.content s m k) body, n => by
+    have h := TextOp.numberList_runs body.toList (n + 1) #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [TextOp.number, TextOp.runs, TextOp.runsList_eq, h]
+
+theorem TextOp.numberList_runs : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
+    (TextOp.numberList n acc l).1.toList.flatMap TextOp.runs
+      = acc.toList.flatMap TextOp.runs ++ l.flatMap TextOp.runs
+  | [], n, acc => by simp [TextOp.numberList]
+  | o :: rest, n, acc => by
+    rw [TextOp.numberList]
+    simp [TextOp.numberList_runs rest, Array.toList_push, TextOp.number_runs o n]
+
+end
+
+mutual
+
+theorem ContentOp.number_runs : ∀ (o : ContentOp) (n : Nat),
+    (ContentOp.number n o).1.runs = o.runs
+  | .fill _ _ _ _ _, _ => rfl
+  | .path _ _ _, _ => rfl
+  | .image _ _ _ _ _, _ => rfl
+  | .imageMissing _ _ _ _, _ => rfl
+  | .text ops, n => by
+    have h := TextOp.numberList_runs ops.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.runs, h]
+  | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_runs body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.runs, ContentOp.runsList_eq, h]
+  | .marked (.content s m k) body, n => by
+    have h := ContentOp.numberList_runs body.toList (n + 1) #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.runs, ContentOp.runsList_eq, h]
+
+theorem ContentOp.numberList_runs : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
+    (ContentOp.numberList n acc l).1.toList.flatMap ContentOp.runs
+      = acc.toList.flatMap ContentOp.runs ++ l.flatMap ContentOp.runs
+  | [], n, acc => by simp [ContentOp.numberList]
+  | o :: rest, n, acc => by
+    rw [ContentOp.numberList]
+    simp [ContentOp.numberList_runs rest, Array.toList_push, ContentOp.number_runs o n]
+
+end
+
+theorem numberMarks_runs_list (ops : Array ContentOp) :
+    (numberMarks ops).toList.flatMap ContentOp.runs = ops.toList.flatMap ContentOp.runs := by
+  unfold numberMarks
+  rw [ContentOp.numberList_runs]
+  simp
+
+theorem numberMarks_runs (ops : Array ContentOp) : runsOf (numberMarks ops) = runsOf ops :=
+  numberMarks_runs_list ops
+
 /-- **The PDF paints every glyph run the page shipped, in order.** The glyph
 census of the typed content stream is the page's run census: no run
 dropped, none invented, none reordered — the `_text` fact for the
 PageOut → ContentOp projection (not a `Conserves` instance: the walk
 changes type, as `structTree_text` does). -/
 theorem contentOps_text (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : runsOf (contentOps geom remap imgMap page) = pageRuns page := by
-  unfold runsOf contentOps pageRuns
-  have himg : ∀ t : Sp × Sp × Sp × Sp × Option Nat,
-      ContentOp.runs (imageOp t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) = [] :=
-    fun t => imageOp_runs ..
-  simp only [Array.toList_append, Array.toList_push, List.flatMap_append, List.flatMap_cons,
-    List.flatMap_nil, artifactBlock_runs, Array.toList_map, List.flatMap_map, himg,
-    flatMap_nil_fun]
+    (tags : Array (Option String)) (page : PageOut) :
+    runsOf (contentOps geom remap imgMap tags page) = pageRuns page := by
+  unfold contentOps
+  unfold runsOf pageRuns
+  simp only [Array.toList_append, List.flatMap_append, artifactBlock_runs, numberMarks_runs_list]
+  simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
+    List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs,
+    flatMap_nil_fun, pathGroups_runs]
   simp only [ContentOp.runs, flatMap_nil_fun, List.append_nil, List.nil_append]
-  have hr := foldl_lines_runs geom remap imgMap page.lines.toList {}
-  have hi := foldl_lines_items geom remap imgMap page.lines.toList {} rfl
+  have hr := foldl_lines_runs geom remap imgMap tags page.lines.toList {}
+  have hi := foldl_lines_items geom remap imgMap tags page.lines.toList {} rfl
   rw [Array.foldl_toList] at hr hi
   simp only [TextSt.runs, hi] at hr
   simpa using hr
@@ -1336,45 +1648,62 @@ the marking cannot change. -/
 def TextSt.plain (st : TextSt) : TextSt := { st with ops := inkText st.ops }
 
 theorem lineSt_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) : lineSt geom remap imgMap st.plain l = lineSt geom remap imgMap st l := by
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    lineSt geom remap imgMap og st.plain l = lineSt geom remap imgMap og st l := by
   simp [lineSt, TextSt.plain]
 
 /-- **Marking a line moves no ink**: the wrapped line and the plain line
-agree on everything but the wrapper. -/
+agree on everything but the wrapper — whichever wrapper the origin chose,
+and when the line's operators are empty and nothing is wrapped. -/
 theorem stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) :
-    (stepLine geom remap imgMap st l).plain = (stepLinePlain geom remap imgMap st l).plain := by
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    (stepLine geom remap imgMap tags st l).plain
+      = (stepLinePlain geom remap imgMap tags st l).plain := by
   simp only [stepLine, stepLinePlain, TextSt.plain]
+  have hempty : ∀ (a b : Array TextOp), b.isEmpty = true → inkText a = inkText (a ++ b) := by
+    intro a b hb
+    rw [Array.isEmpty_iff.mp hb, Array.append_empty]
   split
   · simp [inkText_push_marked, inkText_append]
-  · rfl
+  · split
+    · rename_i he
+      rw [hempty _ _ he]
+    · simp [inkText_push_marked, inkText_append]
+  · split
+    · rename_i he
+      rw [hempty _ _ he]
+    · simp [inkText_push_marked, inkText_append]
 
 theorem stepLinePlain_resp (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    {st st' : TextSt} (h : st.plain = st'.plain) (l : LineOut) :
-    (stepLinePlain geom remap imgMap st l).plain = (stepLinePlain geom remap imgMap st' l).plain := by
-  have hl : lineSt geom remap imgMap st l = lineSt geom remap imgMap st' l := by
-    rw [← lineSt_plain geom remap imgMap st, h, lineSt_plain]
+    (tags : Array (Option String)) {st st' : TextSt} (h : st.plain = st'.plain) (l : LineOut) :
+    (stepLinePlain geom remap imgMap tags st l).plain
+      = (stepLinePlain geom remap imgMap tags st' l).plain := by
+  have hl : lineSt geom remap imgMap (Origin.of tags l) st l
+      = lineSt geom remap imgMap (Origin.of tags l) st' l := by
+    rw [← lineSt_plain geom remap imgMap _ st, h, lineSt_plain]
   have ho : inkText st.ops = inkText st'.ops := congrArg TextSt.ops h
   simp only [stepLinePlain, TextSt.plain, hl, inkText_append, ho]
 
 theorem foldl_stepLinePlain_resp (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (ls : List LineOut) {st st' : TextSt} (h : st.plain = st'.plain) :
-    (ls.foldl (stepLinePlain geom remap imgMap) st).plain
-      = (ls.foldl (stepLinePlain geom remap imgMap) st').plain := by
+    (tags : Array (Option String)) (ls : List LineOut) {st st' : TextSt}
+    (h : st.plain = st'.plain) :
+    (ls.foldl (stepLinePlain geom remap imgMap tags) st).plain
+      = (ls.foldl (stepLinePlain geom remap imgMap tags) st').plain := by
   induction ls generalizing st st' with
   | nil => exact h
-  | cons l rest ih => exact ih (stepLinePlain_resp geom remap imgMap h l)
+  | cons l rest ih => exact ih (stepLinePlain_resp geom remap imgMap tags h l)
 
 /-- The marked walk and the plain walk agree under `inkText`, line by line. -/
 theorem foldl_stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (ls : List LineOut) (st : TextSt) :
-    (ls.foldl (stepLine geom remap imgMap) st).plain
-      = (ls.foldl (stepLinePlain geom remap imgMap) st).plain := by
+    (tags : Array (Option String)) (ls : List LineOut) (st : TextSt) :
+    (ls.foldl (stepLine geom remap imgMap tags) st).plain
+      = (ls.foldl (stepLinePlain geom remap imgMap tags) st).plain := by
   induction ls generalizing st with
   | nil => rfl
   | cons l rest ih =>
     simp only [List.foldl_cons]
-    rw [ih, foldl_stepLinePlain_resp geom remap imgMap rest (stepLine_plain geom remap imgMap st l)]
+    rw [ih, foldl_stepLinePlain_resp geom remap imgMap tags rest
+      (stepLine_plain geom remap imgMap tags st l)]
 
 /-! ### The plain walk pushes only leaves -/
 
@@ -1436,8 +1765,8 @@ theorem stepRun_plainOps (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Na
     · exact toPen_plainOps _ _ _ h
 
 theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
-    (st : TextSt) (seg : Seg) (h : inkText st.ops = st.ops) :
-    inkText (stepSeg remap imgMap ls y st seg).ops = (stepSeg remap imgMap ls y st seg).ops := by
+    (og : Origin) (st : TextSt) (seg : Seg) (h : inkText st.ops = st.ops) :
+    inkText (stepSeg remap imgMap ls y og st seg).ops = (stepSeg remap imgMap ls y og st seg).ops := by
   cases seg with
   | rule => exact h
   | image => exact h
@@ -1445,16 +1774,16 @@ theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y
   | run => exact stepRun_plainOps _ _ _ _ _ _ _ _ _ _ h
 
 theorem foldl_segs_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
-    (segs : List Seg) (st : TextSt) (h : inkText st.ops = st.ops) :
-    inkText (segs.foldl (stepSeg remap imgMap ls y) st).ops
-      = (segs.foldl (stepSeg remap imgMap ls y) st).ops := by
+    (og : Origin) (segs : List Seg) (st : TextSt) (h : inkText st.ops = st.ops) :
+    inkText (segs.foldl (stepSeg remap imgMap ls y og) st).ops
+      = (segs.foldl (stepSeg remap imgMap ls y og) st).ops := by
   induction segs generalizing st with
   | nil => exact h
-  | cons s rest ih => exact ih _ (stepSeg_plainOps _ _ _ _ _ _ h)
+  | cons s rest ih => exact ih _ (stepSeg_plainOps _ _ _ _ _ _ _ h)
 
 theorem lineSt_plainOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) :
-    inkText (lineSt geom remap imgMap st l).ops = (lineSt geom remap imgMap st l).ops := by
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    inkText (lineSt geom remap imgMap og st l).ops = (lineSt geom remap imgMap og st l).ops := by
   unfold lineSt
   simp only []
   apply closeTJ_plainOps
@@ -1465,17 +1794,19 @@ theorem lineSt_plainOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Optio
   · rfl
 
 theorem stepLinePlain_plainOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) (h : inkText st.ops = st.ops) :
-    inkText (stepLinePlain geom remap imgMap st l).ops = (stepLinePlain geom remap imgMap st l).ops := by
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) (h : inkText st.ops = st.ops) :
+    inkText (stepLinePlain geom remap imgMap tags st l).ops
+      = (stepLinePlain geom remap imgMap tags st l).ops := by
   simp only [stepLinePlain, inkText_append, h, lineSt_plainOps]
 
 theorem foldl_stepLinePlain_plainOps (geom : Geom) (remap : Array Nat)
-    (imgMap : Array (Option Nat)) (ls : List LineOut) (st : TextSt) (h : inkText st.ops = st.ops) :
-    inkText (ls.foldl (stepLinePlain geom remap imgMap) st).ops
-      = (ls.foldl (stepLinePlain geom remap imgMap) st).ops := by
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ls : List LineOut) (st : TextSt)
+    (h : inkText st.ops = st.ops) :
+    inkText (ls.foldl (stepLinePlain geom remap imgMap tags) st).ops
+      = (ls.foldl (stepLinePlain geom remap imgMap tags) st).ops := by
   induction ls generalizing st with
   | nil => exact h
-  | cons l rest ih => exact ih _ (stepLinePlain_plainOps _ _ _ _ _ h)
+  | cons l rest ih => exact ih _ (stepLinePlain_plainOps _ _ _ _ _ _ h)
 
 /-! ### The theorems this layer owes -/
 
@@ -1503,96 +1834,756 @@ theorem inkList_map {α : Type} (f g : α → ContentOp) (l : List α) (h : ∀ 
   | nil => rfl
   | cons a rest ih => simp [ContentOp.inkList, h, ih]
 
-theorem imageOp_ink (x y w h : Sp) (r : Option Nat) :
-    (imageOp x y w h r).ink = [imageOpPlain x y w h r] := by
-  cases r <;> simp [imageOp, imageOpPlain, artifact_ink, ContentOp.ink]
+theorem imageOp_ink (i : ImgOut) : (imageOp i).ink = [imageOpPlain i] := by
+  unfold imageOp imageOpPlain
+  split <;> simp [artifact_ink, ContentOp.ink, ContentOp.inkList]
 
-theorem imageOpPlain_ink (x y w h : Sp) (r : Option Nat) :
-    (imageOpPlain x y w h r).ink = [imageOpPlain x y w h r] := by
-  cases r <;> simp [imageOpPlain, ContentOp.ink]
+/-- The ink an open path group holds. -/
+def groupInk : Option (Option Nat × Array ContentOp) → List ContentOp
+  | none => []
+  | some (_, ops) => ContentOp.inkList ops.toList
+
+theorem flushGroup_ink (tags : Array (Option String)) (out : Array ContentOp)
+    (cur : Option (Option Nat × Array ContentOp)) :
+    ContentOp.inkList (flushGroup tags out cur).toList
+      = ContentOp.inkList out.toList ++ (groupInk cur) := by
+  cases cur with
+  | none => simp [flushGroup, groupInk]
+  | some g =>
+    obtain ⟨lf, ops⟩ := g
+    simp [flushGroup, groupInk, Array.toList_push, ContentOp.inkList_append, ContentOp.inkList,
+      ContentOp.ink]
+
+/-- Grouping a page's paths per picture moves no path: the ink under the
+groups is the paths, in order. -/
+theorem pathGroupsList_ink (geom : Geom) (tags : Array (Option String)) (paths : List PathOut)
+    (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp)) :
+    ContentOp.inkList (pathGroupsList geom tags out cur paths).toList
+      = ContentOp.inkList out.toList ++ (groupInk cur)
+        ++ paths.map (fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)) := by
+  induction paths generalizing out cur with
+  | nil => simp [pathGroupsList, flushGroup_ink]
+  | cons p rest ih =>
+    simp only [pathGroupsList]
+    split
+    · split
+      · rw [ih]
+        simp [groupInk, Array.toList_push, ContentOp.inkList_append, ContentOp.inkList,
+          ContentOp.ink, List.append_assoc]
+      · rw [ih, flushGroup_ink]
+        simp [groupInk, ContentOp.inkList, ContentOp.ink, List.append_assoc]
+    · rw [ih]
+      simp [groupInk, ContentOp.inkList, ContentOp.ink, List.append_assoc]
+
+theorem pathGroups_ink (geom : Geom) (tags : Array (Option String)) (paths : Array PathOut) :
+    ContentOp.inkList (pathGroups geom tags paths).toList
+      = paths.toList.map (fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)) := by
+  unfold pathGroups
+  rw [pathGroupsList_ink]
+  simp [groupInk, ContentOp.inkList]
+
+mutual
+
+/-- Numbering the identifiers touches no ink. -/
+theorem TextOp.number_ink : ∀ (o : TextOp) (n : Nat), (TextOp.number n o).1.ink = o.ink
+  | .scale _, _ => rfl
+  | .move _ _, _ => rfl
+  | .font _ _, _ => rfl
+  | .color _, _ => rfl
+  | .show _, _ => rfl
+  | .marked (.artifact a) body, n => by
+    have h := TextOp.numberList_ink body.toList n #[]
+    simp only [TextOp.inkList, List.nil_append] at h
+    simp [TextOp.number, TextOp.ink, h]
+  | .marked (.content s m k) body, n => by
+    have h := TextOp.numberList_ink body.toList (n + 1) #[]
+    simp only [TextOp.inkList, List.nil_append] at h
+    simp [TextOp.number, TextOp.ink, h]
+
+theorem TextOp.numberList_ink : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
+    TextOp.inkList (TextOp.numberList n acc l).1.toList
+      = TextOp.inkList acc.toList ++ (TextOp.inkList l)
+  | [], n, acc => by simp [TextOp.numberList, TextOp.inkList]
+  | o :: rest, n, acc => by
+    rw [TextOp.numberList]
+    rw [TextOp.numberList_ink rest, Array.toList_push, TextOp.inkList_append, TextOp.inkList,
+      TextOp.inkList, TextOp.number_ink o n]
+    simp [TextOp.inkList]
+
+end
+
+mutual
+
+theorem ContentOp.number_ink : ∀ (o : ContentOp) (n : Nat), (ContentOp.number n o).1.ink = o.ink
+  | .fill _ _ _ _ _, _ => rfl
+  | .path _ _ _, _ => rfl
+  | .image _ _ _ _ _, _ => rfl
+  | .imageMissing _ _ _ _, _ => rfl
+  | .text ops, n => by
+    have h := TextOp.numberList_ink ops.toList n #[]
+    simp only [TextOp.inkList, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.ink, inkText, h]
+  | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_ink body.toList n #[]
+    simp only [ContentOp.inkList, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.ink, h]
+  | .marked (.content s m k) body, n => by
+    have h := ContentOp.numberList_ink body.toList (n + 1) #[]
+    simp only [ContentOp.inkList, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.ink, h]
+
+theorem ContentOp.numberList_ink : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
+    ContentOp.inkList (ContentOp.numberList n acc l).1.toList
+      = ContentOp.inkList acc.toList ++ (ContentOp.inkList l)
+  | [], n, acc => by simp [ContentOp.numberList, ContentOp.inkList]
+  | o :: rest, n, acc => by
+    rw [ContentOp.numberList]
+    rw [ContentOp.numberList_ink rest, Array.toList_push, ContentOp.inkList_append,
+      ContentOp.inkList, ContentOp.inkList, ContentOp.number_ink o n]
+    simp [ContentOp.inkList]
+
+end
+
+theorem numberMarks_ink_list (ops : Array ContentOp) :
+    ContentOp.inkList (numberMarks ops).toList = ContentOp.inkList ops.toList := by
+  unfold numberMarks
+  rw [ContentOp.numberList_ink]
+  simp [ContentOp.inkList]
+
+theorem numberMarks_ink (ops : Array ContentOp) : inkOps (numberMarks ops) = inkOps ops := by
+  unfold inkOps
+  rw [numberMarks_ink_list]
 
 /-- **Marking moves no ink.** The stream this layer builds, with every
 marked-content wrapper removed, is the stream the writer built before the
 layer existed (`contentOpsPlain`, the specification twin): same
 operators, same order, same operands — so the same bytes
 (`render_inkOps_exact`), and the strip of marked-content lines the
-acceptance runs is this equation on the file. A fact of the content
-stream, not a projection of an IR statement: the IR never sees marked
-content. -/
+acceptance runs is this equation on the file. Both wrapper kinds are
+covered: artifacts and structure content alike hide nothing, and the
+identifier numbering rewrites tags only. A fact of the content stream,
+not a projection of an IR statement: the IR never sees marked content. -/
 theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) :
-    inkOps (contentOps geom remap imgMap page) = contentOpsPlain geom remap imgMap page := by
+    (tags : Array (Option String)) (page : PageOut) :
+    inkOps (contentOps geom remap imgMap tags page) = contentOpsPlain geom remap imgMap tags page := by
   unfold contentOps contentOpsPlain
-  have hp := foldl_stepLine_plain geom remap imgMap page.lines.toList {}
+  simp only [inkOps, Array.toList_append, ContentOp.inkList_append, numberMarks_ink_list]
+  have hp := foldl_stepLine_plain geom remap imgMap tags page.lines.toList {}
   rw [Array.foldl_toList, Array.foldl_toList] at hp
-  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap page.lines.toList {} rfl
+  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap tags page.lines.toList {} rfl
   rw [Array.foldl_toList] at hpo
-  have hops : inkText (page.lines.foldl (stepLine geom remap imgMap) {}).ops
-      = (page.lines.foldl (stepLinePlain geom remap imgMap) {}).ops := by
+  have hops : inkText (page.lines.foldl (stepLine geom remap imgMap tags) {}).ops
+      = (page.lines.foldl (stepLinePlain geom remap imgMap tags) {}).ops := by
     rw [← hpo]; exact congrArg TextSt.ops hp
   have himg := congrArg TextSt.images hp
   have hrul := congrArg TextSt.rules hp
   simp only [TextSt.plain] at himg hrul
-  simp only [inkOps, Array.toList_append, Array.toList_push, ContentOp.inkList_append,
-    artifactBlock_ink, Array.toList_map, ContentOp.inkList, ContentOp.ink, hops, himg, hrul,
-    List.append_nil]
+  simp only [Array.toList_push, ContentOp.inkList_append,
+    artifactBlock_ink, pathGroups_ink, Array.toList_map, ContentOp.inkList, ContentOp.ink, hops,
+    himg, hrul, List.append_nil]
   rw [inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
       (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink]),
-    inkList_map _ (fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)) _
-      (fun p => by simp [ContentOp.ink]),
-    inkList_map _ (fun (t : Sp × Sp × Sp × Sp × Option Nat) =>
-      imageOpPlain t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => imageOp_ink ..),
+    inkList_map _ imageOpPlain _ imageOp_ink,
     inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink])]
   apply Array.toList_inj.mp
   simp [Array.toList_append, Array.toList_push, Array.toList_map]
 
-/-- **No decoration is left bare.** Every fill and every placeholder box
-`contentOps` ships sits under a marked wrapper; the operations at the top
-of the stream are wrappers, picture paths, loaded images, and the text
-object. -/
-theorem artifacts_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : ∀ o ∈ contentOps geom remap imgMap page, o.decoration = false := by
-  intro o ho
-  simp only [contentOps, Array.mem_append, Array.mem_push, Array.mem_map] at ho
-  rcases ho with (((hf | ⟨p, _, rfl⟩) | rfl) | ⟨t, _, rfl⟩) | hr
-  · rw [mem_artifactBlock hf]; rfl
-  · rfl
-  · rfl
-  · cases t.2.2.2.2 <;> rfl
-  · rw [mem_artifactBlock hr]; rfl
+/-! ### Every painting operator sits under a wrapper -/
 
-/-- The pagination artifacts at the top of a text object. -/
-def textArtifacts (ops : Array TextOp) : Nat := (TextOp.linesList ops.toList).countP Line.isOpen
+def TextOp.isMarked : TextOp → Bool
+  | .marked _ _ => true
+  | .scale _ => false
+  | .move _ _ => false
+  | .font _ _ => false
+  | .color _ => false
+  | .show _ => false
 
-theorem lineSt_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) : textArtifacts (lineSt geom remap imgMap st l).ops = 0 := by
-  have h := lineSt_plainOps geom remap imgMap st l
-  unfold textArtifacts
-  rw [← h, inkText, List.toList_toArray, TextOp.linesList_ink, stripMarks_countP_open]
+/-- A page-level operation the layer leaves nothing bare under: a wrapper,
+or the text object with every operator of its own wrapped. -/
+def ContentOp.wrapped : ContentOp → Bool
+  | .marked _ _ => true
+  | .text ops => ops.all TextOp.isMarked
+  | .fill _ _ _ _ _ => false
+  | .path _ _ _ => false
+  | .image _ _ _ _ _ => false
+  | .imageMissing _ _ _ _ => false
 
-theorem stepLine_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (st : TextSt) (l : LineOut) :
-    textArtifacts (stepLine geom remap imgMap st l).ops
-      = textArtifacts st.ops + (if l.furniture then 1 else 0) := by
-  have h0 := lineSt_textArtifacts geom remap imgMap st l
-  unfold textArtifacts at h0 ⊢
+theorem TextOp.number_marked (o : TextOp) (n : Nat) : (TextOp.number n o).1.isMarked = o.isMarked := by
+  cases o with
+  | marked t body => cases t <;> simp [TextOp.number, TextOp.isMarked]
+  | _ => rfl
+
+theorem TextOp.numberList_marked (l : List TextOp) (n : Nat) (acc : Array TextOp)
+    (ha : ∀ o ∈ acc, o.isMarked = true) (hl : ∀ o ∈ l, o.isMarked = true) :
+    ∀ o ∈ (TextOp.numberList n acc l).1, o.isMarked = true := by
+  induction l generalizing n acc with
+  | nil => simpa [TextOp.numberList] using ha
+  | cons o rest ih =>
+    rw [TextOp.numberList]
+    refine ih _ _ ?_ (fun o h => hl o (List.mem_cons_of_mem _ h))
+    intro o' h
+    simp only [Array.mem_push] at h
+    rcases h with h | rfl
+    · exact ha o' h
+    · rw [TextOp.number_marked]
+      exact hl o (List.mem_cons_self ..)
+
+theorem ContentOp.number_wrapped (o : ContentOp) (n : Nat) (h : o.wrapped = true) :
+    (ContentOp.number n o).1.wrapped = true := by
+  cases o with
+  | text ops =>
+    simp only [ContentOp.number, ContentOp.wrapped, Array.all_eq_true_iff_forall_mem] at h ⊢
+    exact TextOp.numberList_marked ops.toList n #[] (by simp) (fun o h' => h o (Array.mem_def.mpr h'))
+  | marked t body => cases t <;> simp [ContentOp.number, ContentOp.wrapped]
+  | fill => exact absurd h (by simp [ContentOp.wrapped])
+  | path => exact absurd h (by simp [ContentOp.wrapped])
+  | image => exact absurd h (by simp [ContentOp.wrapped])
+  | imageMissing => exact absurd h (by simp [ContentOp.wrapped])
+
+theorem ContentOp.numberList_wrapped (l : List ContentOp) (n : Nat) (acc : Array ContentOp)
+    (ha : ∀ o ∈ acc, o.wrapped = true) (hl : ∀ o ∈ l, o.wrapped = true) :
+    ∀ o ∈ (ContentOp.numberList n acc l).1, o.wrapped = true := by
+  induction l generalizing n acc with
+  | nil => simpa [ContentOp.numberList] using ha
+  | cons o rest ih =>
+    rw [ContentOp.numberList]
+    refine ih _ _ ?_ (fun o h => hl o (List.mem_cons_of_mem _ h))
+    intro o' h
+    simp only [Array.mem_push] at h
+    rcases h with h | rfl
+    · exact ha o' h
+    · exact ContentOp.number_wrapped o n (hl o (List.mem_cons_self ..))
+
+/-- Every operator the line walk puts on the text object is under a
+wrapper: a line's operators are wrapped or, when empty, absent. -/
+theorem stepLine_marked (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut)
+    (h : ∀ o ∈ st.ops, o.isMarked = true) :
+    ∀ o ∈ (stepLine geom remap imgMap tags st l).ops, o.isMarked = true := by
+  have push : ∀ t body o, o ∈ st.ops.push (.marked t body) → o.isMarked = true := by
+    intro t body o ho
+    simp only [Array.mem_push] at ho
+    rcases ho with ho | rfl
+    · exact h o ho
+    · rfl
+  intro o
   simp only [stepLine]
   split
-  · simp [Array.toList_push, TextOp.linesList_append, TextOp.linesList, TextOp.lines,
-      List.countP_append, List.countP_cons, Line.isOpen, h0]
-  · simp [Array.toList_append, TextOp.linesList_append, List.countP_append, h0]
+  · exact push _ _ o
+  · split
+    · exact h o
+    · exact push _ _ o
+  · split
+    · exact h o
+    · exact push _ _ o
+
+theorem foldl_lines_marked (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (lines : List LineOut) (st : TextSt)
+    (h : ∀ o ∈ st.ops, o.isMarked = true) :
+    ∀ o ∈ (lines.foldl (stepLine geom remap imgMap tags) st).ops, o.isMarked = true := by
+  induction lines generalizing st with
+  | nil => exact h
+  | cons l rest ih => exact ih _ (stepLine_marked geom remap imgMap tags st l h)
+
+theorem flushGroup_wrapped (tags : Array (Option String)) (out : Array ContentOp)
+    (cur : Option (Option Nat × Array ContentOp)) (ho : ∀ o ∈ out, o.wrapped = true) :
+    ∀ o ∈ flushGroup tags out cur, o.wrapped = true := by
+  intro o h
+  cases cur with
+  | none => exact ho o h
+  | some g =>
+    simp only [flushGroup, Array.mem_push] at h
+    rcases h with h | rfl
+    · exact ho o h
+    · rfl
+
+theorem pathGroupsList_wrapped (geom : Geom) (tags : Array (Option String)) (paths : List PathOut)
+    (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp))
+    (ho : ∀ o ∈ out, o.wrapped = true) :
+    ∀ o ∈ pathGroupsList geom tags out cur paths, o.wrapped = true := by
+  induction paths generalizing out cur with
+  | nil => exact flushGroup_wrapped tags out cur ho
+  | cons p rest ih =>
+    simp only [pathGroupsList]
+    split
+    · split
+      · exact ih _ _ ho
+      · exact ih _ _ (flushGroup_wrapped tags out _ ho)
+    · exact ih _ _ ho
+
+theorem imageOp_wrapped (i : ImgOut) : (imageOp i).wrapped = true := by
+  unfold imageOp
+  split <;> rfl
+
+/-- **Every painting operator sits under exactly one wrapper.** At the top
+of the stream every operation is a marked-content sequence or the text
+object, and every operator of the text object is a marked-content
+sequence: no fill, path, glyph run or image is bare — real content under
+its structure type, everything else an artifact. The identifier half of
+the statement is `numberMarks_mcids_exact`. -/
+theorem wrapped_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap imgMap tags page, o.wrapped = true := by
+  unfold contentOps numberMarks
+  intro o ho
+  simp only [Array.mem_append] at ho
+  rcases ho with (hf | hm) | hr
+  · rw [mem_artifactBlock hf]; rfl
+  · refine ContentOp.numberList_wrapped _ _ _ (by simp) ?_ o hm
+    intro o ho
+    simp only [Array.mem_toList_iff, Array.mem_append, Array.mem_push, Array.mem_map] at ho
+    rcases ho with (hp | rfl) | ⟨i, _, rfl⟩
+    · exact pathGroupsList_wrapped geom tags _ #[] none (by simp) o hp
+    · simp only [ContentOp.wrapped, Array.all_eq_true_iff_forall_mem]
+      have := foldl_lines_marked geom remap imgMap tags page.lines.toList {} (by simp)
+      rw [Array.foldl_toList] at this
+      exact this
+    · exact imageOp_wrapped i
+  · rw [mem_artifactBlock hr]; rfl
+
+/-- **No decoration is left bare** — the corollary `wrapped_covers`
+projects: every fill and every placeholder box sits under a wrapper. -/
+theorem artifacts_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap imgMap tags page, o.decoration = false := by
+  intro o ho
+  have h := wrapped_covers geom remap imgMap tags page o ho
+  cases o <;> simp_all [ContentOp.wrapped, ContentOp.decoration]
+
+/-! ### Identifiers in stream order -/
+
+/-- A content opener's identifier and leaf; nothing for an artifact or an
+operator. -/
+def Line.contentOpen : Line → Option (Nat × Nat)
+  | .open (.content _ m k) => some (m, k)
+  | .open (.artifact _) => none
+  | .op _ => none
+  | .emc => none
+
+def Line.isPaginationOpen : Line → Bool
+  | .open (.artifact (some .pagination)) => true
+  | .open (.artifact (some .layout)) => false
+  | .open (.artifact (some .page)) => false
+  | .open (.artifact none) => false
+  | .open (.content _ _ _) => false
+  | .op _ => false
+  | .emc => false
+
+/-- The `(identifier, leaf)` pairs a stream's content openers carry, in
+stream order. -/
+def contentOpens (ls : List Line) : List (Nat × Nat) := ls.filterMap Line.contentOpen
+
+mutual
+
+/-- The content openers under a text operator, without rendering them:
+`TextOp.lines` spells every operator on the way to the same list
+(`marksList_eq_contentOpens`), which on a rule-heavy page is a full render
+paid a second time. -/
+def TextOp.marks (acc : Array (Nat × Nat)) : TextOp → Array (Nat × Nat)
+  | .scale _ => acc
+  | .move _ _ => acc
+  | .font _ _ => acc
+  | .color _ => acc
+  | .show _ => acc
+  | .marked (.artifact _) body => TextOp.marksList acc body.toList
+  | .marked (.content _ m k) body => TextOp.marksList (acc.push (m, k)) body.toList
+
+def TextOp.marksList (acc : Array (Nat × Nat)) : List TextOp → Array (Nat × Nat)
+  | [] => acc
+  | o :: rest => TextOp.marksList (TextOp.marks acc o) rest
+
+end
+
+mutual
+
+def ContentOp.marks (acc : Array (Nat × Nat)) : ContentOp → Array (Nat × Nat)
+  | .fill _ _ _ _ _ => acc
+  | .path _ _ _ => acc
+  | .text ops => TextOp.marksList acc ops.toList
+  | .image _ _ _ _ _ => acc
+  | .imageMissing _ _ _ _ => acc
+  | .marked (.artifact _) body => ContentOp.marksList acc body.toList
+  | .marked (.content _ m k) body => ContentOp.marksList (acc.push (m, k)) body.toList
+
+def ContentOp.marksList (acc : Array (Nat × Nat)) : List ContentOp → Array (Nat × Nat)
+  | [] => acc
+  | o :: rest => ContentOp.marksList (ContentOp.marks acc o) rest
+
+end
+
+/-- The marked content of one page: its identifiers and the leaves they
+paint, read off the typed stream — what the structure walk keys on. -/
+def pageMarks (ops : Array ContentOp) : Array (Nat × Nat) := ContentOp.marksList #[] ops.toList
+
+theorem contentOpens_append (a b : List Line) :
+    contentOpens (a ++ b) = contentOpens a ++ contentOpens b := by
+  simp [contentOpens, List.filterMap_append]
+
+theorem contentOpens_op (s : String) : contentOpens [.op s] = [] := rfl
+theorem contentOpens_emc : contentOpens [.emc] = [] := rfl
+theorem contentOpens_nil : contentOpens [] = [] := rfl
+
+/-- Two adjacent ranges are one, however the second's start is spelled. -/
+theorem range'_append_of (s m s' n : Nat) (h : s' = s + m) :
+    List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
+  subst h
+  have := @List.range'_append s m n 1
+  simpa only [Nat.one_mul] using this
+
+theorem TextOp.linesList_push (acc : Array TextOp) (o : TextOp) :
+    TextOp.linesList (acc.push o).toList = TextOp.linesList acc.toList ++ o.lines := by
+  rw [Array.toList_push, TextOp.linesList_append]
+  simp [TextOp.linesList]
+
+theorem ContentOp.linesList_push (acc : Array ContentOp) (o : ContentOp) :
+    ContentOp.linesList (acc.push o).toList = ContentOp.linesList acc.toList ++ o.lines := by
+  rw [Array.toList_push, ContentOp.linesList_append]
+  simp [ContentOp.linesList]
+
+theorem range'_cons_of (n m : Nat) (h : n + 1 ≤ m) :
+    n :: List.range' (n + 1) (m - (n + 1)) = List.range' n (m - n) := by
+  rw [show m - n = (m - (n + 1)) + 1 by omega]
+  rfl
+
+mutual
+
+/-- The identifiers the numbering hands out are the run from `n` of the
+count it returns, in stream order. -/
+theorem TextOp.number_mcids : ∀ (o : TextOp) (n : Nat),
+    (contentOpens (TextOp.number n o).1.lines).map Prod.fst
+      = List.range' n ((TextOp.number n o).2 - n)
+    ∧ n ≤ (TextOp.number n o).2
+  | .scale _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
+  | .move _ _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
+  | .font _ _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
+  | .color _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
+  | .show _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
+  | .marked (.artifact a) body, n => by
+    have h := TextOp.numberList_mcids body.toList n #[]
+    simp only [TextOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [TextOp.number, TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append, List.filterMap_nil, List.append_nil]
+    exact h
+  | .marked (.content s m k) body, n => by
+    have h := TextOp.numberList_mcids body.toList (n + 1) #[]
+    simp only [TextOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [TextOp.number, TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append, List.filterMap_nil, List.append_nil, List.map_cons]
+    rw [← contentOpens, h.1, range'_cons_of _ _ h.2]
+    exact ⟨rfl, by omega⟩
+
+theorem TextOp.numberList_mcids : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
+    (contentOpens (TextOp.linesList (TextOp.numberList n acc l).1.toList)).map Prod.fst
+      = (contentOpens (TextOp.linesList acc.toList)).map Prod.fst
+        ++ List.range' n ((TextOp.numberList n acc l).2 - n)
+    ∧ n ≤ (TextOp.numberList n acc l).2
+  | [], n, acc => by simp [TextOp.numberList]
+  | o :: rest, n, acc => by
+    rw [TextOp.numberList]
+    have ho := TextOp.number_mcids o n
+    have ih := TextOp.numberList_mcids rest (TextOp.number n o).2 (acc.push (TextOp.number n o).1)
+    rw [ih.1, TextOp.linesList_push, contentOpens_append, List.map_append, ho.1, List.append_assoc,
+      range'_append_of _ _ _ _ (Nat.add_sub_cancel' ho.2).symm]
+    refine ⟨?_, by omega⟩
+    congr 2
+    omega
+
+end
+
+mutual
+
+theorem ContentOp.number_mcids : ∀ (o : ContentOp) (n : Nat),
+    (contentOpens (ContentOp.number n o).1.lines).map Prod.fst
+      = List.range' n ((ContentOp.number n o).2 - n)
+    ∧ n ≤ (ContentOp.number n o).2
+  | .fill _ _ _ _ _, _ => by simp [ContentOp.number, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .path _ _ _, _ => by simp [ContentOp.number, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .image _ _ _ _ _, _ => by
+    simp [ContentOp.number, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .imageMissing _ _ _ _, _ => by
+    simp [ContentOp.number, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .text ops, n => by
+    have h := TextOp.numberList_mcids ops.toList n #[]
+    simp only [TextOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [ContentOp.number, ContentOp.lines, contentOpens, List.filterMap_cons,
+      Line.contentOpen, List.filterMap_append, List.filterMap_nil, List.append_nil]
+    exact h
+  | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_mcids body.toList n #[]
+    simp only [ContentOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [ContentOp.number, ContentOp.lines, contentOpens, List.filterMap_cons,
+      Line.contentOpen, List.filterMap_append, List.filterMap_nil, List.append_nil]
+    exact h
+  | .marked (.content s m k) body, n => by
+    have h := ContentOp.numberList_mcids body.toList (n + 1) #[]
+    simp only [ContentOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [ContentOp.number, ContentOp.lines, contentOpens, List.filterMap_cons,
+      Line.contentOpen, List.filterMap_append, List.filterMap_nil, List.append_nil, List.map_cons]
+    rw [← contentOpens, h.1, range'_cons_of _ _ h.2]
+    exact ⟨rfl, by omega⟩
+
+theorem ContentOp.numberList_mcids : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
+    (contentOpens (ContentOp.linesList (ContentOp.numberList n acc l).1.toList)).map Prod.fst
+      = (contentOpens (ContentOp.linesList acc.toList)).map Prod.fst
+        ++ List.range' n ((ContentOp.numberList n acc l).2 - n)
+    ∧ n ≤ (ContentOp.numberList n acc l).2
+  | [], n, acc => by simp [ContentOp.numberList]
+  | o :: rest, n, acc => by
+    rw [ContentOp.numberList]
+    have ho := ContentOp.number_mcids o n
+    have ih := ContentOp.numberList_mcids rest (ContentOp.number n o).2
+      (acc.push (ContentOp.number n o).1)
+    rw [ih.1, ContentOp.linesList_push, contentOpens_append, List.map_append, ho.1,
+      List.append_assoc, range'_append_of _ _ _ _ (Nat.add_sub_cancel' ho.2).symm]
+    refine ⟨?_, by omega⟩
+    congr 2
+    omega
+
+end
+
+mutual
+
+theorem TextOp.marks_eq_contentOpens : ∀ (o : TextOp) (acc : Array (Nat × Nat)),
+    TextOp.marks acc o = acc ++ (contentOpens o.lines).toArray
+  | .scale _, acc => by simp [TextOp.marks, TextOp.lines, contentOpens, Line.contentOpen]
+  | .move _ _, acc => by simp [TextOp.marks, TextOp.lines, contentOpens, Line.contentOpen]
+  | .font _ _, acc => by simp [TextOp.marks, TextOp.lines, contentOpens, Line.contentOpen]
+  | .color _, acc => by simp [TextOp.marks, TextOp.lines, contentOpens, Line.contentOpen]
+  | .show _, acc => by simp [TextOp.marks, TextOp.lines, contentOpens, Line.contentOpen]
+  | .marked (.artifact a) body, acc => by
+    rw [TextOp.marks, TextOp.marksList_eq_contentOpens body.toList]
+    simp [TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append]
+  | .marked (.content s m k) body, acc => by
+    rw [TextOp.marks, TextOp.marksList_eq_contentOpens body.toList]
+    simp [TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append]
+
+theorem TextOp.marksList_eq_contentOpens : ∀ (l : List TextOp) (acc : Array (Nat × Nat)),
+    TextOp.marksList acc l = acc ++ (contentOpens (TextOp.linesList l)).toArray
+  | [], acc => by simp [TextOp.marksList, TextOp.linesList, contentOpens]
+  | o :: rest, acc => by
+    rw [TextOp.marksList, TextOp.marksList_eq_contentOpens rest, TextOp.marks_eq_contentOpens o,
+      TextOp.linesList, contentOpens_append]
+    simp
+
+end
+
+mutual
+
+theorem ContentOp.marks_eq_contentOpens : ∀ (o : ContentOp) (acc : Array (Nat × Nat)),
+    ContentOp.marks acc o = acc ++ (contentOpens o.lines).toArray
+  | .fill _ _ _ _ _, acc => by simp [ContentOp.marks, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .path _ _ _, acc => by simp [ContentOp.marks, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .image _ _ _ _ _, acc => by
+    simp [ContentOp.marks, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .imageMissing _ _ _ _, acc => by
+    simp [ContentOp.marks, ContentOp.lines, contentOpens, Line.contentOpen]
+  | .text ops, acc => by
+    rw [ContentOp.marks, TextOp.marksList_eq_contentOpens ops.toList]
+    simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append]
+  | .marked (.artifact a) body, acc => by
+    rw [ContentOp.marks, ContentOp.marksList_eq_contentOpens body.toList]
+    simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append]
+  | .marked (.content s m k) body, acc => by
+    rw [ContentOp.marks, ContentOp.marksList_eq_contentOpens body.toList]
+    simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append]
+
+theorem ContentOp.marksList_eq_contentOpens : ∀ (l : List ContentOp) (acc : Array (Nat × Nat)),
+    ContentOp.marksList acc l = acc ++ (contentOpens (ContentOp.linesList l)).toArray
+  | [], acc => by simp [ContentOp.marksList, ContentOp.linesList, contentOpens]
+  | o :: rest, acc => by
+    rw [ContentOp.marksList, ContentOp.marksList_eq_contentOpens rest,
+      ContentOp.marks_eq_contentOpens o, ContentOp.linesList, contentOpens_append]
+    simp
+
+end
+
+/-- The page's marks are the content openers of its lines, in order. -/
+theorem pageMarks_eq_contentOpens (ops : Array ContentOp) :
+    pageMarks ops = (contentOpens (lines ops)).toArray := by
+  unfold pageMarks lines
+  rw [ContentOp.marksList_eq_contentOpens]
+  simp
+
+/-- **`numberMarks_mcids_exact`**: a numbered stream's marked-content
+identifiers, in stream order, are exactly `0, 1, …, n−1` — unique per page
+(§14.7.5.1), with no gap, however the construction nested them. -/
+theorem numberMarks_mcids_exact (ops : Array ContentOp) :
+    (pageMarks (numberMarks ops)).toList.map Prod.fst = List.range (pageMarks (numberMarks ops)).size := by
+  have h := ContentOp.numberList_mcids ops.toList 0 #[]
+  simp only [ContentOp.linesList, contentOpens_nil, List.map_nil,
+    List.nil_append, Nat.sub_zero] at h
+  rw [pageMarks_eq_contentOpens]
+  unfold numberMarks lines
+  have hl := congrArg List.length h.1
+  rw [List.length_map, List.length_range'] at hl
+  rw [List.toList_toArray, List.size_toArray, hl, h.1, List.range_eq_range']
+
+/-- A block of fills opens no content sequence. -/
+theorem fillBlock_contentOpens (k : Option ArtifactKind) (fills : Array ContentOp)
+    (hf : ∀ o ∈ fills, ∃ c x y w h, o = ContentOp.fill c x y w h) :
+    contentOpens (ContentOp.linesList (artifactBlock k fills).toList) = [] := by
+  have hl : ∀ (l : List ContentOp), (∀ o ∈ l, ∃ c x y w h, o = ContentOp.fill c x y w h) →
+      contentOpens (ContentOp.linesList l) = [] := by
+    intro l
+    induction l with
+    | nil => intro _; rfl
+    | cons o rest ih =>
+      intro h
+      obtain ⟨c, x, y, w, hh, rfl⟩ := h o (List.mem_cons_self ..)
+      rw [ContentOp.linesList]
+      simp only [ContentOp.lines, contentOpens_append, contentOpens_op, List.nil_append]
+      exact ih (fun o ho => h o (List.mem_cons_of_mem _ ho))
+  unfold artifactBlock
+  split
+  · rfl
+  · simp only [ContentOp.linesList, ContentOp.lines,
+      List.append_nil, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append,
+      List.filterMap_nil]
+    rw [← contentOpens, hl fills.toList (fun o ho => hf o (Array.mem_toList_iff.mp ho))]
+
+/-- **`mcids_partition_covers`** (the `_covers` statement): every painting
+operator of a page is under exactly one wrapper (`wrapped_covers`), and the
+identifiers its content wrappers carry are `0 … n−1` in stream order —
+the two fill blocks around the numbered middle carry none. -/
+theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (page : PageOut) :
+    (∀ o ∈ contentOps geom remap imgMap tags page, o.wrapped = true)
+    ∧ (pageMarks (contentOps geom remap imgMap tags page)).toList.map Prod.fst
+        = List.range (pageMarks (contentOps geom remap imgMap tags page)).size := by
+  refine ⟨wrapped_covers geom remap imgMap tags page, ?_⟩
+  unfold contentOps
+  have hA := fillBlock_contentOpens none (page.fills.map fun f =>
+    ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h)
+    (fun o ho => by
+      simp only [Array.mem_map] at ho
+      obtain ⟨f, _, rfl⟩ := ho
+      exact ⟨_, _, _, _, _, rfl⟩)
+  have hC := fillBlock_contentOpens (some .layout)
+    ((page.lines.foldl (stepLine geom remap imgMap tags) {}).rules.map
+      fun (c, x, y, w, h) => ContentOp.fill c x y w h)
+    (fun o ho => by
+      simp only [Array.mem_map] at ho
+      obtain ⟨t, _, rfl⟩ := ho
+      exact ⟨_, _, _, _, _, rfl⟩)
+  have hmid : ∀ (a m c : Array ContentOp),
+      contentOpens (ContentOp.linesList a.toList) = [] →
+      contentOpens (ContentOp.linesList c.toList) = [] →
+      pageMarks ((a ++ m) ++ c) = pageMarks m := by
+    intro a m c ha hc
+    rw [pageMarks_eq_contentOpens, pageMarks_eq_contentOpens]
+    unfold lines
+    rw [Array.toList_append, Array.toList_append, ContentOp.linesList_append,
+      ContentOp.linesList_append, contentOpens_append, contentOpens_append, ha, hc]
+    simp
+  rw [hmid _ _ _ hA hC]
+  exact numberMarks_mcids_exact _
+
+/-! ### Furniture -/
+
+/-- The pagination artifacts at the top of a text object. -/
+def textArtifacts (ops : Array TextOp) : Nat :=
+  (TextOp.linesList ops.toList).countP Line.isPaginationOpen
+
+theorem stripMarks_countP_pagination (ls : List Line) :
+    (stripMarks ls).countP Line.isPaginationOpen = 0 := by
+  rw [List.countP_eq_zero]
+  intro l hl
+  simp only [stripMarks, List.mem_filter, Bool.and_eq_true, Bool.not_eq_eq_eq_not,
+    Bool.not_true] at hl
+  cases l with
+  | op s => simp [Line.isPaginationOpen]
+  | emc => simp [Line.isPaginationOpen]
+  | «open» t => simp [Line.isOpen] at hl
+
+theorem lineSt_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    textArtifacts (lineSt geom remap imgMap og st l).ops = 0 := by
+  have h := lineSt_plainOps geom remap imgMap og st l
+  unfold textArtifacts
+  rw [← h, inkText, List.toList_toArray, TextOp.linesList_ink, stripMarks_countP_pagination]
+
+/-- A line is furniture exactly when its origin says so. -/
+theorem Origin.of_furniture_iff (tags : Array (Option String)) (l : LineOut) :
+    Origin.of tags l = .furniture ↔ l.furniture = true := by
+  unfold Origin.of
+  split
+  · simp [*]
+  · rename_i hf
+    simp only [Bool.not_eq_true] at hf
+    simp only [hf, Bool.false_eq_true, iff_false]
+    split
+    · split <;> simp
+    · simp
+
+theorem stepLine_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    textArtifacts (stepLine geom remap imgMap tags st l).ops
+      = textArtifacts st.ops + (if l.furniture then 1 else 0) := by
+  unfold textArtifacts
+  have hpush : ∀ og t, (TextOp.linesList (st.ops.push (.marked t
+      (lineSt geom remap imgMap og st l).ops)).toList).countP Line.isPaginationOpen
+      = (TextOp.linesList st.ops.toList).countP Line.isPaginationOpen
+        + (if (Line.open t).isPaginationOpen then 1 else 0) := by
+    intro og t
+    have h0 := lineSt_textArtifacts geom remap imgMap og st l
+    unfold textArtifacts at h0
+    rw [TextOp.linesList_push, List.countP_append, TextOp.lines, List.countP_cons,
+      List.countP_append, h0]
+    simp [Line.isPaginationOpen]
+  simp only [stepLine]
+  generalize hog : Origin.of tags l = og
+  cases og with
+  | furniture =>
+    have hf := (Origin.of_furniture_iff tags l).mp hog
+    dsimp only
+    rw [hpush]
+    simp [hf, furnitureTag, Line.isPaginationOpen]
+  | unattributed =>
+    have hf : l.furniture = false := by
+      cases hfl : l.furniture with
+      | false => rfl
+      | true =>
+        have := (Origin.of_furniture_iff tags l).mpr hfl
+        rw [hog] at this
+        cases this
+    dsimp only
+    split
+    · simp [hf]
+    · rw [hpush]
+      simp [hf, Line.isPaginationOpen]
+  | leaf k tag =>
+    have hf : l.furniture = false := by
+      cases hfl : l.furniture with
+      | false => rfl
+      | true =>
+        have := (Origin.of_furniture_iff tags l).mpr hfl
+        rw [hog] at this
+        cases this
+    dsimp only
+    split
+    · simp [hf]
+    · rw [hpush]
+      simp [hf, Line.isPaginationOpen]
 
 /-- **Every furniture line is one pagination artifact, and no flow line
-is any.** The text object `contentOps` ships carries exactly one wrapper
-per line the furniture pass laid — the count is the census the artifact
-acceptance reads. -/
+is any.** The text object `contentOps` ships carries exactly one
+pagination wrapper per line the furniture pass laid — the count is the
+census the artifact acceptance reads. -/
 theorem furniture_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (lines : Array LineOut) :
-    textArtifacts (lines.foldl (stepLine geom remap imgMap) {}).ops
+    (tags : Array (Option String)) (lines : Array LineOut) :
+    textArtifacts (lines.foldl (stepLine geom remap imgMap tags) {}).ops
       = (lines.filter (·.furniture)).size := by
   have h : ∀ (ls : List LineOut) (st : TextSt),
-      textArtifacts (ls.foldl (stepLine geom remap imgMap) st).ops
+      textArtifacts (ls.foldl (stepLine geom remap imgMap tags) st).ops
         = textArtifacts st.ops + (ls.filter (·.furniture)).length := by
     intro ls
     induction ls with

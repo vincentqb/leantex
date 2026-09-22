@@ -990,10 +990,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- cache: a face, or a page unchanged since the last build, reads
         -- its stream back instead of compressing it.
         let fs := { fs with zdata := ← fontZdata fs (Pdf.keepFaces fs out.pages) }
+        -- The structure tree the pages' `leaf` indices name: the one the
+        -- layout attributed against (`Layout.pdfView`), projected once.
+        let tree := Struct.ofDoc (Layout.pdfView doc)
+        let ops := Pdf.pageOps geom fs out.pages imgs tree
         let mut streams : Array (ByteArray × Option ByteArray) := #[]
-        for data in Pdf.pageStreams geom fs out.pages imgs do
+        for o in ops do
+          let data := (Pdf.render o).toUTF8
           streams := streams.push (data, some (← deflateCached data))
-        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams
+        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams tree ops
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
         pdfBuilt := some pdf
       -- Phase 3: census, gate, publish. Assertions judge what shipped, so

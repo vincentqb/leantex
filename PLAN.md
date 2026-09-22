@@ -164,10 +164,101 @@ list.
   leaf no block opens at. Same blocker plus the per-paragraph half of
   `emission_conservation_paras`; the witness is the exact-equality row of
   `leafAttributionChecks` over plain paragraphs, cells and titles.
+- `skeleton_leafKids_nodup` — the PDF structure skeleton holds each leaf of
+  `Struct.ofDoc doc` in one element: no two elements carry the same
+  `.leaf k` placeholder, so `leafTags` is a function and the parent tree
+  names one element per identifier. Blocked on the accumulator-generalised
+  leaf census of the mutual skeleton walk through `Array.modify` (the
+  heading census `pdf_headings_covers` went that route and is closed);
+  the witness is the per-fixture nodup row in `structTreeChecks`.
+- `parentTree_covers` — the parent tree entry of every marked-content
+  identifier is the element that lists it (ISO 32000-2 §14.7.5.4), over the
+  typed model `fill`/`leafPagesOf`/`leafOwners`/`parentTreeOf`, under
+  positional marks (`numberMarks_mcids_exact`) and placeholders held once.
+  Blocked on two fold inversions (`leafPagesOf`, `leafOwners`); the witness
+  is the per-fixture parent-tree row in `structTreeChecks`, read back
+  through the engine's reader.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-21 — every PDF is tagged: marked content on real content, a
+structure tree, a parent tree, `/MarkInfo` and `/StructTreeRoot` in every
+catalog, unconditionally (pdf-tag-skeleton, M7-19b; feature — PDF bytes
+gain `/<S> << /MCID n >> BDC` sequences, structure objects in the object
+stream and two catalog entries; rasters, text extraction and the stream
+stripped of its marked-content lines identical on all 72 corpus fixtures,
+143 pages; goldens unchanged). The projection is two halves of one walk
+(`LeanTex/Core/PdfStruct.lean`): `skeleton` emits one `StructElem` per
+`Struct` node with `.leaf k` placeholders where leaf `k`'s content will go,
+`leafTags` reads each leaf's structure type off the element holding it —
+the tag the stream spells (`Origin.of`) — and `fill` replaces the
+placeholders by the `(page, mcid)` pairs the numbered streams carry
+(`pageMarks`), the parent tree being the same map read from the page side.
+So the tag on a sequence *is* the type of the element listing it, by
+construction. A line lands in the element that *holds* its leaf — the
+nearest block-level ancestor (paragraph, heading, title, caption, cell,
+code, footnote body, list body, bibliography entry, figure, display
+formula), never an inline one (link, span, reference, inline formula):
+18a names a line by the first leaf of the block it sets, and a paragraph
+opening with a link must land in the paragraph. Types after ISO 32000-2
+§14.8.4: heading level n → `H{n+1}` (level 0 is the document title, the
+HTML's one `<h1>`), `.title` → `Title`, `.note` → `FENote`, `.artifact` →
+`NonStruct` (furniture the census counts, whose leaves the page never
+attributes), `.nav` → `Sect` (ships no ink, stands so the census sees
+through it), consecutive `bibEntry` siblings → one `L` of `LI`/`LBody`
+(`BibEntry` is a 1.7-only type — named-next), `.image` leaf → its own
+`Figure` with `/Alt` exactly when the document gave one, `.picture` leaf →
+the enclosing figure's content; `.label` is transparent at line
+granularity (an empty `Lbl` would demand a `ListNumbering` the layout has
+not said — veraPDF 8.2.5.25-1, seen and removed; the list slice adds both
+together); `.aside` emits nothing. `Code`, `BlockQuote`, `Reference` were
+dropped by PDF 2.0 and carry no `/NS` (the 1.7 namespace, which UA-2
+8.2.4-1 accepts — veraPDF flagged `Code` in the 2.0 namespace as
+non-standard, the one ISO 32005 violation the first cut had); every other
+element names the one `http://iso.org/pdf2/ssn` namespace object. `/K`
+entries are `/MCR` dictionaries carrying their page, so a stepped frame's
+element spans pages legally. Identifiers are assigned in stream order by a
+separate pass (`numberMarks`) rather than a counter in the walk state —
+so `TextSt.plain` and `mark_ink_exact`'s proof route survive unchanged,
+and `numberMarks_mcids_exact` states `0 … n−1` per page over any nesting.
+Images at line granularity: a `Do` is attributed to its line's leaf, so a
+float's image is its `Figure` and an inline image lands in its paragraph
+(18b's inline attribution, in flight, refines); a furniture line's image
+(a logo) is a `/Pagination` artifact. Picture paths carry their picture's
+leaf (`PathOut.leaf`, the one Layout field this slice adds, stamped in
+`placePicture`) and group per picture under the figure's type. A line no
+element holds (the abstract heading, a headline band, a rules-only line
+that resets `Tz`) is a bare `/Artifact`; an attributed line whose operators
+are empty takes no sequence. The object table's two `Option` slots became
+the unconditional structure block — root, parent tree, namespace, one id
+per element — between the outline and XMP (`ids_exact` extended, the
+tiling proof re-closed). Theorems closed: `pdf_marked_declared` (the
+`pdf_lang_declared` shape), `pdf_headings_covers` (the elements' heading
+levels are `Struct.headings`, hence `Ir.headingLevels` — the mutual
+induction over the skeleton through `Array.modify`), `structKids_mem`,
+`mcids_partition_covers` (= `wrapped_covers`: every operator under a
+wrapper, and `numberMarks_mcids_exact`), `mark_ink_exact` re-proved over
+both wrapper kinds and the numbering (`numberMarks_ink`, `pathGroups_ink`),
+`contentOps_text`, `furniture_covers` (now over pagination openers),
+`artifacts_covers` as `wrapped_covers`'s corollary. Owed (§ Owed
+obligations, two rows): `skeleton_leafKids_nodup`, `parentTree_covers` —
+the executable witnesses are the per-fixture rows of `structTreeChecks`,
+which reads every corpus PDF back through `PdfRead.objects`, walks
+`StructTreeRoot`/`K`/`MCR`, and checks the multiset of identifiers against
+the decoded streams, `0 … n−1` per page, the parent tree, the heading
+census, and the namespaces. veraPDF 1.30 `-df ua2`: `6.2-1`, `8.2.1-1`,
+`8.2.2-1` pass on every declared fixture (8.2.2-1 was 22/94/18/31/38
+unmarked pieces on paragraphs/footnotes/lists/tables/deck); the residue is
+`5-1` (the withheld claim), `8.4.4-1` (`/Lang`, fixtures declaring none),
+`8.11.1-1` (dc:title, fixtures declaring none), `8.9.3.3-1` (`/Tabs`,
+M7-17), `8.2.5.28.2-1` (`Figure` without `/Alt`: floats, 25a), `-df 4`
+unchanged. Bench neutral within noise. Unlocks 21a, 22a, 23a/b/c, 24,
+25a, 25b, and M7-20's `getStructTree` column. Named-next: `BibEntry`,
+`TOC`/`TOCI` for a nav that lists sections, `/Placement` on frame
+`Sect`s, `.float` over a table as `Table` + `Caption` rather than `Figure`,
+a `Fill` origin bit.
 
 2026-09-22 — the writer's features are a closed type, and two browser
 engines now sit on the reader matrix's `target:` line (pdf-browser-oracles,

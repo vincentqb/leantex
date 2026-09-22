@@ -330,4 +330,36 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
       (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
   sorry
 
+-- owed: skeleton_leafKids_nodup
+-- owner: LeanTex.Core.PdfStruct
+-- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the structure elements hold each leaf's marked content once — the hypothesis `parentTree_covers` reads, and what makes the leaf tags a function (`leafTags`) rather than a last-writer-wins fold; the executable witness is the per-fixture row "every leaf placeholder is held by exactly one element" in Tests/Backends.
+-- blocker: the skeleton walk threads an element accumulator through a mutual recursion (`skelList`/`skelStep`) that also modifies earlier elements in place (`pushElem`, `addKid`), so the census of its `.leaf` placeholders needs the accumulator-generalised statement `leafKids (skelList es …) = leafKids es ++ <the tree's leaf ids outside asides>` proved through `Array.modify`'s equational theory before `structTree_leaves_id` (the ids are `range n`) gives the nodup; the heading census (`pdf_headings_covers`) went the same route and is closed — this row is the leaf half of that induction.
+-- goldens: no
+/-- The skeleton holds every leaf of a document's structure tree at most
+once: no two elements carry the same `.leaf k` placeholder, so a leaf's
+marked content lands in one element and the parent tree names it. -/
+theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
+    (Pdf.leafKids (Pdf.skeleton (Struct.ofDoc doc))).Nodup := by
+  sorry
+
+-- owed: parentTree_covers
+-- owner: LeanTex.Core.PdfStruct
+-- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the parent tree entry of every marked-content identifier is the element that lists it — ISO 32000-2 §14.7.5.4's contract, which every reader's structure walk relies on; the executable witness is the per-fixture row "the parent tree maps every identifier back to the element listing it" in Tests/Backends, read back through the engine's reader.
+-- blocker: two fold inversions over `Id`-style array folds — `leafPagesOf` (a `(page, mcid)` pair lands in slot `k` exactly when the marks of that page carry `(mcid, k)`) and `leafOwners` (an owner recorded for `k` is the element carrying `.leaf k`, unique under `skeleton_leafKids_nodup`) — plus `numberMarks_mcids_exact` read as "position is identifier" on `pageMarks`; the statement is closed the day those three lemmas are, and its shape is fixed here so they are proved against it.
+-- goldens: no
+/-- The parent tree covers every marked-content reference: for elements
+filled from the pages' marks (`fill` over `leafPagesOf`), if element `i`
+lists `(page, mcid)` then the parent tree built from the same marks and
+owners (`parentTreeOf`) answers `i` at `[page][mcid]` — given the marks are
+positional (identifier = index, `numberMarks_mcids_exact`), the leaf
+placeholders are held once (`skeleton_leafKids_nodup`) and lie within the
+leaf count. -/
+theorem parentTree_covers (es : Array Pdf.StructElem) (n : Nat) (marks : Array (Array (Nat × Nat)))
+    (hpos : ∀ p (hp : p < marks.size) i (hi : i < marks[p].size), (marks[p][i]).1 = i)
+    (hnodup : (Pdf.leafKids es).Nodup) (hlt : ∀ k ∈ Pdf.leafKids es, k < n) :
+    ∀ i (hi : i < (Pdf.fill es (Pdf.leafPagesOf n marks)).size) p m,
+      Pdf.StructKid.mcid p m ∈ (Pdf.fill es (Pdf.leafPagesOf n marks))[i].kids →
+        ((Pdf.parentTreeOf marks (Pdf.leafOwners es n))[p]?).bind (·[m]?) = some (some i) := by
+  sorry
+
 end Obligations
