@@ -842,9 +842,9 @@ def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.S
   | .xrefStream => true
   | .objStm => true
   | .flatePredictor15 =>
-    (placedImages imgs pages).any (fun i => i.format == .png && i.predictor)
+    (placedImages imgs pages).any (fun i => i.form.isNone && i.filter == .flatePredictor)
       || (tableOf fs pages imgs outline).smaskIds.any Option.isSome
-  | .dct => (placedImages imgs pages).any (·.format == .jpeg)
+  | .dct => (placedImages imgs pages).any (fun i => i.form.isNone && i.filter == .dct)
   | .smask => (tableOf fs pages imgs outline).smaskIds.any Option.isSome
   | .formXObject => (tableOf fs pages imgs outline).formBases.any Option.isSome
   | .copiedGraph => (tableOf fs pages imgs outline).formSizes.any (· > 0)
@@ -868,7 +868,7 @@ def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.S
 where
   /-- The decoded images the pages place, in placement order: what `write`
   writes an XObject dictionary for. -/
-  placedImages (imgs : Image.Store) (pages : Array PageOut) : Array Image.Info :=
+  placedImages (imgs : Image.Store) (pages : Array PageOut) : Array Image.Plan :=
     (usedImagesOf imgs pages).filterMap fun k => (imgs.get? k).bind (·.info)
 
 /-- The features `write` reaches on these inputs, in `Feature.all`'s order:

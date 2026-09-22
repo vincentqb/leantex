@@ -1133,14 +1133,13 @@ itself — the file whose bytes were decoded. -/
 def resolvedSrc (en : Image.Loaded) : String :=
   if en.href.isEmpty then en.src else en.href
 
-/-- Which entries copy: a loaded PNG or JPEG that is not a boundary picture.
-A picture publishes as SVG through `picsToSvg`'s own list; a PDF source is a
-form XObject in the PDF and no browser image either way, so it keeps its
-spelling. -/
+/-- Which entries copy: a loaded raster plan that is not a boundary picture.
+A picture publishes as SVG through `picsToSvg`'s own list; a PDF source carries a
+form XObject and no browser image either way, so it keeps its spelling. -/
 def rasterShips (en : Image.Loaded) : Bool :=
   !en.src.startsWith Ir.picSrcPrefix &&
   match en.info with
-  | some i => i.format == .png || i.format == .jpeg
+  | some i => i.form.isNone
   | none => false
 
 /-- The copy's file name: the store index, then the source's basename. The

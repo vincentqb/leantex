@@ -416,7 +416,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let hcfg : HtmlDoc.Config := { imgs := store }
   let (figHtml, _) := HtmlDoc.emit hcfg figDoc
   t "html figure image with alt and intrinsic size"
-    ((figHtml.splitOn "<img src=\"rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
+    ((figHtml.splitOn "<img src=\"assets/i0-rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
   let (twDoc, _) := Elab.run "t" "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let (twHtml, _) := HtmlDoc.emit hcfg twDoc
   t "html width fraction becomes a percentage"
@@ -469,7 +469,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
      let (h, _) := HtmlDoc.emit { imgs := store2 }
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
-     (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
+     (h.splitOn "<img src=\"assets/i0-plot.png\"").length == 2)
 
 /-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
 types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`
