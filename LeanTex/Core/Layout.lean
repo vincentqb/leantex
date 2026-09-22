@@ -1204,6 +1204,8 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
   | .step _ _ body => flatten mathOk noteOk st sty body
+  | .alt _ _ active otherwise =>
+    flatten mathOk noteOk (flatten mathOk noteOk st sty active) sty otherwise
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content: generated ink of the block,
   -- no leaf of its own (`Struct.inlineRaw` gives it none).
@@ -1438,6 +1440,15 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .underline body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .step _ _ body => exact flatten_attr_covers mathOk noteOk st sty body h
+  | .alt _ _ active otherwise =>
+    simp only [flattenOne]
+    obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk st sty active h
+    obtain ⟨h2, m2⟩ := flatten_attr_covers mathOk noteOk
+      (flatten mathOk noteOk st sty active) sty otherwise h1
+    refine ⟨h2, fun tk hm => ?_⟩
+    rcases m2 tk hm with hm' | hm'
+    · exact m1 tk hm'
+    · exact Or.inr hm'
   | .pageNumber =>
     obtain ⟨hc, hm⟩ := pushTextAttr_toks st sty "?" st.ctr.generated
       (LeafCtr.generated_attributes st.ctr h)
@@ -1850,6 +1861,9 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .step _ _ body => scalarTextList out itemD enumD body.toList
+  | .alt _ _ active otherwise =>
+    scalarTextList (scalarTextList out itemD enumD active.toList) itemD enumD
+      otherwise.toList
   | .only _ body => scalarTextList out itemD enumD body.toList
   | .nav _ body => scalarTextList out itemD enumD body.toList
   -- A note is never set in either backend's pages; its glyphs are not asked
@@ -2032,6 +2046,8 @@ private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle
   | .link _ body => weightKeysInlineList acc sty body.toList
   | .underline body => weightKeysInlineList acc sty body.toList
   | .step _ _ body => weightKeysInlineList acc sty body.toList
+  | .alt _ _ active otherwise =>
+    weightKeysInlineList (weightKeysInlineList acc sty active.toList) sty otherwise.toList
   -- A note body sets at the page foot in the base style, not the mark's.
   | .footnote _ body => weightKeysInlineList acc {} body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
@@ -2061,6 +2077,8 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .spaced _ body => weightKeysBlockList acc body.toList
   | .columns cols => weightKeysBlockCols acc cols.toList
   | .step _ _ body => weightKeysBlockList acc body.toList
+  | .alt _ _ active otherwise =>
+    weightKeysBlockList (weightKeysBlockList acc active.toList) otherwise.toList
   | .only _ body => weightKeysBlockList acc body.toList
   | .nav _ body => weightKeysBlockList acc body.toList
   | .note body => weightKeysBlockList acc body.toList
@@ -5983,6 +6001,10 @@ private def collectBlock (r : Rd) (a : Acc)
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks r a body indent
+  | .alt _ _ active otherwise =>
+    -- Outside a frame no step page selects, so both alternatives set, as
+    -- the document census carries both.
+    collectBlocks r (collectBlocks r a active indent) otherwise indent
   | .only _ body =>
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
@@ -8261,10 +8283,14 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
         -- The tree numbers the frame once; every step's pages name the same
         -- leaves, so the counter rewinds to the frame's start per step
         -- (dimming recolours and unwrapping splices: neither moves a leaf).
+        -- Alternation keeps the rewind: an `alt` node's two alternatives are
+        -- two leaves of the one frame, declared in page order
+        -- (`Struct.altStepOrder`), and each step page names the one it ships.
         let leafStart := acc.leafNext
         for k in [1:steps + 1] do
           acc := collectBlock rd { acc with leafNext := leafStart }
-            (.frame title standout valign breakable (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
+            (.frame title standout valign breakable
+              (Ir.unwrapItemSteps (Ir.dimBlocks cover k (Ir.selectSteps k body)))) 0
     | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach

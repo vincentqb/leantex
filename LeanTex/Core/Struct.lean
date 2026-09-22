@@ -147,6 +147,8 @@ def inlineRaw (out : Array Node) : Inline → Array Node
   | .linebreak _ => out.push (.leaf 0 .linebreak)
   | .strut _ => out
   | .step _ _ body => inlinesRaw out body.toList
+  | .alt _ _ active otherwise =>
+    inlinesRaw (inlinesRaw out active.toList) otherwise.toList
   | .image src _ alt => out.push (.leaf 0 (.image src alt))
   | .icon _ label => out.push (.leaf 0 (.text label))
   | .cite _ keys => out.push (.leaf 0 (.text (citeMarks keys)))
@@ -223,6 +225,8 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .algorithm _ _ lines => out.push (.node .code (algRaw #[] lines.toList))
   | .columns cols => colsRaw out cols.toList
   | .step _ _ body => blocksRaw out body.toList
+  | .alt _ _ active otherwise =>
+    blocksRaw (blocksRaw out active.toList) otherwise.toList
   | .note body => out.push (.node .aside (blocksRaw #[] body.toList))
   | .only _ body => blocksRaw out body.toList
   | .nav _ body => out.push (.node .nav (blocksRaw #[] body.toList))
@@ -509,6 +513,10 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
   | .step n l body =>
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
+  | .alt n l active otherwise =>
+    simp only [inlineRaw, plainTextOne]
+    rw [inlinesRaw_text acc (inlinesRaw out active.toList) otherwise.toList,
+      inlinesRaw_text acc out active.toList, String.append_assoc]
   | .image src size alt =>
     simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
   | .icon sc label => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
@@ -655,6 +663,10 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .step n l body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
+  | .alt n l active otherwise =>
+    simp only [blockRaw, blockTextOne]
+    rw [blocksRaw_text acc (blocksRaw out active.toList) otherwise.toList,
+      blocksRaw_text acc out active.toList]
   | .note body =>
     simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
     rw [blocksRaw_text]
@@ -814,6 +826,10 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
   | .step n l body =>
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
+  | .alt n l active otherwise =>
+    simp only [inlineRaw]
+    rw [inlinesRaw_headings hs (inlinesRaw out active.toList) otherwise.toList,
+      inlinesRaw_headings hs out active.toList]
   | .image src size alt => simp [inlineRaw, headingsList_snoc, headingsOne]
   | .icon sc label => simp [inlineRaw, headingsList_snoc, headingsOne]
   | .cite tx keys => simp [inlineRaw, headingsList_snoc, headingsOne]
@@ -949,6 +965,10 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .step n l body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
+  | .alt n l active otherwise =>
+    simp only [blockRaw, headingLevelOne]
+    rw [blocksRaw_headings hs (blocksRaw out active.toList) otherwise.toList,
+      blocksRaw_headings hs out active.toList]
   | .note body => simp [blockRaw, headingsList_snoc, headingsOne, headingLevelOne]
   | .only targets body =>
     simp only [blockRaw, headingLevelOne]
@@ -1094,6 +1114,10 @@ theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x :
   | .step n l body =>
     simp only [inlineRaw, foldInline, imageAltPush]
     exact inlinesRaw_images is out body.toList
+  | .alt n l active otherwise =>
+    simp only [inlineRaw, foldInline, imageAltPush]
+    rw [inlinesRaw_images is (inlinesRaw out active.toList) otherwise.toList,
+      inlinesRaw_images is out active.toList]
   | .image src size alt => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
   | .icon sc label => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
   | .cite tx keys => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
@@ -1238,6 +1262,10 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
   | .step n l body =>
     simp only [blockRaw, foldBlock]
     exact blocksRaw_images is out body.toList
+  | .alt n l active otherwise =>
+    simp only [blockRaw, foldBlock]
+    rw [blocksRaw_images is (blocksRaw out active.toList) otherwise.toList,
+      blocksRaw_images is out active.toList]
   | .note body =>
     simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
     rw [blocksRaw_images]

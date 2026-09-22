@@ -2004,6 +2004,33 @@ inductive Inline where
   hides, so no step reflows the slide (PLAN M5). Zero metric impact — a
   pure grouping both backends may recolor or tag. -/
   | step (n : Nat) (last : Option Nat) (body : Array Inline)
+  /-- Overlay *alternation* (`\alt<2>{a}{b}`): exactly one of the two groups
+  is inked per step page. The declared exception to dim-not-hide (PLAN M5):
+  dimming is a quieter version of the truth for `step`, but two
+  alternatives dimmed side by side are a *different* page, and one a reader
+  reads as content — `\alt<2>{apple}{banana}` rendered "applebanana". Nor
+  can a pair of `step` nodes carry it: the complement of a mid-deck range
+  is two ranges, so a pair also showed nothing at all past the range's end.
+
+  The groups are stored in PAGE order, not spec order: `firstPage` is what
+  step 1 ships and `otherPage` what the steps on the far side of the spec
+  ship, so `\alt<2>{a}{b}` stores `b` first. Elaboration decides the order
+  once, where the spec is parsed, and every walk after it reads both groups
+  left to right — which is why the text census, the PDF structure tree and
+  the pages agree with no walk testing the range. Spec order put the tree's
+  reading order backwards from the handout's: page 1's ink landed under a
+  leaf whose census was the other alternative, and the second leaf was
+  named by no page at all.
+
+  Consequences, both real and both paid here: an `alt` frame's step pages
+  differ in content, so they do not share a text census the way `step`
+  pages do, and the line reflows between steps when the groups differ in
+  width — which is what replacement means. The document-level
+  census carries both alternatives (`plainTextOne`), the page's carries
+  the one selected (`selectSteps`, which runs before the dim walk — dimming
+  recolours and never selects, so `dimInline_text` stays true). -/
+  | alt (n : Nat) (last : Option Nat) (firstPage : Array Inline)
+      (otherPage : Array Inline)
   /-- An external image (`\includegraphics`, and what a `figure` or a deck
   logo reduces to): a box of raster content. `src` is the path as written —
   the file itself is the driver's effect, surfaced through `imageRefs` and
@@ -3006,6 +3033,11 @@ inductive Block where
   `\pause`): the block form of `Inline.step`, with the same dim-not-hide
   semantics. -/
   | step (n : Nat) (last : Option Nat) (body : Array Block)
+  /-- Block-level overlay alternation: the block form of `Inline.alt`, with
+  the same select-one-per-step semantics, the same page-order storage, and
+  the same reasons. -/
+  | alt (n : Nat) (last : Option Nat) (firstPage : Array Block)
+      (otherPage : Array Block)
   /-- A speaker note (`\note{...}`): a side channel, never slide content.
   The PDF handout omits it; HTML keeps it as an inert hidden aside for the
   coming speaker view (PLAN M5). -/
@@ -3384,6 +3416,10 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .step n l body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .step n l body2)
+  | .alt n l firstPage otherPage =>
+    let (c2, active2) := numberFloatList c #[] firstPage.toList
+    let (c3, otherwise2) := numberFloatList c2 #[] otherPage.toList
+    (c3, .alt n l active2 otherwise2)
   | .only targets body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .only targets body2)
@@ -3459,6 +3495,8 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .spaced _ body => floatNumsList k out body.toList
   | .columns cols => floatNumsCols k out cols.toList
   | .step _ _ body => floatNumsList k out body.toList
+  | .alt _ _ firstPage otherPage =>
+    floatNumsList k (floatNumsList k out firstPage.toList) otherPage.toList
   | .only _ body => floatNumsList k out body.toList
   | .nav _ body => floatNumsList k out body.toList
   | .frame _ _ _ _ body => floatNumsList k out body.toList
@@ -3587,6 +3625,26 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .alt _ _ firstPage otherPage =>
+    obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[] out firstPage.toList
+    obtain ⟨p, hcp, hnp⟩ := numberFloatList_exact k
+      (numberFloatList c #[] firstPage.toList).1 #[]
+      (floatNumsList k out (numberFloatList c #[] firstPage.toList).2.toList)
+      otherPage.toList
+    refine ⟨m + p, ?_, ?_⟩
+    · show ((numberFloatList (numberFloatList c #[] firstPage.toList).1 #[]
+        otherPage.toList).1).get k = _
+      rw [hcp, hcm, Nat.add_assoc]
+    · show floatNumsList k (floatNumsList k out
+        ((numberFloatList c #[] firstPage.toList).2).toList)
+        ((numberFloatList (numberFloatList c #[] firstPage.toList).1 #[]
+          otherPage.toList).2).toList = _
+      rw [hnp]
+      simp only [floatNumsList]
+      rw [hnm]
+      simp only [floatNumsList]
+      rw [hcm, List.append_assoc,
+        show c.get k + m + 1 = (c.get k + 1) + m by omega, range'_glue]
   | .only _ body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
@@ -4293,6 +4351,10 @@ def fillOne (content : Array Inline) : Inline → Inline
     .link u (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .step n last body =>
     .step n last (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .alt n last firstPage otherPage =>
+    .alt n last
+      (if firstPage.isEmpty then content else (fillList content firstPage.toList).toArray)
+      (if otherPage.isEmpty then content else (fillList content otherPage.toList).toArray)
   | .text s => .text s
   | .math d src => .math d src
   -- a formula's body is math atoms, an image carries no inline body:
@@ -4735,6 +4797,8 @@ def plainTextOne (x : Inline) : String :=
   | .link _ body => plainTextList body.toList
   | .underline body => plainTextList body.toList
   | .step _ _ body => plainTextList body.toList
+  | .alt _ _ firstPage otherPage =>
+    plainTextList firstPage.toList ++ plainTextList otherPage.toList
   | .fill | .strut _ | .pageNumber | .pageCount => ""
   | .image _ _ _ => ""
   -- an icon is worth its text alternative: what the markdown twin renders
@@ -4770,6 +4834,8 @@ def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   | .link _ body => foldInlineList fi (fi acc x) body.toList
   | .underline body => foldInlineList fi (fi acc x) body.toList
   | .step _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .alt _ _ firstPage otherPage =>
+    foldInlineList fi (foldInlineList fi (fi acc x) firstPage.toList) otherPage.toList
   | .footnote _ body => foldInlineList fi (fi acc x) body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
@@ -4827,6 +4893,8 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
   | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
   | .step _ _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .alt _ _ firstPage otherPage =>
+    foldBlockList fb fi (foldBlockList fb fi (fb acc b) firstPage.toList) otherPage.toList
   | .only _ body => foldBlockList fb fi (fb acc b) body.toList
   | .nav _ body => foldBlockList fb fi (fb acc b) body.toList
   | .note body => foldBlockList fb fi (fb acc b) body.toList
@@ -5001,6 +5069,8 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .spaced _ body => navLinkList out body.toList
   | .columns cols => navLinkColumns out cols.toList
   | .step _ _ body => navLinkList out body.toList
+  | .alt _ _ firstPage otherPage =>
+    navLinkList (navLinkList out firstPage.toList) otherPage.toList
   -- a speaker note is a side channel in every backend; never navigation
   | .note _ => out
   | .only _ body => navLinkList out body.toList
@@ -5058,6 +5128,8 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .role _ body => navLinkInlineList out body.toList
   | .underline body => navLinkInlineList out body.toList
   | .step _ _ body => navLinkInlineList out body.toList
+  | .alt _ _ firstPage otherPage =>
+    navLinkInlineList (navLinkInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   -- a footnote's links are the note's own, never navigation entries
@@ -5075,6 +5147,12 @@ def dumpStepRange (n : Nat) (last : Option Nat) : String :=
   match last with
   | some u => s!"step {n}-{u}"
   | none => s!"step {n}"
+
+/-- An alternation's range, spelled as a step's is. -/
+def dumpAltRange (n : Nat) (last : Option Nat) : String :=
+  match last with
+  | some u => s!"alt {n}-{u}"
+  | none => s!"alt {n}"
 
 mutual
 
@@ -5190,6 +5268,10 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}underline\n" ++ dumpInlines (ind ++ "  ") body
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpInlines (ind ++ "  ") body
+  | .alt n last firstPage otherPage =>
+    s!"{ind}{dumpAltRange n last}\n" ++
+    s!"{ind}  first page\n" ++ dumpInlines (ind ++ "    ") firstPage ++
+    s!"{ind}  other page\n" ++ dumpInlines (ind ++ "    ") otherPage
   | .fill => s!"{ind}fill\n"
   | .strut _ => s!"{ind}strut\n"
   | .label key => s!"{ind}label {key.quote}\n"
@@ -5327,6 +5409,10 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .alt n last firstPage otherPage =>
+    s!"{ind}{dumpAltRange n last}\n" ++
+    s!"{ind}  first page\n" ++ dumpBlocks (ind ++ "    ") firstPage ++
+    s!"{ind}  other page\n" ++ dumpBlocks (ind ++ "    ") otherPage
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
   | .only targets body =>
     s!"{ind}only {String.intercalate "," targets.toList}\n" ++ dumpBlocks (ind ++ "  ") body
@@ -5667,6 +5753,9 @@ def maxStepBlock : Block → Nat
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
+  | .alt n last firstPage otherPage =>
+    max (max n (last.getD n))
+      (max (maxStepBlockList firstPage.toList) (maxStepBlockList otherPage.toList))
   -- Conditional content steps like any other content: a backend that keeps
   -- it must give its overlays their pages. A nav's links may step too.
   | .only _ body => maxStepBlockList body.toList
@@ -5730,6 +5819,9 @@ def maxStepInline : Inline → Nat
   | .underline body => maxStepInlineList body.toList
   | .footnote _ body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
+  | .alt n last firstPage otherPage =>
+    max (max n (last.getD n))
+      (max (maxStepInlineList firstPage.toList) (maxStepInlineList otherPage.toList))
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
@@ -5795,6 +5887,9 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   -- exactly as beamer's transparent covering does.
   | .step n last body =>
     .step n last (dimBlockList cover k (pending || stepPending n last k) #[] body.toList)
+  | .alt n last firstPage otherPage =>
+    .alt n last (dimBlockList cover k pending #[] firstPage.toList)
+      (dimBlockList cover k pending #[] otherPage.toList)
   | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
   | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
   | .section l st num title => .section l st num title
@@ -5906,6 +6001,9 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
     if !pending && stepPending n last k then
       .step n last #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
     else .step n last (dimInlineList cover k pending #[] body.toList)
+  | .alt n last firstPage otherPage =>
+    .alt n last (dimInlineList cover k pending #[] firstPage.toList)
+      (dimInlineList cover k pending #[] otherPage.toList)
   | .text s => .text s
   | .math d src => .math d src
   -- the walk leaves formula and image nodes whole: a pending formula or
@@ -5932,6 +6030,194 @@ end
 entry, `pending` off. -/
 def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
   dimBlockList cover k false #[] xs.toList
+
+mutual
+
+/-- Overlay *selection* at step `k`: every `alt` node is replaced by the one
+group that step inks, spliced where the node stood, its own content selected
+in turn. Because the groups are stored in page order, the choice is whether
+step `k` falls on step 1's side of the spec — `stepPending n last k` agreeing
+with `stepPending n last 1` — and not which side is "active": that is what
+keeps the census, the structure tree and the pages reading the same way.
+Every other node keeps its shape. Selection runs before the dim walk:
+dimming recolours, and what it recolours is the page this pass leaves. A
+nested frame and a speaker note stay whole, exactly as the dim walk leaves
+them. -/
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectBlockList (k : Nat) (out : Array Block) (xs : List Block) : Array Block :=
+  match xs with
+  | [] => out
+  | b :: rest => selectBlockList k (selectBlockOne k out b) rest
+termination_by structural xs
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectBlockOne (k : Nat) (out : Array Block) (b : Block) : Array Block :=
+  match b with
+  | .alt n last firstPage otherPage =>
+    if stepPending n last k == stepPending n last 1 then
+      selectBlockList k out firstPage.toList
+    else selectBlockList k out otherPage.toList
+  | .para content => out.push (.para (selectInlineList k #[] content.toList))
+  | .equation num content =>
+    out.push (.equation num (selectInlineList k #[] content.toList))
+  | .list o items => out.push (.list o (selectItems k #[] items.toList))
+  | .center body => out.push (.center (selectBlockList k #[] body.toList))
+  | .ragged body => out.push (.ragged (selectBlockList k #[] body.toList))
+  | .quote body => out.push (.quote (selectBlockList k #[] body.toList))
+  | .abstract body => out.push (.abstract (selectBlockList k #[] body.toList))
+  | .titled kind title body =>
+    out.push (.titled kind (selectInlineList k #[] title.toList)
+      (selectBlockList k #[] body.toList))
+  | .role n body => out.push (.role n (selectBlockList k #[] body.toList))
+  | .spaced g body => out.push (.spaced g (selectBlockList k #[] body.toList))
+  | .columns cols => out.push (.columns (selectColumns k #[] cols.toList))
+  | .step n last body =>
+    out.push (.step n last (selectBlockList k #[] body.toList))
+  | .only targets body =>
+    out.push (.only targets (selectBlockList k #[] body.toList))
+  | .nav spec body => out.push (.nav spec (selectBlockList k #[] body.toList))
+  | .section l st num title => out.push (.section l st num title)
+  | .verbatim c s spec =>
+    out.push (.verbatim c s
+      { spec with caption := spec.caption.map fun (n, cap) =>
+          (n, selectInlineList k #[] cap.toList) })
+  | .algorithm n sm lines =>
+    out.push (.algorithm n sm (selectAlgLines k #[] lines.toList))
+  | .note body => out.push (.note body)
+  | .frame t st v br body => out.push (.frame t st v br body)
+  | .framefoot content => out.push (.framefoot content)
+  | .setPalette pal => out.push (.setPalette pal)
+  | .setTokens tk => out.push (.setTokens tk)
+  | .pagebreak => out.push .pagebreak
+  | .logo content => out.push (.logo content)
+  | .rule c nm th => out.push (.rule c nm th)
+  | .picture p => out.push (.picture p)
+  | .table cols pl pr rows rules =>
+    out.push (.table cols pl pr (selectTableRows k #[] rows.toList) rules)
+  | .float fk num ca body caption =>
+    out.push (.float fk num ca (selectBlockList k #[] body.toList)
+      (selectInlineList k #[] caption.toList))
+  | .bibliography src style items => out.push (.bibliography src style items)
+termination_by structural b
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectItems (k : Nat) (out : Array (Array Block)) (items : List (Array Block)) :
+    Array (Array Block) :=
+  match items with
+  | [] => out
+  | item :: rest => selectItems k (out.push (selectBlockList k #[] item.toList)) rest
+termination_by structural items
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectColumns (k : Nat) (out : Array (Option Nat × Array Block))
+    (cols : List (Option Nat × Array Block)) : Array (Option Nat × Array Block) :=
+  match cols with
+  | [] => out
+  | (w, body) :: rest =>
+    selectColumns k (out.push (w, selectBlockList k #[] body.toList)) rest
+termination_by structural cols
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectTableRows (k : Nat) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest => selectTableRows k (out.push (selectTableCells k #[] row.toList)) rest
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectTableCells (k : Nat) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest =>
+    selectTableCells k (out.push (selectInlineList k #[] cell.toList)) rest
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectAlgLines (k : Nat) (out : Array AlgLine) : List AlgLine → Array AlgLine
+  | [] => out
+  | l :: rest =>
+    let comment := match l.comment with
+      | some c => some (selectInlineList k #[] c.toList)
+      | none => Option.none
+    selectAlgLines k (out.push
+      { depth := l.depth
+        kind := l.kind
+        content := selectInlineList k #[] l.content.toList
+        comment := comment }) rest
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectInlineList (k : Nat) (out : Array Inline) : List Inline → Array Inline
+  | [] => out
+  | x :: rest => selectInlineList k (selectInlineOne k out x) rest
+
+-- conserves: none — selection ships one of an alt node two groups
+-- (\`Ir.Inline.alt\`), so a step page census is a proper part of the
+-- document one; the walks below carry the same refusal for it.
+def selectInlineOne (k : Nat) (out : Array Inline) : Inline → Array Inline
+  | .alt n last firstPage otherPage =>
+    if stepPending n last k == stepPending n last 1 then
+      selectInlineList k out firstPage.toList
+    else selectInlineList k out otherPage.toList
+  | .styled st body => out.push (.styled st (selectInlineList k #[] body.toList))
+  | .colored c nm body =>
+    out.push (.colored c nm (selectInlineList k #[] body.toList))
+  | .role n body => out.push (.role n (selectInlineList k #[] body.toList))
+  | .link u body => out.push (.link u (selectInlineList k #[] body.toList))
+  | .underline body => out.push (.underline (selectInlineList k #[] body.toList))
+  | .step n last body =>
+    out.push (.step n last (selectInlineList k #[] body.toList))
+  | .footnote n body =>
+    out.push (.footnote n (selectInlineList k #[] body.toList))
+  | .text s => out.push (.text s)
+  | .math d src => out.push (.math d src)
+  | .formula d src body => out.push (.formula d src body)
+  | .image src size alt => out.push (.image src size alt)
+  | .icon s l => out.push (.icon s l)
+  | .label key => out.push (.label key)
+  | .ref key form text target => out.push (.ref key form text target)
+  | .fill => out.push .fill
+  | .strut h => out.push (.strut h)
+  | .pageNumber => out.push .pageNumber
+  | .pageCount => out.push .pageCount
+  | .linebreak e => out.push (.linebreak e)
+  | .cite t keys => out.push (.cite t keys)
+
+end
+
+/-- The frame's body as step `k` of its overlay selects it: the selection
+walk's page entry, run before the dim walk. -/
+-- conserves: none — selection is the declared exception to dim-not-hide
+-- (`Ir.Inline.alt`): an `alt` node ships one of its two alternatives, so a
+-- step page's census is a proper part of the document's.
+def selectSteps (k : Nat) (xs : Array Block) : Array Block :=
+  selectBlockList k #[] xs.toList
+
+/-- Selection at one node is exactly the chosen group's own selection, and
+the choice is page-relative: a step on step 1's side of the spec inks the
+group stored first, a step on the far side the other. Read at `k = 1` it
+says step 1 inks `firstPage`, which is what page order means. -/
+theorem selectSteps_exact (k n : Nat) (last : Option Nat)
+    (firstPage otherPage : Array Block) :
+    selectSteps k #[Block.alt n last firstPage otherPage]
+      = if stepPending n last k == stepPending n last 1 then selectSteps k firstPage
+        else selectSteps k otherPage := by
+  by_cases h : stepPending n last k == stepPending n last 1
+  · simp [selectSteps, selectBlockList, selectBlockOne, h]
+  · simp [selectSteps, selectBlockList, selectBlockOne, h]
 
 /-- The item flatten itself: a leading `.step` wrapper opens into its item,
 the body standing where the wrapper stood. Named so its text conservation
@@ -5966,6 +6252,9 @@ def unwrapItemStep : Block → Block
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
+  | .alt n l firstPage otherPage =>
+    .alt n l (unwrapItemStepList #[] firstPage.toList)
+      (unwrapItemStepList #[] otherPage.toList)
   | .only targets body => .only targets (unwrapItemStepList #[] body.toList)
   | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
   | .frame t s v br body => .frame t s v br (unwrapItemStepList #[] body.toList)
@@ -6109,6 +6398,8 @@ def blockTextOne (acc : String) : Block → String
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
   | .step _ _ body => blockTextList acc body.toList
+  | .alt _ _ firstPage otherPage =>
+    blockTextList (blockTextList acc firstPage.toList) otherPage.toList
   -- The census reads the DECLARED content: what a conditional addresses to
   -- one backend is still content the document declares, so it counts here;
   -- `keepFor` is where a backend's own view drops it.
@@ -6298,6 +6589,8 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
   | .step _ _ body => headingLevelList out body.toList
+  | .alt _ _ firstPage otherPage =>
+    headingLevelList (headingLevelList out firstPage.toList) otherPage.toList
   | .only _ body => headingLevelList out body.toList
   | .nav _ body => headingLevelList out body.toList
   | .frame _ _ _ _ body => headingLevelList out body.toList
@@ -6360,6 +6653,8 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .spaced _ body => footnoteBlockList out body.toList
   | .columns cols => footnoteColumns out cols.toList
   | .step _ _ body => footnoteBlockList out body.toList
+  | .alt _ _ firstPage otherPage =>
+    footnoteBlockList (footnoteBlockList out firstPage.toList) otherPage.toList
   | .only _ body => footnoteBlockList out body.toList
   | .nav _ body => footnoteBlockList out body.toList
   | .frame title _ _ _ body =>
@@ -6425,6 +6720,8 @@ def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
   | .link _ body => footnoteInlineList out body.toList
   | .underline body => footnoteInlineList out body.toList
   | .step _ _ body => footnoteInlineList out body.toList
+  | .alt _ _ firstPage otherPage =>
+    footnoteInlineList (footnoteInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => out
@@ -6588,6 +6885,25 @@ def isPhysicalPage : Inline → Bool
 def hasPhysicalPage (xs : Array Inline) : Bool :=
   anyInline isPhysicalPage xs
 
+/-- Is this node an overlay alternation? One leaf each for the two levels;
+any other constructor alternates nothing. -/
+def isAltInline : Inline → Bool
+  | .alt _ _ _ _ => true
+  | _ => false
+
+def isAltBlock : Block → Bool
+  | .alt _ _ _ _ => true
+  | _ => false
+
+/-- Does this content alternate anywhere, at either level? The question a
+frame's step pages must ask before they share leaves: `step` pages ship the
+same ink dimmed differently, so one set of leaves serves them all, but
+`selectSteps` gives an `alt` frame genuinely different content per step, and
+content that differs cannot name the same leaf. `Layout.runCore` reads it to
+decide whether the leaf counter rewinds per step. -/
+def hasAlt (xs : Array Block) : Bool :=
+  foldBlocks (fun b x => b || isAltBlock x) (fun b x => b || isAltInline x) false xs
+
 /-- Is this slot the frame sequence's? The counting model keeps two distinct
 sequences: the frame numbering (`Ir.frameNumbers`, rendered only by
 `ChromeSlot.render`) and the physical pages (`\pagenumber`/`\pagecount`,
@@ -6733,6 +7049,10 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
         dimInlineList_text cover k true body.toList #[]]
     · simp [h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
         plainTextList]
+  | .alt n last firstPage otherPage =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending firstPage.toList #[],
+      dimInlineList_text cover k pending otherPage.toList #[], plainTextList]
   | .image _ _ _ =>
     -- the walk leaves an image node whole (raster content dims in the
     -- backends' hands), and its text census is empty either way
@@ -6890,6 +7210,10 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
     simp [blockTextOne,
       dimBlockList_text cover k (pending || stepPending n last k) body.toList #[] acc,
       blockTextList]
+  | .alt n last firstPage otherPage =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text cover k pending firstPage.toList #[],
+      dimBlockList_text cover k pending otherPage.toList #[], blockTextList]
   | .only targets body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -7058,6 +7382,10 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
+  | .alt n l firstPage otherPage =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text firstPage.toList #[],
+      unwrapItemStepList_text otherPage.toList #[], blockTextList]
   | .only targets body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -7176,6 +7504,8 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .step _ _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
+  | .alt _ _ firstPage otherPage =>
+    simp [numberFloatOne, blockTextOne, numberFloatList_text, blockTextList]
   | .only _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
@@ -7298,6 +7628,10 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .step n last body =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.step n last r.1, r.2)
+  | .alt n last firstPage otherPage =>
+    let ra := recolorRolesList repal recolor pal ground #[] firstPage.toList
+    let ro := recolorRolesList repal recolor ra.2 ground #[] otherPage.toList
+    (.alt n last ra.1 ro.1, ro.2)
   | .only targets body =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.only targets r.1, r.2)
@@ -7415,6 +7749,9 @@ def recolorRolesInline (recolor : RoleRecolor) (pal : Palette)
   | .link u body => .link u (recolorRolesInlines recolor pal ground #[] body.toList)
   | .underline body => .underline (recolorRolesInlines recolor pal ground #[] body.toList)
   | .step n last body => .step n last (recolorRolesInlines recolor pal ground #[] body.toList)
+  | .alt n last firstPage otherPage =>
+    .alt n last (recolorRolesInlines recolor pal ground #[] firstPage.toList)
+      (recolorRolesInlines recolor pal ground #[] otherPage.toList)
   | .footnote n body => .footnote n (recolorRolesInlines recolor pal ground #[] body.toList)
   | .text s => .text s
   | .math d src => .math d src
@@ -7486,6 +7823,10 @@ theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
     rw [recolorRolesInline]
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
       plainTextList]
+  | .alt n last firstPage otherPage =>
+    rw [recolorRolesInline]
+    simp [plainTextOne, recolorRolesInlines_text recolor pal ground firstPage.toList #[],
+      recolorRolesInlines_text recolor pal ground otherPage.toList #[], plainTextList]
   | .footnote n body =>
     rw [recolorRolesInline]
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
@@ -7628,6 +7969,9 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+  | .alt n last firstPage otherPage =>
+    rw [recolorRolesBlock]
+    simp [blockTextOne, recolorRolesList_text, blockTextList]
   | .only targets body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
@@ -7732,6 +8076,7 @@ def keptBy (t : String) : Block → Bool
   | .titled _ _ _
   | .spaced _ _
   | .verbatim _ _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
+  | .alt _ _ _ _
   | .frame _ _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak | .algorithm _ _ _
   | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
@@ -7757,6 +8102,8 @@ def keepForOne (t : String) : Block → Block
   | .spaced g body => .spaced g (keepForList t body.toList).toArray
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
   | .step n l body => .step n l (keepForList t body.toList).toArray
+  | .alt n l firstPage otherPage =>
+    .alt n l (keepForList t firstPage.toList).toArray (keepForList t otherPage.toList).toArray
   | .note body => .note (keepForList t body.toList).toArray
   | .frame ti st v br body => .frame ti st v br (keepForList t body.toList).toArray
   | .para c => .para c
@@ -7847,6 +8194,8 @@ def textLeavesOne (acc : List String) : Block → List String
   | .spaced _ body => textLeavesList acc body.toList
   | .columns cols => textLeavesColumns acc cols.toList
   | .step _ _ body => textLeavesList acc body.toList
+  | .alt _ _ firstPage otherPage =>
+    textLeavesList (textLeavesList acc firstPage.toList) otherPage.toList
   | .note body => textLeavesList acc body.toList
   | .only _ body => textLeavesList acc body.toList
   | .nav _ body => textLeavesList acc body.toList
@@ -7920,6 +8269,8 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .spaced _ body => orphanFreeList avail body.toList
   | .columns cols => orphanFreeColumns avail cols.toList
   | .step _ _ body => orphanFreeList avail body.toList
+  | .alt _ _ firstPage otherPage =>
+    orphanFreeList avail firstPage.toList && orphanFreeList avail otherPage.toList
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ _ body => orphanFreeList avail body.toList
@@ -8049,6 +8400,11 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .step n l body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
+  | .alt n l firstPage otherPage =>
+    rw [textLeavesOne, textLeavesOne, textLeavesList_acc acc firstPage.toList,
+      textLeavesList_acc (textLeavesList [] firstPage.toList ++ acc) otherPage.toList,
+      textLeavesList_acc (textLeavesList [] firstPage.toList) otherPage.toList]
+    simp [List.append_assoc]
   | .note body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
@@ -8277,6 +8633,21 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .alt n l firstPage otherPage =>
+    intro s hs
+    rw [orphanFreeOne, Bool.and_eq_true] at h
+    rw [textLeavesOne, textLeavesList_acc, List.mem_append] at hs
+    cases hs with
+    | inl hso =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 otherPage.toList h.2 s hso
+      refine ⟨t, ht, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne, textLeavesList_acc, List.mem_append]
+      exact .inl (by simpa using hmem)
+    | inr hsa =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 firstPage.toList h.1 s hsa
+      refine ⟨t, ht, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne, textLeavesList_acc, List.mem_append]
+      exact .inr (by simpa using hmem)
   | .note body =>
     intro s hs
     rw [textLeavesOne] at hs
@@ -8433,6 +8804,8 @@ def onlyFreeOne : Block → Bool
   | .spaced _ body => onlyFreeList body.toList
   | .columns cols => onlyFreeColumns cols.toList
   | .step _ _ body => onlyFreeList body.toList
+  | .alt _ _ firstPage otherPage =>
+    onlyFreeList firstPage.toList && onlyFreeList otherPage.toList
   | .note body => onlyFreeList body.toList
   | .nav _ body => onlyFreeList body.toList
   | .frame _ _ _ _ body => onlyFreeList body.toList
@@ -8516,6 +8889,10 @@ theorem keepForOne_id (t : String) (b : Block)
   | .step n l body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
+  | .alt n l firstPage otherPage =>
+    rw [onlyFreeOne, Bool.and_eq_true] at h
+    simp [keepForOne, keepForList_id t firstPage.toList h.1,
+      keepForList_id t otherPage.toList h.2]
   | .note body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
@@ -9185,6 +9562,8 @@ def mapInline (f : Inline → Inline) : Inline → Inline
   | .link u body => .link u (mapInlineList f #[] body.toList)
   | .underline body => .underline (mapInlineList f #[] body.toList)
   | .step n l body => .step n l (mapInlineList f #[] body.toList)
+  | .alt n l firstPage otherPage =>
+    .alt n l (mapInlineList f #[] firstPage.toList) (mapInlineList f #[] otherPage.toList)
   | .footnote n body => .footnote n (mapInlineList f #[] body.toList)
   | .text s => f (.text s)
   | .math d src => f (.math d src)
@@ -9259,6 +9638,8 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .spaced g body => .spaced g (mapBlockList f #[] body.toList)
   | .columns cols => .columns (mapBlockCols f #[] cols.toList)
   | .step n l body => .step n l (mapBlockList f #[] body.toList)
+  | .alt n l firstPage otherPage =>
+    .alt n l (mapBlockList f #[] firstPage.toList) (mapBlockList f #[] otherPage.toList)
   | .only targets body => .only targets (mapBlockList f #[] body.toList)
   | .nav spec body => .nav spec (mapBlockList f #[] body.toList)
   | .note body => .note (mapBlockList f #[] body.toList)
@@ -9329,6 +9710,12 @@ theorem mapInline_text (f : Inline → Inline)
   | .step n l body =>
     show plainTextList (mapInlineList f #[] body.toList).toList = _
     rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .alt n l firstPage otherPage =>
+    show plainTextList (mapInlineList f #[] firstPage.toList).toList
+        ++ plainTextList (mapInlineList f #[] otherPage.toList).toList = _
+    rw [mapInlineList_text f hf firstPage.toList #[],
+      mapInlineList_text f hf otherPage.toList #[]]
     simp [plainTextList, plainTextOne]
   | .footnote n body =>
     show plainTextList (mapInlineList f #[] body.toList).toList = _
@@ -9402,6 +9789,12 @@ theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
   | .step n l body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
+  | .alt n l firstPage otherPage =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or,
+      foldInlineList_or p (foldInlineList (fun a y => a || p y)
+        (false || p (Inline.alt n l firstPage otherPage)) firstPage.toList) otherPage.toList,
+      foldInlineList_or p (false || p (Inline.alt n l firstPage otherPage)) firstPage.toList]
+    simp [Bool.or_assoc]
   | .footnote n body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
@@ -9462,6 +9855,13 @@ theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     rw [foldInline, foldInlineList_or] at h
     rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .alt n l firstPage otherPage =>
+    rw [foldInline, foldInlineList_or, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨h1, h3⟩
+    rcases Bool.or_eq_false_iff.mp h1 with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf firstPage.toList #[] h2,
+      mapInlineList_id f p hf otherPage.toList #[] h3]
     simp
   | .footnote n body =>
     rw [foldInline, foldInlineList_or] at h
@@ -9586,6 +9986,12 @@ theorem mapBlock_text (f : Inline → Inline)
   | .step n l body =>
     show blockTextList acc (mapBlockList f #[] body.toList).toList = _
     rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .alt n l firstPage otherPage =>
+    show blockTextList (blockTextList acc (mapBlockList f #[] firstPage.toList).toList)
+        (mapBlockList f #[] otherPage.toList).toList = _
+    rw [mapBlockList_text f hf firstPage.toList #[],
+      mapBlockList_text f hf otherPage.toList #[]]
     rfl
   | .only targets body =>
     show blockTextList acc (mapBlockList f #[] body.toList).toList = _
@@ -9763,6 +10169,8 @@ def textUnder (p : Style → Bool) (x : Inline) : String :=
   | .link _ body => textUnderList p "" body.toList
   | .underline body => textUnderList p "" body.toList
   | .step _ _ body => textUnderList p "" body.toList
+  | .alt _ _ firstPage otherPage =>
+    textUnderList p (textUnderList p "" firstPage.toList) otherPage.toList
   | .footnote _ body => textUnderList p "" body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _
@@ -10253,6 +10661,8 @@ def floatLabelOne (float : Option RefBinding) (out : Array (String × Option Ref
   | .spaced _ body => floatLabelList float out body.toList
   | .columns cols => floatLabelCols float out cols.toList
   | .step _ _ body => floatLabelList float out body.toList
+  | .alt _ _ firstPage otherPage =>
+    floatLabelList float (floatLabelList float out firstPage.toList) otherPage.toList
   | .only _ body => floatLabelList float out body.toList
   | .nav _ body => floatLabelList float out body.toList
   | .note body => floatLabelList float out body.toList

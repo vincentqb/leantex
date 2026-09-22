@@ -71,6 +71,8 @@ private def inlineInto (acc : String) : Inline → String
     if inner == url then acc ++ url else acc ++ s!"[{inner}]({url})"
   | .underline body => inlinesInto acc body.toList
   | .step _ _ body => inlinesInto acc body.toList
+  | .alt _ _ active otherwise =>
+    inlinesInto (inlinesInto acc active.toList) otherwise.toList
   -- `\hfill` separates a label from what it pushes to the far margin; text
   -- has no margin, so the separation renders as a spaced em dash. The space
   -- the author typed before it folds in rather than doubling.
@@ -189,6 +191,9 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     acc ++ "```\n" ++ txt ++ "\n```\n\n"
   | .columns cols => columnsInto loc summary ind acc cols.toList
   | .step _ _ body => blocksInto loc summary ind acc body.toList
+  | .alt _ _ active otherwise =>
+    blocksInto loc summary ind (blocksInto loc summary ind acc active.toList)
+      otherwise.toList
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
   -- it is a transparent group, as a resolved step is.
   | .only _ body => blocksInto loc summary ind acc body.toList
@@ -432,6 +437,9 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
     exact append_chain₃ _ _ _ _
   | .columns cols => columnsInto_extends loc summary ind acc cols.toList
   | .step _ _ body => blocksInto_extends loc summary ind acc body.toList
+  | .alt _ _ active otherwise =>
+    extends_comp (blocksInto_extends loc summary ind acc active.toList)
+      (blocksInto_extends loc summary ind _ otherwise.toList)
   | .only _ body => blocksInto_extends loc summary ind acc body.toList
   | .nav _ _ => append_nil acc
   | .note _ => append_nil acc
@@ -676,6 +684,9 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h
   | .columns cols, out, h => headingLevelColumns_mem x cols.toList out h
   | .step _ _ body, out, h => headingLevelList_mem x body.toList out h
+  | .alt _ _ active otherwise, out, h =>
+    headingLevelList_mem x otherwise.toList (Ir.headingLevelList out active.toList)
+      (headingLevelList_mem x active.toList out h)
   | .only _ body, out, h => headingLevelList_mem x body.toList out h
   | .nav _ body, out, h => headingLevelList_mem x body.toList out h
   | .frame _ _ _ _ body, out, h => headingLevelList_mem x body.toList out h

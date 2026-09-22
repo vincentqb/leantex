@@ -332,19 +332,18 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
          | some (_, body) => body == #[.para #[.text "steady"]]
          | none => false)
       | _ => false))
-  -- \alt: both alternatives are on the page — the active one crisp within
-  -- its spec, the other before it.
+  -- \alt: one node carrying both alternatives, exactly one of them inked per
+  -- step page (`Ir.selectSteps`).
   let (aDoc, aDs) := elabStr (deck169Frame "\\alt<2>{after}{before}")
-  t "alt inline yields the step and its complement"
+  t "alt inline yields one alternation node"
     (aDs.isEmpty && aDoc.body == #[.frame #[] false .center false #[.para #[
-      .step 2 (some 2) #[.text "after"],
-      .step 1 (some 1) #[.text "before"]]]])
+      .alt 2 (some 2) #[.text "before"] #[.text "after"]]]])
   let (abDoc, abDs) := elabStr (deck169Frame
     "\\alt<2->{\nAfter one.\n\nAfter two.\n}{\nBefore.\n}")
-  t "alt with block alternatives steps both at block level"
+  t "alt with block alternatives alternates at block level"
     (abDs.isEmpty && abDoc.body == #[.frame #[] false .center false #[
-      .step 2 none #[.para #[.text "After one."], .para #[.text "After two."]],
-      .step 1 (some 1) #[.para #[.text "Before."]]]])
+      .alt 2 none #[.para #[.text "Before."]]
+        #[.para #[.text "After one."], .para #[.text "After two."]]]])
   -- A spec the model cannot number keeps W0105 and shows the block content.
   let (uDoc, uDs) := elabStr (deck169Frame
     "\\onslide<+->{\n\\begin{itemize}\n\\item shown anyway\n\\end{itemize}\n}")

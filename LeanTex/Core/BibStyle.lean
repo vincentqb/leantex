@@ -644,6 +644,9 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .link u body => out.push (.link u (resolveInlines style find #[] body.toList))
   | .underline body => out.push (.underline (resolveInlines style find #[] body.toList))
   | .step n last body => out.push (.step n last (resolveInlines style find #[] body.toList))
+  | .alt n last active otherwise =>
+    out.push (.alt n last (resolveInlines style find #[] active.toList)
+      (resolveInlines style find #[] otherwise.toList))
   -- a citation inside a note resolves like any other
   | .footnote n body => out.push (.footnote n (resolveInlines style find #[] body.toList))
   | .text s => out.push (.text s)
@@ -681,6 +684,8 @@ def citeFreeOne : Ir.Inline → Bool
   | .link _ body => citeFreeList body.toList
   | .underline body => citeFreeList body.toList
   | .step _ _ body => citeFreeList body.toList
+  | .alt _ _ active otherwise =>
+    citeFreeList active.toList && citeFreeList otherwise.toList
   | .footnote _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
@@ -708,6 +713,7 @@ where
     | .cite t keys => simp [resolveInline]
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
     | .underline body | .step _ _ body | .footnote _ body => simp [resolveInline]
+    | .alt _ _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
     | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -742,6 +748,10 @@ theorem resolveInline_id (style : CiteStyle) (find : Resolver)
   | .step n last body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .alt n last active otherwise =>
+    rw [citeFreeOne, Bool.and_eq_true] at h
+    rw [resolveInline, resolveInlines_id style find active.toList h.1,
+      resolveInlines_id style find otherwise.toList h.2]
   | .footnote n body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id style find body.toList h]
@@ -791,6 +801,9 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .columns cols => out.push (.columns (resolveCols style find items #[] cols.toList))
   | .step n last body =>
     out.push (.step n last (resolveBlocks style find items #[] body.toList))
+  | .alt n last active otherwise =>
+    out.push (.alt n last (resolveBlocks style find items #[] active.toList)
+      (resolveBlocks style find items #[] otherwise.toList))
   | .only t body => out.push (.only t (resolveBlocks style find items #[] body.toList))
   | .nav spec body => out.push (.nav spec (resolveBlocks style find items #[] body.toList))
   | .note body => out.push (.note (resolveBlocks style find items #[] body.toList))
@@ -1047,6 +1060,14 @@ theorem resolveInline_pending (style : CiteStyle) (find : Resolver) (x : Ir.Inli
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
       Array.append_empty] at h
     exact resolveInlines_pending style find body.toList acc q h
+  | .alt _ _ active otherwise =>
+    intro acc q h
+    simp only [resolveInline, Array.toList_push, List.nil_append,
+      Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
+      Array.append_empty] at h
+    rcases resolveInlines_pending style find otherwise.toList _ q h with h' | hc
+    · exact resolveInlines_pending style find active.toList acc q h'
+    · exact .inr hc
   | .cite textual keys =>
     intro acc q h
     simp only [resolveInline, Array.empty_append, renderCite_pending] at h
@@ -1166,6 +1187,12 @@ theorem resolveBlock_pending (style : Style) (find : Resolver) (items : Array Ir
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveBlocks_pending style find items body.toList #[] _ q h
+  | .alt _ _ active otherwise =>
+    intro out acc q h
+    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
+    rcases resolveBlocks_pending style find items otherwise.toList #[] _ q h with h' | hc
+    · exact resolveBlocks_pending style find items active.toList #[] _ q h'
+    · exact .inr hc
   | .titled _ title body | .frame title _ _ _ body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h

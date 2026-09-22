@@ -3358,11 +3358,11 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | none =>
       elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "alt" then
-    -- `\alt<spec>{active}{otherwise}`: under dim-not-hide both
-    -- alternatives are on the page — the active one crisp within its
-    -- spec, the other before it — so alternation reads as emphasis
-    -- moving, and nothing reflows. The complement of a mid-deck range
-    -- is not one range, so the otherwise side stays dimmed past it.
+    -- `\alt<spec>{active}{otherwise}`: one node carrying both alternatives,
+    -- because exactly one of them is inked on each step page — the declared
+    -- exception to dim-not-hide (`Ir.Inline.alt`). A pair of `step` nodes
+    -- cannot say it: the complement of a mid-deck range is two ranges, so
+    -- the selection has to see both alternatives at once.
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
@@ -3386,8 +3386,11 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         | some (n, last) =>
           let ia ← elabInlines ctx ga
           let ib ← elabInlines ctx gb
-          elabInlinesFrom ctx raws (j3 + 1)
-            ((acc.push (.step n last ia)).push (.step 1 (some (n - 1)) ib)) ""
+          -- Page order, not spec order (`Ir.Inline.alt`): step 1 ships the
+          -- in-range group only when the range already covers it.
+          let onFirst := if Ir.stepPending n last 1 then ib else ia
+          let onOther := if Ir.stepPending n last 1 then ia else ib
+          elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alt n last onFirst onOther)) ""
         | none =>
           warnAltSpec ctx pos
           let ia ← elabInlines ctx ga
@@ -3395,6 +3398,9 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+          (help := "'\\alt<2>{on step 2}{on the others}' takes a spec and TWO \
+braced groups: the second is what every other step shows, so give it even \
+when it is empty — '{}'")
         elabInlinesFrom ctx raws (i + 1) acc sb
     | none =>
       let j3 := skipSpaces raws (j + 1)
@@ -3415,6 +3421,9 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+          (help := "'\\alt<2>{on step 2}{on the others}' takes a spec and TWO \
+braced groups: the second is what every other step shows, so give it even \
+when it is empty — '{}'")
         elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "pause" then
     -- Reachable only inside an argument or definition body; between
@@ -7707,8 +7716,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlocksGo stepCtx ga 0 #[] #[] (← get).flowGen
           let ib ← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen
-          blocks := blocks.push (.step s last ia)
-          blocks := blocks.push (.step 1 (some (s - 1)) ib)
+          blocks := blocks.push
+            (if Ir.stepPending s last 1 then .alt s last ib ia else .alt s last ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           blocks := blocks ++ (← elabBlocksGo ctx ga 0 #[] #[] (← get).flowGen)
@@ -7716,6 +7725,9 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           return (blocks, ⟨j3 + 1, by omega⟩)
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+          (help := "'\\alt<2>{on step 2}{on the others}' takes a spec and TWO \
+braced groups: the second is what every other step shows, so give it even \
+when it is empty — '{}'")
         return (blocks, ⟨i + 1, by omega⟩)
     else
       match hgg : raws[jg]? with

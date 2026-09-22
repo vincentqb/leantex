@@ -323,6 +323,7 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .pageCount :: _ => none
   | .linebreak _ :: _ => none
   | .step _ _ _ :: _ => none
+  | .alt _ _ _ _ :: _ => none
   | .image _ _ _ :: _ => none
   -- a `content` string cannot carry the icon's accessible name, so an icon
   -- marker is inexpressible here and diagnosed (W0331), never defaulted
@@ -365,6 +366,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .pageCount => none
   | .linebreak _ => none
   | .step _ _ _ => none
+  | .alt _ _ _ _ => none
   | .image _ _ _ => none
   | .icon _ _ => none
   | .label _ => none
@@ -427,6 +429,7 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
   | .strut _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
   | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ =>
     simp [markerCssOne] at h
+  | .alt _ _ _ _ => simp [markerCssOne] at h
 
 theorem markerCssList_text (scale : List (String × Nat)) (decls : Array String)
     (xs : List Inline)
@@ -3040,6 +3043,17 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
          | some u => #[("data-step-last", toString u)]
          | none => #[]) ++
         #[("style", s!"--step: {n}")]))
+  | .alt n last active otherwise =>
+    -- Both alternatives ride inside the step wrapper the `.step` arm gives:
+    -- one range on one element, everything visible — the handout floor.
+    -- Which alternative a step page shows is the deck stylesheet's to say.
+    acc.push (Html.elem "span"
+      (inlineNodesInto cfg (inlineNodesInto cfg #[] active.toList) otherwise.toList)
+      (#[("class", "step"), ("data-step", toString n)] ++
+        (match last with
+         | some u => #[("data-step-last", toString u)]
+         | none => #[]) ++
+        #[("style", s!"--step: {n}")]))
   | .icon c label =>
     -- The glyph is a Private Use Area scalar assistive technology cannot
     -- read, so it is hidden (`aria-hidden`) and the accessible name rides
@@ -3457,6 +3471,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- The block form of the inline step arm: visible — the handout floor —
     -- with its `--step` index for the class-gated uncover, range as data.
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+      (#[("class", "step"), ("data-step", toString n)] ++
+        (match last with
+         | some u => #[("data-step-last", toString u)]
+         | none => #[]) ++
+        #[("style", s!"--step: {n}")])
+  | .alt n last active otherwise =>
+    -- The block form of the inline alternation arm.
+    Html.elem "div"
+      (blockNodesInto cfg.into (blockNodesInto cfg.into #[] active.toList) otherwise.toList)
       (#[("class", "step"), ("data-step", toString n)] ++
         (match last with
          | some u => #[("data-step-last", toString u)]

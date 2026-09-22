@@ -469,6 +469,10 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .link _ body => usesInlines cx acc body.toList
   | .underline body => usesInlines cx acc body.toList
   | .step n last body => usesInlines cx (acc.step n last) body.toList
+  -- An alternative is never covered: it is inked at full colour or not
+  -- inked at all, so no alt range makes a palette pending.
+  | .alt _ _ active otherwise =>
+    usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   -- a note's body is ink like any other; it holds the contrast contract
   | .footnote _ body => usesInlines cx acc body.toList
   | .fill | .strut _ | .linebreak _ => acc
@@ -520,6 +524,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
   | .step n last body => usesBlocks cx (acc.step n last) body.toList
+  | .alt _ _ active otherwise =>
+    usesBlocks cx (usesBlocks cx acc active.toList) otherwise.toList
   -- Conditional content is judged whichever backend carries it: a colour
   -- pairing is wrong on the surface that shows it, so no target set
   -- exempts it. A nav's links are page text like any other.
