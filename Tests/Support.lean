@@ -410,6 +410,12 @@ def censusText (c : Array CensusPage) : String :=
 def pageHas (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
   (c[i]?.map fun p => hasStr p.text needle).getD false
 
+/-- How many times `needle` is inked on page `i`. The census counts what
+shipped, so a construct that put its content on the page twice reads as 2
+here — `pageHas` cannot tell one copy from two. -/
+def pageOccurs (c : Array CensusPage) (i : Nat) (needle : String) : Nat :=
+  (c[i]?.map fun p => (p.text.splitOn needle).length - 1).getD 0
+
 def pageCovered (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
   (c[i]?.map fun p => hasStr p.covered needle).getD false
 

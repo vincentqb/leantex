@@ -187,6 +187,46 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — `\alert<spec>{body}` inks its body once (alert-overlay-once,
+M5; engine bug, and a correction of the entry below — the `\alt` rewrite
+shipped there put the body on the page TWICE on every step: under
+dim-not-hide both alternatives are on the page, the pending one covered
+rather than gone, so `\alert<2>{place}` rendered "placeplace" on both
+pages of its frame, in PDF and HTML alike). That entry recorded the
+doubling as a residual of the `\alt` model. It is not a residual; it is
+the defect, and it is what a reader sees. The invariant that was absent is
+the census one: *an overlay alternation inks exactly one alternative per
+step page*, so `\alert<spec>{body}`'s body text appears exactly once on
+every page. The fix is the one rewrite dim-not-hide can express without a
+second copy — `\alert<spec>{body}` is `\uncover<spec>{\alert{body}}`
+(`Compat.alertOverlay`, pinned to those three raws by
+`alertOverlay_exact`): one copy of the body, the alert style on it
+throughout, crisp on the selected step, still the elaborator's one overlay
+reader (`overlayCtrls`) numbering the spec or keeping the honest W0105. It
+also removes the reflow a bold twin would have caused between steps, since
+the inked run is the same on every page. The divergence from beamer is the
+model's and is named where it is made: beamer sets the run plain off its
+steps, this engine dims it, so the alert colour is present from step one —
+plain-before-the-step is a style that varies per step, which no `Ir`
+constructor expresses (`Inline.step` wraps content, not style). Evidence,
+shipped pages not IR: `pageOccurs` (new in `Tests/Support.lean` — the
+census could not previously tell one copy from two, which is how the green
+suite passed a doubled page) reads exactly 1 per step page, covered on
+step 1 and crisp on step 2; in HTML the body and the alert role are each
+named once; the repro deck renders "Put it place here." on both pages.
+Residual, and now the whole of it: `\alt<spec>{a}{b}` itself still inks
+both alternatives — `\alt<2>{apple}{banana}` renders "applebanana" on
+every page. That one cannot be fixed by rewriting, because replacement
+needs a construct dim-not-hide does not have: the complement of a mid-deck
+range is not one range, so no pair of `Inline.step` nodes can carry it,
+and selection has to happen per step page. The shape it needs is one node
+holding both alternatives (`Ir.Inline.alt`, `Ir.Block.alt`) with the
+selection in the per-step walk (`Ir.dimInlineList`/`dimBlockList`, where
+splicing an array is already natural) and CSS selection in the HTML deck
+rules, which owes the full constructor trail — an arm in every IR-to-IR
+walk and both backends, its census fact, and the step-to-step reflow that
+genuine replacement implies.
+
 2026-09-22 — `\alert<spec>{body}` is the `\alt` overlay (alert-overlay,
 M5; engine bug — beamer's overlay form of alert, `\alert<2>{…}`, fell
 through `Compat`'s arm unread: themed, the synthesized `\textcolor{alert}`
