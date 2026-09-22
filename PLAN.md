@@ -187,6 +187,30 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — a blank line after a comment line is a paragraph break
+(frame-paragraph-breaks, M6; engine bug — two paragraphs separated by a
+blank line set as one whenever a `%` line stood between the first and the
+blank, in article and frame alike, inline and through `\input`; one frame
+on the reference deck, its two body baselines 12 → 17 bp apart, page count
+unchanged). The layer was the lexer: the `%` arm consumed its own
+end-of-line, so the whitespace run that followed counted one newline and
+lexed as a space. The invariant that was absent is TeX's reading state
+(TeXbook ch. 8): the comment discards the rest of its line, end-of-line
+included, and leaves the reader at the start of the next line — state N,
+where indentation is skipped and an end-of-line is already `\par` — while
+text leaves it mid-line, where one end-of-line is a space. `Lex.wsTok`
+is that judgement, keyed by state and newline count, and both the
+whitespace arm and the comment arm read it; `blank_line_par_agree` states
+that the run a comment leaves reads as the run text would have seen, one
+end-of-line longer (`wsTok true n = wsTok false (n + 1)` for `n ≥ 1`), so
+a blank line is one boundary from either side. The fix also drops the
+stray space the old arm minted from a comment's indented continuation
+(`a% c\n  b` is `ab`, as in TeX). Red/green: four `lexChecks` rows and,
+over `Layout.Out`, the article peer pair and a frame's two body baselines
+with a comment line before the blank — both equal to the same source
+without the comment. No golden moved; `\input` splice, Compat, and Elab
+were traced and preserve the boundary they are given.
+
 2026-09-22 — literal Unicode Greek in math is the same atom as its control
 word (greek-literal-math, M6; missing capability — `$λ$`, `$M_θ$`, `$φ$`,
 `$Ω$` used to degrade the whole formula to source text under W0012 while

@@ -74,6 +74,24 @@ private def newlines (cs : Array Char) (a b : Nat) : Nat := Id.run do
       if cs[j] == '\n' then n := n + 1
   return n
 
+/-- What a whitespace run holding `n` end-of-lines means, by TeX's reading
+state when it begins (TeXbook ch. 8): mid-line (`M`), one end-of-line is
+a space and a blank line a paragraph; at the start of a line (`N`, where
+a comment leaves the reader once it has discarded its own end-of-line),
+indentation is skipped and one end-of-line is already a paragraph. -/
+def wsTok (lineStart : Bool) (n : Nat) : Option Tok :=
+  if lineStart then (if n ≥ 1 then some .par else none)
+  else (if n ≥ 2 then some .par else some .space)
+
+/-- A blank line is a paragraph break in either state: the comment that
+put the reader at line start hid its own end-of-line, not the blank line
+after it — the run it leaves reads as the run the text would have seen,
+one end-of-line longer. -/
+theorem blank_line_par_agree (n : Nat) (h : 1 ≤ n) :
+    wsTok true n = wsTok false (n + 1) := by
+  have h' : n + 1 ≥ 2 := by omega
+  simp [wsTok, h, h']
+
 private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
   if i + ps.size > cs.size then
     return false
@@ -125,15 +143,18 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
       let here := pos
       if isWs c then
         let j := scanWhile cs i isWs
-        let tok := if newlines cs i j ≥ 2 then Tok.par else Tok.space
-        toks := toks.push ⟨tok, here⟩
+        if let some tok := wsTok false (newlines cs i j) then
+          toks := toks.push ⟨tok, here⟩
         pos := posOver cs i j pos
         i := j
       else if c == '%' then
         let j := scanWhile cs i (· != '\n')
         let j := min (j + 1) cs.size
-        pos := posOver cs i j pos
-        i := j
+        let k := scanWhile cs j isWs
+        if let some tok := wsTok true (newlines cs j k) then
+          toks := toks.push ⟨tok, posOver cs i j pos⟩
+        pos := posOver cs i k pos
+        i := k
       else if c == '\\' then
         if h' : i + 1 < cs.size then
           let c1 := cs[i + 1]

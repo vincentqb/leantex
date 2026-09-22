@@ -1286,6 +1286,13 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let plain := ysOf geom "a\n\nb"
   t "peers sit a leading plus parskip apart"
     (plain.size == 2 && plain[1]! - plain[0]! == leading + (geom.parskip.resolve body 0).width)
+  -- A blank line that survives TeX's comment rule is the same boundary: a
+  -- comment line before it hides its own end-of-line, not the blank line
+  -- (`Lex.blank_line_par_agree`). Judged on the placed baselines, as the
+  -- peer gap above is — two paragraphs, the declared peer gap between.
+  let commented := ysOf geom "a\n  % an aside\n\n  b"
+  t "peers stay peers across a comment line before the blank line"
+    (commented.size == 2 && commented[1]! - commented[0]! == plain[1]! - plain[0]!)
   let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
   let hugeSize := body * 2488 / 1000
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
@@ -1555,6 +1562,23 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- where an article's does.
   t "[t] is the old top-flush placement"
     (yT == firstY "hello")
+  -- Two paragraphs in a frame stay two through frame elaboration and the
+  -- distribution: the frame's text baselines are the article's peer pair
+  -- (`spacingChecks`), whether or not a comment line precedes the blank
+  -- line that separates them.
+  let textYs (body : String) : Array Dim.Sp :=
+    (linesOf (deck169Body body)).filterMap fun l =>
+      if !l.furniture && l.segs.any (fun s => match s with | .run .. => true | _ => false)
+      then some l.y else none
+  let framePlain := textYs "\\begin{frame}[t]\nFirst label --- one\n\nSecond label --- two\n\\end{frame}"
+  let frameCommented := textYs
+    "\\begin{frame}[t]\n  First label --- one\n  % an aside\n\n  Second label --- two\n\\end{frame}"
+  let peerGap := Ir.leadingFor geom.fontSize geom.leading +
+    (geom.parskip.resolve geom.fontSize 0).width
+  t "a frame's two paragraphs sit the peer gap apart"
+    (framePlain.size == 2 && framePlain[1]! - framePlain[0]! == peerGap)
+  t "a comment line before the blank line keeps a frame's two paragraphs"
+    (frameCommented == framePlain)
   t "[t] parses to top"
     ((elabStr (deck169Body "\\begin{frame}[t]\nx\n\\end{frame}")).1.body ==
       #[.frame #[] false .top #[.para #[.text "x"]]])

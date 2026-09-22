@@ -2099,6 +2099,18 @@ def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "lex par" (toks "a\n\nb" == [.word "a", .par, .word "b"])
   t "lex newline is space" (toks "a\nb" == [.word "a", .space, .word "b"])
   t "lex comment joins lines" (toks "a%c\nb" == [.word "a", .word "b"])
+  -- TeX: `%` discards the rest of its line, end-of-line included, and the
+  -- next line opens in state N — its indentation is skipped and a blank
+  -- line there is `\par`. The comment hides its own end-of-line, never the
+  -- blank line after it (`Lex.blank_line_par_agree`).
+  t "lex blank line after a comment is a par"
+    (toks "a\n  % c\n\n  b" == [.word "a", .space, .par, .word "b"])
+  t "lex blank line after an end-of-line comment is a par"
+    (toks "a% c\n\nb" == [.word "a", .par, .word "b"])
+  t "lex indented line after a comment adds no space"
+    (toks "a% c\n  b" == [.word "a", .word "b"])
+  t "lex comment line between lines is one space"
+    (toks "a\n% c\nb" == [.word "a", .space, .word "b"])
   t "lex ctrl word swallows space" (toks "\\emph  x" == [.ctrl "emph", .word "x"])
   t "lex ctrl word keeps blank line" (toks "\\par\n\nx" == [.ctrl "par", .par, .word "x"])
   t "lex ctrl symbol" (toks "\\%x" == [.ctrl "%", .word "x"])
