@@ -187,6 +187,113 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — HTML selects an alternation's group, and a step covers past its
+range end (alt-html-selection, M5; `alt_backend_agree` discharged, a
+correction of the entry below, which records it as owed and blocked). Two
+defects, one of them the prerequisite:
+
+The prerequisite was not about alternation at all. An HTML step's rules read
+`data-step` and never `data-step-last`, so nothing could re-cover: the
+markup carried the range end as data that no selector mentioned.
+`\uncover<2-3>` in a four-step frame therefore stood crisp on step 4 in HTML
+and dimmed on paper, on both paths — the timeline uncover holds its
+`to` state under fill-mode, and the floor's numeric uncovers only ever
+added steps. The invariant that was absent: *an HTML step is covered
+exactly when `Ir.stepPending` says it is pending*, the predicate the PDF
+handout dims by. The fix gives the range's end its own carrier nested
+inside the step's (`.step-end`, `stepRecoverRule`/`stepRecoverKeyframes`,
+with `stepRecoverFloorRule` per snap on the floor): one element animates
+one property once, so two opacity animations compose only by nesting —
+and nested opacities multiply, which makes covered-before-the-start times
+covered-again-past-the-end exactly the predicate. The floor's recover is
+script-gated like the covered default it completes, so
+`floor_covered_script_gated` still holds with nothing declared that
+nothing can restore. `html_step_pending_agree` states the agreement over
+the selectors' own data (`htmlStepPendingAt`, built by filtering with
+`Ir.stepPending` rather than re-spelling it), with the deck's step bounds
+as the hypotheses that make the numeric enumeration complete.
+
+Alternation then needed no new mechanism, only its own wrappers: one per
+group (`altGroupNode`), each carrying the range and the side page order put
+it on, and both staying in the tree because the document declares both. The
+group stored first needs no rule to be seen — step 1 inks it
+(`Ir.altShowsFirst_id`) — so the other carries `hidden`, which is what a
+page with no snap state shows: the floor with scripting off, the print
+handout, and a page shipped with no stylesheet at all. Per snap, four base
+rules select by `display` (`altStartCrispRule`, `altStartPendingRule`, then
+the end corrections `altEndCrispRule`/`altEndPendingRule`, which carry one
+more element name so they outrank the start rules whatever order they are
+emitted in). Selection is `display`-level and deliberately not `step`'s
+opacity covering: a covered step is content awaiting its turn, an
+unselected group is content this page does not have. No script path grows —
+the rules read the snap attribute the one constant script already writes,
+and no rule animates `display`.
+
+`alt_backend_agree` is a real proof, in the `_agree` shape: the HTML
+selection read off the rules' data equals `Ir.altShowsFirst`
+(`altShownFirstAt = htmlStepPendingAt == Ir.altFirstWhenPending`, through
+`html_step_pending_agree` and the predicate's own factorization,
+`Ir.altShowsFirst_side` — landed with it in Ir.lean, since the side a
+per-step consumer can test is what a stylesheet can read and a walk cannot).
+The PDF side is the same value verbatim at layout's arms, whose leaf
+identity is `Struct.alt_leaf_projects`. § Owed obligations is unchanged at
+thirteen rows: the statement never entered the queue, and it does not need
+to now.
+
+Evidence, artifacts not IR: the new HTML census `treeShownOccurs`
+(Tests/Support.lean) reads the emitted tree's *shown* text — hidden
+subtrees dropped, as the UA stylesheet drops them — and is what the suite
+could not do when both groups sat inside one visible wrapper; on
+`\alt<2-3>` it reads one group shown and both declared exactly once, while
+`pageOccurs` reads the same one group inked per handout page and
+`altShownFirstAt` agrees with it step by step (`deckAltChecks`). The
+range-end row (`deckRangeEndChecks`) pins the same agreement for
+`\uncover<2-3>` in a four-step frame: the handout dims on 1 and 4, the
+stylesheet covers on 1 and 4, and the emitted CSS carries the recover
+keyframes and the snap-4 rule the artifact had no equivalent of before.
+Goldens did not move — nothing in the IR changed — and the deck CSS census
+in Tests/Themes moved by exactly one count (two rules now ride the frame's
+timeline: the uncover and the recover).
+
+Judgment calls, each a place a reviewer could have chosen otherwise.
+Alternation rides `data-snapped` in the base gate rather than an animation
+on the timeline path: the pending side's visible set is *two* ranges (before
+the start and past the end), and nested discrete animations can only
+intersect, so a pure-animation form would have needed a third copy of the
+body in the DOM — the defect class this entry closes. The consequence is
+stated rather than hidden: with scripting off, alternation shows step 1's
+reading on every page, which is the floor the deck already degrades to.
+`contentFrags` was *not* extended to cover the group wrappers: extending it
+would make `floor_hides_nothing` false while saying nothing truer, since the
+contract for two alternatives is which of them shows, not whether content
+can be hidden — the docstring now names the exception and points at
+`alt_backend_agree`. The reduce partition restores step 1's reading at the
+snap rules' own specificity (`altReduceFixed`), because under reduce a
+stepped frame is one page and a swap with no motion would be a change the
+reader cannot page back. The block arm ships the pair in an inert
+`.alt-pair` container (a block arm returns one node; the container carries
+no range, no side, no rule). The outer step wrapper keeps `data-step-last`
+as data beside the carrier's own, so no existing artifact pin moved.
+
+Residual: what stands, and what is deliberately not taken here. The
+`\alert<spec>` flip is now unblocked (the beamer-faithful
+`\alt<spec>{styled}{body}` no longer puts a body on an HTML page twice) and
+is left for its own change; `Compat.alertOverlay` is untouched. The dead
+`Ir.select*` family and `Ir.hasAlt` still stand for their own commit.
+Browser behaviour remains measured, not proved, and this change measured
+half of what it needs: a headless Chromium (141-era, the shell the probes
+use) loading the emitted page with a measuring script appended shows
+exactly one alternation group displayed at every snap, and the one
+`Ir.altShowsFirst` names — snap 1 the group stored first, snaps 2–3 the
+crisp side, snap 4 the group stored first again past the range end — which
+is the reported defect closed on the artifact. The nested-opacity recover
+was *not* measured: that harness does not advance a scroll-driven timeline
+(the pre-existing uncover reads its from-state at every snap under it), and
+the floor path cannot be reached in that build, since no command-line flag
+there turns `view()` timelines off. Both owe the next dated deck probe: the
+recover's opacity product across a real scroll, and the floor's recover in
+an engine without timelines (Firefox is that engine).
+
 2026-09-22 — `alt_leaf_projects` discharged: layout references leaf ids, it no
 longer mints them (alt-leaf-identity, M5; correction of the entry below, which
 lists it as owed). The blocker recorded there — "layout mints leaf ids by
@@ -5877,6 +5984,25 @@ is evidence, not a theorem.
   2026-09-17, including alpha via SMask; PDF pages as form XObjects
   remain), the external-render boundary with content-hash cache (TikZ),
   verbatim code blocks, per-glyph font fallback chains.
+- M8b native pictures: a TikZ/pgf subset in the engine, so `lualatex` stops
+  being a dependency. Today pictures are the one declared external boundary
+  (`Ir.Doc.pictureTool`, default `lualatex`, `picTools` in Elab), which makes
+  the engine's independence conditional and leaks pgf's diagnostics into an
+  otherwise self-contained log: a document whose picture source is missing a
+  definition gets W0378 reading like an engine failure, and a machine without
+  a TeX tree gets placeholder boxes for content the document declared. The
+  target is the path/node/arrow subset real decks use — coordinates, node
+  shapes and anchors, edges with arrow tips, `scope`, styles and keys —
+  elaborated to the same `Ir.picture` the boundary already produces, so both
+  backends and the census are unchanged and a picture becomes ink the engine
+  owns. Scope discipline: the subset is declared, not open-ended, and a
+  construct outside it keeps the external boundary as the escape hatch rather
+  than failing — the boundary stays supported, it stops being the default.
+  Owes the boundary's own census fact (a native picture and a rendered one
+  agree on placement and on text alternative) and a per-construct
+  compat-index file, as `nativePackages` entries do. Acceptance (local): the
+  reference deck's pictures render natively with no `lualatex` on PATH; CI
+  equivalent, synthetic fixtures under `tests/corpus/`.
 - M9 verified inclusions: the boundary, freshness assertions, inclusion
   inventory in porcelain output, and the `lean = …` theorem binding.
   Acceptance (CI): a synthetic publication twin builds with live counts, and
