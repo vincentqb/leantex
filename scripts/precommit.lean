@@ -332,13 +332,19 @@ def surfaceReach (l : String) : Bool :=
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
     || surfaceMods.any (usesQualified l ·)
 
-/-- The census reaching into the writer: an import, an `open`, or a
-qualified use of `Pdf` in PdfCensus.lean. The census judges a file's
-bytes through the reader alone — a census that could read the writer's
-spellings would report what the writer meant, not what the file carries,
-which is the defect (an unembedded copied face passing
-`fonts.all_embedded`) it replaced. `PdfRead.` is a different module and
-does not match. -/
+/-- The modules that judge a PDF's bytes and must never see the writer:
+the census, and the conformance contract that reads it. -/
+def judgeFiles : List String :=
+  ["LeanTex/Core/PdfCensus.lean", "LeanTex/Core/PdfContract.lean"]
+
+/-- A judge reaching into the writer: an import, an `open`, or a
+qualified use of `Pdf` in PdfCensus.lean or PdfContract.lean. The census
+judges a file's bytes through the reader alone — a census that could read
+the writer's spellings would report what the writer meant, not what the
+file carries, which is the defect (an unembedded copied face passing
+`fonts.all_embedded`) it replaced; a contract that could see them would be
+a contract on intent, and its violations would judge the plan, not the
+file. `PdfRead.` is a different module and does not match. -/
 def writerReach (l : String) : Bool :=
   let l := stripLineComment l
   let t := l.trimAscii.toString
@@ -712,14 +718,16 @@ def gates : List Gate := [
     help := "  Backends consume the IR and nothing else; a backend that re-parses is how
   md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
   Fix: put what the backend needs on the IR." },
-  { applies := (· == "LeanTex/Core/PdfCensus.lean")
+  { applies := (judgeFiles.contains ·)
     flag := writerReach
-    what := fun f => s!"the census reaches into the writer, in {f}"
-    help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone; a
-  census that can see Pdf.lean's spellings reports the writer's intent,
-  which is how an unembedded copied face once passed fonts.all_embedded.
-  Fix: read the fact off the parsed objects; a spelling the census needs
-  is a fact of ISO 32000-2, stated in PdfCensus with its section." },
+    what := fun f => s!"a judge of the PDF's bytes reaches into the writer, in {f}"
+    help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone, and
+  PdfContract judges the census; a judge that can see Pdf.lean's spellings
+  reports the writer's intent, which is how an unembedded copied face once
+  passed fonts.all_embedded.
+  Fix: read the fact off the parsed objects or the census; a spelling a
+  judge needs is a fact of ISO 32000-2 or a profile, stated where it
+  stands with its section." },
   { applies := (backendFiles.contains ·)
     flag := dimLiteral
     what := fun f => s!"bare dimension literal in {f}"
@@ -807,6 +815,12 @@ def selftest : IO UInt32 := do
     ("  let s := Ir.scaleStep base n", false),
     ("  -- sizeScale.lookup … .getD quoted in a comment", false),
     ("  say s!\"a message naming sizeScale.lookup and .getD\"", false)]
+
+  -- The gate applies to both judges: the contract module never imports the
+  -- writer any more than the census does.
+  for f in judgeFiles do
+    unless gates.any fun g => g.applies f && g.flag "import LeanTex.Core.Pdf" do
+      fails.modify (s!"writerReach gate does not cover {f}" :: ·)
 
   expect "writerReach" writerReach [
     ("import LeanTex.Core.Pdf", true),

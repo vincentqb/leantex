@@ -1007,16 +1007,34 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- census of its bytes (a copied page can bring a face the writer
       -- never embedded), the HTML by the faces it ships beside the page;
       -- the markdown twin carries none and contributes nothing.
+      let readsPdf := doc.asserts.any fun a => match a.kind with
+        | .fontsAllEmbedded | .pdfProfile _ => true
+        | .pages _ _ | .textInArea | .minXHeight _ | .accessibilityAA => false
+      let pdfCensus : Option (Except String PdfCensus.Census) :=
+        if readsPdf then pdfBuilt.map PdfCensus.census else none
       let fontsEmbedded : Bool :=
         if doc.asserts.any (·.kind == .fontsAllEmbedded) then
-          (pdfBuilt.all fun pdf => match PdfCensus.census pdf with
+          (pdfCensus.all fun c => match c with
             | .ok c => c.fontsEmbedded
             | .error _ => false) &&
           htmlBuilt.all fun _ => shipFonts
         else true
+      -- The declared profile set, held against the census of the PDF just
+      -- built: the meet's rules the file breaks, rendered. A run that
+      -- emits no PDF leaves the list empty and fails loud below instead.
+      let pdfViolations : Array String :=
+        match pdfCensus with
+        | none => #[]
+        | some (.error e) => #[s!"the PDF census refused the file: {e}"]
+        | some (.ok c) =>
+          if doc.output.profiles.isEmpty then #[]
+          else match PdfContract.Contract.ofProfiles doc.output.profiles with
+            | .ok k => (PdfContract.violations k c doc.info.title).map (·.render)
+            | .error v => #[v.render]
       let shipped := if doc.asserts.isEmpty then
           { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
         else Check.Shipped.ofOut geom fs out (fontsEmbedded := fontsEmbedded)
+      let shipped := { shipped with pdfViolations }
       -- The AA rows read the document and its judged diagnostics — the
       -- picture face speaks after fulfilment, so the driver reads the
       -- pre-\allow stream through that batch: accepting a warning quiets

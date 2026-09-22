@@ -84,10 +84,11 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
       | some (k, _) => keyFields k
       | none => ["<malformed>"])
   | "output" =>
-    some ((Decl.splitEntries src).map fun e =>
+    -- A bare entry continues the last opened list (`formats`, `profiles`).
+    some (((Decl.splitEntries src).foldl (fun (acc : List String × String) e =>
       match Decl.splitEntry e with
-      | some (k, _) => k
-      | none => "formats")
+      | some (k, _) => (acc.1 ++ [k], if k == "profiles" then k else "formats")
+      | none => (acc.1 ++ [acc.2], acc.2)) ([], "formats")).1)
   | "chrome" =>
     some ((Decl.splitEntries src).flatMap fun e =>
       match Decl.splitEntry e with
@@ -160,7 +161,7 @@ def synthetic : String :=
   "\\pdfmeta{ subject = \"an invented subject\" }\n" ++
   "\\page{ margin = 18mm }\n" ++
   "\\fonts{ body = \"Nonexistent Face\" }\n" ++
-  "\\output{ formats = pdf }\n" ++
+  "\\output{ formats = pdf, profiles = pdf/a-4 }\n" ++
   "\\chrome{ footer = { left = \\sectiontitle } }\n" ++
   "\\runninghead[from = 2]{An Invented Head}\n" ++
   "\\runningfoot{An Invented Foot}\n" ++
@@ -181,7 +182,8 @@ def syntheticSameHead : String :=
   "\\pdfmeta{ subject = \"an invented subject\" }\n" ++
   "\\pdfmeta{ keywords = \"invented, synthetic\" }\n" ++
   "\\output{ formats = pdf }\n" ++
-  "\\output{ css = own }\n" ++
+  "\\output{ css = own, color = device }\n" ++
+  "\\output{ profiles = pdf/a-4, pdf/ua-2 }\n" ++
   "\\chrome{ footer = { left = \\sectiontitle } }\n" ++
   "\\chrome{ footer = { right = \\framenumber } }\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"

@@ -29,6 +29,12 @@ structure Shipped where
   speak before layout runs and their facts are not recoverable from the
   page tree alone. Empty when nothing failed. -/
   a11y : Array String := #[]
+  /-- The rules of the declared profile set's contract the built PDF's
+  census breaks, rendered one per entry — filled by the driver from the
+  contract module over the census of the bytes, only when a profile is
+  declared. Empty when the file satisfies the contract, or when none is
+  declared. -/
+  pdfViolations : Array String := #[]
 
 /-- Measure the shipped pages. A glyph run's ink box is its advance across
 and its font's ascent/descent at the run's size vertically; a rule's is the
@@ -183,6 +189,9 @@ def one (shipped : Shipped) (a : Assertion) : Option Diag :=
   | .accessibilityAA =>
     if shipped.a11y.isEmpty then none
     else some (failure a (String.intercalate "; " shipped.a11y.toList))
+  | .pdfProfile _ =>
+    if shipped.pdfViolations.isEmpty then none
+    else some (failure a (String.intercalate "; " shipped.pdfViolations.toList))
 
 /-- Check every assertion. Empty result means the document satisfied them. -/
 def all (shipped : Shipped) (asserts : Array Assertion) : Array Diag :=

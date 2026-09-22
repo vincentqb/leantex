@@ -119,6 +119,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   colorKeyChecks ref oneFace
   pdfFormChecks ref oneFace
   pdfCensusChecks ref oneFace
+  pdfContractChecks ref oneFace
   objTableChecks ref oneFace
   pdfConformanceChecks ref oneFace
   leafAttributionChecks ref oneFace pats

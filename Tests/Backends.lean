@@ -3601,3 +3601,204 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t s!"artifacts: the corpus exercised the layer ({pages} pages, {wrappers} wrappers, \
 {furniture} furniture lines)"
     (pages > 0 && wrappers > 0 && furniture > 0)
+
+/-- The profile grammar and the contract algebra: a declared conformance
+name is a set element implying exactly one assertion, judged on the census
+of the built bytes; the meet of two contracts fails no file the two would
+each pass; and no claim is written — every corpus PDF is byte-identical
+to the writer's output before the grammar existed (the writer takes no
+contract; asserted here by the absence of any identification). -/
+def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let out (decl : String) : Ir.Doc × Array Diag := elabStr (dvDoc s!"\\output\{ {decl} }\n" "x")
+  let profileAsserts (d : Ir.Doc) : Array String := d.asserts.filterMap fun a =>
+    match a.kind with
+    | .pdfProfile n => some n
+    | .pages _ _ | .fontsAllEmbedded | .textInArea | .minXHeight _ | .accessibilityAA => none
+  -- Red 1: the key is known, the name lands in the set, one assertion is
+  -- implied, and A-4's colour demand folds into the contract.
+  let (d1, ds1) := out "formats = pdf, profiles = pdf/a-4"
+  t "profiles: 'profiles = pdf/a-4' is a known key" (!ds1.any fun d => d.code == "E0322" || d.code == "E0321")
+  t "profiles: the name lands in the set" (d1.output.profiles == #["pdf/a-4"])
+  t "profiles: one declared profile implies one pdf.profile assertion"
+    (profileAsserts d1 == #["pdf/a-4"])
+  t "profiles: the implied assertion reads the PDF alone"
+    ((Ir.AssertKind.pdfProfile "pdf/a-4").reads == #["pdf"] &&
+     (Ir.AssertKind.pdfProfile "pdf/a-4").source == "pdf.profile = pdf/a-4")
+  t "profiles: pdf/a-4 implies color = srgb" (d1.output.contract.color == .srgb)
+  -- Red 2: a set, and a refused name naming the registered ones.
+  let (d2, _) := out "formats = pdf, profiles = pdf/a-4, pdf/a-4"
+  t "profiles: a repeated name is one entry and one assertion"
+    (d2.output.profiles == #["pdf/a-4"] && profileAsserts d2 == #["pdf/a-4"])
+  let (d2b, _) := out "formats = pdf, profiles = pdf/a-4, pdf/ua-2"
+  t "profiles: two names are two entries, two assertions, in declaration order"
+    (d2b.output.profiles == #["pdf/a-4", "pdf/ua-2"] && profileAsserts d2b == #["pdf/a-4", "pdf/ua-2"])
+  let (dz, dsz) := out "formats = pdf, profiles = pdf/z"
+  t "profiles: an unknown name is E0321 listing the registered names"
+    (dsz.any fun d => d.code == "E0321" && hasStr d.message "pdf/z" &&
+      hasStr (d.help.getD "") "pdf/a-4" && hasStr (d.help.getD "") "pdf/ua-2" &&
+      hasStr (d.help.getD "") "pdf/x-6")
+  t "profiles: an unknown name never enters the set" (dz.output.profiles.isEmpty && (profileAsserts dz).isEmpty)
+  t "profiles: a bare entry after another key is still refused"
+    ((out "css = own, pdf/a-4").2.any (·.code == "E0320"))
+  -- Red 3: UA-2 folds alternatives = required; declared keys win, in
+  -- either order.
+  let (d3, _) := out "formats = pdf, profiles = pdf/ua-2"
+  t "profiles: pdf/ua-2 implies alternatives = required" (d3.output.contract.alternatives == .required)
+  t "profiles: a declared 'color = device' wins over pdf/a-4's srgb"
+    ((out "formats = pdf, profiles = pdf/a-4, color = device").1.output.contract.color == .device)
+  let (dRev, _) := elabStr (dvDoc "\\output{ color = device }\n\\output{ profiles = pdf/a-4 }\n" "x")
+  t "profiles: the declared key wins whatever order the two blocks come in"
+    (dRev.output.contract.color == .device)
+  t "profiles: a declared 'alternatives = judged' wins over pdf/ua-2's required"
+    ((out "formats = pdf, profiles = pdf/ua-2, alternatives = judged").1.output.contract.alternatives == .judged)
+  t "profiles: pdf/x-6 folds no backend-neutral demand"
+    ((out "formats = pdf, profiles = pdf/x-6").1.output.contract == {})
+  -- The algebra, executable: the table, the meet, the order.
+  t "contract: the registered names are exactly the table's"
+    (PdfContract.Profile.names.all fun n => (PdfContract.Profile.contract? n).isSome)
+  t "contract: brotli is not a registered name" ((PdfContract.Profile.contract? "brotli").isNone &&
+    !PdfContract.Profile.names.contains "brotli")
+  t "contract: the empty set is plain" (PdfContract.Contract.ofProfiles #[] == .ok PdfContract.plain)
+  t "contract: plain ≤ every profile; the brotli extension permits more, so it sits below plain"
+    (PdfContract.plain.le PdfContract.archive && PdfContract.plain.le PdfContract.accessible &&
+     PdfContract.plain.le PdfContract.print && PdfContract.brotli.le PdfContract.plain &&
+     !PdfContract.plain.le PdfContract.brotli)
+  t "contract: archive is not ≤ plain" (!PdfContract.archive.le PdfContract.plain)
+  let both := PdfContract.archive.meet PdfContract.accessible
+  t "contract: each member ≤ the meet (meet_covers, executable)"
+    (PdfContract.archive.le both && PdfContract.accessible.le both &&
+     PdfContract.Contract.ofProfiles #["pdf/a-4", "pdf/ua-2"] == .ok both)
+  t "contract: the meet forbids Info, demands tagging, claims both ids"
+    (both.infoDict == .absent && both.tagged && both.needsLang && both.ids.contains .pdfa &&
+     both.ids.contains .pdfua && both.colour == .intent .rgb)
+  let rev := PdfContract.accessible.meet PdfContract.archive
+  t "contract: meet is commutative on the demands (meet_comm, executable)"
+    (both.infoDict == rev.infoDict && both.colour == rev.colour && both.intent == rev.intent &&
+     both.tagged == rev.tagged && both.needsTitle == rev.needsTitle && both.boxes == rev.boxes &&
+     both.filters.all rev.filters.contains && rev.filters.all both.filters.contains &&
+     both.ids.all rev.ids.contains && rev.ids.all both.ids.contains)
+  t "contract: meet is idempotent"
+    (PdfContract.archive.meet PdfContract.archive == PdfContract.archive &&
+     PdfContract.accessible.meet PdfContract.accessible == PdfContract.accessible)
+  t "contract: a-4 + x-6 is refused: two intents of different colour kinds"
+    (match PdfContract.Contract.ofProfiles #["pdf/a-4", "pdf/x-6"] with
+     | .error v => hasStr v.actual "colour kinds" &&
+        (PdfContract.archive.meet PdfContract.print).colour == .conflict
+     | .ok _ => false)
+  t "contract: an unregistered name is refused by the fold too"
+    (match PdfContract.Contract.ofProfiles #["pdf/z"] with
+     | .error v => hasStr v.actual "pdf/z"
+     | .ok _ => false)
+  t "contract: any profile's meet removes the brotli filter"
+    (!(PdfContract.brotli.meet PdfContract.archive).filters.contains (.other "BrotliDecode") &&
+     PdfContract.brotli.filters.contains (.other "BrotliDecode"))
+  t "contract: the filter intersection is the set intersection"
+    ((PdfContract.brotli.meet PdfContract.archive).filters.all (fun f =>
+        PdfContract.brotli.filters.contains f && PdfContract.archive.filters.contains f) &&
+     PdfContract.brotli.filters.all fun f => !PdfContract.archive.filters.contains f ||
+        (PdfContract.brotli.meet PdfContract.archive).filters.contains f)
+  -- Judged on a written file's census: plain passes, the others fail by
+  -- name, and each named fact turns the rule off.
+  let (doc, _) := Elab.run "t" "A line of text."
+  let lo := layoutOf oneFace doc
+  let pdf := Pdf.write {} oneFace lo.pages
+  match pdfCensusOf pdf with
+  | .error e => t s!"contract: census of the written file: {e}" false
+  | .ok c =>
+    let rules (k : PdfContract.Contract) (title : Option String := none) : Array String :=
+      (PdfContract.violations k c title).map (·.rule)
+    t "violations: today's file satisfies plain" ((rules PdfContract.plain).isEmpty)
+    t "violations: archive fails on Info and the missing intent, nothing else"
+      (rules PdfContract.archive == #["6.1.3-4", "6.2.4.3"])
+    t "violations: accessible fails on structure, mark, language, title"
+      (rules PdfContract.accessible == #["8.2.1-1", "6.2-1", "8.4.4-1", "8.11.1-1"])
+    t "violations: a title turns the title rule off (needsTitle_accounts, executable)"
+      (rules PdfContract.accessible (some "T") == #["8.2.1-1", "6.2-1", "8.4.4-1"] &&
+       !(PdfContract.violations PdfContract.accessible c none).isEmpty)
+    t "violations: print fails on the intent and the boxes"
+      (rules PdfContract.print == #["6.2.4.3", "trim-xor-art"])
+    t "violations: the meet's list is each member's rules"
+      (rules both == rules PdfContract.archive ++ rules PdfContract.accessible)
+    t "violations: the conflict meet judges too"
+      (rules (PdfContract.archive.meet PdfContract.print) == #["6.1.3-4", "6.2.4.3", "trim-xor-art"])
+    t "violations: render names the fact then the rule"
+      ((PdfContract.violations PdfContract.archive c none).map (·.render) ==
+        #["trailer /Info dictionary present (6.1.3-4)",
+          "no output intent: device colour has no device-independent meaning (6.2.4.3)"])
+  let (docL, _) := elabStr (dvDoc "\\pdfmeta{ language = \"en\" }\n" "A line of text.")
+  let loL := layoutOf oneFace docL
+  match pdfCensusOf (Pdf.write {} oneFace loL.pages docL.info) with
+  | .error e => t s!"contract: census of the language file: {e}" false
+  | .ok c =>
+    t "violations: a declared language turns the /Lang rule off"
+      ((PdfContract.violations PdfContract.accessible c none).map (·.rule) == #["8.2.1-1", "6.2-1", "8.11.1-1"])
+  -- The corpus: every fixture satisfies plain, every monotone instance
+  -- holds, and no file carries an identification — the writer is
+  -- untouched by this slice.
+  let mut n := 0
+  for name in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let (doc, _) ← elabFixture name src
+    let geom := Layout.Geom.ofPage doc.page
+    let store ← corpusStore doc
+    let lo := layoutOf oneFace doc geom none store
+    let pdf := Pdf.write geom oneFace lo.pages doc.info store lo.outline
+    t s!"contract {name}: no fixture declares a profile" doc.output.profiles.isEmpty
+    t s!"contract {name}: no identification is written" (!bytesContain (pdfText pdf) "pdfaid" &&
+      !bytesContain (pdfText pdf) "pdfuaid" && !bytesContain (pdfText pdf) "pdfxid")
+    match pdfCensusOf pdf with
+    | .error e => t s!"contract {name}: census: {e}" false
+    | .ok c =>
+      n := n + 1
+      let v (k : PdfContract.Contract) := PdfContract.violations k c doc.info.title
+      t s!"contract {name}: the file satisfies plain" ((v PdfContract.plain).isEmpty)
+      t s!"contract {name}: the meet passes only files each member passes (violations_monotone)"
+        (((v both).isEmpty → (v PdfContract.archive).isEmpty && (v PdfContract.accessible).isEmpty) &&
+         ((v PdfContract.archive).isEmpty → (v PdfContract.plain).isEmpty))
+      t s!"contract {name}: archive fails today on Info" ((v PdfContract.archive).any (·.rule == "6.1.3-4"))
+  t s!"contract: the corpus was censused ({n} files)" (n > 0)
+  -- The driver, end to end: honest failure with the census facts as
+  -- actual, nothing written, exit 2; an unknown name refused; a set with
+  -- no PDF to judge fails loud.
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"leantex builds for the profile checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let dir ← IO.FS.createTempDir
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+    let pre := "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
+    let one := "\\begin{document}\nA probe.\n\\end{document}\n"
+    let run (name decl : String) : IO (UInt32 × String × System.FilePath) := do
+      IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ one)
+      let outDir := dir / s!"out-{name}"
+      let r ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+      return (r.exitCode, r.stdout ++ r.stderr, outDir)
+    let (code, log, outDir) ← run "a4" "\\output{ formats = pdf, profiles = pdf/a-4 }\n"
+    t s!"driver: pdf/a-4 on a plain article is E0330 with the census facts as actual: {log}"
+      (code == 2 && hasStr log "E0330" && hasStr log "pdf.profile = pdf/a-4" &&
+       hasStr log "/Info dictionary present" && hasStr log "no output intent" &&
+       !(← outDir.pathExists))
+    let (code, log, outDir) ← run "z" "\\output{ formats = pdf, profiles = pdf/z }\n"
+    t s!"driver: pdf/z is E0321 naming the registered profiles: {log}"
+      (code != 0 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
+       !(← outDir.pathExists))
+    let (code, log, outDir) ← run "ua2" "\\output{ formats = pdf, profiles = pdf/ua-2 }\n"
+    t s!"driver: pdf/ua-2 fails honestly on structure, mark, language: {log}"
+      (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && hasStr log "no structure tree" &&
+       hasStr log "no MarkInfo" && hasStr log "no /Lang" && !(← outDir.pathExists))
+    let (code, log, outDir) ← run "html" "\\output{ formats = html, profiles = pdf/a-4 }\n"
+    t s!"driver: profiles with no PDF emitted fails loud: {log}"
+      (code == 2 && hasStr log "no emitted artifact carries this measurement" &&
+       !(← outDir.pathExists))
+    let (code, log, _) ← run "a4x6" "\\output{ formats = pdf, profiles = pdf/a-4, pdf/x-6 }\n"
+    t s!"driver: a-4 + x-6 fails both assertions on the intent conflict: {log}"
+      (code == 2 && hasStr log "pdf.profile = pdf/a-4" && hasStr log "pdf.profile = pdf/x-6" &&
+       hasStr log "different colour kinds")
+    let (code, log, outDir) ← run "none" "\\output{ formats = pdf }\n"
+    t s!"driver: no profile, no judgement, the file ships: {log}"
+      (code == 0 && (← (outDir / "none.pdf").pathExists))
+    IO.FS.removeDirAll dir

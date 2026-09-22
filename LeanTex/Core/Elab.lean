@@ -11,6 +11,7 @@ import LeanTex.Core.Contrast
 import LeanTex.Core.Picture
 import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
+import LeanTex.Core.PdfContract
 
 namespace LeanTex.Core.Elab
 
@@ -8867,14 +8868,21 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
         evs := evs.push (.say (Decl.unknownKey ctx.file "chrome" key ["footer"] pos))
   return (chrome, evs)
 
+/-- The two bare comma lists `\output` takes; an entry without `=`
+continues whichever was last opened. -/
+private inductive OutputList where
+  | formats
+  | profiles
+
 /-- `\output{...}`: what to build, so a document needs no CLI options.
-`formats` takes a bare comma list (`formats = pdf, html`), so entries are
-walked by hand: an entry without `=` continues the list. -/
+`formats` and `profiles` take bare comma lists (`formats = pdf, html`,
+`profiles = pdf/a-4, pdf/ua-2`), so entries are walked by hand: an entry
+without `=` continues the open list. -/
 private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos) :
     OutputSpec × Array PEvent := Id.run do
   let mut o := o0
   let mut evs : Array PEvent := #[]
-  let mut inFormats := false
+  let mut inList : Option OutputList := none
   let say (evs : Array PEvent) (code : DiagCode) (msg : String)
       (help : Option String := none) : Array PEvent :=
     evs.push (.say (diagOf ctx code msg (some pos) help))
@@ -8885,15 +8893,35 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     else
       (o, say evs .E0321 s!"'{f}' is not an output format"
         (help := "formats: pdf, html, md"))
+  -- A profile name is checked against the registered table, the `formats`
+  -- pattern: an unknown name is refused naming the registered ones and
+  -- never enters the set.
+  let addProfile (o : OutputSpec) (evs : Array PEvent) (p : String) :
+      OutputSpec × Array PEvent :=
+    if PdfContract.Profile.names.contains p then
+      (o.addProfile p, evs)
+    else
+      (o, say evs .E0321 s!"'{p}' is not a conformance profile"
+        (help := s!"profiles: {String.intercalate ", " PdfContract.Profile.names}"))
+  let addListed (o : OutputSpec) (evs : Array PEvent) (l : OutputList) (v : String) :
+      OutputSpec × Array PEvent :=
+    match l with
+    | .formats => addFormat o evs v
+    | .profiles => addProfile o evs v
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | some ("formats", v) =>
-      inFormats := true
+      inList := some .formats
       let (o', evs') := addFormat o evs v
       o := o'
       evs := evs'
+    | some ("profiles", v) =>
+      inList := some .profiles
+      let (o', evs') := addProfile o evs v
+      o := o'
+      evs := evs'
     | some ("css", v) =>
-      inFormats := false
+      inList := none
       if ["own", "bulma", "none"].contains v then
         o := { o with css := some v }
         evs := evs.push (.scalar "output" "css" v pos)
@@ -8901,7 +8929,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         evs := say evs .E0321 s!"'{v}' is not a stylesheet mode"
           (help := "css: own, bulma, none")
     | some ("stylesheet", v) =>
-      inFormats := false
+      inList := none
       -- A path is a string; the quotes other declarations require are
       -- accepted but not demanded, as `formats` entries are bare too.
       let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
@@ -8910,7 +8938,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       o := { o with stylesheet := some v }
       evs := evs.push (.scalar "output" "stylesheet" v pos)
     | some ("md", v) =>
-      inFormats := false
+      inList := none
       let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
           String.ofList (v.toList.drop 1).dropLast
         else v
@@ -8919,7 +8947,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     -- The contract keys: each a closed enumeration, last wins, and each
     -- an apply site the commutation oracle sees through its event.
     | some ("alternatives", v) =>
-      inFormats := false
+      inList := none
       let pol : Option AltPolicy := match v with
         | "judged" => some .judged
         | "required" => some .required
@@ -8932,7 +8960,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         evs := say evs .E0321 s!"'{v}' is not an alternatives policy"
           (help := "alternatives: judged, required")
     | some ("color", v) =>
-      inFormats := false
+      inList := none
       let intent : Option ColorIntent := match v with
         | "device" => some .device
         | "srgb" => some .srgb
@@ -8945,7 +8973,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         evs := say evs .E0321 s!"'{v}' is not a colour intent"
           (help := "color: device, srgb")
     | some ("fonts", v) =>
-      inFormats := false
+      inList := none
       let pol : Option FontPolicy := match v with
         | "embedded" => some .embedded
         | "none" => some .none
@@ -8958,15 +8986,16 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         evs := say evs .E0321 s!"'{v}' is not a font policy"
           (help := "fonts: embedded, none")
     | some (key, _) =>
-      inFormats := false
+      inList := none
       evs := evs.push (.say (Decl.unknownKey ctx.file "output" key
-        (["formats", "css", "stylesheet", "md"] ++ OutputContract.facts) pos))
+        (["formats", "profiles", "css", "stylesheet", "md"] ++ OutputContract.facts) pos))
     | none =>
-      if inFormats then
-        let (o', evs') := addFormat o evs entry
+      match inList with
+      | some l =>
+        let (o', evs') := addListed o evs l entry
         o := o'
         evs := evs'
-      else
+      | none =>
         evs := say evs .E0320 s!"invalid entry in '\\output': {entry.quote}"
           (help := some "entries look like: formats = pdf, html")
   return (o, evs)
@@ -10509,6 +10538,28 @@ declare \\assert\{ pages <= N } to take control" }
   if let some (floor, h) := record.xHeightFloor then
     unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
       asserts := asserts.push { kind := .minXHeight floor, help := some h }
+  -- A declared conformance profile is a set element that implies exactly
+  -- one assertion, `pdf.profile = <name>`, judged on the census of the
+  -- built bytes (the class-implied shape); and it folds its
+  -- backend-neutral demands into the output contract — where the document
+  -- declared a contract key itself, the declaration wins, whatever order
+  -- the two were written in (read here, after every `\output`, so the
+  -- fold commutes with the declarations).
+  let seen := (← get).seenScalars
+  let declaredKey (k : String) : Bool :=
+    seen.any fun e => e.1 == "output" && e.2.1 == k
+  for name in output.profiles do
+    asserts := asserts.push {
+      kind := .pdfProfile name
+      help := some s!"declared by \\output\{ profiles = {name} }; the rules named are the file's, judged on its bytes" }
+    let imp := PdfContract.Profile.implies name
+    output := { output with contract := {
+      alternatives := if declaredKey "alternatives" || imp.alternatives == ({} : OutputContract).alternatives
+        then output.contract.alternatives else imp.alternatives
+      color := if declaredKey "color" || imp.color == ({} : OutputContract).color
+        then output.contract.color else imp.color
+      fonts := if declaredKey "fonts" || imp.fonts.isNone
+        then output.contract.fonts else imp.fonts } }
   if trailing.any (!isSpaceOrPar ·) then
     diag ctx .W0001 "content after '\\end{document}' is ignored" none
   -- PDF metadata falls back to the title declarations: a deck that says

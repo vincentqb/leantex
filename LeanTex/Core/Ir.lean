@@ -1329,6 +1329,12 @@ structure OutputSpec where
   /-- The semantic contract the artifacts are held to (`OutputContract`);
   every key defaults to today's behaviour. -/
   contract : OutputContract := {}
+  /-- The conformance profiles the PDF is held to (`profiles = pdf/a-4,
+  pdf/ua-2`): a set of registered names, each implying the assertion
+  `pdf.profile = <name>`, judged on the census of the built bytes. Names
+  stay strings here for the reason `formats` does; the PDF contract module
+  owns the table they index. -/
+  profiles : Array String := #[]
   css : Option String := none
   /-- A stylesheet the HTML page links, resolved by the browser relative to
   the page. `css = none` promised "bring your own stylesheet" but gave the
@@ -1357,6 +1363,29 @@ half of the surface stays a set. -/
 theorem OutputSpec.addFormat_nodup (o : OutputSpec) (f : String)
     (h : o.formats.toList.Nodup) : (o.addFormat f).formats.toList.Nodup := by
   unfold addFormat
+  split
+  · exact h
+  · next hc =>
+    rw [Array.toList_push]
+    rw [List.nodup_append]
+    refine ⟨h, by simp, ?_⟩
+    intro x hx y hy hxy
+    rw [List.mem_singleton] at hy
+    apply hc
+    subst hy
+    subst hxy
+    simpa [Array.contains_iff_mem] using hx
+
+/-- One profile onto the set, dedup by name: the pure half of
+`applyOutput`'s profiles walk, `addFormat`'s twin. -/
+def OutputSpec.addProfile (o : OutputSpec) (p : String) : OutputSpec :=
+  { o with profiles := if o.profiles.contains p then o.profiles else o.profiles.push p }
+
+/-- A profile set never grows a duplicate: `profiles = pdf/a-4, pdf/a-4` is
+one entry and one implied assertion — the declaration is a set. -/
+theorem OutputSpec.addProfile_nodup (o : OutputSpec) (p : String)
+    (h : o.profiles.toList.Nodup) : (o.addProfile p).profiles.toList.Nodup := by
+  unfold addProfile
   split
   · exact h
   · next hc =>
@@ -1459,6 +1488,12 @@ inductive AssertKind where
   browser rendering) are outside the assertion and stay named in PLAN,
   never implied passes. -/
   | accessibilityAA
+  /-- The PDF satisfies the named conformance profile's contract, judged
+  on the read-side census of the bytes just built — implied by
+  `\output{ profiles = <name> }`, one per name, never declared directly.
+  It fails with the violated rules as its actual; nothing claims the
+  profile in the file until the writer reads the contract. -/
+  | pdfProfile (name : String)
   deriving Repr, BEq, Inhabited
 
 def AssertKind.source : AssertKind → String
@@ -1467,6 +1502,7 @@ def AssertKind.source : AssertKind → String
   | .textInArea => "text.in_area"
   | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
   | .accessibilityAA => "accessibility = AA"
+  | .pdfProfile name => s!"pdf.profile = {name}"
 
 /-- The emitted artifacts an assertion is judged on, in `OutputSpec.formats`'
 own vocabulary (`"pdf"`, `"html"`, `"md"`; strings, so the core learns no
@@ -1477,25 +1513,31 @@ CLI type). Empty means the assertion reads no artifact:
 | `pages`, `textInArea`, `minXHeight` | none | the layout, whatever is emitted — facts of `Layout.run`, which runs unconditionally and is a function of the document |
 | `accessibilityAA` | none | the document and its judged diagnostics, neither per artifact |
 | `fontsAllEmbedded` | `pdf`, `html` | each emitted artifact: the PDF by the census of its bytes, the HTML by the faces it ships beside the page |
+| `pdfProfile` | `pdf` | the PDF alone, by the census of its bytes against the profile's contract |
 
 The driver judges a non-empty `reads` against what the run emits, and a
 run emitting none of them fails the assertion loud rather than passing it
 vacuously (`assert_reads_shipped`). No class implies `fontsAllEmbedded`, so
-that failure is reachable only from a document that asked. -/
+that failure is reachable only from a document that asked; `pdfProfile` is
+implied by `profiles =`, so `formats = html, profiles = pdf/a-4` fails
+there too. -/
 def AssertKind.reads : AssertKind → Array String
   | .pages _ _ => #[]
   | .fontsAllEmbedded => #["pdf", "html"]
   | .textInArea => #[]
   | .minXHeight _ => #[]
   | .accessibilityAA => #[]
+  | .pdfProfile _ => #["pdf"]
 
-/-- The one assertion whose subject is bytes is the one that reads
-artifacts, and it reads exactly the two that carry faces (`_accounts`
-shape: the per-artifact judgement is paid for by a named artifact list). -/
+/-- The assertions whose subject is bytes are the ones that read
+artifacts: the font one reads exactly the two that carry faces, a profile
+one reads exactly the PDF (`_accounts` shape: the per-artifact judgement
+is paid for by a named artifact list). -/
 theorem assert_reads_shipped :
-    (∀ k : AssertKind, k.reads ≠ #[] ↔ k = .fontsAllEmbedded) ∧
-    AssertKind.reads .fontsAllEmbedded = #["pdf", "html"] := by
-  refine ⟨fun k => ?_, rfl⟩
+    (∀ k : AssertKind, k.reads ≠ #[] ↔ k = .fontsAllEmbedded ∨ ∃ n, k = .pdfProfile n) ∧
+    AssertKind.reads .fontsAllEmbedded = #["pdf", "html"] ∧
+    ∀ n, AssertKind.reads (.pdfProfile n) = #["pdf"] := by
+  refine ⟨fun k => ?_, rfl, fun _ => rfl⟩
   cases k <;> simp [AssertKind.reads]
 
 structure Assertion where

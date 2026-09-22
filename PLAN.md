@@ -169,6 +169,79 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — a conformance profile is a set element that implies exactly
+one assertion, judged on the census of the bytes just built, and no claim
+is written (pdf-profile-grammar, M7-13, W2.3a; feature — grammar, pure
+algebra, one assertion kind; no byte of any PDF changes: 72 corpus PDFs
+`cmp`-identical, goldens unchanged). `\output{ profiles = pdf/a-4,
+pdf/ua-2 }` is a bare comma list beside `formats`, a set by
+`OutputSpec.addProfile_nodup`; an unknown name is E0321 listing the
+registered ones (`PdfContract.Profile.names`, one with the table by
+`Profile.names_covers`). Each name pushes `AssertKind.pdfProfile name`
+(`pdf.profile = <name>`, `reads = #["pdf"]` — `assert_reads_shipped`
+restated: the byte-reading kinds are `fontsAllEmbedded` and every
+`pdfProfile`) onto `doc.asserts` at assembly, and folds `Profile.implies`
+into the output contract there — after every `\output`, so the fold
+commutes with the declarations (compose-fuzz green with the key in both
+synthetic preambles) and a declared key wins by the `seenScalars` store,
+not by order. `PdfContract.lean` (pure; imports the census and the IR,
+never the writer — the hook's writer-reach gate now applies to both
+judges) carries `Contract` — `infoDict`, `filters` allowlist, `colour`,
+`intent`, `tagged`/`structDests`/`tabs`/`needsLang`/`needsTitle`,
+`boxes`, `ids` — the built-ins `plain`/`archive`/`accessible`/`print`/
+`brotli`, `meet` (fieldwise stricter), `le` (decidable), `ofProfiles`
+(the fold from `plain`, refusing an unregistered name and a set whose
+intents cannot share one destination profile), `violations : Contract →
+Census → Option String → Array Violation`, and `Profile.implies` (A-4 →
+`color = srgb`, UA-2 → `alternatives = required`). The driver fills
+`Shipped.pdfViolations` from the meet's violations inside S2's census
+phase, only when a profile is declared; `Check.one`'s `.pdfProfile` arm
+fails with them as the actual. Four shapes the brief drew were refactored
+where the statement asked: no `name` field (the meet of two names is not
+a name; the name is the table's key); `XmpId` an enumeration with its
+schema/part/rev as functions (a union by name over a record is not a set
+statement); `IntentReq` `one s | both` (the two-intents case the brief
+spelled `.two a b`); `ColourPolicy.conflict` as the top of the colour
+order, so `meet` is total and `ofProfiles` refuses the pair after the
+fold instead of inside it. The title is judged from `Meta.title`, the one
+IR-side input: the census does not parse XMP, and `dc:title` is the
+writer's projection of that field. `plain`'s allowlist is Table 6 whole
+(what PDF 2.0 itself permits — an allowlist of the engine's own three
+filters would have flagged a copied JPX page under A-4, which A-4
+permits), so `brotli` sits *below* `plain` and an extension must start
+the fold rather than join it. Proved, no `sorry`, ratchet unchanged at
+eleven rows: `addProfile_nodup`, `meet_comm` (`same`: scalar fields
+exact, filters and ids as sets), `meet_idem` (record equality),
+`meet_covers`, `filters_meet_set_eq`, `violations_monotone` (rule by
+rule: nine `_mono` lemmas, one per rule, the rules concatenated),
+`needsTitle_accounts`, `assert_reads_shipped`, `Profile.names_covers`,
+`ofProfiles_plain`. Rules the census cannot see are not judged and are
+named in the module docstring, never approximated from intent: content
+operator colour (the intent rule judges the intent's presence — veraPDF
+confirms the reasoning, firing 6.2.4.3-4 DeviceGray on a colourless
+probe, the initial graphics state), the intent's profile kind, page
+`/Group /CS`, `Default*` spaces, `/Indexed` bases, `/Tabs`, structure
+destinations, artifact marking (8.2.2-1), per-page boxes, Info keys
+(6.1.3-5). Red: the three fixtures were `E0322: '\output' has no key
+'profiles'` on main; now `pdf/a-4` on a plain article is E0330 with
+`trailer /Info dictionary present (6.1.3-4); no output intent … (6.2.4.3)`
+and nothing written, `pdf/ua-2` fails on `no structure tree; no MarkInfo;
+no /Lang; no title`, `pdf/x-6` on the intent and Trim-xor-Art, `pdf/a-4,
+pdf/x-6` refused as two intents of different colour kinds, `formats =
+html, profiles = pdf/a-4` fails loud through S4's `reads` gate. Oracle:
+veraPDF 1.30 on the probe — A-4 fires 6.1.3-4, 6.1.3-5, 6.2.4.3-4,
+6.7.3-1; UA-2 fires 5-1, 6.2-1, 8.2.1-1, 8.2.2-1, 8.4.4-1, 8.11.1-1; every
+census violation is a veraPDF rule (the title rule is spelled `8.11.1-1`
+after it), and the veraPDF rules the census does not report are the two
+identification rules (absence of a claim is not a violation of the
+contract), 6.1.3-5 (same fix as 6.1.3-4), and 8.2.2-1 (a gap for the
+tag skeleton and the UA-2 claim). The A-4 profile's implied `color =
+srgb` fires S4's W0701 against today's device-colour PDF with a help that
+says "drop `color = srgb`" — accurate to the contract, blunt about the
+cause; the colour plan retires the warning. Unlocks `pdf-color-plan`
+(`Contract.colour`, `IntentReq`), `pdf-a4-claim` (the writer reads the
+meet; `xmpIds`; W0702), the UA-2 and X-6 claims.
+
 2026-09-21 — every non-real painting operator sits inside `/Artifact`, and
 the ink is provably unmoved (pdf-tag-artifacts, M7-19a; feature — PDF
 bytes gain marked-content lines, rasters and text extraction identical).
