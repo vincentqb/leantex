@@ -2161,6 +2161,27 @@ def deckLogoChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, ads) := HtmlDoc.emit {} adoc
   t "an article's logo is still a named drop"
     (ads.any (·.code == "W0007"))
+  -- Request exactly where placed, under every shipped bundle: a logo image
+  -- is one entry of `imageRefs` (the driver's read, W0601 when the file is
+  -- absent) and its box — the placeholder, here, with an empty store —
+  -- stands on exactly the pages the declaration is in force for. No bundle
+  -- may keep the request while dropping the placement (a warning for
+  -- furniture no page shows) or place a logo the census never requested.
+  for th in Theme.builtin do
+    let (ldoc, _) := elabStr (deck169 ("\\theme{" ++ th.name ++ "}")
+      ("\\begin{frame}{One}\na\n\\end{frame}\n" ++
+       "\\logo{\\includegraphics[totalheight=.25\\textheight]{nope/absent.png}}\n" ++
+       "\\begin{frame}{Two}\nb\n\\end{frame}\n" ++
+       "\\logo{}\n" ++
+       "\\begin{frame}{Three}\nc\n\\end{frame}"))
+    let lout := layoutOf oneFace ldoc
+    let boxOn (p : Layout.PageOut) : Bool := p.lines.any fun l =>
+      l.furniture && l.segs.any fun sg => match sg with
+        | .image _ _ _ => true
+        | _ => false
+    t s!"{th.name}: the logo image is requested once and its box ships on exactly the declared frame's page"
+      (Ir.imageRefs ldoc == #["nope/absent.png"] &&
+       lout.pages.size == 3 && lout.pages.map boxOn == #[false, true, false])
 
 /-- The gemini poster bundle: the lineage resolves by name (`\usetheme{gemini}`
 and the native `\theme{gemini}` both retire W0319), it installs nothing the
