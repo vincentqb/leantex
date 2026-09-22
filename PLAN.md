@@ -187,6 +187,57 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 - a leaf id belongs to the tree, not to the walk (alt-leaf-identity,
+M5; design decision, taken after three attempts failed and recorded before the
+code that will honour it). Overlay alternation ships one of two groups per step
+page (\`Ir.Inline.alt\`, the entry below), so an \`alt\` frame's step pages differ
+in content - and that broke the PDF structure tree three different ways. The
+attempts, each a genuine finding:
+
+1. Give an \`alt\` frame's steps their own leaves (drop the per-step rewind).
+   Overflows: the tree is built once from \`Struct.ofDoc (pdfView doc)\` while
+   layout allocates per step, so layout asked for leaf 19 of a 19-row tree.
+2. Keep the rewind, fix the ORDER (store the groups in page order, not spec
+   order). Landed and half-worked - the group census went from
+   \`"thesecondbeat."\` to \`"thefirstbeat."\`, matching page 1 - but identity
+   still breaks: both pages name leaf 15, so page 2's ink is tagged as the
+   other alternative and leaf 16 is named by no page.
+3. Teach \`Struct.ofDoc\` to expand per step, so the tree describes pages.
+   Collapses on a 3-step frame with \`<2>\`: the pages carry \`firstPage\` twice
+   and \`otherPage\` once, so the tree can no longer conserve the document's
+   census exactly once (\`blockRaw_text\`).
+
+What all three share is the mistake: each reconciles two counters after the
+fact, treating a leaf id as something a walk ACCUMULATES. The decision is the
+opposite - *a leaf id is a property of the node's position in the document
+tree, not of the walk that reaches it*. The structure tree stays the single
+source of truth, each group declared exactly once in page order, and layout
+REFERENCES ids instead of minting them; rewinding, advancing and skipping stop
+being questions, and the fact becomes the \`_projects\` shape already used
+elsewhere (layout's leaf reference is a projection of \`Struct\`). Route 3 is
+rejected on the same ground: the tree owes the document census, and the
+per-page view is the marked-content references' job, which is what ISO 32000-2
+already separates.
+
+The same principle settles the HTML half, which is why it is one entry. Both
+artifacts must decide *which group step k inks* from ONE predicate, so their
+equivalence is statable over that predicate (the \`_agree\` shape) rather than
+by comparing two emitters - an artifact that decided for itself could disagree
+and no theorem would notice. That predicate is \`Ir.altShowsFirst\`, landed
+here: page-order storage makes it \`stepPending n last k == stepPending n last
+1\`, with \`altShowsFirst_id\` pinning step 1 to the group stored first so page
+order is a fact rather than a convention. \`selectSteps\` now reads it; the HTML
+deck rules will read the same one.
+
+Owed, both named before the code (§ Owed obligations):
+\`alt_leaf_projects\` - an \`alt\` frame's page reference is the projection of the
+structure tree's own leaf for the group it inks; blocker: layout mints leaf ids
+by accumulation, so the statement has nothing to project from until the id
+becomes positional. \`alt_backend_agree\` - the two artifacts ink the same group
+on the same step, both sides reading \`altShowsFirst\`; blocker: HTML does not
+alternate yet, and its step rules key only on \`data-step\` and never
+\`data-step-last\`, so it cannot re-cover past a range end - the prerequisite.
+
 2026-09-22 — `\alert<spec>{body}` inks its body once (alert-overlay-once,
 M5; engine bug, and a correction of the entry below — the `\alt` rewrite
 shipped there put the body on the page TWICE on every step: under

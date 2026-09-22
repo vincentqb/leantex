@@ -5723,6 +5723,26 @@ hidden. -/
 def stepPending (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
   k < n || (match last with | some u => k > u | none => false)
 
+/-- Which group of an overlay alternation does step \`k\` ink: the one stored
+first, or the other? The ONE decision behind alternation, named so that every
+consumer reads the same answer — the PDF's page selection (\`selectSteps\`), the
+HTML deck's rules, and the census facts that hold the two artifacts to each
+other (the \`_agree\` shape). An artifact that decided this for itself could
+disagree with the other and no theorem would notice, which is the whole reason
+this is a definition and not an inlined test.
+
+Page-order storage is what makes it this simple: step \`k\` inks the group
+stored first exactly when it falls on step 1's side of the spec, so
+\`altShowsFirst n last 1\` is \`true\` by construction. -/
+def altShowsFirst (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
+  stepPending n last k == stepPending n last 1
+
+/-- Step 1 inks the group stored first: page order, as a fact rather than a
+convention a later reader has to trust. -/
+theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
+    altShowsFirst n last 1 = true := by
+  simp [altShowsFirst]
+
 mutual
 
 /-- The last step a frame's body reaches: how many pages the PDF handout
@@ -6058,7 +6078,7 @@ termination_by structural xs
 def selectBlockOne (k : Nat) (out : Array Block) (b : Block) : Array Block :=
   match b with
   | .alt n last firstPage otherPage =>
-    if stepPending n last k == stepPending n last 1 then
+    if altShowsFirst n last k then
       selectBlockList k out firstPage.toList
     else selectBlockList k out otherPage.toList
   | .para content => out.push (.para (selectInlineList k #[] content.toList))
@@ -6169,7 +6189,7 @@ def selectInlineList (k : Nat) (out : Array Inline) : List Inline → Array Inli
 -- document one; the walks below carry the same refusal for it.
 def selectInlineOne (k : Nat) (out : Array Inline) : Inline → Array Inline
   | .alt n last firstPage otherPage =>
-    if stepPending n last k == stepPending n last 1 then
+    if altShowsFirst n last k then
       selectInlineList k out firstPage.toList
     else selectInlineList k out otherPage.toList
   | .styled st body => out.push (.styled st (selectInlineList k #[] body.toList))
@@ -6213,9 +6233,9 @@ says step 1 inks `firstPage`, which is what page order means. -/
 theorem selectSteps_exact (k n : Nat) (last : Option Nat)
     (firstPage otherPage : Array Block) :
     selectSteps k #[Block.alt n last firstPage otherPage]
-      = if stepPending n last k == stepPending n last 1 then selectSteps k firstPage
+      = if altShowsFirst n last k then selectSteps k firstPage
         else selectSteps k otherPage := by
-  by_cases h : stepPending n last k == stepPending n last 1
+  by_cases h : altShowsFirst n last k
   · simp [selectSteps, selectBlockList, selectBlockOne, h]
   · simp [selectSteps, selectBlockList, selectBlockOne, h]
 
