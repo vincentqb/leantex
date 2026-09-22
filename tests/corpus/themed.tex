@@ -39,9 +39,10 @@
   covered as themselves.
 \end{frame}
 
-% A frame taller than the stage: its content spills onto a continuation
-% page, and every page of the frame carries the title and its bar.
-\begin{frame}{A frame that continues}
+% A frame taller than the stage, declared breakable: its content continues
+% on a second page, silently (a frame that continued undeclared would be
+% W0384), and every page of the frame carries the title and its bar.
+\begin{frame}[allowframebreaks]{A frame that continues}
   \begin{itemize}
     \item Overflow beat one, invented filler.
     \item Overflow beat two, invented filler.

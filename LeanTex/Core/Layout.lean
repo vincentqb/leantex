@@ -1878,7 +1878,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- A picture's labels are set as inline runs: their text and math
   -- scalars are asked of the faces like any other content.
   | .picture pic => pic.labelContents.foldl textAndMath out
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     scalarTextList (textAndMath out title) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
   | .framefoot content => textAndMath out content
@@ -2064,7 +2064,7 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .only _ body => weightKeysBlockList acc body.toList
   | .nav _ body => weightKeysBlockList acc body.toList
   | .note body => weightKeysBlockList acc body.toList
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
   | .framefoot content => weightKeysInlineList acc {} content.toList
   | .float _ _ _ body caption =>
@@ -3701,6 +3701,13 @@ private structure B where
   `.foot` ops: written onto each closing page (`finishPage`), so the
   attribution and the footer can only move together. -/
   curFrame : Option Nat := none
+  /-- Inside a frame (`.frameOpen` to its `.brk`): whether the author
+  declared `[allowframebreaks]`. `none` outside a frame — an article page
+  close is flow, never a spill to report. -/
+  frameBreak : Option Bool := none
+  /-- The open frame has already been reported once (W0384): a frame three
+  pages tall is one loss, named once, not one per page close. -/
+  spillWarned : Bool := false
   /-- Lines and fills already on the page when `.pin` arrived: page-top
   chrome (the frame title and its bar) the distribution never moves. -/
   pinnedLines : Nat := 0
@@ -4013,11 +4020,94 @@ private def B.reopenChrome (b : B) : B :=
              prevRuleOnly := false }
   | none => b
 
+/-- moloch's frametitle box, closed: the last title baseline plus the
+padding below it, or the title's own depth where that is deeper
+(beamerouterthememoloch.dtx, `\moloch@frametitlestrut@end`: a rule of
+`margin@bottom` hung from the baseline, so the box's depth is
+`max(margin@bottom, depth of the title)`). The first baseline stands at
+`pad + strut` (`@start`: a strut of `margin@top + \ht\strutbox`), which is
+where `.titleBar` moves it. A fact of the paged artifact — where the bar's
+edge falls — not of the IR: the IR's statement is the values
+(`Ir.frameTitleStrut`, `Ir.frameTitlePadding_exact`). Spelled `Int`, as
+`omega` reads it. -/
+def frameBarHeight (pad lastBaseline depth : Int) : Int :=
+  lastBaseline + max pad depth
+
+/-- `frameBar_exact`: a one-line title whose depth stays inside the padding
+paints a bar exactly `2·pad + strut` tall — moloch's `2·\ht\strutbox +
+\ht\strutbox` (29.4 pt at beamer's `\large` on the 11 pt body), and with
+the token's value (`Ir.frameTitlePadding_exact`) three struts of the title's
+leading. -/
+theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
+    frameBarHeight pad (pad + strut) depth = 2 * pad + strut := by
+  simp only [frameBarHeight]
+  omega
+
+/-- W0384, the spill's account: a frame whose author did not declare
+`[allowframebreaks]` has content `over` taller than its page, and it
+continues on the next page — beamer would have clipped it off the frame's
+bottom; this engine ships it and says so. Inside a declared-breakable
+frame, and outside any frame (an article's page close is flow), silent. -/
+private def B.warnSpill (b : B) (over : Sp) : B :=
+  match b.frameBreak, b.spillWarned with
+  | some false, false =>
+    let who := match b.curFrame with
+      | some n => s!"frame {n}"
+      | none => "a frame"
+    { b with diags := b.diags.push (Diag.of .W0384
+        (s!"{who} is {over.toPtString}pt taller than its page; " ++
+          "it continues on the next page")
+        (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
+        (subject := b.curFrame.map toString))
+             spillWarned := true }
+  | _, _ => b
+
+@[simp] private theorem warnSpill_pages (b : B) (o : Sp) :
+    (b.warnSpill o).pages = b.pages := by
+  simp only [B.warnSpill]
+  split <;> rfl
+
+@[simp] private theorem warnSpill_geom (b : B) (o : Sp) :
+    (b.warnSpill o).geom = b.geom := by
+  simp only [B.warnSpill]
+  split <;> rfl
+
+@[simp] private theorem warnSpill_docBg (b : B) (o : Sp) :
+    (b.warnSpill o).docBg = b.docBg := by
+  simp only [B.warnSpill]
+  split <;> rfl
+
+@[simp] private theorem warnSpill_cur (b : B) (o : Sp) :
+    (b.warnSpill o).cur = b.cur := by
+  simp only [B.warnSpill]
+  split <;> rfl
+
+@[simp] private theorem warnSpill_noBreak (b : B) (o : Sp) :
+    (b.warnSpill o).noBreak = b.noBreak := by
+  simp only [B.warnSpill]
+  split <;> rfl
+
+/-- `spill_accounts`: the one mid-frame page close, and the diagnostic in
+the same step — the first spill inside a frame that declared no break adds
+exactly one W0384 to the builder, and a spill anywhere else (a declared
+break, an article's flow, the same frame's later pages) adds none.
+The `_accounts` shape (`rewriteCtrl_accounts`): the continuation page is
+paid for by the warning, decided on the same `frameBreak` the builder
+reads, never by inspecting the shipped pages afterwards. -/
+private theorem warnSpill_accounts (b : B) (o : Sp) :
+    (b.warnSpill o).diags.size =
+      b.diags.size +
+        (if b.frameBreak = some false ∧ b.spillWarned = false then 1 else 0) := by
+  unfold B.warnSpill
+  rcases h : b.frameBreak with _ | (_ | _) <;> rcases hw : b.spillWarned <;> simp
+
 /-- Close an overfull page mid-frame and repeat the frame's chrome on the
 next. Where no chrome is set — an article page, a plain or standout
-frame — this is exactly `finishPage`. -/
-private def B.spillPage (b : B) : B :=
-  b.finishPage.reopenChrome
+frame — the page ships exactly as `finishPage` ships it. `over` is how
+far the band that did not fit reached past the page bottom, for the
+account (`warnSpill`). -/
+private def B.spillPage (b : B) (over : Sp := 0) : B :=
+  b.finishPage.reopenChrome.warnSpill over
 
 @[simp] private theorem reopenChrome_pages (b : B) :
     b.reopenChrome.pages = b.pages := by
@@ -4027,8 +4117,8 @@ private def B.spillPage (b : B) : B :=
 /-- A spill ships exactly the page `finishPage` ships: the chrome reopen
 only seeds the next page's `cur`, so every pages-extension fact about
 `finishPage` transports. -/
-@[simp] private theorem spillPage_pages (b : B) :
-    b.spillPage.pages = b.finishPage.pages := by
+@[simp] private theorem spillPage_pages (b : B) (o : Sp) :
+    (b.spillPage o).pages = b.finishPage.pages := by
   unfold B.spillPage
   simp
 
@@ -4340,7 +4430,7 @@ private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B �
     if overflow ≤ above ∨ b.noBreak then
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
     else
-      let b := b.spillPage
+      let b := b.spillPage (overflow - above)
       if b.cur.lines.isEmpty then
         ((b.commit (mk (firstY b)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (firstY b) inkBelow
@@ -4581,8 +4671,16 @@ private inductive Op where
   the page closes and resets with it. -/
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   /-- A colour bar behind the line just placed — the frame title. Full page
-  width, from the page top to `pad` below the line's depth. -/
-  | titleBar (color : Ir.Color) (pad : Sp)
+  width, from the page top to `pad` below the line's depth. With a `strut`
+  the bar is moloch's frametitle box instead (`Ir.frameTitleStrut`): the
+  title's first baseline moves to `pad + strut` below the page top and the
+  bar closes `pad` under the last baseline — `frameBar_exact`. -/
+  | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
+  /-- A frame opens: whether its author declared `[allowframebreaks]`, so
+  the builder knows which mid-frame page close is a declared continuation
+  and which is an overflow to report (`spill_accounts`). Cleared at the
+  frame's `.brk`. -/
+  | frameOpen (breakable : Bool)
   /-- A colour bar behind the line just placed — a titled block's title.
   Unlike the frame's bar it stands mid-page: `x` across `w` (the measure
   in force where the block stands), one `pad` above the line's ink top to
@@ -6058,13 +6156,14 @@ private def collectBlock (r : Rd) (a : Acc)
         | .caption => setCaption a
         | .object => collectCentered rf a body.toList indent) a
     a.pushOp .floatClose
-  | .frame title standout valign body =>
+  | .frame title standout valign breakable body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
     -- clipped. The frame's number rides in from `run`'s top-level driver,
     -- read off `Ir.frameNumbers`, once per logical frame, so a stepped
     -- frame's pages share it.
     let a := a.pageBreak
+    let a := { a with ops := a.ops.push (.frameOpen breakable) }
     -- The footer belongs to the frame: its pages, spill pages included,
     -- carry the frame's own number. A frame the numbering skips — the
     -- title page, a standout — carries no footer at all: moloch renders
@@ -6131,7 +6230,7 @@ private def collectBlock (r : Rd) (a : Acc)
         let a := match bar with
           | some barBg =>
             { a with fg := saved.1, ground := saved.2
-                     ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2)) }
+                     ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2) none) }
           | none => a
         -- The band-to-body gap is the frame title's own (`wantDefault`):
         -- without it the first block's title bar pad reaches into the
@@ -6148,18 +6247,31 @@ private def collectBlock (r : Rd) (a : Acc)
         let saved := (a.fg, a.ground)
         let a := { a with fg := ftFg, ground := some barBg }
         let st := r.style "frametitle"
+        let titleSize := match st.font with
+          | some tpl => Ir.templateSize r.geom.fontSize tpl
+          | none => sectionSize r.geom 1
         let a := match st.font with
           | some tpl =>
             collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
               (leaf := titleLeaf) (span := titleSpan)
           | none =>
-            collectDisplay r a title 0 false (sectionSize r.geom 1)
+            collectDisplay r a title 0 false titleSize
               (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
+        -- The bar's box: a bundle that declares `frametitlepadding` (moloch,
+        -- through its lineage table) gets the dtx box — the token resolved
+        -- at the title's size, as `\ht\strutbox` is measured after
+        -- `\usebeamerfont{frametitle}`, around a strut of the same size
+        -- (`Ir.frameTitleStrut`); a bar with no token keeps the generic
+        -- half-body pad below the title's depth.
+        let (pad, strut) := match a.tokens.find? "frametitlepadding" with
+          | some g => (g.width.resolve titleSize r.xHeight,
+                       some (Ir.frameTitleStrut titleSize))
+          | none => (r.geom.fontSize / 2, none)
         -- The title itself is inline content: no `.setPalette` can stand
         -- in it, so the saved ink is the epoch's own.
         let a := { a with fg := saved.1
                           ground := saved.2
-                          ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2)) }
+                          ops := a.ops.push (.titleBar barBg pad strut) }
         { a with wantDefault := true }
       | none =>
         let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
@@ -6637,7 +6749,8 @@ private inductive StagedOp where
   | skip (g : Glue)
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
-  | titleBar (color : Ir.Color) (pad : Sp)
+  | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
+  | frameOpen (breakable : Bool)
   | blockBar (color : Ir.Color) (pad x w : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
@@ -6705,7 +6818,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       yTop := y
       overflow := min overflow above
     else
-      b := b.spillPage
+      b := b.spillPage (overflow - above)
       if !b.cur.lines.isEmpty then
         yTop := b.y + b.prevDepth + inkClearance
       overflow := 0
@@ -6827,10 +6940,12 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- for a page that never got content dies with the boundary. Fills
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
-      b := { b.finishPage with chrome := none }
+      b := { b.finishPage with chrome := none, frameBreak := none, spillWarned := false }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-                    pinnedLines := 0, pinnedFills := 0, chrome := none }
+                    pinnedLines := 0, pinnedFills := 0, chrome := none,
+                    frameBreak := none, spillWarned := false }
+  | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .foot c fr => b := { b with curFoot := c, curFrame := fr }
   | .pin =>
@@ -6872,17 +6987,33 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     prevBelow := bottomBelow, prevRuleOnly := bottomRule
                     skip := {}
                     freshStart := false }
-  | .titleBar color pad =>
+  | .titleBar color pad strut =>
     -- The bar sits behind the line just placed: full page width, page
     -- top to `pad` below the line's depth. Its bottom edge rides onto
-    -- the page (`PageOut.band`) for the corner-logo furniture.
-    b := match b.cur.lines.back? with
-      | some l =>
-        let h := l.y + b.prevDepth + pad
-        { b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
-                                      h := h, color := color }]) with
-          curBand := some (max h (b.curBand.getD 0)) }
-      | none => b
+    -- the page (`PageOut.band`) for the corner-logo furniture. With a
+    -- strut the box is moloch's: the title lines (everything on this
+    -- fresh frame page) move so the first baseline sits `pad + strut`
+    -- below the page top, and the bar closes `pad` under the last
+    -- baseline or under the title's own depth, whichever is deeper
+    -- (`frameBarHeight`).
+    b := match b.cur.lines.back?, b.cur.lines[0]? with
+      | some l, some first =>
+        match strut with
+        | none =>
+          let h := l.y + b.prevDepth + pad
+          { b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
+                                        h := h, color := color }]) with
+            curBand := some (max h (b.curBand.getD 0)) }
+        | some s =>
+          let delta := pad + s - first.y
+          let h := frameBarHeight pad (l.y + delta) b.prevDepth
+          let b := { b with cur := { b.cur with lines := b.cur.lines.map fun (l : LineOut) =>
+                                       { l with y := l.y + delta } }
+                            y := b.y + delta }
+          { b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
+                                        h := h, color := color }]) with
+            curBand := some (max h (b.curBand.getD 0)) }
+      | _, _ => b
   | .blockBar color pad x w =>
     -- The bar sits behind the line just placed: the measure across, one
     -- `pad` above the line's ink top (the body ascent at the line's own
@@ -7083,9 +7214,10 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem reopenChrome_docBg (b : B) :
     b.reopenChrome.docBg = b.docBg := by
   unfold B.reopenChrome; split <;> rfl
-@[simp] private theorem spillPage_geom (b : B) : b.spillPage.geom = b.geom := by
+@[simp] private theorem spillPage_geom (b : B) (o : Sp) : (b.spillPage o).geom = b.geom := by
   simp [B.spillPage]
-@[simp] private theorem spillPage_docBg (b : B) : b.spillPage.docBg = b.docBg := by
+@[simp] private theorem spillPage_docBg (b : B) (o : Sp) :
+    (b.spillPage o).docBg = b.docBg := by
   simp [B.spillPage]
 @[simp] private theorem placeParaTrailer_geom (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
@@ -7169,9 +7301,7 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_of_eq ?_
        simp
        done)
-    | (refine pagesExtend_trans
-        (pagesExtend_congr (spillPage_pages b) (finishPage_extends b))
-        (pagesExtend_of_eq ?_)
+    | (refine pagesExtend_trans (finishPage_extends b) (pagesExtend_of_eq ?_)
        simp
        done)
 
@@ -7380,9 +7510,9 @@ private theorem finishPage_bg (b : B) :
 private theorem bgStep_finishPage (b : B) : BgStep b b.finishPage :=
   ⟨rfl, rfl, finishPage_bg b⟩
 
-private theorem bgStep_spillPage (b : B) : BgStep b b.spillPage :=
+private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
   (bgStep_finishPage b).trans
-    (BgStep.of_eq (reopenChrome_geom _) (reopenChrome_docBg _) (reopenChrome_pages _))
+    (BgStep.of_eq (by simp [B.spillPage]) (by simp [B.spillPage]) (by simp [B.spillPage]))
 
 private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -7393,7 +7523,7 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_spillPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
@@ -7411,7 +7541,7 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_spillPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
@@ -8071,13 +8201,13 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     acc := if firstBlk || statefulBlock blk then acc else acc.wantGap
     firstBlk := firstBlk && statefulBlock blk
     match blk with
-    | .frame title standout valign body =>
+    | .frame title standout valign breakable body =>
       let num := nums[i]?.getD none
       acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
       let steps := Ir.maxStepBlocks body
       if steps ≤ 1 then
         acc := collectBlock rd acc
-          (.frame title standout valign (Ir.unwrapItemSteps body)) 0
+          (.frame title standout valign breakable (Ir.unwrapItemSteps body)) 0
       else
         -- The tree numbers the frame once; every step's pages name the same
         -- leaves, so the counter rewinds to the frame's start per step
@@ -8085,7 +8215,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
         let leafStart := acc.leafNext
         for k in [1:steps + 1] do
           acc := collectBlock rd { acc with leafNext := leafStart }
-            (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
+            (.frame title standout valign breakable (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach
@@ -8101,7 +8231,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .skip g => .skip g
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
-    | .titleBar color pad => .titleBar color pad
+    | .titleBar color pad strut => .titleBar color pad strut
+    | .frameOpen br => .frameOpen br
     | .blockBar color pad x w => .blockBar color pad x w
     | .hrule color th => .hrule color th
     | .tableRule th x w segs => .tableRule th x w segs

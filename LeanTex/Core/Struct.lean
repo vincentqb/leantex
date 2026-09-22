@@ -228,7 +228,7 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .nav _ body => out.push (.node .nav (blocksRaw #[] body.toList))
   | .logo content => out.push (.node .artifact (inlinesRaw #[] content.toList))
   | .pagebreak => out
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
   | .framefoot content => out.push (.node .artifact (inlinesRaw #[] content.toList))
   | .setPalette _ => out
@@ -670,7 +670,7 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
     simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
     exact inlinesRaw_text_nil _ content
   | .pagebreak => simp [blockRaw, blockTextOne]
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
     rw [blocksRaw_text, titleRaw_text]
   | .framefoot content =>
@@ -961,7 +961,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
     simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
     exact inlinesRaw_headings_nil _ content
   | .pagebreak => rfl
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
     rw [blocksRaw_headings, titleRaw_headings]
   | .framefoot content =>
@@ -1253,7 +1253,7 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
     simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
     exact inlinesRaw_images_nil _ content
   | .pagebreak => rfl
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
     rw [blocksRaw_images, titleRaw_images]
   | .framefoot content =>

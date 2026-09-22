@@ -3540,7 +3540,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | none => cssColor color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssLength thickness.width}; background: {c}")]
-  | .frame title standout valign body =>
+  | .frame title standout valign _ body =>
     -- One slide of the deck: a linear readable section in every class. On
     -- the paged deck (`cfg.deck`) the slide is a flex column the height of
     -- the viewport, and its declared vertical distribution is realized as
@@ -4201,7 +4201,7 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title _ _ fb =>
+        | .frame title _ _ _ fb =>
           let num := nums[i]?.getD none
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*

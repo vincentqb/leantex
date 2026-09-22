@@ -59,14 +59,18 @@ private def pt1 : Dim.SymGlue := { width := Length.ofSp (Dim.pt 1) }
 /-- The moloch lineage's furniture weights and title-page gaps, one named
 dtx-sourced table: a 1pt progress bar (`progressbar linewidth`,
 beamerouterthememoloch.dtx, `\moloch@outer@setdefaults`), a 0.5pt hairline
-separator (its default linewidth), and the title page's inter-part gaps
-from beamerinnerthememoloch.dtx — 0.3em above the subtitle, 0.8em below
-the separator, 0.5em below the author, 1em below the institute. `moloch`
-installs it because these are its own source's values; `daylight` installs
-the same table because its rhythm is deliberately the lineage's, not a
-knob of its own — one edit site for a dtx correction. -/
+separator (its default linewidth), the frame-title bar's padding
+(`\moloch@frametitle@margin@top`/`@bottom` = `\ht\strutbox` in the
+frametitle font, beamerouterthememoloch.dtx `frametitle` template —
+`Ir.frameTitlePadding`, em of the title size), and the title page's
+inter-part gaps from beamerinnerthememoloch.dtx — 0.3em above the
+subtitle, 0.8em below the separator, 0.5em below the author, 1em below the
+institute. `moloch` installs it because these are its own source's values;
+`daylight` installs the same table because its rhythm is deliberately the
+lineage's, not a knob of its own — one edit site for a dtx correction. -/
 private def lineageTokens : Tokens := { entries := #[
   ("progressheight", pt1),
+  ("frametitlepadding", Ir.frameTitlePadding),
   ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),
   ("subtitlegap", { width := { em := 300 } }),
   ("separatorgap", { width := { em := 800 } }),
@@ -74,11 +78,17 @@ private def lineageTokens : Tokens := { entries := #[
   ("institutegap", { width := { em := 1000 } })] }
 
 /-- The footline every shipped bundle declares, read as data from the
-metropolis lineage (beamerouterthememoloch.dtx, footline template): the
-section title keeps the reader placed, the frame number says how far
-along. One value, three installs. -/
+metropolis lineage (beamerouterthememoloch.dtx, `footline` template:
+`\usebeamertemplate*{frame footer}` `\hfill` `\usebeamertemplate*{page
+number in head/foot}`): the left slot is the author's `\framefoot` and
+nothing else — the template names no section slot, so an undeclared frame's
+footer-left is empty, as the lineage renders it — and the right slot is
+the frame number. One value, three installs; `footline_left_contract`
+holds every shipped bundle to the template. A section title in the footer
+would be an engine embellishment a document opts into (`\chrome{ footer =
+{ left = \sectiontitle } }`), never a bundle's claim about its source. -/
 private def builtinChrome : Chrome :=
-  { footerLeft := some .sectionTitle
+  { footerLeft := none
     footerRight := some .frameNumber }
 
 /-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
@@ -255,6 +265,18 @@ def gemini : Theme :=
                       separator := some (darkblue, some "separator") })] } }
 
 def builtin : List Theme := [moloch, plain, daylight, gemini]
+
+/-- `footline_left_contract`: no shipped bundle declares a footer-left
+datum. The lineage's footline template (beamerouterthememoloch.dtx,
+`\defbeamertemplate{footline}{plain}`) has exactly two slots — the
+author's `frame footer` and the frame number — so a bundle that cites it
+owes an empty left slot; a bundle wanting a section title there would be
+adding to its source and must say so as an opt-in, not as data read from
+the dtx. Quantified over `builtin`: adding a bundle enters the contract. -/
+theorem footline_left_contract : ∀ th ∈ builtin, th.chrome.footerLeft = none := by
+  intro th h
+  simp only [builtin, List.mem_cons, List.not_mem_nil, or_false] at h
+  rcases h with rfl | rfl | rfl | rfl <;> rfl
 
 /-- A role resolves at one site: `Palette.find?` is the single reader of
 the entries, and `Palette.resolve` — the evaluator `\textcolor` and every

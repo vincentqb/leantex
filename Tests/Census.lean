@@ -418,10 +418,27 @@ def censusTable :
       geom.pageW == Dim.mm 160 && geom.pageH == Dim.mm 100),
     ("the frame title ships", pageHas c 0 "One declared key"),
     ("the frame body ships", pageHas c 0 "160 by 100 millimetres")]),
-  ("themed", fun _ c => [
+  ("themed", fun geom c => [
     ("pages", c.size == 8),
     ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
     ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
+    -- moloch's frametitle box, on the page: the bar is a full-width fill
+    -- from the page top, exactly `2·pad + strut` tall at the bundle's
+    -- `\large` title step (`Layout.frameBar_exact`; the pad is the
+    -- lineage's `frametitlepadding` token resolved at the title size,
+    -- `Ir.frameTitlePadding_exact`) — never the body's vmargin plus a
+    -- half-body pad, which was 1.5× the reference.
+    ("the frame-title bar is moloch's box: 2·pad + strut at the title step",
+      let titleSize := Ir.scaleStep geom.fontSize "large"
+      let pad := Ir.frameTitlePadding.width.resolve titleSize 0
+      let strut := Ir.frameTitleStrut titleSize
+      let h := Layout.frameBarHeight pad (pad + strut) 0
+      (c[2]?.map fun p => p.fillRects.any fun (x, y, w, fh) =>
+        x == 0 && y == 0 && w == geom.pageW && fh == h).getD false),
+    ("the frame title's baseline stands one pad and one strut below the page top",
+      let titleSize := Ir.scaleStep geom.fontSize "large"
+      lineYOf c 2 "A theme is data" ==
+        some (Ir.frameTitlePadding.width.resolve titleSize 0 + Ir.frameTitleStrut titleSize)),
     ("the covered step dims the alert and example beats in place",
       pageCovered c 3 "alert beat" && pageCovered c 3 "teal example beat"),
     ("the covered beats still ship", pageHas c 3 "alert beat"),

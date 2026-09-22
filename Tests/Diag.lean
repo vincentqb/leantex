@@ -262,6 +262,11 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}")
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
+  -- A frame taller than its page with no [allowframebreaks]: the layout
+  -- closes the page mid-frame and the account fires once, naming the frame.
+  | .W0384 => dvL one (dvDeck "\\theme{moloch}\n"
+      ("\\begin{frame}{Too tall}\n" ++
+       String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}"))
   | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++

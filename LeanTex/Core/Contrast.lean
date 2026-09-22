@@ -525,7 +525,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- exempts it. A nav's links are page text like any other.
   | .only _ body => usesBlocks cx acc body.toList
   | .nav _ body => usesBlocks cx acc body.toList
-  | .frame title standout _ body =>
+  | .frame title standout _ _ body =>
     -- A frame title sets at `\large\bfseries` (the shipped bundles'
     -- template): the scale's own step, never a re-spelled factor. The
     -- frame is a design site of its epoch: the resolved-pair judge tests

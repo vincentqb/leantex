@@ -269,6 +269,62 @@ no U+03xx Greek run does. Not taken: accepting every identity scalar of
 the same shape, owed separately, not folded in here. The 2026-09-17 M6
 still-owed list did not name literal Greek; this entry closes it.
 
+2026-09-22 — moloch's frame chrome is sourced, and a frame that continues
+undeclared is a named loss (moloch-chrome-spill; causal-render-audit fixes
+3 and 4). Three defects on the 24-page reference deck traced to one cause:
+the frame-title bar was the body's `vmargin` plus the title line plus a
+half-body pad (45.6 pt against the theme's 29.4 pt), which took 12% of the
+body and spilled two frames onto orphan continuation pages that nothing
+reported; and the footer-left showed the section title on every undeclared
+frame while citing a dtx footline that has no section slot. The bar is now
+moloch's own box, read from the installed beamerouterthememoloch.dtx
+(`frametitle` template): a strut of `\ht\strutbox` in the frametitle font
+(ltfssbas.dtx: 0.7 of its baselineskip, `Ir.frameTitleStrut`), the same
+amount above it (`\moloch@frametitle@margin@top`) and below the last
+baseline (`@margin@bottom`), spelled once as the lineage token
+`frametitlepadding` (`Ir.frameTitlePadding`, 0.84 em *of the title size* —
+the dtx measures the strut after `\usebeamerfont{frametitle}`, and the
+layout resolves the token there, not at the body) and held to the strut by
+`Ir.frameTitlePadding_exact`. `.titleBar` carries the strut: the title's
+first baseline moves to `pad + strut` below the page top and the bar
+closes `pad` under the last baseline or under the title's depth
+(`Layout.frameBarHeight`; `frameBar_exact`, `_exact`: a one-line title
+whose depth stays inside the pad paints exactly `2·pad + strut`). A bar
+declared with no token (a document's own `frametitlebg`, the poster
+headline) keeps the generic half-body pad. `Theme.builtinChrome` drops the
+section slot — the dtx footline is `frame footer \hfill frame numbering`,
+so footer-left is the author's `\framefoot` or empty — and
+`Theme.footline_left_contract` holds every shipped bundle to it; a section
+title in the footer is an opt-in (`\chrome{ footer = { left = \sectiontitle
+} }`), which the chrome fixtures now declare for the slot mechanics they
+pin. `Block.frame` gains `breakable` (beamer's `[allowframebreaks]`,
+elaborated in `frameOpts`, factored out of the elaboration knot because
+its loop state pushed the knot's compile over the heartbeat wall); the
+layout's `.frameOpen` op carries it to the builder, and `spillPage` — the
+one mid-frame page close — now accounts: **W0384** (degraded), "frame N is
+X pt taller than its page; it continues on the next page", once per frame
+(`spillWarned`), subject the frame's number, silent under a declared break
+and on an article's flow close (`warnSpill_accounts`, `_accounts`: the
+builder's diagnostics grow by exactly one iff the open frame declared no
+break and has not been named). Red before, green after: the census row
+"the frame-title bar is moloch's box" on `themed` (bar fill `2·pad + strut`
+at the `\large` step, the title baseline at `pad + strut`), the four spill
+tests in `tableChecks` (undeclared → one W0384 naming frame 1; declared →
+same pages, no W0384, no N0102; a fitting frame silent; an a5 article's
+120 paragraphs silent), and the W0384 witness in the diagnostics golden.
+`themed.tex`'s tall frame declares its break. Goldens moved by exactly the
+two data facts (the token line, the chrome line); `lake build --wfail`,
+`lake test`, precommit selftest, owed ratchet, `lake build Obligations`
+green. Private deck (acceptance, this slice alone on the causal-render-audit
+scratch copy): 24 → **22 pages**, the reference's count, with no W0384 —
+both spills were the bar's; the frame-title bar 50 px at 120 dpi (30.0 pt)
+against the reference's 49 px (29.4 pt), from 76 px (45.6 pt); footer-left empty on undeclared frames as in the
+reference; W0012/W0104/W0315/W0376/W0378 unchanged. Deferred, distinct:
+the title page's title step and separator colour (audit's lower-priority
+row), the bar-to-body gap (`titleBarGap` under the bar is the engine's
+rhythm, not the dtx's), and `allowframebreaks=<fraction>` (read as an
+unmodelled option today).
+
 2026-09-21 — every PDF is tagged: marked content on real content, a
 structure tree, a parent tree, `/MarkInfo` and `/StructTreeRoot` in every
 catalog, unconditionally (pdf-tag-skeleton, M7-19b; feature — PDF bytes

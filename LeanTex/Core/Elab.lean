@@ -5962,7 +5962,7 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
     let content := if tps.align == some "left" then inner else #[.center inner]
-    blocks := blocks.push (.frame #[] false .golden content)
+    blocks := blocks.push (.frame #[] false .golden false content)
   else
     -- The flow classes centre the title block, as `\@maketitle`
     -- does — unless the `titlepage` style declares its matter
@@ -6742,6 +6742,48 @@ seal scanBracketArg Parse.inputEnvFile?
 -- orders spine (2) over dispatch arms (1) over loop members (0) where the
 -- sums tie, and `scan` is a loop member's own index.
 
+/-- `\begin{frame}[options]`, read. Options are ignored with a note
+(fragile, plain say how beamer should cope, not what to say) except
+`standout`, which says what the frame IS, `allowframebreaks`, which
+declares that content taller than one page continues (beamer user guide
+§8.1; the layout's spill account reads it), and `t`/`c`/`b`, which say how
+the frame distributes its leftover vertical space (`c` is beamer's
+default). Outside the elaboration knot on purpose: its loop state is what
+pushed the knot's compile over the heartbeat wall. -/
+structure FrameOpts where
+  standout : Bool := false
+  breakable : Bool := false
+  valign : VAlign := .center
+  /-- The index past the last bracket group read. -/
+  next : Nat := 0
+
+private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts := do
+  let mut o : FrameOpts := {}
+  for _ in [0:body.size] do
+    let j0 := skipSpaces body o.next
+    match scanBracketArg body o.next pos with
+    | .took k' =>
+      let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
+      for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
+        match opt with
+        | "standout" => o := { o with standout := true }
+        | "allowframebreaks" => o := { o with breakable := true }
+        | "t" => o := { o with valign := .top }
+        | "c" => o := { o with valign := .center }
+        | "b" => o := { o with valign := .bottom }
+        | other =>
+          -- fragile, plain, and friends say how beamer should
+          -- cope, not what to say: registered, never silent.
+          unless other.isEmpty do
+            warnOnce ctx ("frame:opt:" ++ other) .N0102
+              s!"frame option '{other}' is not modelled; ignored" pos
+      o := { o with next := k' }
+    | .unclosed bpos =>
+      warnUnclosed ctx "'\\begin{frame}'" bpos
+      break
+    | .content => break
+  return o
+
 mutual
 
 /-- Rule (b), judged once at the definition — the gate both registration
@@ -7150,41 +7192,15 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
   else if n == "tabular" || n == "tabular*" then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "frame" then
-    -- \begin{frame}[options]{title}: options are ignored with a
-    -- note (fragile, plain say how beamer should cope, not what to
-    -- say) except
-    -- `standout`, which says what the frame IS, and `t`/`c`/`b`,
-    -- which say how it distributes its leftover vertical space
-    -- (beamer user guide §8.1; `c` is beamer's default); the title
-    -- group counts only when it follows directly — a paragraph
+    -- \begin{frame}[options]{title}: the options are `frameOpts`'; the
+    -- title group counts only when it follows directly — a paragraph
     -- break before a group makes it content, which is where LaTeX's
     -- own argument scanning stops looking too.
-    let mut k := 0
-    let mut standout := false
-    let mut valign : VAlign := .center
-    for _ in [0:body.size] do
-      let j0 := skipSpaces body k
-      match scanBracketArg body k pos with
-      | .took k' =>
-        let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
-        for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
-          match opt with
-          | "standout" => standout := true
-          | "t" => valign := .top
-          | "c" => valign := .center
-          | "b" => valign := .bottom
-          | other =>
-            -- fragile, plain, and friends say how beamer should
-            -- cope, not what to say: registered, never silent.
-            unless other.isEmpty do
-              warnOnce ctx ("frame:opt:" ++ other) .N0102
-                s!"frame option '{other}' is not modelled; ignored" pos
-        k := k'
-      | .unclosed bpos =>
-        warnUnclosed ctx "'\\begin{frame}'" bpos
-        break
-      | .content => break
-    k := skipSpaces body k
+    let opts ← frameOpts ctx body pos
+    let standout := opts.standout
+    let breakable := opts.breakable
+    let valign := opts.valign
+    let mut k := skipSpaces body opts.next
     let mut title : Array Inline := #[]
     if let some (.group t _) := body[k]? then
       title ← elabInlines ctx t
@@ -7221,7 +7237,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     else
       have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
       inner ← drainNotesGo ctx stash.toList inner
-    blocks := blocks.push (.frame title standout valign inner)
+    blocks := blocks.push (.frame title standout valign breakable inner)
   else if n == "itemize" || n == "enumerate" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the
@@ -10587,7 +10603,7 @@ names the .bib file")
       | .faces =>
         let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
           match b with
-          | .frame _ _ _ _ => n + 1
+          | .frame _ _ _ _ _ => n + 1
           | _ => n)
         asserts := asserts.push {
           kind := .pages .le faces

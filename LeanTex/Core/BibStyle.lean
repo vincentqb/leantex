@@ -794,8 +794,8 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .only t body => out.push (.only t (resolveBlocks style find items #[] body.toList))
   | .nav spec body => out.push (.nav spec (resolveBlocks style find items #[] body.toList))
   | .note body => out.push (.note (resolveBlocks style find items #[] body.toList))
-  | .frame title standout va body =>
-    out.push (.frame (resolveArr style.cite find title) standout va
+  | .frame title standout va br body =>
+    out.push (.frame (resolveArr style.cite find title) standout va br
       (resolveBlocks style find items #[] body.toList))
   | .framefoot content => out.push (.framefoot (resolveArr style.cite find content))
   | .float k n ca body caption =>
@@ -1166,7 +1166,7 @@ theorem resolveBlock_pending (style : Style) (find : Resolver) (items : Array Ir
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveBlocks_pending style find items body.toList #[] _ q h
-  | .titled _ title body | .frame title _ _ body =>
+  | .titled _ title body | .frame title _ _ _ body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     rcases resolveBlocks_pending style find items body.toList #[] _ q h with h' | hc

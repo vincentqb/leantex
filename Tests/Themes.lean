@@ -83,7 +83,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
   let (doc, ds) := elabStr src
   t "columns elaborate with widths, its option a note" (ds.all (·.severity == .note) &&
-    doc.body == #[.frame #[] false .center #[.columns #[
+    doc.body == #[.frame #[] false .center false #[.columns #[
       (some 600, #[.para #[.text "left"]]),
       (some 400, #[.para #[.text "right"]])]]])
   -- PDF: the columns' first lines share a baseline, and the second sits
@@ -112,7 +112,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "an absolute column width warns and degrades to a share"
     (aDs.any (·.code == "W0314") &&
      (match aDoc.body with
-      | #[.frame _ _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
+      | #[.frame _ _ _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
       | _ => false))
   -- `\hfill` between `column`s is the gutter, never a paragraph: beamer's
   -- own row opens with `\hbox{}\hfill` and closes every column with
@@ -134,7 +134,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       ("\\begin{columns}\nstray \\hfill words\n\\begin{column}{0.5\\textwidth}\n" ++
        "left\n\\end{column}\n\\end{columns}"))
      match sDoc.body with
-     | #[.frame _ _ _ body] =>
+     | #[.frame _ _ _ _ body] =>
        body.any fun b => match b with
          | .para xs => xs.any (fun x => x matches .fill)
          | _ => false
@@ -172,7 +172,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\uncover<2>{tail}")
   let (doc, ds) := elabStr src
   t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] false .center #[
+    doc.body == #[.frame #[] false .center false #[
       .list false #[
         #[.step 1 none #[.para #[.text "first"]]],
         #[.step 2 none #[.para #[.text "second"]]]],
@@ -180,7 +180,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- \pause steps the rest of the scope.
   let (pDoc, pDs) := elabStr (deck169Frame "one\n\n\\pause\ntwo\n\n\\pause\nthree")
   t "pause steps the rest, cumulatively" (pDs.isEmpty &&
-    pDoc.body == #[.frame #[] false .center #[
+    pDoc.body == #[.frame #[] false .center false #[
       .para #[.text "one"],
       .step 2 none #[.para #[.text "two"], .step 3 none #[.para #[.text "three"]]]]])
   -- PDF: one page per step; pending content dims, nothing moves.
@@ -216,7 +216,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- as beamer's transparent covering does; <2-3> reads the same way.
   t "a range spec carries its end"
     ((elabStr (deck169Frame "\\uncover<2-3>{ranged}")).1.body ==
-      #[.frame #[] false .center #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
+      #[.frame #[] false .center false #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
   let (rDoc, rDs) := elabStr (deck169Frame ("\\begin{itemize}\n\\item<1> opening\n" ++
     "\\item<2-> second\n\\item<3-> third\n\\end{itemize}"))
   let rOut := layoutOf oneFace rDoc
@@ -280,13 +280,13 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let (lDoc, lDs) := elabStr (deck169Frame
     "\\onslide<2->{\n\\begin{itemize}\n\\item Stepped item.\n\\end{itemize}\n}")
   t "a list inside an overlay group steps whole, erroring nothing"
-    (lDs.isEmpty && lDoc.body == #[.frame #[] false .center #[
+    (lDs.isEmpty && lDoc.body == #[.frame #[] false .center false #[
       .step 2 none #[.list false #[#[.para #[.text "Stepped item."]]]]]])
   -- A multi-paragraph group: every paragraph stays inside the step (the
   -- par splice used to strip all but the first).
   let (mDoc, mDs) := elabStr (deck169Frame "\\uncover<2>{\nFirst covered.\n\nSecond covered.\n}")
   t "every paragraph of an overlay group stays inside its step"
-    (mDs.isEmpty && mDoc.body == #[.frame #[] false .center #[
+    (mDs.isEmpty && mDoc.body == #[.frame #[] false .center false #[
       .step 2 (some 2) #[.para #[.text "First covered."],
         .para #[.text "Second covered."]]]])
   -- Block and inline agree: the same spec around the same words reaches the
@@ -296,21 +296,21 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\uncover<2->{\n\\begin{itemize}\n\\item same words\n\\end{itemize}\n}")
   t "block and inline agree on steps"
     (match iDoc.body, bDoc.body with
-     | #[.frame _ _ _ ib], #[.frame _ _ _ bb] =>
+     | #[.frame _ _ _ _ ib], #[.frame _ _ _ _ bb] =>
        Ir.maxStepBlocks ib == 2 && Ir.maxStepBlocks bb == 2
      | _, _ => false)
   -- The open form between blocks: the rest of the scope steps (it used to
   -- produce an empty step and leave the content unstepped).
   let (oDoc, oDs) := elabStr (deck169Frame "shown\n\n\\onslide<2->\nlater one\n\nlater two")
   t "bare onslide between blocks steps the rest of the scope"
-    (oDs.isEmpty && oDoc.body == #[.frame #[] false .center #[
+    (oDs.isEmpty && oDoc.body == #[.frame #[] false .center false #[
       .para #[.text "shown"],
       .step 2 none #[.para #[.text "later one"], .para #[.text "later two"]]]])
   -- \pause between items steps the rest of the list, not nothing.
   let (pDoc, pDs) := elabStr (deck169Frame
     "\\begin{itemize}\n\\item first\n\\pause\n\\item second\n\\pause\n\\item third\n\\end{itemize}")
   t "pause between items steps the later items"
-    (pDs.isEmpty && pDoc.body == #[.frame #[] false .center #[
+    (pDs.isEmpty && pDoc.body == #[.frame #[] false .center false #[
       .list false #[
         #[.para #[.text "first"]],
         #[.step 2 none #[.para #[.text "second"]]],
@@ -323,7 +323,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
      "\\end{column}\n\\begin{column}{0.5\\textwidth}\nsteady\n\\end{column}\n\\end{columns}"))
   t "pause inside a column steps the column's rest"
     (cDs.isEmpty && (match cDoc.body with
-      | #[.frame _ _ _ #[.columns cols]] =>
+      | #[.frame _ _ _ _ #[.columns cols]] =>
         (match cols[0]? with
          | some (_, body) => body == #[.para #[.text "above"],
              .step 2 none #[.para #[.text "below"]]]
@@ -336,20 +336,20 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- its spec, the other before it.
   let (aDoc, aDs) := elabStr (deck169Frame "\\alt<2>{after}{before}")
   t "alt inline yields the step and its complement"
-    (aDs.isEmpty && aDoc.body == #[.frame #[] false .center #[.para #[
+    (aDs.isEmpty && aDoc.body == #[.frame #[] false .center false #[.para #[
       .step 2 (some 2) #[.text "after"],
       .step 1 (some 1) #[.text "before"]]]])
   let (abDoc, abDs) := elabStr (deck169Frame
     "\\alt<2->{\nAfter one.\n\nAfter two.\n}{\nBefore.\n}")
   t "alt with block alternatives steps both at block level"
-    (abDs.isEmpty && abDoc.body == #[.frame #[] false .center #[
+    (abDs.isEmpty && abDoc.body == #[.frame #[] false .center false #[
       .step 2 none #[.para #[.text "After one."], .para #[.text "After two."]],
       .step 1 (some 1) #[.para #[.text "Before."]]]])
   -- A spec the model cannot number keeps W0105 and shows the block content.
   let (uDoc, uDs) := elabStr (deck169Frame
     "\\onslide<+->{\n\\begin{itemize}\n\\item shown anyway\n\\end{itemize}\n}")
   t "an unnumberable spec on a block group warns and shows the content"
-    ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center #[
+    ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center false #[
       .list false #[#[.para #[.text "shown anyway"]]]]])
 
 /-- `\alert<spec>{body}`: beamer's overlay form of alert is the `\alt`
@@ -473,7 +473,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   altWalkChecks ref oneFace
   let (doc, ds) := elabStr (deck169Frame "Visible words.\n\\note{Hidden speaker words.}")
   t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] false .center #[
+    doc.body == #[.frame #[] false .center false #[
       .para #[.text "Visible words."],
       .note #[.para #[.text "Hidden speaker words."]]]])
   -- PDF: the note adds nothing — the page is the page without it.
@@ -493,7 +493,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "a mid-sentence note leaves its paragraph whole and drains to the frame"
     (inlDs.isEmpty &&
      (match inl.body with
-      | #[.frame _ _ _ #[.para content, .note nbody]] =>
+      | #[.frame _ _ _ _ #[.para content, .note nbody]] =>
         Ir.plainText content == "bold text" &&
         ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
@@ -505,7 +505,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "reserved characters in a note stay literal, erroring nothing"
     (resvDs.isEmpty &&
      (match resv.body with
-      | #[.frame _ _ _ #[_, .note nbody]] =>
+      | #[.frame _ _ _ _ #[_, .note nbody]] =>
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
   -- A note is not slide content, so a frame inside a note cannot carry a
@@ -518,7 +518,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     ((nestedDs.map (·.code)) == #["E0359"])
   t "the refusal keeps the frame's visible words and drops only the inner note"
     (match nested.body with
-     | #[.note #[.frame _ _ _ inner]] =>
+     | #[.note #[.frame _ _ _ _ inner]] =>
        ((Ir.dumpBlocks "" inner).splitOn "spoken words").length == 2 && -- ir tier: note content, not a page claim
        ((Ir.dumpBlocks "" inner).splitOn "inner aside").length == 1 -- ir tier: note content, not a page claim
      | _ => false)
@@ -591,8 +591,11 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let frame := "\\begin{frame}{T}\nx\n\\end{frame}"
   let (mDoc, mDs) := elabStr (deck169 "\\theme{moloch}" frame)
   t "chrome moloch source clean" mDs.isEmpty
-  t "moloch declares the footer slots"
-    (mDoc.chrome.footerLeft == some .sectionTitle &&
+  -- The dtx footline has two slots, `frame footer` and the number: the
+  -- left one is the author's, so the bundle declares none for it
+  -- (`Theme.footline_left_contract`).
+  t "moloch declares the footer's right slot and leaves the left to \\framefoot"
+    (mDoc.chrome.footerLeft == none &&
      mDoc.chrome.footerRight == some .frameNumber)
   t "moloch declares the muted step"
     (mDoc.palette.find? "muted" == some { r := 0x64, g := 0x72, b := 0x74 })
@@ -609,7 +612,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (oDoc, oDs) := elabStr (deck169
     "\\theme{moloch}\\chrome{ footer = { right = \\slidenumber } }" frame)
   t "a document's chrome refines the theme's footer per slot" (oDs.isEmpty &&
-    oDoc.chrome.footerLeft == some .sectionTitle &&
+    oDoc.chrome.footerLeft == none &&
     oDoc.chrome.footerRight == some .frameNumber)
   -- The install direction of the same per-slot contract: a bundle fills
   -- the slots it declares and only those (`Theme.apply`), never the band
@@ -637,8 +640,11 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- last-writer rule every palette entry follows.
   let (bDoc, _) := elabStr (deck169
     "\\chrome{ footer = { right = \\framefraction } }\\theme{moloch}" frame)
+  -- moloch names only the right slot and the document named none for the
+  -- left: the left stays empty through the install (`Theme.apply` merges
+  -- per slot).
   t "a theme after the document's chrome wins per slot"
-    (bDoc.chrome.footerLeft == some .sectionTitle &&
+    (bDoc.chrome.footerLeft == none &&
      bDoc.chrome.footerRight == some .frameNumber)
   -- The sketch's spelling and the beamer lineage's name one datum.
   t "slidenumber and framenumber are one datum"
@@ -715,8 +721,8 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a second theme replacing the first theme's values is silent"
     (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0348"))
   t "a replaced chrome slot is named as its slot"
-    ((ds "\\chrome{ footer = { left = \\framenumber } }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "footer.left").length == 2)
+    ((ds "\\chrome{ footer = { right = \\framefraction } }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "footer.right").length == 2)
   t "a replaced covered fraction is named"
     ((ds "\\palette{ covered = 50\\% }\\theme{moloch}").any fun d =>
       d.code == "W0348" && (d.message.splitOn "'covered'").length == 2)
@@ -776,7 +782,10 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\section{Topic}\n" ++
     "\\begin{frame}{Two}\nb\n\n\\pause\nc\n\\end{frame}\n" ++
     "\\begin{frame}[standout]\nQ\n\\end{frame}"
-  let (doc, ds) := elabStr (deck169 "\\theme{moloch}" body)
+  -- The section title in the left slot is the document's declaration: the
+  -- bundle leaves that slot to \\framefoot (`Theme.footline_left_contract`).
+  let (doc, ds) := elabStr (deck169
+    "\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }" body)
   t "chrome deck source clean" ds.isEmpty
   let geom0 := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom0
@@ -902,7 +911,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       | none => acc) []).reverse
   -- The headline disagreement: the title page carried footer "1" and the
   -- first content frame showed "2"; the progress fraction counted both.
-  let (doc, ds) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
+  let (doc, ds) := elabStr (deck169
+    "\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }\\title{T}\\author{A}"
     ("\\maketitle\n\\section{S}\n\\begin{frame}{One}\na\n\\end{frame}\n" ++
      "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "numbering deck source clean" ds.isEmpty
@@ -1046,7 +1056,8 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     "\\begin{frame}{Two}\nb\n\\end{frame}\n" ++
     "\\end{framefooter}\n" ++
     "\\begin{frame}{Three}\nc\n\\end{frame}"
-  let (doc, ds) := elabStr (deck169 ("\\theme{moloch}" ++ wrapper) body)
+  let (doc, ds) := elabStr (deck169
+    ("\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }" ++ wrapper) body)
   t "framefooter deck raises no W0104" (!ds.any (·.code == "W0104"))
   t "framefooter deck source clean" (ds.filter (·.severity == .error)).isEmpty
   let out := layoutOf oneFace doc
@@ -1165,12 +1176,12 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (fDoc, fDs) := elabStr (deck169Body "\\begin{frame}{T}\nbody\n\\end{frame}")
   t "frame source clean" fDs.isEmpty
   t "frame is first-class with its title"
-    (fDoc.body == #[.frame #[.text "T"] false .center #[.para #[.text "body"]]])
+    (fDoc.body == #[.frame #[.text "T"] false .center false #[.para #[.text "body"]]])
   -- A group after a paragraph break is content, not a title: LaTeX's own
   -- argument scanning stops looking there too.
   t "frame title after a blank line is content"
     ((elabStr (deck169Body "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
-      #[.frame #[] false .center #[.para #[.text "scope group"]]])
+      #[.frame #[] false .center false #[.para #[.text "scope group"]]])
   -- Options that say how beamer should cope (fragile, plain) are ignored
   -- with a registered note, never silently.
   t "an unmodelled frame option is a note"
@@ -1178,14 +1189,14 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       fun d => d.code == "N0102" && d.severity == .note)
   t "frametitle names the frame"
     ((elabStr (deck169Body "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
-      #[.frame #[.text "Named"] false .center #[.para #[.text "body"]]])
+      #[.frame #[.text "Named"] false .center false #[.para #[.text "body"]]])
   -- Two titles: the last wins, as in beamer, but never silently.
   let (dupDoc, dupDs) := elabStr
     (deck169Body "\\begin{frame}\n\\frametitle{One}\n\\frametitle{Two}\nbody\n\\end{frame}")
   t "a second frametitle warns and wins"
     (dupDs.any (·.code == "W0311") &&
      match dupDoc.body with
-     | #[.frame title _ _ _] => Ir.plainText title == "Two"
+     | #[.frame title _ _ _ _] => Ir.plainText title == "Two"
      | _ => false)
   -- \title and friends may sit in the body, as beamer documents do; an
   -- empty declaration (\date{}) is deliberately blank and sets nothing.
@@ -1195,7 +1206,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "maketitle source clean" tDs.isEmpty
   t "maketitle is a centered title frame with the empty date dropped"
     (match tDoc.body[0]? with
-     | some (Ir.Block.frame title _ _ #[.center inner]) => title.isEmpty && inner.size == 3
+     | some (Ir.Block.frame title _ _ _ #[.center inner]) => title.isEmpty && inner.size == 3
      | _ => false)
   t "pdf metadata falls back to the title declarations"
     (tDoc.info.title == some "A Deck" && tDoc.info.author == some "Pat Placeholder")
@@ -1268,11 +1279,11 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- options stay ignored, as notes.
   t "standout option marks the frame"
     (match (elabStr (deck169Body "\\begin{frame}[fragile,standout]\nQ\n\\end{frame}")).1.body with
-     | #[.frame _ true _ _] => true
+     | #[.frame _ true _ _ _] => true
      | _ => false)
   t "other frame options do not mark it"
     (match (elabStr (deck169Body "\\begin{frame}[plain]\nQ\n\\end{frame}")).1.body with
-     | #[.frame _ false _ _] => true
+     | #[.frame _ false _ _ _] => true
      | _ => false)
   let (sDoc, _) := elabStr (deck169Body ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
     "\\begin{frame}[standout]\nQ\n\\end{frame}"))
@@ -1622,7 +1633,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\begin{frame}\\alert{hot}\\end{frame}\\end{document}")
   t "themed alert is colour and bold" (themedAlert.1.body.any fun b =>
     match b with
-    | .frame _ _ _ body => body.any fun blk =>
+    | .frame _ _ _ _ body => body.any fun blk =>
       match blk with
       | .para content => content.any fun x =>
         match x with
@@ -1744,7 +1755,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")
   t "themed alert is the alert colour"
     (match aDoc.body with
-     | #[.frame _ _ _ body] => body.any fun b => match b with
+     | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .colored c (some "alert") _ => c == { r := 0xA5, g := 0x5A, b := 0x13 }
           | _ => false
@@ -1752,7 +1763,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "unthemed alert stays bold"
     (match (elabStr (deck169 "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
-     | #[.frame _ _ _ body] => body.any fun b => match b with
+     | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .styled .bold _ => true
           | _ => false
@@ -1869,7 +1880,7 @@ def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
   | some c' =>
     t "the realized run ships the solver's value (the PDF half)"
       (doc.body.any fun b => match b with
-        | .frame title _ _ _ => title.any fun x => match x with
+        | .frame title _ _ _ _ => title.any fun x => match x with
           | .colored cRun (some "alert") _ => cRun == c'
           | _ => false
         | _ => false)
@@ -2077,7 +2088,8 @@ index for the class-gated uncover, a `\label` anchor lands once, and
 every section keeps a unique id. -/
 def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let (doc, ds) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
+  let (doc, ds) := elabStr (deck169
+    "\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }\\title{T}\\author{A}"
     ("\\maketitle\n\\section{S}\n" ++
      "\\begin{frame}{Steps}\n\\label{fr:steps}first\n\n\\pause\n" ++
      "\\alert{second}\n\n\\pause\nthird\n\\end{frame}\n" ++
@@ -2089,7 +2101,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let slideSections := count "<section class=\"slide\""
     + count "<section class=\"slide standout\""
   let frames := doc.body.foldl (fun n b => match b with
-    | Ir.Block.frame _ _ _ _ => n + 1
+    | Ir.Block.frame _ _ _ _ _ => n + 1
     | _ => n) 0
   let stepDup := doc.body.foldl (fun n b => n + (Ir.frameSteps b - 1)) 0
   t "frames_sections: one section per frame, the PDF's page count less step duplicates"

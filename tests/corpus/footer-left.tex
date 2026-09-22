@@ -6,6 +6,9 @@
 \documentclass[aspectratio=169]{beamer}
 
 \usetheme{moloch}
+% The section title in the left slot is this deck's own declaration: the
+% bundle's footline (the dtx) leaves that slot to \framefoot.
+\chrome{ footer = { left = \sectiontitle } }
 
 \fonts{
   dir = "fonts",

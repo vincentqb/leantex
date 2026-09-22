@@ -154,8 +154,8 @@ theorem emission_conservation_paras
 sense: non-standout, not the golden-valign title page, visibly titled.
 What the numbering statements range over. -/
 def framedDeck (doc : Ir.Doc) : Prop :=
-  doc.body ≠ #[] ∧ ∀ b ∈ doc.body, ∃ title valign body,
-    b = Ir.Block.frame title false valign body ∧ valign ≠ Ir.VAlign.golden ∧
+  doc.body ≠ #[] ∧ ∀ b ∈ doc.body, ∃ title valign br body,
+    b = Ir.Block.frame title false valign br body ∧ valign ≠ Ir.VAlign.golden ∧
       Ir.plainText title ≠ ""
 
 -- owed: pages_partition_frames

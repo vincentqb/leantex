@@ -78,7 +78,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds alg == #[.code] && structTexts alg == #["a", "c"])
   t "speaker note is an aside" (structKinds (Struct.ofBlocks #[.note #[para]]) == #[.aside])
   t "nav is a landmark" (structKinds (Struct.ofBlocks #[.nav {} #[para]]) == #[.nav])
-  let frame := Struct.ofBlocks #[.frame #[.text "F"] false .center #[para]]
+  let frame := Struct.ofBlocks #[.frame #[.text "F"] false .center false #[para]]
   t "frame is a section opening with its title"
     (structKinds frame == #[.section] && structKinds (structKids frame) == #[.title, .paragraph])
   t "logo and framefoot are artifacts"

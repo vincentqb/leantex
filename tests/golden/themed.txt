@@ -17,12 +17,13 @@ palette standoutbg #23373B
 palette alert #C2185B
 palette covered 31%
 token progressheight 1pt
+token frametitlepadding 840/1000em
 token separatorheight 0.5pt
 token subtitlegap 300/1000em
 token separatorgap 800/1000em
 token authorgap 500/1000em
 token institutegap 1000/1000em
-chrome footer left sectiontitle right framenumber
+chrome footer right framenumber
 meta title "A Themed Deck"
 meta author "Pat Placeholder"
 frame golden

@@ -214,7 +214,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- A picture is diagram ink; its labels are coordinates' text, not prose
   -- the twin can carry in reading order.
   | .picture _ => acc
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     let head := if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n"
     blocksInto loc summary ind (acc ++ head) body.toList
   -- Markdown's own table is the pipe table: one line per row, the GFM
@@ -442,7 +442,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .logo _ => append_nil acc
   | .rule _ _ _ => append_nil acc
   | .picture _ => append_nil acc
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
       (acc ++ if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n")
       body.toList)
@@ -678,7 +678,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .step _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .only _ body, out, h => headingLevelList_mem x body.toList out h
   | .nav _ body, out, h => headingLevelList_mem x body.toList out h
-  | .frame _ _ _ body, out, h => headingLevelList_mem x body.toList out h
+  | .frame _ _ _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .note _, _, h => h
   | .verbatim _ _ _, _, h => h
   | .algorithm _ _ _, _, h => h

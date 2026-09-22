@@ -1,11 +1,14 @@
-% Invented deck exercising the slide chrome end to end: the themed default
-% footer (section title left, frame number right, in the muted key at the
-% small step), a beamer-style framefooter wrapper whose \setbeamertemplate
+% Invented deck exercising the slide chrome end to end: the footer (a
+% declared section title left, the theme's frame number right, in the muted
+% key at the small step), a beamer-style framefooter wrapper whose \setbeamertemplate
 % reaches the same footer through \framefoot, and the return to the default
 % when the wrapper ends. Nothing here derives from any private document.
 \documentclass[aspectratio=169]{beamer}
 
 \usetheme{moloch}
+% The section title in the left slot is this deck's own declaration: the
+% bundle's footline (the dtx) leaves that slot to \framefoot.
+\chrome{ footer = { left = \sectiontitle } }
 
 \fonts{
   dir = "fonts",

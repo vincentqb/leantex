@@ -773,6 +773,25 @@ asymmetry through `\style{titlepage}{ rule-above-gap = … }`. Spelled in
 em, with `titleAuthorStrut`'s rounding caveat: exactness is per-base. -/
 def titleBarGap : SymGlue := { width := { em := 3 * leadingMilli / 2 } }
 
+/-- LaTeX's `\strutbox` height at a size: 0.7 of its baselineskip
+(ltfssbas.dtx, `\set@fontsize`: `\vrule\@height.7\baselineskip
+\@depth.3\baselineskip`). What moloch's frametitle box is built from: the
+box opens with a strut of `\ht\strutbox` in the frametitle font and pads
+it by the same amount above and below (beamerouterthememoloch.dtx,
+`\moloch@frametitlestrut@start`/`@end`,
+`\moloch@frametitle@margin@top`/`@bottom`). -/
+def frameTitleStrut (titleSize : Sp) : Sp := leadingFor titleSize * 7 / 10
+
+/-- The frametitle padding moloch's outer theme declares, as the token the
+bundle installs: `\moloch@frametitle@margin@top = \moloch@frametitle@margin@bottom
+= \ht\strutbox` measured after `\usebeamerfont{frametitle}` — so the
+length is em of the *title's* size (0.7 of its leading), and the layout
+resolves it there (`Layout` reads `frametitlepadding` at the title size),
+not at the body's. A bundle declaring the token gets moloch's box; a bar
+declared with no token keeps the engine's generic half-body pad. -/
+def frameTitlePadding : SymGlue := { width := { em := 7 * leadingMilli / 10 } }
+
+
 /-- The skip outside a title bar — above the top one, below the bottom
 one: one rhythm quantum. -/
 def titleBarSkip : SymGlue := { width := { em := leadingMilli / 2 } }
@@ -2965,8 +2984,13 @@ inductive Block where
   An empty title is a bare frame. `standout` is beamer's `[standout]`: the
   frame inverts (`standoutfg` on `standoutbg`, defaulting to the inverse of
   the page), centres, and sets Large bold. `valign` is the frame's declared
-  vertical distribution (`[t]`/`[c]`/`[b]`; `center` unless declared). -/
-  | frame (title : Array Inline) (standout : Bool) (valign : VAlign) (body : Array Block)
+  vertical distribution (`[t]`/`[c]`/`[b]`; `center` unless declared).
+  `breakable` is beamer's `[allowframebreaks]`: the author has declared
+  that content taller than one page continues on the next, so a
+  continuation page of this frame is not a loss to report; a frame
+  without it that continues is (`Layout.spill_accounts`). -/
+  | frame (title : Array Inline) (standout : Bool) (valign : VAlign) (breakable : Bool)
+      (body : Array Block)
   /-- `\framefoot{...}` (beamer's `frame footer` template): the footer note
   the frames from here on carry in the chrome footer's left slot, beside
   the frame number. Empty content clears it back to the chrome default. -/
@@ -3038,7 +3062,7 @@ its standout frames are likewise `noframenumbering` (:777-778). beamer's
 the k-th countable frame in document order bears number k — the fold below —
 and a non-countable frame bears none. -/
 def Block.countable : Block → Bool
-  | .frame _ standout valign _ => !standout && !(valign matches .golden)
+  | .frame _ standout valign _ _ => !standout && !(valign matches .golden)
   | _ => false
 
 /-- Count of `true` in a mask: the numbering's denominator. -/
@@ -3271,9 +3295,9 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .nav spec body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .nav spec body2)
-  | .frame t s v body =>
+  | .frame t s v br body =>
     let (c2, body2) := numberFloatList c #[] body.toList
-    (c2, .frame t s v body2)
+    (c2, .frame t s v br body2)
   | .note body => (c, .note body)
   | .verbatim k s sp => (c, .verbatim k s sp)
   | .logo content => (c, .logo content)
@@ -3342,7 +3366,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .step _ _ body => floatNumsList k out body.toList
   | .only _ body => floatNumsList k out body.toList
   | .nav _ body => floatNumsList k out body.toList
-  | .frame _ _ _ body => floatNumsList k out body.toList
+  | .frame _ _ _ _ body => floatNumsList k out body.toList
   | .note _ => out
   | .verbatim _ _ _ => out
   | .logo _ => out
@@ -3476,7 +3500,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
-  | .frame _ _ _ body =>
+  | .frame _ _ _ _ body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -4208,6 +4232,25 @@ is what a marker is. -/
 def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
+/-- The size a font template sets its content at: the outermost `.size`
+wrapper's step of the base, else the base itself. Both shipped frametitle
+templates are `{\large\bfseries}` (`Theme.boldFont`), so the frame-title
+bar's strut reads its size from here rather than from a glyph pass. -/
+def templateSize (base : Sp) (tpl : Array Inline) : Sp :=
+  if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
+  then scaleStep base s else base
+
+/-- The token resolves to the strut it is defined as: at the slides
+class's `\large` title step, `frametitlepadding` and `frameTitleStrut`
+agree — the dtx's one value, spelled once as a token and once as the
+kernel's strut. Per-base `decide`, with `titleAuthorStrut`'s caveat:
+em-resolution floors, so the general equality is false off the shipped
+bases. -/
+theorem frameTitlePadding_exact :
+    frameTitlePadding.width.resolve (scaleStep slidesFontSize "large") 0 =
+      frameTitleStrut (scaleStep slidesFontSize "large") := by
+  decide
+
 /-- The kernel's page models: how content maps onto the surfaces the paged
 backends draw. Three today; `report`'s chapter-opens-a-page is the one
 candidate fourth. HTML is continuous scroll whatever the model —
@@ -4692,7 +4735,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .only _ body => foldBlockList fb fi (fb acc b) body.toList
   | .nav _ body => foldBlockList fb fi (fb acc b) body.toList
   | .note body => foldBlockList fb fi (fb acc b) body.toList
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
   | .framefoot content => foldInlineList fi (fb acc b) content.toList
   | .float _ _ _ body caption =>
@@ -4867,7 +4910,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .note _ => out
   | .only _ body => navLinkList out body.toList
   | .nav _ body => navLinkList out body.toList
-  | .frame title _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
+  | .frame title _ _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .table _ _ _ rows _ => navLinkRows out rows.toList
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
   | .algorithm _ _ lines => navLinkAlgLines out lines.toList
@@ -5234,7 +5277,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
       (match l.comment with
        | some c => s!"{ind}    comment\n" ++ dumpInlines (ind ++ "      ") c
        | none => ""))
-  | .frame title standout valign body =>
+  | .frame title standout valign _ body =>
     let va := match valign with
       | .center => ""
       | .top => " top"
@@ -5537,7 +5580,7 @@ def maxStepBlock : Block → Nat
   | .verbatim _ _ _ => 1
   | .algorithm _ _ lines => maxStepAlgLines lines.toList
   | .note _ => 1
-  | .frame _ _ _ _ => 1
+  | .frame _ _ _ _ _ => 1
   | .framefoot _ => 1
   | .setPalette _ => 1
   | .setTokens _ => 1
@@ -5605,7 +5648,7 @@ and the `frames_sections` census (deckStepChecks) holds it to the shipped
 page count. The page-count obligation (`pages_count_frame_steps`,
 Obligations.lean) states its theorem over this def. -/
 def frameSteps (b : Block) : Nat :=
-  if let .frame _ _ _ body := b then max 1 (maxStepBlocks body) else 0
+  if let .frame _ _ _ _ body := b then max 1 (maxStepBlocks body) else 0
 
 mutual
 
@@ -5668,7 +5711,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   -- change, so no step can reflow the pseudocode.
   | .algorithm n sm lines => .algorithm n sm (dimAlgLines cover k pending #[] lines.toList)
   | .note body => .note body
-  | .frame t st v body => .frame t st v body
+  | .frame t st v br body => .frame t st v br body
   | .framefoot content => .framefoot content
   -- A stateful declaration carries no ink: covering changes only colours
   -- of content, never the state the declaration installs.
@@ -5830,7 +5873,7 @@ def unwrapItemStep : Block → Block
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
   | .only targets body => .only targets (unwrapItemStepList #[] body.toList)
   | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
-  | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
+  | .frame t s v br body => .frame t s v br (unwrapItemStepList #[] body.toList)
   | .para content => .para content
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
@@ -5981,7 +6024,7 @@ def blockTextOne (acc : String) : Block → String
   -- Content and comment count; generated keywords never do (algorithm_text).
   | .algorithm _ _ lines => algLineText acc lines.toList
   | .logo content => acc ++ plainText content
-  | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
+  | .frame title _ _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
   -- A stateful declaration ships no text of its own.
   | .setPalette _ => acc
@@ -6162,7 +6205,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .step _ _ body => headingLevelList out body.toList
   | .only _ body => headingLevelList out body.toList
   | .nav _ body => headingLevelList out body.toList
-  | .frame _ _ _ body => headingLevelList out body.toList
+  | .frame _ _ _ _ body => headingLevelList out body.toList
   | .note _ => out
   | .verbatim _ _ _ => out
   -- Lines hold inline content; no heading can stand in an algorithm.
@@ -6224,7 +6267,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .step _ _ body => footnoteBlockList out body.toList
   | .only _ body => footnoteBlockList out body.toList
   | .nav _ body => footnoteBlockList out body.toList
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     footnoteBlockList (footnoteInlineList out title.toList) body.toList
   -- a speaker note is a side channel; its text never ships on a page
   | .note _ => out
@@ -6772,7 +6815,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
     | some p =>
       simp [blockTextOne, ListingSpec.capText, hc, plainText, plainTextList,
         dimInlineList_text cover k pending p.2.toList #[]]
-  | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
+  | .section _ _ _ _ | .note _ | .frame _ _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
   | .algorithm n sm lines =>
@@ -6928,7 +6971,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
-  | .frame t s v body =>
+  | .frame t s v _ body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
@@ -7044,7 +7087,7 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .nav _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
-  | .frame _ _ _ body =>
+  | .frame _ _ _ _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .float kind _ capAbove body caption =>
@@ -7169,13 +7212,13 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   -- The title sits on the frame-title bar when the palette in force
   -- declares one; a standout frame's body sits on the inversion — the
   -- grounds the judge reads, at the palette in force at the frame.
-  | .frame title standout valign body =>
+  | .frame title standout valign br body =>
     let bodyGround := if standout then
         some ((pal.find? "standoutbg").getD ((pal.find? "fg").getD Color.black))
       else ground
     let r := recolorRolesList repal recolor pal bodyGround #[] body.toList
     (.frame (recolorRolesInlines recolor pal (pal.find? "frametitlebg") #[] title.toList)
-      standout valign r.1, r.2)
+      standout valign br r.1, r.2)
   | .framefoot content =>
     (.framefoot (recolorRolesInlines recolor pal ground #[] content.toList), pal)
   -- The epoch boundary: the palette is rewritten where it stands, and the
@@ -7498,7 +7541,7 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
-  | .frame title standout valign body =>
+  | .frame title standout valign _ body =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
       recolorRolesInlines_text recolor pal (pal.find? "frametitlebg") title.toList #[],
@@ -7594,7 +7637,7 @@ def keptBy (t : String) : Block → Bool
   | .titled _ _ _
   | .spaced _ _
   | .verbatim _ _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
+  | .frame _ _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak | .algorithm _ _ _
   | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
 
@@ -7620,7 +7663,7 @@ def keepForOne (t : String) : Block → Block
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
   | .step n l body => .step n l (keepForList t body.toList).toArray
   | .note body => .note (keepForList t body.toList).toArray
-  | .frame ti st v body => .frame ti st v (keepForList t body.toList).toArray
+  | .frame ti st v br body => .frame ti st v br (keepForList t body.toList).toArray
   | .para c => .para c
   | .equation n c => .equation n c
   | .section l st num title => .section l st num title
@@ -7712,7 +7755,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .note body => textLeavesList acc body.toList
   | .only _ body => textLeavesList acc body.toList
   | .nav _ body => textLeavesList acc body.toList
-  | .frame title _ _ body => textLeavesList (plainText title :: acc) body.toList
+  | .frame title _ _ _ body => textLeavesList (plainText title :: acc) body.toList
   -- A rule is decorative ink; it carries no text (as `blockTextOne` reads it).
   | .rule _ _ _ => acc
   -- A picture's labels reach the census through the shipped runs, as
@@ -7784,7 +7827,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .step _ _ body => orphanFreeList avail body.toList
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
-  | .frame _ _ _ body => orphanFreeList avail body.toList
+  | .frame _ _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
@@ -7920,7 +7963,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .nav spec body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     rw [textLeavesOne, textLeavesOne,
       textLeavesList_acc (plainText title :: acc) body.toList,
       textLeavesList_acc [plainText title] body.toList]
@@ -8159,7 +8202,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForColumns_covers avail t0 h0 cols.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     intro s hs
     rw [textLeavesOne, textLeavesList_acc [plainText title] body.toList,
       List.mem_append] at hs
@@ -8297,7 +8340,7 @@ def onlyFreeOne : Block → Bool
   | .step _ _ body => onlyFreeList body.toList
   | .note body => onlyFreeList body.toList
   | .nav _ body => onlyFreeList body.toList
-  | .frame _ _ _ body => onlyFreeList body.toList
+  | .frame _ _ _ _ body => onlyFreeList body.toList
   | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
@@ -8384,7 +8427,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .nav spec body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
-  | .frame ti st v body =>
+  | .frame ti st v _ body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .float k n ca body caption =>
@@ -9124,8 +9167,8 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .only targets body => .only targets (mapBlockList f #[] body.toList)
   | .nav spec body => .nav spec (mapBlockList f #[] body.toList)
   | .note body => .note (mapBlockList f #[] body.toList)
-  | .frame title st v body =>
-    .frame (mapInlines f title) st v (mapBlockList f #[] body.toList)
+  | .frame title st v br body =>
+    .frame (mapInlines f title) st v br (mapBlockList f #[] body.toList)
   | .framefoot content => .framefoot (mapInlines f content)
   | .float k num ca body caption =>
     .float k num ca (mapBlockList f #[] body.toList) (mapInlines f caption)
@@ -9461,7 +9504,7 @@ theorem mapBlock_text (f : Inline → Inline)
     show blockTextList acc (mapBlockList f #[] body.toList).toList = _
     rw [mapBlockList_text f hf body.toList #[]]
     rfl
-  | .frame title st v body =>
+  | .frame title st v _ body =>
     show blockTextList (acc ++ plainText (mapInlines f title))
       (mapBlockList f #[] body.toList).toList = _
     rw [mapInlines_text f hf title, mapBlockList_text f hf body.toList #[]]
@@ -10118,7 +10161,7 @@ def floatLabelOne (float : Option RefBinding) (out : Array (String × Option Ref
   | .only _ body => floatLabelList float out body.toList
   | .nav _ body => floatLabelList float out body.toList
   | .note body => floatLabelList float out body.toList
-  | .frame title _ _ body =>
+  | .frame title _ _ _ body =>
     floatLabelList float (foldInlineList (floatLabelPush float) out title.toList)
       body.toList
   | .framefoot content => foldInlineList (floatLabelPush float) out content.toList

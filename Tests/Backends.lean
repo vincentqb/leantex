@@ -1039,7 +1039,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- reveal and ships no timeline, uncover rule, track, or spacer — its
   -- frames are their own snap pages.
   t "a stepless deck ships no uncover rule and no track"
-    (!has deckPage "ltx-uncover" && !has deckPage "--frame" &&
+    -- (`--frame x`/`animation-timeline: --frame` are the timeline's own
+    -- spellings; a `--frametitle…` token var is not a timeline.)
+    (!has deckPage "ltx-uncover" && !has deckPage "--frame x" &&
+     !has deckPage "animation-timeline: --frame" &&
      !has deckPage "data-snapped" && !has deckPage "scroll-state" &&
      !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"")
   -- The gate, both directions: no deck rule and no script outside the

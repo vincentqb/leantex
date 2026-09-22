@@ -458,7 +458,7 @@ def columnFormChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let colsOf (src : String) : Option (Array (Option Nat × Array Ir.Block)) :=
     (elabStr (deck169Frame src)).1.body.findSome? fun
-      | .frame _ _ _ body => body.findSome? fun
+      | .frame _ _ _ _ body => body.findSome? fun
         | .columns cols => some cols
         | _ => none
       | _ => none
@@ -1931,18 +1931,18 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fDoc, fDs) := elabStr (deck169Body "\\begin{frame}[unclosed\nBody survives.\n\\end{frame}")
   t "unclosed bracket keeps the frame body"
     (match fDoc.body with
-     | #[.frame _ _ _ body] => body.any fun b => (blockText b).endsWith "Body survives."
+     | #[.frame _ _ _ _ body] => body.any fun b => (blockText b).endsWith "Body survives."
      | _ => false)
   t "unclosed bracket in a frame warns" (fDs.any (·.code == "W0310"))
   -- a bracket opening the frame's content is content, not an option
   t "frame content starting with a bracket survives"
     (match (elabStr (deck169Body "\\begin{frame}\n[1] Reference survives.\n\\end{frame}")).1.body with
-     | #[.frame _ _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
+     | #[.frame _ _ _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
      | _ => false)
   -- options on the begin line are still arguments, bracket runs included
   t "frame options on the begin line are consumed, never content"
     (match (elabStr (deck169Body "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
-     | #[.frame title _ _ #[.para xs]] =>
+     | #[.frame title _ _ _ #[.para xs]] =>
        Ir.plainText title == "T" && Ir.plainText xs == "body"
      | _ => false)
   -- unknown environment: unclosed bracket keeps the body, later-line bracket is content

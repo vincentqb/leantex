@@ -507,7 +507,7 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fr, frDs) := elabStr ("\\documentclass{slides}\\begin{document}" ++
     "\\begin{frame}\\centering Questions?\\end{frame}\\end{document}")
   t "centering inside a frame centres its content" (frDs.isEmpty &&
-    fr.body == #[.frame #[] false .center #[.center #[.para #[.text "Questions?"]]]])
+    fr.body == #[.frame #[] false .center false #[.center #[.para #[.text "Questions?"]]]])
   -- Inside inline content there is no block to centre; the warning stays.
   t "centering in an argument still warns"
     (warnCodes "\\textbf{\\centering x}" == ["W0108"])
@@ -1581,13 +1581,13 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (frameCommented == framePlain)
   t "[t] parses to top"
     ((elabStr (deck169Body "\\begin{frame}[t]\nx\n\\end{frame}")).1.body ==
-      #[.frame #[] false .top #[.para #[.text "x"]]])
+      #[.frame #[] false .top false #[.para #[.text "x"]]])
   t "[b] parses to bottom"
     ((elabStr (deck169Body "\\begin{frame}[b]\nx\n\\end{frame}")).1.body ==
-      #[.frame #[] false .bottom #[.para #[.text "x"]]])
+      #[.frame #[] false .bottom false #[.para #[.text "x"]]])
   t "[t,standout] keeps both"
     ((elabStr (deck169Body "\\begin{frame}[t,standout]\nx\n\\end{frame}")).1.body ==
-      #[.frame #[] true .top #[.para #[.text "x"]]])
+      #[.frame #[] true .top false #[.para #[.text "x"]]])
   -- A titled frame's title is page-top chrome: distributing the body must
   -- not move the title line, and the title bar keeps its height.
   let titled (opt : String) : String :=
@@ -1613,11 +1613,11 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let titled := deck169Body "\\title{A Deck}\\author{Pat Placeholder}\n\\maketitle"
   t "the title frame declares the golden split"
     (match (elabStr titled).1.body with
-     | #[.frame _ _ .golden _] => true
+     | #[.frame _ _ .golden _ _] => true
      | _ => false)
   t "an undeclared title page centres"
     (match (elabStr titled).1.body with
-     | #[.frame _ _ _ #[.center _]] => true
+     | #[.frame _ _ _ _ #[.center _]] => true
      | _ => false)
   let styledSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
     "\\palette{sep = #445566}\n" ++
@@ -1626,7 +1626,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\end{document}"
   t "a left title page is ragged and carries the separator"
     (match (elabStr styledSrc).1.body with
-     | #[.frame _ _ .golden inner] =>
+     | #[.frame _ _ .golden _ inner] =>
        -- The separator stands inside its declared-gap wrapper
        -- (`separatorgap` above it, the rule convention's gap).
        inner.size ≥ 2 && inner.any (fun b => match b with
@@ -1851,7 +1851,8 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let longTok := String.ofList (List.replicate 10 "0123456789".toList).flatten
   let frame := "\\begin{frame}{F}\nx\n\\end{frame}"
   let run (left : String) : Layout.Out × Array CensusPage :=
-    let (doc, _) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
+    let (doc, _) := elabStr (deck169
+      "\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }\\title{T}\\author{A}"
       (s!"\\maketitle\n{left}{frame}"))
     let out := layoutOf oneFace doc
     (out, censusOf (coveredColorsOf doc) out)
@@ -2255,6 +2256,32 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       samePage tallDoc ["firstrow", "lastrow", "Below the table"])
   t "a fitting float is not named tall"
     (!(layoutDiags (tieDoc 12)).any (·.code == "W0358"))
+  -- `spill_accounts` (W0384), over the shipped pages: a frame whose
+  -- content does not fit closes its page mid-frame and continues; without
+  -- a declared [allowframebreaks] that continuation is paid for by exactly
+  -- one warning naming the frame — with the declaration, or on an
+  -- article's page close (flow, not a spill), none. The page counts hold
+  -- either way: the diagnostic never changes what ships.
+  let tall (opts : String) :=
+    "\\documentclass{slides}\n\\theme{moloch}\n\\begin{document}\n" ++
+    "\\begin{frame}" ++ opts ++ "{Too tall}\n" ++
+    String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}\n\\end{document}"
+  let tallOut := layoutOf oneFace (elabStr (tall "")).1
+  let breakOut := layoutOf oneFace (elabStr (tall "[allowframebreaks]")).1
+  t "spill: an undeclared frame that continues fires W0384 exactly once, naming the frame"
+    (tallOut.pages.size ≥ 2 &&
+     (tallOut.diags.filter (·.code == "W0384")).size == 1 &&
+     (tallOut.diags.find? (·.code == "W0384")).bind (·.subject) == some "1")
+  t "spill: [allowframebreaks] declares the continuation; the pages ship, the account is silent"
+    (breakOut.pages.size == tallOut.pages.size && breakOut.diags.all (·.code != "W0384") &&
+     (dvE (tall "[allowframebreaks]")).all (·.code != "N0102"))
+  t "spill: a frame that fits is silent"
+    ((layoutOf oneFace (elabStr (deck169 "\\theme{moloch}"
+      "\\begin{frame}{Fits}\none line\n\\end{frame}")).1).diags.all (·.code != "W0384"))
+  t "spill: an article's page close is flow, never a spill"
+    ((layoutDiags ("\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\n" ++
+      String.join (List.replicate 120 "one line\n\n") ++ "\\end{document}")).all
+        (·.code != "W0384"))
   -- The caption gap has a side: `captionsep` on the object side,
   -- `floatsep` on the text side, whichever side the caption stands
   -- (classes.dtx: `\abovecaptionskip` 10pt between object and caption,
@@ -3301,7 +3328,7 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       | .verbatim _ s spec => if spec.numbers then out.push s else out
       | _ => out) (fun out _ => out) (#[] : Array String) doc.body
     let standoutTitles := Ir.foldBlocks (fun out b => match b with
-      | .frame title true _ _ => out.push (Ir.plainText title)
+      | .frame title true _ _ _ => out.push (Ir.plainText title)
       | _ => out) (fun out _ => out) (#[] : Array String) doc.body
     let excluded (r : LeafRow) : Bool :=
       unshippedKind r || (match r.leaf with
