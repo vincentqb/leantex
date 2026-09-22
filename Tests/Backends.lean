@@ -3606,8 +3606,8 @@ the line before it set (`lineSt`'s `Tz`), which `expectedArtifacts`
 tracks. -/
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ | .rule _ _ _ _ | .gap _ => false
+    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+    | .image _ _ _ | .rule _ _ _ _ | .gap _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
 tags, not from the stream: one block for its fills when it has any, one
