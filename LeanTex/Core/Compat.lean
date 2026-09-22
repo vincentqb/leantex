@@ -479,6 +479,52 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | _ => break
   return (out, j)
 
+/-- The alert style around a body, one spelling for both `\alert` forms:
+themed, the theme's alert colour AND bold — colour alone would be the only
+signal distinguishing the run, which WCAG 2.2 SC 1.4.1 forbids (metropolis
+itself colours only; the divergence is deliberate); unthemed there is no
+alert colour and bold stands in. -/
+def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
+  if themed then
+    #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos,
+      .group #[.ctrl "textbf" pos, .group body pos] pos]
+  else #[.ctrl "textbf" pos, .group body pos]
+
+/-- `\alert<spec>{body}` is beamer's `\alt<spec>{styled}{body}`: the body is
+on every overlay, the alert style rides the selected one alone, and the
+spec word travels as written for the elaborator's one overlay reader
+(`\alt`'s arm numbers it or keeps the honest W0105). No second overlay
+implementation: the two alternatives are the plain rewrite and the body. -/
+def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
+  #[.ctrl "alt" pos, spec, .group (alertStyled themed body pos) pos, .group body pos]
+
+/-- Text conservation for the two `\alert` spellings is stated where text
+exists: a raw has no text census (which words are content and which are a
+colour name is the elaborator's knowledge), so the fact is over the
+elaborated inlines — `alertOverlayChecks` holds `Ir.plainText` of each
+alternative equal to the body's, and `compatConservationChecks` holds the
+replacement elaborating to the document its note names. On the raws the
+statement is structural: the body is carried whole, untouched, by both
+alternatives (`alertOverlay_ordinary_id`, `alertOverlay_selected_exact`).
+
+Selected-style gating: the overlay's ordinary alternative is the body
+itself (`_id`) — no style leaks onto the complement — and the selected
+alternative is exactly the plain `\alert` rewrite, so the two spellings
+cannot drift apart. -/
+theorem alertOverlay_ordinary_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
+    (alertOverlay themed spec body pos)[3]? = some (.group body pos) := rfl
+
+theorem alertOverlay_selected_exact (themed : Bool) (spec : Raw) (body : Array Raw)
+    (pos : Pos) :
+    (alertOverlay themed spec body pos)[2]? = some (.group (alertStyled themed body pos) pos) :=
+  rfl
+
+/-- The spec reaches the elaborator as written: the overlay carries it at
+the position `\alt`'s arm reads, so a spec the step model cannot number is
+judged there (W0105), never silently dropped here. -/
+theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
+    (alertOverlay themed spec body pos)[1]? = some spec := rfl
+
 /-- The boundary's set-line vocabulary: with the boundary open (the
 default) these preamble lines are the standalone's, collected as written
 and consumed silently — the real TikZ reads them where the engine's subset
@@ -1469,6 +1515,25 @@ private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
 
+/-- `\alert{body}` without an overlay spec: the plain rewrite, byte for
+byte what it was before the spec form existed — themed, `\textcolor{alert}`
+around bold; unthemed, `\textbf` with the body left in the stream. -/
+private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  if (← get).themed then
+    let (args, k) := takeGroups raws start 1
+    match args[0]? with
+    | some body =>
+      became "\\alert" "\\textcolor{alert}{\\textbf ...}" pos
+      return some ((← synthAt "\\textcolor{alert}" pos).push
+        (.group #[.ctrl "textbf" pos, .group body pos] pos), k)
+    | none =>
+      became "\\alert" "\\textcolor{alert}" pos
+      return some (← synthAt "\\textcolor{alert}" pos, start)
+  else
+    became "\\alert" "\\textbf" pos
+    return some (#[.ctrl "textbf" pos], start)
+
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one
 logical dispatcher, two compilation units. `rewriteCtrl`'s own match
@@ -1920,23 +1985,24 @@ the definition is skipped" pos
       write fun st => { st with themed := true }
     return none
   | "alert" =>
-    -- Themed, alert is the theme's colour AND bold: colour alone would be
-    -- the only signal distinguishing the run, which WCAG 2.2 SC 1.4.1
-    -- forbids (metropolis itself colours only; the divergence is
-    -- deliberate). Unthemed there is no alert colour and bold stands in.
-    if (← get).themed then
-      let (args, k) := takeGroups raws start 1
-      match args[0]? with
-      | some body =>
-        became "\\alert" "\\textcolor{alert}{\\textbf ...}" pos
-        return some ((← synthAt "\\textcolor{alert}" pos).push
-          (.group #[.ctrl "textbf" pos, .group body pos] pos), k)
-      | none =>
-        became "\\alert" "\\textcolor{alert}" pos
-        return some (← synthAt "\\textcolor{alert}" pos, start)
-    else
-      became "\\alert" "\\textbf" pos
-      return some (#[.ctrl "textbf" pos], start)
+    -- Themed, alert is the theme's colour AND bold (`alertStyled` says
+    -- why). With an overlay spec the command is beamer's `\alt`: the body
+    -- is on every overlay and the style rides the selected one alone — the
+    -- spec used to fall through, and `\textcolor{alert}` then read `<2>`
+    -- as its content and failed E0304 (unthemed, `\textbf` set the spec
+    -- as text). Without a spec the plain rewrite stands untouched.
+    let j := skipSpaces raws start
+    match raws[j]? with
+    | some (spec@(.word w _)) =>
+      if w.startsWith "<" && w.endsWith ">" then
+        let (args, k) := takeGroups raws (j + 1) 1
+        match args[0]? with
+        | some body =>
+          became s!"\\alert{w}" s!"\\alt{w}\{...}\{...}" pos
+          return some (alertOverlay (← get).themed spec body pos, k)
+        | none => alertPlain pos raws (j + 1)
+      else alertPlain pos raws start
+    | _ => alertPlain pos raws start
   | "setbeamertemplate" =>
     -- `frame footer` is the one template with a native meaning: its body
     -- is the per-frame footer note. The body group STAYS in the stream —

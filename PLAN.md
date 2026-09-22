@@ -187,6 +187,36 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — `\alert<spec>{body}` is the `\alt` overlay (alert-overlay,
+M5; engine bug — beamer's overlay form of alert, `\alert<2>{…}`, fell
+through `Compat`'s arm unread: themed, the synthesized `\textcolor{alert}`
+took `<2>` as its content and E0304 fired once per use — three on the
+reference deck, no artifact — and unthemed `\textbf` set the spec as bold
+text, silently). The invariant that was absent: *an overlay spec on a
+styling command selects the step its style rides, never the content* — in
+beamer the body is on every overlay and `\alert<2>{x}` is `\alt<2>{\alert{x}}{x}`
+(user guide, `\alert<overlay specification>{text}`: the text is alerted
+only on the specified slides). The fix is that equation as the
+rewrite: `Compat.alertOverlay` spells the command as `\alt<spec>{styled}{body}`
+with the spec word carried as written, so the elaborator's one overlay
+reader numbers it (`<2>`, `<2->`, `<2-3>`) or keeps the honest W0105 with the
+body shown — no second overlay implementation, no spec stripping. The
+selected alternative is exactly the plain `\alert` rewrite
+(`alertOverlay_selected_exact`), the ordinary alternative the body untouched
+(`alertOverlay_ordinary_id`), the spec reaches `\alt`'s arm
+(`alertOverlay_spec_id`); text conservation is asserted where text exists,
+over the elaborated inlines (`alertOverlayChecks`: `Ir.plainText` of each
+alternative equals the body's). The plain `\alert{…}` arm is untouched
+(`alertPlain`; the themed golden is the witness). Shipped-page evidence:
+one handout page per step, the body on every page twice — one twin crisp,
+one covered in place (`censusOf` over `Layout.Out`), and in HTML the alert
+role named once, inside the selected step. Reference deck: 3 → 0 errors,
+the one frame with alert specs ships as two pages, its step-2 page carrying
+more alert-coloured ink than its step-1 page (raster count). Residual, the
+`\alt` model's own: under dim-not-hide both twins are on the page, the
+pending one covered — a reader sees the body twice per step, once dimmed;
+`\alert<1>{x}`'s ordinary twin is step 1..0, covered on every page.
+
 2026-09-22 — a blank line after a comment line is a paragraph break
 (frame-paragraph-breaks, M6; engine bug — two paragraphs separated by a
 blank line set as one whenever a `%` line stood between the first and the
