@@ -169,6 +169,73 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — the writer's features are a closed type, and two browser
+engines now sit on the reader matrix's `target:` line (pdf-browser-oracles,
+M7-20, W2.9; tooling plus one typed census; no byte of any PDF changes: 72
+corpus PDFs `cmp`-identical to main's, goldens unchanged). `Pdf.Feature`
+names, one parameter-free constructor each, what a reader must implement
+to show a written file right — the cross-reference and object streams,
+the PNG predictor, DCT, a soft mask, a form XObject and the copied graph
+it brings, the two CID subtypes, link URIs, outlines, XMP, the trim box,
+marked content, and the six the writer cannot emit yet (output intent,
+ICC, `/Tabs`, structure tree, transparency group, Brotli, JPX). `all` is
+derived from the type as `DiagCode.all` is (`all_complete`, `all_nodup`,
+`name_inj`, `count` the one number a constructor bumps), and
+`Pdf.features` computes the census from the inputs `write` reads: the
+object table's slots (`smaskIds`, `formBases`, `formSizes`, the
+conditional families), the kept faces' `isCff`, each placed image's
+declared filter, the pages' link rectangles and the outline's URI targets,
+and whether any page's operator array opens a marked sequence
+(`lines`/`Line.isOpen`, no new walk). `features_mem` (`_mem`) closes the
+row set — a matrix with a row per `Feature.all` has a row for whatever a
+fixture emits — and `features_smask_iff` (`_exact`) ties the soft-mask row
+to the table's slot. The conformance gate reads this census on every
+golden fixture against a parsed reading of the written objects and the
+spelled reading of the bytes, and the hand table of fixture features is
+deleted: it had no row for three features the writer was already emitting
+— marked content on nearly every page since the artifact layer, DCT on
+`images` (`rects.jpg`), the copied graph behind `figures` — which is the
+red the census was for (on the previous matrix, 73 checks fail: the three
+rows are missing and every fixture reaching them fails by name). Chosen
+over `other (name)`: every constructor is nullary so completeness is a
+theorem, and the graph a placed PDF page brings is `copiedGraph`, one row
+the readers pass as a whole until the graph census names its filters.
+The script's slice 2: PDFium is the host Chrome's own viewer driven over
+`--remote-debugging-pipe` by a node driver the script writes (no
+Playwright, no module) — the extension frame's `pdf-viewer` reports load
+state (`failed` on a broken file) and page boxes, the plugin is told to
+paint magenta and each page is cut from a whole-viewport capture as the
+block of non-magenta pixels less the viewer's shadow insets (the viewer's
+own page rectangle was off by pixels on some pages; `fromSurface: false`
+plus a two-pixel tick toggled behind the embed, because the surface
+capture hung for good on later pages); pdf.js 5.2.183 is unzipped from
+the host Firefox's `omni.ja` into a harness page under the same Chrome
+(`getDocument({data})`, `getTextContent`, canvas render, `getMetadata`).
+A browser cell passes a feature when every fixture reaching it opened,
+counted its pages, contained the shipped text (pdf.js text content;
+PDFium's select-all) and every page's raster lay within `dssimTolerance`
+of Poppler's `pdftoppm -r 100` — measured at a quarter of that resolution,
+because at 100 dpi ImageMagick's DSSIM between two conforming renderers
+of one dense text page (0.14, `valign` p5) exceeded the distance between
+two different pages (0.049): glyph anti-aliasing swamped layout. At 25 dpi
+the 142 corpus pages measure PDFium ≤ 0.026 and pdf.js ≤ 0.030 against
+Poppler, a page against another page of the same deck 0.085 and a text
+page against itself rolled one 12 pt line 0.043, so the tolerance is
+0.035 and the window `[0.030, 0.043]` is recorded as narrow — a metric
+over ink positions is the wider one. The truncated mutant is refused by
+both engines (`load-state:failed`, `InvalidPDFException`). `target:` is
+now `poppler ghostscript pypdf pdfium pdfjs`; a host without Chrome or
+`omni.ja` writes `untested` and the run exits non-zero, so the widened
+header lands only with the cells that earn it. Raster hashes and the
+per-page calibration table go to the run record, never the repo. The
+script's census is checked against the built bytes per fixture; the one
+parting is `diagram-boundary`, where the driver had TeX render the
+boundary picture as a copied page while the harness lays a placeholder —
+recorded, the two rows joined. Firefox itself stays untested on this host
+(glibc); veraPDF `[profile]` cells unchanged. `pdf.js getStructTree` as a
+UA judge is named next, after the tag skeleton. Unlocks M7-25, M7-26,
+M7-33.
+
 2026-09-21 — a conformance profile is a set element that implies exactly
 one assertion, judged on the census of the bytes just built, and no claim
 is written (pdf-profile-grammar, M7-13, W2.3a; feature — grammar, pure
@@ -5087,7 +5154,16 @@ is evidence, not a theorem.
   every target reader; `untested` in a target column is a failure; a
   column outside the target line is recorded and gates nothing, and
   "installed on this host" is never consulted. Widening `target:` is the
-  act that strengthens the claim. A hand-edited cell is caught in review
+  act that strengthens the claim: the line names five readers today —
+  Poppler, Ghostscript, pypdf, PDFium (the host Chrome's viewer) and
+  pdf.js (from the host Firefox's `omni.ja`) — and the `[feature]` rows
+  are the writer's own typed census (`Pdf.Feature`, `Pdf.features`), so a
+  feature the writer starts emitting is a row with no `pass` and the
+  fixture reaching it fails by name. A browser cell is open, page count,
+  text containment and a per-page DSSIM against Poppler's raster inside a
+  calibrated tolerance (`dssimTolerance`, its calibration in the run
+  record) — renderer agreement is a tolerance, never identity. A
+  hand-edited cell is caught in review
   the way a hand-edited golden is: it moved while `tools:`/`date:` did not.
 - Profile claims through the same file: while a profile's `[profile]`
   cells on its declared fixtures are not `pass`, its identifier is absent

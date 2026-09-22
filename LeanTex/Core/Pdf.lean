@@ -697,6 +697,158 @@ theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs :
   · rfl
   · split <;> rfl
 
+-- ## The feature census
+
+/-- What a written file asks of a reader, one constructor per thing a
+reader must implement to show the file right: the rows of the reader
+matrix (`tests/oracles/reader-matrix.txt`, spelled by `name`), whose
+cells are what the readers on the `target:` line made of each. Every
+constructor is parameter-free, so `all` is derived from the type and
+`all_complete`/`all_nodup` close the census: a feature the writer starts
+emitting is a row the matrix must carry, red until the readers pass it.
+`copiedGraph` stands where a placed PDF page's own resource streams ride
+verbatim: their filters are theirs, not this writer's, and the census
+does not read them — the graph census will name them; until then the
+whole graph is one feature the readers must pass. -/
+inductive Feature where
+  | xrefStream
+  | objStm
+  | flatePredictor15
+  | dct
+  | smask
+  | formXObject
+  | copiedGraph
+  | cidFontType0
+  | cidFontType2
+  | linkURI
+  | outlines
+  | xmp
+  | trimBox
+  | outputIntent
+  | iccBased
+  | tabs
+  | markedContent
+  | structTree
+  | transparencyGroup
+  | brotli
+  | jpx
+  deriving DecidableEq, Repr, Inhabited
+
+/-- How many features the census names: the one number a new constructor
+bumps (`all_complete` fails on an undercount, `all_nodup` on an overcount,
+`ofNat` clamping the excess onto the last constructor). -/
+def Feature.count : Nat := 21
+
+/-- Every feature, in declaration order — derived from the type through
+the `ofNat` that `deriving DecidableEq` synthesises, never hand-kept. -/
+def Feature.all : List Feature := (List.range Feature.count).map Feature.ofNat
+
+theorem Feature.all_complete (f : Feature) : f ∈ Feature.all := by
+  cases f <;> decide
+
+theorem Feature.all_nodup : Feature.all.Nodup := by decide
+
+/-- The matrix row a feature is spelled as. -/
+def Feature.name : Feature → String
+  | .xrefStream => "xref-stream"
+  | .objStm => "objstm"
+  | .flatePredictor15 => "flate-predictor15"
+  | .dct => "dct"
+  | .smask => "smask"
+  | .formXObject => "form-xobject"
+  | .copiedGraph => "copied-graph"
+  | .cidFontType0 => "cidfonttype0"
+  | .cidFontType2 => "cidfonttype2"
+  | .linkURI => "link-uri"
+  | .outlines => "outlines"
+  | .xmp => "xmp"
+  | .trimBox => "trimbox"
+  | .outputIntent => "output-intent"
+  | .iccBased => "icc-based"
+  | .tabs => "tabs"
+  | .markedContent => "marked-content"
+  | .structTree => "struct-tree"
+  | .transparencyGroup => "transparency-group"
+  | .brotli => "brotli"
+  | .jpx => "jpx"
+
+/-- **`Feature.name_inj`** (the `_inj` statement): no two features share a
+row name, so a matrix row names one feature. -/
+theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b := by
+  cases a <;> cases b <;> first | rfl | (simp [Feature.name] at h)
+
+def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
+
+/-- Whether one run of `write` on these inputs reaches a feature: the
+table's slots say what was allocated (a soft mask, a copied graph, an
+outline, the colour and structure families); the kept faces say which CID
+subtype; each placed image its declared filter; the pages their link
+annotations and the outline its URI targets; the content operators whether
+a marked sequence opens. The four the writer cannot emit yet (`tabs`,
+`transparencyGroup`, `brotli`, `jpx`) are `false` here and rows the matrix
+already carries, so the day one is emitted the census says so. -/
+def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+    (outline : Array OutlineEntry) : Feature → Bool
+  | .xrefStream => true
+  | .objStm => true
+  | .flatePredictor15 =>
+    (placedImages imgs pages).any (fun i => i.format == .png && i.predictor)
+      || (tableOf fs pages imgs outline).smaskIds.any Option.isSome
+  | .dct => (placedImages imgs pages).any (·.format == .jpeg)
+  | .smask => (tableOf fs pages imgs outline).smaskIds.any Option.isSome
+  | .formXObject => (tableOf fs pages imgs outline).formBases.any Option.isSome
+  | .copiedGraph => (tableOf fs pages imgs outline).formSizes.any (· > 0)
+  | .cidFontType0 => (keepFaces fs pages).any fun k => (fs.get k).isCff
+  | .cidFontType2 => (keepFaces fs pages).any fun k => !(fs.get k).isCff
+  | .linkURI =>
+    pages.any (fun p => !(linkRects geom p).isEmpty)
+      || outline.any (fun e => e.page.isNone && e.url.isSome)
+  | .outlines => outline.size > 0
+  | .xmp => true
+  | .trimBox => geom.bleed != 0
+  | .outputIntent => (tableOf fs pages imgs outline).outputIntent.isSome
+  | .iccBased => (tableOf fs pages imgs outline).icc.isSome
+  | .tabs => false
+  | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
+  | .structTree => (tableOf fs pages imgs outline).structTreeRoot.isSome
+  | .transparencyGroup => false
+  | .brotli => false
+  | .jpx => false
+where
+  /-- The decoded images the pages place, in placement order: what `write`
+  writes an XObject dictionary for. -/
+  placedImages (imgs : Image.Store) (pages : Array PageOut) : Array Image.Info :=
+    (usedImagesOf imgs pages).filterMap fun k => (imgs.get? k).bind (·.info)
+
+/-- The features `write` reaches on these inputs, in `Feature.all`'s order:
+the closed census the reader matrix's rows are checked against, computed
+by the test and the oracle script from the same inputs `write` reads,
+never from the bytes. -/
+def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
+    (outline : Array OutlineEntry := #[]) : Array Feature :=
+  (Feature.all.filter (reaches geom fs pages imgs outline)).toArray
+
+/-- **`features_mem`** (the `_mem` statement): every feature the census
+reports is drawn from `Feature.all` — the row set is closed, so a matrix
+carrying a row per `Feature.all` has a row for whatever a fixture emits. -/
+theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+    (outline : Array OutlineEntry) (f : Feature) (h : f ∈ features geom fs pages imgs outline) :
+    f ∈ Feature.all := by
+  unfold features at h
+  exact (List.mem_filter.1 (List.mem_toArray.1 h)).1
+
+/-- **`features_smask_iff`** (the `_exact` statement): the census says
+`smask` exactly when the table allocated a soft-mask id — the same slot
+`write` reads to emit `/SMask`. -/
+theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (imgs : Image.Store) (outline : Array OutlineEntry) :
+    .smask ∈ features geom fs pages imgs outline ↔
+      ∃ k, ∃ h : k < (tableOf fs pages imgs outline).smaskIds.size,
+        ((tableOf fs pages imgs outline).smaskIds[k]).isSome = true := by
+  unfold features
+  rw [List.mem_toArray, List.mem_filter]
+  simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
+
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually

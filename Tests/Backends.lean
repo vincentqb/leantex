@@ -3448,6 +3448,85 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         ((((PdfRead.trailer pdf).toOption.bind (·.get? "Size")).bind PdfRead.Obj.int?)
           == some (tb.size : Int))
 
+/-- One page placing the store's first image: the shape whose store
+decides the census's image rows. -/
+def featurePlacingPages : Array Layout.PageOut :=
+  #[{ lines := #[
+    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 10, setWidth := Dim.pt 100,
+      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15)] }] }]
+
+/-- The typed feature census: the registry (`Feature.all` derived and
+closed, names one-to-one with rows), `features` on the shapes that decide
+each row — a soft-mask image says `smask`, a plain one does not, a copied
+page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
+every corpus fixture, the four unemitted features stay unreached while
+the bookkeeping four are always reached. -/
+def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  t "features: the registry counts its constructors"
+    (Pdf.Feature.all.length == Pdf.Feature.count && Pdf.Feature.all.Nodup)
+  t "features: every row name reads back to its feature"
+    (Pdf.Feature.all.all fun f => Pdf.Feature.ofName? f.name == some f)
+  t "features: row names are distinct" ((Pdf.Feature.all.map Pdf.Feature.name).Nodup)
+  t "features: an unknown row name is nobody's" (Pdf.Feature.ofName? "hologram").isNone
+  -- One page placing one image; the store decides the row.
+  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
+  let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
+    pngChunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ pngChunk "IEND" [])
+  let geom : Layout.Geom := {}
+  let placing := featurePlacingPages
+  let storeOf (src : String) (data : ByteArray) : Image.Store :=
+    { entries := #[{ src, info := (Image.decode data).toOption }] }
+  let feats (src : String) (data : ByteArray) : Array Pdf.Feature :=
+    Pdf.features geom oneFace placing (storeOf src data)
+  let alpha := feats "alpha.png" rgbaPng
+  t s!"features: an alpha PNG reaches smask and the predictor: {repr alpha}"
+    (alpha.contains .smask && alpha.contains .flatePredictor15 && !alpha.contains .dct)
+  let plain := feats "plain.png" png
+  t s!"features: an opaque PNG reaches the predictor and no smask: {repr plain}"
+    (!plain.contains .smask && plain.contains .flatePredictor15 && !plain.contains .dct)
+  let jpeg := feats "photo.jpg" jpg
+  t s!"features: a JPEG reaches dct alone: {repr jpeg}"
+    (jpeg.contains .dct && !jpeg.contains .smask && !jpeg.contains .flatePredictor15)
+  let form := feats "page.pdf" unembeddedProbePdf
+  t s!"features: a copied page reaches the form and its graph: {repr form}"
+    (form.contains .formXObject && form.contains .copiedGraph && !form.contains .dct)
+  let missing := Pdf.features geom oneFace placing { entries := #[{ src := "gone.png" }] }
+  t s!"features: a placeholder reaches no image feature: {repr missing}"
+    (!missing.contains .smask && !missing.contains .formXObject && !missing.contains .dct &&
+     !missing.contains .flatePredictor15)
+  t "features: the placeholder's box is a layout artifact, so marked content is reached"
+    (missing.contains .markedContent && !plain.contains .markedContent)
+  let bare := Pdf.features geom oneFace #[]
+  t s!"features: no pages reach the bookkeeping three and the stand-in face: {repr bare}"
+    (bare == #[.xrefStream, .objStm, .cidFontType2, .xmp])
+  t "features: a bleed reaches the trim box"
+    ((Pdf.features { geom with bleed := Dim.pt 3 } oneFace #[]).contains .trimBox &&
+     !bare.contains .trimBox)
+  t "features: an outline reaches outlines; a URI-only item reaches link-uri too"
+    (let o := Pdf.features geom oneFace #[] {} #[{ title := "a", page := some 0 }]
+     let u := Pdf.features geom oneFace #[] {} #[{ title := "a", url := some "https://example.org" }]
+     o.contains .outlines && !o.contains .linkURI && u.contains .outlines && u.contains .linkURI)
+  -- The census over the corpus: the four unemitted features never, the
+  -- bookkeeping four always, and the census is in registry order.
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let store ← corpusStore doc
+    let out := layoutOf oneFace doc geom none store
+    let fs := Pdf.features geom oneFace out.pages store out.outline
+    t s!"features {n}: never tabs, transparency groups, Brotli or JPX"
+      (!fs.contains .tabs && !fs.contains .transparencyGroup && !fs.contains .brotli &&
+       !fs.contains .jpx)
+    t s!"features {n}: always the cross-reference stream, the object stream, XMP, one CIDFontType2"
+      (fs.contains .xrefStream && fs.contains .objStm && fs.contains .xmp &&
+       fs.contains .cidFontType2 && !fs.contains .cidFontType0)
+    t s!"features {n}: in registry order, once each"
+      (fs.toList == Pdf.Feature.all.filter fs.contains)
+
 /-- The recorded text page under the artifact layer: the fills as one bare
 `/Artifact` block, each placeholder under `/Layout`, the rules as one
 `/Layout` block, the loaded image and the text object bare. -/
