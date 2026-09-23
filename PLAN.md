@@ -187,6 +187,28 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — a pairing is solved once, because the solver is a function. The
+entry below left this named: `realize` ran per failing *use*, not per failing
+pairing, so one pale role through a long document walked the Oklab lightness
+axis thousands of times for one answer. It is a pure function of (requirement,
+ground, colour) — the pairing key the judge already carries — so the judge
+memoizes it, and the note a document earns for one use is the note it earns
+for three thousand.
+
+Measured in the judge alone (`Contrast.docDiags` over synthetic IR, compiled):
+3,000 uses of one failing role, 1,101 ms → under 400 ms, the bound the new
+test holds. Whole build, one failing role repeated: 400 runs 234 → 90 ms,
+3,200 runs 1,355 → 172 ms. 3,200 *distinct* failing roles, where the memo
+cannot share a single answer, still halve — 2,007 → 843 ms — because the
+engine judges twice per build and the second pass re-asks the first pass's
+questions. `scripts/bench.lean` unchanged (±5 ms).
+
+Every diagnostic over the same 113 documents in three renderings is
+byte-for-byte identical to mainline's, memo and all: a cached pure answer is
+the answer. The pin is two tests — the note for one use equals the note for
+four, and 3,000 uses of one failing pairing are judged under 400 ms (1,101 ms
+per-use, so the bound fails by ~2.8x if the search comes back per use).
+
 2026-09-23 — a pairing is a key, so the contrast judge stops re-reading the
 document to judge one run. `declaredUseJudged` (Contrast.lean) asked two
 questions per coloured use by scanning: *have I reported this pairing?*

@@ -1766,6 +1766,29 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let judgeMs := (← IO.monoMsNow) - t0
   t s!"the contrast judge is linear in the coloured runs ({judgeMs} ms for 20000)"
     (judgeMs < 1500)
+  -- A failing pairing is solved once, not once per use: the lightness search
+  -- is a pure function of the requirement, the ground and the colour, so the
+  -- note one use earns is the note three thousand earn — and the search is
+  -- paid once. Measured in the judge: 3,000 uses of one failing role cost
+  -- 1,101 ms solved per use.
+  let washedNotes (uses : Nat) : Array String :=
+    ((elabStr ("\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
+      "\\begin{document}" ++
+      String.join ((List.range uses).map fun i =>
+        "\\textcolor{washed}{w" ++ toString i ++ "} ") ++
+      "\\end{document}")).2.filter (·.code == "N0022")).map (·.message)
+  t "a repeated failing pairing is solved once, to the same value"
+    ((washedNotes 4).size == 1 && washedNotes 4 == washedNotes 1)
+  let manyPale : Ir.Doc :=
+    { palette := { entries := #[("washed", declared)] }
+      body := (List.range 3000).toArray.map fun i =>
+        Ir.Block.para #[.colored declared (some "washed") #[.text s!"w{i}"]] }
+  let t1 ← IO.monoMsNow
+  let paleJudged := Contrast.docDiags manyPale
+  t "3,000 uses of one failing pairing read one note" (paleJudged.size == 1)
+  let paleMs := (← IO.monoMsNow) - t1
+  t s!"a failing pairing is solved once, not per use ({paleMs} ms for 3000)"
+    (paleMs < 400)
 
   -- The built-in theme bundles, held to the same contract. The theorems
   -- range over the bundles' own typed values; this pin closes the chain:

@@ -889,6 +889,11 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
   -- epochs, so this stays the dedup `j.palWrites.contains` was, without the
   -- scan over every write made so far.
   let mut palSeen : Std.HashMap UseKey (Array Palette) := {}
+  -- `realize` is a pure search over the requirement, the ground and the
+  -- colour, so a pairing that repeats is solved once: one pale role through
+  -- a long document paid the Oklab lightness walk per *use* before this,
+  -- 1,101 ms of judging for 3,000 uses of one failing role.
+  let mut solved : Std.HashMap PairKey (Option Color) := {}
   for u in acc.uses do
     -- The exemption is judged before the dedup: an exempt use must not
     -- consume the key a later, non-exempt epoch's use of the same pairing
@@ -909,7 +914,11 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
       -- re-realized — only warned, as before.
       match u.name with
       | some role =>
-        match realize aaText u.surface u.color with
+        let cand := match solved[key.pair]? with
+          | some c => c
+          | none => realize aaText u.surface u.color
+        solved := solved.insert key.pair cand
+        match cand with
         | some c' =>
           -- The entry rewrite follows the value: when the epoch's palette
           -- carries this role at this colour and the ground is its own
