@@ -2308,6 +2308,76 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     ((layoutDiags ("\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\n" ++
       String.join (List.replicate 120 "one line\n\n") ++ "\\end{document}")).all
         (·.code != "W0384"))
+  -- Alternation's spill account, over the shipped pages. A step page inks
+  -- one group of an `\alt` (`Ir.altShowsFirst`), so its height — and the
+  -- spill it is charged for — is that group's alone. The pair of `step`
+  -- nodes alternation replaced put BOTH groups on every step page, so it
+  -- was the taller reading of the same source: more pages, and one
+  -- collapsed report, because every step page carried identical content
+  -- and W0384 dedupes by message. These pin the direction, so a later
+  -- change cannot make selection cost pages or invent an account: the
+  -- stacked shape is asserted beside the selected one in each, which is
+  -- what keeps the claims from passing vacuously.
+  let altFiller (tag : String) (rows reps : Nat) : String :=
+    String.join ((List.range rows).map fun i =>
+      tag ++ " " ++ toString i ++ " " ++
+        String.join (List.replicate reps "band of body text ") ++ "\n\n")
+  let altFrame (body : String) : String :=
+    deck169 "\\theme{moloch}"
+      ("\\begin{frame}{Alternating}\n" ++ body ++ "\n\\end{frame}")
+  let altSrc (a b : String) : String :=
+    altFrame ("\\alt<2>{" ++ a ++ "}{" ++ b ++ "}")
+  -- The shape `\alt` used to elaborate to: the active group in range, the
+  -- other before it, both on the page under dim-not-hide.
+  let stackSrc (a b : String) : String :=
+    altFrame ("\\onslide<2>{" ++ a ++ "}\\onslide<1>{" ++ b ++ "}")
+  let shipsMark (src mark : String) : Array Bool :=
+    (pageTexts (layoutOut src)).map fun txt => (txt.splitOn mark).length > 1
+  let spillTexts (src : String) : Array String :=
+    ((layoutDiags src).filter (·.code == "W0384")).map (·.message)
+  let one := "Alphafill"
+  let two := "Bravofill"
+  let shortA := altFiller one 1 1
+  let shortB := altFiller two 1 1
+  t "alternation: each step page inks one group, where the stack it replaced inks both"
+    (shipsMark (altSrc shortA shortB) one == #[false, true] &&
+     shipsMark (altSrc shortA shortB) two == #[true, false] &&
+     shipsMark (stackSrc shortA shortB) one == #[true, true] &&
+     shipsMark (stackSrc shortA shortB) two == #[true, true])
+  -- The step count is the spec's, not the selection's: a frame whose every
+  -- step fits ships exactly one page per step under either shape.
+  t "alternation: a fitting frame ships one page per step, as the stack does"
+    ((layoutOut (altSrc shortA shortB)).pages.size ==
+       (layoutOut (stackSrc shortA shortB)).pages.size &&
+     (layoutOut (altSrc shortA shortB)).pages.size == 2 &&
+     (layoutOut (altFrame ("\\alt<3-4>{" ++ shortA ++ "}{" ++ shortB ++ "}" ++
+       "\n\\pause\\pause\\pause"))).pages.size == 4)
+  -- Selection never costs a page and never adds an account: swept across
+  -- the page boundary, so the claim covers a group that fits, one that
+  -- does not, and the seam between them.
+  t "alternation: never more pages and never more spill accounts than the stack"
+    ((List.range 9).all fun k =>
+      let a := altFiller one (5 + 2 * k) 3
+      let b := altFiller two (5 + 2 * k) 3
+      (layoutOut (altSrc a b)).pages.size ≤ (layoutOut (stackSrc a b)).pages.size &&
+        (spillTexts (altSrc a b)).size ≤ (spillTexts (stackSrc a b)).size)
+  -- And the account it does raise is true: what a step page is charged for
+  -- is what the group it ships is charged for standing alone, so
+  -- alternation neither invents a spill nor inflates one. The groups spill
+  -- by different amounts — one is set larger, so a different band is the
+  -- one that fails to fit — because equal numbers would let a wrong
+  -- attribution pass: W0384 dedupes by message, which is exactly how the
+  -- stacked shape reported one figure for a frame whose two readings
+  -- overflow by two.
+  let overA := altFiller one 20 3
+  let overB := "{\\Large " ++ altFiller two 9 3 ++ "}"
+  t "alternation: a step page's spill is the selected group's own, not the stack's"
+    (spillTexts (altSrc overA overB) ==
+       (spillTexts (altFrame overB)) ++ (spillTexts (altFrame overA)) &&
+     (spillTexts (altFrame overA)).size == 1 &&
+     (spillTexts (altFrame overB)).size == 1 &&
+     spillTexts (altFrame overA) != spillTexts (altFrame overB) &&
+     spillTexts (stackSrc overA overB) == spillTexts (altFrame overA))
   -- The caption gap has a side: `captionsep` on the object side,
   -- `floatsep` on the text side, whichever side the caption stands
   -- (classes.dtx: `\abovecaptionskip` 10pt between object and caption,
