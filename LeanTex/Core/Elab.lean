@@ -648,7 +648,7 @@ def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
-   "paragraph", "subparagraph", "href", "link", "url", "cite", "citep",
+   "paragraph", "subparagraph", "href", "link", "url", "nolinkurl", "cite", "citep",
    "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
@@ -3089,21 +3089,29 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
-        else if name == "url" then
+        else if name == "url" || name == "nolinkurl" then
           -- hyperref/url/xurl's one-argument sibling of `\href`: the URL is
           -- its own text, set mono (url.sty's `\urlstyle{tt}` default).
+          -- `\nolinkurl` is the same command minus the link (hyperref
+          -- manual, "User macros": "\nolinkurl{URL} ... without a link"),
+          -- so it resolves HERE, from the same group, the same text and the
+          -- same face — one site, one difference. Two sites is how the face
+          -- went missing: the URL was set as plain text elsewhere, which is
+          -- byte-identical to dropping an unknown command.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
           | some (.group urlRaw _) =>
             have hjlt := getElem?_lt hj
             let url := argText ctx urlRaw
+            let set : Ir.Inline := .styled .mono #[.text url]
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.link url #[.styled .mono #[.text url]])) ""
+              ((flushText acc sb).push
+                (if name == "url" then .link url #[set] else set)) ""
           | _ =>
-            diag ctx .E0304 "'\\url' needs a {url} group" pos
+            diag ctx .E0304 s!"'\\{name}' needs a \{url} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "cite" || name == "citep" || name == "citet" then
           -- natbib's citation commands (natbib manual §2.3): one node per

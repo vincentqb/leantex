@@ -2252,10 +2252,6 @@ the definition is skipped" pos
         "'\\titlegraphic' declares title-page content the engine does not place; the content is dropped" pos
         (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
     return some (#[], k)
-  | "nolinkurl" =>
-    -- Its group stays in the stream: the URL renders as its own text.
-    became "\\nolinkurl" "the URL as plain text" pos
-    return some (#[], start)
   | "multicolumn" =>
     -- `\multicolumn{n}{align}{text}`: spans are not modelled — the cell's
     -- text lands in its own single cell, and the short row is padded with

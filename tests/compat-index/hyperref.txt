@@ -2,12 +2,9 @@
 # bookmark commands, starred cross-references, \texorpdfstring, \hypersetup.
 # The starred \ref* breaks argument scanning (E0304, the star-scan defect the
 # \citet* row also pins); \pageref* is pending as a whole (W0307).
-# \nolinkurl is set as plain text, which is the same text an unknown command
-# leaves behind: the URL loses the typewriter face \url keeps, so the row
-# claims no effect (inert) until the face lands and promotes it.
 body impl \href{https://example.org}{x}
 body impl \url{https://example.org}
-body inert:plain-text \nolinkurl{https://example.org}
+body impl \nolinkurl{https://example.org}
 body refuse:W0301 \hyperref[s]{x}
 body refuse:W0301 \hyperlink{t}{x}
 body refuse:W0301 \hypertarget{t}{x}

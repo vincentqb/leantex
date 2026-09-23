@@ -1659,6 +1659,60 @@ def compatRowEffect (pkg place call : String) : Bool :=
   (elabStr (compatRowSrc pkg place call)).1
     != (elabStr (compatRowSrc pkg place (compatUnknown call))).1
 
+/-- The invariant whose absence lost the face: `\url` and `\nolinkurl`
+resolve at ONE site, so on the shipped page their runs agree in everything
+but the link. Two sites is how the face went missing — the URL was set as
+plain text, which is byte-identical to dropping an unknown command — so the
+claim is read off `Layout.Out`, where the face is a fact about the page,
+never off the IR. The face is the document's mono family, so the check needs
+a set where mono is a *different* index from the body: one face maps every
+slot to 0 and could not tell the two apart. Both faces ship in
+`tests/corpus/fonts`. -/
+def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (p : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ p)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"url face fixture: {p}: {e}")
+  let body ← load "SourceSerifPro-Regular.otf"
+  let code ← load "SourceCodePro-Regular.otf"
+  let twoFace : Font.FontSet :=
+    { fonts := #[body, code]
+      index := ((List.range 3).flatMap fun slot =>
+        let i := if slot == 2 then 1 else 0
+        [((slot, 400, false), i), ((slot, 700, false), i),
+         ((slot, 400, true), i), ((slot, 700, true), i)]).toArray }
+  let url := "https://example.org"
+  -- The projection the two commands must agree on: face, metrics, glyphs,
+  -- size. The link is the one difference, and the underline is the link's
+  -- own affordance (`linkSignalChecks`), so both stay out of the projection.
+  let runsOf (call : String) : Array ((Nat × Int × Array (Nat × Char) × Int) × Bool × Bool) :=
+    let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\nsee " ++
+      call ++ " here\n\\end{document}")).1
+    let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
+    segs.filterMap fun s => match s with
+      | .run fi _ link w gs sz ul _ _ _ =>
+        if String.ofList (gs.map (·.2)).toList == url then
+          some ((fi, w, gs, sz), link.isSome, ul)
+        else none
+      | _ => none
+  let linked := runsOf s!"\\url\{{url}}"
+  let plain := runsOf s!"\\nolinkurl\{{url}}"
+  let monoIdx (rs : Array ((Nat × Int × Array (Nat × Char) × Int) × Bool × Bool)) : Bool :=
+    !rs.isEmpty && rs.all fun r => r.1.1 == 1
+  t "url ships the URL in the mono face" (monoIdx linked)
+  -- The gap: \nolinkurl shipped the body face, the same ink an unknown
+  -- command's leftover text ships.
+  t "nolinkurl ships the URL in the mono face too" (monoIdx plain)
+  t "url and nolinkurl agree on the shipped face, metrics and glyphs"
+    (linked.map (·.1) == plain.map (·.1))
+  t "the link is the one difference: url links and underlines, nolinkurl does neither"
+    (!linked.isEmpty && linked.all (fun r => r.2.1 && r.2.2) &&
+      !plain.isEmpty && plain.all (fun r => !r.2.1 && !r.2.2))
+  -- Neither is an unknown command, and neither loses its group.
+  t "nolinkurl is recognised, not dropped"
+    (warnCodes (dvDoc "" s!"\\nolinkurl\{{url}}") == [])
+
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,
