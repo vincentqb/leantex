@@ -187,6 +187,59 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — the gates run in CI, and a cited theorem name has to exist.
+Two holes in the enforcement surface, both of the same kind: a rule this
+repo states was held by something a fresh clone does not have.
+
+The first was `core.hooksPath`. Roughly a dozen obligations AGENTS.md marks
+"(hook)" — no wildcard arm in an IR walk, the conservation-suffix-or-refusal
+walk gate, no non-terminating recursion, no IO in the pure core, no backend
+reach-in to the surface, the `driverConfigReads` allowlist, the Obligations
+import gate, the owed ratchet, the compat-index presence rule, the `]!`
+ratchet, the Support rule — lived only in a per-clone git config, while
+`.github/workflows/ci.yml` ran `lake build` and `lake test` and nothing
+else. A clone that never ran the one-time `git config` merged a wildcard
+walk green. The gate script now takes its diff from a source rather than
+always from the index: `--range origin/main...HEAD` for a pull request (the
+pushed commits for a push), `--tree` when no range computes, and in both
+modes every whole-tree check runs unconditionally. What CI still cannot
+judge is the *per-commit* shape of a rule — the toolchain-bump rule (one
+commit, one bump) is index-only by construction, since a range legitimately
+spans a bump and its neighbours. The linter rule moved too: the workflow
+passes `--wfail` to its own cold build, because the gate's `--wfail` build
+sees a warm cache by the time it runs and cannot be relied on for warnings.
+
+The second was the phantom citation. AGENTS.md asks that a guarantee stated
+in prose name the theorem holding it; 16 backticked names in docstrings
+named nothing at all — `fallback_uncovers_every_step` (deleted),
+`pages_count_frame_steps` (superseded by `pages_partition_frames`),
+`features_agree`, `collectRole_transparent`, `leafOwners_mem`,
+`language_attribute_text_free`, `spill_accounts`, `steps_agree`,
+`float_whole`, `footLine_eq_slots`, `algorithm_lines_agree`,
+`boundary_request_deterministic`, `covered_is_deliberately_dim`,
+`theme_fixes_no_page`, `furniture_position_content_free`,
+`plain_numbers_every_page`. Each reads as a guarantee held and is not: the
+docstring is the only place the claim appears. The recognition rule is the
+snake_case joint — a backticked token spelled in ASCII word characters,
+opening lowercase, carrying an interior underscore — which is what every
+theorem name here is built from and none of the tree's other backticked
+things are (camelCase defs, dotted or spaced types, hyphenated flags,
+slashed paths, SCREAMING_SNAKE keys, prose). Of 308 distinct candidates in
+the tree's docstrings, 286 resolve to a declaration, 2 to a declaration
+family cited by its shared prefix (`sty_is_defaults`), 2 to a test's check
+label — AGENTS.md accepts a test where a theorem does not fit, and the label
+is where that claim is written — and 22 resolve to nothing: the 16 above
+plus 6 foreign names that are legitimately not declarations (TeX's
+`mlist_to_hlist`, `xn_over_d` and `default_rule_thickness`, zlib's
+`good_length`, Chrome's `headless_shell`, and `x_y` quoted as an example
+label key). The 6 sit in `citeForeign` with their source named; the 16 sit
+in `citePhantomKnown`, frozen, because the files citing them were held by
+other slices when the gate landed. The list may only shrink — a new phantom
+fails the commit — and it is keyed by name, so a second citation of a
+listed name passes. Docstrings only, deliberately: a `--` comment or a PLAN
+entry may name a theorem that was deleted, and a historical record is not a
+claim.
+
 2026-09-23 — a pairing is solved once, because the solver is a function. The
 entry below left this named: `realize` ran per failing *use*, not per failing
 pairing, so one pale role through a long document walked the Oklab lightness
