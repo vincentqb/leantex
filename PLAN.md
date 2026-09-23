@@ -322,6 +322,57 @@ though a node read it), which is a false loss the inheritance increment
 introduced and the next unit should fix by accounting consumption per entry
 rather than per loop.
 
+2026-09-23 — `algorithm_lines_agree` is a theorem. The phantom's own
+allowlist row said what blocked it: the HTML nesting builder was an inline
+`Id.run do` inside a match arm, so no named function existed for a statement
+to range over — the factorization finding AGENTS.md describes, a private
+state the statement cannot name. The arm is now five named values and the
+theorem holds the fact the oracle used to carry alone.
+
+- The factorization separates the nesting from the rendering. The depths a
+  line declares build a forest (`HtmlDoc.AlgTree`, `algNest`) through a
+  named stack machine: `algAttach` closes one level into the node beneath
+  it, `algClose`/`algCloseN`/`algOpenN` are the two `while`-shaped `for`
+  loops counted rather than conditioned — total by structure, no `partial` —
+  and `algStep` is one line onto the stack at the depth it names. The
+  rendering (`algRenderOne`/`algRenderList`) takes the per-line payload as a
+  parameter, so nothing about inlines, the palette or the locale reaches the
+  nesting: the theorem ranges over the forest alone.
+- The statement is `algLinesList #[] (algNest lines).toList = lines` —
+  reading the forest back in document order returns the declared array. It
+  is `_agree` because both projections are in it: screen's is the forest
+  (one `<li>` per node, nested lists per level), print's is that array read
+  straight through (`Layout`'s `.algorithm` arm folds it in order, one
+  display paragraph per element). The fact is of the IR, and each artifact's
+  reading is a projection — so a line cannot reach one artifact and miss the
+  other, nor reach the two in different places. The defect it now refuses is
+  the `\eIf` double-nesting the oracle was written for.
+- The proof is an invariant over the stack, not a tactic: `algStackLines`
+  reads every level bottom-first, `algAttach_lines` is the one step that
+  needed real work (an Array snoc decomposition from `back? = some`), and
+  close, open and step each conserve it (`algClose_lines`,
+  `algOpenN_lines`, `algStep_lines`); the fold then adds exactly its line
+  (`algFold_lines`) and the final unwind leaves one level
+  (`algCloseN_length`). A depth that skips a level — no surface spelling
+  produces one — stands a line-less group in for the level nothing
+  declared, and the group carries no line, which is why the statement needs
+  no well-formedness hypothesis.
+- Behaviour is unchanged, and the check is bytes, not goldens: every golden
+  fixture rendered to HTML before and after hashes to
+  `c9f2482e842c2cc839bba4025096b43b42e489af077d39f23c7dec9f436378da`. The
+  one place the old and new builders could differ is a node taking kids
+  twice, and it is unreachable: a close into a level's last node is followed
+  either by a new last node on that level (the shallower line that triggered
+  it) or by that level's own close, so no node is closed into twice.
+- The oracle stays and changes job. `algorithmBackendChecks` no longer
+  claims to hold the census — the theorem does — and now checks what no
+  theorem states: the *rendering* of the forest, one `<li>` per node and one
+  `<ol>` per level, plus the skipped-level shape built straight on the IR.
+  § Owed obligations is unchanged: nothing was staged, the theorem closed.
+  `Ir.AlgLine.rendered`'s docstring, which called the name "the statement",
+  is now correct rather than phantom — it was left untouched because
+  Ir.lean was held elsewhere this round.
+
 2026-09-23 — four more phantom citations resolved; five are one word in a
 file no sweep has held, and the allowlist stays after them. The nine the
 first sweep left were checked against the tree rather than read: under

@@ -1884,15 +1884,16 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
      | _, _ => false)
 
-/-- The algorithm-line agreement oracle — evidence, not a theorem, and all
-that holds the claim today: the HTML list-item text census equals the PDF's
-line census. Both backends read one line spelling
-(`Ir.AlgLine.rendered`), so what remains checkable is the HTML nesting
-builder itself — that grouping lines into nested `<ol>`s loses no line and
-reorders none, over the shapes that exercise it: the `\eIf` else standing
-at its if's own level (the double-nesting defect this pins), and a plain
-loop. The census texts are checked in emission order, one `<li>` per
-line. -/
+/-- `algorithm_lines_agree`'s executable side. The theorem holds the line
+census — that `algNest`'s forest reads back as the declared array, so no
+line reaches one artifact and misses the other — and what remains for an
+oracle is the *rendering* of that forest, which no theorem states: one
+`<li>` per node, one nested `<ol>` per level, and the emission order the
+census fixes. Checked over the shapes that exercise it: the `\eIf` else
+standing at its if's own level (the double-nesting defect this pins), a
+plain loop, and — built on the IR, since no surface spelling produces
+it — a depth that skips a level, where the forest stands a group in for
+the level nothing declared. -/
 def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let emitOf (body : String) : String :=
@@ -1926,6 +1927,17 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((deep.splitOn "<ol").length - 1) == 3 &&
       inOrder deep ["<strong>for</strong>", "<strong>while</strong>",
         "step;", "<strong>end</strong>", "<strong>end</strong>"])
+  -- a skipped level, straight on the IR: the forest carries every line and
+  -- opens a list for the level no line declared
+  let stmt (d : Nat) (txt : String) : Ir.AlgLine :=
+    { depth := d, kind := .statement, content := #[.text txt], comment := none }
+  let jumpDoc : Ir.Doc :=
+    { body := #[.algorithm false true #[stmt 0 "top", stmt 2 "deep"]] }
+  let jump := (HtmlDoc.emit {} jumpDoc).1
+  t "algorithm html: a skipped level still ships both lines"
+    (((jump.splitOn "<li>").length - 1) == 3 && inOrder jump ["top;", "deep;"])
+  t "algorithm html: a skipped level opens a list per level"
+    (((jump.splitOn "<ol").length - 1) == 3)
 
 mutual
 

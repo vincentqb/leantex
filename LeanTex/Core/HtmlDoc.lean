@@ -3736,6 +3736,306 @@ private theorem bibItemNode_key_enters_attribute_position (cfg : Config)
       Html.elem "li" kids #[("id", Ir.bibAnchor item.key)] :=
   ⟨_, rfl⟩
 
+/-- Where one algorithm line stands in the nesting its declared depths
+imply: a node carrying the line, or a group standing in for a level no
+line declared (a depth that skips one). The forest is what `algNest`
+builds from `Ir.Block.algorithm`'s line array and what
+`algorithm_lines_agree` ranges over; the screen backend renders it as
+nested `<ol>`s. -/
+inductive AlgTree where
+  | node (line : Option Ir.AlgLine) (kids : Array AlgTree)
+
+mutual
+
+/-- The lines one nesting node carries, in document order: its own line
+first, then its kids' — the order the rendered `<li>`s stand in, since a
+nested list follows the text of the item it hangs under. Read by
+`algorithm_lines_agree` only; no emission path walks it. -/
+def algLinesOne (acc : Array Ir.AlgLine) : AlgTree → Array Ir.AlgLine
+  | .node none kids => algLinesList acc kids.toList
+  | .node (some l) kids => algLinesList (acc.push l) kids.toList
+
+/-- `algLinesOne` over one level's forest, threading the accumulator. -/
+def algLinesList (acc : Array Ir.AlgLine) : List AlgTree → Array Ir.AlgLine
+  | [] => acc
+  | t :: rest => algLinesList (algLinesOne acc t) rest
+
+end
+
+/-- One finished level attached to the level below it: the level's forest
+becomes the kids of the node it stood under, or of a group where no node
+declared that level. A node takes kids at most once — the close that
+attaches them is either followed by a new last node on that level (the
+line whose shallower depth triggered it) or by the level's own close. -/
+def algAttach (inner top : Array AlgTree) : Array AlgTree :=
+  match top.back? with
+  | some (.node l kids) => top.pop.push (.node l (kids ++ inner))
+  | none => top.push (.node none inner)
+
+/-- The nesting stack, innermost level first: close the open level into
+the one beneath it. -/
+def algClose : List (Array AlgTree) → List (Array AlgTree)
+  | inner :: top :: rest => algAttach inner top :: rest
+  | [lvl] => [lvl]
+  | [] => []
+
+/-- `algClose` iterated — the unwind, counted rather than conditioned, so
+it is total by structure. -/
+def algCloseN : Nat → List (Array AlgTree) → List (Array AlgTree)
+  | 0, s => s
+  | n + 1, s => algCloseN n (algClose s)
+
+/-- Levels opened under the current one, counted the same way. -/
+def algOpenN : Nat → List (Array AlgTree) → List (Array AlgTree)
+  | 0, s => s
+  | n + 1, s => algOpenN n (#[] :: s)
+
+/-- One line onto the stack, at the depth it declares: close back to that
+depth, open down to it, then stand the line on the level it names. -/
+def algStep (s : List (Array AlgTree)) (l : Ir.AlgLine) : List (Array AlgTree) :=
+  let closed := algCloseN (s.length - (l.depth + 1)) s
+  let opened := algOpenN (l.depth + 1 - closed.length) closed
+  (opened.headD #[]).push (.node (some l) #[]) :: opened.tail
+
+/-- The nesting an algorithm's lines declare, as a forest: each line's own
+depth drives it — the parse's truth — so an else standing at its if's
+level nests exactly once. The final unwind leaves one level, the document
+order `algorithm_lines_agree` reads back. -/
+def algNest (lines : Array Ir.AlgLine) : Array AlgTree :=
+  let s := lines.foldl algStep [#[]]
+  (algCloseN (s.length - 1) s).headD #[]
+
+/-- Every line the stack holds, bottom level first: a level's lines stand
+before the lines of the levels nested under its last node, which is the
+document order the finished forest reads in. -/
+def algStackLines (s : List (Array AlgTree)) : Array Ir.AlgLine :=
+  s.foldl (fun acc lvl => algLinesList #[] lvl.toList ++ acc) #[]
+
+mutual
+
+private theorem algLinesOne_acc (acc : Array Ir.AlgLine) (t : AlgTree) :
+    algLinesOne acc t = acc ++ algLinesOne #[] t := by
+  match t with
+  | .node none kids =>
+    rw [algLinesOne, algLinesOne, algLinesList_acc acc kids.toList]
+  | .node (some l) kids =>
+    rw [algLinesOne, algLinesOne, algLinesList_acc (acc.push l) kids.toList,
+      algLinesList_acc ((#[] : Array Ir.AlgLine).push l) kids.toList,
+      Array.push_eq_append, Array.push_eq_append, Array.empty_append,
+      Array.append_assoc]
+
+private theorem algLinesList_acc (acc : Array Ir.AlgLine) (xs : List AlgTree) :
+    algLinesList acc xs = acc ++ algLinesList #[] xs := by
+  match xs with
+  | [] => rw [algLinesList, algLinesList, Array.append_empty]
+  | t :: rest =>
+    rw [algLinesList, algLinesList, algLinesList_acc (algLinesOne acc t) rest,
+      algLinesList_acc (algLinesOne #[] t) rest, algLinesOne_acc acc t,
+      Array.append_assoc]
+
+end
+
+private theorem algLinesList_append (xs ys : List AlgTree) :
+    algLinesList #[] (xs ++ ys)
+      = algLinesList #[] xs ++ algLinesList #[] ys := by
+  induction xs with
+  | nil => rw [List.nil_append, algLinesList, Array.empty_append]
+  | cons t rest ih =>
+    rw [List.cons_append, algLinesList, algLinesList,
+      algLinesList_acc (algLinesOne #[] t) (rest ++ ys), ih,
+      algLinesList_acc (algLinesOne #[] t) rest, Array.append_assoc]
+
+private theorem algLinesList_acc_append (acc : Array Ir.AlgLine)
+    (xs ys : List AlgTree) :
+    algLinesList acc (xs ++ ys)
+      = acc ++ algLinesList #[] xs ++ algLinesList #[] ys := by
+  rw [algLinesList_acc, algLinesList_append, Array.append_assoc]
+
+private theorem algLinesList_push (xs : Array AlgTree) (t : AlgTree) :
+    algLinesList #[] (xs.push t).toList
+      = algLinesList #[] xs.toList ++ algLinesOne #[] t := by
+  rw [Array.toList_push, algLinesList_append, algLinesList, algLinesList]
+
+private theorem algAttach_lines (inner top : Array AlgTree) :
+    algLinesList #[] (algAttach inner top).toList
+      = algLinesList #[] top.toList ++ algLinesList #[] inner.toList := by
+  rw [algAttach]
+  split
+  · next l kids h =>
+    obtain ⟨ys, hy⟩ := Array.back?_eq_some_iff.1 h
+    subst hy
+    rw [Array.pop_push, algLinesList_push, algLinesList_push]
+    cases l with
+    | none =>
+      rw [algLinesOne, algLinesOne, Array.toList_append,
+        algLinesList_acc_append, Array.empty_append, Array.append_assoc]
+    | some l =>
+      rw [algLinesOne, algLinesOne, Array.toList_append,
+        algLinesList_acc_append,
+        algLinesList_acc ((#[] : Array Ir.AlgLine).push l) kids.toList]
+      simp [Array.append_assoc]
+  · next h =>
+    rw [Array.back?_eq_none_iff.1 h, algLinesList_push, algLinesOne,
+      algLinesList, algLinesList_acc #[] inner.toList, Array.empty_append,
+      Array.empty_append]
+
+private theorem algLevelsFoldl (s : List (Array AlgTree))
+    (acc : Array Ir.AlgLine) :
+    s.foldl (fun acc lvl => algLinesList #[] lvl.toList ++ acc) acc
+      = s.foldl (fun acc lvl => algLinesList #[] lvl.toList ++ acc) #[] ++ acc := by
+  induction s generalizing acc with
+  | nil => rw [List.foldl_nil, List.foldl_nil, Array.empty_append]
+  | cons b bs ih =>
+    rw [List.foldl_cons, List.foldl_cons, ih,
+      ih (algLinesList #[] b.toList ++ #[]), Array.append_empty,
+      Array.append_assoc]
+
+private theorem algStackLines_cons (a : Array AlgTree)
+    (rest : List (Array AlgTree)) :
+    algStackLines (a :: rest)
+      = algStackLines rest ++ algLinesList #[] a.toList := by
+  unfold algStackLines
+  rw [List.foldl_cons, algLevelsFoldl, Array.append_empty]
+
+private theorem algStackLines_nil :
+    algStackLines [] = (#[] : Array Ir.AlgLine) := rfl
+
+private theorem algClose_lines (s : List (Array AlgTree)) :
+    algStackLines (algClose s) = algStackLines s := by
+  match s with
+  | [] => rfl
+  | [_] => rfl
+  | inner :: top :: rest =>
+    rw [algClose, algStackLines_cons, algStackLines_cons, algStackLines_cons,
+      algAttach_lines, Array.append_assoc]
+
+private theorem algCloseN_lines (n : Nat) (s : List (Array AlgTree)) :
+    algStackLines (algCloseN n s) = algStackLines s := by
+  induction n generalizing s with
+  | zero => rfl
+  | succ n ih => rw [algCloseN, ih, algClose_lines]
+
+private theorem algOpenN_lines (n : Nat) (s : List (Array AlgTree)) :
+    algStackLines (algOpenN n s) = algStackLines s := by
+  induction n generalizing s with
+  | zero => rfl
+  | succ n ih =>
+    rw [algOpenN, ih, algStackLines_cons, Array.toList_empty, algLinesList,
+      Array.append_empty]
+
+private theorem algStackLines_headD (t : List (Array AlgTree)) :
+    algStackLines t.tail ++ algLinesList #[] (t.headD #[]).toList
+      = algStackLines t := by
+  match t with
+  | [] =>
+    rw [List.tail_nil, algStackLines_nil, List.headD_nil, Array.toList_empty,
+      algLinesList, Array.append_empty]
+  | _ :: _ => rw [algStackLines_cons]; rfl
+
+private theorem algStep_lines (s : List (Array AlgTree)) (l : Ir.AlgLine) :
+    algStackLines (algStep s l) = algStackLines s ++ #[l] := by
+  rw [algStep, algStackLines_cons, algLinesList_push, algLinesOne,
+    Array.toList_empty, algLinesList, Array.push_eq_append, Array.empty_append,
+    ← Array.append_assoc, algStackLines_headD, algOpenN_lines, algCloseN_lines]
+
+private theorem algStep_ne_nil (s : List (Array AlgTree)) (l : Ir.AlgLine) :
+    algStep s l ≠ [] := by rw [algStep]; exact List.cons_ne_nil _ _
+
+private theorem algFold_lines (xs : List Ir.AlgLine)
+    (init : List (Array AlgTree)) :
+    algStackLines (xs.foldl algStep init)
+      = algStackLines init ++ xs.toArray := by
+  induction xs generalizing init with
+  | nil => simp
+  | cons x rest ih =>
+    rw [List.foldl_cons, ih, algStep_lines, Array.append_assoc]
+    congr 1
+    apply Array.toList_inj.1
+    simp
+
+private theorem algFold_ne_nil (xs : List Ir.AlgLine)
+    (init : List (Array AlgTree)) (h : init ≠ []) :
+    xs.foldl algStep init ≠ [] := by
+  induction xs generalizing init with
+  | nil => rwa [List.foldl_nil]
+  | cons x rest ih =>
+    rw [List.foldl_cons]
+    exact ih (algStep init x) (algStep_ne_nil init x)
+
+private theorem algCloseN_length (n : Nat) (s : List (Array AlgTree))
+    (h : s.length = n + 1) : (algCloseN n s).length = 1 := by
+  induction n generalizing s with
+  | zero => rw [algCloseN]; omega
+  | succ n ih =>
+    rw [algCloseN]
+    refine ih (algClose s) ?_
+    match s with
+    | [] => simp at h
+    | [_] => simp at h
+    | _ :: _ :: rest =>
+      rw [algClose, List.length_cons]
+      simp only [List.length_cons] at h
+      omega
+
+/-- The two artifacts read one algorithm's lines in one order. The fact is
+of the IR, not of either artifact: the nesting a line's declared depth
+implies (`algNest`) loses no line and reorders none, so reading the forest
+back in document order returns the declared array itself. Print's
+projection is that array read straight through — `Layout`'s `.algorithm`
+arm folds it in order, one display paragraph per element — and screen's is
+this forest, one `<li>` per node. Equality here is therefore the
+agreement: a line cannot reach one artifact and miss the other, nor reach
+the two in different places. The defect it refuses is the one an `\eIf`
+produced before the depths drove the build, where the else nested a second
+time and so stood a level deeper on screen than in print. -/
+theorem algorithm_lines_agree (lines : Array Ir.AlgLine) :
+    algLinesList #[] (algNest lines).toList = lines := by
+  rw [algNest]
+  have hne : lines.foldl algStep [#[]] ≠ [] := by
+    rw [← Array.foldl_toList]
+    exact algFold_ne_nil lines.toList [#[]] (List.cons_ne_nil _ _)
+  have hlen : (lines.foldl algStep [#[]]).length
+      = ((lines.foldl algStep [#[]]).length - 1) + 1 := by
+    have := List.length_pos_iff.2 hne; omega
+  have h1 := algCloseN_length _ _ hlen
+  have hfold : algStackLines (lines.foldl algStep [#[]]) = lines := by
+    rw [← Array.foldl_toList, algFold_lines, algStackLines_cons,
+      algStackLines_nil, Array.toList_empty, algLinesList, Array.empty_append,
+      Array.empty_append]
+  have hpres := algCloseN_lines ((lines.foldl algStep [#[]]).length - 1)
+    (lines.foldl algStep [#[]])
+  rw [hfold] at hpres
+  match hm : algCloseN ((lines.foldl algStep [#[]]).length - 1)
+      (lines.foldl algStep [#[]]) with
+  | [] => rw [hm] at h1; simp at h1
+  | _ :: _ :: _ => rw [hm] at h1; simp at h1
+  | [a] =>
+    rw [hm] at hpres
+    rw [List.headD_cons, ← hpres, algStackLines_cons, algStackLines_nil,
+      Array.empty_append]
+
+mutual
+
+/-- One nesting node as a list item: the line's own inlines, then the
+nested list its kids form. The payload is a parameter so the nesting and
+the rendering stay separable — `algorithm_lines_agree` ranges over the
+nesting alone. -/
+def algRenderOne (payload : Ir.AlgLine → Array Node) : AlgTree → Node
+  | .node l kids =>
+    let pay := match l with
+      | some l => payload l
+      | none => #[]
+    Html.elem "li" (if kids.isEmpty then pay
+      else pay.push (Html.elem "ol" (algRenderList payload #[] kids.toList) #[])) #[]
+
+/-- `algRenderOne` over one level's forest, threading the accumulator. -/
+def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Node) :
+    List AlgTree → Array Node
+  | [] => acc
+  | t :: rest => algRenderList payload (acc.push (algRenderOne payload t)) rest
+
+end
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -3909,45 +4209,17 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- nesting, line numbers by a CSS counter when declared (declarative,
     -- no script). Every line — openers, closers, statements — is one
     -- <li>, through the shared rendering `Ir.AlgLine.rendered`, the site
-    -- the PDF paragraphs read too (`algorithm_lines_agree`): keywords
-    -- bold, the comment in the muted role. Native list semantics carry
-    -- the structure; no role attribute is needed. The build is driven by
-    -- each line's own depth — the parse's truth — so an else standing at
-    -- its if's level nests exactly once: a deeper line opens levels under
-    -- the last item, a shallower one closes them back into it, and the
-    -- final unwind makes the builder total (never a lost line).
+    -- the PDF paragraphs read too. The nesting is `algNest`'s, and
+    -- `algorithm_lines_agree` states what it conserves: no line lost, none
+    -- reordered, so an else standing at its if's level nests exactly once.
+    -- Native list semantics carry the structure; no role attribute is
+    -- needed.
     let words := Ir.algWords cfg.locale.tag
     let muted := Ir.mutedOf cfg.pal
-    Id.run do
-      let mut stack : Array (Array Node) := #[#[]]
-      let closeOne (stack : Array (Array Node)) : Array (Array Node) := Id.run do
-        let inner := stack.back?.getD #[]
-        let stack := stack.pop
-        let top := stack.back?.getD #[]
-        let ol := Html.elem "ol" inner #[]
-        let top := match top.back? with
-          | some (.elem "li" attrs kids) =>
-            (top.pop).push (.elem "li" attrs (kids.push ol))
-          | _ => top.push (Html.elem "li" #[ol] #[])
-        return (stack.pop).push top
-      for l in lines do
-        for _ in [0:stack.size + 1] do
-          if stack.size > l.depth + 1 then
-            stack := closeOne stack
-          else break
-        for _ in [0:l.depth + 1] do
-          if stack.size < l.depth + 1 then
-            stack := stack.push #[]
-          else break
-        let li := Html.elem "li"
-          (inlines cfg (Ir.AlgLine.rendered words semis muted l)) #[]
-        stack := (stack.pop).push ((stack.back?.getD #[]).push li)
-      for _ in [0:stack.size + 1] do
-        if stack.size > 1 then
-          stack := closeOne stack
-        else break
-      return Html.elem "ol" (stack.back?.getD #[])
-        #[("class", if numbered then "algorithm numbered" else "algorithm")]
+    Html.elem "ol"
+      (algRenderList (fun l => inlines cfg (Ir.AlgLine.rendered words semis muted l))
+        #[] (algNest lines).toList)
+      #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
     -- The title page's separator: an <hr> carrying the palette variable,
     -- so a host page can override it as it can any colour.
