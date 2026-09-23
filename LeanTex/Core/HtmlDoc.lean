@@ -1458,8 +1458,8 @@ inductive SelChunk where
   | lit (s : String)
   | num (n : Nat)
   /-- The uncovered-step alternatives `.step[data-step="j"], …`: the
-  list is the data (`fallback_uncovers_every_step` reads it), the
-  template renders it. -/
+  list is the data (`snapped_uncovers_every_step` reads it, through
+  `uncoveredBy`), the template renders it. -/
   | stepAlts (js : List Nat)
   /-- One compound per declared attribute value on a class:
   `.step-end[data-step-last="j"], …`, the range ends a snap stands past,
@@ -2589,7 +2589,8 @@ declaration: the emitter marks a stepless frame's section, a section
 page, and a stepped frame's spacers (`track_snaps_exact` counts them),
 so on the timeline path the snap points count one per stepless frame
 plus one per step — the PDF handout's own pagination
-(`pages_count_frame_steps`, the owed PDF half, is this count's twin).
+(`pages_partition_frames`, the owed PDF half, is this count's twin: its
+per-frame page count is `Ir.frameSteps`, this count's source).
 On the floor the spacers hide (`stepSnapHide`) and the stage takes the
 frame's one snap (`stepTrackFloorSnap`): one snap point per frame.
 `_covers`'s grade over the partition: each fact is the membership of the
@@ -2895,6 +2896,12 @@ private def docHasListing (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
+/-- The kerning request, HTML projection of `Ir.features`: the one place
+this stylesheet asks a browser to kern, present exactly when the record
+the PDF path reads asks for it (`Pdf.features_agree` states the pair). -/
+def kernCss : String :=
+  if Ir.features.kern then "  font-kerning: normal;\n" else ""
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -2963,8 +2970,9 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"  line-height: {milliFactor bodyLeadingMilli};\n" ++
   "  text-rendering: optimizeLegibility;\n" ++
   -- The same feature record the PDF path applies (Ir.features): the two
-  -- artifacts request kerning from one value, agreement by construction.
-  (if Ir.features.kern then "  font-kerning: normal;\n" else "") ++
+  -- artifacts request kerning from one value, agreement by the theorem
+  -- `Pdf.features_agree` over this declaration.
+  kernCss ++
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++
@@ -4308,11 +4316,12 @@ private theorem snapWalk_count (id text : String) :
     simp only [Array.size_push, List.length_cons]
     omega
 
-/-- The HTML half of `steps_agree`, stated over `Ir.maxStepBlocks`: a
-stepped frame's track carries exactly `maxStepBlocks fb` snap spacers
-beside its one sticky stage — the count `deckStepCss` reads back as
-`--steps` and the very count the PDF handout paginates the frame by
-(its half is the owed `pages_partition_frames`). -/
+/-- The step count the two backends agree on, HTML half, stated over
+`Ir.maxStepBlocks`: a stepped frame's track carries exactly
+`maxStepBlocks fb` snap spacers beside its one sticky stage — the count
+`deckStepCss` reads back as `--steps` and the very count the PDF handout
+paginates the frame by (that half is the owed `pages_partition_frames`;
+there is no umbrella theorem over the two, one half being owed). -/
 private theorem track_snaps_exact (id text : String)
     (taken : Std.HashMap String String) (diags : Array Diag)
     (fb : Array Ir.Block) :

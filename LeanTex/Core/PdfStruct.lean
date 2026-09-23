@@ -232,6 +232,63 @@ def leafOwners (es : Array StructElem) (n : Nat) : Array (Option Nat) :=
       | .elem _ => out
       | .mcid _ _ => out) out) (Array.replicate n none)
 
+/-- Every owner an answer map records holds the leaf it is recorded for:
+the invariant `leafOwners`' fold preserves. -/
+private def OwnerSound (es : Array StructElem) (out : Array (Option Nat)) : Prop :=
+  ∀ j i, out[j]? = some (some i) → ∃ e, es[i]? = some e ∧ StructKid.leaf j ∈ e.kids
+
+private theorem ownerSound_kids {es : Array StructElem} {e : StructElem} {i : Nat}
+    (hi : es[i]? = some e) {out : Array (Option Nat)} (ho : OwnerSound es out) :
+    OwnerSound es (e.kids.foldl (fun out k =>
+      match k with
+      | .leaf j => out.setIfInBounds j (some i)
+      | .elem _ => out
+      | .mcid _ _ => out) out) := by
+  refine Array.foldl_induction (motive := fun _ acc => OwnerSound es acc) ho ?_
+  intro idx acc hacc
+  have hmem : e.kids[idx.1] ∈ e.kids := e.kids.getElem_mem idx.isLt
+  split
+  next j0 hk =>
+    intro j' i' hj'
+    rw [Array.getElem?_setIfInBounds] at hj'
+    split at hj'
+    next heq =>
+      split at hj'
+      · have hii : i = i' := by simpa using hj'
+        subst hii
+        exact ⟨e, hi, heq ▸ hk ▸ hmem⟩
+      · simp at hj'
+    next => exact hacc j' i' hj'
+  next => exact hacc
+  next => exact hacc
+
+/-- Soundness of the owner map (the `_mem` shape: the owner is drawn from
+the elements that carry the leaf): `leafOwners` records `some i` at slot
+`j` only from the element at index `i` listing `.leaf j`, so the tag
+`leafTags` reads off an owner is the type of an element that does hold the
+leaf. The fold's inversion, by the invariant `OwnerSound`. That each leaf
+is held by *one* element is the separate census (`skeleton_leafKids_nodup`,
+owed). -/
+theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
+    (h : (leafOwners es n)[j]? = some (some i)) :
+    ∃ e, es[i]? = some e ∧ StructKid.leaf j ∈ e.kids := by
+  have base : OwnerSound es (Array.replicate n (none : Option Nat)) := by
+    intro j' i' hj'
+    rcases Nat.lt_or_ge j' n with hlt | hge
+    · rw [Array.getElem?_eq_getElem (by simpa using hlt)] at hj'
+      simp at hj'
+    · rw [Array.getElem?_eq_none (by simpa using hge)] at hj'
+      simp at hj'
+  have main : OwnerSound es (leafOwners es n) := by
+    unfold leafOwners
+    refine List.foldlRecOn _ _ base ?_
+    intro out ho p hp
+    obtain ⟨e, idx⟩ := p
+    exact ownerSound_kids (by
+      have hg := (List.mk_mem_zipIdx_iff_getElem?).1 hp
+      simpa using hg) ho
+  exact main j i h
+
 /-- Every leaf placeholder the elements carry, in element order: the
 census `skeleton_leafKids_nodup` (owed) says holds each leaf once. -/
 def leafKids (es : Array StructElem) : List Nat :=

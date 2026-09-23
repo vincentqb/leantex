@@ -187,6 +187,45 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — seven of the sixteen phantom citations resolved; the rest
+carry their real holder's name. The gate that landed earlier today froze
+sixteen backticked names that resolved to nothing. Three were citation
+errors with a live theorem beside them: `spill_accounts` is
+`warnSpill_accounts` (the very theorem its docstring titles), `float_whole`
+is `runFloat_whole`, and the deleted `:has(:target)` fallback's claim is
+`snapped_uncovers_every_step`, over the same `SelChunk.stepAlts` data the
+dead name read. Two were umbrella names over halves that exist: the step
+count is `track_snaps_exact` (proved) and `pages_partition_frames` (owed) —
+no theorem spans them, and the HtmlDoc docstrings now say so rather than
+naming one. One was a test wearing a theorem's name: the block half of
+`role_transparent_layout` is an oracle over the shipped pages
+(roleLayoutChecks), blocked on the collector's equation lemmas, and reads
+as an oracle now — AGENTS.md asks which one you have.
+
+Two were written for real. `leafOwners_mem` (PdfStruct): an owner the map
+records does carry its leaf, by the fold invariant `OwnerSound` threaded
+through `Array.foldl_induction` over an element's kids and
+`List.foldlRecOn` over the elements — the first of the three fold
+inversions `parentTree_covers` waits on. `features_agree` (Pdf, the one
+module both backends are in scope in): the HTML stylesheet asks a browser
+to kern exactly when `Ir.features` says so, and the PDF path's pair kern is
+zero when the request is off, so neither artifact can kern where the record
+does not ask. It needed the CSS conditional extracted as `HtmlDoc.kernCss`
+— a value a theorem can name instead of a branch inside a 300-line string.
+
+Nine remain in `citePhantomKnown`, every one a docstring in a file another
+slice held this session, and each row now carries the fact's real holder:
+`langWrap_text` sits three lines under language_attribute_text_free;
+`Chrome.footBand_projects` is the live form of footLine_eq_slots, whose
+renderer is gone; pages_count_frame_steps is the superseded name of
+`pages_partition_frames`; algorithm_lines_agree, furniture_position_content_free
+and plain_numbers_every_page are oracles, not theorems;
+boundary_request_deterministic is a pure function's definitional purity;
+covered_is_deliberately_dim and theme_fixes_no_page are declared design
+decisions carried by a skip and a record shape. Each is one line in a file
+this slice must not touch, which is why the ratchet keeps them rather than
+this entry claiming them fixed.
+
 2026-09-23 — the gates run in CI, and a cited theorem name has to exist.
 Two holes in the enforcement surface, both of the same kind: a rule this
 repo states was held by something a fresh clone does not have.

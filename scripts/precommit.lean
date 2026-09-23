@@ -944,27 +944,58 @@ def citeForeign : List String :=
 /-- The phantom citations standing when the gate landed: a backticked
 theorem name in a docstring that resolves to nothing. Each is a guarantee
 that reads as held and is not, so the list may only shrink — a new phantom
-fails the commit. The citing files were held by other slices when the gate
-landed, which is why the debt is frozen rather than fixed here; a name
-leaves this list when its citation is corrected (the theorem is written, the
-claim is restated in prose, or the dead name is deleted).
+fails the commit. A name leaves this list when its citation is corrected
+(the theorem is written, the claim is restated in prose, or the dead name is
+deleted).
 
-  algorithm_lines_agree           Ir.lean:2720, Tests/Backends.lean:1887
-  boundary_request_deterministic  Ir.lean:9052, Tests/Surface.lean:3644
-  collectRole_transparent         Layout.lean:1233
-  covered_is_deliberately_dim     Contrast.lean:1061
-  fallback_uncovers_every_step    HtmlDoc.lean:1461 (recorded deleted in PLAN)
-  features_agree                  Ir.lean:1514, Layout.lean:1512, Tests/Themes.lean:2034
-  float_whole                     Layout.lean:4011, Layout.lean:7199
-  footLine_eq_slots               Ir.lean:4300
-  furniture_position_content_free  Tests/Layout.lean:1725
-  language_attribute_text_free    Ir.lean:6206
-  leafOwners_mem                  PdfStruct.lean:225
-  pages_count_frame_steps         HtmlDoc.lean:2592, Ir.lean:5908 (superseded)
-  plain_numbers_every_page        Tests/Layout.lean:1806
-  spill_accounts                  Layout.lean:4121, Layout.lean:4712
-  steps_agree                     HtmlDoc.lean:4306
-  theme_fixes_no_page             Theme.lean:13
+Seven left in the 2026-09-23 sweep: fallback_uncovers_every_step (the
+deleted fallback's claim, now `snapped_uncovers_every_step` over the same
+`SelChunk.stepAlts` data), steps_agree and pages_count_frame_steps at
+their HtmlDoc sites (restated as the two halves that exist —
+`track_snaps_exact` proved, `pages_partition_frames` owed),
+collectRole_transparent (an oracle over the shipped pages, roleLayoutChecks
+in Tests.lean, not a theorem — said so), spill_accounts →
+`warnSpill_accounts`, float_whole → `runFloat_whole`, `leafOwners_mem`
+(written for real, PdfStruct.lean, by the fold invariant `OwnerSound`), and
+`features_agree` (written for real in Pdf.lean, the one module both backends
+are in scope in, over the extracted `HtmlDoc.kernCss`).
+
+What remains, each with the fact's real holder named, because the citing
+docstring is in a file that sweep could not touch — the fix per name is one
+line in a file another slice owns:
+
+  algorithm_lines_agree           Ir.lean:2721 ("is the statement"),
+                                  Tests/Backends.lean:1887. Held by the
+                                  oracle there — both backends render
+                                  through `Ir.AlgLine.rendered`; Ir's
+                                  "statement" should read "oracle".
+  boundary_request_deterministic  Ir.lean:9053, Tests/Surface.lean:3644.
+                                  Purity of a Lean function needs no
+                                  theorem: the claim is definitional and
+                                  the test checks it — prose fix.
+  covered_is_deliberately_dim     Contrast.lean:1169. The `covered` role's
+                                  exemption is a declared design decision
+                                  at the judge's own skip, not a theorem.
+  footLine_eq_slots               Ir.lean:4301. Names the role a deleted
+                                  one-line renderer played; the live
+                                  statement is `Chrome.footBand_projects`,
+                                  the theorem that docstring belongs to.
+  furniture_position_content_free  Tests/Layout.lean:1725. The position half
+                                  is what those census checks assert;
+                                  `furniture_symmetric` (which resolves) is
+                                  the theorem beside it.
+  language_attribute_text_free    Ir.lean:6207. The theorem is three lines
+                                  below the citation: `langWrap_text`.
+  pages_count_frame_steps         Ir.lean:5909. Stale name for the record
+                                  now in the queue as
+                                  `pages_partition_frames`.
+  plain_numbers_every_page        Tests/Layout.lean:1806. Census facts over
+                                  `Layout.Out` — the checks themselves; the
+                                  theorem waits on the collect walk.
+  theme_fixes_no_page             Theme.lean:13. Carried by the record shape
+                                  (`Ir.ClassRecord`), not by a theorem; if
+                                  it is to be one it is Theme's, over
+                                  `Theme.builtin`.
 
 Keyed by name, not by site: a second citation of a listed name passes, and
 an entry left behind after its citation is fixed is dead weight rather than
@@ -972,12 +1003,10 @@ a failure. Both are deliberate — the ratchet's job is to stop new phantoms,
 and neither looseness lets one through. -/
 def citePhantomKnown : List String :=
   ["algorithm_lines_agree", "boundary_request_deterministic",
-   "collectRole_transparent", "covered_is_deliberately_dim",
-   "fallback_uncovers_every_step", "features_agree", "float_whole",
-   "footLine_eq_slots", "furniture_position_content_free",
-   "language_attribute_text_free", "leafOwners_mem",
-   "pages_count_frame_steps", "plain_numbers_every_page", "spill_accounts",
-   "steps_agree", "theme_fixes_no_page"]
+   "covered_is_deliberately_dim", "footLine_eq_slots",
+   "furniture_position_content_free", "language_attribute_text_free",
+   "pages_count_frame_steps", "plain_numbers_every_page",
+   "theme_fixes_no_page"]
 
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.

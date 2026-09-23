@@ -187,6 +187,24 @@ theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
     ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
   fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
 
+/-- **Both artifacts' kerning is one record's two projections**
+(`_agree`). `Ir.features` is the one resolving site, and neither artifact
+can kern where that record does not ask: the HTML stylesheet carries its
+kerning request exactly when the record asks for it (`HtmlDoc.kernCss`),
+and the PDF path's pair kern is zero on every box and glyph when the
+request is off (`Layout.kernVal`). What the PDF *does* under a live request
+is the face's own kern data, not this statement's business. Stated here
+because this is the one module both backends are in scope in; the IR value
+behind it is `Ir.features` itself. -/
+theorem features_agree (size : Sp) (font : Font)
+    (box : Array (Nat × Char × Sp)) (g1 : Nat) :
+    (HtmlDoc.kernCss ≠ "" ↔ Ir.features.kern = true) ∧
+      Layout.kernVal false size font box g1 = 0 := by
+  refine ⟨?_, ?_⟩
+  · simp [HtmlDoc.kernCss, Ir.features]
+  · unfold Layout.kernVal
+    cases box.back? <;> simp
+
 /-- **Both artifacts' font decisions are projections of one policy value**
 (`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
 `shipFonts` is the spelling `doc.fontPolicy == .embedded`, and the HTML's

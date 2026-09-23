@@ -1229,8 +1229,12 @@ end
 /-- A role is transparent to layout: the flatten walk recurses into the
 body with the state and the style unchanged, so wrapping content in a role
 moves no ink and no metric — the `.step` property, and the reason the PDF
-page is byte-identical with and without the annotation. The block half is
-`collectRole_transparent`, over the collector's own arm. The one exception
+page is byte-identical with and without the annotation. The block half —
+`collectBlock` on an unstyled `.role` delegating to `collectBlocks`
+unchanged — is an executable oracle over `Layout.run`'s shipped pages
+(roleLayoutChecks in Tests.lean), not a theorem: its `rw [collectBlock]`
+needs the collector's equation lemmas, whose generation exhausts `whnf`
+(the note above the `.role` arm carries the detail). The one exception
 is the walk's own `leafRole` marker (a NUL-prefixed name no document can
 spell), which changes the attribution the body's tokens carry and nothing
 else. -/
@@ -1509,8 +1513,9 @@ theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char × Sp) :
 /-- The scaled pair kern the next glyph owes against the box's last: 0
 at a box head, and 0 for every pair of a face with no kern data (Open
 Sans ships none). Both backends read one `Ir.Features` value for whether
-kerning applies at all — `features_agree` by construction, `font-kerning`
-in CSS and this application being two projections of it. -/
+kerning applies at all — `features_agree` (stated in Pdf.lean, where both
+backends are in scope), `font-kerning` in CSS and this application being
+two projections of it. -/
 def kernVal (kern : Bool) (size : Sp) (font : Font)
     (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
   match box.back? with
@@ -4008,7 +4013,7 @@ enter `cur`/`pendingNotes` in one step, both spilling together when the
 line does) and `stepStaged_extends` (a shipped page never changes), a
 committed line carrying mark k has note k's first line on its own page
 index. The census tests over `Layout.Out` are the realisation check, as
-`float_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
+`runFloat_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
 insertion on the page of its mark (TeXbook ch. 15; ltmiscen.dtx's
 `\@makecol` builds the page as body then rule then notes). -/
 private theorem footnote_with_mark (b : B)
@@ -4118,7 +4123,7 @@ private def B.warnSpill (b : B) (over : Sp) : B :=
   simp only [B.warnSpill]
   split <;> rfl
 
-/-- `spill_accounts`: the one mid-frame page close, and the diagnostic in
+/-- `warnSpill_accounts`: the one mid-frame page close, and the diagnostic in
 the same step — the first spill inside a frame that declared no break adds
 exactly one W0384 to the builder, and a spill anywhere else (a declared
 break, an article's flow, the same frame's later pages) adds none.
@@ -4709,7 +4714,7 @@ private inductive Op where
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
   /-- A frame opens: whether its author declared `[allowframebreaks]`, so
   the builder knows which mid-frame page close is a declared continuation
-  and which is an overflow to report (`spill_accounts`). Cleared at the
+  and which is an overflow to report (`warnSpill_accounts`). Cleared at the
   frame's `.brk`. -/
   | frameOpen (breakable : Bool)
   /-- A colour bar behind the line just placed — a titled block's title.
@@ -7196,10 +7201,11 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       else b2
     { st2 with b := { b2 with noBreak := false } }
 
-/-! ## `float_whole` — the theorem over the builder
+/-! ## `runFloat_whole` — the float placed whole, over the builder
 
-STEER3's statement: every glyph of a float's body and caption in `Out`
-shares a page index. The four census tests over `Layout.Out` are the
+STEER3's statement ("a float is placed whole"): every glyph of a float's
+body and caption in `Out` shares a page index. The four census tests over
+`Layout.Out` are the
 realisation check; the theorems here are about `runFloat`, the function
 that ships the pages. Two facts per placement step carry the result: a
 step only ever *extends* the shipped pages (page close appends; nothing
