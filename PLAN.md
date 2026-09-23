@@ -311,6 +311,75 @@ point, so its call necessarily names a second command; the hook's own
 contribution is pinned by `hookChecks`, which compares the two replay points
 directly.
 
+2026-09-23 — five driver diagnostics stop being claims and start being
+observations; the effects-as-data rule reaches the driver's own decisions.
+The probe mechanism landed this morning with two rows (E0501, E0502) and a
+stated blocker: every other driver code is emitted from the entry path in
+`Main.lean`, which no test can call — importing `Main` into `Tests` is
+impossible, both declare `main` — so its witness had to be a hand-built
+`Diag`, and a hand-built value cannot notice that the driver stopped
+emitting the code it stands for. That is not a testing problem. The rule
+AGENTS.md states for the core — files and fonts surface as request values
+the driver fulfils — was never applied to the driver's *own* judgements,
+so five of them lived inside one 400-line `IO` function that also prints,
+times, and writes.
+
+Each moves to a module that returns what it decided. The document's own
+bytes, its `\bibliography`'s `.bib` and its `\data`'s `.bib` are the three
+document-file reads, and they join the `\input` splice in `Cli/Input.lean`:
+one module for every file the document names, each answering "the file is
+there, or its absence is this named loss". The `LEANTEX_FONT` override and
+the `\fonts{ dir = ... }` declaration are the two font-environment
+decisions that read no scan — one opens a path the environment names, the
+other asks whether a path the document names is a directory — and they go
+to a new `Cli/FontEnv.lean`. `Main.lean` keeps the effects: printing,
+timing, resolving against `\allow`. Five codes then become five rows in
+`driverProbes` and nothing else, which was the point of the table.
+
+The probes bite, which is the only evidence worth having: neutering each
+emission site fails three checks (the probe's own "still emits it", the
+witness's "fires it", and the golden block), and all five were green under
+the constructed witnesses. Hermeticity needed one new rule, because three
+of these messages carry a resolved path and a golden must read the same on
+every host: a probe that cannot use a sandbox path names its file relative
+to the working directory instead, and if such a file ever appears the read
+succeeds, the probe returns nothing, and the coverage check fails loudly —
+the failure mode is a red suite, never a green one.
+
+Two drifts fell out, both the same species: a hand-built witness inventing
+text no code path produces. E0001's witness invented a one-line read
+failure, while `IO.Error`'s rendering appends a second `  file: <path>`
+line — so the golden showed a shape the driver never emitted. The
+witnessed shape is the right one and the driver now produces it: the path
+the second line repeats is already in the message, and a newline inside a
+`Diag.message` breaks the one-line-per-diagnostic rendering that the
+golden's own block parse depends on. E0402's witness invented "not a
+TrueType or OpenType file" as the parse failure; the parser says
+"unsupported font format (need TrueType or CFF OpenType)". Neither was
+reachable by inspection of the driver alone — both surfaced the moment a
+real path had to produce the golden's bytes, which is what a witness is
+for.
+
+What remains, and why. Three codes are not hermetically probeable even
+after the refactor, because the host is the input: E0401 fires only where
+no font is installed at all, E0403's help carries the host's nearest
+family names or its family count, and E0404 needs a file the host's scan
+indexes and the parser rejects. A fixture may not depend on what this host
+has installed, so those three stay constructed values, deliberately.
+W0378's message carries the converter's own failure — an exit code where
+poppler is installed, an exception where it is not — so probing it would
+put a host-dependent string in the golden; the same is true of E0382,
+whose help is the boundary tool's last words. W0379, W0011 and N0016 are
+reachable in principle but sit inside the picture and font resolvers,
+where the decision and the host's scan are still one function: moving them
+is the next slice, and the shape is the one above. W0013's decision is
+already core-tested (`Diag.unfired`); only the projection to a diagnostic
+is unwitnessed, and it has no coherent home yet.
+
+One wart, named rather than hidden: `Cli/FontEnv.lean` is imported by
+`Main.lean` and `Tests/Diag.lean` directly, not through the `LeanTex.lean`
+roll-up, which another slice held this cycle.
+
 2026-09-23 — seven of the sixteen phantom citations resolved; the rest
 carry their real holder's name. The gate that landed earlier today froze
 sixteen backticked names that resolved to nothing. Three were citation
