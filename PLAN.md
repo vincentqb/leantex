@@ -187,6 +187,52 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — `/.append style` composes and `/.tip` declares a drawable
+arrow tip (m8b-keys, M8b slice 1, fourth increment). Both were unread key
+paths: an appended body drew none of its keys, and a document that declared
+its own tip and used it on an edge lost the head natively and met `Unknown
+arrow tip kind` at the boundary — the defect that started this thread.
+
+Two invariants, one for each. **An appended body is read as well as the
+body it appends to**: `/.style` replaces a bundle and `/.append style` adds
+to it, so `ball/.style={circle, draw}` then `ball/.append style={minimum
+size=8mm}` draws an 8 mm outline where a second `/.style` would have drawn
+a bare label. And **a tip the document declared is a tip the subset can
+draw**: the engine has one arrow head and puts it where a declared tip is
+named, exactly as it already did for pgf's `latex` — the substitution is
+the established one, not a new claim, and a tip *nothing* declared is still
+named by its own spelling with the edge shipping headless beside the
+refusal.
+
+Append preserves the termination property rather than restating it, and
+that is why the fold was factored: `expandBody` is now the one site where a
+body is read, splicing a reference to an *already defined* bundle in at the
+definition, once. Append is one concatenation on top of that splice, so a
+use site still expands exactly one level and the hostile input has nowhere
+to go: `a/.append style={a}` resolves its reference to the body `a` already
+had — a finite array — and yields that body twice over, read once, drawing
+what it always drew (no diagnostic; the keys are the same keys). Appending
+to a name nothing defined keeps the reference a literal key, which the
+option loop names as W0334 — the same answer `loop/.style={loop}` gets. No
+fuel, no fixed point, nothing new to bound.
+
+One honest caveat recorded rather than smoothed over: where both bodies set
+a key the option loops *assign*, the appended value is read last and
+stands, but the `minimum` family accumulates by maximum within one bracket
+and a style body is one bracket — so appending a smaller minimum leaves the
+larger standing, where pgf would take the later value. The fix is to make
+the `minimum` family assign per key as pgf does, which the entry above
+depends on in its current form; it belongs with that change, not this one.
+
+Evidence is the artifact: a rendered page carries an 8.00 mm circle for the
+composed bundle (the outline from one half, the size from the other), a
+6.00 mm circle for a bundle that appends to itself, and for `-scm` a 28.31
+mm stroked edge with a filled three-point head of 1.69 × 1.06 mm at its
+end. Zero form XObjects, zero image XObjects, and no tool line in the
+verbose log on either page. `pictureStyleHandlerChecks` holds the same as
+census over `Layout.Out` — the appended size as a shipped path span, the
+head as the second shipped path where an undeclared tip ships one.
+
 2026-09-23 — `every node` and `every path` reach their nodes and paths, as
 the third precedence level (m8b-keys, M8b slice 1, third increment; the
 level the two entries below deferred and named). `\tikzset{every

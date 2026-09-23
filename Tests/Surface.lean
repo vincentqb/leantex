@@ -2976,6 +2976,131 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((elabStr (dvDoc "\\tikzset{every node/.style={draw}}\n"
       ("\\begin{tikzpicture}\\draw (0,0) -- node {m} (2,0);" ++
        "\\end{tikzpicture}"))).2.map (·.code)).toList == ["W0334"])
+  -- **`/.append style` composes where `/.style` shadows.** Both bodies'
+  -- keys are read at the use site: the outline comes from the prior body
+  -- and the size from the appended one, which a second `/.style` of that
+  -- name would have thrown away.
+  t "elab append style keeps the prior body and adds to it"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw}}\n" ++
+      "\\tikzset{ball/.append style={minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .circle _ _ r _ _ => r == Dim.mm 4
+            | _ => false
+        | _ => false))
+  t "elab a second style definition of a name throws the prior body away"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw}}\n" ++
+      "\\tikzset{ball/.style={minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 1
+        | _ => false))
+  -- Where both bodies set a key the loop assigns, the appended value is
+  -- read last and stands.
+  t "elab an appended key the loop assigns beats the prior body's"
+    ((elabStr ("\\tikzset{wire/.style={draw=blue}}\n" ++
+      "\\tikzset{wire/.append style={draw=red}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[wire] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ st _ => st.color == { r := 255, g := 0, b := 0 }
+            | _ => false
+        | _ => false))
+  -- Appending to a name nothing defined defines it: the keys the document
+  -- asked for still apply.
+  t "elab append style to an undefined name defines it"
+    ((elabStr ("\\tikzset{ball/.append style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  -- **The hostile input for append: a style appending to itself.** The
+  -- splice is still at the definition and against what is already defined,
+  -- so the reference resolves to the body that name already had and the
+  -- result is that body twice over — read once, drawing what it always
+  -- drew. Nothing is chased and nothing is named.
+  t "elab a style appending to itself terminates and draws its own keys"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\tikzset{ball/.append style={ball}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\tikzset{ball/.append style={ball}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  -- Appending to a name that does not exist yet keeps the reference a
+  -- literal key, which the option loop names: one W0334, nothing chased.
+  t "elab a style appending to an undefined self is named, not chased"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{loop/.append style={loop}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[loop] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  -- **`/.tip` declares a tip name the subset can draw.** The engine has one
+  -- arrow head and draws a declared tip with it, exactly as it already does
+  -- for `latex` — the shape a document gets when it names its own tip and
+  -- uses it on an edge, which was `Unknown arrow tip kind` at the boundary
+  -- and a dropped option natively.
+  t "elab a declared tip draws the subset's arrow head"
+    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ _ tip => tip.isSome
+            | _ => false
+        | _ => false))
+  t "elab a declared tip in braces draws the same head"
+    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-{scm}] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ _ tip => tip.isSome
+            | _ => false
+        | _ => false))
+  -- A tip nothing declared is still named by its own spelling, and the
+  -- edge still ships: a picture draws what it can and says what it lost.
+  t "elab an undeclared tip is named and the edge still draws"
+    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.code)).toList == ["W0334"] &&
+     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.message)).any (fun m => hasStr m "'scm'") &&
+     (elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ _ tip => tip.isNone
+            | _ => false
+        | _ => false))
+  -- `>=<tip>` names which head the `->` shorthand draws: accepted for a
+  -- declared tip, named for one nothing declared.
+  t "elab a declared tip named by '>=' is accepted"
+    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  t "elab an undeclared tip named by '>=' is named"
+    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.code)).toList == ["W0334"])
+  -- A `/.tip` declaration is read, so it is not an unread key at its line;
+  -- an `every X` with no loop behind it still is (`readableKey`).
+  t "elab a tip declaration is not named as an unread key"
+    ((elabStr ("\\pictures{ tool = none }\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
@@ -4257,6 +4382,42 @@ def pictureEveryLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       col == { r := 255, g := 0, b := 0 } && w == Ir.Pic.thickWidth) == some true)
   t "both node bodies ship as ink"
     (pageHas c 0 "A" && pageHas c 0 "C")
+
+/-- The two other definition handlers, read off the shipped page: an
+appended body's keys both draw (`Picture.appendStyle` composes where
+`/.style` shadows), and an arrow tip the document declared with `/.tip`
+ships this subset's own head — a filled triangle path beside the edge's
+own, where an undeclared tip ships the edge alone and says so. No image
+box on either page: the heads are the engine's ink, not a tool's. -/
+def pictureStyleHandlerChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let appended :=
+    "\\tikzset{ball/.style={circle, draw}}\n" ++
+    "\\tikzset{ball/.append style={minimum size=8mm}}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node[ball] at (0,0) {A};\n\\end{tikzpicture}\n\\end{document}"
+  let ca := censusSrc appended
+  t "an appended body ships the outline of one half at the size of the other"
+    ((ca[0]?.map (·.paths == 1)).getD false &&
+     ((ca[0]?.bind (·.pathSpans[0]?)).map (· == (Dim.mm 8, Dim.mm 8)) == some true))
+  t "no boundary box stands where the appended-style picture is"
+    ((ca[0]?.map (·.images == 0)).getD false)
+  let tipSrc (decl : String) : String :=
+    decl ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\draw[-scm] (0,0) -- (2,0);\n\\end{tikzpicture}\n\\end{document}"
+  let cd := censusSrc (tipSrc "\\tikzset{scm/.tip={Latex[round]}}\n")
+  let cu := censusSrc (tipSrc "")
+  t "a declared tip ships a head beside its edge"
+    ((cd[0]?.map (·.paths == 2)).getD false)
+  t "an undeclared tip ships the edge alone"
+    ((cu[0]?.map (·.paths == 1)).getD false)
+  t "no boundary box stands where the tip pictures are"
+    ((cd[0]?.map (·.images == 0)).getD false &&
+     (cu[0]?.map (·.images == 0)).getD false)
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no

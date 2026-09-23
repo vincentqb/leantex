@@ -637,24 +637,21 @@ private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) := Id.r
     | _ => cur := cur.push t
   return out.push cur
 
-/-- Fold one `name/.style={...}` definition into the bundles already read,
-newest first, so an inner definition shadows an outer one of the same name
-(pgf scopes keys; a picture's own `[...]` is inside the document's
-`\tikzset`).
+/-- A style body read once, at the definition: its entries as written, with
+a reference to a bundle *already defined* spliced in place of its name.
 
 **Expansion is at the definition, never at the use.** pgf's own model is
 textual — a style's body is re-read as keys where the style is applied —
 and a body that names another style would then have to be expanded again,
 with no bound on the depth and no bound at all on a body that names
-itself. So a reference to a bundle *already defined* is spliced in here,
-once, and a use site expands exactly one level whatever the nesting depth.
-A style that names itself, or any cycle of styles, therefore finds nothing
-to splice and keeps its own name as a literal key — which the option loop
-that reads it then names as a key outside the subset (W0334), never
-silently dropped and never chased. No fuel, no fixed point: the recursion
-does not exist. -/
-def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
-    List (String × Array Tok) := Id.run do
+itself. So the splice happens here, once, and a use site expands exactly
+one level whatever the nesting depth. A style that names itself, or any
+cycle of styles, therefore finds nothing to splice and keeps its own name
+as a literal key — which the option loop that reads it then names as a key
+outside the subset (W0334), never silently dropped and never chased. No
+fuel, no fixed point: the recursion does not exist. -/
+def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
+    Array Tok := Id.run do
   let mut expanded : Array Tok := #[]
   for part in splitTop (g.toArray.filter (· != .space)) ',' do
     unless expanded.isEmpty do expanded := expanded.push (.sym ',')
@@ -664,7 +661,57 @@ def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
       | some bundle => expanded := expanded ++ bundle
       | none => expanded := expanded ++ part
     | _ => expanded := expanded ++ part
-  return (n, expanded) :: styles
+  return expanded
+
+/-- Fold one `name/.style={...}` definition into the bundles already read,
+newest first, so an inner definition shadows an outer one of the same name
+(pgf scopes keys; a picture's own `[...]` is inside the document's
+`\tikzset`). The body is read by `expandBody`, which is where the
+termination property lives. -/
+def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+    List (String × Array Tok) :=
+  (n, expandBody styles g) :: styles
+
+/-- Fold one `name/.append style={...}` definition in: pgf's own reading is
+that the keys are *added* to the bundle of that name rather than replacing
+it, so the prior body stands and the new entries follow it. Where both
+bodies set a key the option loops assign — a colour, a dash, a shape — the
+appended value is the one read last and stands; the `minimum` family is the
+exception this subset carries, since it accumulates by maximum within one
+bracket and a style body is one bracket, so appending a *smaller* minimum
+leaves the larger one standing.
+
+Termination is the same property `expandBody` has, for the same reason: the
+new entries are spliced against the bundles *already defined*, once, at the
+definition. Appending is one concatenation on top of that splice, so a use
+site still expands exactly one level. A style appending to itself
+(`a/.append style={a}`) therefore resolves the reference to the body `a`
+already had — a finite array — and yields that body twice over; nothing is
+chased, and the option loop reads the same keys it read before. Appending
+to a name nothing defined defines it, which is the reading that applies the
+keys the document asked for. -/
+def appendStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+    List (String × Array Tok) :=
+  let added := expandBody styles g
+  match styles.lookup n with
+  | some prior =>
+    if added.isEmpty then styles
+    else if prior.isEmpty then (n, added) :: styles
+    else (n, prior.push (.sym ',') ++ added) :: styles
+  | none => (n, added) :: styles
+
+/-- Where a declared arrow tip is kept: one bundle environment carries the
+definitions, because the elaborator hands the reader one list, and a tip is
+not an option bundle — so its slot is a name no key list can spell (a key
+path is idents, joined by single spaces). -/
+def tipKey (n : String) : String := ".tip " ++ n
+
+/-- Fold one `name/.tip={...}` declaration in. The body is kept as written
+and never re-read as keys: it is an arrow-tip construction, not an option
+bundle, so there is nothing here to expand and nothing to chase. -/
+def declareTip (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+    List (String × Array Tok) :=
+  (tipKey n, g.toArray) :: styles
 
 /-- The name of the `every node` level, and of the `every path` level: the
 two key paths the option loops read (pgf manual §12.4.1 — every X is
@@ -719,7 +766,29 @@ def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
   match readDef entry with
   | some (n, "style", g) =>
     if readableKey n then some (addStyle styles n g) else none
+  | some (n, "append style", g) =>
+    if readableKey n then some (appendStyle styles n g) else none
+  | some (n, "tip", g) =>
+    if readableKey n then some (declareTip styles n g) else none
   | _ => none
+
+/-- The tip name an arrow spec ends in, where the spec is one this subset
+draws: `-name`, `-{name}`, or `->`. A declared tip draws the engine's own
+arrow head, the way `latex` already does — pgf manual §16 names many tip
+kinds and this subset has one head to draw them with, so the substitution
+is the established one, not a new claim. -/
+def arrowTipName : List Tok → Option String
+  | [.sym '-', .sym '>'] => some ">"
+  | [.sym '-', .ident n] => some n
+  | [.sym '-', .group g] => identPath (g.filter (· != .space))
+  | _ => none
+
+/-- Does a name draw as this subset's arrow head? A tip the document
+declared with `/.tip`, or one of the two built-in kinds the plain head has
+always stood in for (`latex`, pgf manual §16.3; `>` is the shorthand
+itself). Anything else stays outside the subset and is named. -/
+def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
+  n == ">" || n == "latex" || (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
 folds into the bundles, in source order so a later definition may name an
@@ -1581,11 +1650,28 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     i := j + 1
   ev := { ev with readOpts := true }
   for opt in mergeOpts cx.opts cx.everyPath own do
+    match arrowTipName opt.toList with
+    | some tip =>
+      if drawsAsArrow cx.styles tip then arrow := true
+      else
+        ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
+picture subset; the edge is drawn without a head")
+    | none =>
     match opt.toList with
     | [.ident "thick"] => thick := true
     | [.ident "dashed"] => dash := .dashed
     | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
-    | [.sym '-', .sym '>'] | [.sym '-', .ident "latex"] => arrow := true
+    -- `>=<tip>` names which head the `->` shorthand draws; a declared tip
+    -- draws this subset's own head, so the key changes no shape here.
+    | .sym '>' :: .sym '=' :: rest =>
+      match identPath rest with
+      | some tip =>
+        unless drawsAsArrow cx.styles tip do
+          ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
+picture subset; the edge is drawn without a head")
+      | none =>
+        ev := ev.diag (.W0334, "'>=' without a tip name is outside the rendered \
+picture subset; the option is dropped")
     -- `draw=<colour>` and a bare colour both set the stroke, as in pgf
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
