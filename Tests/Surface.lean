@@ -2583,6 +2583,81 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\pictures{ tool = none }\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  -- **A style applied in the picture's own bracket reaches the picture's
+  -- contents.** pgf sets those keys in the picture's scope, so every path
+  -- and node reads them before its own. Before this, a picture-level style
+  -- name was a key outside the subset: W0334, and the contents shipped
+  -- bare. The node here declares no options at all, so the outline it
+  -- draws can only have come from the picture's bracket.
+  t "elab picture-level style reaches a node that declares nothing"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[ball]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[ball]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  t "elab picture-level style reaches every node in the picture"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[ball]\n" ++
+      "\\node at (0,0) {x};\\node at (2,0) {y};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 4
+        | _ => false))
+  -- **The inner setting wins** (`Picture.inherit_inner_exact`): a key the
+  -- node sets again takes the node's value, and the picture's other keys
+  -- still apply. Stated here on a key this subset accumulates rather than
+  -- assigns — a `minimum size` takes a maximum within one bracket, so
+  -- inheriting by prefix alone would leave the picture's larger value
+  -- standing and the node would be drawn 9mm wide, not 4mm.
+  t "elab a node's own key beats the picture's, even where keys accumulate"
+    ((elabStr ("\\tikzset{big/.style={draw, minimum size=9mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[big]\n" ++
+      "\\node[minimum size=4mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .frame _ _ w h _ _ => w == Dim.mm 4 && h == Dim.mm 4
+            | _ => false
+        | _ => false))
+  -- A picture-level key that names no declared style is still the picture
+  -- loop's own, named where it stands: inheritance carries styles, not
+  -- every spelling, so nothing became silently acceptable.
+  t "elab picture-level key naming no style is still named"
+    (warnCodes (dvDoc "\\pictures{ tool = none }\n"
+      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      == ["W0334"])
+  -- **An inherited key nothing read is named, never dropped in silence.**
+  -- `\fill`'s bracket is a colour spelling, not a key list, so a picture
+  -- of nothing but fills reads no keys at all — and it still draws, so the
+  -- refusal path would not have named them either.
+  t "elab inherited key no path or node read is named at the picture"
+    (warnCodes (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
+      "\\begin{tikzpicture}[odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      == ["W0334"] &&
+     ((elabStr (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
+      "\\begin{tikzpicture}[odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.map
+      (·.message)).any (fun m => hasStr m "'ellipse'"))
+  -- The hostile input at the picture level too: a self-referential style
+  -- applied to the picture expands one level, keeps its own name as a
+  -- literal key, and the node's option loop names it. Nothing is chased —
+  -- inherited entries are never expanded a second time.
+  t "elab picture-level self-referential style is named, not chased"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{loop/.style={loop}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[loop]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  -- `every X` is not this mechanism: it is a third precedence level, run
+  -- inside the node's own scope, so it stays unread and named at the line
+  -- that declared it — unchanged by picture-level keys.
+  t "elab every-node style is still unread under the refusal"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{every node/.style={draw}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 1
+        | _ => false)))
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++

@@ -1,8 +1,12 @@
 % Synthetic fixture: named styles declared by \tikzset reach the engine's
-% own picture renderer, wherever they were written. `ball` is declared in
+% own picture renderer, wherever they were written, and a style applied to
+% the picture itself reaches the picture's contents. `ball` is declared in
 % the preamble, `slab` beside the picture inside the document body — the
 % position a collector that stopped at \begin{document} could not see — and
-% both are applied by name on a node. The boundary is left open on purpose:
+% both are applied by name on a node. `wire` is applied on the second
+% picture's own bracket, so both its edges inherit it, and the second edge
+% sets one of the same keys again: the page must carry the edge's own value
+% there, the picture's on the rest. The boundary is left open on purpose:
 % the census asserts the outlines ship as page paths and that no image box
 % stands where the picture is, so the page is the engine's own ink and no
 % external tool was asked to draw it. Invented content and design.
@@ -11,6 +15,7 @@
 \fonts{ dir = "fonts", body = "Source Serif Pro" }
 
 \tikzset{ball/.style={circle, draw, minimum size=7mm}}
+\tikzset{wire/.style={draw=blue, thick}}
 
 \begin{document}
 
@@ -25,6 +30,13 @@ Before the diagram stands a paragraph, so the picture spaces below text.
   \node[ball] (q) at (3, 0) {Q};
   \node[slab] (r) at (1.5, -1.5) {out};
   \draw (p) -- (q);
+\end{tikzpicture}
+
+The next diagram applies its style to itself, not to either edge.
+
+\begin{tikzpicture}[wire]
+  \draw (0, 0) -- (3, 0);
+  \draw[draw=red] (0, 0.6) -- (3, 0.6);
 \end{tikzpicture}
 
 After the diagram stands another, so the flow resumes.

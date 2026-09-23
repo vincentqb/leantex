@@ -334,6 +334,12 @@ structure CensusPage where
   fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
   /-- Picture paths shipped on the page: node outlines and edges. -/
   paths : Nat
+  /-- Every shipped path's stroke, in paint order: its colour and width.
+  What a fact about an inherited picture-level key reads — a key set on
+  the picture and again on the path must leave the path's own value on the
+  page (`Picture.inherit_inner_exact`), and only the artifact can say so.
+  An unstroked path (a node's fill alone) contributes nothing. -/
+  pathStrokes : Array (Ir.Color × Dim.Sp) := #[]
   /-- Image boxes shipped on the page: an embedded figure, or a boundary
   request's box (fulfilled or placeholder) — what the diagram-boundary
   row reads to pin that the request ships ink where the picture stood. -/
@@ -400,6 +406,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           fills := p.fills.size
                           fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
                           paths := p.paths.size
+                          pathStrokes := p.paths.filterMap fun q =>
+                            q.stroke.map fun s => (s.color, s.width)
                           images := images }
   return pages
 

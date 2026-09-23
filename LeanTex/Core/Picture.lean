@@ -597,6 +597,11 @@ structure Cx where
   scale : Int := 1000
   styles : List (String × Array Tok) := []
   transformShape : Bool := false
+  /-- The picture-level option entries its contents inherit: what a style
+  named in `\begin{tikzpicture}[...]` expanded to, already split into
+  entries. Every path and node reads them before its own
+  (`inheritOpts`). -/
+  opts : Array (Array Tok) := #[]
   /-- How a math span in a node body elaborates: provided by the
   elaborator, so `{$X$}` renders through the same math layer a
   paragraph's does — the picture walk owns no math parser. The result is
@@ -686,6 +691,73 @@ the line that wrote it. The elaborator's one caller; the fold the pictures
 read is `documentStyles`. -/
 def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
   (readStyleList styles keys).2.filterMap fun e => (e[0]?).map tokText
+
+/-- Split an option bracket into entries and expand a declared bundle's
+name one level into the bundle's own entries. One level is all a use site
+needs: `addStyle` spliced any nested bundle in at the definition. -/
+def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok) :
+    Array (Array Tok) := Id.run do
+  let mut opts : Array (Array Tok) := #[]
+  for opt in splitTop (inner.filter (· != .space)) ',' do
+    match opt.toList with
+    | [.ident n] =>
+      match styles.lookup n with
+      | some bundle => opts := opts ++ splitTop bundle ','
+      | none => opts := opts.push opt
+    | _ => opts := opts.push opt
+  return opts
+
+/-- The key an option entry sets: its tokens up to the `=`, so `draw` and
+`draw=red` name one key as they do in pgf, and `minimum size=8mm` names
+`minimum size`. -/
+def optKey (opt : Array Tok) : String := Id.run do
+  let mut s := ""
+  for t in opt do
+    if t == .sym '=' then break
+    unless t == .space do s := s ++ tokText t
+  return s
+
+/-- Merge the picture's inherited entries with a path's or node's own.
+
+**The inner setting wins, exactly.** The inherited entries come first, and
+an inherited entry whose key the inner bracket also names is dropped
+rather than merely overwritten — so `\begin{tikzpicture}[thin]` with
+`\draw[thick]` strokes thick, pgf's rule, and it holds for every key
+including those this subset accumulates rather than assigns: a `minimum
+size` takes a maximum *within* one bracket, so an inherited one left in
+place would beat a smaller inner one. Keys whose names differ compose
+exactly as they would written in one bracket, the picture's first.
+
+The two facts are `inherit_inner_exact` and `inherit_covers`; they are of
+this reader, not of either artifact, because a picture's keys are consumed
+here and never reach the IR. -/
+def inheritOpts (outer inner : Array (Array Tok)) : Array (Array Tok) :=
+  let names := inner.map optKey
+  outer.filter (fun o => !names.contains (optKey o)) ++ inner
+
+/-- Precedence: an entry in the merge whose key some inner entry also names
+is the inner bracket's own. -/
+theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ inheritOpts outer inner)
+    (hk : ∃ e ∈ inner, optKey e = optKey o) : o ∈ inner := by
+  simp only [inheritOpts, Array.mem_append, Array.mem_filter] at hm
+  rcases hm with ⟨_, hp⟩ | h
+  · obtain ⟨e, he, hek⟩ := hk
+    simp at hp
+    exact absurd hek (hp e he)
+  · exact h
+
+/-- Nothing the inner bracket said is lost to the merge. -/
+theorem inherit_covers {outer inner : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ inner) : o ∈ inheritOpts outer inner := by
+  simp only [inheritOpts, Array.mem_append]
+  exact Or.inr h
+
+/-- A picture-level key outside the subset, named at the bracket that
+wrote it. -/
+private def outsideOpt (o : Tok) : PDiag :=
+  (.W0334, s!"picture option {tokText o} is outside the \
+rendered picture subset; the option is dropped")
 
 /-- Substitute macros into a colour spelling and hand it to
 `Palette.resolve`, the engine's one `!`-mix parser. A computed percentage
@@ -959,6 +1031,11 @@ structure Ev where
   /-- Named nodes seen so far, latest first: what a `\draw` endpoint's
   `(name)` resolves against. -/
   nodes : List (String × NodeGeom) := []
+  /-- Did some path or node read the picture's inherited options? If
+  nothing did, the picture's own bracket names them rather than dropping
+  them: `\fill`'s bracket is a colour spelling, not a key list, so a
+  picture of nothing but fills reads no keys at all. -/
+  readOpts : Bool := false
 
 def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
@@ -1100,6 +1177,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut thick := false
   let mut minW : Sp := 0
   let mut minH : Sp := 0
+  let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
     let mut j := 1
     let mut inner : Array Tok := #[]
@@ -1111,64 +1189,58 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       else break
     unless ts[j]? == some (.sym ']') do
       return ev.diag (.E0333, "'\\node' options miss their ']'; the node is not drawn")
-    let mut opts : Array (Array Tok) := #[]
-    for opt in splitTop inner ',' do
-      match opt.toList with
-      | [.ident n] =>
-        match cx.styles.lookup n with
-        | some bundle => opts := opts ++ splitTop bundle ','
-        | none => opts := opts.push opt
-      | _ => opts := opts.push opt
-    for opt in opts do
-      match opt.toList with
-      | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
-        match Ir.sizeScale.lookup size with
-        | some k => scale := k * factor / 1000
-        | none =>
-          ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside the \
-rendered picture subset; the option is dropped")
-      | .ident "text" :: .sym '=' :: rest =>
-        match evalColor cx env rest.toArray with
-        | .ok c => color := c
-        | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
-      | [.ident "circle"] => isCircle := true
-      | [.ident "rectangle"] => isCircle := false
-      | [.ident "draw"] => draw := some none
-      | .ident "draw" :: .sym '=' :: rest =>
-        match evalColor cx env rest.toArray with
-        | .ok c => draw := some (some c)
-        | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
-      | .ident "fill" :: .sym '=' :: rest =>
-        match evalColor cx env rest.toArray with
-        | .ok c => fillCol := some c
-        | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
-      | [.ident "dashed"] => dash := .dashed
-      | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
-      | [.ident "thick"] => thick := true
-      | .ident "minimum" :: .ident "size" :: .sym '=' :: rest =>
-        match readDim rest with
-        | .ok d => minW := max minW d; minH := max minH d
-        | .error e => ev := ev.diag (.W0334, s!"in 'minimum size', {e}; the option \
-is dropped")
-      | .ident "minimum" :: .ident "width" :: .sym '=' :: rest =>
-        match readDim rest with
-        | .ok d => minW := max minW d
-        | .error e => ev := ev.diag (.W0334, s!"in 'minimum width', {e}; the option \
-is dropped")
-      | .ident "minimum" :: .ident "height" :: .sym '=' :: rest =>
-        match readDim rest with
-        | .ok d => minH := max minH d
-        | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
-is dropped")
-      -- `inner sep` is inert under minimum-only sizing: the outline is the
-      -- declared minimum (see the emission note below), which already
-      -- dominates the body plus its sep in the class this subset renders.
-      | .ident "inner" :: .ident "sep" :: .sym '=' :: _ => pure ()
-      | [] => pure ()
-      | o :: _ =>
-        ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
-picture subset; the option is dropped")
+    own := expandOpts cx.styles inner
     i := j + 1
+  ev := { ev with readOpts := true }
+  for opt in inheritOpts cx.opts own do
+    match opt.toList with
+    | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
+      match Ir.sizeScale.lookup size with
+      | some k => scale := k * factor / 1000
+      | none =>
+        ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside the \
+rendered picture subset; the option is dropped")
+    | .ident "text" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => color := c
+      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+    | [.ident "circle"] => isCircle := true
+    | [.ident "rectangle"] => isCircle := false
+    | [.ident "draw"] => draw := some none
+    | .ident "draw" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => draw := some (some c)
+      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+    | .ident "fill" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => fillCol := some c
+      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+    | [.ident "dashed"] => dash := .dashed
+    | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
+    | [.ident "thick"] => thick := true
+    | .ident "minimum" :: .ident "size" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => minW := max minW d; minH := max minH d
+      | .error e => ev := ev.diag (.W0334, s!"in 'minimum size', {e}; the option \
+is dropped")
+    | .ident "minimum" :: .ident "width" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => minW := max minW d
+      | .error e => ev := ev.diag (.W0334, s!"in 'minimum width', {e}; the option \
+is dropped")
+    | .ident "minimum" :: .ident "height" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => minH := max minH d
+      | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
+is dropped")
+    -- `inner sep` is inert under minimum-only sizing: the outline is the
+    -- declared minimum (see the emission note below), which already
+    -- dominates the body plus its sep in the class this subset renders.
+    | .ident "inner" :: .ident "sep" :: .sym '=' :: _ => pure ()
+    | [] => pure ()
+    | o :: _ =>
+      ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
+picture subset; the option is dropped")
   -- A `(name)` before `at` names the node for edges to reference. It is
   -- recognised only when `at` follows, so a coordinate standing where the
   -- name would does not read as one.
@@ -1383,6 +1455,7 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut dash : Ir.Pic.Dash := .solid
   let mut thick := false
   let mut arrow := false
+  let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
     let mut j := 1
     let mut inner : Array Tok := #[]
@@ -1394,36 +1467,30 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       else break
     unless ts[j]? == some (.sym ']') do
       return ev.diag (.E0333, "'\\draw' options miss their ']'; the edge is not drawn")
-    let mut opts : Array (Array Tok) := #[]
-    for opt in splitTop inner ',' do
-      match opt.toList with
-      | [.ident n] =>
-        match cx.styles.lookup n with
-        | some bundle => opts := opts ++ splitTop bundle ','
-        | none => opts := opts.push opt
-      | _ => opts := opts.push opt
-    for opt in opts do
-      match opt.toList with
-      | [.ident "thick"] => thick := true
-      | [.ident "dashed"] => dash := .dashed
-      | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
-      | [.sym '-', .sym '>'] | [.sym '-', .ident "latex"] => arrow := true
-      -- `draw=<colour>` and a bare colour both set the stroke, as in pgf
-      | .ident "draw" :: .sym '=' :: rest =>
-        match evalColor cx env rest.toArray with
-        | .ok c => color := c
-        | .error e =>
-          ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
-      | [] => pure ()
-      | o :: rest =>
-        -- A remaining option is a colour spelling, or names itself.
-        match evalColor cx env opt with
-        | .ok c => color := c
-        | .error _ =>
-          let _ := rest
-          ev := ev.diag (.W0334, s!"draw option {tokText o} is outside the \
-rendered picture subset; the option is dropped")
+    own := expandOpts cx.styles inner
     i := j + 1
+  ev := { ev with readOpts := true }
+  for opt in inheritOpts cx.opts own do
+    match opt.toList with
+    | [.ident "thick"] => thick := true
+    | [.ident "dashed"] => dash := .dashed
+    | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
+    | [.sym '-', .sym '>'] | [.sym '-', .ident "latex"] => arrow := true
+    -- `draw=<colour>` and a bare colour both set the stroke, as in pgf
+    | .ident "draw" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => color := c
+      | .error e =>
+        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
+    | [] => pure ()
+    | o :: rest =>
+      -- A remaining option is a colour spelling, or names itself.
+      match evalColor cx env opt with
+      | .ok c => color := c
+      | .error _ =>
+        let _ := rest
+        ev := ev.diag (.W0334, s!"draw option {tokText o} is outside the \
+rendered picture subset; the option is dropped")
   -- The endpoint chain: `(name|x,y)` separated by `--`.
   let readAnchor (i : Nat) : Except PDiag (Anchor × Nat) := Id.run do
     unless ts[i]? == some (.sym '(') do
@@ -1784,7 +1851,14 @@ subset cannot render is a named diagnostic beside the shapes that did.
 `sets` carries the document's `\tikzset` key lists in source order
 (`Compat.tikzsetKeys`), whose `/.style` definitions every picture starts
 from — a style reaches its picture wherever the author wrote it — and the
-picture's own `[...]` definitions shadow them. -/
+picture's own `[...]` definitions shadow them.
+
+A style *applied* in the picture's own bracket reaches the contents:
+pgf sets those keys in the picture's scope, so every path and node reads
+them before its own, and a key set in both takes the inner value
+(`inheritOpts`). `every X` styles are not this mechanism — they are a
+third precedence level, executed inside the node's own scope — and stay
+unread, named at the line that declared them. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -1794,6 +1868,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map fun keys => ofRaws keys)
   let mut transformShape := false
+  let mut inherited : Array (Array Tok) := #[]
   let mut diags : Array PDiag := #[]
   let mut i := 0
   for _ in [0:toks.size] do
@@ -1828,18 +1903,38 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         -- definition shadows the document's of that name.
         | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
           styles := addStyle styles n g
+        -- A bare name that resolves is a style applied to the picture
+        -- itself: pgf sets it in the picture's scope, so its options are
+        -- what the contents inherit (`Cx.opts`, merged by `inheritOpts`).
+        -- A name that resolves to nothing is a key, and is named here.
+        | [.ident n] =>
+          match styles.lookup n with
+          | some bundle => inherited := inherited ++ splitTop bundle ','
+          | none => diags := diags.push (outsideOpt (.ident n))
         | [] => pure ()
         | o :: _ =>
-          diags := diags.push (.W0334, s!"picture option {tokText o} is outside the \
-rendered picture subset; the option is dropped")
+          diags := diags.push (outsideOpt o)
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := parseList (toks.toList.drop i) {}
   let cx : Cx := { pal := pal, scale := scale
                    styles := styles, transformShape := transformShape
+                   opts := inherited
                    math := math }
   let (_, ev) := evalList cx st.out.toList [] {}
-  let all := diags ++ st.bad ++ ev.diags
+  -- Nothing in the picture reads keys (a picture of nothing but `\fill`,
+  -- whose bracket is a colour spelling), so the inherited entries reached
+  -- no loop that could name them. Naming them here keeps the standing
+  -- rule: a key the subset does not use is never silently dropped.
+  let mut unread : Array PDiag := #[]
+  unless ev.readOpts do
+    for opt in inherited do
+      match opt.toList with
+      | [] => pure ()
+      | o :: _ =>
+        unread := unread.push (.W0334, s!"picture option {tokText o} reached no path \
+or node; the option is dropped")
+  let all := diags ++ st.bad ++ ev.diags ++ unread
   -- One message, once: the parse and eval sides dedupe among themselves;
   -- this joins them under the same rule.
   let mut seen : Array String := #[]

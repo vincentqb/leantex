@@ -691,13 +691,30 @@ def censusTable :
   -- bare labels: three fewer paths on the page, and the fixture's own
   -- declaration silently doing nothing. `images == 0` is the other half of
   -- the claim — the ink is the engine's own, with no tool asked to draw.
+  -- The second picture carries `wire` on its own bracket, which is the
+  -- inheritance half: see the stroke rows below.
   ("diagram-tikzset", fun _ c => [
     ("one page", c.size == 1),
-    -- two circle outlines + one rectangle outline + one edge
-    ("the styled node outlines and the edge ship as page paths",
-      (c[0]?.map (·.paths == 4)).getD false),
+    -- two circle outlines + one rectangle outline + one edge, then the
+    -- second picture's two inheriting edges
+    ("the styled node outlines and the edges ship as page paths",
+      (c[0]?.map (·.paths == 6)).getD false),
     ("no boundary box stands where the picture is",
       (c[0]?.map (·.images == 0)).getD false),
+    -- **A style applied to the picture reaches the picture's contents, and
+    -- the inner setting wins.** `wire` sets a stroke colour and `thick` on
+    -- the second picture; its first edge declares nothing of its own and
+    -- must ship both, its second re-declares the colour and must ship its
+    -- own there and the picture's width still. Before picture-level keys,
+    -- `wire` was a key outside the subset and both edges shipped thin and
+    -- black. Read off the shipped strokes, because only the page can say
+    -- which value survived.
+    ("the edge that declared nothing inherits the picture's colour and width",
+      ((c[0]?.bind (·.pathStrokes[4]?)).map fun (col, w) =>
+        col == { r := 0, g := 0, b := 255 } && w == Ir.Pic.thickWidth).getD false),
+    ("the edge that re-declared the colour keeps its own, and the picture's width",
+      ((c[0]?.bind (·.pathStrokes[5]?)).map fun (col, w) =>
+        col == { r := 255, g := 0, b := 0 } && w == Ir.Pic.thickWidth).getD false),
     ("every styled node's body ships",
       hasStr (censusText c) "P" && hasStr (censusText c) "Q" &&
         hasStr (censusText c) "out"),

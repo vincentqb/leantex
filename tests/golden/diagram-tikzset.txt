@@ -18,6 +18,11 @@ picture 7 shapes
     text "out"
   edge (9.921,0)--(75.118,0) stroke #000000 0.4
 para
+  text "The next diagram applies its style to itself, not to either edge."
+picture 2 shapes
+  edge (0,0)--(85.039,0) stroke #0000FF 0.8
+  edge (0,17.008)--(85.039,17.008) stroke #FF0000 0.8
+para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics
 (none)

@@ -320,6 +320,84 @@ is that the binary's resolved path carries the distribution's own version
 directory on this host, and that replacing a binary in place moves its size
 and mtime.
 
+2026-09-23 — a style applied to a picture reaches the picture's contents,
+and the inner setting wins (m8b-keys, M8b slice 1, second increment; the
+edge the entry below named as next). `\tikzset{wire/.style={draw=blue,
+thick}}` then `\begin{tikzpicture}[wire]` was W0334: styles applied only
+through the path and node option loops, and a picture's own bracket is not
+one of those loops. So the shape a document reaches for when every edge in
+a diagram should look alike — declare once, apply to the picture — drew
+nothing of what it declared, while the same style on each edge worked.
+
+The invariant that was absent is the inheritance half of the entry below:
+*a key set on the picture is set on the picture's contents.* pgf sets a
+picture's keys in the picture's scope and a path's inside it, so the
+mechanism is one `Cx` field (`opts`) that every path and node reads before
+its own — no second option reader, and `\foreach`-generated statements
+inherit because they read the same context.
+
+Precedence was decided rather than defaulted, and it is a theorem rather
+than an ordering habit. A textual prefix would have been the obvious
+implementation and is wrong here: the option loops assign in order, so the
+inner value would win for most keys, but the `minimum` family accumulates
+by maximum *within* one bracket, and an inherited `minimum size=9mm` left
+in place therefore beats an inner `4mm` — the node draws 9mm, the opposite
+of what the document says. `inheritOpts` drops an inherited entry whose key
+the inner bracket also names, so the inner entry is the only one present:
+`inherit_inner_exact` says any entry in the merge whose key an inner entry
+names is the inner bracket's own, `inherit_covers` that nothing the inner
+bracket said is lost. `optKey` is what makes "the same key" statable —
+tokens up to the `=`, so `draw` and `draw=red` are one key as they are in
+pgf. Keys whose names differ compose as they would in one bracket, the
+picture's first, which is how an inherited `thick` survives an inner
+`draw=blue`.
+
+Termination is untouched because no recursion was added. `expandOpts`
+expands a style name one level at the bracket that names it; inherited
+entries are never expanded again, so `loop/.style={loop}` applied to the
+picture behaves as it does on a node — the name stays a literal key, the
+node's loop names it W0334, and nothing is chased. No fuel, no fixed
+point, no `partial`.
+
+Two rules the subset needed and now states. A picture-level key that names
+no declared style is still the picture loop's own and named there, so
+`[banana]` is W0334 exactly as before: inheritance carries styles, not
+every spelling, and a key did not become silently acceptable by being
+written one bracket out. And an inherited key that no path or node read is
+named at the picture's bracket (`Ev.readOpts`), because `\fill`'s bracket
+is a colour spelling rather than a key list — a picture of nothing but
+fills reads no keys at all, still draws, and would otherwise have dropped
+the entry in silence while claiming the page. `\scope` is outside the
+subset entirely (the environment is refused, W0334), so picture-level keys
+cannot reach through one and no nesting chase is possible.
+
+`every node/.style={...}` is *not* this mechanism and was left alone
+deliberately: pgf runs it inside the node's own scope, which makes it a
+third precedence level above the picture's and below the node's, with its
+own merge and its own tests. Forcing it in here would have been two
+features in one commit. It stays unread, named at the line that declared
+it under the refusal, exactly as before.
+
+Evidence is the artifact, measured before and after on the same fixture
+with `lualatex` on PATH throughout. `diagram-tikzset` grew a second
+picture carrying `wire` on its own bracket, whose first edge declares
+nothing and whose second re-declares the colour. Before: one W0334, and
+the two edges shipped `#000000 0.4` and `#FF0000 0.4` — the picture's
+colour lost entirely, its `thick` lost on both. After: `#0000FF 0.8` and
+`#FF0000 0.8` — inherited where nothing overrode, the edge's own colour
+where it did, the picture's width on both. Read through the shipped-page
+census over `Layout.Out` (`pathStrokes`, new: the census counted paths but
+could not see a stroke), with `paths == 6` and `images == 0` on the page.
+The PDF is byte-identical built with `lualatex` on PATH and with an empty
+PATH, and the page carries no form XObject, so no boundary run happened
+and none could have. The node side is the same mechanism: a 4mm node
+inside a 9mm picture ships an 11.339 pt outline, the inner value.
+
+Stopped at the increment's edge. The next one picks up `every X` styles
+with the third precedence level they need, then `/.append style` (which
+composes rather than shadows, a different fold in `addStyle`), `/.tip`,
+and pgfmath completion.
+
 2026-09-23 — a boundary refusal is an answer, so the cache keeps it. A
 document with several pictures the subset drew nothing of *and* that
 `lualatex` refused paid a full tool startup per picture on every build,
