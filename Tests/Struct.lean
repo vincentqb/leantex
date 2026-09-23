@@ -77,6 +77,12 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "algorithm is code, content then comment"
     (structKinds alg == #[.code] && structTexts alg == #["a", "c"])
   t "speaker note is an aside" (structKinds (Struct.ofBlocks #[.note #[para]]) == #[.aside])
+  -- the one place a census declines a subtree: the outline stops at an
+  -- aside, while every other census still reads through it
+  let buried := Struct.ofBlocks #[.note #[.section 1 false none #[.text "Buried"]]]
+  t "a heading inside a speaker note is not in the outline, but its text is"
+    (Struct.headings buried == #[] && Struct.leafText buried == "Buried"
+      && structKinds (structKids buried) == #[.heading 1])
   t "nav is a landmark" (structKinds (Struct.ofBlocks #[.nav {} #[para]]) == #[.nav])
   let frame := Struct.ofBlocks #[.frame #[.text "F"] false .center false #[para]]
   t "frame is a section opening with its title"

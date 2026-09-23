@@ -7819,3 +7819,62 @@ is evidence, not a theorem.
   and the sentence would still read as a guarantee held. Judging a statement
   against the sentence citing it stays review's job, and the gate's docstring
   says so.
+
+
+- 2026-09-23: the four tree censuses are one walk, and the ~120-declaration
+  collapse the audit predicted did **not** happen — the number went up.
+  Both halves are worth recording. The unblocking was the classification
+  the entry above asked for: `Kind.outlineDescends` and `Kind.outlineEmit`
+  answer whether a kind's content is read and what the node ships, as
+  functions on `Kind` rather than a match inside the walk, so
+  `headingsOne_node_exact` holds over *any* kind and a citation carries no
+  hypothesis and names no kind — the prover reduces the classifiers and the
+  match follows. With that, each census states its nil/cons/leaf/node
+  equations and its entry point, and the 167 tactic lists in `Struct.lean`
+  that read the census definitions now read the pack. `Leaf.imageCensus`
+  is the same move on the leaf side; `headings_eq_exact` was already the
+  shape for the tagger. Then `NodeFold` — `leaf : α → Nat → Leaf → α`,
+  `enter : α → Kind → α`, `descends : Kind → Bool` — replaced the four
+  hand-rolled mutual walks, and **every proof in the file and in
+  `PdfStruct` compiled untouched**, because the stated equations still hold
+  by `rfl` over the fold. That is the interface rule paying for itself in
+  one step: the packs were the cost of being able to redefine the walk at
+  all. Signature read off the four callers, not invented: the id is a
+  parameter because one caller of four reads it; `enter` exists because
+  only the outline ships anything on the way in; `descends` is kind-only
+  because that is what makes the node equation reduce, and it is the field
+  `Ir.CtxFold` cannot supply — this is a *node* walk, and its enter side
+  must be able to decline a subtree, which is what `.aside` is. No close
+  event and no context: none of the four needs where a container ends.
+  Breaking the classification (`.aside => true`) fails the *build* at
+  `structTree_headings_covers`, not a test — the declining is proof-held.
+
+  The collapse, measured: `Struct.lean` went 1,781 → 1,982 lines and
+  134 → 173 declarations. What did collapse is the shared argument: four
+  copies of the append/snoc/push triple and two copies of the
+  accumulator-extraction induction are now three generic lemmas plus
+  `foldNodeList_acc`/`foldNode_acc` over any `NodeFold`, with `Appends`
+  naming the hypothesis (each answer builds onto the accumulator it was
+  given) — the fourteen named forms survive as two-line instances, since
+  `PdfStruct` and sixty statements name them. What did *not* collapse is
+  the bulk: the three per-arm chains (`inlineRaw_*`/`blockRaw_*`/… ,
+  42 declarations, 945 lines) each relate the *same* tree walk to a
+  *different* IR-side census — `plainTextList`, `headingLevelList`, and
+  `foldBlock`/`foldInline`. A generic chain must abstract the IR side too,
+  and its hypothesis bundle would carry one field per `Block` and `Inline`
+  constructor: the same content moved into a record fitted to one caller,
+  which is exactly the fourth-quadrant failure the entry above names. So
+  the prerequisite stands where the 2026-09-23 entry put it — those 945
+  lines collapse when `blockTextOne`, `headingLevelOne` and `foldBlock`
+  become one walk in `Ir.lean`, and not before. The +201 lines are the
+  interface itself (+164 in the census region: one walk, four three-answer
+  records, twenty stated equations, the generic arguments) and +37 from
+  wrapping the widened tactic lists. Paying 201 lines to make the walk
+  redefinable, and to delete the last unfold of a census outside its own
+  statement, is the trade; the saving is owed by `Ir.lean`.
+
+  Identity, not green tests: all 76 corpus artifacts hash identically at
+  every step, and the diagnostic stream — output path and timings
+  normalised — is byte-identical. `scripts/bench.lean` (median of 7)
+  before and after: 96/98, 326/324, 484/490, 92/91, 163/163 ms — the
+  closure indirection a shared fold introduces is not measurable here.
