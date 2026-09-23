@@ -187,6 +187,41 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — a once-per-document diagnostic is the document's promise, not
+the pass's (warn-once-one-set, M5; engine bug, the residual the
+overprint-unnumberable entry below recorded). W0105 is declared
+once-per-document on the key `spec:overlay`, and both passes fire on it: the
+rewrite for an `{overprint}` item whose spec the step model cannot number,
+the elaborator for `\alt`/overlay specs it cannot number. Each kept its own
+warn-once set, so a deck spelling both heard W0105 twice — two frames, one
+key, two reports.
+
+The invariant that was absent: *the warn-once key set is a property of the
+document, not of the pass that first met a cause.* Namespaced keys already
+carry the discipline that one key means one problem (`sayOnce`'s docstring:
+the namespace exists so no entry can claim another's key); a set per pass
+breaks it at the pass boundary rather than at the key.
+
+The mechanism is the set as data, threaded, the way `Ir.overlayRange` became
+the one numberability reader both passes ask rather than a second range
+reader per pass: `Compat.rewrite` and `Compat.rewriteText` take the keys
+fired so far and return the keys they leave, and `Elab.runRawsSpanned`
+starts `ESt.warnedUnknown` from what the rewrite chain reports instead of
+from empty. No IO, no ambient state, no second notion of "already said" —
+one set, three hands. The nested value-text rewrite inside `\style` is
+seeded but does not merge back, and says why where it stands: that site
+discards the notes the rewrite produced, so a key it fired can stand for a
+diagnostic the document never received, and recording it would silence the
+later visible one.
+
+Evidence: `deckOverlayWarnOnceChecks` — a deck with an unnumberable
+overprint item AND an unnumberable `\alt` reports W0105 exactly once, in
+either frame order, and each cause alone still reports it once, so the
+change deduplicates rather than silences. Both cross-pass rows fail on the
+previous elaborator; both single-cause rows pass on it, which is what
+distinguishes a shared set from a swallowed warning. A diagnostic count on
+the elaborated diagnostics, no page claim. Goldens did not move.
+
 2026-09-23 — the overprint slice pays its index row and its fixture
 (overprint-evidence, M5; the two obligations the overprint-alt entry below
 shipped without). `{overprint}` elaborated onto nested alternation with

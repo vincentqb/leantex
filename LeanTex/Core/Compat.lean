@@ -3440,9 +3440,22 @@ private def flushRunning : M (Array Raw) := do
   return out
 
 /-- Rewrite a whole parsed document. The gathered running content lands just
-before `\begin{document}`, where a declaration belongs. -/
-def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []) :
-    Array Raw × Array Diag :=
+before `\begin{document}`, where a declaration belongs.
+
+`warned` in and out is the warn-once key set as data: a once-per-document
+diagnostic is a promise about the DOCUMENT, not about whichever pass first
+met a cause, and this pass and the elaborator both fire on some of the same
+keys (`spec:overlay` is the one two arms share today — an unnumberable
+overprint item here, an unnumberable `\alt` there). A set per pass makes the
+promise per pass, which is how a deck spelling both got W0105 twice. The set
+therefore travels with the document, out of here and into the state the
+elaborator starts from, the way `Ir.overlayRange` became the one
+numberability reader both passes ask: one notion of "already said", one
+place it lives. It travels as a value the caller chains
+(`Elab.runRawsSpanned`), never as ambient state. -/
+def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
+    (warned : Array String := #[]) :
+    Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
     let raws ← condList raws #[] [] raws.toList 0
     -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
@@ -3458,8 +3471,11 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     return match out.findIdx? isBody with
       | some i => out.extract 0 i ++ running ++ out.extract i out.size
       | none => out ++ running
-  let (out, st) := go.run { file := file, provideKeeps := provideKeeps, boundaryOpen := !boundaryRefused raws }
-  (out, st.diags)
+  let st0 : St :=
+    { file := file, provideKeeps := provideKeeps, warned := warned,
+      boundaryOpen := !boundaryRefused raws }
+  let (out, st) := go.run st0
+  (out, st.diags, st.warned)
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
 own rule made literal (ltfiles.dtx `\\@onefilewithoptions`: find `p.sty` on
@@ -4137,14 +4153,18 @@ end
 
 /-- The listings/siunitx pass, run right after `rewrite`: `\lstset` folds
 into the listings that follow it, and the siunitx commands become their
-spelled text under the document's own locale. -/
-def rewriteText (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
-  if !textNeededList raws.toList then (raws, #[]) else
+spelled text under the document's own locale. Third in the document's
+warn-once chain (`rewrite`'s docstring carries why the set travels): the
+keys it receives are the ones `rewrite` fired, the keys it returns go on to
+the elaborator. -/
+def rewriteText (file : String) (raws : Array Raw) (warned : Array String := #[]) :
+    Array Raw × Array Diag × Array String :=
+  if !textNeededList raws.toList then (raws, #[], warned) else
   let loc := ((declaredTagList raws.toList).bind Locale.forTag).getD Locale.en
   let go : M (Array Raw) := do
     let (out, _) ← textList loc {} raws #[] raws.toList 0 0
     return out
-  let (out, st) := go.run { file := file }
-  (out, st.diags)
+  let (out, st) := go.run { file := file, warned := warned }
+  (out, st.diags, st.warned)
 
 end LeanTex.Core.Compat

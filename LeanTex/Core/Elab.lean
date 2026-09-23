@@ -8825,7 +8825,12 @@ list levels: itemize2..4, enumerate2..4")
         let (raws, _) := Parse.parse ctx.file toks
         -- Value text re-enters through the same door as the document, idiom
         -- translation included, or a \color inside a font spec would leak.
-        let (raws, ds) := Compat.rewrite ctx.file raws
+        -- Seeded with the document's warn-once keys (one set, `Compat.rewrite`
+        -- carries why) but not merged back: this site discards the notes the
+        -- rewrite produced, so a key it fired may stand for a diagnostic the
+        -- document never received, and recording it would silence the later
+        -- visible one.
+        let (raws, ds, _) := Compat.rewrite ctx.file raws (warned := (← get).warnedUnknown)
         modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
         return some (← elabInlines ctx raws)
       let asLength : EM (Option SymGlue) := do
@@ -10740,11 +10745,14 @@ the resolution gate (`pending_named`) is one statement over that tail;
 def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag × ReqSpans :=
   let picPre := Compat.boundaryDecls raws
-  let (raws, compatDiags) :=
+  let (raws, compatDiags, warned) :=
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
-  let (raws, textDiags) := Compat.rewriteText file raws
+  let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   let compatDiags := compatDiags ++ textDiags
-  let ((doc, table), st) := (elabDoc file raws picPre).run {}
+  -- One warn-once key set for the document, not one per pass: the rewrite
+  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
+  -- starts from what the document has already been told, not from empty.
+  let ((doc, table), st) := (elabDoc file raws picPre).run { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry

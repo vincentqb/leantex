@@ -2519,6 +2519,42 @@ def deckOverprintUnnumberableChecks (ref : IO.Ref (List String))
     (((oDs.filter (·.severity != .note)).map (·.code)) == #["W0105"] &&
      oc.size == 1 && pageOccurs oc 0 "Delta reading." == 1)
 
+/-- A once-per-document diagnostic fires once for the DOCUMENT, however many
+passes meet a cause. The invariant absent before: *the warn-once key set is a
+property of the document, not of the pass that first met a cause* — `Compat`
+and `Elab` each kept their own set, so a deck spelling both an unnumberable
+`{overprint}` item (refused in the rewrite) and an unnumberable `\alt`
+(warned in the elaborator) was told twice about one key, `spec:overlay`. The
+set now travels out of the rewrite and into the state the elaborator starts
+from, one notion of "already said". A diagnostic count, asserted on the
+elaborated diagnostics — no claim here about what a page shows. -/
+def deckOverlayWarnOnceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let bothCauses := deck169Body
+    "\\begin{frame}\n\\begin{overprint}\n\\onslide<+-> Alpha reading.\n\
+\\onslide<2> Bravo reading.\n\\end{overprint}\n\\end{frame}\n\
+\\begin{frame}\n\\alt<+->{First alternative.}{Second alternative.}\n\\end{frame}"
+  t "a deck with an unnumberable overprint item AND an unnumberable \\alt says W0105 once"
+    ((warnCodes bothCauses).filter (· == "W0105") == ["W0105"])
+  -- The order the passes meet the causes must not decide it either: the
+  -- `\alt` frame first, the overprint second.
+  let reversed := deck169Body
+    "\\begin{frame}\n\\alt<+->{First alternative.}{Second alternative.}\n\\end{frame}\n\
+\\begin{frame}\n\\begin{overprint}\n\\onslide<+-> Alpha reading.\n\
+\\onslide<2> Bravo reading.\n\\end{overprint}\n\\end{frame}"
+  t "the pass order does not decide how often the document hears it"
+    ((warnCodes reversed).filter (· == "W0105") == ["W0105"])
+  -- Sharing the set never costs the warning itself: each cause alone still
+  -- says it once, so the fix deduplicates rather than silences.
+  let overprintOnly := deck169Frame
+    "\\begin{overprint}\n\\onslide<+-> Alpha reading.\n\
+\\onslide<2> Bravo reading.\n\\end{overprint}"
+  t "the overprint cause alone still says it"
+    ((warnCodes overprintOnly).filter (· == "W0105") == ["W0105"])
+  let altOnly := deck169Frame "\\alt<+->{First alternative.}{Second alternative.}"
+  t "the \\alt cause alone still says it"
+    ((warnCodes altOnly).filter (· == "W0105") == ["W0105"])
+
 /-- The deck's logo is frame furniture in HTML too — the executable half
 of `logo_frames_agree`, over one deck: the frames whose HTML section
 carries the `.slide-logo` strip are exactly the pages whose `Layout.Out`
