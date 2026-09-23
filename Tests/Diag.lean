@@ -57,13 +57,22 @@ and never builds a `Diag` itself, so a driver path that stops emitting its
 code leaves that code's witness empty and the suite fails. -/
 abbrev DriverProbe := System.FilePath → IO (Array Diag)
 
-/-- The probed driver codes, by the code each probe must fire. Both run the
-driver's `\input` fixpoint (`Input.expandInputs`) over a document written
-into a fresh temporary directory: one names a file that is not there, one
-names a file that names itself. Hermetic — the probe writes its own
-sandbox, so what fires depends on nothing this host has installed, and both
-messages are path-free (the spans do name the sandbox, and the golden drops
-spans).
+/-- The probed driver codes, by the code each probe must fire. Each runs a
+real driver decision and returns what that decision returned; a probe never
+builds a `Diag` itself, so a driver path that stops emitting its code leaves
+that code's witness empty and the suite fails.
+
+Hermetic: nothing a probe fires on depends on what this host has installed.
+Two shapes appear, because a message the golden records must be the same on
+every host. The splice probes (E0501, E0502) write their own sandbox and
+name files inside it — their messages are path-free, and the golden drops
+spans, so the sandbox's random name never reaches the file. The three
+document-file reads (E0001, E0503, E0365) carry the resolved path in the
+message or the help, so they name a file *relative to the working
+directory* — the same spelling on every host, resolving against a tree that
+contains no `doc.tex`, `references.bib` or `records.bib`. Should one appear,
+the read succeeds, the probe returns nothing, and the coverage check below
+fails loudly: the failure mode is a red suite, never a green one.
 
 A driver code is probeable exactly when its emission site is reachable as a
 unit and hands its diagnostics back: the modules under `LeanTex/Cli/` are.
@@ -86,7 +95,21 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
   #[(.E0502, fun dir => splice dir "\\input{chapter1}"),
     (.E0501, fun dir => do
       IO.FS.writeFile (dir / "loop.tex") "Around again.\n\\input{loop}\n"
-      splice dir "\\input{loop}")]
+      splice dir "\\input{loop}"),
+    (.E0001, fun _ => do
+      match ← Input.readSource "doc.tex" with
+      | .error d => return #[d]
+      | .ok _ => return #[]),
+    (.E0503, fun _ => do
+      let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+        "A claim\\cite{k}.\n\\bibliography{references}\n\\end{document}\n")).1
+      return (← Input.resolveBibliography "doc.tex" doc).2),
+    (.E0365, fun _ => do
+      let src := "\\documentclass{article}\n\\data{ file = \"records\" }\n" ++
+        "\\begin{document}\n\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}\n" ++
+        "\\end{document}\n"
+      let (raws, _) := Parse.parse "doc.tex" (Lex.lex "doc.tex" src).1
+      return (← Input.resolveData "doc.tex" raws).2)]
 
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
@@ -102,8 +125,7 @@ code's witness is what the driver did rather than a value written here. The
 remaining synthetic driver arguments mirror what Main.lean passes. -/
 def diagWitness (one mapped withMath : Font.FontSet)
     (probed : DiagCode → Array Diag) : DiagCode → Array Diag
-  | .E0001 => #[DriverDiag.unreadableInput "doc.tex"
-      "no such file or directory (error code: 2)"]
+  | .E0001 => probed .E0001
   | .E0002 =>
     match Utf8.validate (ByteArray.mk #[0xC3, 0x28]) with
     | some e => #[e.toDiag "doc.tex"]
@@ -159,8 +181,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .E0405 => dvL mapped "lost \u27e8 here"
   | .E0501 => probed .E0501
   | .E0502 => probed .E0502
-  | .E0503 => #[DriverDiag.bibMissing "references"
-      "/doc/references.bib" none]
+  | .E0503 => probed .E0503
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
@@ -388,7 +409,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}") ++
     dvData "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
     dvData "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
-  | .E0365 => #[DriverDiag.dataMissing "records" "/documents/records.bib" none]
+  | .E0365 => probed .E0365
   | .W0366 =>
     let mk (sub : String) (w : Nat) : FontDb.Face :=
       { path := s!"fonts/DemoSans-{sub}.otf", family := "Demo Sans"

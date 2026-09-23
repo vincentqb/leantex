@@ -389,56 +389,6 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     math := mathIdx }
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
-/-- The bibliography request an elaborated document states (`Ir.bibRefs`),
-fulfilled: each named `.bib` resolves beside the document, like `\input`,
-and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
-formatting, and the citation rewrite all happen there, on every document
-(`Bib.apply_no_cite`: no `.cite` node reaches a backend). A missing file is
-E0503 naming the path; the marker stays empty and the citations' `?`
-marks say so on the page. -/
-def resolveBibliography (file : String) (doc : Ir.Doc)
-    (bibSpans : Array (String × Span) := #[]) :
-    IO (Ir.Doc × Array Diag) := do
-  let requested := Ir.bibRefs doc
-  let dir := (System.FilePath.mk file).parent.getD "."
-  let mut sources : Array (String × String) := #[]
-  let mut diags : Array Diag := #[]
-  for src in requested do
-    let name := Bib.sourceName src
-    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
-      else dir / name
-    if ← path.pathExists then
-      sources := sources.push (src, ← IO.FS.readFile path)
-    else
-      diags := diags.push (DriverDiag.bibMissing src path.toString
-        ((bibSpans.find? (·.1 == src)).map (·.2)))
-  let (doc, applyDiags) := Bib.apply sources doc
-  return (doc, diags ++ applyDiags)
-
-/-- The data request a parsed document states (`Data.fileRefs`), fulfilled
-before elaboration — the expansion needs the records where
-`\begin{foreach}` stands, so this is the `resolveBibliography` shape moved
-ahead of `Elab.runRaws`. Each named `.bib` resolves beside the document,
-like `\input`; a missing file is E0365 naming the path, and the reads that
-wanted its records say what stayed unresolved. -/
-def resolveData (file : String) (raws : Array Parse.Raw) :
-    IO (Array Parse.Raw × Array Diag) := do
-  unless Data.hasData raws do return (raws, #[])
-  let requested := Data.fileRefs raws
-  let dir := (System.FilePath.mk file).parent.getD "."
-  let mut sources : Array (String × String) := #[]
-  let mut diags : Array Diag := #[]
-  for (src, pos) in requested do
-    let name := Data.sourceName src
-    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
-      else dir / name
-    if ← path.pathExists then
-      sources := sources.push (src, ← IO.FS.readFile path)
-    else
-      diags := diags.push (DriverDiag.dataMissing src path.toString (some ⟨file, pos⟩))
-  let (raws, expandDiags) := Data.expandData file sources raws
-  return (raws, diags ++ expandDiags)
-
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
@@ -870,11 +820,11 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
 Returns the document, all diagnostics, and whether reading itself failed. -/
 def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Elab.ReqSpans)) := do
   let t0 ← IO.monoMsNow
-  let bytes ← try
-    pure (some (← IO.FS.readBinFile file))
-  catch e =>
-    ui.diag (DriverDiag.unreadableInput file (toString e))
-    pure none
+  let bytes ← match ← Input.readSource file with
+    | .error d =>
+      ui.diag d
+      pure none
+    | .ok bytes => pure (some bytes)
   let some bytes := bytes | return none
   ui.phase "read" s!"{bytes.size} bytes" (← since t0)
   let t ← IO.monoMsNow
@@ -893,7 +843,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Ela
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
-    let (raws, dataDiags) ← resolveData file raws
+    let (raws, dataDiags) ← Input.resolveData file raws
     let (doc, elabDiags, reqSpans) := Elab.runRawsSpanned file raws
       (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags)
     -- N0020 says a `.sty` was read and how much of it took; its counts
@@ -905,7 +855,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Ela
         Compat.styRead (src.getD file) sty pos elabDiags
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     let t ← IO.monoMsNow
-    let (doc, bibDiags) ← resolveBibliography file doc reqSpans.bib
+    let (doc, bibDiags) ← Input.resolveBibliography file doc reqSpans.bib
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
     -- The unresolved-reference judge, over the document the backends read

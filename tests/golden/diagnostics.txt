@@ -105,7 +105,7 @@ error[E0359]: a '\note' inside this note's frame is dropped: one note cannot car
   help: move the inner '\note' out of the enclosing '\note', beside its frame
 ── E0365 (dropped) \data file not found; its records are absent
 error[E0365]: '\data' file 'records' is not there; its records are absent
-  help: looked at: /documents/records.bib; \allow{E0365} accepts the loss
+  help: looked at: ./records.bib; \allow{E0365} accepts the loss
 ── E0375 (dropped) \dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped
 error[E0375]: '\dimexpr' division rounds to nearest; this engine's length arithmetic truncates toward zero as TeX's '\divide' does
   help: divide outside '\dimexpr': '(\a - \b) / 2' truncates as TeX does
@@ -135,7 +135,7 @@ error[E0502]: '\input' file 'chapter1.tex' is not there; its content is absent
   help: \allow{E0502} accepts the loss
 ── E0503 (dropped) \bibliography file not found; the reference list is empty
 error[E0503]: '\bibliography' file 'references' is not there; the reference list is empty
-  help: looked at: /doc/references.bib; \allow{E0503} accepts the loss
+  help: looked at: ./references.bib; \allow{E0503} accepts the loss
 ── N0016 (info) no math face declared; the engine picked one and says which
 note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of 'TeX Gyre Pagella'
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
