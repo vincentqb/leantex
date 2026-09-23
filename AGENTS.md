@@ -84,6 +84,7 @@ in this repo; refer to the private reference corpus abstractly.
   | a page-opening path | a declared vertical distribution, never a default (`Layout.VDist` is the vocabulary; declare through it) |
   | a furniture element | a declared alignment, never a hard-coded `.center` (`align` on `ElementStyle` carries it) |
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
+  | a cached external answer | the *failure* cached too, under the same content key, replayed as the identical diagnostic — and an attempt with no evidence the tool ran (kill, failed spawn, nonzero exit with no log) cached not at all (`Cli/PicCache.lean` holds the policy as values; `step_cold_exact`, `remembers_verdict_exact`, `unlogged_retried_exact`, `picCacheChecks`) |
   | a document class | sourced defaults, and its contract as implied assertions |
   | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
 
@@ -211,6 +212,23 @@ in this repo; refer to the private reference corpus abstractly.
   only indexes is fine.
   `scripts/bench.lean` is the check; run it when touching any pass over the
   whole document.
+- A cache over an external tool caches the tool's *whole* answer, not
+  only the answer that succeeded. A verdict remembered for the drawn case
+  and dropped for the refused one means the slow path is the one that
+  repeats: six unrenderable pictures cost six `lualatex` startups on every
+  build, forever (4,524 ms of a 4,754 ms run), while the renderable ones
+  warmed after the first. So the failure goes in the same slot under the
+  same content key, and the replay reports the identical diagnostic with
+  the tool's own words — a cached loss is still named, once, at full
+  strength. The line a cache must not cross: an attempt the tool never
+  finished is not a verdict. A budget kill, a spawn that raised, and a
+  nonzero exit that left no log are all facts about the machine, not the
+  request, and caching one would let a busy minute — or a missing
+  install — permanently condemn a picture that renders. An exit code alone
+  cannot make that call: a missing tool still reaches `exec` and returns
+  127, so the evidence is that the tool left a log. The policy lives as
+  values in the driver (`Cli/PicCache.lean`) precisely so it is checkable
+  with no tool installed.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property

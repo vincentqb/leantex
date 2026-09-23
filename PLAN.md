@@ -187,6 +187,78 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — a boundary refusal is an answer, so the cache keeps it. A
+document with several pictures the subset drew nothing of *and* that
+`lualatex` refused paid a full tool startup per picture on every build,
+forever: the cache wrote a slot for a drawn PDF and nothing at all for a
+refusal, so the renderable pictures warmed after the first build and the
+unrenderable ones never did. Measured on a synthetic reproduction of the
+reported shape (6 refused pictures, low-contrast text, no text
+alternatives), medians of 3: 4,739 ms with 7 `lualatex` spawns per run —
+one `--version` probe and six renders — and run 2 identical to run 1, the
+`pics` cache directory still empty. Attribution: 4,524 ms in the six
+renders (95.5%), 70 ms in the version probe, 145 ms in everything the
+engine itself does. Raw `lualatex` on the same failing standalone is
+733 ms against 734 ms on a succeeding one, so TeX's error recovery is not
+the cost — the cost is paying startup again at all.
+
+The two alternatives were measured out rather than reasoned out. Contrast
+(`Contrast.lean`, where W0315 fires) walks once per document and judges
+per *use*: 400 to 3,200 coloured runs moved the whole build from 107 ms to
+307 ms, so the quadratic pair in `declaredUseJudged` (`done.contains` and
+`acc.uses.all` per use) is real but two orders off the reported scale. The
+picture-alt census (W0376) is linear and nearly free: 25 to 200 boundary
+pictures moved a build from 77 ms to 109 ms. Each failing picture was
+attempted exactly once *within* a run — the spawn count says six for six —
+so the defect was never a double walk; it was that no run could benefit
+from any earlier one.
+
+The invariant, now a theorem rather than a habit: **one attempt per
+request and tool version, whichever way the tool answered.**
+`Cli/PicCache.lean` holds the policy as values — `Ran` (how a process
+ended), `Outcome` (what the tool said), `Step` (what this run does) — so it
+is checkable with no tool installed, which is why `picCacheChecks` can
+exist at all. `step_cold_exact` says the tool runs exactly when the slot
+holds neither a drawn PDF nor a remembered refusal; `replay_says_exact`
+says a replay carries the string the tool gave, so E0382's help reads the
+same on the second build as on the first, verified end to end as
+byte-identical diagnostics across a cold and a warm run. The loss is
+undiminished: E0382 keeps its `dropped` loss, fires once per picture, and
+still stops the artifact unless `\allow{E0382}` accepts it.
+
+The line the cache does not cross is `remembers_verdict_exact`: only an
+exit the tool *chose and left a log for* is remembered. A budget kill, a
+spawn that raised, and a nonzero exit with no log at all are
+`inconclusive` and written nowhere, because each says something about the
+machine and nothing about the request. That guard earned itself during this
+change: with no tool on PATH the spawn still reaches `exec` and comes back
+as exit 127, so an exit code alone cannot tell "this picture cannot be
+drawn" from "this machine has no drawing tool", and the first draft of the
+cache remembered the second as the first. The log's presence is the
+platform-independent evidence that the tool formed an opinion
+(`unlogged_retried_exact`); with no tool installed E0382 still fires on
+every build, exactly as before, and the slot stays empty, so installing the
+tool is all it takes. The same distinction is why `runBounded` now returns
+`Ran` instead of `Except String Unit`: the old signature could not tell a
+tool's verdict from a kill, and a cache built on it would have had to
+guess.
+
+Not a defect of this change but found by it, and left alone: the
+`--version` probe never checks its exit code, so on a machine with no tool
+the version reads as the empty string rather than `none` — which is why
+that machine gets E0382 rather than the W0379 the no-tool path documents.
+Correcting it would move a dropped loss to a degraded one on those
+machines, which is a diagnostic decision, not a cache fix.
+
+After: 4,754 ms cold, 155 ms warm (30×), with the warm run's spawn count
+down to the one `--version` probe and the PDF byte-identical to the cold
+run's. An edited picture is retried and its neighbours are not — one spawn,
+not six — because the slot is still keyed by the request's content hash.
+Not fixed, and measured: that `--version` probe is 70 ms of the 155 ms warm
+run, and memoizing it the way `kpsewhich`'s answer is memoized would trade
+a real correctness property (an upgraded TeX re-renders) for 70 ms, so it
+stands.
+
 2026-09-23 — a style reaches its picture wherever `\tikzset` declared it
 (m8b-keys, M8b slice 1, first increment). `Picture.lean` already read
 `name/.style={...}` — but only in a picture's *own* option bracket, so the

@@ -3868,3 +3868,88 @@ def posterChromeCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
      (elabStr (pre "\\logoright{x}")).1.logoRight.isNone)
   t "no title, no band"
     ((elabStr (pre "")).1.headline.isNone)
+
+
+/-- The boundary cache's decision, the driver's half stated as values
+(`LeanTex.Cli.PicCache`): one attempt per request and tool version,
+whichever way the tool answered. Before this block a *failing* render was
+the one verdict the cache did not keep, so every unrenderable picture paid
+a fresh tool process on every build — the drawn ones warmed, the refused
+ones never did, and a document with six of them stayed seconds slow
+forever. The three facts that close it: a held verdict is never re-run, a
+replay reports the tool's own words under the same code, and an attempt the
+tool never finished is not a verdict at all. No tool runs here: the policy
+is pure, which is why it can be checked at all. -/
+def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The decision table, exhaustively. `run` is the cold case and only the
+  -- cold case (`PicCache.step_cold_exact`).
+  t "nothing held: the tool runs"
+    (PicCache.step false none == .run)
+  t "a drawn PDF serves"
+    (PicCache.step true none == .serve)
+  t "a remembered refusal replays instead of running"
+    (PicCache.step false (some "! Package pgf Error") == .replay "! Package pgf Error")
+  t "a drawn PDF outranks a stale refusal in the same slot"
+    (PicCache.step true (some "! Package pgf Error") == .serve)
+  -- The replay is the fresh diagnostic, not a degraded stand-in: same
+  -- code, same message, same help carrying the tool's own last words.
+  let says := "! Package pgf Error: No shape named `x' is known."
+  let fresh := DriverDiag.boundaryFailed "lualatex" says
+  let replayed := match PicCache.step false (some says) with
+    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s)
+    | _ => none
+  t "a replayed refusal is the fresh diagnostic, word for word"
+    (replayed.map (·.code) == some fresh.code &&
+     replayed.map (·.message) == some fresh.message &&
+     replayed.bind (·.help) == fresh.help)
+  t "the replayed help still carries the tool's own words"
+    (fresh.code == "E0382" && (fresh.help.any fun h => hasStr h says))
+  -- What the tool answered, read off the process ending and what it left
+  -- behind. An exit the tool chose *and left a log for* is a verdict;
+  -- nothing else is.
+  t "a clean exit that drew is the drawing"
+    (PicCache.outcome (.exited 0) true .absent == .drawn)
+  t "a clean exit that drew nothing is the tool's own no"
+    (PicCache.outcome (.exited 0) false .absent == .refused "no PDF was produced")
+  t "a failing exit carries the log's last words"
+    (PicCache.outcome (.exited 1) false (.says says) == .refused says)
+  t "a failing exit whose log says nothing usable names the code"
+    (PicCache.outcome (.exited 1) false (.says "") == .refused "exit code 1")
+  t "a failing exit that left no log at all is no answer about the request"
+    (PicCache.outcome (.exited 127) false .absent == .inconclusive "exit code 127")
+  t "a budget overrun is no answer about the request"
+    (PicCache.outcome (.overran 120) false .absent ==
+      .inconclusive "no result within 120 s; killed")
+  t "a spawn that raised is no answer about the request"
+    (PicCache.outcome (.unstarted "no such file") false .absent ==
+      .inconclusive "no such file")
+  -- What the cache keeps: the tool's refusal, and nothing the machine did
+  -- (`PicCache.remembers_verdict_exact`, `PicCache.unlogged_retried_exact`).
+  t "a refusal is remembered, in the tool's words"
+    (PicCache.remembers (PicCache.outcome (.exited 1) false (.says says)) == some says)
+  t "a drawing is not remembered as a refusal"
+    (PicCache.remembers (PicCache.outcome (.exited 0) true .absent) == none)
+  t "an overrun is not remembered, so the next build retries it"
+    (PicCache.remembers (PicCache.outcome (.overran 120) false .absent) == none)
+  t "a failed spawn is not remembered, so the next build retries it"
+    (PicCache.remembers (PicCache.outcome (.unstarted "boom") false .absent) == none)
+  t "a missing tool is not remembered, so installing it is enough"
+    (PicCache.remembers (PicCache.outcome (.exited 127) false .absent) == none)
+  -- The slot: the request's content hash and the tool's version, so an
+  -- edited picture reads a different slot and is retried, and a tool
+  -- upgrade retries every one.
+  let k := Ir.picHash "\\draw (0,0) -- (1,1);"
+  let k' := Ir.picHash "\\draw (0,0) -- (1,2);"
+  let v := Ir.picHash "lualatex 1.0"
+  let v' := Ir.picHash "lualatex 1.1"
+  t "the drawn PDF and the remembered refusal share one slot"
+    (PicCache.pdfName k v == PicCache.stem k v ++ ".pdf" &&
+     PicCache.failName k v == PicCache.stem k v ++ ".fail" &&
+     PicCache.pdfName k v != PicCache.failName k v)
+  t "an edited picture names a different slot"
+    (k != k' && PicCache.failName k v != PicCache.failName k' v)
+  t "an upgraded tool names a different slot"
+    (v != v' && PicCache.failName k v != PicCache.failName k v')
+  t "the remembered refusal is not mistaken for a drawing"
+    (!(PicCache.failName k v).endsWith ".pdf")

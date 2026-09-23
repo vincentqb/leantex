@@ -467,9 +467,11 @@ structure PicResult where
 
 /-- Run one process with a wall-clock budget: poll-and-sleep, kill on
 overrun. The boundary tool is external and a runaway TeX must not hang the
-build. -/
+build. The ending is returned as a value (`PicCache.Ran`), because whether
+the tool reached a decision is what decides whether its answer is worth
+remembering. -/
 def runBounded (cmd : String) (args : Array String) (cwd : System.FilePath)
-    (budgetMs : Nat) : IO (Except String Unit) := do
+    (budgetMs : Nat) : IO PicCache.Ran := do
   let child ← IO.Process.spawn {
     cmd := cmd
     args := args
@@ -477,17 +479,13 @@ def runBounded (cmd : String) (args : Array String) (cwd : System.FilePath)
     stdout := .null
     stderr := .null
     stdin := .null }
-  let mut waited := 0
   for _ in [0:budgetMs / 50 + 1] do
     match ← child.tryWait with
-    | some 0 => return .ok ()
-    | some code => return .error s!"exit code {code}"
-    | none =>
-      IO.sleep 50
-      waited := waited + 50
+    | some code => return .exited code.toNat
+    | none => IO.sleep 50
   child.kill
   let _ ← child.wait
-  return .error s!"no result within {budgetMs / 1000} s; killed"
+  return .overran (budgetMs / 1000)
 
 /-- The last words of a batchmode log: the `!` error lines, else the last
 line — what E0382's help shows so the failure is diagnosable without
@@ -506,10 +504,19 @@ drawn PDF lands in the cache beside the font cache, keyed by the request's
 content hash *and the tool's version string* — an upgraded TeX re-renders,
 an unchanged request never re-runs, and a warm cache needs no TeX
 installed: with no tool at all, any earlier render of the same request
-serves. A
-request nothing can fulfil is W0379, per picture; each such picture then
-ships as the placeholder box the diagnostic names. Failures of a tool that
-ran are E0382 with the tool's own last words. Refusals are returned keyed
+serves. A request nothing can fulfil is W0379, per picture; each such
+picture then ships as the placeholder box the diagnostic names. Failures of
+a tool that ran are E0382 with the tool's own last words — and are
+remembered in the same slot the drawn PDF would take, so the tool is asked
+about one request at most once per version (`PicCache.step_cold_exact`) and
+a replay carries the words the tool gave (`PicCache.replay_says_exact`),
+never a stand-in.
+An attempt the tool did not finish — a budget kill, a spawn that raised, or
+a nonzero exit that left no log at all — is not an answer and is not
+remembered (`PicCache.remembers_verdict_exact`,
+`PicCache.unlogged_retried_exact`), so neither a busy machine nor one
+without the tool installed can make a picture that renders look like one
+that cannot. Refusals are returned keyed
 by the picture's image source, for `Image.fulfil` to name (the subject is
 set there, so the gate's match cannot depend on the words chosen here).
 The inventory (`-v` and the porcelain phases) says per picture what came
@@ -542,61 +549,86 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     -- and one it does not mention leaves it warm
     -- (`Ir.paletteDecls_local_exact`); the id stays the author's bytes.
     let key := Ir.picHash wrapped
-    -- The cache: exact key+version with a tool present; with none, any
-    -- earlier render of this request serves — the content hash is the
-    -- request's meaning, and the version in the key only forces a
-    -- re-render on upgrade.
-    let cached? ← do
-      match version? with
-      | some version =>
-        let c := picDir / (key ++ "-" ++ Ir.picHash version ++ ".pdf")
-        if ← c.pathExists then pure (some c) else pure (none : Option System.FilePath)
-      | none =>
-        let entries ← picDir.readDir
-        pure <| entries.findSome? fun e =>
-          if e.fileName.startsWith (key ++ "-") && e.fileName.endsWith ".pdf" then
-            some e.path
-          else none
-    if let some cached := cached? then
-      let bytes ← IO.FS.readBinFile cached
-      results := results.push { src, bytes, cached }
-      ui.phase "boundary"
-        s!"{tool} ({version?.getD "?"}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
-        (← since t0)
-      continue
     match version? with
     | none =>
-      refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor id))
+      -- No tool: any earlier render of this request serves — the content
+      -- hash is the request's meaning, and the version in the slot only
+      -- forces a re-render on upgrade. A remembered refusal is *not* read
+      -- here: with no tool there is no version to match it against, and
+      -- W0379 — no tool, no render — stays the honest answer.
+      let entries ← picDir.readDir
+      let any? := entries.findSome? fun e =>
+        if e.fileName.startsWith (key ++ "-") && e.fileName.endsWith ".pdf" then
+          some e.path
+        else none
+      match any? with
+      | some cached =>
+        let bytes ← IO.FS.readBinFile cached
+        results := results.push { src, bytes, cached }
+        ui.phase "boundary"
+          s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
+          (← since t0)
+      | none =>
+        refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor id))
     | some version =>
-      let cached := picDir / (key ++ "-" ++ Ir.picHash version ++ ".pdf")
-      let work := picDir / s!"work-{key}"
-      IO.FS.createDirAll work
-      IO.FS.writeFile (work / "pic.tex") wrapped
-      let r ← try
-        runBounded tool #["-interaction=batchmode", "-halt-on-error", "pic.tex"]
-          work 120000
-      catch e =>
-        pure (.error (toString e))
-      let produced := work / "pic.pdf"
-      match r with
-      | .ok _ =>
-        if ← produced.pathExists then
+      -- One slot per request and tool version, holding whichever way the
+      -- tool answered: the drawn PDF, or its own refusal in the tool's own
+      -- words. Either is an answer, so neither is asked for twice.
+      let cached := picDir / PicCache.pdfName key (Ir.picHash version)
+      let slot := picDir / PicCache.failName key (Ir.picHash version)
+      let drawn ← cached.pathExists
+      let remembered? ← if drawn then pure (none : Option String)
+        else if ← slot.pathExists then pure (some (← IO.FS.readFile slot))
+        else pure (none : Option String)
+      match PicCache.step drawn remembered? with
+      | .serve =>
+        let bytes ← IO.FS.readBinFile cached
+        results := results.push { src, bytes, cached }
+        ui.phase "boundary"
+          s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
+          (← since t0)
+      | .replay says =>
+        -- The tool already answered no for exactly these bytes under
+        -- exactly this version: its own words, the same code, the same
+        -- dropped loss — one attempt per request, not one per build.
+        refused := refused.push (src, DriverDiag.boundaryFailed tool says (spanFor id))
+        ui.phase "boundary"
+          s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
+          (← since t0)
+      | .run =>
+        let work := picDir / s!"work-{key}"
+        IO.FS.createDirAll work
+        IO.FS.writeFile (work / "pic.tex") wrapped
+        let ran ← try
+          runBounded tool #["-interaction=batchmode", "-halt-on-error", "pic.tex"]
+            work 120000
+        catch e =>
+          pure (.unstarted (toString e))
+        let produced := work / "pic.pdf"
+        let drew ← produced.pathExists
+        let logPath := work / "pic.log"
+        let log ← if ← logPath.pathExists then
+            pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
+          else pure PicCache.Log.absent
+        match PicCache.outcome ran drew log with
+        | .drawn =>
           let bytes ← IO.FS.readBinFile produced
           IO.FS.writeBinFile cached bytes
           results := results.push { src, bytes, cached }
           ui.phase "boundary"
             s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes"
             (← since t0)
-        else
-          refused := refused.push (src, DriverDiag.boundaryFailed tool "no PDF was produced"
-            (spanFor id))
-      | .error err =>
-        let log ← try IO.FS.readFile (work / "pic.log") catch _ => pure ""
-        let tail := logTail log
-        refused := refused.push (src, DriverDiag.boundaryFailed tool
-          (if tail.isEmpty then err else tail) (spanFor id))
-      -- The scratch directory is per-content and spent either way.
-      try IO.FS.removeDirAll work catch _ => pure ()
+        | .refused said =>
+          IO.FS.writeFile slot said
+          refused := refused.push (src, DriverDiag.boundaryFailed tool said (spanFor id))
+          ui.phase "boundary"
+            s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing"
+            (← since t0)
+        | .inconclusive said =>
+          -- Nothing the machine did is written: the next build retries.
+          refused := refused.push (src, DriverDiag.boundaryFailed tool said (spanFor id))
+        -- The scratch directory is per-content and spent either way.
+        try IO.FS.removeDirAll work catch _ => pure ()
   return (results, refused)
 
 /-- Where the image cache files a plan: beside the font and boundary

@@ -45,6 +45,7 @@ import LeanTex.Cli.Args
 import LeanTex.Cli.Render
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.Input
+import LeanTex.Cli.PicCache
 
 namespace LeanTex
 
