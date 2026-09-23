@@ -1,0 +1,32 @@
+% Synthetic fixture: named styles declared by \tikzset reach the engine's
+% own picture renderer, wherever they were written. `ball` is declared in
+% the preamble, `slab` beside the picture inside the document body — the
+% position a collector that stopped at \begin{document} could not see — and
+% both are applied by name on a node. The boundary is left open on purpose:
+% the census asserts the outlines ship as page paths and that no image box
+% stands where the picture is, so the page is the engine's own ink and no
+% external tool was asked to draw it. Invented content and design.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\tikzset{ball/.style={circle, draw, minimum size=7mm}}
+
+\begin{document}
+
+\section{Styles the engine reads}
+
+Before the diagram stands a paragraph, so the picture spaces below text.
+
+\tikzset{slab/.style={rectangle, draw, thick, minimum width=9mm, minimum height=6mm}}
+
+\begin{tikzpicture}
+  \node[ball] (p) at (0, 0) {P};
+  \node[ball] (q) at (3, 0) {Q};
+  \node[slab] (r) at (1.5, -1.5) {out};
+  \draw (p) -- (q);
+\end{tikzpicture}
+
+After the diagram stands another, so the flow resumes.
+
+\end{document}

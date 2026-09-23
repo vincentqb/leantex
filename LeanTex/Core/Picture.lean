@@ -626,6 +626,67 @@ private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) := Id.r
     | _ => cur := cur.push t
   return out.push cur
 
+/-- Fold one `name/.style={...}` definition into the bundles already read,
+newest first, so an inner definition shadows an outer one of the same name
+(pgf scopes keys; a picture's own `[...]` is inside the document's
+`\tikzset`).
+
+**Expansion is at the definition, never at the use.** pgf's own model is
+textual — a style's body is re-read as keys where the style is applied —
+and a body that names another style would then have to be expanded again,
+with no bound on the depth and no bound at all on a body that names
+itself. So a reference to a bundle *already defined* is spliced in here,
+once, and a use site expands exactly one level whatever the nesting depth.
+A style that names itself, or any cycle of styles, therefore finds nothing
+to splice and keeps its own name as a literal key — which the option loop
+that reads it then names as a key outside the subset (W0334), never
+silently dropped and never chased. No fuel, no fixed point: the recursion
+does not exist. -/
+def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+    List (String × Array Tok) := Id.run do
+  let mut expanded : Array Tok := #[]
+  for part in splitTop (g.toArray.filter (· != .space)) ',' do
+    unless expanded.isEmpty do expanded := expanded.push (.sym ',')
+    match part.toList with
+    | [.ident m] =>
+      match styles.lookup m with
+      | some bundle => expanded := expanded ++ bundle
+      | none => expanded := expanded ++ part
+    | _ => expanded := expanded ++ part
+  return (n, expanded) :: styles
+
+/-- Read a `\tikzset` key list: every `name/.style={...}` entry defines a
+bundle, folded in source order so a later definition may name an earlier
+one. Every other entry comes back unread — `every X`, `/.tip`, `/.append
+style`, a bare key — for the caller to name at the line that wrote it,
+which is where such a diagnostic belongs: the line is the document's, not
+any one picture's. -/
+def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
+    List (String × Array Tok) × Array (Array Tok) := Id.run do
+  let mut styles := styles
+  let mut unread : Array (Array Tok) := #[]
+  for entry in splitTop toks ',' do
+    match entry.toList.filter (· != .space) with
+    | [] => pure ()
+    | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
+      styles := addStyle styles n g
+    | other => unread := unread.push other.toArray
+  return (styles, unread)
+
+/-- The bundles a document's `\tikzset` lines define, folded in source
+order: what every picture in it starts from. -/
+def documentStyles (sets : Array (Array Tok)) : List (String × Array Tok) := Id.run do
+  let mut styles : List (String × Array Tok) := []
+  for keys in sets do
+    styles := (readStyleList styles keys).1
+  return styles
+
+/-- What one `\tikzset` key list leaves unread, named for a diagnostic at
+the line that wrote it. The elaborator's one caller; the fold the pictures
+read is `documentStyles`. -/
+def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
+  (readStyleList styles keys).2.filterMap fun e => (e[0]?).map tokText
+
 /-- Substitute macros into a colour spelling and hand it to
 `Palette.resolve`, the engine's one `!`-mix parser. A computed percentage
 rounds to the whole percent xcolor's grammar takes. -/
@@ -1719,14 +1780,19 @@ end
 
 /-- Elaborate one `tikzpicture` body: the leading `[scale=...]` option
 block, the statements, then the unrolled evaluation. Everything the
-subset cannot render is a named diagnostic beside the shapes that did. -/
+subset cannot render is a named diagnostic beside the shapes that did.
+`sets` carries the document's `\tikzset` key lists in source order
+(`Compat.tikzsetKeys`), whose `/.style` definitions every picture starts
+from — a style reaches its picture wherever the author wrote it — and the
+picture's own `[...]` definitions shadow them. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
-      fun d rs => (.math d (Parse.rawSrc rs), #[])) :
+      fun d rs => (.math d (Parse.rawSrc rs), #[]))
+    (sets : Array (Array Parse.Raw) := #[]) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let toks := ofRaws raws
   let mut scale : Int := 1000
-  let mut styles : List (String × Array Tok) := []
+  let mut styles := documentStyles (sets.map fun keys => ofRaws keys)
   let mut transformShape := false
   let mut diags : Array PDiag := #[]
   let mut i := 0
@@ -1755,20 +1821,13 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         -- `transform shape`: nodes take the picture's scale (pgf manual
         -- §25.4, "transformations do not apply to nodes" without it).
         | [.ident "transform", .ident "shape"] => transformShape := true
-        -- `name/.style={...}`: a named option bundle. References to
-        -- earlier bundles expand at the definition, so use-site expansion
-        -- is one level and total whatever the nesting depth.
+        -- `name/.style={...}`: a named option bundle, read by the one
+        -- definition reader the document's `\tikzset` lines go through, so
+        -- a picture's own definition and a document-level one cannot
+        -- differ in what they mean. Consed on top, so a picture's own
+        -- definition shadows the document's of that name.
         | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
-          let mut expanded : Array Tok := #[]
-          for part in splitTop (g.toArray.filter (· != .space)) ',' do
-            unless expanded.isEmpty do expanded := expanded.push (.sym ',')
-            match part.toList with
-            | [.ident m] =>
-              match styles.lookup m with
-              | some bundle => expanded := expanded ++ bundle
-              | none => expanded := expanded ++ part
-            | _ => expanded := expanded ++ part
-          styles := (n, expanded) :: styles
+          styles := addStyle styles n g
         | [] => pure ()
         | o :: _ =>
           diags := diags.push (.W0334, s!"picture option {tokText o} is outside the \

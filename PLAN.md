@@ -187,6 +187,66 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — a style reaches its picture wherever `\tikzset` declared it
+(m8b-keys, M8b slice 1, first increment). `Picture.lean` already read
+`name/.style={...}` — but only in a picture's *own* option bracket, so the
+common shape (declare the style once, apply it by name) drew nothing of
+what it declared: the style name was a key outside the subset, W0334 named
+it, and the nodes shipped bare labels. A `\tikzset` reached the boundary
+standalone only (`boundaryCtrls`), which is to say pgf could read the
+document's styles and the engine could not.
+
+The invariant, the native half of `boundaryDecls_covers` and stated over
+the same walk: **a definition a picture needs reaches that picture's
+renderer regardless of where in the document it was written** — now for
+*both* renderers. `Compat.boundaryScan` collects once into a two-field
+accumulator (`pre`, the standalone's preamble as written; `sets`, the same
+lines' key lists with the position of each), so the two readings cannot
+disagree about which definitions a picture was handed;
+`boundaryDecls`/`tikzsetKeys` are its projections and `tikzsetKeys_covers`
+is `boundaryDecls_covers` for the native one. The boundary's copy is
+untouched: a picture the subset draws nothing of still routes there with
+the same preamble it always had.
+
+Expansion is at the definition, never at the use, and that is what makes
+the hostile input terminate rather than be bounded. pgf's model is
+textual — a style's body is re-read as keys where it is applied — so a body
+naming another style would have to expand again, with no bound on depth and
+none at all on a body that names itself. `addStyle` splices a reference to
+an *already defined* bundle in at the definition, once; a use site then
+expands exactly one level whatever the nesting depth, and a self-reference
+or a cycle finds nothing to splice, keeps its own name as a literal key,
+and is named W0334 by the option loop that meets it. No fuel, no fixed
+point: the recursion does not exist. Two checks pin it (`loop/.style={loop}`
+and the two-cycle), each one W0334 and nothing else.
+
+Two rules decided rather than defaulted. A `\tikzset` is no longer an
+unknown command under `tool = none` (`nativeSetCtrls`): the engine reads
+that line now, so calling it unknown while using it would be incoherent —
+and it closes a second copy of the 2026-09-22 defect, where the
+definition's own source printed into the paragraph beneath a refusal. And
+an entry the native reader cannot use (`every X`, `/.tip`, `/.append
+style`) is named at the line that wrote it, per entry, but *only* under the
+refusal: with the boundary open the real TikZ still reads it, so naming a
+loss there would be a claim the document does not have.
+
+Evidence is the artifact, not the IR. `diagram-tikzset` declares `ball` in
+the preamble and `slab` beside its picture inside the document body — the
+position a collector stopping at `\begin{document}` cannot see — and its
+census row reads `paths == 4` (two circle outlines, one rectangle, one
+edge) with `images == 0`, so the ink is the engine's own. Measured in the
+rendered PDF against the same fixture with its two declarations removed
+(which is what the engine saw before): `re` 0→1, `c` 4→12, `m` 1→3,
+`S` 13→16 — one rectangle, two circles, three strokes — and the two W0334
+refusals gone. `lualatex` was on PATH and the boundary open throughout; the
+verbose log names no tool, no N0023, and the page carries no form XObject.
+
+Stopped deliberately at the increment's edge, and the next one picks up
+from here: key inheritance and `every X` styles, `/.tip` (the 2026-09-22
+defect's own key), `/.append style`, and a style applied in the picture's
+*own* bracket as a picture-level key — today that is still W0334, honestly,
+since picture-level keys are not what a path or node option loop reads.
+
 2026-09-23 — `overprintScan` cites the section that documents `{overprint}`
 (overprint-cite, M5; the residual the overprint-evidence entry below
 recorded for the owner of Compat.lean). The docstring cited "beamer manual

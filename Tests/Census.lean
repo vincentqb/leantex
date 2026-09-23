@@ -683,6 +683,27 @@ def censusTable :
     ("the curve's mid-path label ships", hasStr (censusText c) "lift"),
     ("every node ships a glyph line",
       (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
+  -- **A style reaches its picture wherever it was declared.** `ball` comes
+  -- from the preamble, `slab` from a `\tikzset` beside the picture inside
+  -- the document body; both are applied by name, and their keys are what
+  -- draws the outlines this row counts. Before the native reading, the
+  -- style names were keys outside the subset (W0334) and the nodes shipped
+  -- bare labels: three fewer paths on the page, and the fixture's own
+  -- declaration silently doing nothing. `images == 0` is the other half of
+  -- the claim — the ink is the engine's own, with no tool asked to draw.
+  ("diagram-tikzset", fun _ c => [
+    ("one page", c.size == 1),
+    -- two circle outlines + one rectangle outline + one edge
+    ("the styled node outlines and the edge ship as page paths",
+      (c[0]?.map (·.paths == 4)).getD false),
+    ("no boundary box stands where the picture is",
+      (c[0]?.map (·.images == 0)).getD false),
+    ("every styled node's body ships",
+      hasStr (censusText c) "P" && hasStr (censusText c) "Q" &&
+        hasStr (censusText c) "out"),
+    ("the prose around the diagram ships",
+      hasStr (censusText c) "Before the diagram" &&
+        hasStr (censusText c) "After the diagram")]),
   ("tables", fun geom c => [
     ("one page", c.size == 1),
     ("the header row ships", hasStr (censusText c) "Construct"

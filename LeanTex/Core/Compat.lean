@@ -556,6 +556,16 @@ state one request (the conservation oracle holds them equal). -/
 def boundaryCtrls : List String :=
   ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset"]
 
+/-- The set lines the engine reads *itself*: their key lists address the
+picture machinery, and the engine has picture machinery of its own
+(`Picture.readStyleList` takes the `/.style` definitions out of a
+`\tikzset`). Such a line is therefore never the sentence's and never an
+unknown command, whichever renderer ends up drawing — it still rides to
+the boundary as well (`boundaryCtrls` keeps it), because a picture the
+subset draws nothing of is drawn there and needs the same definitions.
+A subset of `boundaryCtrls`. -/
+def nativeSetCtrls : List String := ["tikzset"]
+
 /-- Picture packages, whose whole meaning is drawing: with the boundary
 open (the default), their loads belong to the boundary standalone's
 preamble (`boundaryDecls` carries each with its options) rather than being
@@ -601,23 +611,37 @@ collector does not hoist it: hoisting would scope one picture's styling to
 every other picture in the document. -/
 def pictureEnvs : List String := ["tikzpicture", "external"]
 
+/-- What one tree walk collects for the renderers of a document's
+pictures: `pre` is the boundary standalone's preamble, as written; `sets`
+is the same collection read natively — one entry per `nativeSetCtrls`
+line, its key list beside the position of the line that wrote it. One
+accumulator, so the two readings cannot disagree about which definitions
+reached a picture. -/
+structure BoundaryScan where
+  pre : String := ""
+  sets : Array (Pos × Array Raw) := #[]
+
 mutual
 
 /-- One level of the boundary-declaration walk. The list drives the
 recursion; the array gives `takeOpt`/`takeGroups` O(1) access to the
 siblings a set line's arguments are, and `skip` counts the siblings a
 line already consumed so its argument group is never walked as content.
-The string accumulates, so the standalone's preamble is built in one pass
-in source order. -/
--- conserves: none — the walk's result is the standalone's preamble text,
--- not a tree: it collects the subset of lines the real TeX must read and
--- drops everything else by design, so no census equality can hold. What
--- it must conserve is stated where it pays: `boundaryDecls_covers`.
-private def boundaryLevel (raws : Array Raw) (out : String) :
-    List Raw → Nat → Nat → String
+The accumulator carries both readings of the same collection — the
+standalone's preamble text and the native key lists — so the two can
+never disagree about which lines a picture's renderer was handed. It
+accumulates, so the standalone's preamble is built in one pass in source
+order. -/
+-- conserves: none — the walk's result is the standalone's preamble text
+-- plus the key lists the engine reads, not a tree: it collects the subset
+-- of lines a picture's renderer must read and drops everything else by
+-- design, so no census equality can hold. What it must conserve is stated
+-- where it pays: `boundaryDecls_covers` and `tikzsetKeys_covers`.
+private def boundaryLevel (raws : Array Raw) (out : BoundaryScan) :
+    List Raw → Nat → Nat → BoundaryScan
   | [], _, _ => out
   | _ :: rest, i, skip + 1 => boundaryLevel raws out rest (i + 1) skip
-  | .ctrl name _ :: rest, i, 0 =>
+  | .ctrl name p :: rest, i, 0 =>
     if name == "usepackage" || name == "RequirePackage" then
       let (opt, j) := takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
@@ -627,12 +651,17 @@ private def boundaryLevel (raws : Array Raw) (out : String) :
         if pkgs.isEmpty then out
         else
           let o := match opt with | some o => s!"[{o}]" | none => ""
-          out ++ s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
+          let line := s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
+          { out with pre := out.pre ++ line }
       boundaryLevel raws out rest (i + 1) (k - (i + 1))
     else if boundaryCtrls.contains name then
       let (args, k) := takeGroups raws (i + 1) 1
-      let out := out ++ s!"\\{name}" ++
-        String.join (args.toList.map fun g => s!"\{{rawSrc g}}") ++ "\n"
+      let groups := String.join (args.toList.map fun g => s!"\{{rawSrc g}}")
+      let out := { out with pre := out.pre ++ s!"\\{name}" ++ groups ++ "\n" }
+      let out :=
+        if nativeSetCtrls.contains name then
+          { out with sets := out.sets.push (p, args.getD 0 #[]) }
+        else out
       boundaryLevel raws out rest (i + 1) (k - (i + 1))
     else boundaryLevel raws out rest (i + 1) 0
   | r :: rest, i, 0 => boundaryLevel raws (boundaryRaw out r) rest (i + 1) 0
@@ -640,7 +669,7 @@ private def boundaryLevel (raws : Array Raw) (out : String) :
 /-- Descend into a group or an environment. Split from the list walk so
 the recursion is structural on `Raw`: the body is a field of the head, not
 a tail of the list — `rewriteList`/`rewriteRaw`'s shape. -/
-private def boundaryRaw (out : String) : Raw → String
+private def boundaryRaw (out : BoundaryScan) : Raw → BoundaryScan
   | .group body _ => boundaryLevel body out body.toList 0 0
   | .env n body _ =>
     if pictureEnvs.contains n then out
@@ -654,6 +683,14 @@ private def boundaryRaw (out : String) : Raw → String
   | .verb _ _ _ => out
 
 end
+
+/-- What one walk of the tree collects for a picture's renderers: the
+preamble text the boundary standalone needs, and the key lists the engine
+reads itself, each with the position of the line it came from (a
+diagnostic about a key belongs to the line that wrote it, not to whichever
+picture first met it). -/
+def boundaryScan (raws : Array Raw) : BoundaryScan :=
+  boundaryLevel raws {} raws.toList 0 0
 
 /-- The preamble declarations a boundary standalone needs, collected from
 the *unrewritten* tree — the compat rewrite drops package loads, so
@@ -672,7 +709,17 @@ therefore descends the whole tree; only a picture environment is left
 closed (`pictureEnvs`), its body being its own standalone's already. Pure
 and total; `\input` wrappers open as any other environment does. -/
 def boundaryDecls (raws : Array Raw) : String :=
-  boundaryLevel raws "" raws.toList 0 0
+  (boundaryScan raws).pre
+
+/-- The key lists the engine reads itself, in source order, each with the
+position of the `\tikzset` that wrote it. Read from the *unrewritten* tree
+for the same reason `boundaryDecls` is, and from the whole tree for the
+same reason: where the author wrote a definition says nothing about which
+pictures need it. The one consumer is the elaborator, which folds the
+`/.style` entries into every picture's bundles (`Picture.readStyleList`)
+and names what it could not read at the line above. -/
+def tikzsetKeys (raws : Array Raw) : Array (Pos × Array Raw) :=
+  (boundaryScan raws).sets
 
 /-- **A set line reaches the boundary wherever it stands.** Wrapping a run
 of declarations in the document environment leaves the standalone's
@@ -683,7 +730,16 @@ pgf, the boundary failed on an arrow tip or a shape it had no definition
 for, and the page shipped an empty box. -/
 theorem boundaryDecls_covers (raws : Array Raw) (p : Pos) :
     boundaryDecls #[.env "document" raws p] = boundaryDecls raws := by
-  simp [boundaryDecls, boundaryLevel, boundaryRaw, pictureEnvs]
+  simp [boundaryDecls, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
+
+/-- **And it reaches the engine's own renderer wherever it stands**, which
+is the same claim for the native reading: a style defined beside its
+picture, inside the document body, is the style that picture draws with.
+Stated over the same walk the boundary's copy comes from, so neither
+reading can gain a definition the other lost. -/
+theorem tikzsetKeys_covers (raws : Array Raw) (p : Pos) :
+    tikzsetKeys #[.env "document" raws p] = tikzsetKeys raws := by
+  simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
 
 /-- The `*` of a starred LaTeX form, standing between the command and its
 arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)

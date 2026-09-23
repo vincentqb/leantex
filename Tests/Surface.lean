@@ -2496,6 +2496,93 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab picture style bundle referencing an earlier bundle expands"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}[a/.style={font=\\small}, b/.style={a}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  -- **A style reaches its picture wherever `\tikzset` declared it** — the
+  -- native half of `Compat.boundaryDecls_covers`, stated over the same walk
+  -- (`Compat.tikzsetKeys_covers`). Before it, the style name was a key
+  -- outside the subset and the node shipped without the outline its
+  -- declaration asked for.
+  t "elab tikzset style from the preamble reaches the picture"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  t "elab tikzset style written beside its picture reaches it"
+    ((elabStr ("\\begin{document}\n\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  -- The style's keys are what draws: a plain node ships its label alone, a
+  -- styled one ships the outline its declaration asked for as well.
+  t "elab tikzset style draws the outline its keys declare"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false) &&
+     (elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 1
+        | _ => false))
+  -- A later `\tikzset` may name an earlier one; expansion is at the
+  -- definition, so the use site reads one level.
+  t "elab tikzset style may name a bundle an earlier line defined"
+    ((elabStr ("\\tikzset{a/.style={circle, draw, minimum size=8mm}}\n\\tikzset{b/.style={a}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  -- A picture's own definition shadows the document's of that name: pgf
+  -- scopes keys, and the picture's bracket is inside the `\tikzset`.
+  t "elab picture style bundle shadows a tikzset bundle of the same name"
+    ((elabStr ("\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[ball/.style={font=\\small}]\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 1
+        | _ => false))
+  -- **The hostile input: a style that names itself.** Expansion happens at
+  -- the definition, where the name is not yet bound, so the reference stays
+  -- a literal key and the option loop names it — no fixed point is chased
+  -- and no fuel bounds anything. A cycle of two behaves the same way.
+  t "elab tikzset self-referential style is named, not chased"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{loop/.style={loop}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[loop] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  t "elab tikzset cycle of two styles is named, not chased"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{a/.style={b}}\n\\tikzset{b/.style={a}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[a] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  -- A key the subset does not know keeps its own spelling in the
+  -- diagnostic, never the bundle's — and a style of nothing but unknown
+  -- keys cannot make the picture claim to be drawn silently.
+  t "elab tikzset style names its outside keys by their own spelling"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{b/.style={ellipse}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
+      (fun m => hasStr m "'ellipse'"))
+  -- A `\tikzset` entry the native reader does not understand is named at
+  -- the line that wrote it — but only under the refusal: with the boundary
+  -- open the real TikZ still reads it, so naming a loss there would be a
+  -- claim the document does not have.
+  t "elab tikzset entry outside the native reading is named under the refusal"
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{every node/.style={draw}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  t "elab tikzset entry outside the native reading is silent with the boundary open"
+    ((elabStr ("\\tikzset{every node/.style={draw}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  -- A `\tikzset` the engine reads is never an unknown command, and its
+  -- group never reaches the sentence — under the refusal too, which is
+  -- where the definition's own source used to print into the paragraph.
+  t "elab tikzset is not an unknown command under the refusal"
+    ((elabStr ("\\pictures{ tool = none }\\tikzset{ball/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++

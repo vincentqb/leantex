@@ -128,6 +128,12 @@ structure Ctx where
   palette are not carried here: the request site (`Ir.pictureRefs`) reads
   them off the finished `Doc`, after contrast realization. -/
   picPreamble : String := ""
+  /-- The key lists the document's `\tikzset` lines wrote, in source order
+  and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
+  definitions are what every picture's own option block starts from, so a
+  style reaches its picture whether it was declared in the preamble or
+  beside the figure. Set once by the elaborator, as `picPreamble` is. -/
+  picSets : Array (Array Raw) := #[]
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -3542,14 +3548,17 @@ a side channel, never slide content" pos
       (help := "it is a block-level command: use it between paragraphs, " ++
         "not inside inline content")
     elabInlinesFrom ctx raws (i + 1) acc sb
-  else if ctx.picTool.isSome && Compat.boundaryCtrls.contains name then
-    -- With the boundary open (the default), a tikz-family set line is not
-    -- unknown wherever it stands: `Compat.boundaryDecls` collected it —
-    -- body-level lines included (`boundaryDecls_covers`) — and the real
-    -- TikZ reads it in every wrapped standalone. It is a definition, so
-    -- its group addresses pgf, never the sentence: kept as text it printed
-    -- the definition's own source into the paragraph. A declared refusal
-    -- (`tool = none`) makes it an unknown command again, arguments and all.
+  else if Compat.nativeSetCtrls.contains name ||
+      (ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then
+    -- A tikz-family set line is not unknown wherever it stands. Its group
+    -- addresses the picture machinery, never the sentence: kept as text it
+    -- printed the definition's own source into the paragraph. The engine
+    -- reads `\tikzset` itself now (`Compat.nativeSetCtrls`), so that line
+    -- is consumed whichever renderer draws; the rest are the boundary's
+    -- while it is open (`Compat.boundaryDecls` collected them — body-level
+    -- lines included, `boundaryDecls_covers`), and a declared refusal
+    -- (`tool = none`) makes those unknown again, arguments and all. What a
+    -- read line left unread is named at the line itself, in `elabDoc`.
     let jr := skipReservedArgs raws (i + 1) pos
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
@@ -5892,7 +5901,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula is set as source text")])
-  let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
+  let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf ctx.picSets
   -- **Native first; the boundary is the fallback.** What the engine's own
   -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
   -- the constructs it refused are named beside the shapes that landed
@@ -10043,11 +10052,14 @@ its declared layout" pos
       s!"'\\{name}' is not modelled; the algorithm keeps the engine's own display" pos
     return s
   | .unknownCmd name unclosed pos =>
-    -- With the boundary open (the default), a tikz-family set line is not
-    -- unknown: it rides into every wrapped standalone
-    -- (`Compat.boundaryDecls` collected it), where the real TikZ reads
-    -- it. A declared refusal (`tool = none`) makes it unknown again.
-    if s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name then
+    -- A tikz-family set line is not unknown: the engine reads `\tikzset`
+    -- itself (`Compat.nativeSetCtrls`), and while the boundary is open the
+    -- rest ride into every wrapped standalone (`Compat.boundaryDecls`
+    -- collected them), where the real TikZ reads them. A declared refusal
+    -- (`tool = none`) makes only the ones the engine does not read unknown
+    -- again.
+    if Compat.nativeSetCtrls.contains name ||
+        (s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then
       return s
     -- Unknown preamble commands are configuration, not content: their
     -- arguments are skipped with them, never elaborated as stray text.
@@ -10353,7 +10365,8 @@ order, so it is not read" }
 
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
-def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
+def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
+    (picSets : Array (Pos × Array Raw) := #[]) :
     EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -10391,7 +10404,24 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
           | _ => none
       | _ => none).getD (some "lualatex")
   let s ← decls.foldlM applyDecl
-    { ctx := { file := file, picTool := picTool0, picPreamble := picPre } }
+    { ctx := { file := file, picTool := picTool0, picPreamble := picPre
+               picSets := picSets.map (·.2) } }
+  -- What a `\tikzset` left unread is named at the line that wrote it —
+  -- but only under the refusal. With the boundary open the entries the
+  -- engine does not read are still read by the real TikZ at the edge, so
+  -- naming them there would claim a loss the document does not have; under
+  -- `tool = none` nothing else reads them, and this is the honest place to
+  -- say so, per entry rather than per line.
+  if picTool0.isNone then
+    let mut styles : List (String × Array Picture.Tok) := []
+    for (pos, keys) in picSets do
+      let toks := Picture.ofRaws keys
+      for key in Picture.unreadKeys styles toks do
+        warnOnce s.ctx ("picture:set:" ++ key) .W0334
+          s!"picture key {key} is outside the rendered picture subset; \
+the key is dropped" pos
+          (help := "the rendered subset reads 'name/.style={...}' definitions")
+      styles := (Picture.readStyleList styles toks).1
   -- What a refused `\maketitle` redefinition still declares, applied once
   -- the fold has bound everything its body names.
   let s ← applyRefusedTitleStyle s
@@ -10744,7 +10774,7 @@ the resolution gate (`pending_named`) is one statement over that tail;
 `runRaws`, the face that fulfils nothing, runs it itself. -/
 def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag × ReqSpans :=
-  let picPre := Compat.boundaryDecls raws
+  let picScan := Compat.boundaryScan raws
   let (raws, compatDiags, warned) :=
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
@@ -10752,7 +10782,8 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   -- One warn-once key set for the document, not one per pass: the rewrite
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
-  let ((doc, table), st) := (elabDoc file raws picPre).run { warnedUnknown := warned }
+  let ((doc, table), st) :=
+    (elabDoc file raws picScan.pre picScan.sets).run { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry

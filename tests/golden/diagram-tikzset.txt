@@ -1,0 +1,23 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "Styles the engine reads"
+para
+  text "Before the diagram stands a paragraph, so the picture spaces below text."
+picture 7 shapes
+  circle 0 0 9.921 stroke #000000 0.4
+  label 0 0 #000000 1000
+    text "P"
+  circle 85.039 0 9.921 stroke #000000 0.4
+  label 85.039 0 #000000 1000
+    text "Q"
+  frame 29.764 -51.024 25.512 17.008 stroke #000000 0.8
+  label 42.52 -42.52 #000000 1000
+    text "out"
+  edge (9.921,0)--(75.118,0) stroke #000000 0.4
+para
+  text "After the diagram stands another, so the flow resumes."
+-- diagnostics
+(none)
