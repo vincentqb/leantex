@@ -9,6 +9,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The gates read history, not just the tree: the diff checks want
+          # the pushed range, and the golden-regeneration check asks for the
+          # merge base with the trunk. A depth-1 checkout has neither.
+          fetch-depth: 0
       - uses: leanprover/lean-action@v1
         with:
           test: true
+          # Linter warnings fail the build, as they do at commit time. This
+          # is the cold build of the run, so the warnings are emitted here;
+          # the gate's own --wfail build below sees a warm cache and cannot
+          # be relied on for them.
+          build-args: "--wfail"
+
+      # The structural gates. Until now they ran only out of a per-clone
+      # core.hooksPath, so a fresh clone could merge a wildcard IR arm, a
+      # non-terminating recursion, an IO leak into the pure core, or an
+      # unnamed obligation, all green.
+      - name: build the gate binaries
+        run: lake build precommit owed
+      - name: gate selftests
+        run: |
+          .lake/build/bin/precommit --selftest
+          .lake/build/bin/owed --selftest
+      - name: owed-theorem ratchet
+        run: .lake/build/bin/owed --check
+      - name: structural gates
+        env:
+          # Empty on a push; the target branch on a pull request.
+          BASE_REF: ${{ github.base_ref }}
+          # The previous tip on a push; all-zeros when the branch is new.
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BASE_REF}" ]; then
+            # Three dots: the diff from the merge base, which is the change
+            # the pull request proposes rather than the trunk's own moves.
+            RANGE="origin/${BASE_REF}...HEAD"
+          elif [ -n "${BEFORE:-}" ] && git rev-parse --verify --quiet "${BEFORE}^{commit}" >/dev/null; then
+            RANGE="${BEFORE}..HEAD"
+          else
+            RANGE=""
+          fi
+          if [ -n "${RANGE}" ]; then
+            echo "gate range: ${RANGE}"
+            .lake/build/bin/precommit --range "${RANGE}"
+          else
+            # No computable range (a first push, a force-push over a gone
+            # commit): the whole-tree gates still run.
+            echo "gate range: none, whole tree only"
+            .lake/build/bin/precommit --tree
+          fi

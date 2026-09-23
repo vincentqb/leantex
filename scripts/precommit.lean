@@ -3,6 +3,11 @@ Pre-commit gate: compile+lint via lake build --wfail, plus convention checks
 over the staged diff. Silent on success. Git executes the FILE
 scripts/hooks/pre-commit, a 3-line sh trampoline that runs this after a cheap
 staged-file filter; install with: git config core.hooksPath scripts/hooks
+
+Three sources, one gate. The hook reads the index (no flag). CI has no
+index and reads a revision range instead (`--range origin/main...HEAD`), or
+nothing at all (`--tree`); both run every whole-tree check unconditionally,
+so the structural guarantees do not depend on a per-clone core.hooksPath.
 -/
 
 import scripts.Gate
@@ -13,6 +18,64 @@ def git (args : Array String) : IO String := do
     IO.eprintln s!"pre-commit: git {String.intercalate " " args.toList} failed:\n{out.stderr}"
     IO.Process.exit 1
   return out.stdout
+
+/-- A git query whose failure is an answer rather than an abort. The
+merge-base lookups read it: in a CI checkout the trunk exists only as
+`origin/main` (actions/checkout creates the one local branch it checked
+out), and a shallow clone may hold neither ref. -/
+def gitOpt (args : Array String) : IO (Option String) := do
+  let out ← IO.Process.output { cmd := "git", args }
+  return if out.exitCode == 0 then some out.stdout else none
+
+/-- The merge base with the trunk, under either spelling — a local `main`
+first, then `origin/main`. `none` when neither ref resolves. -/
+def mergeBaseMain : IO (Option String) := do
+  for ref in ["main", "origin/main"] do
+    if let some out ← gitOpt #["merge-base", "HEAD", ref] then
+      let b := ((out.splitOn "\n").headD "").trimAscii.toString
+      if !b.isEmpty then return some b
+  return none
+
+/-- Where a run reads its diff. The hook reads the index: the content the
+commit will carry, which is the only thing a commit-time gate can judge. CI
+has no index, so it reads a revision range — the pushed commits, or a pull
+request against its base — and the whole-tree gates run either way. `tree`
+is the range-free mode: the whole-tree gates alone, for a CI run whose
+range cannot be computed (a first push, a shallow clone). -/
+inductive Source where
+  | index
+  | range (rev : String)
+  | tree
+  deriving BEq
+
+/-- The `git diff` selector for a source, or `none` when the run reads no
+diff at all. -/
+def Source.diffSel : Source → Option (Array String)
+  | .index => some #["--cached"]
+  | .range r => some #[r]
+  | .tree => none
+
+/-- `--range <rev>` (or `--range=<rev>`), `--tree`, else the hook's index.
+A `--range` with no revision is an error, not a silent whole-tree pass: a
+CI step that meant to read the pushed commits must fail loudly rather than
+go quiet about them. -/
+def parseSource : List String → Except String Source
+  | [] => .ok .index
+  | a :: rest =>
+    if a == "--tree" then .ok .tree
+    else if a == "--range" then
+      match rest with
+      | r :: _ =>
+        if (r.trimAscii.toString).isEmpty then
+          .error "--range needs a revision range, e.g. --range origin/main...HEAD"
+        else .ok (.range r)
+      | [] => .error "--range needs a revision range, e.g. --range origin/main...HEAD"
+    else if a.startsWith "--range=" then
+      let r := (a.drop "--range=".length).toString
+      if (r.trimAscii.toString).isEmpty then
+        .error "--range needs a revision range, e.g. --range=origin/main...HEAD"
+      else .ok (.range r)
+    else parseSource rest
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
@@ -1205,6 +1268,33 @@ def selftest : IO UInt32 := do
     ("  let x := hcfg.mathBoundary", false),
     ("  cfg : Config", false)]
 
+  -- The source parser: the hook's index is the default, CI's range and
+  -- tree modes are explicit, and a range with no revision is an error —
+  -- a CI step that meant to read the pushed commits must not go quiet.
+  let srcShow : Except String Source → String
+    | .ok .index => "index"
+    | .ok .tree => "tree"
+    | .ok (.range r) => s!"range {r}"
+    | .error e => s!"error {e}"
+  let srcCases : List (List String × String) := [
+    ([], "index"),
+    (["--tree"], "tree"),
+    (["--range", "origin/main...HEAD"], "range origin/main...HEAD"),
+    (["--range=abc123..HEAD"], "range abc123..HEAD"),
+    (["--range"], "error --range needs a revision range, e.g. --range origin/main...HEAD"),
+    (["--range="], "error --range needs a revision range, e.g. --range=origin/main...HEAD"),
+    (["-q", "--tree"], "tree")]
+  for (argv, want) in srcCases do
+    let got := srcShow (parseSource argv)
+    if got != want then
+      fails.modify (s!"parseSource {argv}: got {got}, want {want}" :: ·)
+  -- The index is the only source that reads a diff selector `--cached`;
+  -- the tree mode reads no diff at all.
+  if (Source.index).diffSel != some #["--cached"] then
+    fails.modify ("Source.index.diffSel" :: ·)
+  if (Source.tree).diffSel != none then
+    fails.modify ("Source.tree.diffSel" :: ·)
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -1216,8 +1306,19 @@ def selftest : IO UInt32 := do
 def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then
     return (← selftest)
-  let staged := ((← git #["diff", "--cached", "--name-only"]).splitOn "\n").filter (!·.isEmpty)
-  if staged.isEmpty then
+  let src ← match parseSource args with
+    | .ok s => pure s
+    | .error e =>
+      IO.eprintln s!"pre-commit: {e}"
+      return 1
+  let sel := src.diffSel
+  -- The changed-file list: the index for the hook, the range for CI, empty
+  -- for --tree. Only the hook may exit early on an empty list — a CI run
+  -- whose range touches nothing still owes the whole-tree checks.
+  let staged ← match sel with
+    | none => pure ([] : List String)
+    | some s => pure (((← git (#["diff", "--name-only"] ++ s)).splitOn "\n").filter (!·.isEmpty))
+  if src == .index && staged.isEmpty then
     return 0
 
   let failed ← IO.mkRef false
@@ -1228,7 +1329,9 @@ def main (args : List String) : IO UInt32 := do
   -- Checked in every staged file whatever its extension — the two markers
   -- that once landed were in PLAN.md prose — and before the relevance
   -- gate, which would otherwise skip a prose-only commit.
-  let fullDiff ← git #["diff", "--cached", "--no-color", "--unified=0"]
+  let fullDiff ← match sel with
+    | none => pure ""
+    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s)
   let bad := conflictMarkers fullDiff
   if !bad.isEmpty then
     let hits := String.intercalate "\n" (bad.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
@@ -1240,7 +1343,10 @@ def main (args : List String) : IO UInt32 := do
   -- Also over every staged file, before the relevance gate: the checks
   -- above read content, and the debris that escaped had none — a
   -- zero-byte file named by a mangled shell command's own text.
-  let faults := addedPathFaults (← git #["diff", "--cached", "--numstat", "--diff-filter=A", "-z"])
+  let numstat ← match sel with
+    | none => pure ""
+    | some s => git (#["diff", "--numstat", "--diff-filter=A", "-z"] ++ s)
+  let faults := addedPathFaults numstat
   if !faults.isEmpty then
     let hits := String.intercalate "\n" (faults.toList.map fun (p, rule) => s!"  {p}: {rule}")
     say s!"pre-commit: a staged added file is debris:
@@ -1248,10 +1354,12 @@ def main (args : List String) : IO UInt32 := do
   Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
   never with -A or ."
 
-  if !staged.any relevant then
+  if src == .index && !staged.any relevant then
     return (if ← failed.get then 1 else 0)
 
-  if staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
+  -- One commit, one bump: a range legitimately spans a bump commit and the
+  -- commits around it, so this reads the index alone.
+  if src == .index && staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
     say "pre-commit: lean-toolchain changed together with other files.
   Toolchain bumps are deliberate and go in their own commit (AGENTS.md, Don't touch).
   Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
@@ -1264,13 +1372,10 @@ def main (args : List String) : IO UInt32 := do
     -- harness output is what lands either way. So the source change is
     -- looked for across the branch, not only in this commit.
     let branchTouched ← do
-      let base := ((← git #["merge-base", "HEAD", "main"]).splitOn "\n").head?
-      match base with
+      match ← mergeBaseMain with
       | some b =>
-        let b := b.trimAscii.toString
-        if b.isEmpty then pure #[] else
-          pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
-            (!·.isEmpty)).toArray
+        pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
+          (!·.isEmpty)).toArray
       | none => pure #[]
     let isSource (f : String) : Bool :=
       f.endsWith ".lean" || (f.startsWith "tests/corpus/" && f.endsWith ".tex")
@@ -1279,7 +1384,9 @@ def main (args : List String) : IO UInt32 := do
   Goldens are regenerated through the harness, never hand-edited (AGENTS.md, Don't touch).
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
 
-  let diff ← git #["diff", "--cached", "--no-color", "--unified=0", "--", "*.lean"]
+  let diff ← match sel with
+    | none => pure ""
+    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s ++ #["--", "*.lean"])
   for (file, lns) in addedByFile diff do
     for g in gates do
       if g.applies file then
@@ -1517,7 +1624,9 @@ def main (args : List String) : IO UInt32 := do
   -- PLAN.md must leave the debt recorded — one hole per owed record, every
   -- record registered in PLAN, no import of Obligations from the gated
   -- library. The check reads the whole tree, not the diff, so the count
-  -- cannot drift through an edit the diff scanner does not see.
+  -- cannot drift through an edit the diff scanner does not see. Off the
+  -- index it always runs: CI has no reason to trust a file list for a
+  -- whole-tree fact.
   let mut env : Array (String × Option String) := #[]
   let clang := "/home/linuxbrew/.linuxbrew/bin/clang"
   if (← IO.getEnv "LEAN_CC").isNone && (← System.FilePath.pathExists clang) then
@@ -1525,7 +1634,7 @@ def main (args : List String) : IO UInt32 := do
     let pre := prefixOut.stdout.trimAscii.toString
     env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
 
-  if staged.any (fun f => obligationsFile f || f == "PLAN.md") then
+  if src != .index || staged.any (fun f => obligationsFile f || f == "PLAN.md") then
     let owedBuild ← IO.Process.output
       { cmd := "lake", args := #["build", "owed", "-q"], env }
     let owed ← if owedBuild.exitCode == 0 then
@@ -1550,8 +1659,10 @@ def main (args : List String) : IO UInt32 := do
   -- Staged obligations must still type-check: the staging target builds
   -- without --wfail, so its expected open-proof warnings pass while a
   -- statement that does not compile still fails the commit. A statement
-  -- that does not compile is worse than no statement.
-  if staged.any obligationsFile then
+  -- that does not compile is worse than no statement. Off the index it
+  -- always runs: the staging target is outside `lake build`, so nothing
+  -- else in CI would compile it.
+  if src != .index || staged.any obligationsFile then
     let ob ← IO.Process.output { cmd := "lake", args := #["build", "Obligations", "-q"], env }
     if ob.exitCode != 0 then
       IO.eprintln "pre-commit: lake build Obligations failed (staged statements must type-check):"
