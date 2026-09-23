@@ -3953,3 +3953,107 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (v != v' && PicCache.failName k v != PicCache.failName k v')
   t "the remembered refusal is not mistaken for a drawing"
     (!(PicCache.failName k v).endsWith ".pdf")
+  -- Who the tool is, read off the probe's ending. Only a clean exit names
+  -- a version (`PicCache.probed_present_exact`): a machine with nothing
+  -- installed still reaches `exec`, comes back nonzero, and hands back
+  -- whatever the forked child inherited on its stdout — so reading the
+  -- output without the exit code read the parent's own text back as a tool
+  -- identity, and a picture no tool had looked at was reported as one the
+  -- tool drew nothing for.
+  let banner := "This is InventedTeX, Version 1.0"
+  t "a clean exit that named itself is the tool"
+    (PicCache.probed (.exited 0) banner == .present banner)
+  t "a clean exit that named nothing is no tool"
+    (PicCache.probed (.exited 0) "" == .absent "no version line")
+  t "a nonzero exit is no tool, whatever it wrote"
+    (PicCache.probed (.exited 127) banner == .absent "'--version' exited 127" &&
+     PicCache.probed (.exited 255) banner == .absent "'--version' exited 255")
+  t "a probe that raised is no tool"
+    (PicCache.probed (.unstarted "no such file") "" == .absent "no such file")
+  t "a probe that never came back is no tool"
+    (PicCache.probed (.overran 5) "" == .absent "no version within 5 s; killed")
+  -- The two endings route to two different losses, and the absent one is
+  -- the degraded one: a placeholder ships and the run stands. A picture the
+  -- tool ran on and refused keeps the dropped loss, undiminished.
+  let unavailable := DriverDiag.boundaryToolUnavailable "lualatex"
+  t "a tool that is not there is a degraded loss, not a dropped one"
+    (unavailable.code == "W0379" && DiagCode.W0379.loss == .degraded &&
+     unavailable.severity == .warning)
+  t "a picture the tool refused is still a dropped loss"
+    ((DriverDiag.boundaryFailed "lualatex" says).code == "E0382" &&
+     DiagCode.E0382.loss == .dropped && unavailable.code != "E0382")
+  -- The version memo: asked once per tool binary, not once per build. The
+  -- version string is still the slot's key
+  -- (`PicCache.versionStep_remembered_exact`), and a witness that moved
+  -- sends the run back to the tool (`versionStep_changed_exact`).
+  let stampA := "/opt/invented/bin/tool\t7634408\t1777998731\t0"
+  let stampB := "/opt/invented/bin/tool\t7634512\t1778998731\t0"
+  t "a witness that still matches answers without asking"
+    (PicCache.versionStep (some (stampA, banner)) stampA == .remembered banner)
+  t "a witness that moved asks again"
+    (PicCache.versionStep (some (stampA, banner)) stampB == .probe)
+  t "no memo at all asks"
+    (PicCache.versionStep none stampA == .probe)
+  t "a witness no stat could take matches nothing"
+    (PicCache.versionStep (some ("", banner)) "" == .probe)
+  t "a memo with no version asks"
+    (PicCache.versionStep (some (stampA, "")) stampA == .probe)
+  t "the memo round-trips its two lines"
+    (PicCache.readVersionMemo (PicCache.versionMemo stampA banner) ==
+      some (stampA, banner))
+  t "a memo that is not those two lines asks"
+    (PicCache.readVersionMemo "" == none &&
+     PicCache.readVersionMemo stampA == none)
+  t "the memo lives beside the slots it names"
+    (PicCache.versionName v == "tool-" ++ v ++ ".ver" &&
+     !(PicCache.versionName v).endsWith ".pdf" &&
+     !(PicCache.versionName v).endsWith ".fail")
+
+/-- **A build whose pictures all replay starts no tool process.** The
+invariant this block holds, at the seam where the tool is asked who it is:
+the version string is part of every slot's name, so learning it was worth a
+full tool startup on every build — 70 ms of a 144 ms warm run measured on
+six cached pictures, the largest single cost left in it. The answer is now
+remembered against a stat-only witness of the binary, and `identify` takes
+the probe as an argument precisely so "it was not called" is a claim a test
+can make with no tool installed. The property the memo must not spend is
+the other half: a witness that moved is asked again, and the version it
+comes back with names fresh slots. -/
+def toolProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let spawns ← IO.mkRef 0
+  let answering (answer : PicCache.Tool) : IO PicCache.Tool := do
+    spawns.modify (· + 1)
+    return answer
+  let dir ← IO.FS.createTempDir
+  let memo := dir / "tool.ver"
+  let stampA := "/opt/invented/bin/tool\t7634408\t1777998731\t0"
+  let stampB := "/opt/invented/bin/tool\t9001234\t1788000000\t0"
+  let one := "This is InventedTeX, Version 1.0"
+  let two := "This is InventedTeX, Version 2.0"
+  let cold ← ToolProbe.identify memo stampA (answering (.present one))
+  t "the first build asks the tool who it is"
+    (cold == .present one && (← spawns.get) == 1)
+  let warm ← ToolProbe.identify memo stampA (answering (.present one))
+  t "a build whose tool has not moved asks nothing"
+    (warm == .present one && (← spawns.get) == 1)
+  let warm2 ← ToolProbe.identify memo stampA (answering (.present two))
+  t "and keeps answering from the memo, not from the tool"
+    (warm2 == .present one && (← spawns.get) == 1)
+  let upgraded ← ToolProbe.identify memo stampB (answering (.present two))
+  t "a tool whose witness moved is asked again"
+    (upgraded == .present two && (← spawns.get) == 2)
+  let after ← ToolProbe.identify memo stampB (answering (.present one))
+  t "the new version is what the next build remembers"
+    (after == .present two && (← spawns.get) == 2)
+  -- A tool that cannot say who it is records nothing: nothing would ever
+  -- match an empty witness, and installing the tool must take effect at
+  -- once rather than after a cache wipe.
+  let missing := dir / "absent.ver"
+  let gone ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
+  t "a tool that is not there is not remembered as one that is"
+    (gone == .absent "'--version' exited 127" && !(← missing.pathExists))
+  let gone2 ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
+  t "so the next build asks again, and installing it is enough"
+    (gone2 == .absent "'--version' exited 127" && (← spawns.get) == 4)
+  IO.FS.removeDirAll dir

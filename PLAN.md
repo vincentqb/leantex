@@ -256,6 +256,70 @@ role is 1,355 ms, of which ~1.1 s is that repetition. It is linear and the
 answer is a pure function of (requirement, ground, colour), so a memo would be
 output-identical; it is a separate change with its own measurement.
 
+2026-09-23 — a missing tool is not a refused picture, and the version is
+asked once per tool, not once per build. Two corrections to the entry
+below, which named both and left both: the probe that learns the tool's
+version never read its exit code, and it ran on every build.
+
+The defect first, because the classification matters more than the
+milliseconds. On a machine with no boundary tool the spawn still reaches
+`exec`, so there is an exit code and no exception — 255 on this host, not
+the 127 the shell would report — and the probe read the *output* without
+the code. Worse than the empty string the entry below expected: a failed
+`exec` hands back whatever the forked child inherited on its stdout, so the
+first line read as a version was the parent's own last output. Either way
+the run then had a version, took the version-keyed path, and every picture
+came out E0382 — *the tool drew nothing for this picture*, a dropped loss
+that fails the run and writes no artifact — about a tool that had never
+looked at it. Measured on the synthetic six-picture repro with PATH
+emptied: before, 6 × E0382, exit 1, no artifact; after, 6 × W0379, exit 0,
+a 380 KB PDF with six placeholder boxes. The statement is
+`PicCache.probed_present_exact`: only a clean exit that named something is
+an identified tool. It is a theorem and not a test because the old
+behaviour must not be expressible — restoring it (the nonzero arm returning
+`.present`) fails the build on that theorem and on `probed_absent_exact`,
+which is the guard the first draft wanted.
+
+E0382 is untouched where it belongs: a picture the tool ran on and refused
+is still dropped, still exit 1, still no artifact, cold and warm alike, and
+still remembered in its slot (2 refusals, 3 spawns cold, 0 spawns warm).
+Nor can a missing tool poison the cache: an unidentified tool has no
+version, so it reaches no slot at all, and the no-tool path writes nothing
+— the empty-PATH run above left the `pics` directory without a single
+`.fail`, and `remembers_verdict_exact` already covers the other half.
+
+Then the cost. The probe was 70 ms of a 144 ms warm run (measured here:
+6 cached pictures, medians of 5, a counting shim on PATH for the spawns) —
+and it bought a real property, since the version string is part of every
+slot's name, so an upgraded TeX re-renders everything. Laziness alone
+cannot keep that property: deciding whether the tool is still the one that
+drew the slots requires *some* observation of the tool, and the slot cannot
+even be named without it. So the observation became the cheapest sound one
+— a stat of the binary PATH reaches: resolved path, size, modification
+time, the three facts the font cache already keys a face on — and the
+version string stays the key. `ToolProbe.identify` remembers what the tool
+said under the witness it was observed with (`PicCache.versionStep`,
+`versionStep_remembered_exact`, `versionStep_changed_exact`); a witness
+that still matches answers with no process, and any other outcome asks the
+tool. The witness is never the cache key, so a witness that moves for no
+reason costs one probe, not a wrong answer.
+
+After: warm 80 ms against 144 ms, and the warm spawn count is zero where it
+was one — the invariant `toolProbeChecks` holds, and holds with no tool
+installed, because `identify` takes the probe as an argument. Cold is
+unchanged (5.4 s against 6.0 s, the six renders). The upgrade property was
+measured, not argued, with a shim standing in for the tool: replacing the
+binary while it reports the same version costs 1 probe and 0 renders (the
+witness moved, the tool was asked, the answer named the same slots);
+bumping the reported version costs 1 probe and 6 renders. What is *not*
+verified is a real distribution upgrade — one version of TeX Live is
+installed here. That is why the version remained the key rather than being
+replaced by the witness: an upgrade whose stat did not move would then
+serve stale renders silently. The partial evidence for the witness moving
+is that the binary's resolved path carries the distribution's own version
+directory on this host, and that replacing a binary in place moves its size
+and mtime.
+
 2026-09-23 — a boundary refusal is an answer, so the cache keeps it. A
 document with several pictures the subset drew nothing of *and* that
 `lualatex` refused paid a full tool startup per picture on every build,

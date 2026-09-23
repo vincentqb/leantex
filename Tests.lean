@@ -164,6 +164,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   smartChecks ref
   boundaryChecks ref
   picCacheChecks ref
+  toolProbeChecks ref
   posterChromeCompatChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched

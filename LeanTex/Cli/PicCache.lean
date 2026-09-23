@@ -70,6 +70,133 @@ def remembers : Outcome → Option String
   | .refused says => some says
   | .inconclusive _ => none
 
+/-- What asking the tool who it is came back with. `present` is the tool's
+own answer — it ran and named a version; `absent` is every other ending,
+because none of them identifies a tool: a machine with nothing installed
+still reaches `exec` and comes back as a nonzero exit, and its stdout is
+not empty but whatever the forked child inherited, so the exit code is the
+only signal worth reading. A tool that cannot say who it is cannot have a
+slot keyed by its version, and a request it never saw is not a request it
+refused. -/
+inductive Tool where
+  | absent (why : String)
+  | present (version : String)
+  deriving BEq, Repr
+
+/-- One `--version` attempt read as the tool's identity: a clean exit that
+named something is the tool, and nothing else is. `firstLine` is the first
+line of what the probe wrote — trusted only on a clean exit, since a failed
+`exec` hands back a child's inherited buffer rather than silence. -/
+def probed (ran : Ran) (firstLine : String) : Tool :=
+  match ran with
+  | .exited 0 =>
+    if firstLine = "" then .absent "no version line" else .present firstLine
+  | .exited c => .absent s!"'--version' exited {c}"
+  | .overran s => .absent s!"no version within {s} s; killed"
+  | .unstarted e => .absent e
+
+/-- **A tool that did not exit cleanly is not an identified tool.** The
+statement whose absence sent a machine with no boundary tool installed down
+the *refused* path: the probe read a nonzero exit as a version string, so a
+picture no tool had ever looked at was reported as one the tool drew
+nothing for — a dropped loss that fails the run, where the honest answer is
+the degraded one, a placeholder and a warning naming the missing tool. -/
+theorem probed_present_exact (ran : Ran) (firstLine version : String) :
+    probed ran firstLine = .present version ↔
+      (ran = .exited 0 ∧ firstLine = version ∧ firstLine ≠ "") := by
+  cases ran with
+  | exited c =>
+    cases c with
+    | zero =>
+      by_cases h : firstLine = ""
+      · simp [probed, h]
+      · simp [probed, h]
+    | succ n => simp [probed]
+  | overran _ => simp [probed]
+  | unstarted _ => simp [probed]
+
+/-- **A nonzero exit names no version.** The half of `probed_present_exact`
+the missing-tool machine lands on, spelled as the equation the driver's
+routing reads. -/
+theorem probed_absent_exact (c : Nat) (hc : c ≠ 0) (firstLine : String) :
+    probed (.exited c) firstLine = .absent s!"'--version' exited {c}" := by
+  unfold probed
+  cases c with
+  | zero => exact absurd rfl hc
+  | succ _ => rfl
+
+/-- Whether this run has to ask the tool who it is. -/
+inductive VersionStep where
+  | remembered (version : String)
+  | probe
+  deriving BEq, Repr
+
+/-- **The property the memo keeps: the version string is still the cache
+key, and a tool that changed is asked again.** Asking costs a full tool
+startup, which a build where every picture replays from cache would
+otherwise pay for nothing. So the answer is remembered beside the slots
+against a stat-only witness of the binary PATH reaches — its resolved path,
+size and modification time, the same three facts the font cache keys a face
+on. A witness that still matches means the same binary, so its remembered
+version names the same slots; any change to it, and any memo that cannot be
+read, sends the run back to the tool. The witness is never the key: the
+slot's name still carries the version the tool gave, so what an upgrade
+invalidates is unchanged — the memo only decides whether the version has to
+be re-asked, and a witness that moved for no reason costs one probe, not a
+wrong answer. -/
+def versionStep (memo : Option (String × String)) (witness : String) : VersionStep :=
+  match memo with
+  | some (w, v) =>
+    if w = witness ∧ w ≠ "" ∧ v ≠ "" then .remembered v else .probe
+  | none => .probe
+
+/-- **A version is reused only for the witness it was recorded under.** -/
+theorem versionStep_remembered_exact (memo : Option (String × String))
+    (witness version : String) :
+    versionStep memo witness = .remembered version ↔
+      (memo = some (witness, version) ∧ witness ≠ "" ∧ version ≠ "") := by
+  cases memo with
+  | none => simp [versionStep]
+  | some p =>
+    obtain ⟨w, v⟩ := p
+    by_cases hc : w = witness ∧ w ≠ "" ∧ v ≠ ""
+    · obtain ⟨hw, hne, hvne⟩ := hc
+      subst hw
+      constructor
+      · intro h
+        have hv : v = version := by simpa [versionStep, hne, hvne] using h
+        exact ⟨by rw [hv], hne, by rw [← hv]; exact hvne⟩
+      · rintro ⟨he, -, -⟩
+        have hv : v = version := by simpa using Option.some.inj he
+        subst hv
+        simp [versionStep, hne, hvne]
+    · refine ⟨fun h => absurd h (by simp [versionStep, hc]), fun h => absurd ?_ hc⟩
+      obtain ⟨he, hw, hv⟩ := h
+      have hp : w = witness ∧ v = version := by simpa using Option.some.inj he
+      exact ⟨hp.1, by rw [hp.1]; exact hw, by rw [hp.2]; exact hv⟩
+
+/-- **A tool that changed is asked again.** The upgrade half, stated as the
+equation: a witness that does not match the recorded one sends the run back
+to the tool, whose version then names fresh slots and re-renders every
+picture. -/
+theorem versionStep_changed_exact (w witness version : String) (h : w ≠ witness) :
+    versionStep (some (w, version)) witness = .probe := by
+  simp [versionStep, h]
+
+/-- The remembered version as its file's two lines: the witness it was
+recorded under, then the version the tool gave. -/
+def versionMemo (witness version : String) : String := witness ++ "\n" ++ version
+
+/-- The two lines back, or nothing when the file is not those two lines —
+an unreadable memo asks the tool rather than guessing. -/
+def readVersionMemo (text : String) : Option (String × String) :=
+  match text.splitOn "\n" with
+  | w :: v :: _ => if w = "" ∨ v = "" then none else some (w, v)
+  | _ => none
+
+/-- Where the remembered version lives, beside the slots it names. -/
+def versionName (toolKey : String) : String := "tool-" ++ toolKey ++ ".ver"
+
 /-- The cache slot one request takes: its content hash and the tool's
 version, so an edited picture reads a different slot and is retried, and a
 tool upgrade retries every one. -/

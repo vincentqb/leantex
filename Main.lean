@@ -504,8 +504,15 @@ drawn PDF lands in the cache beside the font cache, keyed by the request's
 content hash *and the tool's version string* — an upgraded TeX re-renders,
 an unchanged request never re-runs, and a warm cache needs no TeX
 installed: with no tool at all, any earlier render of the same request
-serves. A request nothing can fulfil is W0379, per picture; each such
-picture then ships as the placeholder box the diagnostic names. Failures of
+serves. The version string stays the key; what is memoized is the *asking*,
+against a stat-only witness of the tool binary (`ToolProbe.identify`,
+`PicCache.versionStep`), so a build whose pictures all replay starts no
+process at all. A request nothing can fulfil is W0379, per picture; each
+such
+picture then ships as the placeholder box the diagnostic names. A tool that
+is not installed lands there and not on E0382: only a clean exit names a
+version (`PicCache.probed_present_exact`), so a picture no tool ever looked
+at is never reported as one the tool drew nothing for. Failures of
 a tool that ran are E0382 with the tool's own last words — and are
 remembered in the same slot the drawn PDF would take, so the tool is asked
 about one request at most once per version (`PicCache.step_cold_exact`) and
@@ -531,15 +538,15 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
   let t0 ← IO.monoMsNow
-  -- The tool's identity: first line of `--version`, part of the cache key.
-  let version? ← try
-    let out ← IO.Process.output { cmd := tool, args := #["--version"] }
-    pure (some (((out.stdout.splitOn "\n").headD "").trimAscii.toString))
-  catch _ =>
-    pure (none : Option String)
   let cacheRoot ← FontDb.cacheDir
   let picDir := (cacheRoot.getD "/tmp") / "pics"
   IO.FS.createDirAll picDir
+  -- The tool's identity: first line of `--version`, part of the cache key —
+  -- asked once per tool binary, not once per build, and only its exit code
+  -- decides whether it answered at all.
+  let stamp ← ToolProbe.witness tool
+  let found ← ToolProbe.identify (picDir / PicCache.versionName (Ir.picHash tool))
+    stamp (ToolProbe.probeVersion tool)
   let mut results : Array PicResult := #[]
   let mut refused : Array (String × Diag) := #[]
   for (id, wrapped) in refs do
@@ -549,8 +556,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     -- and one it does not mention leaves it warm
     -- (`Ir.paletteDecls_local_exact`); the id stays the author's bytes.
     let key := Ir.picHash wrapped
-    match version? with
-    | none =>
+    match found with
+    | .absent why =>
       -- No tool: any earlier render of this request serves — the content
       -- hash is the request's meaning, and the version in the slot only
       -- forces a re-render on upgrade. A remembered refusal is *not* read
@@ -570,7 +577,10 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           (← since t0)
       | none =>
         refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor id))
-    | some version =>
+        ui.phase "boundary"
+          s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
+          (← since t0)
+    | .present version =>
       -- One slot per request and tool version, holding whichever way the
       -- tool answered: the drawn PDF, or its own refusal in the tool's own
       -- words. Either is an answer, so neither is asked for twice.
