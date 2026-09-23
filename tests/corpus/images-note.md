@@ -1,5 +1,8 @@
 # The image fixtures
 
+This note is documentation for the image files beside it, not a document
+fixture: it is excluded from the golden set, and nothing elaborates it.
+
 `rects.png`, `rects.jpg`, and `rects-alpha.png` are synthetic: flat
 coloured rectangles invented for this repository — no image from any real
 document. They were generated on 2026-09-17 by:

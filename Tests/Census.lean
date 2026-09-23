@@ -946,6 +946,70 @@ def censusOutlineTable :
       (o.find? (·.title == "Back to top")).map
         (fun e => e.page.isNone && e.url.isNone) == some true)])]
 
+/-- The phrase a corpus file writes in its own header to declare itself out
+of the golden set: the convention PLAN records for a design sketch whose
+commands do not exist yet. The declaration lives in the file it applies to,
+not in a second list beside `goldenNames` — a list of exclusions here would
+drift from the directory exactly the way `goldenNames` itself did. -/
+def corpusExcludeMarker : String := "excluded from the golden set"
+
+/-- Does this corpus file's header declare it out of the golden set? Only the
+opening lines count, so a fixture whose body discusses the golden set does
+not thereby excuse itself. The header is read as one run of prose — comment
+markers dropped, lines joined — so the declaration may wrap the way a
+sentence does. -/
+def declaresExcluded (text : String) : Bool :=
+  let header := ((text.splitOn "\n").take 16).map fun line =>
+    let l := line.trimAscii.toString
+    if l.startsWith "%" then (l.drop 1).toString.trimAscii.toString else l
+  hasStr (" ".intercalate header) corpusExcludeMarker
+
+/-- The corpus entries a golden run could draw from: the top-level `.tex` and
+`.md` files under `tests/corpus`. The subdirectories hold `\input` targets,
+`.sty` files and the shipped fonts — never fixtures — so the scan does not
+descend. `.md` is in scope because markdown is a shipped surface: a markdown
+fixture dropped here must face the same question a `.tex` one does. -/
+def corpusDocs : IO (Array String) := do
+  let dir : System.FilePath := "tests/corpus"
+  let mut out := #[]
+  for entry in (← dir.readDir).map (·.fileName) |>.qsort (· < ·) do
+    unless entry.endsWith ".tex" || entry.endsWith ".md" do continue
+    unless (← (dir / entry).isDir) do
+      out := out.push entry
+  return out
+
+/-- The coverage loop's missing half: `goldenNames` against the corpus
+directory. `censusChecks` holds the golden set and `censusTable` to each
+other, which says nothing about what is on disk — so a fixture added to
+`tests/corpus` and forgotten from the list owed no golden and no census row,
+and nothing noticed; two files sat in that state. The directory is the
+authority for what exists, and whether a file is a fixture is a decision, so
+the decision is written where it applies (`corpusExcludeMarker`) and both
+directions are loud. A declared exclusion may not rot either: a `.tex` that
+excuses itself must still refuse to elaborate, or the sketch's commands have
+landed and it belongs in the golden set. -/
+def corpusCoverageChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let dir : System.FilePath := "tests/corpus"
+  for entry in ← corpusDocs do
+    let some stem := (System.FilePath.mk entry).fileStem | continue
+    let listed := goldenNames.contains stem
+    let text ← IO.FS.readFile (dir / entry)
+    let excluded := declaresExcluded text
+    check ref s!"corpus {entry}: in the directory but not in the golden set, \
+and its header does not say why not"
+      (listed || excluded)
+    check ref s!"corpus {entry}: declares itself out of the golden set yet is listed in it"
+      (!(listed && excluded))
+    if excluded && !listed && entry.endsWith ".tex" then
+      let (_, diags) ← elabFixture stem text
+      check ref s!"corpus {entry}: excuses itself from the golden set but now \
+elaborates without complaint — promote it"
+        (diags.any fun d =>
+          d.severity == .error || d.code == "W0301" || d.code == "W0302")
+  for n in goldenNames do
+    check ref s!"golden {n}: in the golden set but no tests/corpus/{n}.tex"
+      (← (dir / s!"{n}.tex").pathExists)
+
 /-- The census tier: every golden fixture also appears in `censusTable`,
 and each row's facts hold on the pages the engine actually ships. A
 fixture that declares a math face renders its census with the shipped

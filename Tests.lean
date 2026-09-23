@@ -216,6 +216,7 @@ def main (args : List String) : IO UInt32 := do
   elabDocChecks ref
 
   -- goldens
+  corpusCoverageChecks ref
   runGoldens update (failures ref)
   floatRefAgreementChecks ref
 

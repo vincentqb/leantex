@@ -240,6 +240,36 @@ listed name passes. Docstrings only, deliberately: a `--` comment or a PLAN
 entry may name a theorem that was deleted, and a historical record is not a
 claim.
 
+2026-09-23 — the golden set is held to the directory, so the coverage check
+stops closing over itself. `censusChecks` checked `goldenNames` against
+`censusTable` in both directions and nothing against `tests/corpus`: a fixture
+dropped into the corpus and forgotten from the list owed no golden and no
+census row, and the suite stayed green. Two files sat in that state.
+`corpusCoverageChecks` (Tests/Census.lean) reads the directory — top-level
+`.tex` and `.md`, markdown in scope because it is a shipped surface — and
+demands each file be listed or excuse itself in its own header
+(`corpusExcludeMarker`, the phrase "excluded from the golden set"). The
+exclusion lives in the file it applies to, never in a second list beside the
+first, because a second list drifts from the directory exactly the way the
+first one did. It may not rot either: a `.tex` that excuses itself must still
+refuse to elaborate, so when a sketch's commands land the check says promote
+it. The list stays written out rather than globbed — membership of a golden
+run is visible in the source, and existence is what the directory decides.
+
+Neither orphan becomes a fixture. `theme-modern.tex` is the PENDING design
+sketch this document already names (Testing): it refuses — `error[E0321]`,
+`a4paper` is not a declared token, exit 1 — so no honest row could assert its
+shipped pages. `images-note.md` is the provenance record for the image
+fixtures, cited by `scripts/img-fuzz.lean` and owed by the synthetic-corpus
+rule; markdown input is not implemented in the driver ("markdown input is not
+implemented yet", exit 3), so it could not be a golden even read as a
+document. Both now declare themselves, and the declaration is checked.
+
+The check bites, by mutation: an unlisted probe fixture in `tests/corpus`
+fails one named check and the suite exits 1; a probe that excuses itself and
+elaborates clean fails the staleness check. A golden name with no file on disk
+is named rather than crashing `runGoldens`, but that direction is not probed.
+
 2026-09-23 — a pairing is solved once, because the solver is a function. The
 entry below left this named: `realize` ran per failing *use*, not per failing
 pairing, so one pale role through a long document walked the Oklab lightness
