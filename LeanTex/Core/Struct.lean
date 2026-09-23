@@ -134,6 +134,12 @@ def Kind.outlineDescends : Kind → Bool
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
   | .note | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => true
 
+/-- The outline's contribution builds onto its accumulator: the classifier's
+half of the outline census's `Appends` witness. -/
+theorem Kind.outlineEmit_acc (out : Array Nat) (kind : Kind) :
+    kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
+  cases kind <;> simp [Kind.outlineEmit]
+
 inductive Node where
   | leaf (id : Nat) (l : Leaf)
   | node (kind : Kind) (children : Array Node)
@@ -360,7 +366,72 @@ def foldNode (f : NodeFold α) (acc : α) : Node → α
 
 end
 
--- The four censuses, each three answers over that walk.
+-- The walk's own equations, and the two arguments every census over it
+-- shares: an appended list folds the halves in turn, and a census that only
+-- appends builds onto the accumulator it was given. Stated once over any
+-- `NodeFold`; each census's named form below is an instance.
+
+theorem foldNodeList_nil_exact (f : NodeFold α) (acc : α) : foldNodeList f acc [] = acc := rfl
+
+theorem foldNodeList_cons_exact (f : NodeFold α) (acc : α) (n : Node) (rest : List Node) :
+    foldNodeList f acc (n :: rest) = foldNodeList f (foldNode f acc n) rest := rfl
+
+theorem foldNode_leaf_exact (f : NodeFold α) (acc : α) (id : Nat) (l : Leaf) :
+    foldNode f acc (.leaf id l) = f.leaf acc id l := rfl
+
+theorem foldNode_node_exact (f : NodeFold α) (acc : α) (kind : Kind) (kids : Array Node) :
+    foldNode f acc (.node kind kids)
+      = match f.descends kind with
+        | true => foldNodeList f (f.enter acc kind) kids.toList
+        | false => f.enter acc kind := rfl
+
+theorem foldNodeList_append (f : NodeFold α) (acc : α) (a b : List Node) :
+    foldNodeList f acc (a ++ b) = foldNodeList f (foldNodeList f acc a) b := by
+  induction a generalizing acc with
+  | nil => rfl
+  | cons n rest ih =>
+    rw [List.cons_append, foldNodeList_cons_exact, foldNodeList_cons_exact, ih]
+
+theorem foldNodeList_snoc (f : NodeFold α) (acc : α) (l : List Node) (n : Node) :
+    foldNodeList f acc (l ++ [n]) = foldNode f (foldNodeList f acc l) n := by
+  rw [foldNodeList_append]
+  rfl
+
+theorem foldNodeList_push (f : NodeFold α) (acc : α) (out : Array Node) (n : Node) :
+    foldNodeList f acc (out.push n).toList = foldNode f (foldNodeList f acc out.toList) n := by
+  rw [Array.toList_push, foldNodeList_snoc]
+
+/-- A census that only appends: each of its answers builds onto the
+accumulator it was given, so the whole walk does. The hypothesis the
+accumulator-extraction argument needs, named rather than repeated per
+census. -/
+structure Appends {β : Type} (f : NodeFold (Array β)) : Prop where
+  leaf : ∀ (out : Array β) (id : Nat) (l : Leaf), f.leaf out id l = out ++ f.leaf #[] id l
+  enter : ∀ (out : Array β) (kind : Kind), f.enter out kind = out ++ f.enter #[] kind
+
+mutual
+
+theorem foldNodeList_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
+    (ns : List Node) : foldNodeList f out ns = out ++ foldNodeList f #[] ns := by
+  match ns with
+  | [] => simp [foldNodeList_nil_exact]
+  | n :: rest =>
+    rw [foldNodeList_cons_exact, foldNodeList_acc h _ rest, foldNode_acc h out n,
+      foldNodeList_cons_exact, foldNodeList_acc h (foldNode f #[] n) rest, Array.append_assoc]
+
+theorem foldNode_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
+    (n : Node) : foldNode f out n = out ++ foldNode f #[] n := by
+  match n with
+  | .leaf id l => rw [foldNode_leaf_exact, foldNode_leaf_exact, h.leaf]
+  | .node kind kids =>
+    rw [foldNode_node_exact, foldNode_node_exact]
+    cases hd : f.descends kind
+    · simpa using h.enter out kind
+    · simp only []
+      rw [foldNodeList_acc h (f.enter out kind) kids.toList, h.enter out kind,
+        foldNodeList_acc h (f.enter #[] kind) kids.toList, Array.append_assoc]
+
+end
 
 /-- The tree's text census: every leaf's text, in preorder. -/
 def leafTextFold : NodeFold String where
@@ -433,6 +504,14 @@ def imagesOne (out : Array (String × String)) (n : Node) : Array (String × Str
 def images (ns : Array Node) : Array (String × String) := imagesList #[] ns.toList
 
 def Tree.images (t : Tree) : Array (String × String) := Struct.images t.children
+
+theorem leavesAppends : Appends leavesFold where
+  leaf := by intros; simp [leavesFold]
+  enter := by intros; simp [leavesFold]
+
+theorem headingsAppends : Appends headingsFold where
+  leaf := by intros; simp [headingsFold]
+  enter := fun out kind => Kind.outlineEmit_acc out kind
 
 /-- The IR's image census through the shared fold: every `.image`'s source
 and alternative, in the fold's document order — the descent `imageRefs`
@@ -528,109 +607,72 @@ theorem imagesOne_node_exact (out : Array (String × String)) (kind : Kind) (kid
 
 theorem images_eq_exact (ns : Array Node) : images ns = imagesList #[] ns.toList := rfl
 
-/-- The outline's contribution builds onto its accumulator: the classifier's
-half of `headingsOne_acc`. -/
-theorem Kind.outlineEmit_acc (out : Array Nat) (kind : Kind) :
-    kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
-  cases kind <;> simp [Kind.outlineEmit]
-
 -- The census lemmas the projection theorems stand on: each census over an
 -- appended list folds the halves in turn, so a pushed node is the census
--- of the array then of the node.
+-- of the array then of the node. Each is its census's instance of the one
+-- argument stated over `foldNodeList` above.
 
 theorem leafTextList_append (acc : String) (a b : List Node) :
-    leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons n rest ih =>
-    rw [List.cons_append, leafTextList_cons_exact, leafTextList_cons_exact, ih]
+    leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b :=
+  foldNodeList_append leafTextFold acc a b
 
 theorem leafTextList_snoc (acc : String) (l : List Node) (n : Node) :
-    leafTextList acc (l ++ [n]) = leafTextOne (leafTextList acc l) n := by
-  rw [leafTextList_append]
-  rfl
+    leafTextList acc (l ++ [n]) = leafTextOne (leafTextList acc l) n :=
+  foldNodeList_snoc leafTextFold acc l n
 
 theorem leafTextList_push (acc : String) (out : Array Node) (n : Node) :
-    leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n := by
-  rw [Array.toList_push, leafTextList_snoc]
+    leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n :=
+  foldNodeList_push leafTextFold acc out n
 
 theorem headingsList_append (out : Array Nat) (a b : List Node) :
-    headingsList out (a ++ b) = headingsList (headingsList out a) b := by
-  induction a generalizing out with
-  | nil => rfl
-  | cons n rest ih =>
-    rw [List.cons_append, headingsList_cons_exact, headingsList_cons_exact, ih]
+    headingsList out (a ++ b) = headingsList (headingsList out a) b :=
+  foldNodeList_append headingsFold out a b
 
 theorem headingsList_snoc (out : Array Nat) (l : List Node) (n : Node) :
-    headingsList out (l ++ [n]) = headingsOne (headingsList out l) n := by
-  rw [headingsList_append]
-  rfl
+    headingsList out (l ++ [n]) = headingsOne (headingsList out l) n :=
+  foldNodeList_snoc headingsFold out l n
 
 theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
-    headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n := by
-  rw [Array.toList_push, headingsList_snoc]
+    headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n :=
+  foldNodeList_push headingsFold out ns n
 
 -- The accumulator extraction each projection proof needs of the outline
--- walk, in place of its equations.
-
-mutual
+-- walk, in place of its equations: the generic argument at the census.
 
 /-- The outline census builds onto its accumulator: the census of a list is
 the accumulator, then the list's own — the fact a projection proof needs of
 the walk, in place of its equations. -/
 theorem headingsList_acc (out : Array Nat) (ns : List Node) :
-    headingsList out ns = out ++ headingsList #[] ns := by
-  match ns with
-  | [] => simp [headingsList_nil_exact]
-  | n :: rest =>
-    rw [headingsList_cons_exact, headingsList_acc _ rest, headingsOne_acc out n,
-      headingsList_cons_exact, headingsList_acc (headingsOne #[] n) rest, Array.append_assoc]
+    headingsList out ns = out ++ headingsList #[] ns :=
+  foldNodeList_acc headingsAppends out ns
 
 theorem headingsOne_acc (out : Array Nat) (n : Node) :
-    headingsOne out n = out ++ headingsOne #[] n := by
-  match n with
-  | .leaf id l => simp [headingsOne_leaf_exact]
-  | .node kind kids =>
-    rw [headingsOne_node_exact, headingsOne_node_exact]
-    cases hd : kind.outlineDescends
-    · simpa using Kind.outlineEmit_acc out kind
-    · simp only []
-      rw [headingsList_acc (kind.outlineEmit out) kids.toList, Kind.outlineEmit_acc out kind,
-        headingsList_acc (kind.outlineEmit #[]) kids.toList, Array.append_assoc]
-
-end
+    headingsOne out n = out ++ headingsOne #[] n :=
+  foldNode_acc headingsAppends out n
 
 theorem imagesList_append (out : Array (String × String)) (a b : List Node) :
-    imagesList out (a ++ b) = imagesList (imagesList out a) b := by
-  induction a generalizing out with
-  | nil => rfl
-  | cons n rest ih =>
-    rw [List.cons_append, imagesList_cons_exact, imagesList_cons_exact, ih]
+    imagesList out (a ++ b) = imagesList (imagesList out a) b :=
+  foldNodeList_append imagesFold out a b
 
 theorem imagesList_snoc (out : Array (String × String)) (l : List Node) (n : Node) :
-    imagesList out (l ++ [n]) = imagesOne (imagesList out l) n := by
-  rw [imagesList_append]
-  rfl
+    imagesList out (l ++ [n]) = imagesOne (imagesList out l) n :=
+  foldNodeList_snoc imagesFold out l n
 
 theorem imagesList_push (out : Array (String × String)) (ns : Array Node) (n : Node) :
-    imagesList out (ns.push n).toList = imagesOne (imagesList out ns.toList) n := by
-  rw [Array.toList_push, imagesList_snoc]
+    imagesList out (ns.push n).toList = imagesOne (imagesList out ns.toList) n :=
+  foldNodeList_push imagesFold out ns n
 
 theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
-    leavesList out (a ++ b) = leavesList (leavesList out a) b := by
-  induction a generalizing out with
-  | nil => rfl
-  | cons n rest ih =>
-    rw [List.cons_append, leavesList_cons_exact, leavesList_cons_exact, ih]
+    leavesList out (a ++ b) = leavesList (leavesList out a) b :=
+  foldNodeList_append leavesFold out a b
 
 theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : Node) :
-    leavesList out (l ++ [n]) = leavesOne (leavesList out l) n := by
-  rw [leavesList_append]
-  rfl
+    leavesList out (l ++ [n]) = leavesOne (leavesList out l) n :=
+  foldNodeList_snoc leavesFold out l n
 
 theorem leavesList_push (out : Array (Nat × Leaf)) (ns : Array Node) (n : Node) :
-    leavesList out (ns.push n).toList = leavesOne (leavesList out ns.toList) n := by
-  rw [Array.toList_push, leavesList_snoc]
+    leavesList out (ns.push n).toList = leavesOne (leavesList out ns.toList) n :=
+  foldNodeList_push leavesFold out ns n
 
 /-- An empty inline array has no list: the shape the empty-title and
 empty-caption splits reduce to. -/
@@ -950,8 +992,7 @@ end
 /-- **Numbering conserves the text**: the ids pass is a `Conserves`
 instance over the tree's own census. -/
 theorem number_text (k : Nat) : Conserves leafText (number k) := fun ns => by
-  unfold leafText number
-  rw [numberList_text]
+  rw [leafText_eq_exact, leafText_eq_exact, number, numberList_text]
   rfl
 
 /-- **The tree's text is the IR's.** The projection of a block sequence has
@@ -1279,8 +1320,8 @@ heading the outline does not know — the fact the outline diagnostics, the
 markdown preamble, and a tagger's `H<n>` sequence all read. -/
 theorem structTree_headings_covers (bs : Array Block) :
     headings (ofBlocks bs) = headingLevels bs := by
-  unfold ofBlocks headings headingLevels
-  rw [number, numberList_headings, blocksRaw_headings]
+  unfold ofBlocks headingLevels
+  rw [headings_eq_exact, number, numberList_headings, blocksRaw_headings]
   rfl
 
 -- **The images are the IR's** (`structTree_images_covers`): the tree's
@@ -1593,35 +1634,23 @@ text alternative, in preorder, is the shared fold's image census over the
 blocks — the descent `imageRefs` uses, so an image the driver fetches is
 an image the tree attributes, wherever the body put it. -/
 theorem structTree_images_covers (bs : Array Block) : images (ofBlocks bs) = irImages bs := by
-  unfold ofBlocks images irImages foldBlocks
-  rw [number, numberList_images, blocksRaw_images]
+  unfold ofBlocks irImages foldBlocks
+  rw [images_eq_exact, number, numberList_images, blocksRaw_images]
   rfl
 
 -- **Ids are the preorder index** (`structTree_leaves_id`): the k-th leaf
 -- in preorder carries `k`, so the attribution channel's `Option Nat` and a
 -- tagger's `/K` both index one array.
 
-mutual
-
 /-- `leaves` builds onto its accumulator: the census of a list is the
 accumulator, then the list's own. -/
 theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
-    leavesList out ns = out ++ leavesList #[] ns := by
-  match ns with
-  | [] => simp [leavesList_nil_exact]
-  | n :: rest =>
-    rw [leavesList_cons_exact, leavesList_acc _ rest, leavesOne_acc out n, leavesList_cons_exact,
-      leavesList_acc (leavesOne #[] n) rest, Array.append_assoc]
+    leavesList out ns = out ++ leavesList #[] ns :=
+  foldNodeList_acc leavesAppends out ns
 
 theorem leavesOne_acc (out : Array (Nat × Leaf)) (n : Node) :
-    leavesOne out n = out ++ leavesOne #[] n := by
-  match n with
-  | .leaf id l => simp [leavesOne_leaf_exact]
-  | .node kind kids =>
-    simp only [leavesOne_node_exact]
-    exact leavesList_acc out kids.toList
-
-end
+    leavesOne out n = out ++ leavesOne #[] n :=
+  foldNode_acc leavesAppends out n
 
 /-- `numberList` builds onto its accumulator and counts independently of it. -/
 theorem numberList_acc (k : Nat) (out : Array Node) (ns : List Node) :
@@ -1687,7 +1716,8 @@ whose id is `k`, so `leaves t` is the one array the attribution channel's
 `Option Nat` and a tagger's marked-content keys both index. -/
 theorem structTree_leaves_id (bs : Array Block) :
     (leaves (ofBlocks bs)).toList.map Prod.fst = List.range (leaves (ofBlocks bs)).size := by
-  unfold ofBlocks number leaves
+  unfold ofBlocks number
+  rw [leaves_eq_exact]
   obtain ⟨h, _⟩ := numberList_id 0 (blocksRaw #[] bs.toList).toList
   rw [List.range_eq_range', h]
   congr 1
