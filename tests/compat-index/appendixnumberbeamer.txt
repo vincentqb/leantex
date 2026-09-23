@@ -1,3 +1,5 @@
 # source: appendixnumberbeamer README — no commands of its own: it patches
-# \appendix, which the cross-reference slice numbers from A.
-body impl \appendix
+# \appendix, which the cross-reference slice numbers from A. The row carries
+# the section the patch renumbers: \appendix alone declares a state and
+# draws nothing, so it cannot witness the numbering it exists to change.
+body impl \appendix\section{A}x

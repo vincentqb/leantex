@@ -2,6 +2,8 @@
 # the exception list of punctuation). Implemented as lookahead in the
 # rewrite walk; at a group or macro-body end, where the use site is
 # unknowable at rewrite time, the space (the package's default action) is
-# emitted.
+# emitted. Before punctuation the package's action is to emit nothing, which
+# the engine reports as a construct read with no effect (W0387) — the
+# exception list working, said out loud rather than passed off as ink.
 body impl a\xspace b
-body impl a\xspace.
+body refuse:W0387 a\xspace.

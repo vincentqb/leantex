@@ -6,10 +6,12 @@
 # are honoured or named W0110 at the one validation site. \lstinputlisting
 # reads a file — a driver request later — and \lstinline's free-form
 # delimiter has no lexer door; both refuse by name.
-pre impl \lstset{language=Python}
-pre impl \lstset{numbers=left}
-pre impl \lstset{caption={An invented default}}
-pre impl \lstset{basicstyle=\ttfamily\footnotesize}
+pre inert:binds \lstset{language=Python}
+pre inert:binds \lstset{numbers=left}
+pre inert:binds \lstset{caption={An invented default}}
+pre inert:binds \lstset{basicstyle=\ttfamily\footnotesize}
+body impl \lstset{numbers=left}\begin{lstlisting} x = 1 \end{lstlisting}
+body impl \lstset{caption={An invented default}}\begin{lstlisting} x = 1 \end{lstlisting}
 body impl \begin{lstlisting} x = 1 \end{lstlisting}
 body impl \begin{lstlisting}[caption={An invented probe}] x = 1 \end{lstlisting}
 body impl \begin{lstlisting}[caption={A labelled probe}, label=lst:p] x = 1 \end{lstlisting}
@@ -23,3 +25,6 @@ pre refuse:W0301 \lstnewenvironment{code}{}{}
 pre refuse:W0301 \lstdefinestyle{plain}{numbers=none}
 pre refuse:W0301 \lstdefinelanguage{invented}{keywords={probe}}
 body refuse:W0301 \lstlistoflistings
+# A \lstset in the preamble binds defaults for the listings that follow and
+# draws nothing where it stands (inert:binds); the two rows pairing it with a
+# listing carry the evidence that the binding is read.

@@ -1,7 +1,9 @@
 # source: url package documentation (url.sty header) — \url, \urldef,
-# \urlstyle, \DeclareUrlCommand.
+# \urlstyle, \DeclareUrlCommand. URLs are set mono already, so \urlstyle{tt}
+# asks for the face in force and moves no ink (inert:noop); every other style
+# it can name is refused (W0104).
 body impl \url{https://example.org}
-pre impl \urlstyle{tt}
+pre inert:noop \urlstyle{tt}
 pre refuse:W0301 \urldef\myurl\url{https://example.org}
 pre refuse:W0301 \DeclareUrlCommand\myp{\urlstyle{tt}}
 pre refuse:W0104 \urlstyle{same}

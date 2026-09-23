@@ -1,8 +1,13 @@
 # source: xparse/ltcmd documentation §1 — the document-command declaration
-# family.
-pre impl \NewDocumentCommand{\zz}{m}{#1}
-pre impl \RenewDocumentCommand{\emph}{m}{#1}
+# family. A declaration on its own binds a name and draws nothing where it
+# stands (inert:binds); the rows that declare and then call the command carry
+# the evidence that the binding is read.
+pre inert:binds \NewDocumentCommand{\zz}{m}{#1}
+pre inert:binds \RenewDocumentCommand{\emph}{m}{#1}
 pre refuse:W0301 \ProvideDocumentCommand{\zz}{m}{#1}
-pre impl \DeclareDocumentCommand{\zz}{m}{#1}
+pre inert:binds \DeclareDocumentCommand{\zz}{m}{#1}
 pre refuse:W0301 \NewDocumentEnvironment{zz}{}{a}{b}
-pre impl \NewDocumentCommand{\zz}{m}{#1}\RenewDocumentCommand{\zz}{m}{x}
+pre inert:binds \NewDocumentCommand{\zz}{m}{#1}\RenewDocumentCommand{\zz}{m}{x}
+body impl \NewDocumentCommand{\zz}{m}{[#1]}\zz{q}
+body impl \RenewDocumentCommand{\emph}{m}{[#1]}\emph{q}
+body impl \DeclareDocumentCommand{\zz}{m}{[#1]}\zz{q}

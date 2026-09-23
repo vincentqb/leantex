@@ -1,9 +1,14 @@
 # source: fancyhdr manual §2 (\fancyhead/\fancyfoot/\fancyhf and the
 # \lhead...\rfoot shorthands), §7 (\fancypagestyle), §5 (\headrulewidth).
-pre impl \pagestyle{fancy}
+# Three rows move no ink and say why: \pagestyle{fancy} is answered by
+# nothing (declared running fields apply by themselves), \fancyhf{} clears
+# to the state a document starts in, and \renewcommand{\headrulewidth}
+# binds a name the engine never reads — the head rule is not modelled, so
+# the declaration is carried as a definition and nothing draws it.
+pre inert:noop \pagestyle{fancy}
 pre impl \fancyhead[L]{x}
 pre impl \fancyfoot[C]{x}
-pre impl \fancyhf{}
+pre inert:default \fancyhf{}
 pre refuse:W0301 \fancypagestyle{mine}{\fancyhead[L]{x}}
 pre impl \lhead{x}
 pre impl \chead{x}
@@ -11,4 +16,4 @@ pre impl \rhead{x}
 pre impl \lfoot{x}
 pre impl \cfoot{x}
 pre impl \rfoot{x}
-pre impl \renewcommand{\headrulewidth}{0pt}
+pre inert:binds \renewcommand{\headrulewidth}{0pt}

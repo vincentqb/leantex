@@ -23,8 +23,8 @@ pre impl \runninglinenumbers
 pre impl \modulolinenumbers
 pre impl \modulolinenumbers[4]
 pre impl \modulolinenumbers*
-body impl \linenomath
-body impl \endlinenomath
+body inert:noop \linenomath
+body inert:noop \endlinenomath
 pre refuse:W0301 \pagewiselinenumbers
 pre refuse:W0301 \resetlinenumber
 pre refuse:W0301 \setrunninglinenumbers

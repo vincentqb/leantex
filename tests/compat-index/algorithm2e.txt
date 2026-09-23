@@ -3,6 +3,11 @@
 # §6 (\SetKw and family), §7 (display options). A display setting outside
 # the model is N0102, named and ignored; a construct outside the modeled
 # subset is W0383, its content kept as plain lines.
+# The preamble rows of the \SetKw family and the two display switches bind
+# a keyword or a default and move no ink where they stand (inert:binds):
+# each one's effect is the algorithm body that uses it, and the body rows
+# above carry that evidence — \SetKwInOut with its \Params use site,
+# \LinesNumbered and \DontPrintSemicolon inside an algorithm.
 body impl \begin{algorithm}\caption{An invented pass.}x\;\end{algorithm}
 body impl \begin{algorithm}[H]x\;\end{algorithm}
 body impl \begin{algorithm2e}x\;\end{algorithm2e}
@@ -26,13 +31,13 @@ body impl \begin{algorithm}x\tcp*{an invented remark}\end{algorithm}
 body impl \begin{algorithm}\LinesNumbered x\;\end{algorithm}
 body impl \begin{algorithm}\DontPrintSemicolon x\;\end{algorithm}
 body impl \begin{algorithm}\SetKwInOut{Params}{params}\Params{a knob}\end{algorithm}
-pre impl \SetKw{KwGoal}{goal}
-pre impl \SetKwInOut{Params}{params}
-pre impl \SetKwInput{KwReq}{requires}
-pre impl \SetKwFunction{FMain}{Main}
-pre impl \SetKwData{DTot}{total}
-pre impl \DontPrintSemicolon
-pre impl \LinesNumbered
+pre inert:binds \SetKw{KwGoal}{goal}
+pre inert:binds \SetKwInOut{Params}{params}
+pre inert:binds \SetKwInput{KwReq}{requires}
+pre inert:binds \SetKwFunction{FMain}{Main}
+pre inert:binds \SetKwData{DTot}{total}
+pre inert:binds \DontPrintSemicolon
+pre inert:binds \LinesNumbered
 pre refuse:N0102 \SetAlgoNoEnd
 pre refuse:N0102 \SetInd{0.5em}{1em}
 body refuse:N0102 \begin{algorithm}\SetAlgoLined x\;\end{algorithm}

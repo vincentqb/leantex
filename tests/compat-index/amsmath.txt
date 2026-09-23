@@ -4,6 +4,9 @@
 # list. The math slice renders the starred one-column displays; numbered rows
 # degrade W0015 and the rest of the construct set degrades W0012, set as
 # source text.
+# \DeclareMathOperator is a preamble declaration: it binds the operator name
+# and moves no ink where it stands (inert:binds). What it binds the name to
+# is \operatorname, whose own row below carries the drawn evidence.
 body impl $\frac{1}{2}$
 body impl $\dfrac{1}{2}$
 body impl $\tfrac{1}{2}$
@@ -41,7 +44,7 @@ pre refuse:W0301 \numberwithin{equation}{section}
 body refuse:W0012 \begin{align}a &= b\\ \intertext{so} c &= d\end{align}
 body impl $\text{ab}$
 body impl $\operatorname{foo}(x)$
-pre impl \DeclareMathOperator{\tr}{tr}
+pre inert:binds \DeclareMathOperator{\tr}{tr}
 body impl $\boldsymbol{x}$
 body refuse:W0012 $\pmb{x}$
 body refuse:W0012 $\overset{a}{b}$

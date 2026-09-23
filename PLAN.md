@@ -226,6 +226,66 @@ decisions carried by a skip and a record shape. Each is one line in a file
 this slice must not touch, which is why the ratchet keeps them rather than
 this entry claiming them fixed.
 
+2026-09-23 — an `impl` row in the package index now has to move ink. The
+compat index probed each row by elaborating the call and reading only the
+diagnostic codes, so `impl` meant no more than "W0301 and W0302 did not
+fire" — a claim a command satisfies by being dropped entirely. A native
+command that regressed to a silent no-op would keep its `impl` claim across
+the whole index, and the obligation table asks these rows to prove
+implementation, not to observe a silence.
+
+The predicate is a recognition counterfactual, one statement inherited by
+every present and future row rather than a per-row assertion list: the row's
+call is elaborated twice from the same source, once as written and once with
+every control word renamed to a name the engine cannot know (`\emph` →
+`\emphZq`; digits are not name characters, so no package spells one), and
+`impl` requires the two documents to differ. Literal text, braces and
+structure are held fixed, so the arms differ in exactly one thing — whether
+the engine recognises the commands — and a command that contributes nothing
+lands in the same `Ir.Doc` as the command the engine never heard of. Removal
+was the other candidate and is weaker: a call carrying prose (`90\textdegree`)
+passes on the prose alone. Two mechanical consequences: a `pre` row whose
+call loads its own package no longer gets the scaffold's duplicate load,
+since loading twice puts the call's whole effect in the baseline as well
+(nine font-package rows became real evidence that way); and the claim is
+about the call as written, so a row wanting one command's effect attributed
+to it writes a call with one command.
+
+A row whose command legitimately moves no ink says so in the row —
+`inert:<why>`, decided where it applies rather than in an exception list
+beside the checker, which would drift from the directory the way a second
+list always does — and it is loud in both directions, as a corpus file's own
+exclusion is: an `inert` row whose command starts changing the document
+fails until someone promotes it. `inert` still requires the name to be
+recognised, so it cannot launder an unknown command.
+
+37 of 273 `impl` rows failed. Two were engine gaps. `\AtBeginDocument` is
+read where it stands, which is the preamble: the index probed it with the
+one argument — the empty one — for which that cannot be seen, and any
+non-empty hook body is either refused as preamble material (E0313) or goes
+unknown and is skipped, so the hook the package documents is not earned at
+all. Its row now records the empty case as inert and a second row pins
+E0313, so earning the hook fails both and asks for a promotion.
+`\nolinkurl` is set as plain text, which is exactly what dropping an
+unknown command leaves: it loses the typewriter face `\url` keeps. One row
+was miscategorised in the engine's favour — `a\xspace.` fires W0387, the
+engine's own "read and had no effect", so the row is a `refuse:` row and
+says so. The remaining 34 were bindings read at a later use site
+(`\SetKw` family, `\lstset`, the xparse declarations, biblatex styles and
+resources), values already in force (`\crop[off]`, `\singlespacing`,
+`\urlstyle{tt}`, `\tikzexternalize`, `\fancyhf{}`), or constructs the engine
+answers by design with nothing (`\pagestyle{fancy}`, `\linenomath`). Where a
+use site could carry the evidence instead of a marker, the row now does:
+`\appendix` gained the section it renumbers, and five rows were added that
+declare and then call (xparse, `\lstset`).
+
+Two things the check does not reach, for a successor. A no-op that fires no
+diagnostic at all is invisible to a reader of the file (`\SetKw`,
+`\lstset`, `\fancyhf{}`, `\tikzexternalize` say nothing) — requiring every
+`inert` row to name its no-op is the next ratchet, and it needs engine
+work. And an `inert` row for a gap reads the same as one for a design
+choice; the `why` carries the difference in prose today.
+
 2026-09-23 — the gates run in CI, and a cited theorem name has to exist.
 Two holes in the enforcement surface, both of the same kind: a rule this
 repo states was held by something a fresh clone does not have.

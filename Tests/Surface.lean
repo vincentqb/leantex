@@ -1600,18 +1600,87 @@ def linenoChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((pageOf "").linenumbers == none &&
      !(elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.lineNumbersOn)
 
+/-- The row spelling the effect check reads as its counterfactual: every
+control word in the call becomes a name the engine cannot know (`\emph` →
+`\emphZq`; digits are not name characters, so no package spells one). The
+call's literal text, braces and structure are untouched, so the two arms of
+the comparison differ in exactly one thing — whether the engine recognises
+the commands. A control symbol (`\\`, `\;`, `\$`) is left alone: renaming
+one would insert a control word the source never had. -/
+def compatUnknown (call : String) : String := Id.run do
+  let mut out := ""
+  let mut st : Nat := 0
+  for c in call.toList do
+    if st == 2 && !c.isAlpha then
+      out := out ++ "Zq"
+      st := 0
+    if st == 1 then
+      st := if c.isAlpha then 2 else 0
+      out := out.push c
+    else if c == '\\' then
+      st := 1
+      out := out.push c
+    else
+      out := out.push c
+  if st == 2 then out := out ++ "Zq"
+  return out
+
+/-- Does the row's call load the row's own package? Then the scaffold does
+not load it a second time: a duplicate load puts the call's whole effect in
+the baseline as well, and a `\usepackage{times}` row could not witness
+anything. The decision is read off the row's own text — never a list of
+package names here, which would drift from the directory. -/
+def compatRowSelfLoads (pkg call : String) : Bool :=
+  hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
+
+/-- The document a row elaborates as: the call at its declared place, with
+the package loaded unless the call loads it itself. -/
+def compatRowSrc (pkg place call : String) : String :=
+  let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
+  if place == "pre" then
+    s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
+  else if place == "frame" then
+    s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
+  else
+    s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
+
+/-- The one predicate every `impl` row answers to: recognising this call
+changes the elaborated document. Both arms elaborate the same source; the
+baseline's control words are the same call with names the engine does not
+know, so a command that contributes nothing lands in the same `Ir.Doc` as
+the command the engine never heard of, and the row fails. Silence about
+W0301 says only that the name was consumed — a native command that
+regressed to a no-op keeps that silence, which is how
+`\AtBeginDocument{}` held an `impl` claim while the hook body was never
+deferred anywhere. The claim is about the call as written: a call naming
+several commands is witnessed as a whole, so a row that wants one
+command's effect attributed to it writes a call with one command. -/
+def compatRowEffect (pkg place call : String) : Bool :=
+  (elabStr (compatRowSrc pkg place call)).1
+    != (elabStr (compatRowSrc pkg place (compatUnknown call))).1
+
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,
 place `pre` | `body` | `frame` (a `beamer` frame body, for the class's own
 surface — a class loads by `\documentclass`, never `\usepackage`),
-annotation `impl` | `refuse:<code>`. An `impl` call
-elaborates without W0301/W0302; a `refuse:` call fires exactly its named
+annotation `impl` | `inert:<why>` | `refuse:<code>`. An `impl` call
+elaborates without W0301/W0302 *and* changes the document by being
+recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
 code, so a refusal that silently stops warning fails too. Adding a package
 to the list without its index file fails: the claim and its evidence
 arrive together. Every file in the directory is probed, not only the
 native list's: a deliberately refused package (todonotes) records its
-stance as refuse rows, and those rows are load-bearing the same way. -/
+stance as refuse rows, and those rows are load-bearing the same way.
+
+`inert:<why>` is how a row says its command legitimately moves no ink — a
+binding read at a later use site, a value already in force, a construct the
+engine answers by design with nothing. The decision is written in the row
+that needs it, never as an exception list here, which would drift from the
+directory the way a second list always does; and it is loud in both
+directions, as a corpus file's own exclusion is: an `inert` row whose
+command starts changing the document fails until someone promotes it. The
+`why` may not be empty — a row that moves no ink says why it does not. -/
 def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dir : System.FilePath := "tests/compat-index"
   for pkg in Compat.nativePackages do
@@ -1628,18 +1697,26 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
       let rest := (line.drop place.length).toString.trimAscii.toString
       let ann := ((rest.splitOn " ").headD "")
       let call := (rest.drop ann.length).toString.trimAscii.toString
-      let src := if place == "pre" then
-          s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n{call}\n\\begin\{document}\nx\n\\end\{document}"
-        else if place == "frame" then
-          s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
-        else
-          s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n\\begin\{document}\n{call}\n\\end\{document}"
+      let src := compatRowSrc pkg place call
       let codes := (elabStr src).2.map (·.code)
       if place != "pre" && place != "body" && place != "frame" then
         failures ref s!"compat index {pkg}: unreadable place in: {line}"
       else if ann == "impl" then
         check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
           (!codes.contains "W0301" && !codes.contains "W0302")
+        check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
+is the same one the engine elaborates when it knows none of these commands — \
+say why with inert:<why>, or probe the command where its effect lands"
+          (compatRowEffect pkg place call)
+      else if ann.startsWith "inert:" then
+        let why := (ann.drop "inert:".length).toString
+        check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
+          (!why.isEmpty)
+        check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
+          (!codes.contains "W0301" && !codes.contains "W0302")
+        check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
+changes the document — promote it to impl"
+          (!compatRowEffect pkg place call)
       else if ann.startsWith "refuse:" then
         let code := (ann.drop "refuse:".length).toString
         check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
