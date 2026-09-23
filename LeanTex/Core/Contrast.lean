@@ -361,6 +361,22 @@ surface (the same rule `effectivePair` applies to epoch 0). -/
 private def surfaceOf (pal : Palette) : Color :=
   (pal.find? "bg").getD light.surface
 
+/-- The ground a titled block's title stands on: the kind's bar where the
+palette declares one, the epoch's own page where it does not. One resolving
+site, read by the per-use walk, the resolved-pair judge, and the judged-pair
+census alike — `titled_ground_agree` holds them to it.
+
+The undeclared page resolves through `surfaceOf`, not `Color.white`, because
+that is what the artifacts ship: `Layout` carries an unbarred title run's
+ground as `none` — paper it paints no fill for — and under a `none` ground
+the PDF leaves white paper while HTML's body takes `--surface`
+(`light.surface`, `HtmlDoc.baseCss`). `light.surface` is the darker of the
+two, so a pair that passes here passes on the white page too; grounding on
+white instead judged the lighter one and passed titles the HTML page fails —
+#757575 reads 4.61:1 on white and 4.41:1 on the surface it ships on. -/
+private def titledGround (pal : Palette) (kind : TitledKind) : Color :=
+  (titledLook pal kind).bar.getD (surfaceOf pal)
+
 /-- The text-size context of the walk below. `size` follows the layout
 semantics: a size declaration sets a factor over the document base (`base`
 here, so `\normalfont` can restore it), it does not compound. -/
@@ -728,10 +744,10 @@ private def resolvedPairJudged (doc : Doc)
   for (kind, pal) in blocks do
     -- The block title sets bold at the body size — under WCAG 2.2's
     -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
-    -- palette declares one, on the page otherwise (`titledLook`, the one
+    -- palette declares one, on the page otherwise (`titledGround`, the one
     -- resolving site). A failing pair realizes before it warns.
     let look := titledLook pal kind
-    let ground := look.bar.getD ((pal.find? "bg").getD Color.white)
+    let ground := titledGround pal kind
     let milli := contrastMilli look.fg ground
     if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
       match realize aaText ground look.fg with
@@ -1027,6 +1043,23 @@ theorem judged_pair_is_shipped (doc : Doc) :
       (effectivePair doc).bg = (Design.ofDoc doc).bg) :=
   ⟨rfl, fun h => by simp [effectivePair, h]⟩
 
+/-- The resolved-pair judge grounds a titled title where the per-use walk
+records it: both resolve `(titledLook pal kind).bar` — the ground `Layout`
+carries on the title run, `none` where no bar is declared — through
+`surfaceOf`, the engine's one reading of an unpainted page. Two projections
+of one palette, so the pair the judge weighs is the pair the reader sees.
+
+Stated because the two drifted: the judge read an unbarred title's page as
+`Color.white` while the walk read it as `surfaceOf` (`#FAFAF9`, the surface
+`HtmlDoc.baseCss` ships under a `none` ground), and white is the lighter
+ground — so a title between the two ratios was judged passing and shipped
+failing, with no test, theorem or diagnostic to say so. -/
+theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKind)
+    (nm : Option String) (c : Color) :
+    ((acc.use { cx with ground := (titledLook acc.pal kind).bar } nm c).uses.back?).map
+        Use.surface = some (titledGround acc.pal kind) := by
+  simp [UseAcc.use, titledGround]
+
 /-- The load-bearing form of F3, over every document: when the effective
 pair fails the AA text threshold and the ink is not declared decorative,
 `docDiags` reports — declared ink or defaulted, because
@@ -1221,8 +1254,7 @@ def judgedPairs (doc : Doc) : Array (Color × Color) := Id.run do
   for u in acc.uses do
     out := out.push (u.color, u.surface)
   for (kind, pal) in walk.blockPals do
-    let look := titledLook pal kind
-    out := out.push (look.fg, look.bar.getD ((pal.find? "bg").getD Color.white))
+    out := out.push ((titledLook pal kind).fg, titledGround pal kind)
   for pal in walk.titledPals do
     let d := Design.ofDoc { doc with palette := pal }
     if let some p := d.frametitle then

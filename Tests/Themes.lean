@@ -2777,3 +2777,71 @@ def geminiChecks (ref : IO.Ref (List String)) : IO Unit := do
       { fg := blue, bar := none })
   t "usetheme gemini reaches the same bundle"
     (!(elabStr (poster "\\usetheme{gemini}" blocks)).2.any (·.code == "W0319"))
+
+
+/-- A titled block's title is judged on the ground the pages ship it on.
+The artifact half is read off `Layout.Out`: with no bar and no declared
+page, the title run's declared ground is `none` and the page paints no
+fill, so what the reader sees is the surface each backend puts under a
+`none` ground — `light.surface` in HTML (`--surface`, `HtmlDoc.baseCss`),
+white paper in the PDF. `#757575` sits between the two ratios (4.61:1 on
+white, 4.41:1 on `#FAFAF9`), so grounding the judge on white passed a title
+the HTML page fails — silently, since neither a theorem nor a census row
+read that pair. Own function: `main`'s elaboration budget. -/
+def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let grey : Ir.Color := { r := 0x75, g := 0x75, b := 0x75 }
+  let surface := Contrast.light.surface
+  -- The discriminator: this colour passes on white and fails on the
+  -- surface the page ships, so the two groundings cannot both be right.
+  t "the probe colour passes on white"
+    (Contrast.aaText ≤ Contrast.contrastMilli grey Ir.Color.white)
+  t "the probe colour fails on the shipped surface"
+    (Contrast.contrastMilli grey surface < Contrast.aaText)
+  let pal := ({} : Ir.Palette).declare "blocktitlefg" grey
+  let doc : Ir.Doc :=
+    { palette := pal
+      body := #[.titled .block #[.text "Title"] #[.para #[.text "body text"]]] }
+  let out := layoutOf oneFace doc
+  -- The artifact half: the title ships on no fill of its own.
+  let runs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
+    l.segs.filterMap fun seg => match seg with
+      | .run _ color _ _ glyphs _ _ _ ground _ =>
+        if glyphs.isEmpty then none else some (color, ground)
+      | _ => none
+  t "the unbarred title run ships on the undeclared page"
+    (runs.any fun (color, ground) => color == grey && ground == none)
+  t "the undeclared page paints no fill"
+    (out.pages.all fun p => p.fills.isEmpty)
+  -- The judge half: it speaks for the pair the reader sees. Grounded on
+  -- white it said nothing at all.
+  let ds := Contrast.docDiags doc
+  t "the judge speaks for the shipped titled pair" (!ds.isEmpty)
+  t "the judge names the ground the page ships"
+    (ds.any fun d => (d.code == "N0022" || d.code == "W0345") &&
+      hasStr d.message "#FAFAF9")
+  -- And the value it writes clears the requirement on that same ground.
+  let realized := (Contrast.realizeDoc doc).1
+  t "the realized title clears the requirement on the shipped ground"
+    (match realized.palette.find? "blocktitlefg" with
+     | some c => Contrast.aaText ≤ Contrast.contrastMilli c surface
+     | none => false)
+  -- A declared bar is still the ground: the fix resolves the undeclared
+  -- page, it does not override a bar.
+  let barPal := (pal.declare "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
+  let barDoc := { doc with palette := barPal }
+  let barOut := layoutOf oneFace barDoc
+  t "a declared bar is the title's ground"
+    (barOut.pages.any fun p => p.lines.any fun l => l.segs.any fun seg =>
+      match seg with
+      | .run _ color _ _ glyphs _ _ _ ground _ =>
+        !glyphs.isEmpty && color == grey &&
+          ground == some { r := 0xEE, g := 0xEE, b := 0xEE }
+      | _ => false)
+  t "the judge grounds the barred title on the bar"
+    ((Contrast.docDiags barDoc).all fun d => !hasStr d.message "#FAFAF9")
+  -- A declared page is the ground where one is declared, white nowhere.
+  let pagePal := (pal.declare "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
+  t "a declared white page is judged as declared"
+    ((Contrast.docDiags { doc with palette := pagePal }).isEmpty)
