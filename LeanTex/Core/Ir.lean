@@ -11092,20 +11092,6 @@ private def floatLabelPush (float : Option RefBinding)
   | .label k => out.push (k, float)
   | _ => out
 
-/-- Labels inside algorithm lines, bound to the binding in force — a
-`\label` under a captioned algorithm float resolves to its number. -/
-private def algFloatLabels (float : Option RefBinding)
-    (out : Array (String × Option RefBinding)) :
-    List AlgLine → Array (String × Option RefBinding)
-  | [] => out
-  | l :: rest =>
-    algFloatLabels float (match l.comment with
-      | some c => foldInlineList (floatLabelPush float)
-          (foldInlineList (floatLabelPush float) out l.content.toList) c.toList
-      | none => foldInlineList (floatLabelPush float) out l.content.toList) rest
-
-mutual
-
 /-- The float binding in force at every `.label` of the numbered IR, in
 document order. `float` is the enclosing captioned float's rendering —
 `none` outside every captioned float — and every label is reported, bound
@@ -11120,35 +11106,20 @@ bind to numbers elaboration already recorded, so their labels report
 unbound here. The IR keeps a float body's labels but not their side of
 the caption, so a label anywhere under a captioned float binds to it —
 LaTeX documents `\label` before `\caption` as a user error (clsguide §"The
-label commands"); here it resolves to the number the author captioned. -/
-def floatLabelOne (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
-    Block → Array (String × Option RefBinding)
-  | .para content => foldInlineList (floatLabelPush float) out content.toList
-  | .equation _ content => foldInlineList (floatLabelPush none) out content.toList
-  | .section _ _ _ title => foldInlineList (floatLabelPush none) out title.toList
-  | .list _ items => floatLabelItems float out items.toList
-  | .center body => floatLabelList float out body.toList
-  | .ragged body => floatLabelList float out body.toList
-  | .quote body => floatLabelList float out body.toList
-  | .abstract body => floatLabelList float out body.toList
-  | .titled _ title body =>
-    floatLabelList float (foldInlineList (floatLabelPush float) out title.toList)
-      body.toList
-  | .role _ body => floatLabelList float out body.toList
-  | .spaced _ body => floatLabelList float out body.toList
-  | .columns cols => floatLabelCols float out cols.toList
-  | .step _ _ body => floatLabelList float out body.toList
-  | .alt _ _ firstPage otherPage =>
-    floatLabelList float (floatLabelList float out firstPage.toList) otherPage.toList
-  | .only _ body => floatLabelList float out body.toList
-  | .nav _ body => floatLabelList float out body.toList
-  | .note body => floatLabelList float out body.toList
-  | .frame title _ _ _ body =>
-    floatLabelList float (foldInlineList (floatLabelPush float) out title.toList)
-      body.toList
-  | .framefoot content => foldInlineList (floatLabelPush float) out content.toList
-  | .float kind num _ body caption =>
-    let mine := match num with
+label commands"); here it resolves to the number the author captioned.
+
+The binding is the walk's context, so this is the open event and nothing
+else: `foldCtxBlock` owns the descent, and the arms below say only what
+each block does to the binding its content is read under. The explicit
+arms are the obligation table's, kept here because a new constructor must
+declare which binding it passes down. -/
+def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option RefBinding))
+    (b : Block) : Array (String × Option RefBinding) × Option RefBinding :=
+  match b with
+  -- an equation's content and a section's title number at elaboration
+  | .equation _ _ | .section _ _ _ _ => (out, none)
+  | .float kind num _ _ _ =>
+    (out, match num with
       | none => float
       | some m =>
         match kind with
@@ -11158,36 +11129,26 @@ def floatLabelOne (float : Option RefBinding) (out : Array (String × Option Ref
                          num := ((float.map (·.num)).getD "") ++ subLetter m }
         | .figure => some { kind := some .figure, num := toString m }
         | .table => some { kind := some .table, num := toString m }
-        | .algorithm => some { kind := some .algorithm, num := toString m }
-    floatLabelList mine (foldInlineList (floatLabelPush mine) out caption.toList)
-      body.toList
-  | .table _ _ _ rows _ => foldTableRows (floatLabelPush float) out rows.toList
-  | .algorithm _ _ lines => algFloatLabels float out lines.toList
-  | .logo content => foldInlineList (floatLabelPush float) out content.toList
+        | .algorithm => some { kind := some .algorithm, num := toString m })
+  | .para _ | .list _ _ | .center _ | .ragged _ | .quote _ | .abstract _
+  | .titled _ _ _ | .role _ _ | .spaced _ _ | .columns _ | .step _ _ _
+  | .alt _ _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
+  | .framefoot _ | .table _ _ _ _ _ | .algorithm _ _ _ | .logo _
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => out
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => (out, float)
 
-def floatLabelList (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
-    List Block → Array (String × Option RefBinding)
-  | [] => out
-  | b :: rest => floatLabelList float (floatLabelOne float out b) rest
+/-- The label walk: `floatLabelEnter` binds, `floatLabelPush` collects, the
+shared context fold descends. -/
+def floatLabelWalk : CtxFold (Option RefBinding) (Array (String × Option RefBinding)) where
+  openBlock := floatLabelEnter
+  closeBlock := fun _ out _ => out
+  openInline := fun float out x => (floatLabelPush float out x, float)
+  closeInline := fun _ out _ => out
 
-def floatLabelItems (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
-    List (Array Block) → Array (String × Option RefBinding)
-  | [] => out
-  | item :: rest => floatLabelItems float (floatLabelList float out item.toList) rest
-
-def floatLabelCols (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
-    List (Option Nat × Array Block) → Array (String × Option RefBinding)
-  | [] => out
-  | (_, body) :: rest => floatLabelCols float (floatLabelList float out body.toList) rest
-
-end
-
-/-- `floatLabelOne` over the numbered body: every label with the float
-binding in force where it stands, the table's float half. -/
+/-- The float rows of the numbered body: every label with the float binding
+in force where it stands, the table's float half. -/
 def floatLabelRows (xs : Array Block) : RefTable :=
-  floatLabelList none #[] xs.toList
+  foldCtxBlocks floatLabelWalk none #[] xs
 
 /-- The label table with its float rows filled from the numbered IR: an
 entry whose key's first `.label` stands under a captioned float takes that
