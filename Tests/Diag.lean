@@ -51,12 +51,57 @@ and parses itself and needs no driver. -/
 def dvData (src : String) : Array Diag :=
   (Data.expandData "t" #[] (Parse.parse "t" (Lex.lex "t" src).1).1).2
 
+/-- A driver probe: one real driver path, run against a sandbox directory
+the harness creates and deletes. A probe returns what the driver returned
+and never builds a `Diag` itself, so a driver path that stops emitting its
+code leaves that code's witness empty and the suite fails. -/
+abbrev DriverProbe := System.FilePath → IO (Array Diag)
+
+/-- The probed driver codes, by the code each probe must fire. Both run the
+driver's `\input` fixpoint (`Input.expandInputs`) over a document written
+into a fresh temporary directory: one names a file that is not there, one
+names a file that names itself. Hermetic — the probe writes its own
+sandbox, so what fires depends on nothing this host has installed, and both
+messages are path-free (the spans do name the sandbox, and the golden drops
+spans).
+
+A driver code is probeable exactly when its emission site is reachable as a
+unit and hands its diagnostics back: the modules under `LeanTex/Cli/` are.
+The codes still witnessed by a constructed value below are emitted from the
+entry path in Main.lean, which is not callable as a unit — and the font
+codes among them are decided against the host's installed families, so a
+probe asserting one fires would depend on what this machine has. Making one
+of those probeable is a driver refactor, not a new mechanism here: move the
+decision into a module that returns its diagnostics, then add a row. -/
+def driverProbes : Array (DiagCode × DriverProbe) :=
+  let splice (dir : System.FilePath) (body : String) : IO (Array Diag) := do
+    let doc := dir / "doc.tex"
+    let src := "\\documentclass{article}\n\\begin{document}\n" ++ body ++
+      "\n\\end{document}\n"
+    IO.FS.writeFile doc src
+    let path := doc.toString
+    let (raws, _) := Parse.parse path (Lex.lex path src).1
+    let (_, ds, _) ← Input.expandInputs path raws
+    return ds
+  #[(.E0502, fun dir => splice dir "\\input{chapter1}"),
+    (.E0501, fun dir => do
+      IO.FS.writeFile (dir / "loop.tex") "Around again.\n\\input{loop}\n"
+      splice dir "\\input{loop}")]
+
+/-- Every probe run once, each in its own sandbox, removed afterwards. -/
+def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
+  driverProbes.mapM fun (c, probe) => do
+    let ds ← IO.FS.withTempDir probe
+    return (c, ds)
+
 /-- One firing input per code. `one` maps every slot to one face;
 `mapped` adds a second face and a fallback map for the substitution codes;
 `withMath` carries a math face with no fallback, for the codes only a
-formula can fire. The synthetic driver arguments mirror what Main.lean
-passes. -/
-def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
+formula can fire. `probed` reads the driver probes' own output, so a probed
+code's witness is what the driver did rather than a value written here. The
+remaining synthetic driver arguments mirror what Main.lean passes. -/
+def diagWitness (one mapped withMath : Font.FontSet)
+    (probed : DiagCode → Array Diag) : DiagCode → Array Diag
   | .E0001 => #[DriverDiag.unreadableInput "doc.tex"
       "no such file or directory (error code: 2)"]
   | .E0002 =>
@@ -112,8 +157,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .E0404 => #[DriverDiag.fontFileUnusable "fonts/Broken-Regular.otf"
       "not a TrueType or OpenType file"]
   | .E0405 => dvL mapped "lost \u27e8 here"
-  | .E0501 => #[DriverDiag.inputTooDeep]
-  | .E0502 => #[DriverDiag.inputMissing "chapter1.tex" none]
+  | .E0501 => probed .E0501
+  | .E0502 => probed .E0502
   | .E0503 => #[DriverDiag.bibMissing "references"
       "/doc/references.bib" none]
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
@@ -473,12 +518,23 @@ def diagBlocksOf (s : String) : Array (String × String) := Id.run do
 
 /-- The voice golden and its coverage: every registered code fires from its
 witness, and every fired form renders into tests/golden/diagnostics.txt —
-the one place the whole voice is reviewable in a diff. Spans are dropped:
-the witnesses' line numbers are noise. The file is one block per code,
-sorted by code on emission, so an added code is a one-block insertion at
-its sorted position and two additions to different codes never touch the
-same lines; the compare is per block, so a mismatch names its code. -/
+the one place the whole voice is reviewable in a diff. The driver probes run
+first, before the font gate can skip anything: each has to fire its own code
+from the driver's own return, which is what makes a probed code's witness
+evidence that the code can still fire. Spans are dropped: the witnesses'
+line numbers are noise. The file is one block per code, sorted by code on
+emission, so an added code is a one-block insertion at its sorted position
+and two additions to different codes never touch the same lines; the compare
+is per block, so a mismatch names its code. -/
 def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
+  let probed ← runDriverProbes
+  for (c, ds) in probed do
+    check ref s!"driver probe {c.code}: one row per code"
+      ((driverProbes.filter (·.1 == c)).size == 1)
+    check ref s!"driver probe {c.code}: the driver path still emits it"
+      (ds.any (·.code == c.code))
+  let probeOf (c : DiagCode) : Array Diag :=
+    ((probed.find? (·.1 == c)).map (·.2)).getD #[]
   let load (name : String) : IO (Option Font.Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure (some f)
@@ -511,7 +567,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     | .info => "info"
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
-    let fired := (diagWitness one mapped withMath c).filter (·.code == c.code)
+    let fired := (diagWitness one mapped withMath probeOf c).filter (·.code == c.code)
     check ref s!"diag voice {c.code}: the witness fires it" (!fired.isEmpty)
     -- The registry meaning is prose too: self-contained, one convention.
     if dvInternalRef c.meaning then

@@ -7216,3 +7216,41 @@ is evidence, not a theorem.
   only once `blockTextOne`, `headingLevelOne` and `foldBlock` are one
   walk, which is a change to three hand-rolled IR censuses the backends
   read.
+
+
+- 2026-09-23: a diagnostic's witness is a run, not a value. The obligation
+  table asks every code for a firing witness in `diagWitness`, and the
+  driver codes answered it by applying their own constructor — the test
+  built the `Diag` the driver would have built, so the witness check, the
+  diagnostics golden, and the source-scan registry check all stayed green
+  whether or not any driver path still reached the constructor. The
+  registry scan cannot close that gap: each driver code's only application
+  sits inside `DriverDiag.lean`, so a code that nothing emits still reads
+  as emitted. So the table now holds *probes* for the codes that admit
+  one: `driverProbes` pairs a code with a driver path run against a fresh
+  temporary directory the probe writes itself, `runDriverProbes` runs each
+  in its own sandbox, and the witness of a probed code is the array the
+  driver returned — a probe never constructs a `Diag`. E0501 and E0502 are
+  probed through `Input.expandInputs` (a document naming an absent file;
+  one naming a file that names itself); deleting either emission leaves
+  the witness empty and `lake test` names the code twice, once for the
+  probe and once for the witness. Hermetic by construction: the sandbox is
+  the probe's own, the two messages carry no path, and the golden drops
+  spans, so nothing here depends on what a host has installed — the
+  golden did not move. The mechanism is per-code data, so a future driver
+  code emitted from a `LeanTex/Cli/` module is one row and nothing else.
+  Two limits stated rather than papered over. A code is probeable only
+  where its emission site is reachable as a unit and hands its
+  diagnostics back, and every remaining driver code (E0001, E0401–E0404,
+  E0503, E0365, W0008, W0011, N0016, W0013, W0378, W0379, E0382) is
+  emitted from the entry path in Main.lean — E0001 through a Ui stream
+  rather than a return — so probing them is a driver refactor: return the
+  decision, then add a row. And three of them are not hermetically
+  probeable even then, because the host is the input: E0401 fires only
+  where no font is installed at all, and E0403's help and E0404's
+  candidate file are read off the host's own scan, so a rendered form
+  would differ per machine. One drift the probes already expose by
+  contrast: E0001's witness invents `no such file or directory (error
+  code: 2)` as the read failure, while a real failed read renders that
+  string followed by a second `file:` line, so the golden's E0001 block
+  shows a message shape the driver never produces.
