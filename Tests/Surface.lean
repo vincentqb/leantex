@@ -4132,3 +4132,83 @@ def toolProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "so the next build asks again, and installing it is enough"
     (gone2 == .absent "'--version' exited 127" && (← spawns.get) == 4)
   IO.FS.removeDirAll dir
+
+
+
+
+/-- The keyed-lookup layer: the index beside a keyed store answers exactly
+what the scan answers, and the store a document grows costs its size, not
+its square.
+
+Both halves are here because either alone would let the engine lie: the
+timing without the identity would admit a faster wrong answer, and the
+identity without the timing is what let the square stand. The cost is
+asserted on the float merge alone — there the lookup is the whole
+measurement, so the number means what it says; the end-to-end resolution
+below is checked for its answers, not its clock, because at any size where
+its scan would show the elaboration around it dominates. Compiled, the
+merge over 50,000 labels ran 5.5 s scanned and 23 ms keyed. -/
+def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The one equation the whole layer rests on, at the cases that matter:
+  -- a hit, a miss, an empty store, and a duplicate key — first wins, which
+  -- is what makes the index and `find?` the same question.
+  let store : Array (String × Nat) := #[("a", 1), ("b", 2), ("a", 3)]
+  t "the index answers a present key as the scan does"
+    ((Ir.keyIndex store)["a"]? == store.find? (·.1 == "a"))
+  t "the index answers an absent key as the scan does"
+    ((Ir.keyIndex store)["zz"]? == store.find? (·.1 == "zz"))
+  t "a duplicate key reads first-wins through the index, as through the scan"
+    ((Ir.keyIndex store)["a"]? == some ("a", 1))
+  t "the index is empty for an empty store"
+    ((Ir.keyIndex (#[] : Array (String × Nat)))["a"]? == none)
+  -- Resolution's identity end to end: many labels, many references, every
+  -- one showing its own number. A reference that lost its binding reads
+  -- '??', so the numbers are the check.
+  let refDoc (n : Nat) : String :=
+    "\\documentclass{article}\\begin{document}" ++
+    String.join ((List.range n).map fun i =>
+      s!"\\section\{S {i}}\\label\{sec:{i}}") ++
+    String.join ((List.range n).map fun i => s!"see \\ref\{sec:{i}} ") ++
+    "\\end{document}"
+  let refTexts (n : Nat) : Array String :=
+    Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+      | .ref _ _ shown _ => out.push shown
+      | _ => out) #[] (elabStr (refDoc n)).1.body
+  t "every reference resolves to its own number"
+    (refTexts 6 == #["1", "2", "3", "4", "5", "6"])
+  let many := refTexts 3000
+  t "three thousand references against three thousand labels all resolve"
+    (many.size == 3000 && !many.contains "??" && many[2999]? == some "3000")
+  -- The cost witness, where the lookup is the whole measurement: 50,000
+  -- labels against 50,000 float rows. Scanned this is 2.5 x 10^9
+  -- comparisons; keyed it is 50,000 lookups.
+  let n := 50000
+  let labels : Ir.RefTable := ((List.range n).map fun i => (s!"k{i}", none)).toArray
+  let rows : Ir.RefTable := ((List.range n).map fun i =>
+    (s!"k{i}", some ({ num := toString i, kind := some .figure } : Ir.RefBinding))).toArray
+  let t0 ← IO.monoMsNow
+  let merged := Ir.withFloatRows labels rows
+  -- Consumed before the clock is read again: a pure `let` floats to its
+  -- first use, so a timing with nothing between the two reads measures
+  -- nothing (the FontDb.families precedent).
+  t "the merge carries every row's number onto its key"
+    (merged.size == n && merged[7]? == some ("k7", some { num := "7", kind := some .figure })
+      && merged[n - 1]? == some (s!"k{n - 1}", some { num := toString (n - 1), kind := some .figure }))
+  let mergeMs := (← IO.monoMsNow) - t0
+  t s!"the float merge is linear in the table ({mergeMs} ms for {n} labels x {n} rows)"
+    (mergeMs < 800)
+  -- The duplicate-label test reads the key set now; the table stays flow
+  -- ordered for the backends. A second `\label` of one key is still
+  -- refused, exactly once, and distinct keys still draw nothing.
+  let dup := (elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\section{A}\\label{k}\\section{B}\\label{k}\\end{document}")).2
+  t "a redeclared label key is still refused once"
+    ((dup.filter (·.code == "W0350")).size == 1)
+  let manyLabels := (elabStr ("\\documentclass{article}\\begin{document}" ++
+    String.join ((List.range 2000).map fun i => s!"\\section\{S {i}}\\label\{k{i}}") ++
+    "\\end{document}")).2
+  t "two thousand distinct label keys draw no duplicate warning"
+    ((manyLabels.filter (·.code == "W0350")).isEmpty)
+
+

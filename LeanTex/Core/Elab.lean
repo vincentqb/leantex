@@ -326,6 +326,13 @@ structure ESt where
   The first declaration of a key wins (LaTeX's behaviour); a second is
   W0350 at its own position. -/
   labels : Array (String × Option Ir.RefBinding) := #[]
+  /-- The same table's key set, the only thing the duplicate test asks of
+  it. The table stays flow-ordered because backends read it in order; the
+  set answers "already declared" without walking it, which a document of
+  a few thousand labels had been paying a square for. One writer
+  (`labelStep`) moves both, and `labelStep_set_eq` is that they cannot
+  drift. -/
+  labelKeys : Std.HashSet String := {}
   /-- Every reference site with its form, for W0349 and W0380 once the
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
@@ -1673,16 +1680,44 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
     | _ => true
   else !sb.endsWith " "
 
+/-- The one writer of the label store: the flow-ordered table and its key
+set move together, so no caller can leave them disagreeing. -/
+private def labelStep (st : ESt) (key : String) (target : Option Ir.RefBinding) : ESt :=
+  { st with
+    labels := st.labels.push (key, target)
+    labelKeys := st.labelKeys.insert key }
+
+/-- **The key set is the table's key set.** The duplicate test reads the
+set and the backends read the table, so the two must answer the same
+question about every key; this is that the one writer keeps them equal,
+and `labelKeys_set_eq_empty` is that they start equal. Without it a
+`\label` could be accepted twice, or refused once, with nothing to
+notice — the set is the only part of this store that can lie. -/
+private theorem labelStep_set_eq (st : ESt) (key k : String)
+    (target : Option Ir.RefBinding)
+    (h : st.labelKeys.contains k = st.labels.any (·.1 == k)) :
+    (labelStep st key target).labelKeys.contains k
+      = (labelStep st key target).labels.any (·.1 == k) := by
+  simp only [labelStep, Std.HashSet.contains_insert, Array.any_push, h]
+  exact Bool.or_comm _ _
+
+/-- The store starts with both faces empty, the base case that with
+`labelStep_set_eq` makes the equality hold at every point of elaboration. -/
+private theorem labelKeys_set_eq_empty (k : String) :
+    (∅ : Std.HashSet String).contains k
+      = (#[] : Array (String × Option Ir.RefBinding)).any (·.1 == k) := by
+  simp
+
 /-- Record one `\label` binding. The first declaration of a key wins,
 LaTeX's behaviour; a second is W0350 where it stands and binds nothing. -/
 private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBinding)
     (pos : Pos) : EM Unit := do
   let st ← get
-  if st.labels.any (·.1 == key) then
+  if st.labelKeys.contains key then
     diag ctx .W0350 s!"'{key}' is already a \\label'ed key; the first wins" (some pos)
       (help := s!"one \\label\{{key}} per key: give this one its own name")
   else
-    modify fun st => { st with labels := st.labels.push (key, target) }
+    modify fun st => labelStep st key target
 
 /-- Strip a display-math body's metadata before the math parser sees it:
 top-level `\label{...}` keys (returned for binding to the display's
@@ -10798,8 +10833,10 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
     { bib := st.spans.bib
       images := st.spans.images
-      refs := st.refSites.foldl (init := #[]) fun out (key, _, pos) =>
-        if out.any (·.1 == key) then out else out.push (key, ⟨file, pos⟩)
+      refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
+        fun (out, seen) (key, _, pos) =>
+          if seen.contains key then (out, seen)
+          else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
 
 /-- The span a reporting record holds for a key, for the judges. -/

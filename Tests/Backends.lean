@@ -3793,3 +3793,58 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
        assetDirs == #[dir / "out" / "x.assets"])
     IO.FS.removeDirAll dir
+
+
+
+
+/-- Anchor claiming: the ids this backend assigns are unique, numbered in
+the documented order, and cost their count rather than its cube.
+
+`claimId` probed a growing association array for every candidate id, so
+`k` sections sharing one slug scanned `k` entries `k` times. Compiled, 1,800
+same-titled sections cost 5.4 s that way and 234 ms keyed. The numbering is
+pinned beside the timing because the cheap way to make the probe fast would
+be a per-base counter, which assigns different ids the moment another
+title's slug has already taken `base-2` — so the ladder is the contract,
+not an implementation detail. -/
+def anchorCostChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pageOf (body : String) : String × Array Diag :=
+    HtmlDoc.emit {} (elabStr ("\\documentclass{article}\\begin{document}" ++
+      body ++ "\\end{document}")).1
+  let page (body : String) : String := (pageOf body).1
+  -- Identical titles take the documented base, base-2, base-3 ladder.
+  let shared := page (String.join ((List.range 3).map fun _ => "\\section{Topic}"))
+  t "the first of three identical titles claims the bare slug"
+    (hasStr shared "id=\"topic\"")
+  t "the second takes -2 and the third -3"
+    (hasStr shared "id=\"topic-2\"" && hasStr shared "id=\"topic-3\"")
+  t "and no fourth id is invented" (!hasStr shared "id=\"topic-4\"")
+  t "a repeated identical title takes its number without a warning"
+    (((pageOf "\\section{Topic}\\section{Topic}").2.filter (·.code == "W0327")).isEmpty)
+  -- A *different* title folding to the same slug is named, not resolved in
+  -- silence: an in-page link written from the second title would otherwise
+  -- reach the first section with no error anywhere.
+  let clash := pageOf "\\section{Data set}\\section{Data-set}"
+  t "two different titles sharing a slug both ship an anchor"
+    (hasStr clash.1 "id=\"data-set\"" && hasStr clash.1 "id=\"data-set-2\"")
+  t "and the collision is named W0327"
+    ((clash.2.filter (·.code == "W0327")).size == 1)
+  -- Distinct slugs stay distinct at scale, and the ladder is not entered.
+  let wide := page (String.join ((List.range 4000).map fun i => s!"\\section\{Topic {i}}"))
+  t "the four-thousandth distinct section ships its own anchor, unnumbered"
+    (hasStr wide "id=\"topic-3999\"" && !hasStr wide "id=\"topic-3999-2\"")
+  -- The cost witness, in the shape that was cubic: every section shares one
+  -- slug, so every claim walks the whole ladder and the claim is the
+  -- measurement.
+  let n := 1800
+  let t0 ← IO.monoMsNow
+  let big := page (String.join ((List.range n).map fun _ => "\\section{Topic}"))
+  -- Consumed before the clock is read again: a pure `let` floats to its
+  -- first use, so a timing with nothing between the two reads measures
+  -- nothing (the FontDb.families precedent).
+  t s!"all {n} same-titled sections ship an anchor"
+    (hasStr big s!"id=\"topic-{n}\"" && hasStr big "id=\"topic\"")
+  let sharedMs := (← IO.monoMsNow) - t0
+  t s!"anchor claiming is not cubic in same-slug sections ({sharedMs} ms for {n})"
+    (sharedMs < 1500)

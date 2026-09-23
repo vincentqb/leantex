@@ -4244,14 +4244,19 @@ plus the holder's title when a *different* title collides — the W0327
 case. k assigned ids can block at most k candidates, so the first free
 one is always found among the k+1 checked. One uniqueness rule for every
 id this backend assigns: the article's sections and the deck's frames
-claim through the same door, which `getElementById` semantics require. -/
-private def claimId (taken : Array (String × String)) (base text : String) :
+claim through the same door, which `getElementById` semantics require.
+
+`taken` is keyed, not ordered: every id in it was put there by this
+function after finding it free, so the keys are distinct and the only
+question ever asked of the store is "who holds this id" — an answer no
+ordering changes. Scanning for it made a shared slug cost a cube. -/
+private def claimId (taken : Std.HashMap String String) (base text : String) :
     String × Option String := Id.run do
   let mut id := base
   let mut clash : Option String := none
   for n in [2 : taken.size + 3] do
-    match taken.find? (·.1 == id) with
-    | some (_, holder) =>
+    match taken[id]? with
+    | some holder =>
       if holder != text && clash.isNone then
         clash := some holder
       id := s!"{base}-{n}"
@@ -4265,8 +4270,8 @@ frame title's is. Recursion over the step list with threaded
 accumulators, so the spacer count is a statement
 (`track_snaps_exact`), not a reading of a loop. -/
 private def snapWalk (id text : String) (kids : Array Node)
-    (taken : Array (String × String)) (diags : Array Diag) :
-    List Nat → Array Node × Array (String × String) × Array Diag
+    (taken : Std.HashMap String String) (diags : Array Diag) :
+    List Nat → Array Node × Std.HashMap String String × Array Diag
   | [] => (kids, taken, diags)
   | k :: rest =>
     let (sid, sclash) := claimId taken s!"{id}-{k}" text
@@ -4280,7 +4285,7 @@ the first; retitle one frame, or link to '#{sid}'"))
     snapWalk id text
       (kids.push (Html.elem "div" #[]
         #[("class", "snap"), ("id", sid), ("data-snap", "")]))
-      (taken.push (sid, text)) diags rest
+      (taken.insert sid text) diags rest
 
 /-- The steps a frame with `steps` overlay steps snaps through: 1 to
 `steps`, the range both the spacer walk and the PDF handout's per-step
@@ -4293,7 +4298,7 @@ private def stepList (steps : Nat) : List Nat :=
   simp [stepList]
 
 private theorem snapWalk_count (id text : String) :
-    ∀ (ks : List Nat) (kids : Array Node) (taken : Array (String × String))
+    ∀ (ks : List Nat) (kids : Array Node) (taken : Std.HashMap String String)
       (diags : Array Diag),
       (snapWalk id text kids taken diags ks).1.size = kids.size + ks.length
   | [], _, _, _ => rfl
@@ -4309,7 +4314,7 @@ beside its one sticky stage — the count `deckStepCss` reads back as
 `--steps` and the very count the PDF handout paginates the frame by
 (its half is the owed `pages_partition_frames`). -/
 private theorem track_snaps_exact (id text : String)
-    (taken : Array (String × String)) (diags : Array Diag)
+    (taken : Std.HashMap String String) (diags : Array Diag)
     (fb : Array Ir.Block) :
     (snapWalk id text #[] taken diags
         (stepList (Ir.maxStepBlocks fb))).1.size
@@ -4340,7 +4345,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut cur : Array Node := #[]
   let mut openId : Option String := none
   -- Each assigned id with the plain text of the title that holds it.
-  let mut taken : Array (String × String) := #[]
+  let mut taken : Std.HashMap String String := {}
   let mut diags : Array Diag := #[]
   -- The epoch state threads through the article's top level exactly as
   -- through `blockNodesInto`: each node after a body declaration carries
@@ -4366,7 +4371,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
 anchor '{base}'; the second becomes '{id}'"
           (help := some s!"an in-page link '#{base}' reaches only the first; \
 retitle one section, or link to '#{id}'"))
-      taken := taken.push (id, text)
+      taken := taken.insert id text
       openId := some id
       cur := #[withEpoch cfg.epochStyle (blockNode cfg b)]
     | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
@@ -4580,7 +4585,7 @@ def emitTree (cfg : Config) (doc : Doc) :
       let mut walkDiags : Array Diag := #[]
       -- Each assigned frame id with the plain title that holds it: the
       -- same uniqueness door the article's sections claim through.
-      let mut taken : Array (String × String) := #[]
+      let mut taken : Std.HashMap String String := {}
       -- The epoch state threads through the deck's top level exactly as
       -- through `blockNodesInto`.
       let mut cfg := cfg
@@ -4640,7 +4645,7 @@ via \\chrome is the sequence both backends share"))
 anchor '{base}'; the second becomes '{id}'"
               (help := some s!"an in-page link '#{base}' reaches only the \
 first; retitle one frame, or link to '#{id}'"))
-          taken := taken.push (id, text)
+          taken := taken.insert id text
           -- The spacer anchors `<frame>-k`, claimed and built by the one
           -- walk whose count is a statement (`track_snaps_exact`); each
           -- spacer carries the `[data-snap]` door, so deep links and the

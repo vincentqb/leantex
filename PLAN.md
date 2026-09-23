@@ -7020,3 +7020,35 @@ is evidence, not a theorem.
   Recorded because a default `lualatex` comparison looks like ~3% failures.
 - 2026-09-15: the in-repo test corpus is synthetic only; real documents stay
   private and local. Acceptance bars run locally, CI runs the dummies.
+
+- 2026-09-23: the keyed-lookup layer gets an index, not a new
+  representation. Every keyed store here is an `Array (String × α)` read by
+  `find? (·.1 == k)`, and several make declaration order observable in the
+  artifact — a palette's CSS variables, a style's cascade, a token defined
+  in terms of an earlier one — so order is not negotiable. `Ir.keyIndex`
+  builds a first-wins `Std.HashMap` *beside* the array and
+  `keyIndex_find?` is the one equation that the two answer the same
+  question; every `find?`-stated theorem then transfers by rewriting with
+  it, unweakened. Applied where measurement justified it: the float-label
+  merge (50,000 labels × 50,000 rows, 6,086 ms → 28 ms, quadratic →
+  linear), reference resolution and the W0349 judge, HTML anchor claiming
+  (1,800 same-slug sections 4,468 ms → 201 ms, cubic → quadratic; the
+  probe stays linear per claim because the `base-2`, `base-3` ladder is the
+  contract, and a per-base counter would assign different ids once another
+  title's slug has taken a rung), and the two membership tests in
+  elaboration (the duplicate-`\label` test and the ref-site dedup, both
+  now keyed with their output arrays left in flow order). Three things this
+  cost to learn. A lookup hoisted into a `let` used once inside a lambda is
+  inlined back into it, so the index rebuilt per element and ran 32× slower
+  than the scan it replaced — the index must be a strict *parameter*.
+  `lake env lean --run` is the interpreter and inflated every figure by
+  ~35×, so a cost bound calibrated there passes on the broken code: cost
+  claims are measured through the compiled binary. And a proof that fought
+  the change was a factorization finding, not a tactic problem — the lookup
+  became a parameter of `resolveOneRefWith`/`floatRowLeaf`/`refDiagLeaf`,
+  which turned "index or scan" into a function equality and left the
+  matches, and their theorems, untouched. `Tokens`/`Palette`/`Styles`
+  `declare` stay association arrays: their order is artifact-observable,
+  `Theme.lean` states ~40 theorems directly over `.entries` including
+  `tokens_ext`-style structure equality from entries equality alone, and a
+  theme carries tens of entries, so the square is never reached.

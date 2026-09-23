@@ -48,6 +48,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   contentOpsChecks ref
   outputContractChecks ref
   htmlAssetChecks ref
+  anchorCostChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.
@@ -167,6 +168,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   picCacheChecks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
+  keyedLookupChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
 together so each stays a leaf and `main`'s spent elaboration budget stays

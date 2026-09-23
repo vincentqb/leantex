@@ -3,6 +3,7 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Image
 import LeanTex.Core.Math
 import LeanTex.Core.LocaleContract
+import Std.Data.HashMap
 
 namespace LeanTex.Core.Ir
 
@@ -10162,6 +10163,83 @@ structure RefBinding where
   num : String
   deriving Repr, BEq
 
+/-! ## The keyed index
+
+Every keyed store in this engine is an association array read by
+`find? (·.1 == k)`: it holds declaration order, which several stores make
+observable (a palette's CSS variables, a style's cascade, a token defined
+in terms of an earlier one). Order is therefore not negotiable, so the
+fast lookup is an *index beside* the array, never a replacement for it —
+`keyIndex_find?` is the one equation that makes the two answers the same,
+so a pass may read the index while every theorem keeps stating `find?`.
+
+First-wins insertion is what makes the equation hold: `Array.find?`
+answers with the earliest match, so a key already indexed is never
+overwritten by a later duplicate. -/
+
+private def indexStep {α : Type} (m : Std.HashMap String (String × α))
+    (e : String × α) : Std.HashMap String (String × α) :=
+  if m.contains e.1 then m else m.insert e.1 e
+
+/-- The lookup index of a keyed store: each key to its earliest entry. -/
+def keyIndex {α : Type} (xs : Array (String × α)) :
+    Std.HashMap String (String × α) :=
+  xs.foldl (init := ∅) indexStep
+
+private theorem absent_of_getElem?_none {α : Type}
+    (m : Std.HashMap String (String × α)) (k : String) (h : m[k]? = none) :
+    m.contains k = false := by
+  rw [Std.HashMap.contains_eq_isSome_getElem?, h]
+  rfl
+
+private theorem key_ne_of_absent {α : Type} (m : Std.HashMap String (String × α))
+    (e : String × α) (k : String) (hc : m.contains e.1 = true) (hk : m[k]? = none) :
+    (e.1 == k) = false := by
+  cases hEq : (e.1 == k) with
+  | true =>
+    rw [eq_of_beq hEq, absent_of_getElem?_none m k hk] at hc
+    exact absurd hc (by simp)
+  | false => rfl
+
+private theorem absent_of_beq {α : Type} (m : Std.HashMap String (String × α))
+    (e : String × α) (k : String) (hc : m.contains e.1 = false)
+    (hEq : (e.1 == k) = true) : m[k]? = none := by
+  rw [eq_of_beq hEq, Std.HashMap.contains_eq_isSome_getElem?] at hc
+  simpa using hc
+
+private theorem indexList {α : Type} :
+    ∀ (l : List (String × α)) (m : Std.HashMap String (String × α)) (k : String),
+      (l.foldl indexStep m)[k]? = m[k]?.or (l.find? (·.1 == k))
+  | [], m, k => by cases h : m[k]? <;> simp [h]
+  | e :: rest, m, k => by
+    rw [List.foldl_cons, indexList rest]
+    cases hc : m.contains e.1 with
+    | true =>
+      cases hk : m[k]? with
+      | some v => simp [indexStep, hc, hk]
+      | none => simp [indexStep, hc, hk, key_ne_of_absent m e k hc hk]
+    | false =>
+      cases hEq : (e.1 == k) with
+      | true =>
+        have hk := absent_of_beq m e k hc hEq
+        have hstep : indexStep m e = m.insert e.1 e := by simp [indexStep, hc]
+        rw [hstep, Std.HashMap.getElem?_insert, hEq]
+        simp [hk, hEq]
+      | false => simp [indexStep, hc, hEq, Std.HashMap.getElem?_insert]
+
+/-- **The index answers exactly what the scan answers.** Every keyed store
+this engine reads is an `Array (String × α)` scanned by `find?`; the index
+is the same question asked in constant time, on the same array, with the
+same first-wins tie-break. So a pass may read the index and keep every
+`find?`-stated theorem it already had, unweakened: rewriting with this
+equation turns the one into the other. -/
+theorem keyIndex_find? {α : Type} (xs : Array (String × α)) (k : String) :
+    (keyIndex xs)[k]? = xs.find? (·.1 == k) := by
+  unfold keyIndex
+  rw [← Array.foldl_toList, indexList, Std.HashMap.getElem?_empty,
+    ← Array.find?_toList]
+  rfl
+
 /-- The label table resolution spends: each key with the binding its
 `\label` took in flow order (`none`: the label stood where nothing
 numbers). Elaboration builds it — the first declaration of a key wins,
@@ -10238,35 +10316,94 @@ def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
     | none => b.num
 
+/-- One reference against a lookup. The table is reached through a function
+rather than scanned in place, so the same match serves the scan and the
+index beside it — `resolveOneRef` is this at the scan, `resolveRefs` this at
+the index, and the two differ by a function equality, never by a case. -/
+def resolveOneRefWith (loc : Locale)
+    (look : String → Option (String × Option RefBinding)) (key : String)
+    (form : RefForm) : Inline :=
+  match look key with
+  | some (_, some b) =>
+    .ref key form (refText loc form b) (some (labelAnchor key))
+  | _ => .ref key form "??" none
+
 /-- One reference against the table. A key bound to a number takes exactly
 its form's text over the binding (`refText`) and the label's anchor; a key
 the table cannot number keeps LaTeX's own `??` and no target (the
 elaborator has already named it, W0349). -/
 def resolveOneRef (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm) : Inline :=
-  match table.find? (·.1 == key) with
-  | some (_, some b) =>
-    .ref key form (refText loc form b) (some (labelAnchor key))
-  | _ => .ref key form "??" none
+  resolveOneRefWith loc (fun k => table.find? (·.1 == k)) key form
 
-/-- Resolution's one rewrite: every `.ref` is rewritten from the table
+/-- Resolution at the scan, written out: the equation every `resolveOneRef`
+theorem is proved through, so factoring the lookup out as a parameter cost
+the statements nothing. -/
+theorem resolveOneRef_scan (loc : Locale) (table : RefTable) (key : String)
+    (form : RefForm) :
+    resolveOneRef loc table key form =
+      match table.find? (·.1 == key) with
+      | some (_, some b) =>
+        .ref key form (refText loc form b) (some (labelAnchor key))
+      | _ => .ref key form "??" none := rfl
+
+/-- Resolution's one rewrite: every `.ref` is rewritten from the lookup
 (`resolveOneRef_exact` is its statement), everything else keeps its shape
 and is walked by the generic map. -/
-private def resolveRefLeaf (loc : Locale) (table : RefTable)
+private def resolveRefLeaf (loc : Locale)
+    (look : String → Option (String × Option RefBinding))
     (x : Inline) : Inline :=
   match x with
-  | .ref key form _ _ => resolveOneRef loc table key form
+  | .ref key form _ _ => resolveOneRefWith loc look key form
   | _ => x
+
+/-- The table read as a lookup: resolution's scan face, the one every
+theorem states. -/
+def refScan (table : RefTable) : String → Option (String × Option RefBinding) :=
+  fun k => table.find? (·.1 == k)
+
+/-- **The index answers the scan's question.** The lookup a resolution pass
+reads is the index beside the table, and this is the one step that makes
+that the same lookup the theorems state: the two functions are equal, so
+every `resolveOneRef` statement is a statement about the indexed pass too.
+Resolution's cost changed; its meaning did not. -/
+theorem refLook_agree (table : RefTable) :
+    (fun k => (keyIndex table)[k]?) = refScan table := by
+  funext k
+  exact keyIndex_find? table k
+
+/-- The pass over an index already built. The index is a *parameter*, not a
+`let` inside the leaf: Lean is strict, so an argument is evaluated once
+before the call, while a binding used once inside a lambda can be inlined
+back into it — which rebuilt the index per reference and cost 12× the scan
+it replaced. -/
+private def resolveRefsIdx (loc : Locale)
+    (idx : Std.HashMap String (String × Option RefBinding))
+    (xs : Array Block) : Array Block :=
+  mapBlocks (resolveRefLeaf loc (fun k => idx[k]?)) xs
+
+private def resolveRefInlinesIdx (loc : Locale)
+    (idx : Std.HashMap String (String × Option RefBinding))
+    (xs : Array Inline) : Array Inline :=
+  mapInlines (resolveRefLeaf loc (fun k => idx[k]?)) xs
 
 -- conserves: none — resolution rewrites a ref's placeholder text to its
 -- number, which is the pass's whole point; `resolveOneRef_exact` is its
 -- statement.
 def resolveRefInline (loc : Locale) (table : RefTable) (x : Inline) : Inline :=
-  mapInline (resolveRefLeaf loc table) x
+  mapInline (resolveRefLeaf loc (refScan table)) x
 
 -- conserves: none — the block face of resolveRefInline, same reason.
 def resolveRefs (loc : Locale) (table : RefTable) (xs : Array Block) : Array Block :=
-  mapBlocks (resolveRefLeaf loc table) xs
+  resolveRefsIdx loc (keyIndex table) xs
+
+/-- The block pass reads the index and means the scan: `refLook_agree`
+under the leaf, so `resolveRefs` is still `mapBlocks` of `resolveRefLeaf`
+and inherits every statement it had. -/
+theorem resolveRefs_agree (loc : Locale) (table : RefTable) (xs : Array Block) :
+    resolveRefs loc table xs = mapBlocks (resolveRefLeaf loc (refScan table)) xs := by
+  unfold resolveRefs resolveRefsIdx
+  rw [refLook_agree]
 
 /-- References resolve to what they name: when the table binds `key` to
 binding `b` — elaboration binds a key declared exactly once to the numbered
@@ -10281,7 +10418,7 @@ theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : String)
     resolveOneRef loc table key form =
       .ref key form (refText loc form b)
         (some (labelAnchor key)) := by
-  unfold resolveOneRef
+  rw [resolveOneRef_scan]
   obtain ⟨e, hmem, hkey, hval⟩ := h
   have hfind : ∃ f, table.find? (·.1 == key) = some f := by
     have : (table.find? (·.1 == key)).isSome := by
@@ -10305,7 +10442,7 @@ already named the key. -/
 theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : String)
     (form : RefForm) (h : ∀ e ∈ table, e.1 ≠ key) :
     resolveOneRef loc table key form = .ref key form "??" none := by
-  unfold resolveOneRef
+  rw [resolveOneRef_scan]
   have hfind : table.find? (·.1 == key) = none := by
     rw [Array.find?_eq_none]
     intro e hmem
@@ -10318,7 +10455,15 @@ the body does. -/
 -- conserves: none — the inline-region face of resolveRefs, same reason.
 def resolveRefInlines (loc : Locale) (table : RefTable) (xs : Array Inline) :
     Array Inline :=
-  mapInlines (resolveRefLeaf loc table) xs
+  resolveRefInlinesIdx loc (keyIndex table) xs
+
+/-- The inline-region pass reads the index and means the scan, the twin of
+`resolveRefs_agree`: a `\ref` in a running head resolves as one in the body
+does, off the same index. -/
+theorem resolveRefInlines_agree (loc : Locale) (table : RefTable) (xs : Array Inline) :
+    resolveRefInlines loc table xs = mapInlines (resolveRefLeaf loc (refScan table)) xs := by
+  unfold resolveRefInlines resolveRefInlinesIdx
+  rw [refLook_agree]
 
 /-! ## The pending census
 
@@ -10404,19 +10549,34 @@ the table knows — a `\label` that stood where nothing numbers, or no
 `\label` at all. It reads the census the gate quantifies over, so a
 reference cannot escape it without escaping the fold whose arms are all
 explicit (`refDiags_named`). -/
+private def refDiagLeaf (look : String → Option (String × Option RefBinding))
+    (spanOf : String → Option Span) (key : String) : Diag :=
+  match look key with
+  | some (_, none) =>
+    Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
+      (spanOf key)
+      (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
+      (subject := some key)
+  | _ =>
+    Diag.of .W0349 s!"no \\label\{{key}} in the document; set as '??'" (spanOf key)
+      (help := s!"declare \\label\{{key}} after the numbered thing it names")
+      (subject := some key)
+
+private def refDiagsIdx (idx : Std.HashMap String (String × Option RefBinding))
+    (spanOf : String → Option Span) (keys : Array String) : Array Diag :=
+  keys.map (refDiagLeaf (fun k => idx[k]?) spanOf)
+
 def refDiags (table : RefTable) (spanOf : String → Option Span) (doc : Doc) :
     Array Diag :=
-  (pendingRefKeys doc).map fun key =>
-    match table.find? (·.1 == key) with
-    | some (_, none) =>
-      Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
-        (spanOf key)
-        (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
-        (subject := some key)
-    | _ =>
-      Diag.of .W0349 s!"no \\label\{{key}} in the document; set as '??'" (spanOf key)
-        (help := s!"declare \\label\{{key}} after the numbered thing it names")
-        (subject := some key)
+  refDiagsIdx (keyIndex table) spanOf (pendingRefKeys doc)
+
+/-- The judge reads the index and means the scan: `refLook_agree` under the
+leaf, so W0349's census is the one the table states. -/
+theorem refDiags_agree (table : RefTable) (spanOf : String → Option Span) (doc : Doc) :
+    refDiags table spanOf doc
+      = (pendingRefKeys doc).map (refDiagLeaf (refScan table) spanOf) := by
+  unfold refDiags refDiagsIdx
+  rw [refLook_agree]
 
 /-- The key fold only grows its accumulator. -/
 private theorem pendingRefKeys_grow (l : List Unresolved) :
@@ -10461,7 +10621,8 @@ theorem refDiags_named (table : RefTable) (spanOf : String → Option Span) (doc
     (key : String) (h : Unresolved.ref key ∈ pendingNodes doc) :
     ∃ d ∈ refDiags table spanOf doc, d.mentions (.node (.ref key)) = true := by
   have hk := pendingRefKeys_mem doc key h
-  unfold refDiags
+  rw [refDiags_agree]
+  unfold refDiagLeaf refScan
   refine ⟨_, Array.mem_map_of_mem hk, ?_⟩
   cases hf : table.find? (·.1 == key) with
   | none => simp [Diag.mentions, Diag.of, Pending.key]
@@ -10583,11 +10744,31 @@ entry whose key's first `.label` stands under a captioned float takes that
 float's number; every other entry keeps elaboration's binding (headings
 and equations number at elaboration; a key bound nowhere keeps `none` and
 W0349 names it). `rows` is `floatLabelRows` over the numbered body. -/
+private def floatRowLeaf (look : String → Option (String × Option RefBinding))
+    (e : String × Option RefBinding) : String × Option RefBinding :=
+  match look e.1 with
+  | some (_, some n) => (e.1, some n)
+  | _ => e
+
+/-- The merge over an index already built. The index is a *parameter*, not
+a `let` inside the mapped function: Lean is strict, so an argument is
+evaluated once before the call, while a binding used once inside a lambda
+can be inlined back into it — which rebuilt the whole index per label and
+cost 32× the scan it replaced. -/
+private def withFloatRowsIdx (labels : RefTable)
+    (idx : Std.HashMap String (String × Option RefBinding)) : RefTable :=
+  labels.map (floatRowLeaf (fun k => idx[k]?))
+
 def withFloatRows (labels rows : RefTable) : RefTable :=
-  labels.map fun e =>
-    match rows.find? (·.1 == e.1) with
-    | some (_, some n) => (e.1, some n)
-    | _ => e
+  withFloatRowsIdx labels (keyIndex rows)
+
+/-- The merge reads the index and means the scan: `refLook_agree` under the
+leaf, the equation `withFloatRows_finds` is proved through. -/
+theorem withFloatRows_agree (labels rows : RefTable) :
+    withFloatRows labels rows
+      = labels.map (floatRowLeaf (refScan rows)) := by
+  unfold withFloatRows withFloatRowsIdx
+  rw [refLook_agree]
 
 /-- The merge keeps keys and takes exactly the collect's binding: when the
 collect's first row for `key` carries a number and elaboration recorded
@@ -10596,22 +10777,24 @@ theorem withFloatRows_finds (labels rows : RefTable) (key : String) (b : RefBind
     (hrow : rows.find? (·.1 == key) = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
     (withFloatRows labels rows).find? (·.1 == key) = some (key, some b) := by
-  unfold withFloatRows
+  rw [withFloatRows_agree]
+  unfold refScan
   obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hkey
   have hekey : e.1 = key := by simpa using Array.find?_some he
   rw [Array.find?_map]
-  have hp : ((fun x : String × Option RefBinding => x.1 == key) ∘ fun e =>
-      match rows.find? (·.1 == e.1) with
-      | some (_, some n) => (e.1, some n)
-      | _ => e) = fun e : String × Option RefBinding => e.1 == key := by
+  have hp : ((fun x : String × Option RefBinding => x.1 == key) ∘
+      floatRowLeaf (fun k => rows.find? (·.1 == k)))
+      = fun e : String × Option RefBinding => e.1 == key := by
     funext x
     cases hx : rows.find? (·.1 == x.1) with
-    | none => simp [Function.comp, hx]
+    | none => simp [Function.comp, floatRowLeaf, hx]
     | some p =>
       obtain ⟨pk, pv⟩ := p
-      cases pv <;> simp [Function.comp, hx]
+      cases pv <;> simp [Function.comp, floatRowLeaf, hx]
   rw [hp, he, Option.map_some]
-  rw [hekey, hrow]
+  unfold floatRowLeaf
+  rw [hekey]
+  simp [hrow]
 
 /-- Floats are numbered once, from the proved walk. `numberFloats` assigns
 every captioned float's number (`numberFloats_exact`: gapless, 1-based,
@@ -10633,7 +10816,7 @@ theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs : Array
         (some (labelAnchor key)) := by
   have h := withFloatRows_finds labels _ key b hrow hkey
   show resolveOneRef _ _ key form = _
-  unfold resolveOneRef
+  rw [resolveOneRef_scan]
   rw [h]
 
 def dumpDiag (d : Diag) : String :=
