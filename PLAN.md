@@ -187,6 +187,43 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — an unnumberable overlay spec on `\alt` ships one reading
+(alt-unnumberable-once, M5; engine bug, and the last of the doubling class
+the alternation node was landed to remove — `\alert<+->{place}` rendered
+"placeplace" and `\alt<+->{apple}{banana}` "applebanana" on the one page
+such a frame ships, in PDF and HTML alike). `Ir.Inline.alt`/`Ir.Block.alt`
+ink exactly one alternative per step page, but that property lived only in
+the numbered branch: where the spec cannot be numbered — `<+->`, `<.->`, or
+no spec token at all — the `\alt` arms took a fallback that warned W0105
+and spliced BOTH groups into the stream, and `Compat.alertOverlay`'s
+rewrite of `\alert<spec>{body}` to `\alt<spec>{\alert{body}}{body}` routes
+every alert spec through exactly that fallback. The invariant that was
+absent is the census one restated for the degraded path: *an overlay
+alternation inks exactly one alternative per step page, whether or not its
+spec names a step*. The fix is that one reading at both fallback sites,
+inline and block-level (`Elab.lean`, `\alt`'s two arms): the ACTIVE
+alternative — the first group, which is the styled one under the alert
+rewrite — stands on every step, the other group is not elaborated at all,
+and W0105 accounts for it. The rationale is the warning's own: the step
+model cannot number the spec, so the honest degradation is one reading and
+not two, and one reading is beamer's reading of an alert with a spec (user
+guide, `\alert<overlay specification>{text}`: the text is alerted, never
+duplicated). W0105 now says which alternative stands ("shows its first
+alternative on every step"); its help and its one-per-document key are
+unchanged, so it still fires exactly once, and the block arm's no-spec-token
+door fires it too — a group dropped with no diagnostic would be an
+unaccounted loss. A block-level unnumberable spec keeps the generic overlay
+W0105 it already had (same key, first door wins), whose text — content
+shown on every step — is true of the alternative that stands. Evidence,
+shipped pages not IR (`alertOverlayChecks`): `pageOccurs` reads exactly 1
+for the active body and 0 for the other on the single page each fixture
+ships, nothing covered, for `\alert<+->`, for inline `\alt<+->`, and for a
+block-level `\alt<+->` whose alternatives are lists; in HTML the dropped
+alternative is not declared at all (`treeOccurs` 0), so neither artifact can
+show a second copy. Those four census rows fail on the previous elaborator
+and pass on this one. A numbered spec is untouched: `\alert<2>{quince}`
+still ships two step pages, one group inked on each.
+
 2026-09-22 — a definition reaches its picture wherever it was written, and
 native draws before the boundary does (pic-boundary, M8/M8b). Three defects,
 one cause. A figure kept in its own file carries its `\usetikzlibrary` and

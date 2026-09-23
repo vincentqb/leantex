@@ -2456,11 +2456,15 @@ shown on every step" pos
 specs are not modelled")
 
 /-- The one W0105 for `\alt` without a numbered specification, outside
-the knot. -/
+the knot. An alternation inks exactly one alternative per step page, and
+an unnumberable spec does not lift that: the step model cannot say which
+page the switch happens on, so the honest degradation is the active
+alternative on every step — the styled reading for `\alert<spec>{body}`,
+as beamer reads an alert-with-spec — never both alternatives at once. -/
 private def warnAltSpec (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "spec:overlay" .W0105
-    "'\\alt' without a numbered specification shows both \
-alternatives on every step" pos
+    "'\\alt' without a numbered specification shows its first \
+alternative on every step" pos
     (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
 
@@ -3392,10 +3396,13 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let onOther := if Ir.stepPending n last 1 then ia else ib
           elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alt n last onFirst onOther)) ""
         | none =>
+          -- One reading, never two: the warning says the step model cannot
+          -- number this spec, so the active alternative — the styled one
+          -- under `\alert<spec>{body}`, as beamer reads an alert with a
+          -- spec — stands on every step, and the other is never inked.
           warnAltSpec ctx pos
           let ia ← elabInlines ctx ga
-          let ib ← elabInlines ctx gb
-          elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
+          elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
           (help := "'\\alt<2>{on step 2}{on the others}' takes a spec and TWO \
@@ -3406,19 +3413,16 @@ when it is empty — '{}'")
       let j3 := skipSpaces raws (j + 1)
       have hj3ge := skipSpaces_ge raws (j + 1)
       match hj2 : raws[j]?, hj3 : raws[j3]? with
-      | some (.group ga _), some (.group gb _) =>
+      | some (.group ga _), some (.group _ _) =>
         have hj3lt := getElem?_lt hj3
         have hwa : rawWeightList ga.toList < sliceWeight raws i :=
           body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
-        have hwb : rawWeightList gb.toList < sliceWeight raws i :=
-          body_lt_slice hj3 (by simp only [rawWeight]; omega) (by omega)
         have hadv : sliceWeight raws (j3 + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         let acc := flushText acc sb
         warnAltSpec ctx pos
         let ia ← elabInlines ctx ga
-        let ib ← elabInlines ctx gb
-        elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
+        elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
           (help := "'\\alt<2>{on step 2}{on the others}' takes a spec and TWO \
@@ -7740,8 +7744,12 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
             (if Ir.stepPending s last 1 then .alt s last ib ia else .alt s last ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
+          -- One reading at block level too: an unnumberable spec keeps the
+          -- active alternative on every step, never a second copy beside
+          -- it. W0105 accounts for the group that is not inked; it is the
+          -- one already fired for the spec when there was one to read.
+          warnAltSpec ctx pos
           blocks := blocks ++ (← elabBlocksGo ctx ga 0 #[] #[] (← get).flowGen)
-          blocks := blocks ++ (← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen)
           return (blocks, ⟨j3 + 1, by omega⟩)
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos

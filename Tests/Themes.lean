@@ -406,14 +406,47 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let (rDoc, _) := elabStr (themedDeck "One \\alert<2-3>{apple} here.")
   t "alert<2-3> is alert within its range"
     ((altOf rDoc).map (fun (n, last, _, _) => n == 2 && last == some 3) == some true)
-  -- A spec the model cannot number: the honest W0105, content still shown.
+  -- A spec the model cannot number: the honest W0105, and ONE reading on
+  -- the page. The invariant is the alternation's own — exactly one
+  -- alternative is inked per step page — and an unnumberable spec does not
+  -- lift it: with no step to switch on, the active alternative stands on
+  -- every page and the other is never inked. The fallback used to splice
+  -- both groups into the stream, so `\alert<+->{apple}` shipped
+  -- "appleapple" and `\alt<+->{apple}{banana}` "applebanana" — which only
+  -- a census over shipped pages can tell from one copy.
   let (uDoc, uDs) := elabStr (themedDeck "One \\alert<+->{apple} here.")
   t "an unnumberable alert spec warns W0105 once"
     ((uDs.filter (·.severity != .note)).map (·.code) == #["W0105"])
-  t "an unnumberable alert spec keeps the body visible"
-    (match uDoc.body with
-     | #[.frame _ _ _ _ #[.para xs]] => hasStr (Ir.plainText xs) "apple"
-     | _ => false)
+  let uc := censusOf (coveredColorsOf uDoc) (layoutOf oneFace uDoc)
+  t "an unnumberable alert spec ships one page, its body inked exactly once"
+    (uc.size == 1 && pageOccurs uc 0 "apple" == 1 && pageAllRevealed uc 0)
+  -- `\alt` itself reads the same fallback: the active alternative alone,
+  -- the other group nowhere on the page — W0105 accounts for it.
+  let (nDoc, nDs) := elabStr (deck169Frame "Pick the \\alt<+->{apple}{banana} now.")
+  t "an unnumberable alt spec warns W0105 once"
+    ((nDs.filter (·.severity != .note)).map (·.code) == #["W0105"])
+  let nc := censusOf (coveredColorsOf nDoc) (layoutOf oneFace nDoc)
+  t "an unnumberable alt ships its active alternative exactly once, alone"
+    (nc.size == 1 && pageOccurs nc 0 "apple" == 1 &&
+      pageOccurs nc 0 "banana" == 0 && pageAllRevealed nc 0)
+  -- The block-level arm is a second fallback site, reached when either
+  -- alternative is block-shaped: it owes the same one reading.
+  let (bDoc, bDs) := elabStr (deck169Frame
+    "\\alt<+->{\\begin{itemize}\\item Apricot\\end{itemize}}\
+{\\begin{itemize}\\item Blueberry\\end{itemize}}")
+  t "an unnumberable block-level alt warns W0105 once"
+    ((bDs.filter (·.severity != .note)).map (·.code) == #["W0105"])
+  let bc := censusOf (coveredColorsOf bDoc) (layoutOf oneFace bDoc)
+  t "an unnumberable block-level alt ships its active alternative alone"
+    (bc.size == 1 && pageOccurs bc 0 "Apricot" == 1 &&
+      pageOccurs bc 0 "Blueberry" == 0 && pageAllRevealed bc 0)
+  -- HTML reads the same elaboration: the dropped alternative is not
+  -- declared there either, so neither artifact can show a second copy.
+  let nHtml := (HtmlDoc.emit {} nDoc).1
+  let (_, nBody, _) := HtmlDoc.emitTree {} nDoc
+  t "html ships the unnumberable alt's active alternative once, and only it"
+    (treeOccurs nBody "apple" == 1 && treeShownOccurs nBody "apple" == 1 &&
+      treeOccurs nBody "banana" == 0 && !hasStr nHtml "banana")
   -- Shipped pages: steps are pages, the body is inked ONCE on each, and
   -- no page covers it — alternation replaces, it never dims.
   let (cDoc, _) := elabStr (deck169Frame "One \\alert<2>{apple} here.")
