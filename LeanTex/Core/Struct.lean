@@ -321,37 +321,72 @@ page artifacts the furniture pass writes and flags as such; they are not
 document structure and have no node here. -/
 def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
 
--- Censuses over the tree, each a `List` companion with an accumulator.
+-- **One walk over the tree.** The four censuses below differ in three
+-- answers and nothing else, so those three are the walk's fields. Read off
+-- the four callers rather than invented:
+--
+--   * `leaf` takes the id because one caller of four reads it (`leaves`
+--     pairs it with the leaf; the text and image censuses ignore it).
+--   * `enter` is what a node ships before its content: only the outline
+--     ships anything (`Kind.outlineEmit`), the other three thread the
+--     accumulator through.
+--   * `descends` is whether the content is read at all — the one thing a
+--     leaf fold cannot say. `.aside` is a side channel, so the outline
+--     declines its subtree. It is a function of the kind alone, which is
+--     what lets a proof reduce it without unfolding the walk.
+--
+-- No close event and no context, unlike `Ir.CtxFold`: none of the four
+-- needs to know where a container ends, and all four thread one
+-- accumulator left to right. Structural mutual recursion through `List`,
+-- the knot the projection walks already tie.
+
+structure NodeFold (α : Type) where
+  leaf : α → Nat → Leaf → α
+  enter : α → Kind → α
+  descends : Kind → Bool
 
 mutual
 
-/-- The tree's text census: every leaf's text, in preorder. -/
-def leafTextList (acc : String) : List Node → String
+def foldNodeList (f : NodeFold α) (acc : α) : List Node → α
   | [] => acc
-  | n :: rest => leafTextList (leafTextOne acc n) rest
+  | n :: rest => foldNodeList f (foldNode f acc n) rest
 
-def leafTextOne (acc : String) : Node → String
-  | .leaf _ l => acc ++ l.census
-  | .node _ kids => leafTextList acc kids.toList
+def foldNode (f : NodeFold α) (acc : α) : Node → α
+  | .leaf id l => f.leaf acc id l
+  | .node kind kids =>
+    match f.descends kind with
+    | true => foldNodeList f (f.enter acc kind) kids.toList
+    | false => f.enter acc kind
 
 end
+
+-- The four censuses, each three answers over that walk.
+
+/-- The tree's text census: every leaf's text, in preorder. -/
+def leafTextFold : NodeFold String where
+  leaf := fun acc _ l => acc ++ l.census
+  enter := fun acc _ => acc
+  descends := fun _ => true
+
+def leafTextList (acc : String) (ns : List Node) : String := foldNodeList leafTextFold acc ns
+
+def leafTextOne (acc : String) (n : Node) : String := foldNode leafTextFold acc n
 
 def leafText (ns : Array Node) : String := leafTextList "" ns.toList
 
 def Tree.text (t : Tree) : String := leafText t.children
 
-mutual
-
 /-- Every leaf with its id, in preorder. -/
-def leavesList (out : Array (Nat × Leaf)) : List Node → Array (Nat × Leaf)
-  | [] => out
-  | n :: rest => leavesList (leavesOne out n) rest
+def leavesFold : NodeFold (Array (Nat × Leaf)) where
+  leaf := fun out id l => out.push (id, l)
+  enter := fun out _ => out
+  descends := fun _ => true
 
-def leavesOne (out : Array (Nat × Leaf)) : Node → Array (Nat × Leaf)
-  | .leaf id l => out.push (id, l)
-  | .node _ kids => leavesList out kids.toList
+def leavesList (out : Array (Nat × Leaf)) (ns : List Node) : Array (Nat × Leaf) :=
+  foldNodeList leavesFold out ns
 
-end
+def leavesOne (out : Array (Nat × Leaf)) (n : Node) : Array (Nat × Leaf) :=
+  foldNode leavesFold out n
 
 def leaves (ns : Array Node) : Array (Nat × Leaf) := leavesList #[] ns.toList
 
@@ -365,40 +400,35 @@ def leafCountInlines (xs : Array Inline) : Nat := (leaves (inlinesRaw #[] xs.toL
 /-- How many leaves the tree gives a block sequence. -/
 def leafCountBlocks (bs : Array Block) : Nat := (leaves (blocksRaw #[] bs.toList)).size
 
-mutual
-
 /-- The outline headings, in preorder: every `.heading`'s level. An
 `.aside` is a side channel and never ships a heading, as `headingLevels`
-reads the speaker note it comes from. -/
-def headingsList (out : Array Nat) : List Node → Array Nat
-  | [] => out
-  | n :: rest => headingsList (headingsOne out n) rest
+reads the speaker note it comes from — the one census that declines a
+subtree, and it declines it by the classification, not by a walk of its
+own. -/
+def headingsFold : NodeFold (Array Nat) where
+  leaf := fun out _ _ => out
+  enter := Kind.outlineEmit
+  descends := Kind.outlineDescends
 
-def headingsOne (out : Array Nat) : Node → Array Nat
-  | .leaf _ _ => out
-  | .node kind kids =>
-    match kind.outlineDescends with
-    | true => headingsList (kind.outlineEmit out) kids.toList
-    | false => kind.outlineEmit out
+def headingsList (out : Array Nat) (ns : List Node) : Array Nat := foldNodeList headingsFold out ns
 
-end
+def headingsOne (out : Array Nat) (n : Node) : Array Nat := foldNode headingsFold out n
 
 def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
 
 def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
 
-mutual
-
 /-- Every image leaf's source and text alternative, in preorder. -/
-def imagesList (out : Array (String × String)) : List Node → Array (String × String)
-  | [] => out
-  | n :: rest => imagesList (imagesOne out n) rest
+def imagesFold : NodeFold (Array (String × String)) where
+  leaf := fun out _ l => l.imageCensus out
+  enter := fun out _ => out
+  descends := fun _ => true
 
-def imagesOne (out : Array (String × String)) : Node → Array (String × String)
-  | .leaf _ l => l.imageCensus out
-  | .node _ kids => imagesList out kids.toList
+def imagesList (out : Array (String × String)) (ns : List Node) : Array (String × String) :=
+  foldNodeList imagesFold out ns
 
-end
+def imagesOne (out : Array (String × String)) (n : Node) : Array (String × String) :=
+  foldNode imagesFold out n
 
 def images (ns : Array Node) : Array (String × String) := imagesList #[] ns.toList
 
