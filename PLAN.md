@@ -497,6 +497,59 @@ point, so its call necessarily names a second command; the hook's own
 contribution is pinned by `hookChecks`, which compares the two replay points
 directly.
 
+2026-09-23 — the last three reachable driver diagnostics become
+observations: W0379, W0011 and N0016 were named as the next slice this
+morning, and they are now three rows in `driverProbes`. Both decisions sat
+fused to a host scan, which is why they were left: the math face was
+decided inside the 120-line block in `buildFontSet` that also performs the
+scan, and the cold boundary answer inside `resolvePictures`, next to the
+process spawn. The fusion was the defect, not the host dependency. Which
+faces exist is the machine's answer; what the engine *does* with a set of
+faces is a decision, and handed the faces rather than fetching them it is
+the same decision on every host. So `FontEnv.resolveMath` takes the scan's
+result as an argument and returns the face, the loaded set, and what it
+decided (W0011 for a declared face with no MATH table, N0016 for a face the
+engine chose), and `Boundary.coldPicture` takes the cache directory and
+returns either the earlier render that serves or W0379. `Main.lean` keeps
+what is genuinely the host's: which roots to scan, whether a tool is
+runnable, and printing.
+
+Hermeticity came out of the same split rather than needing a new rule. The
+two math probes hand the decision exactly the faces the suite ships
+(`tests/corpus/fonts`, the directory `Tests.lean` already scans instead of
+the host), so the family the engine picks and the path it names are
+repository facts: Fira Math as Fira Sans's designed companion, Fira Math
+again as the first MATH-table face, Open Sans as the declared face that has
+no MATH table. The boundary probe reads the harness's own empty sandbox as
+its cache, and W0379's message names no path at all. Two golden lines moved,
+both in the same direction: a constructed value invented from a host that
+happens to have TeX Gyre Pagella, replaced by what the decision really
+returns over the shipped corpus. No message text changed — only the
+arguments, which now come from a run.
+
+Each probe bites, checked by breaking the decision it observes: neutering
+the W0011 push, the N0016 push, and the W0379 return each failed exactly
+three checks (the probe's "still emits it", the witness's "fires it", and
+the golden block), where the constructed witnesses had been green through
+the same neutering. Live evidence too, from the same binary: a formula
+document on this host now names its math face from the moved decision,
+which is the code path the hermetic probe exercises with different inputs.
+
+What stays constructed is unchanged and deliberate: E0401, E0403 and E0404
+are decided against the host itself (no font at all, its nearest family
+names, a file its scan indexes and the parser rejects), and W0378 and E0382
+carry an external tool's own words, so probing either would put a
+per-machine string in the golden. W0013's projection still has no home.
+With this slice the probeable set is closed: every driver code that can be
+observed without asserting a fact about this machine now is.
+
+The `Cli/FontEnv.lean` wart named this morning is gone: it and the new
+`Cli/Boundary.lean` are in the `LeanTex.lean` roll-up, and the direct
+imports in `Main.lean` and `Tests/Diag.lean` are dropped. The CLI surface is
+untouched — no flag added, removed or read differently, and every phase and
+diagnostic line is byte-identical, this being a refactor behind the same
+surface rather than a migration.
+
 2026-09-23 — five driver diagnostics stop being claims and start being
 observations; the effects-as-data rule reaches the driver's own decisions.
 The probe mechanism landed this morning with two rows (E0501, E0502) and a
