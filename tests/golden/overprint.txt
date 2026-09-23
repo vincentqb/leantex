@@ -1,0 +1,70 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11
+palette fg #292524
+palette bg #FDFCF9
+palette alert #0B66C2
+palette example #0F7A52
+palette muted #696664
+palette progressfg #0B66C2
+palette progressbg #CDDEEE
+palette separator #0B66C2
+palette standoutfg #FDFCF9
+palette standoutbg #0B66C2
+palette covered 38%
+token progressheight 1pt
+token frametitlepadding 840/1000em
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer right framenumber
+frame
+  title
+    text "Three readings"
+  alt 1-1
+    first page
+      para
+        text "The lone opening reading."
+    other page
+      alt 2-2
+        first page
+          alt 3-3
+            first page
+            other page
+              para
+                text "The closing reading opens a paragraph."
+              para
+                text "And ends on a second paragraph."
+        other page
+          list unordered
+            item
+              para
+                text "A listed point on the middle step."
+            item
+              para
+                text "A second listed point beside it."
+frame
+  title
+    text "A line that stands"
+  para
+    text "Standing above every reading."
+  para
+    alt 1-1
+      first page
+        text " Shown on the opening step only. "
+      other page
+        alt 2-2
+          first page
+          other page
+            text " Shown on the later step only. "
+frame
+  title
+    text "Unnumbered"
+  para
+    text "A reading kept as written."
+-- diagnostics
+note[N0100] 12:1 '\begin{overprint}' → \alt alternation, one item per overlay
+note[N0100] 28:1 '\begin{overprint}' → \alt alternation, one item per overlay
+note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+warning[W0302] 35:1 unknown environment '{overprint}'; its body is kept | help: \defineenv{name}(...) {begin} {end} declares one

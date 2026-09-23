@@ -187,6 +187,45 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — the overprint slice pays its index row and its fixture
+(overprint-evidence, M5; the two obligations the overprint-alt entry below
+shipped without). `{overprint}` elaborated onto nested alternation with
+census checks over `Layout.Out` but with no `tests/compat-index` row and no
+corpus fixture, so the claim "beamer's overprint works" was held by
+hand-built decks inside one check block and by nothing a reader of the
+index or the corpus could see.
+
+The index row's obstacle was the header: `tests/compat-index/beamer.txt`
+scoped itself to "beamer user guide §12.7 (Splitting a Frame into Multiple
+Columns)", and an overprint row under that header would claim coverage the
+header does not carry. The header now names §9.5 (Dynamically Changing Text
+or Images) beside §12.7 and covers BOTH environments that section
+documents, which is what naming a section means here: `overprint` as three
+`impl` rows (two items, and an item holding a list), the spec-less
+`\onslide` as `refuse:W0302` — beamer reads a bare `\onslide` as "on every
+overlay", so there is no alternation in it and the body stands as one
+reading — and `overlayarea`, which the engine does not model at all, as
+`refuse:W0302` with its two size arguments landing as E0336 beside it.
+Recorded for the owner of Compat.lean: `overprintScan`'s docstring cites
+"beamer manual §9.6.2" for the items-are-alternatives reading, but the
+guide's own source (`beamerug-overlays.tex`) puts the `overprint`
+environment under §9.5's "Dynamically Changing Text or Images"; §9.6 is
+Advanced Overlay Specifications. This entry's rows cite §9.5.
+
+The fixture is `tests/corpus/overprint.tex`, six shipped pages across three
+frames, and its `censusTable` row states what the pages show — the ABSENCE
+of the other readings on a step page is the row that names the defect,
+since a kept body stacked all of them on every page and no page claim could
+tell one copy from three. Covered shapes beyond the happy path: an item
+holding a list (which ships its markers, alone on its step), an item holding
+two paragraphs (both shipped, on two baselines — the block level the
+paragraph fence exists to reach), content standing before the first item
+(inked on every step of its frame), the reading the rewrite refuses to
+number (shipped once, not several), and the frame number holding across each
+frame's step pages — the readings are steps of one frame, not frames of
+their own. One row quantifies over all six pages to say nothing is ever
+dimmed: alternation replaces, and covering is the other mechanism.
+
 2026-09-23 — an unnumberable overlay spec on `\alt` ships one reading
 (alt-unnumberable-once, M5; engine bug, and the last of the doubling class
 the alternation node was landed to remove — `\alert<+->{place}` rendered

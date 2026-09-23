@@ -810,6 +810,43 @@ def censusTable :
     ("the dimmed beats still ship", pageHas c 0 "Second beat."),
     ("the last step reveals everything", pageAllRevealed c 2),
     ("pause dims what follows it", pageCovered c 3 "After the pause.")]),
+  -- `{overprint}` is alternation, and alternation is replacement: the row
+  -- that names the defect is the ABSENCE of the other readings on a step
+  -- page, since keeping the body stacked all of them on every page and no
+  -- page claim could tell. Covering is the other mechanism and stays out
+  -- of it — nothing here is ever dimmed.
+  ("overprint", fun _ c => [
+    ("a page per step across the three frames: three, two, one", c.size == 6),
+    ("the opening step inks its one reading and neither of the others",
+      pageOccurs c 0 "The lone opening reading." == 1 &&
+        !pageHas c 0 "A listed point on the middle step." &&
+        !pageHas c 0 "The closing reading opens a paragraph."),
+    ("an item holding a list steps whole, markers and all, alone on its step",
+      pageHas c 1 "• A listed point on the middle step." &&
+        pageHas c 1 "• A second listed point beside it." &&
+        !pageHas c 1 "The lone opening reading."),
+    ("an item holding two paragraphs ships both, on two baselines",
+      pageHas c 2 "The closing reading opens a paragraph." &&
+        pageHas c 2 "And ends on a second paragraph." &&
+        ((lineYOf c 2 "opens a paragraph").bind fun y1 =>
+          (lineYOf c 2 "second paragraph").map fun y2 => decide (y1 < y2)).getD false),
+    ("content before the first item stands on every step of its frame",
+      pageOccurs c 3 "Standing above every reading." == 1 &&
+        pageOccurs c 4 "Standing above every reading." == 1),
+    ("each later reading ships on its own step page only",
+      pageOccurs c 3 "Shown on the opening step only." == 1 &&
+        !pageHas c 3 "Shown on the later step only." &&
+        pageOccurs c 4 "Shown on the later step only." == 1 &&
+        !pageHas c 4 "Shown on the opening step only."),
+    ("a reading is inked at full colour: an alternative is replaced, never dimmed",
+      (List.range 6).all fun i => pageAllRevealed c i),
+    ("the reading the rewrite refuses to number ships once, not several",
+      pageOccurs c 5 "A reading kept as written." == 1),
+    ("the readings are steps of one frame, not frames of their own: the \
+frame number holds across each frame's step pages",
+      (List.range 6).map (fun i =>
+        (c[i]?.bind fun p => (p.lines.find? (·.furniture)).map (·.text)).getD "")
+        == ["1", "1", "1", "2", "2", "3"])]),
   ("notes", fun _ c => [
     ("one page", c.size == 1),
     ("the note never ships on the handout", !hasStr (censusText c) "Say hello"),

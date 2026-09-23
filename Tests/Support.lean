@@ -123,7 +123,7 @@ def deck169Frame (body : String) : String :=
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "deck1610", "themed", "latex-idioms", "wrapper",
-   "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
+   "centering", "columns", "overlays", "overlays-blocks", "overprint", "notes", "furniture",
    "chrome", "footer-left", "footer-mixed", "footer-collide", "lists",
    "lists-styled", "lists-deck", "headroom",
    "marker-styled", "marker-content",

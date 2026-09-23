@@ -2320,6 +2320,7 @@ def pdfCensusTable :
   ("columns", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("overlays", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("overlays-blocks", (12, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("overprint", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("notes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("furniture", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("chrome", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

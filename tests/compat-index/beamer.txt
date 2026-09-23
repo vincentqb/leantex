@@ -1,10 +1,23 @@
-# source: beamer user guide §12.7 (Splitting a Frame into Multiple Columns) —
-# the columns environment, the column environment, and the \column command
-# form. beamer is a class (it maps onto slides), so its rows probe a frame
-# body under \documentclass{beamer}: the `frame` place. Both column
-# spellings elaborate to the one columns row; a \column that is not at the
-# top level of a columns body starts no column and is refused by name.
+# source: beamer user guide §12.7 (Splitting a Frame into Multiple Columns)
+# and §9.5 (Dynamically Changing Text or Images) — §12.7's columns
+# environment, column environment and \column command form, and §9.5's two
+# environments, overprint and overlayarea. beamer is a class (it maps onto
+# slides), so its rows probe a frame body under \documentclass{beamer}: the
+# `frame` place. Both column spellings elaborate to the one columns row; a
+# \column that is not at the top level of a columns body starts no column
+# and is refused by name.
+# §9.5's two environments take opposite stances, and the rows say which.
+# overprint is alternation: one \onslide item inked per overlay step, an
+# item holding block content included. An \onslide with no <spec> has no
+# alternation in it (beamer reads a bare \onslide as "on every overlay"),
+# so that body stands as written, as ONE reading, with W0302 naming the
+# loss. overlayarea is not modelled: its body is kept under W0302 too, and
+# its two size arguments go with the unknown wrapper (E0336 beside it).
 frame impl \begin{columns}[T]\begin{column}{0.5\textwidth}x\end{column}\begin{column}{0.5\textwidth}y\end{column}\end{columns}
 frame impl \begin{columns}[T,onlytextwidth]\column{0.5\textwidth}x\column{0.5\textwidth}y\end{columns}
 frame impl \begin{columns}\column{0.5\textwidth}x\begin{column}{0.5\textwidth}y\end{column}\end{columns}
 frame refuse:W0104 \column{0.5\textwidth}x
+frame impl \begin{overprint}\onslide<1> A first reading.\onslide<2> A second reading.\end{overprint}
+frame impl \begin{overprint}\onslide<1>\begin{itemize}\item A listed point.\end{itemize}\onslide<2> A second reading.\end{overprint}
+frame refuse:W0302 \begin{overprint}\onslide A reading with no step.\onslide<2> A second reading.\end{overprint}
+frame refuse:W0302 \begin{overlayarea}{\textwidth}{3cm}\only<1>{A first reading.}\only<2>{A second reading.}\end{overlayarea}

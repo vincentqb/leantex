@@ -1,0 +1,40 @@
+% Invented fixture: beamer's {overprint} as alternation. One item inked per
+% overlay step and the others absent — never several readings stacked, which
+% is what keeping the body did. Three items, one an inline run, one a list,
+% one two paragraphs, so an item holding block content steps whole; a second
+% frame puts content before the first item, which stands on every step; a
+% third frame holds the reading the rewrite refuses to number, kept once.
+\documentclass[aspectratio=169]{beamer}
+
+\begin{document}
+
+\begin{frame}{Three readings}
+\begin{overprint}
+\onslide<1> The lone opening reading.
+\onslide<2>
+\begin{itemize}
+\item A listed point on the middle step.
+\item A second listed point beside it.
+\end{itemize}
+\onslide<3>
+The closing reading opens a paragraph.
+
+And ends on a second paragraph.
+\end{overprint}
+\end{frame}
+
+\begin{frame}{A line that stands}
+Standing above every reading.
+\begin{overprint}
+\onslide<1> Shown on the opening step only.
+\onslide<2> Shown on the later step only.
+\end{overprint}
+\end{frame}
+
+\begin{frame}{Unnumbered}
+\begin{overprint}
+\onslide A reading kept as written.
+\end{overprint}
+\end{frame}
+
+\end{document}
