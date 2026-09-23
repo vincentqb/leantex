@@ -116,8 +116,8 @@ error[E0382]: 'lualatex' drew nothing for this picture; the page would carry an 
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
 ── E0402 (dropped) LEANTEX_FONT is unusable
-error[E0402]: LEANTEX_FONT '/tmp/face.ttf' does not exist
-error[E0402]: cannot use LEANTEX_FONT '/tmp/face.ttf': not a TrueType or OpenType file
+error[E0402]: LEANTEX_FONT 'face.ttf' does not exist
+error[E0402]: cannot use LEANTEX_FONT 'README.md': unsupported font format (need TrueType or CFF OpenType)
 ── E0403 (dropped) no installed font family by that name
 error[E0403]: no installed font family named 'Sourse Serif Pro'
   help: did you mean: Source Serif Pro? — `leantex fonts` lists every family
@@ -186,7 +186,7 @@ warning[W0006]: 'Demo Serif' declares 'DemoSerif-Bold.otf' as its bold face, whi
 warning[W0007]: running head/foot is paged-media furniture; omitted from HTML
   help: body content reaches both backends: move the masthead there
 ── W0008 (config) \fonts dir is not a directory
-warning[W0008]: '\fonts' dir 'fonts' is not a directory (/documents/fonts); looking elsewhere
+warning[W0008]: '\fonts' dir 'fonts' is not a directory (./fonts); looking elsewhere
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
 warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker

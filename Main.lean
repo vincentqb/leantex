@@ -1,4 +1,5 @@
 import LeanTex
+import LeanTex.Cli.FontEnv
 
 open LeanTex.Core LeanTex.Cli
 
@@ -80,17 +81,6 @@ def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
   ((List.range 3).flatMap fun slot =>
     [((slot, 400, false), 0), ((slot, 700, false), 0),
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
-
-/-- `LEANTEX_FONT` (a path) overrides the default face for a document that
-declares no `\fonts`: one face serves every slot and variant, no scan. -/
-def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
-  if ← System.FilePath.pathExists path then
-    let data ← IO.FS.readBinFile path
-    match Font.parse data with
-    | .ok f => return .ok (f, path)
-    | .error e => return .error (DriverDiag.envFontUnusable path e)
-  else
-    return .error (DriverDiag.envFontMissing path)
 
 /-- TeX Live's font roots, asked of kpsewhich when it is installed, so
 `--font-dir` is almost never needed. `--show-path` returns the expanded list.
@@ -187,20 +177,13 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     && spec.math.isNone
   if bare then
     if let some path ← IO.getEnv "LEANTEX_FONT" then
-      match ← loadOverride path with
+      match ← FontEnv.loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
         return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
   let mut diags : Array Diag := #[]
-  let mut docDirs : List String := []
-  for d in spec.dirs do
-    let d := if d.endsWith "/" && d.length > 1 then (d.dropEnd 1).toString else d
-    let p := System.FilePath.mk d
-    let p := if p.isAbsolute then p else ((System.FilePath.mk file).parent.getD ".") / p
-    if ← p.isDir then
-      docDirs := docDirs ++ [p.toString]
-    else
-      diags := diags.push (DriverDiag.fontsDirMissing d p.toString)
+  let (docDirs, dirDiags) ← FontEnv.resolveDocDirs file spec.dirs
+  diags := diags ++ dirDiags
   let t ← IO.monoMsNow
   let faces ← FontDb.scanRoots
     (docDirs ++ (← FontDb.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))

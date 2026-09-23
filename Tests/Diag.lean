@@ -1,4 +1,5 @@
 import Tests.Support
+import LeanTex.Cli.FontEnv
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -109,7 +110,18 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
         "\\begin{document}\n\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}\n" ++
         "\\end{document}\n"
       let (raws, _) := Parse.parse "doc.tex" (Lex.lex "doc.tex" src).1
-      return (← Input.resolveData "doc.tex" raws).2)]
+      return (← Input.resolveData "doc.tex" raws).2),
+    (.E0402, fun _ => do
+      let mut ds : Array Diag := #[]
+      for path in ["face.ttf", "README.md"] do
+        match ← FontEnv.loadOverride path with
+        | .error d => ds := ds.push d
+        | .ok _ => pure ()
+      return ds),
+    (.W0008, fun _ => do
+      let doc := (elabStr ("\\documentclass{article}\n\\fonts{ dir = \"fonts\" }\n" ++
+        "\\begin{document}\nx\n\\end{document}\n")).1
+      return (← FontEnv.resolveDocDirs "doc.tex" doc.fonts.dirs).2)]
 
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
@@ -172,8 +184,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .E0334 => dvE (dvDoc "" ("\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}\n" ++
       "orphaned\n\\end{ifbackend}\\end{ifbackend}"))
   | .E0401 => #[DriverDiag.noFont]
-  | .E0402 => #[DriverDiag.envFontMissing "/tmp/face.ttf",
-      DriverDiag.envFontUnusable "/tmp/face.ttf" "not a TrueType or OpenType file"]
+  | .E0402 => probed .E0402
   | .E0403 => #[DriverDiag.familyMissing "Sourse Serif Pro" ["Source Serif Pro"] 0,
       DriverDiag.familyMissing "Kaputt Grotesk" [] 12]
   | .E0404 => #[DriverDiag.fontFileUnusable "fonts/Broken-Regular.otf"
@@ -244,7 +255,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       | _ => #[]
     ask none ++ ask (some "DemoSerif-Bold.otf")
   | .W0007 => dvH (dvDoc "\\runninghead{name}\n" "x")
-  | .W0008 => #[DriverDiag.fontsDirMissing "fonts" "/documents/fonts"]
+  | .W0008 => probed .W0008
   | .W0009 => dvL mapped "for all is \u2200 set"
   | .W0010 => dvL one (dvDoc "" (String.join
       ((List.range 5).map fun _ => "\\begin{itemize}\\item x\n") ++
