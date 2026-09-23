@@ -373,6 +373,39 @@ theorem holds the fact the oracle used to carry alone.
   is now correct rather than phantom — it was left untouched because
   Ir.lean was held elsewhere this round.
 
+2026-09-23 — the last five phantom citations resolved; `citePhantomKnown` is
+empty and stays. All five were cited from Ir.lean, and not one was a missing
+proof: every fact was held, by something other than the name written down.
+Two called an oracle "the statement" and now name the oracle — the algorithm
+line spelling both backends read (`algorithmBackendChecks`; the theorem still
+waits on HtmlDoc's nesting builder leaving its match arm, which is another
+slice's this round), and the boundary request's byte-identity
+(`boundaryChecks`), where determinism is definitional and no theorem was ever
+owed. One named the equation a deleted one-line footer renderer carried; the
+declaration its docstring is attached to, `Chrome.footBand_projects`, carries
+it now, so the dead name goes and the sentence keeps its claim. Two had a
+live holder one sentence away and did not say the name: `langWrap_text`,
+three lines below its own label, and `pages_partition_frames` over
+`Ir.frameSteps`.
+
+Where checking differed from the rows: the `pages_count_frame_steps` row read
+the prose as false about Obligations.lean stating a theorem over
+`Ir.frameSteps`. It is not — `pages_partition_frames`' second conjunct is
+literally `= frameSteps doc.body[i]`, so the def does carry an owed statement
+and only the name was wrong. The distinction matters for the repair a reader
+would reach for: the sentence needed a name substituted, not a claim
+withdrawn. The other four rows held as recorded.
+
+What the gate cannot see, left standing: `algorithm_lines_agree` is also
+named in `--` comments in HtmlDoc.lean and Layout.lean, which the gate does
+not read, and both files are held elsewhere this round. Each points at the
+same claim the oracle holds, so neither is a guarantee reading as held; they
+are stale handles to sweep when those files are next open — and they are why
+the exact check (`Lean.findDocString?` over the environment, resolving each
+backticked token with the real name resolver) would still be worth building:
+it would see the docstrings exactly and, unlike a comment grep, know which
+prose is a claim.
+
 2026-09-23 — four more phantom citations resolved; five are one word in a
 file no sweep has held, and the allowlist stays after them. The nine the
 first sweep left were checked against the tree rather than read: under

@@ -4298,8 +4298,8 @@ def Chrome.footBand (c : Chrome) (frameFoot : Option (Array Inline))
 /-- The band is a projection of the one slot pair: a left band slot's
 content is the pair's left component, a right one's the right — so the
 backends can only diverge by rendering the same pair, never by resolving
-different pairs (the role `footLine_eq_slots` played for the deleted
-one-line rendering). -/
+different pairs. A deleted one-line renderer once carried this as its own
+equation; the statement below carries it now. -/
 theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline))
     (sec : Array Inline) (n total : Nat) {s : BandSlot}
     (h : s ∈ c.footBand ff sec n total) :
@@ -6356,8 +6356,10 @@ end
 frame, none for anything else. A frame projection, not a measure walk —
 only a frame opens handout duplicates, whatever block kinds arrive later —
 and the `frames_sections` census (deckStepChecks) holds it to the shipped
-page count. The page-count obligation (`pages_count_frame_steps`,
-Obligations.lean) states its theorem over this def. -/
+page count. The owed obligation `pages_partition_frames`
+(Obligations.lean) states the page side over this def: every shipped page
+is attributed to a frame, and frame k's pages number exactly its overlay
+steps — this count, summed over the body. -/
 def frameSteps (b : Block) : Nat :=
   if let .frame _ _ _ _ body := b then max 1 (maxStepBlocks body) else 0
 
@@ -6654,8 +6656,8 @@ def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
   #[.styled (.lang tag) xs]
 
 /-- The language attribute is pure markup: tagging content ships exactly
-the text census the content already had — `language_attribute_text_free`,
-an instance of `wrap_text` because the census ignores style wrappers. -/
+the text census the content already had — `langWrap_text` below, an
+instance of `wrap_text` because the census ignores style wrappers. -/
 theorem langWrap_text (tag : String) :
     Conserves plainText (langWrap tag) :=
   wrap_text (.styled (.lang tag)) fun _ => rfl
@@ -9500,9 +9502,10 @@ the preamble declarations a standalone needs (collected from the document
 by the elaborator's closed list), the document's font roles
 (`fontLines`), the palette roles the body mentions (`paletteDecls`, as
 `colorDeclLine`s), and the picture as written. The request is a pure
-function of the document — `boundary_request_deterministic` holds by
-that purity: two runs over one document state byte-identical requests,
-so the cache key means something. -/
+function of the document: two runs over one document state byte-identical
+requests, so the cache key means something. Determinism here is
+definitional — no theorem states a pure function's purity, and
+`boundaryChecks` checks the bytes agree. -/
 def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
     (body : String) : String :=
   "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++

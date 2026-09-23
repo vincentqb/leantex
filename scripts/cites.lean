@@ -90,10 +90,22 @@ corrected (the theorem is written, the claim is restated in prose, or the
 dead name is deleted).
 
 Sixteen stood when the text-scanning gate landed; eleven were resolved over
-two sweeps, and the five that remained are all cited from
-`LeanTex/Core/Ir.lean`. PLAN 2026-09-23 carries the accounts. A row names the
-anchor declaration rather than a line: every line number the first sweep
-recorded had moved by the second.
+two sweeps, and the five that remained were all cited from
+`LeanTex/Core/Ir.lean`. Those five are now gone too, and not one of them
+needed a proof it did not have: four were mislabels, where the fact was
+held by something other than the name written down -- an oracle called "the
+statement" twice (the boundary request's byte-identity, `boundaryChecks`;
+a pure function's determinism is definitional, so no theorem was ever owed
+there), an equation a deleted one-line renderer carried and its own
+declaration now states, and two live holders one sentence away that did
+not say their names (`langWrap_text`, three lines below its own label, and
+`pages_partition_frames`, the record Obligations.lean actually states over
+`Ir.frameSteps`). The fifth, `algorithm_lines_agree`, was the one that did
+owe a proof: the HTML nesting builder was factored out of its match arm so
+a statement had something to range over, and the theorem was written.
+PLAN 2026-09-23 carries the accounts. A row names the anchor declaration
+rather than a line: every line number the first sweep recorded had moved
+by the second.
 
 Two rows arrived with the resolver, and neither is new debt -- both were
 standing phantoms the text scan could not see, and each is one word to
@@ -129,11 +141,11 @@ spelling, so the gate can fire on prose that makes no claim -- a docstring
 may name a deleted theorem as history -- and a false positive needs a
 parking place that names the real holder, or the next reader silences it by
 deleting the sentence. That is the one repair this gate must not buy, and an
-empty list with no row to imitate invites it. -/
+empty list with no row to imitate invites it. A row added here carries the
+same three things every row above did: the anchor declaration, what actually
+holds the fact, and the one-line fix. -/
 def citePhantomKnown : List String :=
-  ["algorithm_lines_agree", "boundary_request_deterministic",
-   "footLine_eq_slots", "frames_sections", "language_attribute_text_free",
-   "pages_count_frame_steps", "sty_is_defaults"]
+  ["frames_sections", "sty_is_defaults"]
 
 /-- The modules this tree compiles, each with the lake target that builds
 it. The gate imports all of them: a citation may be written anywhere, and a
