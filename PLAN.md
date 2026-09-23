@@ -187,6 +187,53 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — a pairing is a key, so the contrast judge stops re-reading the
+document to judge one run. `declaredUseJudged` (Contrast.lean) asked two
+questions per coloured use by scanning: *have I reported this pairing?*
+(`done.contains`, over every key pushed so far) and *was this pairing always
+large-scale text?* (`acc.uses.all`, over every use in the document). Both are
+functions of the pairing key — the name a run carried, its colour, the ground
+it stood on — so both are answered by key now: a `Std.HashSet` for the first,
+one keyed fold before the loop for the second. The palette-write dedup went
+the same way, keyed, because within one key the only dimension left is the
+epoch's palette (a palette and a role fix the colour, the ground and hence the
+realized value), and a document has few epochs.
+
+Measured on synthetic documents (medians of 3–5, whole build, this host).
+Worst case for the large-scale scan — one role used everywhere at `\Huge`, so
+nothing short-circuits: 400 runs 119 → 91 ms, 3,200 runs 322 → 196 ms, 6,400
+838 → 318 ms, 12,800 2,676 → 573 ms. The last doubling is the shape of the
+defect: ×3.19 before (quadratic), ×1.80 after (linear). Distinct anonymous
+pairings, every pair passing: 3,200 runs 221 → 178 ms, 12,800 554 → 481 ms.
+The palette-write scan was the expensive one, being a scan over writes that
+each compare a whole palette: 3,200 distinct failing roles went 64,829 →
+2,007 ms. Judge alone, over IR, 20,000 runs of one large pairing: 2,351 →
+679 ms, and 2,500/5,000/10,000/20,000 now read 86/170/341/679 ms — linear to
+the doubling. `scripts/bench.lean` on the corpus is flat either way (±5 ms):
+these documents carry few coloured runs, which is why a user's did not.
+
+Identical output was the acceptance condition, not a hope: every diagnostic
+the engine emits for 70 corpus documents (the diagram fixtures excluded: they
+spawn an external tool) plus 43 synthetic ones — porcelain, verbose human, and
+HTML renderings, 339 blocks and 18,084 contrast lines — is byte-for-byte the
+same before and after, the elapsed time being the only field stripped. The invariant is now a test rather than a habit
+(`contrastChecks`): a pairing large in *every* use is held to SC 1.4.3's
+large-scale 3:1 and one small use anywhere puts it back at 4.5:1 *in either
+order* — the property a per-use scan of earlier uses cannot have, since the
+answer is the whole document's; a repeated pairing reports once while distinct
+pairings report separately; one colour under two role names is two pairings,
+one role on two grounds is two pairings; two epochs declaring one failing role
+read one message and rewrite both palettes. Beside them a wall-clock witness
+in the `FontDb.families` shape: 20,000 coloured runs judged under 1,500 ms,
+which the scanning version misses by a third.
+
+What is left, named rather than fixed: `realize` is called once per *failing*
+use, not once per failing pairing, so one pale role through a long document
+pays the Oklab lightness search thousands of times — 3,200 uses of one failing
+role is 1,355 ms, of which ~1.1 s is that repetition. It is linear and the
+answer is a pure function of (requirement, ground, colour), so a memo would be
+output-identical; it is a separate change with its own measurement.
+
 2026-09-23 — a boundary refusal is an answer, so the cache keeps it. A
 document with several pictures the subset drew nothing of *and* that
 `lualatex` refused paid a full tool startup per picture on every build,

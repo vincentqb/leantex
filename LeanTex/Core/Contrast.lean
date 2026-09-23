@@ -1,6 +1,8 @@
 import LeanTex.Core.Oklab
 import LeanTex.Core.Theme
 import LeanTex.Core.Layout
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 /-!
 Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
@@ -816,6 +818,33 @@ private def resolvedPairJudged (doc : Doc)
         j := { j with diags := j.diags ++ judge role c (cov.of c) }
   return j
 
+/-- One pairing: an ink and the ground it stood on. -/
+private structure PairKey where
+  color : Color
+  ground : Color
+  deriving BEq
+
+private instance : Hashable PairKey where
+  hash k := hash (k.color.r, k.color.g, k.color.b, k.color.cmyk,
+    k.ground.r, k.ground.g, k.ground.b, k.ground.cmyk)
+
+/-- What a use is judged under: its pairing and the name it carried there.
+The judge's verdict for a use is a function of this key and the document —
+never of how many uses precede it — so the judge below answers every
+membership question by key. Judging by scanning what came before instead
+cost two full passes over the uses per use: 3,200 coloured runs put ~200 ms
+of quadratic scanning into a 307 ms build (PLAN 2026-09-23). -/
+private structure UseKey where
+  name : Option String
+  pair : PairKey
+  deriving BEq
+
+private instance : Hashable UseKey where
+  hash k := hash (k.name, k.pair)
+
+private def Use.key (u : Use) : UseKey :=
+  { name := u.name, pair := { color := u.color, ground := u.surface } }
+
 /-- The pairings a document's own colours create, judged: every colour the
 document puts on text is paired with the page by the engine, so each is
 checked against the page in force where it is used — the epoch's effective
@@ -845,17 +874,30 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
   -- The effective pair is judged in `effectivePairJudged` (and per epoch
   -- in `epochPairJudged`); a body use of the same pairing must not report
   -- it twice.
-  let mut done : Array (Option String × Color × Color) :=
-    #[(some "fg", d.fg, (effectivePair doc).bg)]
+  let mut done : Std.HashSet UseKey :=
+    ({} : Std.HashSet UseKey).insert
+      { name := some "fg", pair := { color := d.fg, ground := (effectivePair doc).bg } }
+  -- Whether a pairing stood as large-scale text *everywhere* it was used:
+  -- one keyed fold over the uses, so the answer is the whole document's and
+  -- the order the uses arrived in cannot change it.
+  let mut allLargeOf : Std.HashMap UseKey Bool := {}
+  for v in acc.uses do
+    allLargeOf := allLargeOf.insert v.key (v.large && (allLargeOf[v.key]?).getD true)
+  -- The palette entries already written, per key. Within one key the only
+  -- dimension left is the epoch's palette — a palette and a role fix the
+  -- colour, the ground and so the realized value — and a document has few
+  -- epochs, so this stays the dedup `j.palWrites.contains` was, without the
+  -- scan over every write made so far.
+  let mut palSeen : Std.HashMap UseKey (Array Palette) := {}
   for u in acc.uses do
     -- The exemption is judged before the dedup: an exempt use must not
     -- consume the key a later, non-exempt epoch's use of the same pairing
     -- would be judged under.
     if u.exempt then continue
-    let key := (u.name, u.color, u.surface)
+    let key := u.key
     let dup := done.contains key
-    done := done.push key
-    let allLarge := acc.uses.all fun v => (v.name, v.color, v.surface) != key || v.large
+    done := done.insert key
+    let allLarge := (allLargeOf[key]?).getD true
     let threshold := if allLarge then aaLargeText else aaText
     let milli := contrastMilli u.color u.surface
     if milli < threshold then
@@ -876,7 +918,9 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
           -- when the note is already reported.
           if u.pal.find? role == some u.color && u.surface == surfaceOf u.pal then
             let w : PalWrite := { pal := u.pal, key := role, value := c' }
-            unless j.palWrites.contains w do
+            let written := (palSeen[key]?).getD #[]
+            unless written.contains u.pal do
+              palSeen := palSeen.insert key (written.push u.pal)
               j := { j with palWrites := j.palWrites.push w }
           unless dup do
             j := { j with

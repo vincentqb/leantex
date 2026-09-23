@@ -1682,6 +1682,91 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(warnCodes ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
       "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")
 
+  -- The judge's verdict for a use is a function of its pairing key — the
+  -- name it carried, the colour, the ground — and of the whole document's
+  -- uses of that key; never of how many uses came before it. Pinned
+  -- because the judge answers those questions by key now: it used to
+  -- re-scan the uses seen so far and every use again, per use.
+  let paleUse (spec : String) : String :=
+    "\\documentclass{article}\\palette{ alpha = #C4C4C4 }\\begin{document}" ++
+      spec ++ "\\end{document}"
+  let pairing (spec : String) : Array String :=
+    ((elabStr (paleUse spec)).2.filter (·.code == "W0315")).map (·.message)
+  let heldAt (spec needle : String) : Bool :=
+    let ms := pairing spec
+    ms.size == 1 && ((((ms[0]?).getD "").splitOn needle).length == 2)
+  -- Large in every use, so SC 1.4.3's large-scale 3:1 — and said once.
+  t "a pairing large in every use is held to the large-scale threshold"
+    (heldAt "{\\Huge \\textcolor{alpha!60}{a}} {\\Huge \\textcolor{alpha!60}{b}}"
+      "3.00:1")
+  -- Small anywhere, so 4.5:1 — in either order, because the large-scale
+  -- question ranges over every use of the key and not only the earlier
+  -- ones. A per-use scan of what came before would call the second
+  -- document large-scale.
+  t "a pairing small in one use is held to the text threshold, large first"
+    (heldAt "{\\Huge \\textcolor{alpha!60}{a}} \\textcolor{alpha!60}{b}" "4.50:1")
+  t "and the same when the small use comes first"
+    (heldAt "\\textcolor{alpha!60}{a} {\\Huge \\textcolor{alpha!60}{b}}" "4.50:1")
+  -- Once per pairing, however many uses; and distinct pairings each get
+  -- their own message, so the dedup is by key and not a global latch.
+  t "a repeated pairing is reported once"
+    ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!60}{b} " ++
+      "\\textcolor{alpha!60}{c} \\textcolor{alpha!60}{d}")).size == 1)
+  t "distinct pairings are reported separately"
+    ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!50}{b} " ++
+      "\\textcolor{alpha!40}{c} \\textcolor{alpha!60}{d}")).size == 3)
+  -- One colour under two role names is two pairings; one role on two
+  -- grounds is two pairings. Both are the key's doing, not the colour's.
+  t "one colour under two names is two pairings"
+    (((elabStr ("\\documentclass{article}" ++
+      "\\palette{ alpha = #C4C4C4, beta = #C4C4C4 }\\begin{document}" ++
+      "\\textcolor{alpha}{a} \\textcolor{beta}{b} \\textcolor{alpha}{c}" ++
+      "\\end{document}")).2.filter (·.code == "N0022")).size == 2)
+  t "one role on two grounds is two pairings"
+    (((elabStr ("\\documentclass{article}" ++
+      "\\palette{ fg = #303030, bg = #FFFFFF, mid = #818181 }\\begin{document}" ++
+      "\\textcolor{mid}{a}\n\n\\palette{ bg = #222222 }\n\n\\textcolor{mid}{b}" ++
+      "\\end{document}")).2.filter fun d =>
+        d.code == "N0022" && (d.message.splitOn "'mid'").length == 2).size == 2)
+  -- The palette write is per epoch even when the note is already said: two
+  -- epochs declaring one failing role are two palettes to rewrite and one
+  -- message to read. Within a pairing key the only dimension left is the
+  -- epoch's palette, which is what the write's dedup is keyed on.
+  let twoEpochs := elabStr ("\\documentclass{article}" ++
+    "\\palette{ washed = #DDDDDD }\\begin{document}\\textcolor{washed}{a}" ++
+    "\n\n\\palette{ washed = #DDDDDD }\n\n\\textcolor{washed}{b}\\end{document}")
+  let declared : Ir.Color := { r := 0xDD, g := 0xDD, b := 0xDD }
+  t "two epochs declaring one failing role read one note"
+    ((twoEpochs.2.filter fun d =>
+      d.code == "N0022" || d.code == "W0315").size == 1)
+  t "and both epochs' palettes are realized"
+    (twoEpochs.1.palette.find? "washed" != some declared &&
+     (twoEpochs.1.body.filterMap fun b => match b with
+       | .setPalette p => p.find? "washed"
+       | _ => none) == #[(twoEpochs.1.palette.find? "washed").getD declared])
+  -- The judge must be linear in the coloured runs. The shape that made the
+  -- quadratic version cost seconds is one pairing used everywhere at a
+  -- large size: the dedup answers at once, but the large-scale question was
+  -- answered by re-reading every use, per use. Measured on this judge:
+  -- 20,000 runs cost 2,351 ms that way against 679 ms keyed, so the bound
+  -- fails by a third if either question goes back to scanning. Synthesised
+  -- as IR, so the clock sees the judge and not the parser.
+  let dk : Ir.Color := { r := 0x10, g := 0x10, b := 0x10 }
+  let manyUses : Ir.Doc :=
+    { palette := { entries := #[("dk", dk)] }
+      body := (List.range 20000).toArray.map fun i =>
+        Ir.Block.para #[.styled (.size "Huge")
+          #[.colored dk (some "dk") #[.text s!"w{i}"]]] }
+  let t0 ← IO.monoMsNow
+  let judged := Contrast.docDiags manyUses
+  -- Consumed before the clock is read again: a pure `let` floats to its
+  -- first use, so a timing with nothing between the two reads measures
+  -- nothing.
+  t "20,000 legible coloured runs are judged silently" judged.isEmpty
+  let judgeMs := (← IO.monoMsNow) - t0
+  t s!"the contrast judge is linear in the coloured runs ({judgeMs} ms for 20000)"
+    (judgeMs < 1500)
+
   -- The built-in theme bundles, held to the same contract. The theorems
   -- range over the bundles' own typed values; this pin closes the chain:
   -- what \theme installs is exactly the bundle the theorems cover, and
