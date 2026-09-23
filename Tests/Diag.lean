@@ -1,5 +1,4 @@
 import Tests.Support
-import LeanTex.Cli.FontEnv
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -64,25 +63,31 @@ builds a `Diag` itself, so a driver path that stops emitting its code leaves
 that code's witness empty and the suite fails.
 
 Hermetic: nothing a probe fires on depends on what this host has installed.
-Two shapes appear, because a message the golden records must be the same on
-every host. The splice probes (E0501, E0502) write their own sandbox and
-name files inside it — their messages are path-free, and the golden drops
-spans, so the sandbox's random name never reaches the file. The three
-document-file reads (E0001, E0503, E0365) carry the resolved path in the
-message or the help, so they name a file *relative to the working
-directory* — the same spelling on every host, resolving against a tree that
-contains no `doc.tex`, `references.bib` or `records.bib`. Should one appear,
-the read succeeds, the probe returns nothing, and the coverage check below
-fails loudly: the failure mode is a red suite, never a green one.
+Three shapes appear, because a message the golden records must be the same
+on every host. The sandbox probes (E0501, E0502, W0379) write into — or
+read — the temp directory the harness makes and name files inside it; their
+messages are path-free, and the golden drops spans, so the sandbox's random
+name never reaches the file. The three document-file reads (E0001, E0503,
+E0365) carry the resolved path in the message or the help, so they name a
+file *relative to the working directory* — the same spelling on every host,
+resolving against a tree that contains no `doc.tex`, `references.bib` or
+`records.bib`. Should one appear, the read succeeds, the probe returns
+nothing, and the coverage check below fails loudly: the failure mode is a
+red suite, never a green one. The font-environment probes (E0402, W0008,
+W0011, N0016) name paths under the suite's own shipped font directory, and
+the two math-face ones hand the decision exactly those faces — a scan the
+repository carries, not one the machine answers — so which family the
+engine picks, and the path it names, are the same wherever the suite runs.
 
 A driver code is probeable exactly when its emission site is reachable as a
 unit and hands its diagnostics back: the modules under `LeanTex/Cli/` are.
 The codes still witnessed by a constructed value below are emitted from the
-entry path in Main.lean, which is not callable as a unit — and the font
-codes among them are decided against the host's installed families, so a
-probe asserting one fires would depend on what this machine has. Making one
-of those probeable is a driver refactor, not a new mechanism here: move the
-decision into a module that returns its diagnostics, then add a row. -/
+entry path in Main.lean, which is not callable as a unit — or, for the
+remaining font codes (E0401, E0403, E0404), decided against the host itself:
+no font installed at all, the host's nearest family names, a file its scan
+indexes and the parser rejects. Making one of the first kind probeable is a
+driver refactor, not a new mechanism here: move the decision into a module
+that returns its diagnostics, then add a row. -/
 def driverProbes : Array (DiagCode × DriverProbe) :=
   let splice (dir : System.FilePath) (body : String) : IO (Array Diag) := do
     let doc := dir / "doc.tex"
@@ -121,7 +126,20 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
     (.W0008, fun _ => do
       let doc := (elabStr ("\\documentclass{article}\n\\fonts{ dir = \"fonts\" }\n" ++
         "\\begin{document}\nx\n\\end{document}\n")).1
-      return (← FontEnv.resolveDocDirs "doc.tex" doc.fonts.dirs).2)]
+      return (← FontEnv.resolveDocDirs "doc.tex" doc.fonts.dirs).2),
+    (.W0379, fun dir => do
+      match ← Boundary.coldPicture dir "lualatex"
+          (Ir.picHash "\\draw (0,0) circle (1);") with
+      | .error d => return #[d]
+      | .ok _ => return #[]),
+    (.W0011, fun _ => do
+      let faces ← FontDb.scanRoots [testFonts]
+      return (← FontEnv.resolveMath faces (some "Open Sans") none false #[] #[] #[]).diags),
+    (.N0016, fun _ => do
+      let faces ← FontDb.scanRoots [testFonts]
+      let companion ← FontEnv.resolveMath faces none (some "Fira Sans") true #[] #[] #[]
+      let first ← FontEnv.resolveMath faces none (some "Open Sans") true #[] #[] #[]
+      return companion.diags ++ first.diags)]
 
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
@@ -201,8 +219,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
     dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")
   | .N0200 => dvL one (dvDoc "\\page{ height = 115pt, margin = 20pt }\n"
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
-  | .N0016 => #[DriverDiag.mathFaceCompanion "TeX Gyre Pagella Math" "TeX Gyre Pagella",
-      DriverDiag.mathFaceFirst "Fira Math"]
+  | .N0016 => probed .N0016
   | .N0018 => dvL withMath "$\\mathcal{L} + \\mathsf{A}$"
   | .N0017 => (Elab.run "doc.tex" "A classless page, assumed article.").2
   | .N0019 => dvE (dvDoc "" "\\begin{ifbackend}{pdf}\nprint only\n\\end{ifbackend}")
@@ -260,7 +277,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0010 => dvL one (dvDoc "" (String.join
       ((List.range 5).map fun _ => "\\begin{itemize}\\item x\n") ++
       String.join ((List.range 5).map fun _ => "\\end{itemize}\n")))
-  | .W0011 => #[DriverDiag.mathFaceNoTable "Demo Serif" "fonts/DemoSerif-Regular.otf"]
+  | .W0011 => probed .W0011
   | .W0012 => dvE "$\\overset{?}{=}$"
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
   | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
@@ -394,7 +411,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
     let (doc, _) := elabStr (dvDoc "\\output{ formats = pdf, alternatives = required }\n" "x")
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
   -- W0379 is the driver's: a stated request no available tool can fulfil.
-  | .W0379 => #[DriverDiag.boundaryToolUnavailable "lualatex"]
+  | .W0379 => probed .W0379
   -- E0382 is the driver's too: the tool ran and drew nothing, a dropped
   -- loss, so the run fails unless the document declares acceptance.
   | .E0382 => #[DriverDiag.boundaryFailed "lualatex"

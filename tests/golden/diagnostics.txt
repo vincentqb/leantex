@@ -137,7 +137,7 @@ error[E0502]: '\input' file 'chapter1.tex' is not there; its content is absent
 error[E0503]: '\bibliography' file 'references' is not there; the reference list is empty
   help: looked at: ./references.bib; \allow{E0503} accepts the loss
 ── N0016 (info) no math face declared; the engine picked one and says which
-note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of 'TeX Gyre Pagella'
+note[N0016]: math is set in 'Fira Math', the designed companion of 'Fira Sans'
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
@@ -193,7 +193,7 @@ warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Co
 warning[W0010]: lists nest four levels; level 5 reuses the fourth's marker
   help: LaTeX errors here ('Too deeply nested'); flatten the nesting
 ── W0011 (degraded) declared math face has no OpenType MATH table
-warning[W0011]: 'Demo Serif' (fonts/DemoSerif-Regular.otf) has no OpenType MATH table; math is set as plain text
+warning[W0011]: 'Open Sans' (tests/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
   help: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as source text
 warning[W0012]: math with \overset is not rendered yet; the formula is set as source text

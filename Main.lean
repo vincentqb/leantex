@@ -1,5 +1,4 @@
 import LeanTex
-import LeanTex.Cli.FontEnv
 
 open LeanTex.Core LeanTex.Cli
 
@@ -274,62 +273,15 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
             fonts := fonts.push f
             paths := paths.push face.path
   -- The math face: resolved like any named family, and installed only when
-  -- it carries an OpenType MATH table — constants are never invented, so a
-  -- face without the table earns a diagnostic naming it and math is set as
-  -- source text (PLAN, M6 design decision 1).
-  let mut mathIdx : Option Nat := none
-  let loadFace (fonts : Array Font.Font) (paths : Array String) (path : String) :
-      IO (Option Nat × Array Font.Font × Array String × Option Diag) := do
-    match paths.findIdx? (· == path) with
-    | some i => return (some i, fonts, paths, none)
-    | none =>
-      let data ← IO.FS.readBinFile path
-      match Font.parse data with
-      | .error e =>
-        return (none, fonts, paths, some (DriverDiag.fontFileUnusable path e))
-      | .ok f =>
-        return (some fonts.size, fonts.push f, paths.push path, none)
-  if let some family := spec.math then
-    match FontDb.resolveVariant faces family none {} with
-    | none =>
-      unless missing.contains family do
-        missing := missing.push family
-        let all := FontDb.families faces
-        diags := diags.push (DriverDiag.familyMissing family
-          (FontDb.nearest all family).toList all.size)
-    | some (face, _) =>
-      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
-      fonts := fonts'
-      paths := paths'
-      if let some d := diag? then
-        diags := diags.push d
-      if let some i := loaded then
-        if (fonts[i]!).math.isSome then
-          mathIdx := some i
-        else
-          diags := diags.push (DriverDiag.mathFaceNoTable (fonts[i]!).family face.path)
-  else if !(Layout.docMathScalars doc).isEmpty then
-    -- The document has formulas and no declared math face: the body
-    -- family's designed companion when the host has it, else the first
-    -- installed MATH-table face — either way named once, so a face the
-    -- document did not choose is never silent (the `\fonts{ math = ... }`
-    -- override always wins, above).
-    let bodyFam := spec.body.getD ""
-    let choice : Option (FontDb.Face × Option String) ←
-      (← FontDb.pickMathFace faces bodyFam).mapM fun (face, row?) =>
-        pure (face, row?.map fun _ => bodyFam)
-    if let some (face, companionOf) := choice then
-      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
-      fonts := fonts'
-      paths := paths'
-      if let some d := diag? then
-        diags := diags.push d
-      if let some i := loaded then
-        if (fonts[i]!).math.isSome then
-          mathIdx := some i
-          diags := diags.push (match companionOf with
-            | some body => DriverDiag.mathFaceCompanion (fonts[i]!).family body
-            | none => DriverDiag.mathFaceFirst (fonts[i]!).family)
+  -- it carries an OpenType MATH table (`FontEnv.resolveMath`, which is
+  -- handed this scan rather than performing one).
+  let math ← FontEnv.resolveMath faces spec.math spec.body
+    (!(Layout.docMathScalars doc).isEmpty) fonts paths missing
+  fonts := math.fonts
+  paths := math.paths
+  missing := math.missing
+  diags := diags ++ math.diags
+  let mathIdx := math.index
   if fonts.isEmpty then
     -- Every named family failed and `diags` carries the errors; the caller
     -- stops on them, but nothing downstream may ever see an empty set.
@@ -491,25 +443,18 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     let key := Ir.picHash wrapped
     match found with
     | .absent why =>
-      -- No tool: any earlier render of this request serves — the content
-      -- hash is the request's meaning, and the version in the slot only
-      -- forces a re-render on upgrade. A remembered refusal is *not* read
-      -- here: with no tool there is no version to match it against, and
-      -- W0379 — no tool, no render — stays the honest answer.
-      let entries ← picDir.readDir
-      let any? := entries.findSome? fun e =>
-        if e.fileName.startsWith (key ++ "-") && e.fileName.endsWith ".pdf" then
-          some e.path
-        else none
-      match any? with
-      | some cached =>
+      -- No tool: the cold decision is `Boundary.coldPicture`'s — an earlier
+      -- render of this request serves, and where none exists W0379 names
+      -- the loss it returns.
+      match ← Boundary.coldPicture picDir tool key (spanFor id) with
+      | .ok cached =>
         let bytes ← IO.FS.readBinFile cached
         results := results.push { src, bytes, cached }
         ui.phase "boundary"
           s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
           (← since t0)
-      | none =>
-        refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor id))
+      | .error d =>
+        refused := refused.push (src, d)
         ui.phase "boundary"
           s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
           (← since t0)
