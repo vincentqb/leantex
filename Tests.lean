@@ -181,6 +181,7 @@ def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   roleChecks ref
   roleInvocationChecks ref
   realizedChecks ref
+  realizeDocIdChecks ref
   roleShadowChecks ref
   geminiChecks ref
 

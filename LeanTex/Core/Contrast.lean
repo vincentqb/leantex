@@ -626,6 +626,30 @@ private def usesColumns (cx : UseCx) (acc : UseAcc) :
 
 end
 
+/-- The body walk: every coloured use with the epoch it stood in, the
+epoch boundaries, and the design sites each epoch ships, read off
+`doc.body` once. One site, so the judge and the judged-pair census read
+the same walk and not two copies of it. -/
+private def docWalk (doc : Doc) : UseAcc :=
+  usesBlocks { base := doc.page.fontSize, size := doc.page.fontSize }
+    { pal := doc.palette } doc.body.toList
+
+/-- Every use a document puts on a page: the body walk's, plus the page
+furniture's. Page furniture is document state, not flow content — the
+chrome footer's muted text and the running head and foot are judged
+against epoch 0, whatever the body declared later. One site, read by the
+per-use judge and by the judged-pair census. -/
+private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  let mut acc := { walk with pal := doc.palette }
+  if doc.docClass.record.chrome && doc.chrome.hasFooter && doc.foot.isNone then
+    if let some muted := doc.palette.find? "muted" then
+      acc := acc.use base (some "muted") muted
+  for run in [doc.head, doc.foot] do
+    if let some content := run then
+      acc := usesInlines base acc content.toList
+  return acc
+
 /-- The ink/page pair the shipped pages actually carry, declared or
 defaulted: the resolved design's ink — `Design.ofDoc` is the one resolving
 site, and `Layout.run` reads the same field for every uncoloured run — over
@@ -681,44 +705,55 @@ def effectivePairJudged (doc : Doc) : Judged :=
 (`effectivePairDiags`): a `\palette` mid-document that leaves its ink
 illegible on its page is the same defect wherever it is declared, and it
 is judged against the state in force from that point — never the
-document's final state. A pair already judged is silent. -/
-private def epochPairJudged (doc : Doc) (epochs : Array Palette) : Judged := Id.run do
-  let d0 := Design.ofDoc doc
-  let mut j : Judged := {}
-  let mut done : Array ColorPair := #[{ fg := d0.fg, bg := (effectivePair doc).bg }]
-  for pal in epochs do
-    if pal.decorative.contains "fg" then continue
+document's final state. A pair already judged is silent.
+
+The loop is a fold over a named step, so the plan it builds is a statement's
+to read: `epochStep_no_pal_writes` is where "a passing pair is never
+rewritten" is held, one epoch at a time. -/
+private def epochStep (s : Judged × Array ColorPair) (pal : Palette) :
+    Judged × Array ColorPair :=
+  if pal.decorative.contains "fg" then s
+  else
+    let j := s.1
     let p : ColorPair := { fg := (pal.find? "fg").getD Color.black, bg := surfaceOf pal }
     -- The palette write lands per epoch even when the pair's diagnostic is
     -- already reported: two epochs declaring the same failing pair are two
     -- palettes to rewrite, one message to read.
-    let dup := done.contains p
-    done := done.push p
+    let dup := s.2.contains p
+    let done := s.2.push p
     let milli := contrastMilli p.fg p.bg
     if milli < aaText then
       if (pal.find? "fg").isSome then
         match realize aaText p.bg p.fg with
         | some c' =>
-          j := { j with palWrites := j.palWrites.push { pal := pal, key := "fg", value := c' } }
-          unless dup do
-            j := { j with diags := j.diags.push (realizedNote "fg" p.bg none p.fg c' aaText) }
+          let j := { j with
+            palWrites := j.palWrites.push { pal := pal, key := "fg", value := c' } }
+          (if dup then j else
+            { j with diags := j.diags.push (realizedNote "fg" p.bg none p.fg c' aaText) },
+           done)
         | none =>
-          unless dup do
-            j := { j with diags := j.diags.push (Diag.of .W0315
+          (if dup then j else
+            { j with diags := j.diags.push (Diag.of .W0315
               (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
                 s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
                 "WCAG 2.2 asks of text (SC 1.4.3)")
               (help := some ("deliberate low contrast is declared, not defaulted: " ++
-                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))) }
+                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))) },
+           done)
       else
-        unless dup do
-          j := { j with diags := j.diags.push (Diag.of .W0330
+        (if dup then j else
+          { j with diags := j.diags.push (Diag.of .W0330
             (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
               s!"{ratioString milli}, below the " ++
               s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
             (help := some ("a declared surface chooses its ink: declare " ++
-              "\\palette{ fg = ... }" ++ " beside bg"))) }
-  return j
+              "\\palette{ fg = ... }" ++ " beside bg"))) },
+         done)
+    else (j, done)
+
+private def epochPairJudged (doc : Doc) (epochs : Array Palette) : Judged :=
+  (epochs.foldl epochStep
+    ({}, #[{ fg := (Design.ofDoc doc).fg, bg := (effectivePair doc).bg }])).1
 
 /-- The resolved design's own pairs, judged for the document that ships
 them — the pairs `Design.ofDoc` creates out of declared and defaulted keys
@@ -736,71 +771,92 @@ frame is judged for that frame and a declaration after it is not. The
 shipped bundles are proved (`builtin_designs_legible`,
 `builtin_designs_covered`), so only a document's own override can fire
 this; a failing pair realizes before it warns, and the decorative escape is the same one the per-use walk honours, on
-the pair's ink key. -/
-private def resolvedPairJudged (doc : Doc)
-    (titled standout pending : Array Palette)
-    (blocks : Array (TitledKind × Palette)) : Judged := Id.run do
-  let mut j : Judged := {}
-  for (kind, pal) in blocks do
-    -- The block title sets bold at the body size — under WCAG 2.2's
-    -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
-    -- palette declares one, on the page otherwise (`titledGround`, the one
-    -- resolving site). A failing pair realizes before it warns.
-    let look := titledLook pal kind
-    let ground := titledGround pal kind
-    let milli := contrastMilli look.fg ground
-    if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
-      match realize aaText ground look.fg with
+the pair's ink key.
+
+Each family is a fold over a named step, and the plan is assembled from the
+three that write — so "a passing pair is never rewritten" is one lemma per
+step (`blockTitleStep_no_pal_writes` and its siblings), and the cover
+judge's write-freedom is structural rather than asserted: a covering is the
+author's declaration to quiet, so `pendingCoverDiags` returns messages and
+has no plan to add to. -/
+private def blockTitleStep (s : Judged) (kp : TitledKind × Palette) : Judged :=
+  -- The block title sets bold at the body size — under WCAG 2.2's
+  -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
+  -- palette declares one, on the page otherwise (`titledGround`, the one
+  -- resolving site). A failing pair realizes before it warns.
+  let kind := kp.1
+  let pal := kp.2
+  let look := titledLook pal kind
+  let ground := titledGround pal kind
+  let milli := contrastMilli look.fg ground
+  if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
+    match realize aaText ground look.fg with
+    | some c' =>
+      { s with
+        diags := s.diags.push (realizedNote s!"{kind.name}titlefg" ground
+          (look.bar.map fun _ => "the block-title bar") look.fg c' aaText)
+        palWrites := s.palWrites.push
+          { pal := pal, key := s!"{kind.name}titlefg", value := c' } }
+    | none =>
+      { s with diags := s.diags.push (Diag.of .W0345
+        (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
+          s!"{hexOf ground} at {ratioString milli}, below the " ++
+          s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}"))) }
+  else s
+
+private def frameTitleStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
+  match (Design.ofDoc { doc with palette := pal }).frametitle with
+  | none => s
+  | some p =>
+    let milli := contrastMilli p.fg p.bg
+    if milli < aaText && !pal.decorative.contains "frametitlefg" then
+      match realize aaText p.bg p.fg with
       | some c' =>
-        j := { j with
-          diags := j.diags.push (realizedNote s!"{kind.name}titlefg" ground
-            (look.bar.map fun _ => "the block-title bar") look.fg c' aaText)
-          palWrites := j.palWrites.push
-            { pal := pal, key := s!"{kind.name}titlefg", value := c' } }
+        { s with
+          diags := s.diags.push (realizedNote "frametitlefg" p.bg
+            (some "the frame-title bar") p.fg c' aaText)
+          palWrites := s.palWrites.push
+            { pal := pal, key := "frametitlefg", value := c' } }
       | none =>
-        j := { j with diags := j.diags.push (Diag.of .W0345
-          (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
-            s!"{hexOf ground} at {ratioString milli}, below the " ++
-            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+        { s with diags := s.diags.push (Diag.of .W0345
+          (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
+            s!"{ratioString milli}, below the {ratioString aaText} " ++
+            "WCAG 2.2 asks of text (SC 1.4.3)")
           (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}"))) }
-  for pal in titled do
-    let d := Design.ofDoc { doc with palette := pal }
-    if let some p := d.frametitle then
-      let milli := contrastMilli p.fg p.bg
-      if milli < aaText && !pal.decorative.contains "frametitlefg" then
-        match realize aaText p.bg p.fg with
-        | some c' =>
-          j := { j with
-            diags := j.diags.push (realizedNote "frametitlefg" p.bg
-              (some "the frame-title bar") p.fg c' aaText)
-            palWrites := j.palWrites.push
-              { pal := pal, key := "frametitlefg", value := c' } }
-        | none =>
-          j := { j with diags := j.diags.push (Diag.of .W0345
-            (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
-              s!"{ratioString milli}, below the {ratioString aaText} " ++
-              "WCAG 2.2 asks of text (SC 1.4.3)")
-            (help := some ("deliberate low contrast is declared, not defaulted: " ++
-              "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}"))) }
-  for pal in standout do
-    let d := Design.ofDoc { doc with palette := pal }
-    let milli := contrastMilli d.standout.fg d.standout.bg
-    if milli < aaLargeText && !pal.decorative.contains "standoutfg" then
-      match realize aaLargeText d.standout.bg d.standout.fg with
-      | some c' =>
-        j := { j with
-          diags := j.diags.push (realizedNote "standoutfg" d.standout.bg
-            (some "the standout frame") d.standout.fg c' aaLargeText)
-          palWrites := j.palWrites.push
-            { pal := pal, key := "standoutfg", value := c' } }
-      | none =>
-        j := { j with diags := j.diags.push (Diag.of .W0345
-          (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
-            s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
-            s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}"))) }
+            "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}"))) }
+    else s
+
+private def standoutStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
+  let d := Design.ofDoc { doc with palette := pal }
+  let milli := contrastMilli d.standout.fg d.standout.bg
+  if milli < aaLargeText && !pal.decorative.contains "standoutfg" then
+    match realize aaLargeText d.standout.bg d.standout.fg with
+    | some c' =>
+      { s with
+        diags := s.diags.push (realizedNote "standoutfg" d.standout.bg
+          (some "the standout frame") d.standout.fg c' aaLargeText)
+        palWrites := s.palWrites.push
+          { pal := pal, key := "standoutfg", value := c' } }
+    | none =>
+      { s with diags := s.diags.push (Diag.of .W0345
+        (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
+          s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
+          s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}"))) }
+  else s
+
+/-- The covering judged, per epoch that ships pending content: SC 1.4.11's
+3:1 between an active and an inactive state, and quieter-than-active —
+`coveredContract`'s own two bounds, read from `Design.cover`. Messages
+only: the cover fraction is the author's declaration, so the remedy is
+theirs to choose (lower it, or name a quieter colour), and no realization
+can make a deliberately dim state legible without undoing the intent. -/
+private def pendingCoverDiags (doc : Doc) (pending : Array Palette) :
+    Array Diag := Id.run do
+  let mut out : Array Diag := #[]
   for pal in pending do
     if pal.decorative.contains "covered" then continue
     let d := Design.ofDoc { doc with palette := pal }
@@ -823,16 +879,26 @@ private def resolvedPairJudged (doc : Doc)
               "WCAG 2.2 asks of a state change (SC 1.4.11)")
             (help := coverHelp)]
         else #[]
-    j := { j with diags := j.diags ++ judge "fg" d.fg (cov.of d.fg) }
+    out := out ++ judge "fg" d.fg (cov.of d.fg)
     -- A declared constant cover stands for the plain runs itself: judged
     -- under the key that declared it (undeclared, the plain cover IS the
     -- fg cover just judged).
     if d.covered.isSome then
-      j := { j with diags := j.diags ++ judge "covered" d.fg cov.plain }
+      out := out ++ judge "covered" d.fg cov.plain
     for role in ["alert", "example"] do
       if let some c := pal.find? role then
-        j := { j with diags := j.diags ++ judge role c (cov.of c) }
-  return j
+        out := out ++ judge role c (cov.of c)
+  return out
+
+private def resolvedPairJudged (doc : Doc)
+    (titled standout pending : Array Palette)
+    (blocks : Array (TitledKind × Palette)) : Judged :=
+  let jB := blocks.foldl blockTitleStep {}
+  let jT := titled.foldl (frameTitleStep doc) {}
+  let jS := standout.foldl (standoutStep doc) {}
+  let coverDiags := pendingCoverDiags doc pending
+  { diags := jB.diags ++ jT.diags ++ jS.diags ++ coverDiags
+    palWrites := jB.palWrites ++ jT.palWrites ++ jS.palWrites }
 
 /-- One pairing: an ink and the ground it stood on. -/
 private structure PairKey where
@@ -872,53 +938,48 @@ only what was spelled. A pairing used only as large-scale text is held to
 dimmed overlay content is deliberately quiet — and so is anything the
 palette in force at the use declared under `\palette[decorative]{...}`:
 the warning names that spelling, so poor contrast is a choice a document
-states, never a silent default. -/
-private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
-  let d := Design.ofDoc doc
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
-  -- Page furniture is document state, not flow content: the chrome
-  -- footer's muted text and the running head/foot are judged against
-  -- epoch 0, whatever the body declared later.
-  let mut acc := { walk with pal := doc.palette }
-  if doc.docClass.record.chrome && doc.chrome.hasFooter && doc.foot.isNone then
-    if let some muted := doc.palette.find? "muted" then
-      acc := acc.use base (some "muted") muted
-  for run in [doc.head, doc.foot] do
-    if let some content := run then
-      acc := usesInlines base acc content.toList
-  let mut j : Judged := {}
-  -- The effective pair is judged in `effectivePairJudged` (and per epoch
-  -- in `epochPairJudged`); a body use of the same pairing must not report
-  -- it twice.
-  let mut done : Std.HashSet UseKey :=
-    ({} : Std.HashSet UseKey).insert
-      { name := some "fg", pair := { color := d.fg, ground := (effectivePair doc).bg } }
+states, never a silent default.
+
+The loop is a fold over `useStep`, whose state carries the dedup: the keys
+already reported, the palette entries already written per key, and the
+solver's answers. That the dedup cannot rewrite a *passing* pair is
+`useStep_no_writes`, one use at a time — the dedup is where such a write
+would arise, since it is the only state between a pair and its plan. -/
+private def allLargeOf (uses : Array Use) : Std.HashMap UseKey Bool :=
   -- Whether a pairing stood as large-scale text *everywhere* it was used:
   -- one keyed fold over the uses, so the answer is the whole document's and
   -- the order the uses arrived in cannot change it.
-  let mut allLargeOf : Std.HashMap UseKey Bool := {}
-  for v in acc.uses do
-    allLargeOf := allLargeOf.insert v.key (v.large && (allLargeOf[v.key]?).getD true)
-  -- The palette entries already written, per key. Within one key the only
-  -- dimension left is the epoch's palette — a palette and a role fix the
-  -- colour, the ground and so the realized value — and a document has few
-  -- epochs, so this stays the dedup `j.palWrites.contains` was, without the
-  -- scan over every write made so far.
-  let mut palSeen : Std.HashMap UseKey (Array Palette) := {}
-  -- `realize` is a pure search over the requirement, the ground and the
-  -- colour, so a pairing that repeats is solved once: one pale role through
-  -- a long document paid the Oklab lightness walk per *use* before this,
-  -- 1,101 ms of judging for 3,000 uses of one failing role.
-  let mut solved : Std.HashMap PairKey (Option Color) := {}
-  for u in acc.uses do
-    -- The exemption is judged before the dedup: an exempt use must not
-    -- consume the key a later, non-exempt epoch's use of the same pairing
-    -- would be judged under.
-    if u.exempt then continue
+  uses.foldl (fun m v => m.insert v.key (v.large && (m[v.key]?).getD true)) {}
+
+private structure UseJudgeState where
+  j : Judged := {}
+  /-- The pairings already reported: the effective pair seeds it, since
+  `effectivePairJudged` (and `epochPairJudged`) already spoke for it and a
+  body use of the same pairing must not report it twice. -/
+  done : Std.HashSet UseKey
+  /-- The palette entries already written, per key. Within one key the only
+  dimension left is the epoch's palette — a palette and a role fix the
+  colour, the ground and so the realized value — and a document has few
+  epochs, so this stays the dedup `j.palWrites.contains` was, without the
+  scan over every write made so far. -/
+  palSeen : Std.HashMap UseKey (Array Palette) := {}
+  /-- `realize` is a pure search over the requirement, the ground and the
+  colour, so a pairing that repeats is solved once: one pale role through a
+  long document paid the Oklab lightness walk per *use* before this,
+  1,101 ms of judging for 3,000 uses of one failing role. -/
+  solved : Std.HashMap PairKey (Option Color) := {}
+
+private def useStep (large : Std.HashMap UseKey Bool) (s : UseJudgeState) (u : Use) :
+    UseJudgeState :=
+  -- The exemption is judged before the dedup: an exempt use must not
+  -- consume the key a later, non-exempt epoch's use of the same pairing
+  -- would be judged under.
+  if u.exempt then s
+  else
     let key := u.key
-    let dup := done.contains key
-    done := done.insert key
-    let allLarge := (allLargeOf[key]?).getD true
+    let dup := s.done.contains key
+    let done := s.done.insert key
+    let allLarge := (large[key]?).getD true
     let threshold := if allLarge then aaLargeText else aaText
     let milli := contrastMilli u.color u.surface
     if milli < threshold then
@@ -930,10 +991,10 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
       -- re-realized — only warned, as before.
       match u.name with
       | some role =>
-        let cand := match solved[key.pair]? with
+        let cand := match s.solved[key.pair]? with
           | some c => c
           | none => realize aaText u.surface u.color
-        solved := solved.insert key.pair cand
+        let solved := s.solved.insert key.pair cand
         match cand with
         | some c' =>
           -- The entry rewrite follows the value: when the epoch's palette
@@ -941,21 +1002,25 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
           -- page, the entry realizes too, so furniture and custom
           -- properties read the same value the runs ship. Per epoch, even
           -- when the note is already reported.
-          if u.pal.find? role == some u.color && u.surface == surfaceOf u.pal then
-            let w : PalWrite := { pal := u.pal, key := role, value := c' }
-            let written := (palSeen[key]?).getD #[]
-            unless written.contains u.pal do
-              palSeen := palSeen.insert key (written.push u.pal)
-              j := { j with palWrites := j.palWrites.push w }
-          unless dup do
-            j := { j with
-              runWrites := j.runWrites.push
-                { role := role, declared := u.color, ground := u.surface, value := c' }
-              diags := j.diags.push
+          let written := (s.palSeen[key]?).getD #[]
+          let entryFollows := u.pal.find? role == some u.color
+            && u.surface == surfaceOf u.pal && !written.contains u.pal
+          let palSeen := if entryFollows then s.palSeen.insert key (written.push u.pal)
+            else s.palSeen
+          let w : PalWrite := { pal := u.pal, key := role, value := c' }
+          let jw : Judged := if entryFollows then
+              { s.j with palWrites := s.j.palWrites.push w } else s.j
+          let rw : RunWrite :=
+            { role := role, declared := u.color, ground := u.surface, value := c' }
+          let jr : Judged := if dup then jw else
+            { jw with
+              runWrites := jw.runWrites.push rw
+              diags := jw.diags.push
                 (realizedNote role u.surface u.groundName u.color c' aaText) }
+          { j := jr, done := done, palSeen := palSeen, solved := solved }
         | none =>
-          unless dup do
-            j := { j with diags := j.diags.push (Diag.of .W0315
+          let jd : Judged := if dup then s.j else
+            { s.j with diags := s.j.diags.push (Diag.of .W0315
               (s!"text coloured '{role}' ({hexOf u.color}) reads at {ratioString milli} " ++
                 s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
                 s!"below the {ratioString threshold} " ++
@@ -963,9 +1028,10 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
               (help := some ("deliberate low contrast is declared, not defaulted: " ++
                 "\\palette[decorative]{ " ++
                 s!"{role} = {hexOf u.color} " ++ "}"))) }
+          { j := jd, done := done, palSeen := s.palSeen, solved := solved }
       | none =>
-        unless dup do
-          j := { j with diags := j.diags.push (Diag.of .W0315
+        let jd : Judged := if dup then s.j else
+          { s.j with diags := s.j.diags.push (Diag.of .W0315
             (s!"text coloured {hexOf u.color} reads at {ratioString milli} " ++
               s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
               s!"below the {ratioString threshold} " ++
@@ -973,7 +1039,16 @@ private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
             (help := some ("deliberate low contrast is declared, not defaulted: " ++
               "\\palette[decorative]{ " ++
               s!"quiet = {hexOf u.color} " ++ "}"))) }
-  return j
+        { s with j := jd, done := done }
+    else { s with done := done }
+
+private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged :=
+  let d := Design.ofDoc doc
+  let uses := (docUses doc walk).uses
+  (uses.foldl (useStep (allLargeOf uses))
+    { done := ({} : Std.HashSet UseKey).insert
+        { name := some "fg",
+          pair := { color := d.fg, ground := (effectivePair doc).bg } } }).j
 
 /-- The whole document-level contrast contract, one walk: the uses with
 their epochs, the design sites per epoch, and the epoch boundaries are
@@ -982,8 +1057,7 @@ force where the pairing ships — realizing a failing role pair (N0022 +
 the plan) before it warns, warning as before where realization cannot
 reach or the colour has no role. -/
 private def realizePlan (doc : Doc) : Judged :=
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
-  let walk := usesBlocks base { pal := doc.palette } doc.body.toList
+  let walk := docWalk doc
   let jE := effectivePairJudged doc
   let jP := epochPairJudged doc walk.epochs
   let jU := declaredUseJudged doc walk
@@ -1002,10 +1076,11 @@ lightness chosen per ground), and rewrite the document so both backends
 read the realized values — palette entries where the pair is the palette's
 own (the frame-title bar, a titled bar, the standout inversion, `fg` and
 the content colours on their page), role-named runs where a use sits on a
-local ground. A document whose pairs all pass is returned untouched
-(`realize_id_of_passing` upstream: the plan is empty), so a legible
-document's artifact cannot move. Diagnostics are the judges' own: N0022
-where a pair realized, the pairing warnings where none could. -/
+local ground. A document whose pairs all pass is returned untouched —
+`realizeDoc_id`, stated over this function and proved through each judge's
+own plan, not inferred from the single-pair `realize_id_of_passing` — so a
+legible document's artifact cannot move. Diagnostics are the judges' own:
+N0022 where a pair realized, the pairing warnings where none could. -/
 def realizeDoc (doc : Doc) : Doc × Array Diag :=
   let j := realizePlan doc
   if j.palWrites.isEmpty && j.runWrites.isEmpty then (doc, j.diags)
@@ -1233,36 +1308,25 @@ frame-title bar, the standout inversion, the titled blocks.
 `contrast_judged_complete` (Obligations) ranges over this projection: a
 shipped glyph run whose (colour, ground) pair falls outside this set
 would be a run the judge never saw, and the obligation is that no such
-run exists. -/
-def judgedPairs (doc : Doc) : Array (Color × Color) := Id.run do
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
-  let walk := usesBlocks base { pal := doc.palette } doc.body.toList
-  let mut acc := { walk with pal := doc.palette }
-  if doc.docClass.record.chrome && doc.chrome.hasFooter && doc.foot.isNone then
-    if let some muted := doc.palette.find? "muted" then
-      acc := acc.use base (some "muted") muted
-  for run in [doc.head, doc.foot] do
-    if let some content := run then
-      acc := usesInlines base acc content.toList
+run exists.
+
+One family per operand, each the same array the matching judge iterates
+(`docWalk`, `docUses`, the one resolving sites) — declarative rather than
+accumulated so a statement can read a family's membership off it, which is
+what `realizeDoc_id` needs to carry a passing pair into each judge. -/
+def judgedPairs (doc : Doc) : Array (Color × Color) :=
+  let walk := docWalk doc
   let d0 := Design.ofDoc doc
   let bg0 := (effectivePair doc).bg
-  let mut out : Array (Color × Color) := #[((effectivePair doc).fg, bg0)]
-  out := out.push (d0.fg, bg0)
-  out := out.push (d0.muted, bg0)
-  for pal in walk.epochs do
-    out := out.push ((pal.find? "fg").getD Color.black, surfaceOf pal)
-  for u in acc.uses do
-    out := out.push (u.color, u.surface)
-  for (kind, pal) in walk.blockPals do
-    out := out.push ((titledLook pal kind).fg, titledGround pal kind)
-  for pal in walk.titledPals do
-    let d := Design.ofDoc { doc with palette := pal }
-    if let some p := d.frametitle then
-      out := out.push (p.fg, p.bg)
-  for pal in walk.standoutPals do
-    let d := Design.ofDoc { doc with palette := pal }
-    out := out.push (d.standout.fg, d.standout.bg)
-  return out
+  #[((effectivePair doc).fg, bg0), (d0.fg, bg0), (d0.muted, bg0)]
+    ++ (walk.epochs.map fun pal => ((pal.find? "fg").getD Color.black, surfaceOf pal))
+    ++ ((docUses doc walk).uses.map fun u => (u.color, u.surface))
+    ++ (walk.blockPals.map fun kp => ((titledLook kp.2 kp.1).fg, titledGround kp.2 kp.1))
+    ++ (walk.titledPals.filterMap fun pal =>
+        (Design.ofDoc { doc with palette := pal }).frametitle.map fun p => (p.fg, p.bg))
+    ++ (walk.standoutPals.map fun pal =>
+        ((Design.ofDoc { doc with palette := pal }).standout.fg,
+         (Design.ofDoc { doc with palette := pal }).standout.bg))
 
 /-- Every (role, ground) pair a shipped bundle's resolved design creates
 realizes to itself: the pairs already meet their WCAG 2.2 requirement, so
@@ -1291,5 +1355,196 @@ theorem realized_builtin_contract :
         && ok aaText (d.exampleTitle.bar.getD d.bg) d.exampleTitle.fg
         && ok aaLargeText d.standout.bg d.standout.fg) = true := by
   decide +kernel
+
+/-- A fold's invariant, as an induction the judges' no-write lemmas below
+instantiate: a property held by the seed and by every step over the list's
+own elements is held by the result. -/
+private theorem foldlList_invariant {α β : Type} (P : β → Prop) (f : β → α → β) :
+    ∀ (xs : List α) (init : β), P init →
+      (∀ b a, a ∈ xs → P b → P (f b a)) → P (xs.foldl f init)
+  | [], _, hi, _ => hi
+  | a :: as, init, hi, hs =>
+    foldlList_invariant P f as (f init a) (hs init a (List.mem_cons_self ..) hi)
+      (fun b x hx hb => hs b x (List.mem_cons_of_mem a hx) hb)
+
+private theorem epochStep_no_pal_writes (s : Judged × Array ColorPair) (pal : Palette)
+    (hpass : aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal))
+    (h : s.1.palWrites = #[]) : (epochStep s pal).1.palWrites = #[] := by
+  unfold epochStep
+  split
+  · exact h
+  · simpa [Nat.not_lt.mpr hpass] using h
+
+private theorem epochPairJudged_no_pal_writes (doc : Doc) (epochs : Array Palette)
+    (h : ∀ pal ∈ epochs,
+      aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal)) :
+    (epochPairJudged doc epochs).palWrites = #[] := by
+  unfold epochPairJudged
+  rw [← Array.foldl_toList]
+  exact foldlList_invariant (fun s => s.1.palWrites = #[]) epochStep epochs.toList
+    ({}, #[{ fg := (Design.ofDoc doc).fg, bg := (effectivePair doc).bg }]) rfl
+    fun s pal hmem hs =>
+      epochStep_no_pal_writes s pal (h pal (Array.mem_toList_iff.mp hmem)) hs
+
+private theorem effectivePairJudged_no_pal_writes (doc : Doc)
+    (hpass : aaText ≤ contrastMilli (effectivePair doc).fg (effectivePair doc).bg) :
+    (effectivePairJudged doc).palWrites = #[] := by
+  unfold effectivePairJudged
+  split
+  · rfl
+  · simp [Nat.not_lt.mpr hpass]
+
+private theorem blockTitleStep_no_pal_writes (s : Judged) (kp : TitledKind × Palette)
+    (hpass : aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1))
+    (h : s.palWrites = #[]) : (blockTitleStep s kp).palWrites = #[] := by
+  simpa [blockTitleStep, Nat.not_lt.mpr hpass] using h
+
+private theorem frameTitleStep_no_pal_writes (doc : Doc) (s : Judged) (pal : Palette)
+    (hpass : ∀ p : ColorPair, (Design.ofDoc { doc with palette := pal }).frametitle = some p →
+      aaText ≤ contrastMilli p.fg p.bg)
+    (h : s.palWrites = #[]) : (frameTitleStep doc s pal).palWrites = #[] := by
+  unfold frameTitleStep
+  split
+  · exact h
+  · next p hp => simpa [Nat.not_lt.mpr (hpass p hp)] using h
+
+private theorem standoutStep_no_pal_writes (doc : Doc) (s : Judged) (pal : Palette)
+    (hpass : aaLargeText ≤ contrastMilli
+      (Design.ofDoc { doc with palette := pal }).standout.fg
+      (Design.ofDoc { doc with palette := pal }).standout.bg)
+    (h : s.palWrites = #[]) : (standoutStep doc s pal).palWrites = #[] := by
+  simpa [standoutStep, Nat.not_lt.mpr hpass] using h
+
+private theorem resolvedPairJudged_no_pal_writes (doc : Doc)
+    (titled standout pending : Array Palette) (blocks : Array (TitledKind × Palette))
+    (hb : ∀ kp ∈ blocks,
+      aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1))
+    (ht : ∀ pal ∈ titled, ∀ p : ColorPair,
+      (Design.ofDoc { doc with palette := pal }).frametitle = some p →
+      aaText ≤ contrastMilli p.fg p.bg)
+    (hs : ∀ pal ∈ standout, aaLargeText ≤ contrastMilli
+      (Design.ofDoc { doc with palette := pal }).standout.fg
+      (Design.ofDoc { doc with palette := pal }).standout.bg) :
+    (resolvedPairJudged doc titled standout pending blocks).palWrites = #[] := by
+  have eB : (blocks.foldl blockTitleStep {}).palWrites = #[] := by
+    rw [← Array.foldl_toList]
+    exact foldlList_invariant (fun j => j.palWrites = #[]) blockTitleStep blocks.toList
+      {} rfl fun j kp hmem hj =>
+        blockTitleStep_no_pal_writes j kp (hb kp (Array.mem_toList_iff.mp hmem)) hj
+  have eT : (titled.foldl (frameTitleStep doc) {}).palWrites = #[] := by
+    rw [← Array.foldl_toList]
+    exact foldlList_invariant (fun j => j.palWrites = #[]) (frameTitleStep doc) titled.toList
+      {} rfl fun j pal hmem hj =>
+        frameTitleStep_no_pal_writes doc j pal (ht pal (Array.mem_toList_iff.mp hmem)) hj
+  have eS : (standout.foldl (standoutStep doc) {}).palWrites = #[] := by
+    rw [← Array.foldl_toList]
+    exact foldlList_invariant (fun j => j.palWrites = #[]) (standoutStep doc) standout.toList
+      {} rfl fun j pal hmem hj =>
+        standoutStep_no_pal_writes doc j pal (hs pal (Array.mem_toList_iff.mp hmem)) hj
+  simp [resolvedPairJudged, eB, eT, eS]
+
+/-- The large-scale threshold is the weaker of the two: a pair that clears
+the text requirement clears it wherever the judge asks for 3:1. -/
+private theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
+  unfold aaLargeText aaText
+  omega
+
+private theorem useStep_no_writes (large : Std.HashMap UseKey Bool)
+    (s : UseJudgeState) (u : Use)
+    (hpass : aaText ≤ contrastMilli u.color u.surface)
+    (h : s.j.palWrites = #[] ∧ s.j.runWrites = #[]) :
+    (useStep large s u).j.palWrites = #[] ∧ (useStep large s u).j.runWrites = #[] := by
+  have hthr : ¬ (contrastMilli u.color u.surface <
+      (if (large[u.key]?).getD true then aaLargeText else aaText)) := by
+    refine Nat.not_lt.mpr ?_
+    split
+    · exact Nat.le_trans aaLargeText_le_aaText hpass
+    · exact hpass
+  unfold useStep
+  split
+  · exact h
+  · simpa [hthr] using h
+
+private theorem declaredUseJudged_no_writes (doc : Doc) (walk : UseAcc)
+    (h : ∀ u ∈ (docUses doc walk).uses, aaText ≤ contrastMilli u.color u.surface) :
+    (declaredUseJudged doc walk).palWrites = #[] ∧
+      (declaredUseJudged doc walk).runWrites = #[] := by
+  simpa [declaredUseJudged] using
+    foldlList_invariant (fun s => s.j.palWrites = #[] ∧ s.j.runWrites = #[])
+      (useStep (allLargeOf (docUses doc walk).uses)) (docUses doc walk).uses.toList
+      { done := ({} : Std.HashSet UseKey).insert
+          { name := some "fg",
+            pair := { color := (Design.ofDoc doc).fg, ground := (effectivePair doc).bg } } }
+      ⟨rfl, rfl⟩
+      fun s u hmem hs =>
+        useStep_no_writes _ s u (h u (Array.mem_toList_iff.mp hmem)) hs
+
+/-- A legible document's artifact cannot move: when every pair the judge
+enumerates (`judgedPairs` — the effective pair, each epoch's, every
+coloured use on the ground it stood on, and each design site that ships)
+already meets the text threshold, `realizeDoc` returns the document
+itself, not a copy.
+
+`realize_id_of_passing` is the single-pair fact; this is the document-level
+one, and the two are not the same claim — a plan that emitted a write for a
+*passing* pair would shift a legible document's colours while every
+single-pair statement stayed true. The proof is one no-write lemma per
+judge, each a fold invariant over that judge's own step, so the dedup state
+the plan is built through (`useStep`'s `done`/`palSeen`/`solved`) cannot
+manufacture a write the pair did not ask for. The large-scale pairs are
+covered by the text threshold, which is the stricter of the two. -/
+theorem realizeDoc_id (doc : Doc)
+    (h : ∀ p ∈ judgedPairs doc, aaText ≤ contrastMilli p.1 p.2) :
+    (realizeDoc doc).1 = doc := by
+  have hE : aaText ≤ contrastMilli (effectivePair doc).fg (effectivePair doc).bg := by
+    refine h ((effectivePair doc).fg, (effectivePair doc).bg) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
+      (Array.mem_append_left _ (Array.mem_append_left _ (by simp)))))
+  have hP : ∀ pal ∈ (docWalk doc).epochs,
+      aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal) := by
+    intro pal hp
+    refine h ((pal.find? "fg").getD Color.black, surfaceOf pal) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
+      (Array.mem_append_left _ (Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hp, rfl⟩)))))
+  have hU : ∀ u ∈ (docUses doc (docWalk doc)).uses,
+      aaText ≤ contrastMilli u.color u.surface := by
+    intro u hu
+    refine h (u.color, u.surface) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
+      (Array.mem_append_right _ (Array.mem_map.mpr ⟨u, hu, rfl⟩))))
+  have hB : ∀ kp ∈ (docWalk doc).blockPals,
+      aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1) := by
+    intro kp hkp
+    refine h ((titledLook kp.2 kp.1).fg, titledGround kp.2 kp.1) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_left _ (Array.mem_append_left _
+      (Array.mem_append_right _ (Array.mem_map.mpr ⟨kp, hkp, rfl⟩)))
+  have hT : ∀ pal ∈ (docWalk doc).titledPals, ∀ p : ColorPair,
+      (Design.ofDoc { doc with palette := pal }).frametitle = some p →
+      aaText ≤ contrastMilli p.fg p.bg := by
+    intro pal hpal p hp
+    refine h (p.fg, p.bg) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_left _ (Array.mem_append_right _
+      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩))
+  have hS : ∀ pal ∈ (docWalk doc).standoutPals, aaLargeText ≤ contrastMilli
+      (Design.ofDoc { doc with palette := pal }).standout.fg
+      (Design.ofDoc { doc with palette := pal }).standout.bg := by
+    intro pal hpal
+    refine Nat.le_trans aaLargeText_le_aaText
+      (h ((Design.ofDoc { doc with palette := pal }).standout.fg,
+          (Design.ofDoc { doc with palette := pal }).standout.bg) ?_)
+    simp only [judgedPairs]
+    exact Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hpal, rfl⟩)
+  have hu := declaredUseJudged_no_writes doc (docWalk doc) hU
+  simp [realizeDoc, realizePlan,
+    effectivePairJudged_no_pal_writes doc hE,
+    epochPairJudged_no_pal_writes doc (docWalk doc).epochs hP,
+    resolvedPairJudged_no_pal_writes doc (docWalk doc).titledPals
+      (docWalk doc).standoutPals (docWalk doc).pendingPals (docWalk doc).blockPals hB hT hS,
+    hu.1, hu.2]
 
 end LeanTex.Core.Contrast

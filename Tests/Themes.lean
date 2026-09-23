@@ -2845,3 +2845,61 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let pagePal := (pal.declare "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
   t "a declared white page is judged as declared"
     ((Contrast.docDiags { doc with palette := pagePal }).isEmpty)
+
+
+/-- A legible document is returned untouched, and a failing one is not: the
+executable half of `realizeDoc_id`, over a document that exercises every
+family the plan is built from — the effective pair, a mid-document epoch,
+role-named and anonymous uses, a titled block, a frame title, a standout
+frame, pending overlay content, and page furniture. A write emitted for a
+*passing* pair fails the first row here (the returned document differs from
+the one handed in) while every single-pair statement stays true, which is
+the gap this pins: `realize_id_of_passing` speaks for one pair, not for the
+plan the dedup assembles. The second row keeps it honest — the same
+machinery does move a document whose pair fails, so the first row is not
+passing for want of a mechanism. Own function: `main`'s elaboration
+budget. -/
+def realizeDocIdChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ink : Ir.Color := { r := 0x11, g := 0x11, b := 0x11 }
+  let bar : Ir.Color := { r := 0x20, g := 0x30, b := 0x40 }
+  let onBar : Ir.Color := { r := 0xF8, g := 0xF8, b := 0xF8 }
+  let legible : Ir.Palette :=
+    ((((((({} : Ir.Palette).declare "fg" ink).declare "bg" Ir.Color.white).declare
+      "quiet" { r := 0x44, g := 0x44, b := 0x44 }).declare
+      "frametitlebg" bar).declare "frametitlefg" onBar).declare
+      "blocktitlefg" ink).declare "muted" { r := 0x40, g := 0x40, b := 0x40 }
+  let epoch : Ir.Palette :=
+    ((({} : Ir.Palette).declare "fg" ink).declare "bg" Ir.Color.white).declare
+      "quiet" { r := 0x44, g := 0x44, b := 0x44 }
+  let body : Array Ir.Block :=
+    #[.para #[.colored { r := 0x44, g := 0x44, b := 0x44 } (some "quiet") #[.text "role ink"]],
+      .para #[.colored ink none #[.text "anonymous ink"]],
+      .titled .block #[.text "Panel"] #[.para #[.text "panel body"]],
+      .frame #[.text "Frame title"] false .center false #[.para #[.text "frame body"]],
+      .frame #[.text "Standout"] true .center false #[.para #[.text "standout body"]],
+      .para #[.step 2 none #[.text "pending"]],
+      .setPalette epoch,
+      .para #[.colored ink (some "fg") #[.text "after the epoch"]]]
+  let doc : Ir.Doc :=
+    { palette := legible, body := body
+      head := some #[.text "running head"], foot := some #[.text "running foot"] }
+  let (out, ds) := Contrast.realizeDoc doc
+  t "a legible document is returned untouched" (out == doc)
+  t "a legible document's every judged pair passes"
+    ((Contrast.judgedPairs doc).all fun p =>
+      Contrast.aaText ≤ Contrast.contrastMilli p.1 p.2)
+  t "a legible document draws no realization note and no pairing warning"
+    (ds.all fun d => d.code != "N0022" && d.code != "W0315" && d.code != "W0345")
+  -- The same machinery moves a document that fails: one pale role, judged
+  -- on the page it sits on, realizes and the returned document differs.
+  let pale : Ir.Color := { r := 0xBB, g := 0xBB, b := 0xBB }
+  let failing := { doc with
+    palette := legible.declare "quiet" pale
+    body := #[.para #[.colored pale (some "quiet") #[.text "pale role ink"]]] }
+  let (fOut, fDs) := Contrast.realizeDoc failing
+  t "a failing pair is judged, not passed over"
+    (!(Contrast.judgedPairs failing).all fun p =>
+      Contrast.aaText ≤ Contrast.contrastMilli p.1 p.2)
+  t "a failing document does move" (!(fOut == failing))
+  t "a failing document says so" (fDs.any fun d => d.code == "N0022" || d.code == "W0315")
