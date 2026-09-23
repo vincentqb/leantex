@@ -7254,3 +7254,72 @@ is evidence, not a theorem.
   code: 2)` as the read failure, while a real failed read renders that
   string followed by a second `file:` line, so the golden's E0001 block
   shows a message shape the driver never produces.
+
+
+- 2026-09-23: **a definition is not an interface** — the rule the census
+  coupling was asking for, now structural for the outline walk. The finding
+  one entry up was that `PdfStruct.lean` proved its accumulator lemmas by
+  `rw [Struct.headingsList]` and `simp only [Struct.headingsOne]; split`:
+  it read the census's pattern-match equations and its inner `match kind`,
+  so redefining the census would break a file that cannot see the change.
+  A definition becomes an interface the moment a downstream proof unfolds
+  it, and the fix is not to stop refactoring — it is for the downstream
+  lemma to cite a *stated* fact. The outline walk now states the four
+  equations it is built from (`headingsList_nil_exact`,
+  `_cons_exact`, `headingsOne_leaf_exact`, `_heading_exact`,
+  `_aside_exact`, and one `_through_exact` quantified over the kinds that
+  are neither an outline heading nor a side channel, so a citation need not
+  enumerate the other twenty-three), `headings_eq_exact` for the entry
+  point, and the accumulator extraction `headingsList_acc`/`headingsOne_acc`
+  in the shape `leavesList_acc` already had. The five citing proofs in
+  `PdfStruct.lean` — `headingsList_out`, `headingsOne_out`,
+  `skelList_headings`, `skelStep_headings`, `pdf_headings_covers` — read
+  those; the tagger no longer names `headingsList` or `headingsOne` outside
+  a statement. `headingsOne_out` moved from a `where` helper to a
+  top-level theorem, both now two lines over `_acc`. No `def` changed: all
+  75 corpus artifacts hash identically and the diagnostic stream, path and
+  timing normalised, is unchanged.
+
+  What the conversion to a shared walk still costs, measured rather than
+  guessed. The four censuses (`leafTextList`, `headingsList`, `imagesList`,
+  `leavesList`) are over `Struct.Node`, not `Ir.Block`, so the shape they
+  would instantiate is not `Ir.CtxFold` but a Node fold — and the enter
+  side must be able to refuse descent, which is what `.aside` is
+  (`headingsOne` answers `out` without reading its children, the one place
+  a census declines a subtree). The blocker is no longer downstream: it is
+  `Struct.lean` itself, which cites its own census definitions in 171
+  tactic lists across 138 lines (`leafTextOne` 37, `headingsOne` 39,
+  `imagesOne` 37, `leafTextList` 18, `headingsList` 15, `imagesList` 13,
+  `leavesList`/`leavesOne` 6 each) — the per-constructor arms of the three
+  headline conservation theorems, `structTree_text`,
+  `structTree_headings_covers` and `structTree_images_covers`. Those sites
+  are `simp only [...]`, which does not read the default simp set, so each
+  must name the pack's equations; and the descent case cannot fire under
+  `simp only` while it carries a hypothesis, so the conversion also wants
+  the kind classification as a function on `Kind` the prover can reduce
+  (`.heading` ships and reads, `.aside` refuses, the rest read through)
+  rather than as a match inside the walk. That classifier is the design the
+  collapse needs and the equation pack is the half that unblocks it.
+
+  The fourth quadrant (map × state) is not a combinator, and the two
+  callers say why. `Ir.recolorRolesBlock` is `Block → Block × Palette` and
+  `Ir.numberFloatOne` is `Block → FloatCtr × Block`: both thread a state
+  through and *out* of a node, which is what neither `mapBlocks` (a leaf
+  rewrite, no state) nor `CtxFold` (a context that only descends) can
+  express — `.setPalette p => (…, p)` publishes the state outward, and the
+  float counter's `sub := 0` on entry with `cAfter.sub` restored after is
+  an open/close on the state itself. Both also leave whole nodes unread
+  (`.note`, `.verbatim`, `.logo`; the numbering adds `.table`,
+  `.algorithm`, `.bibliography`). So they agree on a *discipline* —
+  thread-through-and-out, open/close, opaque nodes — and diverge
+  irreducibly on the rebuild: the numbering rewrites a node's own field
+  (`.float`'s number, from the state at entry), while the realizer rewrites
+  each node's inline fields under a ground that differs *per child
+  position* (a frame's title on the title bar, its body on the standout
+  inversion, a heading's title always on the page). A generic map cannot
+  rebuild a constructor, so a combinator carrying only the state discipline
+  would hand the rebuild back per arm and both callers would still spell
+  all twenty-nine. Fitting a five-field record to one caller's ground
+  policy is how a vocabulary stops being one; what these two share is a
+  discipline and, when it is written, a state-conservation theorem schema —
+  not a fold. Recorded here so the next reader does not re-derive it.
