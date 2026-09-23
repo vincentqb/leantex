@@ -4934,6 +4934,456 @@ def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (xs : Array Block) : α :=
   foldBlockList fb fi acc xs.toList
 
+/-- The events a context-threading walk declares. `foldBlock`'s pair of
+leaf functions is the case where no context descends and the way out is
+silent — `foldCtxBlock_covers` is that equality, and it is what makes a
+conversion to this walk a no-op on the artifact. Two things a leaf fold
+cannot express live here: a value bound over a node's *extent*, read from
+`γ` (the float binding a `\label` under a captioned float resolves
+against), and the *end* of a container, which a tree built from the IR
+needs and an accumulator reading a node before its content can never
+find. The context descends and does not escape — siblings are read under
+the context their parent opened them in, and `closeBlock` sees that same
+context, so a node's own binding cannot leak past where it stands. -/
+structure CtxFold (γ : Type) (α : Type) where
+  /-- Entering a block: the accumulator, and the context its content is
+  read under. -/
+  openBlock : γ → α → Block → α × γ
+  /-- Leaving a block, under the context the block was entered in. -/
+  closeBlock : γ → α → Block → α
+  /-- Entering an inline node: the accumulator, and the context its
+  content is read under. -/
+  openInline : γ → α → Inline → α × γ
+  /-- Leaving an inline node, under the context it was entered in. -/
+  closeInline : γ → α → Inline → α
+
+mutual
+
+/-- `foldInline`'s descent with a context and a close event: document
+order, a node before its content, the context `openInline` returns in
+force over that content alone. Structural mutual recursion through `List`,
+the same knot `foldInline` ties — no measure, and total by construction. -/
+def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) : α :=
+  match x with
+  | .styled _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .colored _ _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .role _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .link _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .underline body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .step _ _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .alt _ _ firstPage otherPage =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx
+      (foldCtxInlineList w r.2 (foldCtxInlineList w r.2 r.1 firstPage.toList)
+        otherPage.toList) x
+  | .footnote _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
+    w.closeInline ctx (w.openInline ctx acc x).1 x
+
+def foldCtxInlineList (w : CtxFold γ α) (ctx : γ) (acc : α) : List Inline → α
+  | [] => acc
+  | x :: rest => foldCtxInlineList w ctx (foldCtxInline w ctx acc x) rest
+
+end
+
+/-- `foldCtxInline` over an inline tree, the walk's inline entry. -/
+def foldCtxInlines (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Inline) : α :=
+  foldCtxInlineList w ctx acc xs.toList
+
+def foldCtxTableCells (w : CtxFold γ α) (ctx : γ) (acc : α) : List (Array Inline) → α
+  | [] => acc
+  | cell :: rest => foldCtxTableCells w ctx (foldCtxInlineList w ctx acc cell.toList) rest
+
+def foldCtxTableRows (w : CtxFold γ α) (ctx : γ) (acc : α) :
+    List (Array (Array Inline)) → α
+  | [] => acc
+  | row :: rest => foldCtxTableRows w ctx (foldCtxTableCells w ctx acc row.toList) rest
+
+/-- `foldCtxInline` over algorithm lines: content then comment, the reading
+order `foldAlgLines` declares once for every collector. -/
+def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgLine → α
+  | [] => acc
+  | l :: rest =>
+    foldCtxAlgLines w ctx (match l.comment with
+      | some c => foldCtxInlineList w ctx (foldCtxInlineList w ctx acc l.content.toList) c.toList
+      | none => foldCtxInlineList w ctx acc l.content.toList) rest
+
+mutual
+
+/-- The block face: `foldBlock`'s descent, arm for arm, with the context
+`openBlock` returns in force over the node's content and `closeBlock`
+called once that content is read. A `.bibliography`'s items are the style's
+renderings, not authored content, so the walk reads the marker and does not
+descend — the same line `foldBlock` draws. -/
+def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
+  match b with
+  | .para content =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+  | .equation _ content =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+  | .section _ _ _ title =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 title.toList) b
+  | .list _ items =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockItems w r.2 r.1 items.toList) b
+  | .center body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .ragged body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .quote body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .abstract body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .titled _ title body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx
+      (foldCtxBlockList w r.2 (foldCtxInlineList w r.2 r.1 title.toList) body.toList) b
+  | .role _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .spaced _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .columns cols =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockCols w r.2 r.1 cols.toList) b
+  | .step _ _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .alt _ _ firstPage otherPage =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx
+      (foldCtxBlockList w r.2 (foldCtxBlockList w r.2 r.1 firstPage.toList)
+        otherPage.toList) b
+  | .only _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .nav _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .note body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .frame title _ _ _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx
+      (foldCtxBlockList w r.2 (foldCtxInlineList w r.2 r.1 title.toList) body.toList) b
+  | .framefoot content =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+  | .float _ _ _ body caption =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx
+      (foldCtxBlockList w r.2 (foldCtxInlineList w r.2 r.1 caption.toList) body.toList) b
+  | .table _ _ _ rows _ =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxTableRows w r.2 r.1 rows.toList) b
+  | .algorithm _ _ lines =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxAlgLines w r.2 r.1 lines.toList) b
+  | .logo content =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ =>
+    w.closeBlock ctx (w.openBlock ctx acc b).1 b
+
+def foldCtxBlockList (w : CtxFold γ α) (ctx : γ) (acc : α) : List Block → α
+  | [] => acc
+  | b :: rest => foldCtxBlockList w ctx (foldCtxBlock w ctx acc b) rest
+
+def foldCtxBlockItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List (Array Block) → α
+  | [] => acc
+  | item :: rest => foldCtxBlockItems w ctx (foldCtxBlockList w ctx acc item.toList) rest
+
+def foldCtxBlockCols (w : CtxFold γ α) (ctx : γ) (acc : α) :
+    List (Option Nat × Array Block) → α
+  | [] => acc
+  | (_, body) :: rest => foldCtxBlockCols w ctx (foldCtxBlockList w ctx acc body.toList) rest
+
+end
+
+/-- `foldCtxBlock` over a block tree, the walk's entry. -/
+def foldCtxBlocks (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Block) : α :=
+  foldCtxBlockList w ctx acc xs.toList
+
+/-- The leaf fold as a context walk: nothing descends, nothing happens on
+the way out. -/
+def CtxFold.ofFold (fb : α → Block → α) (fi : α → Inline → α) : CtxFold Unit α where
+  openBlock := fun _ acc b => (fb acc b, ())
+  closeBlock := fun _ acc _ => acc
+  openInline := fun _ acc x => (fi acc x, ())
+  closeInline := fun _ acc _ => acc
+
+@[simp] theorem CtxFold.ofFold_openBlock (fb : α → Block → α) (fi : α → Inline → α)
+    (u : Unit) (acc : α) (b : Block) :
+    (CtxFold.ofFold fb fi).openBlock u acc b = (fb acc b, ()) := rfl
+
+@[simp] theorem CtxFold.ofFold_closeBlock (fb : α → Block → α) (fi : α → Inline → α)
+    (u : Unit) (acc : α) (b : Block) : (CtxFold.ofFold fb fi).closeBlock u acc b = acc := rfl
+
+@[simp] theorem CtxFold.ofFold_openInline (fb : α → Block → α) (fi : α → Inline → α)
+    (u : Unit) (acc : α) (x : Inline) :
+    (CtxFold.ofFold fb fi).openInline u acc x = (fi acc x, ()) := rfl
+
+@[simp] theorem CtxFold.ofFold_closeInline (fb : α → Block → α) (fi : α → Inline → α)
+    (u : Unit) (acc : α) (x : Inline) :
+    (CtxFold.ofFold fb fi).closeInline u acc x = acc := rfl
+
+mutual
+
+theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (x : Inline) : foldCtxInline (CtxFold.ofFold fb fi) () acc x = foldInline fi acc x := by
+  match x with
+  | .styled _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .colored _ _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .role _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .link _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .underline body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .step _ _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .alt _ _ firstPage otherPage =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    rw [foldCtxInlineList_covers fb fi _ firstPage.toList,
+      foldCtxInlineList_covers fb fi _ otherPage.toList]
+  | .footnote _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+
+theorem foldCtxInlineList_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (xs : List Inline) :
+    foldCtxInlineList (CtxFold.ofFold fb fi) () acc xs = foldInlineList fi acc xs := by
+  match xs with
+  | [] => rfl
+  | x :: rest =>
+    rw [foldCtxInlineList, foldInlineList, foldCtxInline_covers,
+      foldCtxInlineList_covers fb fi _ rest]
+
+end
+
+theorem foldCtxTableCells_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (cells : List (Array Inline)) :
+    foldCtxTableCells (CtxFold.ofFold fb fi) () acc cells = foldTableCells fi acc cells := by
+  induction cells generalizing acc with
+  | nil => rfl
+  | cons cell rest ih =>
+    rw [foldCtxTableCells, foldTableCells, foldCtxInlineList_covers, ih]
+
+theorem foldCtxTableRows_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (rows : List (Array (Array Inline))) :
+    foldCtxTableRows (CtxFold.ofFold fb fi) () acc rows = foldTableRows fi acc rows := by
+  induction rows generalizing acc with
+  | nil => rfl
+  | cons row rest ih =>
+    rw [foldCtxTableRows, foldTableRows, foldCtxTableCells_covers, ih]
+
+theorem foldCtxAlgLines_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (lines : List AlgLine) :
+    foldCtxAlgLines (CtxFold.ofFold fb fi) () acc lines = foldAlgLines fi acc lines := by
+  induction lines generalizing acc with
+  | nil => rfl
+  | cons l rest ih =>
+    rw [foldCtxAlgLines, foldAlgLines]
+    cases l.comment with
+    | none => simp only [foldCtxInlineList_covers, ih]
+    | some c => simp only [foldCtxInlineList_covers, ih]
+
+mutual
+
+/-- **The context walk covers the leaf fold** (`_covers`): with no context
+descending and a silent way out, `foldCtxBlock` reads exactly the nodes
+`foldBlock` reads, in exactly its order. The descent is declared twice in
+this file, so this is the statement that keeps the two copies one walk —
+the next `Ir` constructor descended in one and not the other fails here,
+and a caller moved from `foldBlocks` to `foldCtxBlocks` is provably a
+no-op. -/
+theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (b : Block) : foldCtxBlock (CtxFold.ofFold fb fi) () acc b = foldBlock fb fi acc b := by
+  match b with
+  | .para content =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxInlineList_covers fb fi _ content.toList
+  | .equation _ content =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxInlineList_covers fb fi _ content.toList
+  | .section _ _ _ title =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxInlineList_covers fb fi _ title.toList
+  | .list _ items =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockItems_covers fb fi _ items.toList
+  | .center body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .ragged body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .quote body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .abstract body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .titled _ title body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    rw [foldCtxInlineList_covers fb fi _ title.toList,
+      foldCtxBlockList_covers fb fi _ body.toList]
+  | .role _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .spaced _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .columns cols =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockCols_covers fb fi _ cols.toList
+  | .step _ _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .alt _ _ firstPage otherPage =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    rw [foldCtxBlockList_covers fb fi _ firstPage.toList,
+      foldCtxBlockList_covers fb fi _ otherPage.toList]
+  | .only _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .nav _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .note body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
+  | .frame title _ _ _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    rw [foldCtxInlineList_covers fb fi _ title.toList,
+      foldCtxBlockList_covers fb fi _ body.toList]
+  | .framefoot content =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxInlineList_covers fb fi _ content.toList
+  | .float _ _ _ body caption =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    rw [foldCtxInlineList_covers fb fi _ caption.toList,
+      foldCtxBlockList_covers fb fi _ body.toList]
+  | .table _ _ _ rows _ =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxTableRows_covers fb fi _ rows.toList
+  | .algorithm _ _ lines =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxAlgLines_covers fb fi _ lines.toList
+  | .logo content =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxInlineList_covers fb fi _ content.toList
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+
+theorem foldCtxBlockList_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (bs : List Block) :
+    foldCtxBlockList (CtxFold.ofFold fb fi) () acc bs = foldBlockList fb fi acc bs := by
+  match bs with
+  | [] => rfl
+  | b :: rest =>
+    rw [foldCtxBlockList, foldBlockList, foldCtxBlock_covers,
+      foldCtxBlockList_covers fb fi _ rest]
+
+theorem foldCtxBlockItems_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (items : List (Array Block)) :
+    foldCtxBlockItems (CtxFold.ofFold fb fi) () acc items = foldBlockItems fb fi acc items := by
+  match items with
+  | [] => rfl
+  | item :: rest =>
+    rw [foldCtxBlockItems, foldBlockItems, foldCtxBlockList_covers,
+      foldCtxBlockItems_covers fb fi _ rest]
+
+theorem foldCtxBlockCols_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (cols : List (Option Nat × Array Block)) :
+    foldCtxBlockCols (CtxFold.ofFold fb fi) () acc cols = foldBlockCols fb fi acc cols := by
+  match cols with
+  | [] => rfl
+  | (_, body) :: rest =>
+    rw [foldCtxBlockCols, foldBlockCols, foldCtxBlockList_covers,
+      foldCtxBlockCols_covers fb fi _ rest]
+
+end
+
+/-- The tree face of `foldCtxBlock_covers`: `foldCtxBlocks` with no context
+is `foldBlocks`. -/
+theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (xs : Array Block) :
+    foldCtxBlocks (CtxFold.ofFold fb fi) () acc xs = foldBlocks fb fi acc xs :=
+  foldCtxBlockList_covers fb fi acc xs.toList
+
 /-- Does any node of the inline content satisfy `p`? The Bool face of the
 fold — the trigger census the conditional-identity schema
 (`mapInlines_id`) and `hasPhysicalPage` read. -/

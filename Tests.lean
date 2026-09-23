@@ -231,6 +231,7 @@ def main (args : List String) : IO UInt32 := do
   diagChecks ref
   pendingChecks ref
   structChecks ref
+  ctxFoldChecks ref
   pictureElabChecks ref
   diagVoiceChecks ref update
   allowChecks ref

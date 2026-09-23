@@ -149,3 +149,48 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds tree.children == #[.heading 1, .paragraph, .list false]
       && tree.headings == #[1]
       && (structKinds (structKids (tree.children.extract 1 2))).contains .note)
+
+
+/-- An event trace of the context walk: `<d` on the way into a block at
+context `d`, `>d` on the way out, `td:s` for a text leaf. The context is the
+nesting depth, so the trace says both things a leaf fold cannot — where the
+context went, and where each container ended. -/
+def ctxTrace (bs : Array Ir.Block) : Array String :=
+  Ir.foldCtxBlocks
+    { openBlock := fun d out _ => (out.push s!"<{d}", d + 1)
+      closeBlock := fun d out _ => out.push s!">{d}"
+      openInline := fun d out x =>
+        match x with
+        | .text s => (out.push s!"t{d}:{s}", d + 1)
+        | _ => (out, d + 1)
+      closeInline := fun _ out _ => out } 0 #[] bs
+
+/-- The context-threading walk (`Ir.foldCtxBlocks`). `foldCtxBlock_covers`
+closes the fact that it reads exactly what `foldBlock` reads; the rows here
+witness that equality over every golden fixture, and pin the two properties
+the equality does not mention — the context descends and does not escape,
+and a container's end is observed after its content. -/
+def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let para : Ir.Block := .para #[.text "a"]
+  t "context descends into a wrapper and does not escape it"
+    (ctxTrace #[.center #[para], para]
+      == #["<0", "<1", "t2:a", ">1", ">0", "<0", "t1:a", ">0"])
+  t "a container's end is observed after its content, innermost first"
+    (ctxTrace #[.quote #[.center #[para]]]
+      == #["<0", "<1", "<2", "t3:a", ">2", ">1", ">0"])
+  t "siblings are read under the context their parent opened them in"
+    (ctxTrace #[.center #[para, para]]
+      == #["<0", "<1", "t2:a", ">1", "<1", "t2:a", ">1", ">0"])
+  t "a non-descending arm still opens and closes"
+    (ctxTrace #[.pagebreak] == #["<0", ">0"])
+  -- the theorem, witnessed over the corpus: the two descents declared in
+  -- Ir.lean read the same nodes in the same order
+  let fb : Array String → Ir.Block → Array String := fun out b => out.push (Ir.blockTextOne "b" b)
+  let fi : Array String → Ir.Inline → Array String := fun out x => out.push (Ir.plainTextOne x)
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    t s!"ctx fold {n}: the context walk covers the leaf fold"
+      (Ir.foldCtxBlocks (Ir.CtxFold.ofFold fb fi) () #[] doc.body
+        == Ir.foldBlocks fb fi #[] doc.body)
