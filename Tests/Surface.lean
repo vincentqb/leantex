@@ -2960,11 +2960,36 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the reference stays a literal key the node's loop names — one W0334,
   -- nothing chased.
   t "elab self-referential every-node style is named, not chased"
-    (((elabStr ("\\pictures{ tool = none }" ++
+    ((((elabStr ("\\pictures{ tool = none }" ++
       "\\tikzset{every node/.style={every node}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
-      == ["W0334"])
+      == ["W0334"]) &&
+     ((elabStr ("\\pictures{ tool = none }" ++
+      "\\tikzset{every node/.style={every node}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map
+      (·.message)).any (fun m => hasStr m "node option"))
+  -- A picture-level key no later level names still reaches the construct
+  -- (`Picture.merge_picture_covers`): the outermost level survives both
+  -- filters, so the picture's colour draws under an `every path` that sets
+  -- something else.
+  t "elab a picture-level key survives an every-path style of other keys"
+    ((elabStr ("\\tikzset{every path/.style={thick}}\n" ++
+      "\\tikzset{wire/.style={draw=blue}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[wire]\n" ++
+      "\\draw (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ st _ => st.color == { r := 0, g := 0, b := 255 } &&
+                st.width == Ir.Pic.thickWidth
+            | _ => false
+        | _ => false))
+  -- An `every X` that declares no keys at all loses nothing, so the two
+  -- places the level cannot reach say nothing either.
+  t "elab an empty every-path style claims no loss"
+    ((elabStr (dvDoc "\\tikzset{every path/.style={}}\n"
+      "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.isEmpty)
   -- The two places this level cannot reach are named, not dropped in
   -- silence: `\fill`'s bracket is a colour spelling, and an edge label
   -- reads its own bracket alone.
@@ -3092,9 +3117,18 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab an undeclared tip named by '>=' is named"
-    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+    ((((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
       "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
-      (·.code)).toList == ["W0334"])
+      (·.code)).toList == ["W0334"]) &&
+     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.message)).any (fun m => hasStr m "'scm'"))
+  -- The braced spelling of a tip name is the same name: pgf writes it that
+  -- way as soon as the tip carries options.
+  t "elab a declared tip named by '>=' in braces is accepted"
+    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw[>={scm}, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `/.tip` declaration is read, so it is not an unread key at its line;
   -- an `every X` with no loop behind it still is (`readableKey`).
   t "elab a tip declaration is not named as an unread key"
@@ -4373,13 +4407,13 @@ def pictureEveryLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     ((c[0]?.bind (·.pathSpans[1]?)).map (· == (Dim.mm 5, Dim.mm 5)) == some true)
   -- The path pair, read off the shipped strokes: the edge that declared
   -- nothing ships `every path`'s colour over the picture's, and both edges
-  -- ship `every path`'s width, which no bracket re-declared.
-  t "the edge that declared nothing ships the every-path colour and width"
-    ((c[0]?.bind (·.pathStrokes[2]?)).map (fun (col, w) =>
-      col == { r := 0, g := 255, b := 0 } && w == Ir.Pic.thickWidth) == some true)
-  t "the edge that re-declared the colour keeps its own, and every-path's width"
-    ((c[0]?.bind (·.pathStrokes[3]?)).map (fun (col, w) =>
-      col == { r := 255, g := 0, b := 0 } && w == Ir.Pic.thickWidth) == some true)
+  -- ship `every path`'s width, which no bracket re-declared. Asserted as
+  -- the whole array, so the two edge facts cannot drift onto another path.
+  t "the shipped strokes are the two node outlines and the two edges' own"
+    ((c[0]?.map (·.pathStrokes ==
+      #[(Ir.Color.black, Ir.Pic.thinWidth), (Ir.Color.black, Ir.Pic.thinWidth),
+        ({ r := 0, g := 255, b := 0 }, Ir.Pic.thickWidth),
+        ({ r := 255, g := 0, b := 0 }, Ir.Pic.thickWidth)])).getD false)
   t "both node bodies ship as ink"
     (pageHas c 0 "A" && pageHas c 0 "C")
 

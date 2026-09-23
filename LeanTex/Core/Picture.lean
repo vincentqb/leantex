@@ -777,10 +777,13 @@ draws: `-name`, `-{name}`, or `->`. A declared tip draws the engine's own
 arrow head, the way `latex` already does — pgf manual §16 names many tip
 kinds and this subset has one head to draw them with, so the substitution
 is the established one, not a new claim. -/
+def tipName : List Tok → Option String
+  | [.group g] => identPath (g.filter (· != .space))
+  | ts => identPath ts
+
 def arrowTipName : List Tok → Option String
   | [.sym '-', .sym '>'] => some ">"
-  | [.sym '-', .ident n] => some n
-  | [.sym '-', .group g] => identPath (g.filter (· != .space))
+  | [.sym '-', t] => tipName [t]
   | _ => none
 
 /-- Does a name draw as this subset's arrow head? A tip the document
@@ -931,6 +934,26 @@ theorem merge_every_exact {picture every own : Array (Array Tok)} {o : Array Tok
 theorem merge_covers {picture every own : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ own) : o ∈ mergeOpts picture every own :=
   inherit_covers h
+
+/-- Nothing the outer level said is lost where no inner entry names its
+key: the level survives the filter, not only the append. -/
+theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ outer) (hk : ∀ e ∈ inner, optKey e ≠ optKey o) :
+    o ∈ inheritOpts outer inner := by
+  simp only [inheritOpts, Array.mem_append, Array.mem_filter]
+  refine Or.inl ⟨h, ?_⟩
+  simp only [Bool.not_eq_eq_eq_not, Bool.not_true, Array.contains_eq_mem,
+    decide_eq_false_iff_not, Array.mem_map, not_exists, not_and]
+  exact fun e he => hk e he
+
+/-- Precedence, outermost level: what the picture set reaches the merge
+where neither later level names its key. Without this the picture's entries
+could be dropped wholesale and the two boundary facts would still hold. -/
+theorem merge_picture_covers {picture every own : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ picture) (he : ∀ e ∈ every, optKey e ≠ optKey o)
+    (ho : ∀ e ∈ own, optKey e ≠ optKey o) :
+    o ∈ mergeOpts picture every own :=
+  inherit_outer_covers (inherit_outer_covers h he) ho
 
 /-- A picture-level key outside the subset, named at the bracket that
 wrote it. -/
@@ -1664,7 +1687,7 @@ picture subset; the edge is drawn without a head")
     -- `>=<tip>` names which head the `->` shorthand draws; a declared tip
     -- draws this subset's own head, so the key changes no shape here.
     | .sym '>' :: .sym '=' :: rest =>
-      match identPath rest with
+      match tipName rest with
       | some tip =>
         unless drawsAsArrow cx.styles tip do
           ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
@@ -1793,8 +1816,8 @@ outside the rendered picture subset; the edge is not drawn")
         -- entries nor an `every node` style reaches it, so a declared one
         -- is named here rather than dropped in silence.
         unless cx.everyNode.isEmpty do
-          ev := ev.diag (.W0334, "'every node' keys do not reach an edge label; \
-the keys are dropped")
+          ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
+the rendered picture subset; the keys are dropped")
         let mut mcolor := Ir.Color.black
         let mut mscale : Nat := factor
         let mut malign := Ir.Pic.LabelAlign.center
@@ -2008,8 +2031,8 @@ def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
       -- option loop runs here and an `every path` style cannot reach it.
       -- Named rather than dropped in silence: pgf would apply those keys.
       let ev := if cx.everyPath.isEmpty then ev else
-        ev.diag (.W0334, "'every path' keys do not reach a '\\fill', whose \
-bracket is a colour; the keys are dropped")
+        ev.diag (.W0334, "an 'every path' key on a '\\fill' is outside the \
+rendered picture subset; the keys are dropped")
       (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
   | .node toks, env, ev => (env, evalNode cx env toks ev)
@@ -2132,7 +2155,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let st := parseList (toks.toList.drop i) {}
   let everyOf (n : String) : Array (Array Tok) :=
     match styles.lookup n with
-    | some bundle => splitTop bundle ','
+    | some bundle => (splitTop bundle ',').filter fun e => !e.isEmpty
     | none => #[]
   let cx : Cx := { pal := pal, scale := scale
                    styles := styles, transformShape := transformShape

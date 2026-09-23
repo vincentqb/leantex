@@ -187,6 +187,43 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — three defects in the two entries below, found by review rather
+than by the suite, and one caveat they should have carried (m8b-keys, M8b
+slice 1, correction).
+
+An `every X` style that declares *no* keys claimed a loss. `splitTop` of an
+empty token array is one empty entry, not none, so `every path/.style={}`
+left the level non-empty and the two "cannot reach" guards reported keys
+that did not exist. The entries are filtered at the level's own reader now;
+the invariant is that an empty declaration loses nothing, and the check
+holds it.
+
+The outermost of the three levels was pinned by nothing. `merge_own_exact`
+and `merge_every_exact` are boundaries between levels and `merge_covers` is
+about the innermost, so `mergeOpts := inheritOpts every own` — the picture's
+entries dropped wholesale — would have satisfied every stated fact, and no
+fixture noticed because each one's picture-level key was re-declared by a
+later level. `merge_picture_covers` (over the new `inherit_outer_covers`,
+which says a level survives the *filter* and not only the append) states
+it, and a check draws a picture-level colour under an `every path` that
+sets a width.
+
+`>={name}` — the spelling pgf requires as soon as a tip name carries
+options — was refused with a message asserting no tip name was written,
+because the `>=` arm read idents where `-{name}` unwrapped a group. One
+reader (`tipName`) now serves both.
+
+The caveat: a declared tip's *body* is stored and never read. The head this
+subset draws is the same head for `/.tip={Latex[round]}` and
+`/.tip={Circle}`, and the declaring line — which used to be named as an
+unread key — is now silent. That is deliberate as to the head (the `latex`
+precedent) and undeclared as to the shape, so it is written here: a
+declared tip's shape is dropped unnamed, and the honest fix is to name the
+substitution at the use site once the subset has more than one head to
+choose between. Also for the record, the 6.00 mm figure in the entry below
+came from the rendered fixture, whose self-appending bundle declares 6 mm;
+the in-repo check for that case declares 8 mm and asserts the shape count.
+
 2026-09-23 — `/.append style` composes and `/.tip` declares a drawable
 arrow tip (m8b-keys, M8b slice 1, fourth increment). Both were unread key
 paths: an appended body drew none of its keys, and a document that declared
