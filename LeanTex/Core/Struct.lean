@@ -425,6 +425,67 @@ theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
     headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n := by
   rw [Array.toList_push, headingsList_snoc]
 
+-- **The outline census's interface**: the equations a prover may cite,
+-- stated. A definition is not an interface — it becomes one the moment a
+-- downstream proof unfolds it, and then the census cannot be refactored
+-- without breaking a file that cannot see the change. So the four
+-- equations the walk is built from are theorems here, and `PdfStruct`
+-- reads those rather than `headingsList`/`headingsOne` themselves. The
+-- descent case is stated once over the kinds that are neither an outline
+-- heading nor a side channel, so a citation need not enumerate them.
+
+theorem headingsList_nil_exact (out : Array Nat) : headingsList out [] = out := rfl
+
+theorem headingsList_cons_exact (out : Array Nat) (n : Node) (rest : List Node) :
+    headingsList out (n :: rest) = headingsList (headingsOne out n) rest := rfl
+
+theorem headingsOne_leaf_exact (out : Array Nat) (id : Nat) (l : Leaf) :
+    headingsOne out (.leaf id l) = out := rfl
+
+theorem headingsOne_heading_exact (out : Array Nat) (level : Nat) (kids : Array Node) :
+    headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList :=
+  rfl
+
+theorem headingsOne_aside_exact (out : Array Nat) (kids : Array Node) :
+    headingsOne out (.node .aside kids) = out := rfl
+
+theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array Node)
+    (hh : ∀ level, kind ≠ .heading level) (ha : kind ≠ .aside) :
+    headingsOne out (.node kind kids) = headingsList out kids.toList := by
+  cases kind
+  case heading level => exact absurd rfl (hh level)
+  case aside => exact absurd rfl ha
+  all_goals rfl
+
+theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := rfl
+
+mutual
+
+/-- The outline census builds onto its accumulator: the census of a list is
+the accumulator, then the list's own — the fact a projection proof needs of
+the walk, in place of its equations. -/
+theorem headingsList_acc (out : Array Nat) (ns : List Node) :
+    headingsList out ns = out ++ headingsList #[] ns := by
+  match ns with
+  | [] => simp [headingsList]
+  | n :: rest =>
+    rw [headingsList, headingsList_acc _ rest, headingsOne_acc out n, headingsList,
+      headingsList_acc (headingsOne #[] n) rest, Array.append_assoc]
+
+theorem headingsOne_acc (out : Array Nat) (n : Node) :
+    headingsOne out n = out ++ headingsOne #[] n := by
+  match n with
+  | .leaf id l => simp [headingsOne]
+  | .node kind kids =>
+    simp only [headingsOne]
+    split
+    · rw [headingsList_acc, headingsList_acc (#[].push _)]
+      simp
+    · simp
+    all_goals exact headingsList_acc out kids.toList
+
+end
+
 theorem imagesList_append (out : Array (String × String)) (a b : List Node) :
     imagesList out (a ++ b) = imagesList (imagesList out a) b := by
   induction a generalizing out with

@@ -371,25 +371,16 @@ theorem headingsOf_bibEntryElems (es : Array StructElem) (parent : Nat) (openLis
   cases openList <;> simp [headingsOf_pushElem]
 
 /-- `Struct.headingsList` with an accumulator is the accumulator then the
-census from empty. -/
-theorem Struct.headingsList_out : ∀ (l : List Struct.Node) (out : Array Nat),
-    (Struct.headingsList out l).toList = out.toList ++ (Struct.headingsList #[] l).toList
-  | [], out => by simp [Struct.headingsList]
-  | n :: rest, out => by
-    rw [Struct.headingsList, Struct.headingsList, Struct.headingsList_out rest,
-      Struct.headingsList_out rest (Struct.headingsOne #[] n), Struct.headingsOne_out n out]
-    simp
-where
-  Struct.headingsOne_out : ∀ (n : Struct.Node) (out : Array Nat),
-      (Struct.headingsOne out n).toList = out.toList ++ (Struct.headingsOne #[] n).toList
-    | .leaf _ _, out => by simp [Struct.headingsOne]
-    | .node kind kids, out => by
-      simp only [Struct.headingsOne]
-      split
-      · rw [Struct.headingsList_out kids.toList, Struct.headingsList_out kids.toList (#[].push _)]
-        simp
-      · simp
-      all_goals exact Struct.headingsList_out kids.toList out
+census from empty: the list form of the census's own `headingsList_acc`. -/
+theorem Struct.headingsList_out (l : List Struct.Node) (out : Array Nat) :
+    (Struct.headingsList out l).toList = out.toList ++ (Struct.headingsList #[] l).toList := by
+  rw [Struct.headingsList_acc]
+  simp
+
+theorem Struct.headingsOne_out (n : Struct.Node) (out : Array Nat) :
+    (Struct.headingsOne out n).toList = out.toList ++ (Struct.headingsOne #[] n).toList := by
+  rw [Struct.headingsOne_acc]
+  simp
 
 mutual
 
@@ -397,9 +388,10 @@ theorem skelList_headings : ∀ (l : List Struct.Node) (es : Array StructElem)
     (parent holder : Nat) (inline : Bool) (openList : Option Nat),
     headingsOf (skelList es parent holder inline openList l)
       = headingsOf es ++ (Struct.headingsList #[] l).toList
-  | [], es, parent, holder, inline, openList => by simp [skelList, Struct.headingsList]
+  | [], es, parent, holder, inline, openList => by
+    simp [skelList, Struct.headingsList_nil_exact]
   | n :: rest, es, parent, holder, inline, openList => by
-    rw [skelList, skelList_headings rest, skelStep_headings n, Struct.headingsList,
+    rw [skelList, skelList_headings rest, skelStep_headings n, Struct.headingsList_cons_exact,
       Struct.headingsList_out rest (Struct.headingsOne #[] _)]
     simp
 
@@ -408,17 +400,29 @@ theorem skelStep_headings : ∀ (n : Struct.Node) (es : Array StructElem) (paren
     headingsOf (skelStep es parent holder inline openList n).1
       = headingsOf es ++ (Struct.headingsOne #[] n).toList
   | .leaf k l, es, parent, holder, inline, openList => by
-    cases l <;> simp [skelStep, headingsOf_addKid, headingsOf_pushElem, Struct.headingsOne]
+    cases l <;> simp [skelStep, headingsOf_addKid, headingsOf_pushElem,
+      Struct.headingsOne_leaf_exact]
   | .node kind kids, es, parent, holder, inline, openList => by
-    simp only [skelStep, Struct.headingsOne]
-    split
-    · simp
-    · rw [skelList_headings kids.toList]
-    · simp only []
+    cases kind
+    case aside => simp [skelStep, Struct.headingsOne_aside_exact]
+    case label =>
+      rw [Struct.headingsOne_through_exact _ _ _ (by simp) (by simp)]
+      simp only [skelStep]
+      rw [skelList_headings kids.toList]
+    case bibEntry =>
+      rw [Struct.headingsOne_through_exact _ _ _ (by simp) (by simp)]
+      simp only [skelStep]
       rw [skelList_headings kids.toList, headingsOf_bibEntryElems]
+    case heading level =>
+      rw [Struct.headingsOne_heading_exact]
+      simp only [skelStep, skelList_headings, headingsOf_pushElem, elemOf, headingLevelOf,
+        List.append_assoc]
+      rw [Struct.headingsList_out kids.toList (#[].push _)]
+      simp
     all_goals
-      simp only [skelList_headings, headingsOf_pushElem, elemOf, headingLevelOf, List.append_assoc]
-      try rw [Struct.headingsList_out kids.toList (#[].push _)]
+      rw [Struct.headingsOne_through_exact _ _ _ (by simp) (by simp)]
+      simp only [skelStep, skelList_headings, headingsOf_pushElem, elemOf, headingLevelOf,
+        List.append_assoc]
       simp
 
 end
@@ -430,8 +434,8 @@ over `Struct.ofDoc`, exactly `Ir.headingLevels` of the document's body.
 The type spelled is `H{level+1}`. -/
 theorem pdf_headings_covers (t : Struct.Tree) :
     headingsOf (skeleton t) = t.headings.toList := by
-  unfold skeleton Struct.Tree.headings Struct.headings
-  rw [skelList_headings]
+  unfold skeleton Struct.Tree.headings
+  rw [Struct.headings_eq_exact, skelList_headings]
   simp [headingsOf, rootElem]
 
 theorem pdf_headings_covers_doc (doc : Ir.Doc) :
