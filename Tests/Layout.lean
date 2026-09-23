@@ -1722,8 +1722,9 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         (f.ascent + (-f.descent) ≤ 2 * (f.unitsPerEm : Int))
     | .error e => failures ref s!"headBand font parse {name}: {e}"
 
-/-- `furniture_symmetric` and `furniture_position_content_free`, realised
-over `Layout.Out`: with a running head and foot declared, every page ships
+/-- `furniture_symmetric` realised over `Layout.Out`, together with the
+position half no theorem states — these checks are that half, an oracle:
+with a running head and foot declared, every page ships
 its furniture at the geometry's own baselines — the short last page
 included, so the foot never floats up toward a page's last line. The
 positions are a function of the geometry alone (`furnHeadY`/`furnFootY`
@@ -1803,8 +1804,10 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       p.lines.any (fun l => l.furniture && l.y == fFootY))
   t "the native gap carries no note" (!fOut.diags.any (·.code == "N0021"))
 
-/-- `plain_numbers_every_page`, as census facts over `Layout.Out`: under
-the flow model's default page style — `plain`, the one article.cls
+/-- The plain page-number census over `Layout.Out` — these facts are the
+claim, an oracle and not a theorem (the theorem form needs the collect
+walk's induction, the wall `pages_partition_frames` records): under the
+flow model's default page style — `plain`, the one article.cls
 initialises (classes.dtx; ltpage.dtx `\ps@plain` centres `\thepage` in the
 foot) — every page carries exactly one number glyph run in the footer
 band, equal to its index; a page before `footFrom` (the title page under

@@ -1884,8 +1884,9 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
      | _, _ => false)
 
-/-- `algorithm_lines_agree`'s executable oracle: the HTML list-item text
-census equals the PDF's line census. Both backends read one line spelling
+/-- The algorithm-line agreement oracle — evidence, not a theorem, and all
+that holds the claim today: the HTML list-item text census equals the PDF's
+line census. Both backends read one line spelling
 (`Ir.AlgLine.rendered`), so what remains checkable is the HTML nesting
 builder itself — that grouping lines into nested `<ol>`s loses no line and
 reorders none, over the shapes that exercise it: the `\eIf` else standing

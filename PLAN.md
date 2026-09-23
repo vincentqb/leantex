@@ -187,6 +187,56 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — four more phantom citations resolved; five are one word in a
+file no sweep has held, and the allowlist stays after them. The nine the
+first sweep left were checked against the tree rather than read: under
+`--tree` the gate names eleven sites for nine names. Four were reachable and
+are fixed where they stand. Two were design decisions wearing a theorem's
+name and now read as decisions — a theme fixes no page because
+`Theme.Decls` carries no page field for a bundle to reach, the compiler
+holding the rule at the type (`theme_layer_contract` is the checkable half
+over the shipped bundles), and `covered`'s contrast exemption is pinned by
+the judge's own skip. Two were oracles over `Layout.Out` and now say which
+one they have: the furniture-position half `furniture_symmetric` does not
+state, and the plain page-number census whose theorem form waits on the
+collect walk `pages_partition_frames` records. Two further sites belonged to
+names that stay and were corrected where this slice owned them — the
+algorithm-line oracle and the boundary request's purity — so eleven sites
+are five.
+
+The five that stand are all cited from Ir.lean, and each has its holder
+already in the tree: `langWrap_text` sits three lines under
+language_attribute_text_free, `Chrome.footBand_projects` is the declaration
+whose own docstring names footLine_eq_slots for a deleted renderer's role,
+and `pages_partition_frames` is what pages_count_frame_steps should read —
+that row is the one where the prose is not merely stale but false about the
+current tree, since it says Obligations.lean states the superseded name.
+algorithm_lines_agree is held by an oracle, and
+boundary_request_deterministic by definitional purity, so both of those
+fixes are a word rather than a proof.
+Rows now name the anchor declaration instead of a line: every line number
+the first sweep recorded had moved within the session.
+
+Why sixteen accumulated at all: a docstring is text, not a term. Lean
+elaborates the declaration under a doc comment and never the prose inside
+it, so a backticked name in `/-- … -/` binds to nothing and the compiler
+cannot tell a live theorem from one deleted last week. Three mechanisms
+produced them, all visible in the nine — aspirational naming (the theorem
+the author meant to write, the fact ending up with an oracle), deletion
+drift (the declaration renamed or deleted, the sentence citing it not), and
+name-as-handle (a snake_case label for a design decision or a definitional
+property that was never going to be a theorem). The gate cannot be exact
+either, by construction: it recognises a citation by its spelling and
+resolves it by scanning declaration lines, so it accepts a test's string
+literal and can fire on prose that makes no claim. The exact check is
+available and unbuilt — inside Lean, walk `Lean.findDocString?` over the
+environment and resolve each backticked token with the real name resolver,
+which turns "reads as held" into a question the compiler answers. Until
+then the allowlist is where that inexactness parks with the real holder
+named, which is why it stays when it empties: an empty list with no row to
+imitate invites the one repair this gate must not buy, deleting the
+sentence.
+
 2026-09-23 — seven of the sixteen phantom citations resolved; the rest
 carry their real holder's name. The gate that landed earlier today froze
 sixteen backticked names that resolved to nothing. Three were citation

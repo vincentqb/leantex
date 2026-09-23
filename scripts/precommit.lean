@@ -948,65 +948,60 @@ fails the commit. A name leaves this list when its citation is corrected
 (the theorem is written, the claim is restated in prose, or the dead name is
 deleted).
 
-Seven left in the 2026-09-23 sweep: fallback_uncovers_every_step (the
-deleted fallback's claim, now `snapped_uncovers_every_step` over the same
-`SelChunk.stepAlts` data), steps_agree and pages_count_frame_steps at
-their HtmlDoc sites (restated as the two halves that exist —
-`track_snaps_exact` proved, `pages_partition_frames` owed),
-collectRole_transparent (an oracle over the shipped pages, roleLayoutChecks
-in Tests.lean, not a theorem — said so), spill_accounts →
-`warnSpill_accounts`, float_whole → `runFloat_whole`, `leafOwners_mem`
-(written for real, PdfStruct.lean, by the fold invariant `OwnerSound`), and
-`features_agree` (written for real in Pdf.lean, the one module both backends
-are in scope in, over the extracted `HtmlDoc.kernCss`).
+Sixteen when the gate landed; seven resolved in the first sweep and four in
+the second, which is where the two declared design decisions came to read as
+decisions (a theme fixes no page, carried by `Theme.Decls`' own shape;
+`covered`'s contrast exemption, carried by the judge's skip) and the two
+oracles over `Layout.Out` came to say they are oracles (furniture position,
+the plain page-number census). PLAN 2026-09-23 carries both accounts.
 
-What remains, each with the fact's real holder named, because the citing
-docstring is in a file that sweep could not touch — the fix per name is one
-line in a file another slice owns:
+Five stand, every one cited from `LeanTex/Core/Ir.lean` — a file no slice
+that could reach this list has held. A row names the anchor declaration
+rather than a line: every line number the first sweep recorded had moved by
+the second. The fix per row is one word or one line, and it is Ir.lean's:
 
-  algorithm_lines_agree           Ir.lean:2721 ("is the statement"),
-                                  Tests/Backends.lean:1887. Held by the
-                                  oracle there — both backends render
-                                  through `Ir.AlgLine.rendered`; Ir's
-                                  "statement" should read "oracle".
-  boundary_request_deterministic  Ir.lean:9053, Tests/Surface.lean:3644.
-                                  Purity of a Lean function needs no
-                                  theorem: the claim is definitional and
-                                  the test checks it — prose fix.
-  covered_is_deliberately_dim     Contrast.lean:1169. The `covered` role's
-                                  exemption is a declared design decision
-                                  at the judge's own skip, not a theorem.
-  footLine_eq_slots               Ir.lean:4301. Names the role a deleted
-                                  one-line renderer played; the live
-                                  statement is `Chrome.footBand_projects`,
-                                  the theorem that docstring belongs to.
-  furniture_position_content_free  Tests/Layout.lean:1725. The position half
-                                  is what those census checks assert;
-                                  `furniture_symmetric` (which resolves) is
-                                  the theorem beside it.
-  language_attribute_text_free    Ir.lean:6207. The theorem is three lines
-                                  below the citation: `langWrap_text`.
-  pages_count_frame_steps         Ir.lean:5909. Stale name for the record
-                                  now in the queue as
-                                  `pages_partition_frames`.
-  plain_numbers_every_page        Tests/Layout.lean:1806. Census facts over
-                                  `Layout.Out` — the checks themselves; the
-                                  theorem waits on the collect walk.
-  theme_fixes_no_page             Theme.lean:13. Carried by the record shape
-                                  (`Ir.ClassRecord`), not by a theorem; if
-                                  it is to be one it is Theme's, over
-                                  `Theme.builtin`.
+  algorithm_lines_agree           the docstring of `Ir.AlgLine.rendered`,
+                                  which calls it "the statement". What
+                                  holds it is an oracle
+                                  (algorithmBackendChecks, which now says
+                                  so); a theorem waits on HtmlDoc's nesting
+                                  builder being factored out of its match
+                                  arm, so the word to change meanwhile is
+                                  "statement".
+  boundary_request_deterministic  the docstring of `Ir.wrapStandalone`. A
+                                  pure function's purity is definitional —
+                                  no theorem states it, and boundaryChecks
+                                  checks it. Drop the name.
+  footLine_eq_slots               the docstring of `Chrome.footBand_projects`,
+                                  naming the role a deleted one-line
+                                  renderer played. The sentence says
+                                  "deleted" already: drop the dead name,
+                                  and the live statement is the declaration
+                                  the docstring is attached to.
+  language_attribute_text_free    the docstring of `langWrap_text` — the
+                                  theorem that holds it, three lines below
+                                  the label. Write that name instead.
+  pages_count_frame_steps         the docstring of `Ir.frameSteps`, which
+                                  says Obligations.lean states this theorem
+                                  over the def. It does not: the record
+                                  there is `pages_partition_frames`, which
+                                  supersedes this name. Cite that one.
 
 Keyed by name, not by site: a second citation of a listed name passes, and
 an entry left behind after its citation is fixed is dead weight rather than
 a failure. Both are deliberate — the ratchet's job is to stop new phantoms,
-and neither looseness lets one through. -/
+and neither looseness lets one through.
+
+The list stays when it empties. `citeCandidate` recognises a citation by its
+spelling, so the gate can fire on prose that makes no claim — a docstring
+may name a deleted theorem as history, as `footBand_projects`' does — and a
+false positive needs a parking place that names the real holder, or the next
+reader silences it by deleting the sentence. That is the one repair this
+gate must not buy, and an empty list with no row to imitate invites it. -/
 def citePhantomKnown : List String :=
   ["algorithm_lines_agree", "boundary_request_deterministic",
-   "covered_is_deliberately_dim", "footLine_eq_slots",
-   "furniture_position_content_free", "language_attribute_text_free",
-   "pages_count_frame_steps", "plain_numbers_every_page",
-   "theme_fixes_no_page"]
+   "footLine_eq_slots", "language_attribute_text_free",
+   "pages_count_frame_steps"]
 
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.

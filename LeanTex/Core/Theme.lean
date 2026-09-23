@@ -10,7 +10,8 @@ keep overriding. Values in, values out — the install is `apply` below, a
 function of these alone. A `Theme` extends this record: a bundle is the
 same four surfaces plus a name.
 
-`theme_fixes_no_page`, by construction: a class fixes the page model and
+A theme fixes no page, by construction — a declared design decision this
+record's own shape carries, not a theorem: a class fixes the page model and
 nothing a theme may override. This structure is `apply`'s whole domain and
 codomain, and it carries no page, no class, and no assertion, so a bundle
 *cannot* reach the geometry or the class's implied contract

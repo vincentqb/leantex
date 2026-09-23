@@ -1166,8 +1166,9 @@ large-scale sizes, so 4.5:1; and the standout pair — `\Large\bfseries`,
 defaulted inversion is checked, never assumed. The progress bar and
 separator are not checked: supplementary position indicators the section
 title already carries, outside SC 1.4.11's "required to understand the
-content"; `covered` is exempt as inactive (`covered_is_deliberately_dim`
-pins the decision; `coveredContract` below holds it to visibly-covered). -/
+content"; `covered` is exempt as inactive — a declared design decision,
+pinned by this judge's own skip rather than by a theorem, and
+`coveredContract` below holds it to visibly-covered. -/
 def designContract (d : Design) : Bool :=
   contrastMilli d.fg d.bg ≥ aaText
     && contrastMilli d.muted d.bg ≥ aaText

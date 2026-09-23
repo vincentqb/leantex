@@ -3718,10 +3718,11 @@ for a stated request no available tool can fulfil). The wrapped standalone
 carries the preamble's closed list and projects the document's design —
 the palette roles the body mentions, the declared font roles
 (`Ir.pictureRefs_design_projects`); the request is a pure function of the
-document (`boundary_request_deterministic` by that purity — checked here
-as bytewise agreement across two runs — and `boundary_request_env_free`:
-the tool choice never shapes it, checked here as whole-`Doc` agreement
-between the pinned and the undeclared spellings). -/
+document (a pure function's determinism, definitional and so nobody's
+theorem; checked here as bytewise agreement across two runs — and
+`boundary_request_env_free`: the tool choice never shapes it, checked here
+as whole-`Doc` agreement between the pinned and the undeclared
+spellings). -/
 def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
