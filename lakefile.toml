@@ -55,3 +55,10 @@ root = "scripts.precommit"
 [[lean_exe]]
 name = "owed"
 root = "scripts.owed"
+
+# The citation gate: it resolves a cited theorem name against the compiled
+# environment, so it imports the tree at run time rather than linking it.
+# Its own build stays independent of whether the library compiles.
+[[lean_exe]]
+name = "cites"
+root = "scripts.cites"

@@ -7516,3 +7516,67 @@ is evidence, not a theorem.
   policy is how a vocabulary stops being one; what these two share is a
   discipline and, when it is written, a state-conservation theorem schema —
   not a fold. Recorded here so the next reader does not re-derive it.
+
+
+- 2026-09-23: **a gate that reads names resolves them; it does not recognise
+  them.** The phantom-citation gate asks whether every theorem name a
+  docstring cites resolves to a declaration, and it asked it by scanning
+  source text for a declaration keyword. Its own authors recorded what that
+  cost, and the three items were one item: a text scan does not resolve
+  names, so each way a name can be declared without looking declared was a
+  hole. A name on a continuation line was invisible (false reject). A name
+  that lived only inside a test's check-label string resolved, because the
+  scan could not tell a declaration from a string that reads like one (false
+  accept). A name resolved whenever some declaration began with it and an
+  underscore, so a relative vouched for a name that was never declared
+  (false accept). Two agents independently proposed the same repair and
+  neither could land it in scope: walk `Lean.findDocString?` over the
+  compiled environment and resolve each backticked token with
+  `Lean.ResolveName.resolveGlobalName`, the resolver the elaborator itself
+  uses. That is now `scripts/cites.lean`, and both false accepts turned out
+  to be live: `frames_sections` is a check label, not a theorem, and
+  `sty_is_defaults` names a pair whose two halves had been vouching for it.
+  Both are frozen with the one-word repair written down; neither is new
+  debt, only debt that was invisible.
+
+  Its own binary rather than another check inside `scripts/precommit.lean`,
+  for the reason the resolver needs: an `Environment` exists only after the
+  tree is built, and precommit's shape is cheap line checks first, compile
+  last. `scripts/owed.lean` is the precedent — a whole-tree fact that needs
+  compilation, its own exe, its own `--selftest` and `--check`, invoked from
+  the hook and from CI directly. Linking the tree into the hook's own binary
+  would also couple it to `Obligations`, whose open proofs warn, and the gate
+  must build when the library does not.
+
+  The environment walk is whole-tree by nature, which is not a mismatch with
+  the hook's three sources but the same shape the `]!` ratchet, the walk gate
+  and the owed ratchet already have: read the tree, not the diff, because CI
+  has no reason to trust a file list for a whole-tree fact. So it runs in all
+  three modes, and the one case it skips is an index with no `.lean` file
+  staged, where neither a citation nor a declaration can have moved. Like the
+  `--wfail` build beside it, it reads the working tree rather than the index;
+  CI closes that gap on the pushed tree.
+
+  Resolution is two tiers, reported separately so the looseness stays
+  visible. A citation resolves *in scope* when the elaborator would resolve
+  it where the docstring is written — the citing declaration's namespace,
+  climbing its parents, plus `Obligations`, because an owed statement is
+  deliberately staged away from the module that will own it and is cited
+  bare. It resolves *elsewhere in the tree* when it resolves in some
+  namespace this tree declares, which the house style needs: a docstring
+  cites `all_complete` from `LeanTex.Core` while the theorem sits in
+  `LeanTex.Core.DiagCode`, and AGENTS.md cites short names across namespaces
+  too. Census over the tree: 4,057 docstrings, 562 citations of 316 distinct
+  names, 339 resolving in scope, 205 elsewhere in the tree, 9 foreign, 9
+  frozen, 0 phantom. The foreign allowlist did not shrink and cannot: every
+  row on it (`mlist_to_hlist`, `good_length`, …) names a thing outside this
+  repository, and no resolver over this environment will ever resolve one.
+  What the resolver removed is the class those rows were confused with — a
+  name that is this tree's and that a scan could not see.
+
+  The limit that remains, which no gate closes: this proves a cited name
+  resolves, not that the declaration it resolves to states the fact the prose
+  claims. `foo_exact` may resolve to a theorem about something else entirely
+  and the sentence would still read as a guarantee held. Judging a statement
+  against the sentence citing it stays review's job, and the gate's docstring
+  says so.

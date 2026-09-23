@@ -28,13 +28,20 @@ jobs:
       # non-terminating recursion, an IO leak into the pure core, or an
       # unnamed obligation, all green.
       - name: build the gate binaries
-        run: lake build precommit owed
+        run: lake build precommit owed cites leantex Tests Obligations
       - name: gate selftests
         run: |
           .lake/build/bin/precommit --selftest
           .lake/build/bin/owed --selftest
+          .lake/build/bin/cites --selftest
       - name: owed-theorem ratchet
         run: .lake/build/bin/owed --check
+      # Whole-tree by nature: it resolves every theorem name a docstring
+      # cites against the compiled environment, so it reads no diff and has
+      # nothing to gain from the range below. It needs the tree's oleans,
+      # which is why the build step above names every library.
+      - name: citation resolution
+        run: .lake/build/bin/cites --check
       - name: structural gates
         env:
           # Empty on a push; the target branch on a pull request.

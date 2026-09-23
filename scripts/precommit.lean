@@ -8,6 +8,11 @@ Three sources, one gate. The hook reads the index (no flag). CI has no
 index and reads a revision range instead (`--range origin/main...HEAD`), or
 nothing at all (`--tree`); both run every whole-tree check unconditionally,
 so the structural guarantees do not depend on a per-clone core.hooksPath.
+
+Two checks are their own binaries, invoked from here and directly from CI,
+because each needs the tree compiled rather than read: scripts/owed.lean
+(the owed-theorem ratchet) and scripts/cites.lean (does every theorem name a
+docstring cites resolve to a declaration?).
 -/
 
 import scripts.Gate
@@ -857,152 +862,6 @@ def topLevelDefName (l : String) : Option String :=
     if n.isEmpty then none else some n
   else none
 
-/-- The keywords that introduce a name, and the modifiers that may stand
-before one. The two banned keywords are composed, like `kwPartial` itself:
-this file's own diff is scanned for them. -/
-def declKeywords : List String :=
-  ["theorem", "lemma", "def", "abbrev", "instance", "structure", "inductive",
-   "class", "opaque", "axiom", "example"]
-
-def declModifiers : List String :=
-  ["private ", "protected ", "nonrec ", "noncomputable ", "scoped ", "local ",
-   kwPartial ++ " ", kwUnsafe ++ " "]
-
-/-- The line with a leading `@[…]` attribute dropped. A `]` inside the
-attribute's own arguments cuts early — a stated line-scanner limit, and one
-that only ever loses a declaration, never invents one. -/
-def stripAttr (t : String) : String :=
-  if t.startsWith "@[" then
-    (String.intercalate "]" (t.splitOn "]").tail).trimAscii.toString
-  else t
-
-/-- The line with its declaration modifiers dropped. Two passes: the tree's
-deepest stack is two (`private noncomputable def`). -/
-def stripModifiers (t : String) : String :=
-  let step := fun (s : String) => declModifiers.foldl (fun s m =>
-    if s.startsWith m then (s.drop m.length).toString.trimAscii.toString else s) s
-  step (step t)
-
-/-- The names a line declares: the name as written, and its last dotted
-segment, so a citation of `footBand_projects` finds
-`theorem Ir.footBand_projects`. A declaration whose name sits on the next
-line is not seen — the same line-scanner limitation as `ioInCore`'s, stated
-rather than claimed away; it can only lose a declaration, which makes the
-citation gate below noisier, never quieter. -/
-def declaredNames (l : String) : List String :=
-  let t := stripModifiers (stripAttr ((stripLineComment l).trimAscii.toString))
-  match declKeywords.find? (fun k => t.startsWith (k ++ " ")) with
-  | none => []
-  | some k =>
-    let rest := ((t.drop (k.length + 1)).toString).trimAscii.toString
-    let name := (rest.takeWhile (fun c => isWordChar c || c == '.' || c == '\'')).toString
-    if name.isEmpty then []
-    else
-      let last := (name.splitOn ".").getLastD name
-      if last == name then [name] else [name, last]
-
-/-- The closed backticked spans of a line, in order. An unclosed span — a
-citation wrapped across two lines — is dropped rather than guessed at. -/
-def backtickSpans (l : String) : List String := Id.run do
-  let parts := (l.splitOn "`").toArray
-  let n := if parts.size % 2 == 0 then parts.size - 1 else parts.size
-  let mut out : Array String := #[]
-  for i in [0:n] do
-    if i % 2 == 1 then out := out.push (parts[i]?.getD "")
-  return out.toList
-
-/-- A backticked token that reads as a theorem name in this tree: it opens
-with a lowercase ASCII letter, is spelled only in ASCII letters, digits and
-underscores, and carries an interior underscore — the snake_case joint every
-theorem name here is built from (`html_fonts_cover_pdf`,
-`footBand_projects`). The tree's other backticked things are each a
-different shape, and none of them matches: a camelCase def or field
-(`foldInlines`), a dotted or spaced type (`Ir.dump`, `Array Block`), a flag
-(`--wfail`), a path (`tests/compat-index`), a SCREAMING_SNAKE environment or
-format key (`LEANTEX_FONT`, `ICC_PROFILE`), prose. -/
-def citeCandidate (tk : String) : Bool :=
-  let cs := tk.toList
-  !cs.isEmpty
-    && cs.all isWordChar
-    && ((cs.head?.map Char.isLower).getD false)
-    && ((cs.getLast?.map (· != '_')).getD false)
-    && containsSub tk "_"
-
-/-- Names that are legitimately not declarations of this tree: foreign
-vocabulary that happens to be spelled snake_case, each named where it comes
-from. A new entry is a deliberate decision — the question it answers is
-"whose name is this?", and only an answer outside this repository earns a
-row. -/
-def citeForeign : List String :=
-  ["default_rule_thickness",   -- TeX's math fontdimen (TeXbook, Appendix G)
-   "good_length",              -- zlib's deflate configuration field
-   "headless_shell",           -- Chrome's own binary name
-   "mlist_to_hlist",           -- TeX's math-list conversion pass
-   "x_y",                      -- an example label key, quoted as prose
-   "xn_over_d"]                -- TeX's scaled-integer routine (TeX §107)
-
-/-- The phantom citations standing when the gate landed: a backticked
-theorem name in a docstring that resolves to nothing. Each is a guarantee
-that reads as held and is not, so the list may only shrink — a new phantom
-fails the commit. A name leaves this list when its citation is corrected
-(the theorem is written, the claim is restated in prose, or the dead name is
-deleted).
-
-Sixteen when the gate landed; seven resolved in the first sweep and four in
-the second, which is where the two declared design decisions came to read as
-decisions (a theme fixes no page, carried by `Theme.Decls`' own shape;
-`covered`'s contrast exemption, carried by the judge's skip) and the two
-oracles over `Layout.Out` came to say they are oracles (furniture position,
-the plain page-number census). PLAN 2026-09-23 carries both accounts.
-
-Five stand, every one cited from `LeanTex/Core/Ir.lean` — a file no slice
-that could reach this list has held. A row names the anchor declaration
-rather than a line: every line number the first sweep recorded had moved by
-the second. The fix per row is one word or one line, and it is Ir.lean's:
-
-  algorithm_lines_agree           the docstring of `Ir.AlgLine.rendered`,
-                                  which calls it "the statement". What
-                                  holds it is an oracle
-                                  (algorithmBackendChecks, which now says
-                                  so); a theorem waits on HtmlDoc's nesting
-                                  builder being factored out of its match
-                                  arm, so the word to change meanwhile is
-                                  "statement".
-  boundary_request_deterministic  the docstring of `Ir.wrapStandalone`. A
-                                  pure function's purity is definitional —
-                                  no theorem states it, and boundaryChecks
-                                  checks it. Drop the name.
-  footLine_eq_slots               the docstring of `Chrome.footBand_projects`,
-                                  naming the role a deleted one-line
-                                  renderer played. The sentence says
-                                  "deleted" already: drop the dead name,
-                                  and the live statement is the declaration
-                                  the docstring is attached to.
-  language_attribute_text_free    the docstring of `langWrap_text` — the
-                                  theorem that holds it, three lines below
-                                  the label. Write that name instead.
-  pages_count_frame_steps         the docstring of `Ir.frameSteps`, which
-                                  says Obligations.lean states this theorem
-                                  over the def. It does not: the record
-                                  there is `pages_partition_frames`, which
-                                  supersedes this name. Cite that one.
-
-Keyed by name, not by site: a second citation of a listed name passes, and
-an entry left behind after its citation is fixed is dead weight rather than
-a failure. Both are deliberate — the ratchet's job is to stop new phantoms,
-and neither looseness lets one through.
-
-The list stays when it empties. `citeCandidate` recognises a citation by its
-spelling, so the gate can fire on prose that makes no claim — a docstring
-may name a deleted theorem as history, as `footBand_projects`' does — and a
-false positive needs a parking place that names the real holder, or the next
-reader silences it by deleting the sentence. That is the one repair this
-gate must not buy, and an empty list with no row to imitate invites it. -/
-def citePhantomKnown : List String :=
-  ["algorithm_lines_agree", "boundary_request_deterministic",
-   "footLine_eq_slots", "language_attribute_text_free",
-   "pages_count_frame_steps"]
-
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -1441,64 +1300,6 @@ def selftest : IO UInt32 := do
   if (Source.tree).diffSel != none then
     fails.modify ("Source.tree.diffSel" :: ·)
 
-  -- The citation gate's recognition rule: a theorem-shaped name, and the
-  -- other things this tree backticks.
-  expect "citeCandidate" citeCandidate [
-    -- theorem names, the shape the gate must judge
-    ("footBand_projects", true),
-    ("html_fonts_cover_pdf", true),
-    ("leafOwners_mem", true),
-    ("labMix_L", true),
-    ("x_y", true),
-    -- everything else the tree backticks
-    ("foldInlines", false),
-    ("Ir.dump", false),
-    ("Array Block", false),
-    ("Conserves", false),
-    ("--wfail", false),
-    ("tests/compat-index", false),
-    ("LEANTEX_FONT", false),
-    ("ICC_PROFILE", false),
-    ("White_Space", false),
-    ("_leading", false),
-    ("trailing_", false),
-    ("lake env lean --run scripts/owed.lean", false),
-    ("", false)]
-
-  let declCases : List (String × List String) := [
-    ("theorem footBand_projects (c : Chrome) :", ["footBand_projects"]),
-    ("theorem Chrome.footBand_projects (c : Chrome) :",
-      ["Chrome.footBand_projects", "footBand_projects"]),
-    ("private def keepFor (t : String) : Array Block :=", ["keepFor"]),
-    ("  noncomputable def scan : IO Unit :=", ["scan"]),
-    ("@[simp] theorem spill_accounts (x : Nat) :", ["spill_accounts"]),
-    ("instance : Conserves dimBlocks :=", []),
-    ("  -- theorem quoted_in_a_comment (x : Nat) :", []),
-    ("  let theorem_like := 3", [])]
-  for (line, want) in declCases do
-    if declaredNames line != want then
-      fails.modify (s!"declaredNames: {line} gave {declaredNames line}" :: ·)
-
-  let spanCases : List (String × List String) := [
-    ("the `features_agree` claim and `steps_agree`", ["features_agree", "steps_agree"]),
-    ("no citation here", []),
-    ("an unclosed `span is dropped", []),
-    ("`opens the line` and closes", ["opens the line"])]
-  for (line, want) in spanCases do
-    if backtickSpans line != want then
-      fails.modify (s!"backtickSpans: {line} gave {backtickSpans line}" :: ·)
-
-  -- The two lists are disjoint and each name on them is a candidate: a row
-  -- that the rule would never fire on is dead weight that reads as debt.
-  for n in citeForeign do
-    unless citeCandidate n do
-      fails.modify (s!"allowlisted name is not a candidate: {n}" :: ·)
-    if citePhantomKnown.contains n then
-      fails.modify (s!"name on both citation lists: {n}" :: ·)
-  for n in citePhantomKnown do
-    unless citeCandidate n do
-      fails.modify (s!"allowlisted name is not a candidate: {n}" :: ·)
-
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -1824,66 +1625,6 @@ def main (args : List String) : IO UInt32 := do
   the second caller appears (AGENTS.md, Conventions).
   Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
 
-  -- The phantom-citation gate: a backticked theorem-shaped name in a
-  -- docstring names a declaration that exists. AGENTS.md asks that a
-  -- guarantee stated in prose name the theorem holding it, and a name that
-  -- resolves to nothing is the failure mode of that rule: the docstring
-  -- reads as a guarantee held, and nothing holds it. Whole tree, docstrings
-  -- only — a `--` comment or a PLAN entry may legitimately name a theorem
-  -- that was deleted, and a historical record is not a claim.
-  let mut citeFiles : Array String := #[]
-  for root in ["LeanTex", "Tests", "scripts"] do
-    if (← System.FilePath.pathExists root) then
-      for f in (← System.FilePath.walkDir root) do
-        if f.toString.endsWith ".lean" then citeFiles := citeFiles.push f.toString
-  for e in (← System.FilePath.readDir ".") do
-    if e.fileName.endsWith ".lean" then citeFiles := citeFiles.push e.fileName
-  let mut citeTexts : Array (String × Array String) := #[]
-  -- Declarations resolve a citation; a check label in a test resolves one
-  -- too, since AGENTS.md accepts a test where a theorem does not fit, and
-  -- the label is where that claim is written down.
-  let mut declared : Array String := #[]
-  let mut labelTok : Array String := #[]
-  for f in citeFiles do
-    let txt ← IO.FS.readFile f
-    let lines := (txt.splitOn "\n").toArray
-    citeTexts := citeTexts.push (f, lines)
-    let isTest := f == "Tests.lean" || f.startsWith "Tests/"
-    for l in lines do
-      for n in declaredNames l do
-        if containsSub n "_" then declared := declared.push n
-      if isTest then
-        for w in (stringsOnly l).split (fun c => !isWordChar c) do
-          let w := w.toString
-          if citeCandidate w then labelTok := labelTok.push w
-  let resolves (n : String) : Bool :=
-    declared.contains n
-      || declared.any (·.startsWith (n ++ "_"))
-      || labelTok.contains n
-  let mut phantoms : Array (String × String × Nat) := #[]
-  for (f, lines) in citeTexts do
-    let mut inDoc := false
-    for i in [0:lines.size] do
-      let l := lines[i]?.getD ""
-      if containsSub l "/--" || containsSub l "/-!" then inDoc := true
-      if inDoc then
-        for tk in backtickSpans l do
-          if citeCandidate tk && !resolves tk && !citeForeign.contains tk
-              && !citePhantomKnown.contains tk then
-            phantoms := phantoms.push (tk, f, i + 1)
-        if containsSub l "-/" then inDoc := false
-  if !phantoms.isEmpty then
-    let hits := String.intercalate "\n"
-      (phantoms.toList.map fun (n, f, i) => s!"  {f}:{i}: `{n}`")
-    say s!"pre-commit: a docstring cites a theorem name that resolves to nothing:
-{hits}
-  A guarantee stated in prose names the theorem holding it (AGENTS.md,
-  Conventions); a name that resolves to nothing reads as held and is not.
-  Fix: write the theorem, or cite the one that does hold the claim, or state
-  the claim without a name. A name that is not this tree's — foreign
-  vocabulary spelled snake_case — goes in citeForeign with its source."
-
-
   -- PLAN.md must leave the debt recorded — one hole per owed record, every
   -- record registered in PLAN, no import of Obligations from the gated
   -- library. The check reads the whole tree, not the diff, so the count
@@ -1908,11 +1649,33 @@ def main (args : List String) : IO UInt32 := do
 {owed.stderr}  Fix: register the obligation in PLAN.md ('Owed obligations'), or finish
   its proof and move it to its owner module (see scripts/owed.lean)."
 
+  -- The phantom-citation gate (scripts/cites.lean), whole tree: does every
+  -- theorem name a docstring cites resolve to a declaration? Its own binary
+  -- rather than a check here, because it resolves names against the compiled
+  -- environment -- `Lean.findDocString?` over the imported modules, the
+  -- elaborator's own resolver over each backticked token -- and an
+  -- environment exists only once the tree has been built. The scan is
+  -- whole-tree by nature, so it needs no diff and runs in all three modes;
+  -- on the index a commit staging no .lean file cannot move a citation or a
+  -- declaration, which is the one case it skips. Like `lake build --wfail`
+  -- below, it reads the working tree rather than the index: the same
+  -- approximation a commit-time compile already makes, closed by CI running
+  -- the pushed tree.
+  if src != .index || staged.any (·.endsWith ".lean") then
+    let citeBuild ← IO.Process.output
+      { cmd := "lake", args := #["build", "leantex", "Tests", "Obligations",
+        "precommit", "owed", "cites", "-q"], env }
+    let cites ← if citeBuild.exitCode == 0 then
+        IO.Process.output { cmd := ".lake/build/bin/cites", args := #["--check"] }
+      else pure citeBuild
+    if cites.exitCode != 0 then
+      say s!"{cites.stderr}{cites.stdout}"
+
   if ← failed.get then
     return 1
 
   let build ← IO.Process.output
-    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed"], env }
+    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed", "cites"], env }
   if build.exitCode != 0 then
     IO.eprintln "pre-commit: lake build --wfail failed (linter warnings fail too):"
     IO.eprint build.stdout
