@@ -345,6 +345,14 @@ structure CensusPage where
   page (`Picture.inherit_inner_exact`), and only the artifact can say so.
   An unstroked path (a node's fill alone) contributes nothing. -/
   pathStrokes : Array (Ir.Color × Dim.Sp) := #[]
+  /-- Every shipped path's extent, in paint order: a circle's diameter, a
+  rectangle's own width and height, a segment chain's or a tip's bounding
+  box. What a fact about a size key set at more than one level reads — a
+  node whose `minimum size` is declared by the picture, by `every node`,
+  and by its own bracket ships exactly one of the three
+  (`Picture.merge_own_exact`, `Picture.merge_every_exact`), and only the
+  page can say which. -/
+  pathSpans : Array (Dim.Sp × Dim.Sp) := #[]
   /-- Image boxes shipped on the page: an embedded figure, or a boundary
   request's box (fulfilled or placeholder) — what the diagram-boundary
   row reads to pin that the request ships ink where the picture stood. -/
@@ -413,6 +421,22 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           paths := p.paths.size
                           pathStrokes := p.paths.filterMap fun q =>
                             q.stroke.map fun s => (s.color, s.width)
+                          pathSpans := p.paths.map fun q =>
+                            match q.path with
+                            | .circle _ _ r => (2 * r, 2 * r)
+                            | .rect _ _ w h => (w, h)
+                            | .tri x1 y1 x2 y2 x3 y3 =>
+                              (max x1 (max x2 x3) - min x1 (min x2 x3),
+                               max y1 (max y2 y3) - min y1 (min y2 y3))
+                            | .segs segs =>
+                              let xs := segs.flatMap fun s => match s with
+                                | .line x1 _ x2 _ => #[x1, x2]
+                                | .cubic x1 _ _ _ _ _ x2 _ => #[x1, x2]
+                              let ys := segs.flatMap fun s => match s with
+                                | .line _ y1 _ y2 => #[y1, y2]
+                                | .cubic _ y1 _ _ _ _ _ y2 => #[y1, y2]
+                              (xs.foldl max (xs[0]?.getD 0) - xs.foldl min (xs[0]?.getD 0),
+                               ys.foldl max (ys[0]?.getD 0) - ys.foldl min (ys[0]?.getD 0))
                           images := images }
   return pages
 

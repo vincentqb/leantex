@@ -187,6 +187,58 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — `every node` and `every path` reach their nodes and paths, as
+the third precedence level (m8b-keys, M8b slice 1, third increment; the
+level the two entries below deferred and named). `\tikzset{every
+node/.style={circle, draw, minimum size=8mm}}` was a key path outside the
+subset: W0334 at the line that wrote it, and every node in every picture
+shipped a bare label — the shape a document reaches for when *all* its
+nodes look alike drew none of what it declared, while the same keys named
+on each node worked.
+
+The invariant that was absent: **a key set for every X is set on every X.**
+The mechanism is not a fourth option reader but a third argument to one
+merge. `mergeOpts picture every own` is `inheritOpts` twice, and the
+ordering is pgf's own scoping rather than a habit: a picture's keys are set
+in the picture's scope, an `every X` style is executed *inside* the X's own
+scope, and the X's bracket is read there too, after it — so the rule is
+**picture < every X < the bracket's own**. `merge_every_exact` and
+`merge_own_exact` are the two boundaries, `merge_covers` that nothing a
+bracket said is lost; `inherit_mem` (the merge invents nothing) is what
+carries the middle one. Each level *drops* an entry whose key a later level
+names, never merely precedes it, for the reason the entry below records:
+the `minimum` family accumulates by maximum within one bracket, so a
+surviving picture-level `14mm` would beat an inner `5mm` and draw the
+opposite of the document.
+
+Reading a multi-word key path is where the honesty cost sat. A definition
+entry's name is now the idents before its `/.`, joined as pgf spells them
+(`readDef`), which would have quietly stored a bundle for `every label`
+too — a name no bracket can apply and no loop reads, so the keys would
+vanish in silence. `readableKey` is the guard: a single word (a bracket can
+apply it) or one of the two levels that have a loop. Anything else stays
+unread and is named at its line, as before. The two places the level cannot
+reach are named rather than dropped: `\fill`'s bracket is a colour
+spelling, not a key list, and an edge label reads its own bracket alone —
+each now says so with W0334 when an `every` style is in force.
+
+Evidence is the artifact, not the IR: a rendered page carries two node
+outlines as 8.00 mm and 5.00 mm circles (every node's size where the node
+declared none, the node's own where it did — the picture's 14 mm nowhere)
+and two edges at 0.8 pt in `0 1 0` and `1 0 0` (every path's colour over
+the picture's blue, the path's own over every path's, its width on both).
+Zero form XObjects, zero image XObjects, and no tool line in the verbose
+log: the ink is the engine's own. `pictureEveryLevelChecks` holds the same
+facts as census over `Layout.Out` through a new `pathSpans` channel — a
+shipped path's extent, since only the page can say which of three declared
+sizes survived.
+
+Recorded rather than hidden: a picture-level entry a path's loop does not
+know is still named there (`minimum size` on a picture with a `\draw` warns
+though a node read it), which is a false loss the inheritance increment
+introduced and the next unit should fix by accounting consumption per entry
+rather than per loop.
+
 2026-09-23 — four more phantom citations resolved; five are one word in a
 file no sweep has held, and the allowlist stays after them. The nine the
 first sweep left were checked against the tree rather than read: under

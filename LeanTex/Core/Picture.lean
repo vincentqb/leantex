@@ -602,6 +602,12 @@ structure Cx where
   entries. Every path and node reads them before its own
   (`inheritOpts`). -/
   opts : Array (Array Tok) := #[]
+  /-- What `every node/.style={...}` declared, split into entries: pgf runs
+  it inside the node's own scope, so it stands between the picture's
+  entries and the node's bracket (`mergeOpts`). -/
+  everyNode : Array (Array Tok) := #[]
+  /-- What `every path/.style={...}` declared: the same level for a path. -/
+  everyPath : Array (Array Tok) := #[]
   /-- How a math span in a node body elaborates: provided by the
   elaborator, so `{$X$}` renders through the same math layer a
   paragraph's does — the picture walk owns no math parser. The result is
@@ -660,9 +666,64 @@ def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     | _ => expanded := expanded ++ part
   return (n, expanded) :: styles
 
-/-- Read a `\tikzset` key list: every `name/.style={...}` entry defines a
-bundle, folded in source order so a later definition may name an earlier
-one. Every other entry comes back unread — `every X`, `/.tip`, `/.append
+/-- The name of the `every node` level, and of the `every path` level: the
+two key paths the option loops read (pgf manual §12.4.1 — every X is
+executed inside the X's own scope). -/
+def everyNodeKey : String := "every node"
+def everyPathKey : String := "every path"
+
+/-- Split a token list at the first occurrence of a symbol, keeping neither
+side's separator. -/
+private def splitSym (c : Char) : List Tok → Option (List Tok × List Tok)
+  | [] => none
+  | t :: rest =>
+    if t == .sym c then some ([], rest)
+    else (splitSym c rest).map fun (pre, post) => (t :: pre, post)
+
+/-- A run of idents read as one key path, joined the way pgf spells it, so
+`every node` is one name and not two keys. -/
+private def identPath : List Tok → Option String
+  | [.ident n] => some n
+  | .ident n :: rest => (identPath rest).map fun s => n ++ " " ++ s
+  | _ => none
+
+/-- A key path this reader can honour: a single word, which an option
+bracket can apply by name, or one of the two `every X` levels the option
+loops read. Any other path (`every label`, a two-word name no bracket can
+spell) is left unread, so the line that wrote it names the loss — storing a
+bundle nothing will ever look up would drop it in silence. -/
+private def readableKey (n : String) : Bool :=
+  n == everyNodeKey || n == everyPathKey || !n.contains ' '
+
+/-- One definition entry as a key path, a handler name, and the handler's
+group: `every node/.style={draw}` reads as `every node`, `style`, `draw`. -/
+private def readDef (entry : List Tok) : Option (String × String × List Tok) := do
+  let (path, rest) ← splitSym '/' entry
+  let name ← identPath path
+  match rest with
+  | .sym '.' :: hrest =>
+    let (hpath, body) ← splitSym '=' hrest
+    let handler ← identPath hpath
+    match body with
+    | [.group g] => some (name, handler, g)
+    | _ => none
+  | _ => none
+
+/-- Fold one definition entry into the bundles, or refuse it: `none` where
+the entry is not a definition at all, or names a handler or a key path
+outside the subset. The one router both a document's `\tikzset` and a
+picture's own bracket go through, so the two cannot differ about what a
+definition means. -/
+def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
+    Option (List (String × Array Tok)) :=
+  match readDef entry with
+  | some (n, "style", g) =>
+    if readableKey n then some (addStyle styles n g) else none
+  | _ => none
+
+/-- Read a `\tikzset` key list: every definition entry this reader knows
+folds into the bundles, in source order so a later definition may name an
+earlier one. Every other entry comes back unread — `/.tip`, `/.append
 style`, a bare key — for the caller to name at the line that wrote it,
 which is where such a diagnostic belongs: the line is the document's, not
 any one picture's. -/
@@ -671,11 +732,13 @@ def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
   let mut styles := styles
   let mut unread : Array (Array Tok) := #[]
   for entry in splitTop toks ',' do
-    match entry.toList.filter (· != .space) with
-    | [] => pure ()
-    | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
-      styles := addStyle styles n g
-    | other => unread := unread.push other.toArray
+    let e := entry.toList.filter (· != .space)
+    match readOneDef styles e with
+    | some s => styles := s
+    | none =>
+      match e with
+      | [] => pure ()
+      | other => unread := unread.push other.toArray
   return (styles, unread)
 
 /-- The bundles a document's `\tikzset` lines define, folded in source
@@ -752,6 +815,53 @@ theorem inherit_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ inner) : o ∈ inheritOpts outer inner := by
   simp only [inheritOpts, Array.mem_append]
   exact Or.inr h
+
+/-- The merge invents nothing: every entry came from one of the two sides. -/
+theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ inheritOpts outer inner) : o ∈ outer ∨ o ∈ inner := by
+  simp only [inheritOpts, Array.mem_append, Array.mem_filter] at hm
+  rcases hm with ⟨h, _⟩ | h
+  · exact Or.inl h
+  · exact Or.inr h
+
+/-- The three levels one bracket's entries are read under, outermost first.
+
+**picture < every X < the bracket's own.** pgf sets a picture's keys in the
+picture's scope; an `every node`/`every path` style is executed inside the
+node's or path's own scope, which is *inside* the picture's; and the
+bracket's own keys are read there too, after it. So `every X` beats what the
+picture set and loses to what the X itself says — and because each level is
+an `inheritOpts`, a key a later level names is *dropped* from the earlier
+one rather than merely preceded by it: the `minimum` family accumulates by
+maximum within one bracket, so a surviving outer `minimum size=9mm` would
+beat an inner `4mm` and draw the opposite of what the document says.
+
+`merge_own_exact` and `merge_every_exact` are the two boundaries,
+`merge_covers` that nothing the bracket said is lost. -/
+def mergeOpts (picture every own : Array (Array Tok)) : Array (Array Tok) :=
+  inheritOpts (inheritOpts picture every) own
+
+/-- Precedence, innermost level: an entry whose key the bracket's own also
+names is the bracket's own. -/
+theorem merge_own_exact {picture every own : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ mergeOpts picture every own)
+    (hk : ∃ e ∈ own, optKey e = optKey o) : o ∈ own :=
+  inherit_inner_exact hm hk
+
+/-- Precedence, middle level: an entry whose key `every X` names and the
+bracket's own does not is the `every X` style's. -/
+theorem merge_every_exact {picture every own : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ mergeOpts picture every own)
+    (hk : ∃ e ∈ every, optKey e = optKey o)
+    (ho : ¬ ∃ e ∈ own, optKey e = optKey o) : o ∈ every := by
+  rcases inherit_mem hm with h | h
+  · exact inherit_inner_exact h hk
+  · exact absurd ⟨o, h, rfl⟩ ho
+
+/-- Nothing the bracket's own entries said is lost to either level. -/
+theorem merge_covers {picture every own : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ own) : o ∈ mergeOpts picture every own :=
+  inherit_covers h
 
 /-- A picture-level key outside the subset, named at the bracket that
 wrote it. -/
@@ -1192,7 +1302,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     own := expandOpts cx.styles inner
     i := j + 1
   ev := { ev with readOpts := true }
-  for opt in inheritOpts cx.opts own do
+  for opt in mergeOpts cx.opts cx.everyNode own do
     match opt.toList with
     | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
       match Ir.sizeScale.lookup size with
@@ -1470,7 +1580,7 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     own := expandOpts cx.styles inner
     i := j + 1
   ev := { ev with readOpts := true }
-  for opt in inheritOpts cx.opts own do
+  for opt in mergeOpts cx.opts cx.everyPath own do
     match opt.toList with
     | [.ident "thick"] => thick := true
     | [.ident "dashed"] => dash := .dashed
@@ -1593,6 +1703,12 @@ outside the rendered picture subset; the edge is not drawn")
       let mut mid : Option (Array Ir.Inline × Ir.Color × Nat × Ir.Pic.LabelAlign) := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
+        -- An edge label reads its own bracket alone: neither the picture's
+        -- entries nor an `every node` style reaches it, so a declared one
+        -- is named here rather than dropped in silence.
+        unless cx.everyNode.isEmpty do
+          ev := ev.diag (.W0334, "'every node' keys do not reach an edge label; \
+the keys are dropped")
         let mut mcolor := Ir.Color.black
         let mut mscale : Nat := factor
         let mut malign := Ir.Pic.LabelAlign.center
@@ -1801,7 +1917,14 @@ def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | .fill toks, env, ev =>
     match evalFill cx env toks with
-    | .ok shape => (env, { ev with shapes := ev.shapes.push shape })
+    | .ok shape =>
+      -- `\fill`'s bracket is a colour spelling, not a key list, so no
+      -- option loop runs here and an `every path` style cannot reach it.
+      -- Named rather than dropped in silence: pgf would apply those keys.
+      let ev := if cx.everyPath.isEmpty then ev else
+        ev.diag (.W0334, "'every path' keys do not reach a '\\fill', whose \
+bracket is a colour; the keys are dropped")
+      (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
   | .node toks, env, ev => (env, evalNode cx env toks ev)
   | .draw toks, env, ev => (env, evalDraw cx env toks ev)
@@ -1856,9 +1979,11 @@ picture's own `[...]` definitions shadow them.
 A style *applied* in the picture's own bracket reaches the contents:
 pgf sets those keys in the picture's scope, so every path and node reads
 them before its own, and a key set in both takes the inner value
-(`inheritOpts`). `every X` styles are not this mechanism — they are a
-third precedence level, executed inside the node's own scope — and stay
-unread, named at the line that declared them. -/
+(`inheritOpts`). An `every node`/`every path` style is the third level
+between them: pgf executes it inside the node's or path's own scope, so it
+beats what the picture set and loses to the bracket's own (`mergeOpts`).
+An `every X` this subset has no loop for stays unread and is named at the
+line that declared it. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -1885,7 +2010,16 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     if toks[j]? == some (.sym ']') then
       i := j + 1
       for opt in splitTop inner ',' do
-        match opt.toList.filter (· != .space) with
+        let entry := opt.toList.filter (· != .space)
+        -- A definition goes through the one router the document's
+        -- `\tikzset` lines go through, so a picture's own definition and a
+        -- document-level one cannot differ in what they mean. Consed on
+        -- top, so a picture's own definition shadows the document's of
+        -- that name.
+        match readOneDef styles entry with
+        | some s => styles := s
+        | none =>
+        match entry with
         | .ident "scale" :: .sym '=' :: rest =>
           match evalNum [] rest.toArray with
           | .ok m =>
@@ -1896,16 +2030,9 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         -- `transform shape`: nodes take the picture's scale (pgf manual
         -- §25.4, "transformations do not apply to nodes" without it).
         | [.ident "transform", .ident "shape"] => transformShape := true
-        -- `name/.style={...}`: a named option bundle, read by the one
-        -- definition reader the document's `\tikzset` lines go through, so
-        -- a picture's own definition and a document-level one cannot
-        -- differ in what they mean. Consed on top, so a picture's own
-        -- definition shadows the document's of that name.
-        | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
-          styles := addStyle styles n g
         -- A bare name that resolves is a style applied to the picture
         -- itself: pgf sets it in the picture's scope, so its options are
-        -- what the contents inherit (`Cx.opts`, merged by `inheritOpts`).
+        -- what the contents inherit (`Cx.opts`, merged by `mergeOpts`).
         -- A name that resolves to nothing is a key, and is named here.
         | [.ident n] =>
           match styles.lookup n with
@@ -1917,9 +2044,15 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := parseList (toks.toList.drop i) {}
+  let everyOf (n : String) : Array (Array Tok) :=
+    match styles.lookup n with
+    | some bundle => splitTop bundle ','
+    | none => #[]
   let cx : Cx := { pal := pal, scale := scale
                    styles := styles, transformShape := transformShape
                    opts := inherited
+                   everyNode := everyOf everyNodeKey
+                   everyPath := everyOf everyPathKey
                    math := math }
   let (_, ev) := evalList cx st.out.toList [] {}
   -- Nothing in the picture reads keys (a picture of nothing but `\fill`,

@@ -2787,14 +2787,17 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A `\tikzset` entry the native reader does not understand is named at
   -- the line that wrote it — but only under the refusal: with the boundary
   -- open the real TikZ still reads it, so naming a loss there would be a
-  -- claim the document does not have.
+  -- claim the document does not have. `every label` is such an entry: the
+  -- option loops read `every node` and `every path`, and a key path with no
+  -- loop behind it is left unread rather than stored as a bundle nothing
+  -- will ever look up (`Picture.readableKey`).
   t "elab tikzset entry outside the native reading is named under the refusal"
-    (((elabStr ("\\pictures{ tool = none }\\tikzset{every node/.style={draw}}\n" ++
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{every label/.style={draw}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
       == ["W0334"])
   t "elab tikzset entry outside the native reading is silent with the boundary open"
-    ((elabStr ("\\tikzset{every node/.style={draw}}\n" ++
+    ((elabStr ("\\tikzset{every label/.style={draw}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `\tikzset` the engine reads is never an unknown command, and its
@@ -2869,16 +2872,110 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\\begin{tikzpicture}[loop]\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
       == ["W0334"])
-  -- `every X` is not this mechanism: it is a third precedence level, run
-  -- inside the node's own scope, so it stays unread and named at the line
-  -- that declared it — unchanged by picture-level keys.
-  t "elab every-node style is still unread under the refusal"
-    (((elabStr ("\\pictures{ tool = none }\\tikzset{every node/.style={draw}}\n" ++
+  -- **`every node` and `every path` are the third precedence level**, run
+  -- inside the node's or path's own scope: they beat what the picture set
+  -- and lose to the bracket's own (`Picture.mergeOpts`). Before this they
+  -- were unread and named at their line; a document that declared one saw
+  -- none of it drawn.
+  t "elab every-node style reaches a node that declares nothing"
+    ((elabStr ("\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => pic.shapes.size == 1
-        | _ => false)))
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  t "elab every-path style reaches a draw that declares nothing"
+    ((elabStr ("\\tikzset{every path/.style={thick, draw=blue}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\draw (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .edge _ st _ => st.color == { r := 0, g := 0, b := 255 } &&
+                st.width == Ir.Pic.thickWidth
+            | _ => false
+        | _ => false))
+  -- The middle boundary: `every node` beats the picture's own entry
+  -- (`Picture.merge_every_exact`), stated on the accumulating key, where a
+  -- surviving outer entry would win by maximum rather than lose.
+  t "elab every-node style beats the picture's entry"
+    ((elabStr ("\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\tikzset{wide/.style={minimum size=14mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[wide]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .circle _ _ r _ _ => r == Dim.mm 4
+            | _ => false
+        | _ => false))
+  -- The inner boundary: the node's own bracket beats `every node`
+  -- (`Picture.merge_own_exact`).
+  t "elab a node's own key beats an every-node style"
+    ((elabStr ("\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node[minimum size=5mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .circle _ _ r _ _ => r == Dim.mm 5 / 2
+            | _ => false
+        | _ => false))
+  -- All three at once: the node's own value is what draws, and neither
+  -- other level leaves a trace of its own.
+  t "elab a key set at all three levels takes the innermost"
+    ((elabStr ("\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
+      "\\tikzset{wide/.style={minimum size=14mm}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[wide]\n" ++
+      "\\node[minimum size=5mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.any fun s => match s with
+            | .circle _ _ r _ _ => r == Dim.mm 5 / 2
+            | _ => false
+        | _ => false))
+  -- The path pair of the same two boundaries, read on the stroke: the
+  -- picture sets a colour, `every path` another, the path its own.
+  t "elab every-path style beats the picture's entry and loses to the path's"
+    ((elabStr ("\\tikzset{every path/.style={draw=green}}\n" ++
+      "\\tikzset{wire/.style={draw=blue}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[wire]\n" ++
+      "\\draw (0,0) -- (2,0);\\draw[draw=red] (0,1) -- (2,1);" ++
+      "\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => (pic.shapes.filterMap fun s => match s with
+            | .edge _ st _ => some st.color
+            | _ => none) == #[{ r := 0, g := 255, b := 0 }, { r := 255, g := 0, b := 0 }]
+        | _ => false))
+  -- A picture's own bracket may declare the level too, through the one
+  -- definition router a `\tikzset` goes through.
+  t "elab every-node style declared on the picture's bracket reaches its nodes"
+    ((elabStr ("\\begin{document}" ++
+      "\\begin{tikzpicture}[every node/.style={circle, draw, minimum size=8mm}]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 2
+        | _ => false))
+  -- The hostile input at this level: an `every node` style naming itself.
+  -- Expansion is at the definition, where the name is not yet bound, so
+  -- the reference stays a literal key the node's loop names — one W0334,
+  -- nothing chased.
+  t "elab self-referential every-node style is named, not chased"
+    (((elabStr ("\\pictures{ tool = none }" ++
+      "\\tikzset{every node/.style={every node}}\n" ++
+      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
+  -- The two places this level cannot reach are named, not dropped in
+  -- silence: `\fill`'s bracket is a colour spelling, and an edge label
+  -- reads its own bracket alone.
+  t "elab every-path keys a fill cannot read are named"
+    (warnCodes (dvDoc "\\tikzset{every path/.style={thick}}\n"
+      "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      == ["W0334"])
+  t "elab every-node keys an edge label cannot read are named"
+    (((elabStr (dvDoc "\\tikzset{every node/.style={draw}}\n"
+      ("\\begin{tikzpicture}\\draw (0,0) -- node {m} (2,0);" ++
+       "\\end{tikzpicture}"))).2.map (·.code)).toList == ["W0334"])
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
@@ -4108,6 +4205,58 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the HTML converter gap is a different code, and still a warning"
     ((DriverDiag.boundarySvgMissing "not found").code == "W0378" &&
      DiagCode.W0378.loss == .degraded)
+
+/-- The three levels a picture's option entries are read under, read off the
+page the engine ships rather than the IR: **picture < every X < the
+bracket's own** (`Picture.mergeOpts`, whose boundaries are
+`merge_every_exact` and `merge_own_exact`). A node's size and a path's
+stroke each take exactly one of the three values declared for it, and the
+other two leave no trace — only the artifact can say which survived. The
+same page carries the no-boundary fact: the outlines ship as page paths and
+no image box stands where either picture is, so the ink is the engine's own
+and no external tool was asked to draw it. -/
+def pictureEveryLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let src :=
+    "\\tikzset{every node/.style={circle, draw, minimum size=8mm}}\n" ++
+    "\\tikzset{every path/.style={thick, draw=green}}\n" ++
+    "\\tikzset{wide/.style={minimum size=14mm}}\n" ++
+    "\\tikzset{wire/.style={draw=blue}}\n" ++
+    "\\begin{document}\n" ++
+    "\\begin{tikzpicture}[wide]\n" ++
+    "\\node at (0,0) {A};\n" ++
+    "\\node[minimum size=5mm] at (3,0) {C};\n" ++
+    "\\end{tikzpicture}\n" ++
+    "\\begin{tikzpicture}[wire]\n" ++
+    "\\draw (0,0) -- (3,0);\n" ++
+    "\\draw[draw=red] (0,0.6) -- (3,0.6);\n" ++
+    "\\end{tikzpicture}\n" ++
+    "\\end{document}"
+  let (doc, ds) := elabStr src
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  t "the every-level document elaborates with nothing refused" ds.isEmpty
+  t "both node outlines and both edges ship as page paths"
+    ((c[0]?.map (·.paths == 4)).getD false)
+  t "no boundary box stands where either picture is"
+    ((c[0]?.map (·.images == 0)).getD false)
+  -- The node that declared nothing ships `every node`'s 8mm, not the
+  -- picture's 14mm; the node that declared its own ships 5mm, not either.
+  t "the node that declared nothing ships the every-node size"
+    ((c[0]?.bind (·.pathSpans[0]?)).map (· == (Dim.mm 8, Dim.mm 8)) == some true)
+  t "the node that declared its own size ships it, over both other levels"
+    ((c[0]?.bind (·.pathSpans[1]?)).map (· == (Dim.mm 5, Dim.mm 5)) == some true)
+  -- The path pair, read off the shipped strokes: the edge that declared
+  -- nothing ships `every path`'s colour over the picture's, and both edges
+  -- ship `every path`'s width, which no bracket re-declared.
+  t "the edge that declared nothing ships the every-path colour and width"
+    ((c[0]?.bind (·.pathStrokes[2]?)).map (fun (col, w) =>
+      col == { r := 0, g := 255, b := 0 } && w == Ir.Pic.thickWidth) == some true)
+  t "the edge that re-declared the colour keeps its own, and every-path's width"
+    ((c[0]?.bind (·.pathStrokes[3]?)).map (fun (col, w) =>
+      col == { r := 255, g := 0, b := 0 } && w == Ir.Pic.thickWidth) == some true)
+  t "both node bodies ship as ink"
+    (pageHas c 0 "A" && pageHas c 0 "C")
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no
