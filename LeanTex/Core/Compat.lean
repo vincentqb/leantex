@@ -3101,8 +3101,9 @@ private def specRaw? : Raw → Option Raw
 
 /-- Split an `{overprint}` body into the content before its first item and
 the items themselves, each an `\onslide` spec with the content that runs to
-the next `\onslide` (beamer manual §9.6.2: the items are alternatives, and
-one of them stands on a given overlay). The `Bool` reports a body this
+the next `\onslide` (beamer manual §9.5, "Dynamically Changing Text or
+Images": the items are alternatives, and one of them stands on a given
+overlay). The `Bool` reports a body this
 rewrite refuses to read as an alternation — an `\onslide` with no spec
 token, where beamer's own reading is "on every overlay" and alternation has
 no meaning; the caller degrades rather than guessing.

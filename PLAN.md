@@ -187,6 +187,20 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-23 — `overprintScan` cites the section that documents `{overprint}`
+(overprint-cite, M5; the residual the overprint-evidence entry below
+recorded for the owner of Compat.lean). The docstring cited "beamer manual
+§9.6.2" for the items-are-alternatives reading. beamer's own guide source
+(`doc/beamerug-overlays.tex`) puts the `overprint` environment in §9.5,
+"Dynamically Changing Text or Images", the fifth subsection of Creating
+Overlays; §9.6 is Advanced Overlay Specifications, which is about spec
+syntax, not the environment. `tests/compat-index/beamer.txt`'s header
+already cited §9.5, so the tree named two sections for one construct and
+the wrong one was the one a reader of the code met. Docstring only: no
+behaviour, no goldens. The older overprint-alt entry below carries the same
+wrong section in its prose; entries are immutable, and this is its
+correction.
+
 2026-09-23 — a once-per-document diagnostic is the document's promise, not
 the pass's (warn-once-one-set, M5; engine bug, the residual the
 overprint-unnumberable entry below recorded). W0105 is declared
