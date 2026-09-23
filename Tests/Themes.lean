@@ -2430,6 +2430,95 @@ def deckOverprintDegradeChecks (ref : IO.Ref (List String)) (oneFace : Font.Font
   t "the degraded page ships the reading once, not twice"
     (c.size == 1 && pageOccurs c 0 "Just a reading." == 1)
 
+/-- An overprint item whose overlay specification the step model cannot
+number does not cost the items it can number. The invariant absent before:
+*refusing an item whose spec names no step never removes an item whose spec
+does — every numberable item still alternates, one inked per step page, and
+the unnumberable item stands on the steps no other item claims.* The nesting
+made the unnumberable item's "otherwise" group the whole rest of the
+overprint, and the `\alt` fallback shows one alternative, so an incremental
+spec on the first item swallowed every item after it: one page where three
+were declared, two readings in neither artifact, with only the
+once-per-document W0105 to account for the loss. Numberability is now one
+definition below both passes (`Ir.overlayRange`), so the rewrite can place
+such an item instead of the elaborator dropping the rest of the deck
+with it. Census and HTML tree, never an IR dump. -/
+def deckOverprintUnnumberableChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let readings := ["Alpha reading.", "Bravo reading.", "Charlie reading."]
+  -- The first item's spec cannot be numbered; the other two name steps 2
+  -- and 3, so the unclaimed step is 1 — where the unnumberable item stands.
+  let src := deck169Frame
+    "\\begin{overprint}\n\\onslide<+-> Alpha reading.\n\
+\\onslide<2> Bravo reading.\n\\onslide<3> Charlie reading.\n\\end{overprint}"
+  let (doc, ds) := elabStr src
+  let warns := (ds.filter (·.severity != .note)).map (·.code)
+  t "an unnumberable overprint item warns W0105 once, and nothing else"
+    (warns == #["W0105"])
+  t "the environment is read as alternation, not left standing"
+    (!(warnCodes src).contains "W0302")
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  -- The defect: this was 1 before, the two numbered items gone with it.
+  t "refusing one item leaves the numbered items their step pages"
+    (c.size == 3)
+  t "each step page inks exactly one of the three readings"
+    ((List.range 3).all fun i =>
+      (readings.map fun r => pageOccurs c i r) == (List.range 3).map fun j =>
+        if i == j then 1 else 0)
+  -- The numbered items ride their own specs, by the one predicate both
+  -- backends select with: item k inks the page inside `<k>`.
+  t "a numbered item inks the page inside its own spec"
+    ([1, 2].all fun j =>
+      (List.range 3).all fun i =>
+        (pageOccurs c i (readings.getD j "") == 1) ==
+          !Ir.stepPending (j + 1) (some (j + 1)) (i + 1))
+  -- The unnumberable item is the nesting's last resort: it inks exactly the
+  -- steps no numbered item's spec claims, read off the one predicate both
+  -- backends select with — pending on every numbered spec at once.
+  t "the unnumberable item inks the one step no numbered item claims"
+    ((List.range 3).all fun i =>
+      (pageOccurs c i (readings.getD 0 "") == 1) ==
+        (Ir.stepPending 2 (some 2) (i + 1) && Ir.stepPending 3 (some 3) (i + 1)))
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  t "the HTML tree declares all three readings and shows exactly one"
+    (readings.all (fun r => treeOccurs body r == 1) &&
+     ((readings.map fun r => treeShownOccurs body r).foldl (· + ·) 0 == 1))
+  -- An unnumberable item in the middle: steps 1 and 3 are claimed, so the
+  -- item stands on 2 — no page shows two readings, none shows none.
+  let mid := ["Delta reading.", "Echo reading.", "Foxtrot reading."]
+  let (mDoc, mDs) := elabStr (deck169Frame
+    "\\begin{overprint}\n\\onslide<1> Delta reading.\n\
+\\onslide<+-> Echo reading.\n\\onslide<3> Foxtrot reading.\n\\end{overprint}")
+  let mc := censusOf (coveredColorsOf mDoc) (layoutOf oneFace mDoc)
+  t "an unnumberable item in the middle warns W0105 once"
+    (((mDs.filter (·.severity != .note)).map (·.code)) == #["W0105"])
+  t "the middle item stands on the step between the two numbered ones"
+    (mc.size == 3 &&
+     (List.range 3).all fun i =>
+      (mid.map fun r => pageOccurs mc i r) == (List.range 3).map fun j =>
+        if i == j then 1 else 0)
+  -- Two unnumberable items: there is one last resort, so the first stands
+  -- and the second is named, never stacked on the page the first holds.
+  let (tDoc, tDs) := elabStr (deck169Frame
+    "\\begin{overprint}\n\\onslide<+-> Alpha reading.\n\
+\\onslide<.-> Bravo reading.\n\\onslide<2> Charlie reading.\n\\end{overprint}")
+  let tc := censusOf (coveredColorsOf tDoc) (layoutOf oneFace tDoc)
+  t "a second unnumberable item is named, not stacked"
+    (((tDs.filter (·.severity != .note)).map (·.code)) == #["W0105"] &&
+     tc.size == 2 &&
+     pageOccurs tc 0 "Alpha reading." == 1 && pageOccurs tc 1 "Alpha reading." == 0 &&
+     pageOccurs tc 0 "Charlie reading." == 0 && pageOccurs tc 1 "Charlie reading." == 1 &&
+     pageOccurs tc 0 "Bravo reading." == 0 && pageOccurs tc 1 "Bravo reading." == 0)
+  -- One item, unnumberable: one reading on one page, which is the whole of
+  -- what an alternation of one can honestly be.
+  let (oDoc, oDs) := elabStr (deck169Frame
+    "\\begin{overprint}\n\\onslide<+-> Delta reading.\n\\end{overprint}")
+  let oc := censusOf (coveredColorsOf oDoc) (layoutOf oneFace oDoc)
+  t "a lone unnumberable item ships its reading once, on one page"
+    (((oDs.filter (·.severity != .note)).map (·.code)) == #["W0105"] &&
+     oc.size == 1 && pageOccurs oc 0 "Delta reading." == 1)
+
 /-- The deck's logo is frame furniture in HTML too — the executable half
 of `logo_frames_agree`, over one deck: the frames whose HTML section
 carries the `.slide-logo` strip are exactly the pages whose `Layout.Out`

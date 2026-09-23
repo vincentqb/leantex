@@ -3089,9 +3089,11 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
-/-- Is this raw an overlay spec token? The shape alone — whether `<2->` names
-a step is the elaborator's arithmetic (`\alt`'s arm) and is deliberately not
-read here, so the overprint rewrite grows no second notion of a range. -/
+/-- Is this raw an overlay spec token? Shape alone, because an item's
+boundary is a lexical question: `\onslide<...>` starts an item whatever its
+spec says. Whether that spec names a step — and so whether the item can be
+an alternative — is the one range definition's answer (`specNumbered`, over
+`Ir.overlayRange`), never a second reading of a range spelled here. -/
 private def specRaw? : Raw → Option Raw
   | r@(.word w _) =>
     if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then some r else none
@@ -3123,8 +3125,19 @@ private def overprintScan : List Raw → Array Raw → Option (Raw × Array Raw)
     | some (sp, content) => overprintScan rest lead (some (sp, content.push r)) items
     | none => overprintScan rest (lead.push r) none items
 
+/-- Can the step model number this item's specification? Asked of the one
+range definition (`Ir.overlayRange`), never of a second parse of a spec: an
+item whose spec names steps is an alternative, and one whose spec names none
+that arithmetic can place cannot be — which of the two it is has to be the
+same question the elaborator's `\alt` arm asks, or the two passes could
+disagree about an item and no theorem would notice. -/
+private def specNumbered : Raw → Bool
+  | .word w _ => (Ir.overlayRange w).isSome
+  | _ => false
+
 /-- n-way alternation is nested binary alternation: item one against all the
-rest, recursively — `\alt<s1>{one}{\alt<s2>{two}{\alt<s3>{three}{}}}`.
+rest, recursively —
+`\alt<s1>{one}{\alt<s2>{two}{\alt<s3>{three}{tail}}}`.
 
 Nesting rather than a new n-ary IR constructor because the selection beamer
 specifies is already a total order (the first item whose spec names the
@@ -3136,63 +3149,130 @@ maximum over every item's spec because `Ir.maxStepBlock`'s `.alt` arm
 recurses into both groups, and the structure tree keeps declaring each
 group exactly once in page order.
 
-The innermost otherwise-group is empty, which is beamer's answer for an
-overlay no item names: nothing stands there. Nothing is the one thing that
-is never *several items stacked*, which is what keeping the body whole did.
+`tail` is what stands on an overlay no item's spec names: empty is beamer's
+own answer (nothing stands there), and nothing is the one thing that is
+never *several items stacked*, which is what keeping the body whole did. An
+item whose spec the step model cannot number goes here instead of nowhere —
+the steps nothing claims are the honest home for an item whose steps cannot
+be enumerated.
 
 The spec travels verbatim at the index the elaborator's `\alt` arm reads,
 as `alertOverlay`'s does, so numbering and range membership stay in the one
 place that owns them. -/
-private def overprintAlt (p : Pos) : List (Raw × Array Raw) → Array Raw
-  | [] => #[]
+private def overprintAlt (p : Pos) (tail : Array Raw) : List (Raw × Array Raw) → Array Raw
+  | [] => tail
   | (sp, content) :: rest =>
-    #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p rest) p]
+    #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p]
 
 /-- The head of a nesting is one alternation node and no fifth raw. -/
-theorem overprintAlt_exact (p : Pos) (sp : Raw) (content : Array Raw)
+theorem overprintAlt_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
-    overprintAlt p ((sp, content) :: rest) =
-      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p rest) p] := rfl
+    overprintAlt p tail ((sp, content) :: rest) =
+      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p] := rfl
 
 /-- The item is carried whole as the alternation's first alternative: what
 the steps its own spec names show, and the only copy of it. -/
-theorem overprintAlt_item_exact (p : Pos) (sp : Raw) (content : Array Raw)
+theorem overprintAlt_item_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
-    (overprintAlt p ((sp, content) :: rest))[2]? = some (.group content p) := rfl
+    (overprintAlt p tail ((sp, content) :: rest))[2]? = some (.group content p) := rfl
 
 /-- The spec reaches the elaborator as written, at the index its `\alt` arm
 reads: a spec the step model cannot number is judged there, never here. -/
-theorem overprintAlt_spec_id (p : Pos) (sp : Raw) (content : Array Raw)
+theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
-    (overprintAlt p ((sp, content) :: rest))[1]? = some sp := rfl
+    (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := rfl
 
-/-- The last item's other alternative is empty: the overlay no item names
-shows nothing, never a second item beside the first. -/
-theorem overprintAlt_last_exact (p : Pos) (sp : Raw) (content : Array Raw) :
-    (overprintAlt p [(sp, content)])[3]? = some (.group #[] p) := rfl
+/-- The last item's other alternative is the tail and nothing else: the
+overlay no item names shows what stands last, never a second item beside the
+first. With no tail — `#[]`, the shape a body of numbered items alone
+plans — it shows nothing. -/
+theorem overprintAlt_last_exact (p : Pos) (tail : Array Raw) (sp : Raw)
+    (content : Array Raw) :
+    (overprintAlt p tail [(sp, content)])[3]? = some (.group tail p) := rfl
 
-/-- An `{overprint}` as alternation, or `none` for a body this rewrite
-refuses to read as one — which leaves the environment standing, so the
-unknown-environment warning names the loss at elaboration and the body is
-kept as ONE reading rather than guessed at.
+/-- The items that can be alternatives, in the order the body wrote them. -/
+private def overprintNumbered (items : Array (Raw × Array Raw)) :
+    Array (Raw × Array Raw) :=
+  items.filter fun it => specNumbered it.1
+
+/-- The items whose spec the step model cannot number, in body order. -/
+private def overprintLoose (items : Array (Raw × Array Raw)) :
+    Array (Raw × Array Raw) :=
+  items.filter fun it => !specNumbered it.1
+
+/-- `_mem`: an alternative of the plan is an item the body wrote. Refusing a
+spec drops items from the nesting; it never invents, reorders or merges one,
+so the reading on a page is always some item's, whole. -/
+theorem overprintNumbered_mem (items : Array (Raw × Array Raw))
+    (it : Raw × Array Raw) (h : it ∈ overprintNumbered items) : it ∈ items :=
+  (Array.mem_filter.mp h).1
+
+/-- `_mem`: the last-resort item is one the body wrote too. -/
+theorem overprintLoose_mem (items : Array (Raw × Array Raw))
+    (it : Raw × Array Raw) (h : it ∈ overprintLoose items) : it ∈ items :=
+  (Array.mem_filter.mp h).1
+
+/-- An `{overprint}` as alternation with the count of items whose spec the
+step model could not number, or `none` for a body this rewrite refuses to
+read as an alternation at all — which leaves the environment standing, so
+the unknown-environment warning names the loss at elaboration and the body
+is kept as ONE reading rather than guessed at.
 
 Content before the first item stays where it was written and shows on every
 overlay, which is what an `\onslide`-less run means in beamer.
+
+Every item whose spec names steps stays an alternative, in body order:
+refusing one item never removes another, so a deck that spells one
+incremental spec keeps every numbered item it wrote. The first item whose
+spec cannot be numbered becomes the nesting's last resort — it inks exactly
+the steps no numbered item claims, which for a deck that numbers the rest is
+the reading beamer gives it — and a second such item cannot, there being one
+last resort; the count travels so the caller names both losses.
 
 The paragraph ends on both sides of the alternation because an overprint is
 a block environment: the fence is what lets the nesting reach the block
 level, where an item holding a list or two paragraphs steps whole instead of
 being squeezed through one paragraph. -/
-private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw) :=
+private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw × Nat) :=
   let (lead, items, bad) := overprintScan body.toList #[] none #[]
   if bad || items.isEmpty then none
-  else some <| Id.run do
-    let mut out : Array Raw := #[.par p]
-    for r in lead do
-      out := out.push r
-    for r in overprintAlt p items.toList do
-      out := out.push r
-    return out.push (.par p)
+  else
+    let numbered := overprintNumbered items
+    let loose := overprintLoose items
+    let tail := match loose[0]? with | some (_, content) => content | none => #[]
+    some (Id.run do
+      let mut out : Array Raw := #[.par p]
+      for r in lead do
+        out := out.push r
+      for r in overprintAlt p tail numbered.toList do
+        out := out.push r
+      return out.push (.par p), loose.size)
+
+/-- `_accounts`: a plan that reports no unnumberable item made no refusal —
+every item the body wrote is an alternative of the nesting. So an item this
+pass could not number is never absent from the caller's count, and the one
+caller says W0105 for it (`overprintRaw`): a refused item cannot reach the
+artifact wordlessly. -/
+theorem overprintPlan_accounts (body : Array Raw) (p : Pos) (repl : Array Raw)
+    (h : overprintPlan body p = some (repl, 0)) :
+    overprintNumbered (overprintScan body.toList #[] none #[]).2.1
+      = (overprintScan body.toList #[] none #[]).2.1 := by
+  simp only [overprintPlan] at h
+  split at h
+  · exact absurd h (by simp)
+  · injection h with h
+    injection h with _ hn
+    have hloose : overprintLoose (overprintScan body.toList #[] none #[]).2.1 = #[] :=
+      Array.eq_empty_of_size_eq_zero hn
+    have : ∀ it ∈ (overprintScan body.toList #[] none #[]).2.1, specNumbered it.1 = true := by
+      intro it hit
+      by_cases hs : specNumbered it.1
+      · exact hs
+      · have : it ∈ overprintLoose (overprintScan body.toList #[] none #[]).2.1 :=
+          Array.mem_filter.mpr ⟨hit, by simp [hs]⟩
+        rw [hloose] at this
+        exact absurd this (by simp)
+    exact Array.filter_eq_self.mpr this
 
 mutual
 
@@ -3217,8 +3297,24 @@ private def overprintRaw : Raw → M (Array Raw)
   | .env "overprint" body p => do
     let body' ← overprintList body.toList #[]
     match overprintPlan body' p with
-    | some repl =>
+    | some (repl, loose) =>
       became "\\begin{overprint}" "\\alt alternation, one item per overlay" p
+      -- A spec this pass could not number is named, once for the document:
+      -- its item is placed where no numbered item claims an overlay, which
+      -- is not where it was declared to stand, and a second such item has
+      -- no place left at all. W0105 is the code for a spec that names no
+      -- step, and the overlay arms already fire it on this key.
+      if loose > 0 then
+        let msg :=
+          if loose == 1 then
+            "an overprint item whose overlay specification does not name a \
+step stands on the steps no other item claims"
+          else
+            "an overprint item whose overlay specification does not name a \
+step stands on the steps no other item claims; a second such item is not shown"
+        sayOnce "spec:overlay" .W0105 msg p
+          (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
       return repl
     | none => return #[.env "overprint" body' p]
   | .env n body p => do return #[.env n (← overprintList body.toList #[]) p]

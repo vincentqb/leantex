@@ -5717,6 +5717,37 @@ structure Cover where
 
 -- Overlay walks. Structural recursion through `List`, as the printers above.
 
+/-- An overlay specification's range, and the one answer to whether the step
+model can number it at all: `<2>` is `(2, some 2)` — crisp on step 2 alone;
+`<2->` is `(2, none)` — crisp from 2 on; `<2-3>` is `(2, some 3)`. `none` is a
+spec no step arithmetic can place: an incremental one (`<+->`, `<.->`) or a
+word that is no range (`<zz>`).
+
+The entry point of the range vocabulary `stepPending` and `altShowsFirst`
+continue: they decide what a numbered range inks, and this decides whether
+there is a number to decide with. One definition because range membership is
+one notion — a second reader that parsed a spec its own way could disagree
+about which steps a spec names, or about whether it names any, and no theorem
+would notice. Both readers are here: the elaborator's overlay and `\alt` arms
+number a spec through this, and the `{overprint}` rewrite asks it which items
+can be alternatives. -/
+def overlayRange (w : String) : Option (Nat × Option Nat) :=
+  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
+    let inner := ((w.drop 1).dropEnd 1).toString.toList
+    let digits := inner.takeWhile Char.isDigit
+    if digits.isEmpty then none else
+    (String.ofList digits).toNat?.bind fun n =>
+      match inner.drop digits.length with
+      | [] => some (n, some n)
+      | '-' :: rest =>
+        let toDigits := rest.takeWhile Char.isDigit
+        if rest.isEmpty then some (n, none)
+        else if toDigits.length == rest.length && !toDigits.isEmpty then
+          (String.ofList toDigits).toNat?.map fun u => (n, some u)
+        else none
+      | _ => none
+  else none
+
 /-- Is a step's content pending on page `k`: before its range starts, or
 past its declared end (`\uncover<2>` covers on 1 and again from 3, exactly
 as beamer's transparent covering does). Pending content dims; it is never

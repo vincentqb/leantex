@@ -1015,29 +1015,6 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ => true
     | _ => false
 
-/-- An overlay specification's range: `<2->` is (2, none) — crisp from 2 on;
-`<2>` is (2, some 2) and `<2-3>` is (2, some 3) — crisp within the range,
-dimmed outside it, never hidden. `none` for a spec the model cannot number
-(`<+->`, `<.->`), which keeps the honest W0105. -/
-private def overlayFrom (w : String) : Option (Nat × Option Nat) :=
-  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
-    let inner := ((w.drop 1).dropEnd 1).toString.toList
-    let digits := inner.takeWhile Char.isDigit
-    if digits.isEmpty then none else
-    match (String.ofList digits).toNat? with
-    | none => none
-    | some n =>
-      match inner.drop digits.length with
-      | [] => some (n, some n)
-      | '-' :: rest =>
-        let toDigits := rest.takeWhile Char.isDigit
-        if rest.isEmpty then some (n, none)
-        else if toDigits.length == rest.length && !toDigits.isEmpty then
-          (String.ofList toDigits).toNat?.map fun u => (n, some u)
-        else none
-      | _ => none
-  else none
-
 /-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
 private def specWord? : Raw → Option String
   | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
@@ -3331,7 +3308,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
     | some w =>
-      match overlayFrom w with
+      match Ir.overlayRange w with
       | some (n, last) =>
         let j2 := skipSpaces raws (j + 1)
         have hj2ge := skipSpaces_ge raws (j + 1)
@@ -3371,7 +3348,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hjge := skipSpaces_ge raws (i + 1)
     match raws[j]?.bind specWord? with
     | some w =>
-      let spec := overlayFrom w
+      let spec := Ir.overlayRange w
       let j2 := skipSpaces raws (j + 1)
       have hj2ge := skipSpaces_ge raws (j + 1)
       let j3 := skipSpaces raws (j2 + 1)
@@ -5527,7 +5504,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
               have h2 := rawPars_split body[j]
               omega)
         else if let some w := specWord? item then
-          let curStep ← match overlayFrom w with
+          let curStep ← match Ir.overlayRange w with
             | some s => pure (some s)
             | none => do
               warnOverlaySpec ctx w pos
@@ -6145,12 +6122,12 @@ theorem wrapScopedEnv_text (n : String) :
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
-seal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+seal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
 seal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
-seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
+seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 seal isColumnStray
 
@@ -7695,7 +7672,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let jg := skipSpaces raws (j + 1)
         have h2 : i + 1 ≤ jg := by
           have := skipSpaces_ge raws (j + 1); omega
-        match overlayFrom w with
+        match Ir.overlayRange w with
         | some p => pure ⟨(some p, jg), h2⟩
         | none => do
           warnOverlaySpec ctx w pos
@@ -8476,12 +8453,12 @@ unseal sectionNumber columnWidth cmidRange trimRawEdges
 unseal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
 unseal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 unseal theCounterLevel? String.toInt? String.toNat?
-unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
 unseal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
-unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
+unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
 unseal scanBracketArg Parse.inputEnvFile?

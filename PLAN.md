@@ -226,6 +226,76 @@ frame's step pages — the readings are steps of one frame, not frames of
 their own. One row quantifies over all six pages to say nothing is ever
 dimmed: alternation replaces, and covering is the other mechanism.
 
+2026-09-23 — numberability is range vocabulary, and an overprint places the
+item it cannot number (overprint-unnumberable, M5; engine bug, the residual
+the overprint-alt entry recorded). n-way alternation is nested binary
+alternation, so an item's "otherwise" group is the whole rest of the
+overprint — and the `\alt` fallback for a spec the step model cannot number
+shows the active alternative alone. Composed, those two honest rules ate a
+deck: `\onslide<+->` on the first of three items shipped ONE page carrying
+that item, with the two numbered items in neither artifact, page count
+collapsed from three to one, and a single once-per-document W0105 whose text
+spoke of `\alt` to account for it. (Measured, not reasoned: `pdftotext` page
+by page on a three-item probe read `Alpha` and nothing else, and the emitted
+HTML declared one reading of three.)
+
+The invariant whose absence allowed it: *refusing an item whose spec names no
+step never removes an item whose spec does.* Every numberable item still
+alternates in body order, one inked per step page, and the unnumberable item
+stands on the steps no other item claims.
+
+The layering that makes it expressible. Numberability was
+`Elab.overlayFrom`, private, and `Elab` imports `Compat` — so the rewrite
+could not ask whether an item's spec names a step without spelling a second
+range reader, which is the thing `Ir.altShowsFirst` exists to prevent. It is
+now `Ir.overlayRange`, beside `stepPending` and `altShowsFirst` in the range
+vocabulary and below both passes: one definition answers "can this spec be
+numbered, and to what range", the elaborator's overlay, `\alt` and pause arms
+read it, and `Compat.specNumbered` asks it which overprint items can be
+alternatives. No copy stayed behind. Item *boundaries* remain shape-only
+(`specRaw?`): where an item starts is lexical, which steps it names is the
+range question, and only the second needed lifting.
+
+The placement decision: the unnumberable item becomes the nesting's last
+resort — the innermost otherwise-group, previously always empty — so it inks
+exactly the steps no numbered item claims. Not an invention but the maximal
+honest reading: the engine cannot enumerate the steps such a spec names, and
+the steps nothing else claims are the ones where beamer would show *something*
+anyway (its own answer for an unclaimed overlay is that nothing stands). For
+the shape a real deck writes — one incremental spec, the rest numbered — it
+coincides with beamer's rendering: `<+->`, `<2>`, `<3>` now ships three pages
+reading Alpha, Bravo, Charlie, which is what beamer prints. It also keeps
+W0105's declared loss honest: the content is in the output, not as declared,
+which is what `degraded` means — dropping the item would have been a
+`dropped` loss wearing a warning's code. There is one last resort, so a
+second unnumberable item has no place; it is refused and the same W0105 says
+so in its plural voice. `overprintPlan` now returns that refusal count and
+the one caller fires W0105 on the existing `spec:overlay` key, so the
+document still gets exactly one such warning — no new code, one code one
+meaning.
+
+Evidence, artifacts and census, never an IR dump. Rendered: the three-item
+probe reads one item per page over three pages in PDF (`pdftotext`, page by
+page) and declares all three readings in HTML, against one page and one
+reading before; two unnumberable items ship the first on the unclaimed page
+and the numbered item on its own, the second nowhere. In the suite,
+`deckOverprintUnnumberableChecks` holds it as census over `Layout.Out` and
+the HTML tree: three step pages, `pageOccurs == 1` for the item whose spec
+names the page and `0` for the others, a numbered item's page read off
+`Ir.stepPending` and the last resort's page off pending-on-every-numbered-spec,
+W0105 exactly once and no W0302, plus the middle-item, two-loose and
+lone-item shapes. Six of those rows fail on the previous elaborator. Pure
+facts beside them: `overprintNumbered_mem`/`overprintLoose_mem` (an
+alternative is an item the body wrote — refusal never invents or merges a
+reading) and `overprintPlan_accounts` (a plan reporting no unnumberable item
+made no refusal, so a refused item cannot reach the artifact wordlessly).
+Goldens did not move: no corpus fixture spells `{overprint}`.
+
+Residual: `Compat` and `Elab` keep separate once-per-document warn sets, so a
+deck that spells both an unnumberable overprint item and an unnumberable
+`\alt` elsewhere can report W0105 twice. One key, two passes — recorded
+rather than hidden.
+
 2026-09-23 — an unnumberable overlay spec on `\alt` ships one reading
 (alt-unnumberable-once, M5; engine bug, and the last of the doubling class
 the alternation node was landed to remove — `\alert<+->{place}` rendered
@@ -263,7 +333,6 @@ show a second copy. Those four census rows fail on the previous elaborator
 and pass on this one. A numbered spec is untouched: `\alert<2>{quince}`
 still ships two step pages, one group inked on each.
 
-||||||| parent of 6c66d86 (Elaborate an overprint onto nested alternation, one item per overlay)
 2026-09-23 — `{overprint}` is alternation, and n-way alternation is nested
 binary alternation (overprint-alt, M5). A real deck's overprint met
 `warning[W0302]: unknown environment '{overprint}'; its body is kept`, and a
