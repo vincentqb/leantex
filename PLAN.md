@@ -224,6 +224,78 @@ show a second copy. Those four census rows fail on the previous elaborator
 and pass on this one. A numbered spec is untouched: `\alert<2>{quince}`
 still ships two step pages, one group inked on each.
 
+||||||| parent of 6c66d86 (Elaborate an overprint onto nested alternation, one item per overlay)
+2026-09-23 — `{overprint}` is alternation, and n-way alternation is nested
+binary alternation (overprint-alt, M5). A real deck's overprint met
+`warning[W0302]: unknown environment '{overprint}'; its body is kept`, and a
+kept body is the defect alternation exists to remove: beamer's overprint is a
+sequence of `\onslide<spec>` items of which one stands per overlay (manual
+§9.6.2), so keeping the body put all of them on every page at once —
+"Alpha reading. Bravo reading. Charlie reading." on all three pages of a
+three-item frame, in both artifacts.
+
+The invariant whose absence allowed it is the census one already in force for
+two alternatives: *an overlay alternation inks exactly one alternative per
+step page.* `{overprint}` now elaborates onto `Ir.Block.alt`/`Ir.Inline.alt`
+through `Compat.overprintList`, so it is held by the same fact that holds for
+`\alt` and `\alert<spec>` (`Ir.altShowsFirst`, `alt_backend_agree`).
+
+The representation decision: `alt` is binary and an overprint may hold any
+number of items, so n-way alternation is *nested* binary alternation — item
+one against the rest, recursively,
+`\alt<s1>{one}{\alt<s2>{two}{\alt<s3>{three}{}}}`. Nesting rather than an
+n-ary constructor because the selection beamer specifies is already a total
+order (the first item whose spec names the overlay stands), and because
+nothing downstream changes at all: each node is an ordinary alternation, so
+one item inks per page by the existing predicate, the handout's page count is
+the maximum over every item's spec because `Ir.maxStepBlock`'s `.alt` arm
+recurses into both groups, the structure tree keeps declaring each group once
+in page order, and the HTML rules select each nested wrapper by the range they
+already read. No `Ir` or `Elab` edit was needed, which is the test of the
+choice. The innermost otherwise-group is empty — beamer's answer for an
+overlay no item names is that nothing stands there, and nothing is the one
+reading that is never *several stacked*.
+
+Two judgment calls. The replacement is spliced as a SEQUENCE rather than
+wrapped in a group, and the pass runs ahead of the idiom rewrite: a group
+offered to a frame as its first body node is read as the frame's title
+(`\begin{frame}{...}`), which silently turned the whole alternation into
+furniture — one page, first item only, on an untitled frame. That is why
+`overprintList` is its own pass with its own `Raw`/`List` pair rather than an
+arm of `rewriteRaw`, and running first leaves the items' content to the main
+pass, so an idiom inside an alternative is rewritten as it would be anywhere.
+The paragraph is fenced on both sides of the nesting because an overprint is a
+block environment: the fence is what lets an item holding a list step whole
+instead of being squeezed through one paragraph.
+
+Second: a body this rewrite refuses to read as an alternation is *left
+standing*, so the existing W0302 names the loss at elaboration and the body is
+kept as one reading. Two such bodies: an `\onslide` with no spec (beamer reads
+a bare `\onslide` as "on every overlay", where alternation has no meaning) and
+a body with no `\onslide` at all. No new diagnostic code: W0302's declared
+loss (degraded) and its message are exactly what happens, and one code one
+meaning is better served by reuse than by a second code for a kept body.
+
+Evidence, artifacts not IR: a three-item probe deck rendered to PDF reads
+`pdftotext` page by page as one item per page with the other two absent
+(against the kept body, all three on every page), and the emitted HTML
+declares three readings and shows one. In the suite,
+`deckOverprintChecks` holds it as census — three step pages, `pageOccurs == 1`
+for the item whose spec names the page and `0` for the others, the inked page
+agreeing with `Ir.stepPending` item by item and the outermost node with
+`Ir.altShowsFirst`, and `treeOccurs`/`treeShownOccurs` three declared and one
+shown — with `deckOverprintDegradeChecks` pinning the refusals to one named
+reading. Goldens did not move: no corpus fixture spells `{overprint}`.
+
+Residual, and the one requirement this does not meet. A spec the step model
+cannot number (`<+->`) still reaches the elaborator's `\alt` arm, which keeps
+the honest W0105 and shows BOTH alternatives — so an unnumberable spec inside
+an overprint stacks that item against the rest of the nesting. Compat cannot
+refuse it here without a second `overlayFrom`, which is the rule the alert
+flip was careful to keep; the fix belongs to the shared `\alt` fallback (show
+the active alternative alone) or to lifting numberability to a module both
+passes can read, and neither is this unit. Recorded rather than hidden.
+
 2026-09-22 — a definition reaches its picture wherever it was written, and
 native draws before the boundary does (pic-boundary, M8/M8b). Three defects,
 one cause. A figure kept in its own file carries its `\usetikzlibrary` and

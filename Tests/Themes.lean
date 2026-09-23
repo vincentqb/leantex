@@ -2363,6 +2363,73 @@ def deckAltChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      hasStr html HtmlDoc.deckScript &&
      has "hidden=\"hidden\">Middle words.</span>")
 
+/-- Beamer's `{overprint}` is an alternation environment, and this is the
+census that says so on the artifacts: three `\onslide` items, three step
+pages, and each page carrying exactly ONE of the three readings. Keeping the
+body — what an unknown environment does — put all three on every page, so
+the row that names the defect is the absence of the other two, not the
+presence of the one. n-way alternation is nested binary alternation, so the
+nesting's own arithmetic is checked here too: the page that inks an item is
+the page `Ir.altShowsFirst` names for that item's spec, and the HTML tree
+declares every reading once while showing one. -/
+def deckOverprintChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let readings := ["Alpha reading.", "Bravo reading.", "Charlie reading."]
+  let (doc, ds) := elabStr (deck169Frame
+    "\\begin{overprint}\n\\onslide<1> Alpha reading.\n\
+\\onslide<2> Bravo reading.\n\\onslide<3> Charlie reading.\n\\end{overprint}")
+  t "an overprint elaborates clean: no unknown environment, no kept body"
+    (ds.all fun d => d.severity == .note)
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  -- Three items name three steps, so the frame ships three pages.
+  t "three alternatives give the frame three step pages" (c.size == 3)
+  -- The defect this closes, stated as the census: one reading per page and
+  -- the other two absent. Against a kept body every row below fails.
+  t "each step page inks exactly one of the three readings"
+    ((List.range 3).all fun i =>
+      (readings.map fun r => pageOccurs c i r) == (List.range 3).map fun j =>
+        if i == j then 1 else 0)
+  -- The nesting's arithmetic, not a second reading of it: item k rides
+  -- `\alt<k>`, and the page that inks it is the page inside that spec —
+  -- `Ir.stepPending`, the predicate both backends select by.
+  t "the page that inks an item is the page inside that item's spec"
+    ((List.range 3).all fun j =>
+      (List.range 3).all fun i =>
+        (pageOccurs c i (readings.getD j "") == 1) ==
+          !Ir.stepPending (j + 1) (some (j + 1)) (i + 1))
+  -- The top of the nesting, tied to the one predicate the PDF page and the
+  -- HTML rules both read: the first item is the group stored first there.
+  t "the outermost alternation inks its first item exactly when altShowsFirst says"
+    ((List.range 3).all fun i =>
+      (pageOccurs c i (readings.getD 0 "") == 1) == Ir.altShowsFirst 1 (some 1) (i + 1))
+  -- The HTML artifact: every reading declared once, exactly one shown —
+  -- the floor a page with no snap state shows, which is step one's.
+  t "the HTML tree declares each reading once and shows exactly one"
+    (readings.all (fun r => treeOccurs body r == 1) &&
+     ((readings.map fun r => treeShownOccurs body r) == [1, 0, 0]))
+
+/-- An overprint the rewrite refuses to read as an alternation degrades to
+ONE reading with its loss named, never to several stacked: an `\onslide`
+with no step specification has no alternation in it (beamer reads a bare
+`\onslide` as "on every overlay"), so the body stands as written and W0302
+says the body is kept. -/
+def deckOverprintDegradeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let bad := deck169Frame
+    "\\begin{overprint}\n\\onslide Alpha reading.\n\\onslide<2> Bravo reading.\n\
+\\end{overprint}"
+  t "an \\onslide with no <spec> leaves the loss named, not guessed"
+    ((warnCodes bad).contains "W0302")
+  let empty := deck169Frame "\\begin{overprint}\nJust a reading.\n\\end{overprint}"
+  t "an overprint with no alternative is named too"
+    ((warnCodes empty).contains "W0302")
+  let (doc, _) := elabStr empty
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  t "the degraded page ships the reading once, not twice"
+    (c.size == 1 && pageOccurs c 0 "Just a reading." == 1)
+
 /-- The deck's logo is frame furniture in HTML too — the executable half
 of `logo_frames_agree`, over one deck: the frames whose HTML section
 carries the `.slide-logo` strip are exactly the pages whose `Layout.Out`

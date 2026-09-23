@@ -3089,6 +3089,143 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
+/-- Is this raw an overlay spec token? The shape alone — whether `<2->` names
+a step is the elaborator's arithmetic (`\alt`'s arm) and is deliberately not
+read here, so the overprint rewrite grows no second notion of a range. -/
+private def specRaw? : Raw → Option Raw
+  | r@(.word w _) =>
+    if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then some r else none
+  | _ => none
+
+/-- Split an `{overprint}` body into the content before its first item and
+the items themselves, each an `\onslide` spec with the content that runs to
+the next `\onslide` (beamer manual §9.6.2: the items are alternatives, and
+one of them stands on a given overlay). The `Bool` reports a body this
+rewrite refuses to read as an alternation — an `\onslide` with no spec
+token, where beamer's own reading is "on every overlay" and alternation has
+no meaning; the caller degrades rather than guessing.
+
+Accumulators rather than a rebuilt tail: the result is one pass, and the
+content of an item grows by `push`. -/
+private def overprintScan : List Raw → Array Raw → Option (Raw × Array Raw) →
+    Array (Raw × Array Raw) → Array Raw × Array (Raw × Array Raw) × Bool
+  | [], lead, cur, items =>
+    (lead, (match cur with | some it => items.push it | none => items), false)
+  | .ctrl "onslide" _ :: s :: rest, lead, cur, items =>
+    let items := match cur with | some it => items.push it | none => items
+    match specRaw? s with
+    | some sp => overprintScan rest lead (some (sp, #[])) items
+    | none => (lead, items, true)
+  | [.ctrl "onslide" _], lead, cur, items =>
+    (lead, (match cur with | some it => items.push it | none => items), true)
+  | r :: rest, lead, cur, items =>
+    match cur with
+    | some (sp, content) => overprintScan rest lead (some (sp, content.push r)) items
+    | none => overprintScan rest (lead.push r) none items
+
+/-- n-way alternation is nested binary alternation: item one against all the
+rest, recursively — `\alt<s1>{one}{\alt<s2>{two}{\alt<s3>{three}{}}}`.
+
+Nesting rather than a new n-ary IR constructor because the selection beamer
+specifies is already a total order (the first item whose spec names the
+overlay stands), and because every consumer of alternation then needs no
+change whatever: each node is an ordinary alternation, so exactly one item
+inks per step page by the same fact that holds for two
+(`Ir.altShowsFirst`, `alt_backend_agree`), the handout's page count is the
+maximum over every item's spec because `Ir.maxStepBlock`'s `.alt` arm
+recurses into both groups, and the structure tree keeps declaring each
+group exactly once in page order.
+
+The innermost otherwise-group is empty, which is beamer's answer for an
+overlay no item names: nothing stands there. Nothing is the one thing that
+is never *several items stacked*, which is what keeping the body whole did.
+
+The spec travels verbatim at the index the elaborator's `\alt` arm reads,
+as `alertOverlay`'s does, so numbering and range membership stay in the one
+place that owns them. -/
+private def overprintAlt (p : Pos) : List (Raw × Array Raw) → Array Raw
+  | [] => #[]
+  | (sp, content) :: rest =>
+    #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p rest) p]
+
+/-- The head of a nesting is one alternation node and no fifth raw. -/
+theorem overprintAlt_exact (p : Pos) (sp : Raw) (content : Array Raw)
+    (rest : List (Raw × Array Raw)) :
+    overprintAlt p ((sp, content) :: rest) =
+      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p rest) p] := rfl
+
+/-- The item is carried whole as the alternation's first alternative: what
+the steps its own spec names show, and the only copy of it. -/
+theorem overprintAlt_item_exact (p : Pos) (sp : Raw) (content : Array Raw)
+    (rest : List (Raw × Array Raw)) :
+    (overprintAlt p ((sp, content) :: rest))[2]? = some (.group content p) := rfl
+
+/-- The spec reaches the elaborator as written, at the index its `\alt` arm
+reads: a spec the step model cannot number is judged there, never here. -/
+theorem overprintAlt_spec_id (p : Pos) (sp : Raw) (content : Array Raw)
+    (rest : List (Raw × Array Raw)) :
+    (overprintAlt p ((sp, content) :: rest))[1]? = some sp := rfl
+
+/-- The last item's other alternative is empty: the overlay no item names
+shows nothing, never a second item beside the first. -/
+theorem overprintAlt_last_exact (p : Pos) (sp : Raw) (content : Array Raw) :
+    (overprintAlt p [(sp, content)])[3]? = some (.group #[] p) := rfl
+
+/-- An `{overprint}` as alternation, or `none` for a body this rewrite
+refuses to read as one — which leaves the environment standing, so the
+unknown-environment warning names the loss at elaboration and the body is
+kept as ONE reading rather than guessed at.
+
+Content before the first item stays where it was written and shows on every
+overlay, which is what an `\onslide`-less run means in beamer.
+
+The paragraph ends on both sides of the alternation because an overprint is
+a block environment: the fence is what lets the nesting reach the block
+level, where an item holding a list or two paragraphs steps whole instead of
+being squeezed through one paragraph. -/
+private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw) :=
+  let (lead, items, bad) := overprintScan body.toList #[] none #[]
+  if bad || items.isEmpty then none
+  else some <| Id.run do
+    let mut out : Array Raw := #[.par p]
+    for r in lead do
+      out := out.push r
+    for r in overprintAlt p items.toList do
+      out := out.push r
+    return out.push (.par p)
+
+mutual
+
+/-- Splice every `{overprint}` in a raw sequence into its alternation. A
+pass of its own, ahead of the idiom rewrite, for two reasons: the
+replacement is a SEQUENCE where the environment was one node — wrapping it
+in a group instead would offer the group to a frame as its title, which is
+what `\begin{frame}{...}` reads — and running first leaves the items'
+content to the main pass, so an idiom inside an alternative is rewritten
+exactly as it would be anywhere else. -/
+private def overprintList : List Raw → Array Raw → M (Array Raw)
+  | [], out => pure out
+  | r :: rest, out => do
+    let rs ← overprintRaw r
+    overprintList rest (out ++ rs)
+
+/-- Descend into a group or environment, so an overprint nested anywhere is
+found. Split from the list walk so the recursion is structural on `Raw`, as
+the idiom rewrite's own pair is. -/
+private def overprintRaw : Raw → M (Array Raw)
+  | .group body p => do return #[.group (← overprintList body.toList #[]) p]
+  | .env "overprint" body p => do
+    let body' ← overprintList body.toList #[]
+    match overprintPlan body' p with
+    | some repl =>
+      became "\\begin{overprint}" "\\alt alternation, one item per overlay" p
+      return repl
+    | none => return #[.env "overprint" body' p]
+  | .env n body p => do return #[.env n (← overprintList body.toList #[]) p]
+  | r => pure #[r]
+
+end
+
 mutual
 
 /-- Walk `raws`. The list is `raws` from index `i` on and only drives the
@@ -3215,6 +3352,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
     let raws ← unwrapBeginHookList #[] raws.toList
     let raws := (splitColumnsList raws.toList).toArray
+    let raws ← overprintList raws.toList #[]
     let out ← rewriteList false raws #[] raws.toList 0 0
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0
