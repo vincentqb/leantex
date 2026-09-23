@@ -286,3 +286,12 @@ in this repo; refer to the private reference corpus abstractly.
 
 - Commit each verified unit (build + tests green); imperative subject line.
 - Never push without being asked.
+- Never `git stash`: the stack is per-repository, not per-worktree, and agents
+  here work in parallel worktree checkouts — a `pop` can apply, and drop,
+  another worktree's entry. Set work aside with file copies instead (the file
+  moved away to prove a test fails before the fix, copied back after). One
+  four-minute test run was long enough for a second agent's stash to take
+  `stash@{0}`; the pop planted its 115-line `Compat.lean` rewrite in the first
+  agent's tree and removed it from the stack. Recovery worked only because the
+  stash commit outlives the stack entry in the shared object store:
+  `git stash store <sha>` puts it back, with the SHA the pop printed.
