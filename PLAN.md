@@ -7082,3 +7082,38 @@ is evidence, not a theorem.
   `Theme.lean` states ~40 theorems directly over `.entries` including
   `tokens_ext`-style structure equality from entries equality alone, and a
   theme carries tens of entries, so the square is never reached.
+
+- 2026-09-23: the third walk combinator — a context fold with open and
+  close events (`Ir.CtxFold`, `foldCtxBlocks`). `foldBlocks` reads a node
+  before its content and never learns where it ends, and `mapBlocks`
+  rewrites leaves; a walk that binds a value over a node's *extent*, or
+  needs the end of a container, had no shared shape and hand-rolled the
+  whole descent instead — all twenty-nine `Block` arms, which is why
+  `.framefoot` is matched at 52 sites in this tree. The signature was read
+  off the two callers that pay for it rather than invented: `openBlock`
+  returns the accumulator *and* the context its content is read under
+  (`floatLabelRows`' float binding, which must not leak past the float),
+  and `closeBlock` fires once that content is read (what a tree built from
+  the IR needs, and what `Struct.lean` says at its own walk: "the fold
+  reads a node before its content and has no close event"). The context
+  descends and does not escape; the accumulator threads left to right and
+  does. `foldCtxBlock_covers` is the fact that keeps the two descents in
+  Ir.lean one walk — with no context and a silent close, the new walk reads
+  exactly the nodes `foldBlock` reads, in its order — so moving a caller
+  over is a proved no-op; `floatLabelRows` moved first (four hand-rolled
+  defs to two, 71 lines to 32, every corpus artifact byte-identical).
+  Structural mutual recursion through `List`, the knot `foldInline`
+  already ties: no measure, no fuel. What did *not* convert, and why:
+  `Struct.lean`'s four tree censuses still stand, because `PdfStruct.lean`
+  proves its own accumulator lemmas by `rw [Struct.headingsList]` and
+  `simp only [Struct.headingsOne]; split` — it reads the census's
+  pattern-match equations and its inner `match kind`, so redefining the
+  census as an instance of anything breaks a file that cannot see the
+  change. That is the same coupling one level up: a census is an interface
+  the moment a downstream proof unfolds it, and the fix is for the
+  downstream lemma to name a stated fact (`headingsList_acc`) rather than
+  the definition — owed, not done. The three chains over that projection
+  (`_text`, `_headings`, `_images`) are a separate finding: they collapse
+  only once `blockTextOne`, `headingLevelOne` and `foldBlock` are one
+  walk, which is a change to three hand-rolled IR censuses the backends
+  read.
