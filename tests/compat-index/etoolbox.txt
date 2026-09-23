@@ -1,17 +1,16 @@
 # source: etoolbox manual §2 (\newrobustcmd, \robustify), §3 (hooks and
 # patching), §3.5 (boolean flags). TeX conditionals resolve from the
 # document's own definitions (N0114).
-# \AtBeginDocument is read where it stands, which is the preamble: an empty
-# hook body therefore changes nothing (inert), and a non-empty one is not
-# deferred to the start of the document at all — text in it is refused as
-# preamble material (E0313) and a command in it goes unknown and is skipped.
-# The hook the package documents — run this at \begin{document} — is not
-# earned; both rows stand so that earning it fails them and asks for a
-# promotion.
+# The hooks are one deferral mechanism, a row each: \AtBeginDocument replays
+# its body at \begin{document}, \AtEndPreamble at the end of the preamble.
+# A body carrying content therefore lands in the document (the \AtBeginDocument
+# row witnesses text appearing in the body), and one carrying a declaration
+# still reaches the preamble — the \AtEndPreamble row names two commands
+# because a deferral with an empty body has no effect to witness, and text is
+# not preamble material at that point.
 body impl \ifdefined\nope a\else b\fi
-pre inert:hook-read-in-place \AtBeginDocument{}
-pre refuse:E0313 \AtBeginDocument{x}
-pre refuse:W0301 \AtEndPreamble{}
+pre impl \AtBeginDocument{x}
+pre impl \AtEndPreamble{\newgeometry{textwidth=396pt}}
 pre refuse:W0301 \newrobustcmd{\zz}[1]{#1}
 pre refuse:W0301 \robustify{\emph}
 pre refuse:W0301 \newbool{mybool}

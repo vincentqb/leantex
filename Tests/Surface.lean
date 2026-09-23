@@ -1659,6 +1659,96 @@ def compatRowEffect (pkg place call : String) : Bool :=
   (elabStr (compatRowSrc pkg place call)).1
     != (elabStr (compatRowSrc pkg place (compatUnknown call))).1
 
+/-- The invariant whose absence left the hook inert: a hook is a DEFERRED
+declaration, so its body is not read where it stands but replayed at the
+point the hook names. Read where it stood — in the preamble — an empty body
+changed nothing, text in it was refused as preamble material and a `\section`
+in it went unknown and vanished, and the index could not see any of that
+through the one argument it probed.
+
+The claim about what the page shows is read off `Layout.Out`, never off the
+IR: a hook body carrying content has to arrive as ink.
+
+`\AtEndPreamble` is the same mechanism at the other point, which is what
+makes the two distinguishable: a declaration deferred to the end of the
+preamble applies, and content deferred there is still not body content. -/
+def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let face ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"hook fixture: {e}")
+  let fs := oneFaceOf face
+  -- Every glyph the page ships, in page order: what "it landed in the body"
+  -- means when the question is about ink.
+  let shippedText (src : String) : String :=
+    let out := layoutOf fs (elabStr src).1
+    ((allLines out).flatMap (·.segs)).foldl (init := "") fun s seg => match seg with
+      | .run _ _ _ _ gs _ _ _ _ _ => s ++ String.ofList (gs.map (·.2)).toList
+      | _ => s
+  let hook (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  -- (1) A hook body carrying content ships, on the page, before the body's
+  -- own first paragraph. Before: E0313, and nothing shipped.
+  let textHook := hook "\\AtBeginDocument{hooked}" "written"
+  t "a hook body's text ships on the page" (hasStr (shippedText textHook) "hooked")
+  t "the hook's text ships before the document's own"
+    (let s := shippedText textHook
+     match (s.splitOn "hooked").head?, (s.splitOn "written").head? with
+     | some a, some b => a.length < b.length
+     | _, _ => false)
+  t "a hook body carrying text is no longer refused as preamble material"
+    (errCodes textHook == [] && warnCodes textHook == [])
+  -- (2) A heading in a hook body is a heading, not an unknown command.
+  let secHook := hook "\\AtBeginDocument{\\section{Hooked}}" "written"
+  t "a hook body's section is a section, not an unknown command"
+    (warnCodes secHook == [] &&
+      (elabStr secHook).1.body.any fun b => match b with
+        | .section .. => true
+        | _ => false)
+  t "the hooked section ships its own text" (hasStr (shippedText secHook) "Hooked")
+  -- (3) The declaration half still reaches the preamble: the seam has two
+  -- sides, and a hook carrying configuration is why.
+  let geoHook := hook "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}}" "x"
+  t "a hook body's declaration reaches the preamble"
+    ((elabStr geoHook).1.page.hmargin == Dim.pt 108 &&
+      (elabStr geoHook).1.page.vmargin == Dim.pt 108)
+  t "a hook mixing a declaration and content honours both"
+    (let mixed := hook
+      "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}seen}" "x"
+     (elabStr mixed).1.page.hmargin == Dim.pt 108 && hasStr (shippedText mixed) "seen")
+  -- (4) Declaration order is replay order (ltfiles.dtx appends). Interword
+  -- space is its own segment, so the claim is over the glyphs' order.
+  t "hook bodies replay in declaration order"
+    (hasStr (shippedText (hook "\\AtBeginDocument{one}\\AtBeginDocument{two}" "three"))
+      "onetwothree")
+  -- (5) The second instance of the one mechanism, at the other point.
+  t "AtEndPreamble defers a declaration to the end of the preamble"
+    ((elabStr (hook "\\AtEndPreamble{\\newgeometry{textwidth=396pt, textheight=576pt}}"
+      "x")).1.page.hmargin == Dim.pt 108)
+  t "the two points are distinguishable: content deferred to the preamble is not body content"
+    (errCodes (hook "\\AtEndPreamble{x}" "y") == ["E0313"])
+  -- (6) The self-declaring hook: a replay cannot re-collect. The nested
+  -- hook's group is read where it stands — nothing is lost, nothing defers
+  -- twice, and elaboration terminates.
+  let nested := hook "\\AtBeginDocument{a\\AtBeginDocument{b}c}" "d"
+  t "a hook declared inside a replayed hook body does not defer again"
+    (warnCodes nested == ["W0340"])
+  t "the self-declaring hook loses none of its text"
+    (hasStr (shippedText nested) "abc")
+  t "a hook written in the body reads its group where it stands"
+    (let inBody := hook "" "p\\AtBeginDocument{q}r"
+     warnCodes inBody == ["W0340"] && hasStr (shippedText inBody) "pqr")
+
+/-- The seam's preamble side may not drift from the engine's own answer to
+"which declarations does the body refuse". `Compat.hookPreambleSide` restates
+`Elab.declCtrl ++ Elab.runningCtrl` because it sits below this module and
+cannot import it; a name added to either list and not the other would route a
+hook's declaration into the body, where it would be named misplaced and
+silently lost. Loud in both directions. -/
+def hookSeamChecks (ref : IO.Ref (List String)) : IO Unit := do
+  check ref "the hook seam's preamble side is exactly the engine's preamble-only declarations"
+    (Compat.hookPreambleSide == Elab.declCtrl ++ Elab.runningCtrl)
+
 /-- The invariant whose absence lost the face: `\url` and `\nolinkurl`
 resolve at ONE site, so on the shipped page their runs agree in everything
 but the link. Two sites is how the face went missing — the URL was set as

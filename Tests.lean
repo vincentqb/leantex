@@ -147,6 +147,8 @@ bibliography, and math elaboration blocks, so an added block lands here and
 dispatchers above exist to prevent. -/
 def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   terminationChecks ref
+  hookChecks ref
+  hookSeamChecks ref
   urlFaceChecks ref
   compatIndexChecks ref
   compatConservationChecks ref

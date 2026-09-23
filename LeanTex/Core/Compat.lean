@@ -164,6 +164,37 @@ def beamerNative : List (String × String) :=
 styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "\\style{element}{...} styles elements; \\framefoot sets a frame footer")]
 
+/-- Where a deferred declaration replays. A hook is a deferred declaration,
+and every hook LaTeX documents names one of these points; the engine has one
+deferral mechanism and each hook is a row in `deferredHooks`, never an arm of
+its own.
+
+`endPreamble` is the last position of the preamble, `beginDocument` the
+instant `\\begin{document}` opens — the seam, whose two sides this engine
+realizes structurally: declarations before the `document` environment,
+content inside it. -/
+inductive DeferPoint where
+  | endPreamble
+  | beginDocument
+deriving BEq, Repr
+
+/-- The deferral table: one row per hook. `\\AtBeginDocument` (ltfiles.dtx,
+the begindocument hook) replays at `\\begin{document}`;
+`\\AtEndPreamble` (etoolbox manual §3) replays at the end of the preamble.
+A further hook costs a row here and nothing else. -/
+def deferredHooks : List (String × DeferPoint) :=
+  [("AtBeginDocument", .beginDocument), ("AtEndPreamble", .endPreamble)]
+
+/-- The native declarations the *preamble* reads and the body refuses, so a
+hook body's declaration half rides to the seam's preamble side rather than
+being named misplaced. It restates `Elab.declCtrl ++ Elab.runningCtrl`,
+which sits above this module and cannot be imported here; the restatement is
+not allowed to drift — `hookSeamChecks` fails the moment the two disagree,
+in either direction. -/
+def hookPreambleSide : List String :=
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
+   "theme", "chrome", "pictures", "runninghead", "runningfoot"]
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -235,6 +266,13 @@ private structure St where
   consumer — a picture package's load rides to the boundary only through
   an open door. -/
   boundaryOpen : Bool := true
+  /-- Hook bodies collected by the one deferral pass, in declaration order
+  with the point each replays at and the file it was declared in. LaTeX runs
+  a hook's bodies in the order they were declared (ltfiles.dtx appends to the
+  hook's token list), so the order here is the order they replay in. The file
+  travels with the body because the replay happens in its own pass: what the
+  engine refuses inside a `.sty`'s hook is still named at the `.sty`. -/
+  deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
 
 private abbrev M := StateM St
 
@@ -1068,42 +1106,69 @@ private def condOne : Raw → M Raw
 
 end
 
+/-- One collected hook: the note naming its replay point, and the body
+stored against that point. Separate from the walk so the walk's recursive
+calls stand in plain sight — a call behind a local function is a call the
+termination checker cannot see. -/
+private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
+    (pos : Pos) : M Unit := do
+  became s!"\\{name}\{...}" (match pt with
+    | .beginDocument => "its body, replayed at '\\begin{document}'"
+    | .endPreamble => "its body, replayed at the end of the preamble") pos
+  let file := (← get).file
+  write fun st => { st with deferred := st.deferred.push (pt, file, pos, body) }
+
 mutual
 
-/-- `\\AtBeginDocument{...}` defers its body to `\\begin{document}`
-(ltfiles.dtx: the begindocument hook). This engine's preamble is
-declarations, and a declaration is document-scoped wherever it stands, so
-the body is read where it is written — the same bindings, no hook
-machinery — and whatever in it the engine refuses is named where it
-stands, exactly as if written unwrapped. -/
-private def unwrapBeginHookList (out : Array Raw) : List Raw → M (Array Raw)
+/-- The one deferral pass: a hook named in `deferredHooks` is removed from
+the stream and its body stored with the point it replays at. The body is
+stored VERBATIM and is never walked here — that is the rule that makes the
+mechanism terminate by construction rather than by a fuel parameter: a
+replay cannot re-collect. Collection finishes before any replay happens, so
+a `\\AtBeginDocument` written inside a hook body is not a second deferral;
+it meets the dispatcher at the replay point, where the document is already
+at the hook's own moment, and its group is read where it stands
+(`rewriteCtrl`'s arm says so with W0340).
+
+The `document` environment is not descended into: a hook is a preamble
+declaration (LaTeX's own `\\@onlypreamble`), so a hook standing in the body
+is at its replay point already and takes the same arm. -/
+private def collectDeferList (out : Array Raw) : List Raw → M (Array Raw)
   | [] => pure out
-  | .ctrl "AtBeginDocument" pos :: .group body _ :: rest => do
-    became "\\AtBeginDocument{...}" "its body, read where it stands" pos
-    let out ← unwrapBeginHookList out body.toList
-    unwrapBeginHookList out rest
-  | .ctrl "AtBeginDocument" pos :: .space :: .group body _ :: rest => do
-    became "\\AtBeginDocument{...}" "its body, read where it stands" pos
-    let out ← unwrapBeginHookList out body.toList
-    unwrapBeginHookList out rest
+  | .ctrl name pos :: .group body p :: rest => do
+    if let some pt := deferredHooks.lookup name then
+      deferOne name pt body pos
+      collectDeferList out rest
+    else
+      let g ← collectDeferOne (.group body p)
+      collectDeferList ((out.push (.ctrl name pos)).push g) rest
+  | .ctrl name pos :: .space :: .group body p :: rest => do
+    if let some pt := deferredHooks.lookup name then
+      deferOne name pt body pos
+      collectDeferList out rest
+    else
+      let g ← collectDeferOne (.group body p)
+      collectDeferList (((out.push (.ctrl name pos)).push .space).push g) rest
   | r :: rest => do
-    unwrapBeginHookList (out.push (← unwrapBeginHookOne r)) rest
+    collectDeferList (out.push (← collectDeferOne r)) rest
 
 /-- Descend into a group or environment body; an `\\input` wrapper switches
-the file its note names, as `condOne` and `rewriteRaw` do. -/
-private def unwrapBeginHookOne : Raw → M Raw
+the file its note names, as `condOne` and `rewriteRaw` do. The document
+environment is left whole: see `collectDeferList`. -/
+private def collectDeferOne : Raw → M Raw
   | .group body p => do
-    return .group (← unwrapBeginHookList #[] body.toList) p
+    return .group (← collectDeferList #[] body.toList) p
+  | .env "document" body p => pure (.env "document" body p)
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
       write fun st => { st with file := f }
-      let body' ← unwrapBeginHookList #[] body.toList
+      let body' ← collectDeferList #[] body.toList
       write fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      return .env n (← unwrapBeginHookList #[] body.toList) p
+      return .env n (← collectDeferList #[] body.toList) p
   | r => pure r
 
 end
@@ -2459,6 +2524,16 @@ where
   if let some native := simpleNative.lookup name then
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
+  if (deferredHooks.lookup name).isSome then
+    -- The replay point, reached: every hook the preamble declared was
+    -- collected before this pass began, so a hook standing here is at its
+    -- own moment already — in the body, or inside a body a hook is
+    -- replaying. Deferring again is what would not terminate; the group
+    -- stays in the stream and is read where it stands.
+    sayOnce ("ctrl:" ++ name) .W0340
+      s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
+      (help := "declare the hook before '\\begin{document}'")
+    return some (#[], start)
   match name with
   | "usepackage" | "RequirePackage" =>
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
@@ -3492,6 +3567,33 @@ private def flushRunning : M (Array Raw) := do
     out := out ++ (← synthAt s!"\\runningfoot[from = {st.runFrom}]\{}" st.runPos)
   return out
 
+/-- Split the raws of a replayed hook body across the seam
+`\begin{document}` is: the native declarations the preamble reads
+(`hookPreambleSide`, with their optional argument and one group) to the
+preamble side, everything else to the body side. Both halves keep their
+order.
+
+The seam has two sides because LaTeX's own `\begin{document}` does: at that
+instant a layout assignment and typeset text are both legal, and this engine
+realizes the instant structurally — declarations before the `document`
+environment, content inside it. Routing per raw is what lets one mechanism
+serve a hook carrying configuration and a hook carrying content, which is
+what real documents put in them. -/
+private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
+    Array Raw × Array Raw → Array Raw × Array Raw
+  | [], _, _, acc => acc
+  | _ :: rest, i, skip + 1, acc => seamSplit raws rest (i + 1) skip acc
+  | .ctrl name pos :: rest, i, 0, (pre, body) =>
+    if hookPreambleSide.contains name then
+      let (_, j) := takeOpt raws (i + 1)
+      let (_, k) := takeGroups raws j 1
+      seamSplit raws rest (i + 1) (k - (i + 1))
+        (pre ++ raws.extract i k, body)
+    else
+      seamSplit raws rest (i + 1) 0 (pre, body.push (.ctrl name pos))
+  | r :: rest, i, 0, (pre, body) =>
+    seamSplit raws rest (i + 1) 0 (pre, body.push r)
+
 /-- Rewrite a whole parsed document. The gathered running content lands just
 before `\begin{document}`, where a declaration belongs.
 
@@ -3511,19 +3613,50 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
     let raws ← condList raws #[] [] raws.toList 0
-    -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
-    let raws ← unwrapBeginHookList #[] raws.toList
+    -- After the conditionals: only live hook bodies are collected.
+    let raws ← collectDeferList #[] raws.toList
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[]
     let out ← rewriteList false raws #[] raws.toList 0 0
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0
+    -- Replay. Each body is rewritten as the preamble material it was
+    -- declared as (`inDoc` restored to false for the pass), then routed
+    -- across the seam by `seamSplit`. `endPreamble` bodies are all
+    -- preamble side by their point's definition.
+    let saved := (← get).inDoc
+    let savedFile := (← get).file
+    write fun st => { st with inDoc := false }
+    let mut preSide : Array Raw := #[]
+    let mut bodySide : Array Raw := #[]
+    for (pt, file, pos, body) in (← get).deferred do
+      write fun st => { st with file := file }
+      let body ← rewriteList false body #[] body.toList 0 0
+      -- A hook declared inside an `\input`'ed file replays inside that
+      -- file's wrapper, so what the engine refuses in it is still named at
+      -- the file that wrote it — the wrapper is how a position names its
+      -- file (a `Raw` carries only a line and a column).
+      let wrap (rs : Array Raw) : Array Raw :=
+        if rs.isEmpty || file == savedFile then rs
+        else #[Raw.env (Parse.inputEnv file) rs pos]
+      match pt with
+      | .endPreamble => preSide := preSide ++ wrap body
+      | .beginDocument =>
+        let (p, b) := seamSplit body body.toList 0 0 (#[], #[])
+        preSide := preSide ++ wrap p
+        bodySide := bodySide ++ wrap b
+    write fun st => { st with inDoc := saved, file := savedFile }
     let isBody : Raw → Bool
       | .env "document" _ _ => true
       | _ => false
     return match out.findIdx? isBody with
-      | some i => out.extract 0 i ++ running ++ out.extract i out.size
-      | none => out ++ running
+      | some i =>
+        let tail := match out[i]? with
+          | some (.env n dbody p) => #[Raw.env n (bodySide ++ dbody) p]
+          | some r => #[r]
+          | none => #[]
+        out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
+      | none => out ++ running ++ preSide ++ bodySide
   let st0 : St :=
     { file := file, provideKeeps := provideKeeps, warned := warned,
       boundaryOpen := !boundaryRefused raws }

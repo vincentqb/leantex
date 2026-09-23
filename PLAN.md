@@ -237,6 +237,80 @@ named, which is why it stays when it empties: an empty list with no row to
 imitate invites the one repair this gate must not buy, deleting the
 sentence.
 
+2026-09-23 — the two engine gaps the strengthened package index convicted
+are closed, each as the factoring its defect asked for rather than as a
+patch at the symptom.
+
+A hook is a deferred declaration, and there is now ONE deferral mechanism
+every hook instantiates. `\AtBeginDocument` was read where it stood, which
+is the preamble: an empty body was inert, text in it was refused as preamble
+material (E0313), and a `\section` in it went unknown and vanished — the
+documented behaviour (run this at `\begin{document}`) was not earned at all.
+The mechanism is a collected list: one pass strips each hook named in
+`deferredHooks` from the stream and stores its body against the point it
+replays at, and `rewrite` replays the bodies in declaration order, which is
+LaTeX's own order (ltfiles.dtx appends to the hook's token list).
+`\AtEndPreamble` is the second row and cost exactly a row.
+
+Replay happens AT the seam `\begin{document}` is, and the seam has two
+sides. A hook body is body content and its content half lands inside the
+`document` environment, which is the point of the whole change; but LaTeX's
+`\begin{document}` is a single instant at which a layout assignment and
+typeset text are *both* legal, and this engine realizes that instant
+structurally — declarations before the environment, content inside it. So
+`seamSplit` routes each raw of a replayed body to the side that can read it
+(`hookPreambleSide`, the native preamble-only declarations, to the preamble
+side; everything else to the body). Sending the whole body one way was the
+tempting simplification and is wrong in both directions: all-preamble keeps
+E0313 on the content, and all-body would have made `\AtBeginDocument
+{\newgeometry{...}}` — the idiom a real `.sty` in the corpus uses — a
+declaration named misplaced and silently lost. A hook declared inside an
+`\input`'ed file replays inside that file's wrapper, so what the engine
+refuses in it is still named at the `.sty` that wrote it; a `Raw` carries a
+line and a column, never its file, and the wrapper is how a position names
+one.
+
+`hookPreambleSide` restates `Elab.declCtrl ++ Elab.runningCtrl`, which sits
+above `Compat` and cannot be imported there. The restatement is the kind of
+second list this repo distrusts, so it is held by `hookSeamChecks`: the two
+must be equal, in both directions, or `lake test` fails. A name added to one
+and not the other would route a declaration into the body and lose it
+quietly, which is precisely the failure mode being fixed.
+
+The termination question a hook raises is the self-declaring hook, and the
+answer is a rule, not a fuel parameter: a replay cannot re-collect.
+Collection is one pass that finishes before any replay, and a collected body
+is stored verbatim and never walked by the collector — so
+`\AtBeginDocument{a\AtBeginDocument{b}c}` cannot defer twice. The inner hook
+meets the dispatcher at the replay point, where the document is already at
+the hook's own moment; its group stays in the stream and is read where it
+stands, with W0340 naming the spent deferral once. Nothing is lost (`abc`
+all ships) and the mechanism terminates by construction. A hook written in
+the body takes the same arm, which is LaTeX's own `\@onlypreamble` rule
+read as a placement fact.
+
+`\url` and `\nolinkurl` are now one resolving site. `\nolinkurl` was set as
+plain text — byte-identical to dropping an unknown command — and lost the
+typewriter face `\url` keeps, which is what a second implementation of the
+same thing buys. They differ in one expression: whether a link wraps the
+result. The invariant is stated over the shipped page (`urlFaceChecks`,
+`Layout.Out`): both ship the URL at the mono face index with the same
+metrics and glyphs, and the link with its underline affordance is the only
+difference. Read off the IR this would have been invisible, which is how the
+face went missing while a fully green suite watched.
+
+Both gaps had their `impl` claims written as the truth that now holds, and
+the rows that existed only to record a gap are gone: `\AtBeginDocument`'s
+`inert:hook-read-in-place` and its `refuse:E0313` companion are one
+`pre impl \AtBeginDocument{x}` row whose effect is the text arriving in the
+body, `\AtEndPreamble` moved from `refuse:W0301` to `impl`, and
+`\nolinkurl`'s `inert:plain-text` became `impl`. One thing the
+`\AtEndPreamble` row cannot do: witness the hook alone. A deferral with an
+empty body has no effect to see, and text is not preamble material at that
+point, so its call necessarily names a second command; the hook's own
+contribution is pinned by `hookChecks`, which compares the two replay points
+directly.
+
 2026-09-23 — seven of the sixteen phantom citations resolved; the rest
 carry their real holder's name. The gate that landed earlier today froze
 sixteen backticked names that resolved to nothing. Three were citation
