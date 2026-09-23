@@ -103,6 +103,37 @@ def Leaf.census : Leaf → String
   | .picture => ""
   | .linebreak => " "
 
+/-- A leaf's image census: an image leaf its source and its text
+alternative, every other leaf nothing — `Leaf.census`'s shape for the image
+channel. -/
+def Leaf.imageCensus (out : Array (String × String)) : Leaf → Array (String × String)
+  | .image src alt => out.push (src, alt)
+  | .text _ | .picture | .linebreak => out
+
+-- **The kind classification**: what a census does with a kind, as two
+-- functions on `Kind` rather than a match inside a walk. A prover reduces
+-- these on a concrete kind, so the walk's descent equation is citable with
+-- no hypothesis about which kind it is — and the same two answers are the
+-- fields a shared node walk would carry.
+
+/-- What a kind contributes to the outline census on the way in: an outline
+heading its level, every other kind nothing. The one resolving site for
+"which kinds are the outline". -/
+def Kind.outlineEmit (out : Array Nat) : Kind → Array Nat
+  | .heading level => out.push level
+  | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
+  | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
+  | .aside | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => out
+
+/-- Does the outline census read a kind's content? A speaker note is a side
+channel, so no heading inside one reaches the outline (`.aside`); every other
+kind reads through. The one place a census declines a subtree. -/
+def Kind.outlineDescends : Kind → Bool
+  | .aside => false
+  | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
+  | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
+  | .note | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => true
+
 inductive Node where
   | leaf (id : Nat) (l : Leaf)
   | node (kind : Kind) (children : Array Node)
@@ -346,13 +377,9 @@ def headingsList (out : Array Nat) : List Node → Array Nat
 def headingsOne (out : Array Nat) : Node → Array Nat
   | .leaf _ _ => out
   | .node kind kids =>
-    match kind with
-    | .heading level => headingsList (out.push level) kids.toList
-    | .aside => out
-    | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
-    | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
-    | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact =>
-      headingsList out kids.toList
+    match kind.outlineDescends with
+    | true => headingsList (kind.outlineEmit out) kids.toList
+    | false => kind.outlineEmit out
 
 end
 
@@ -368,10 +395,7 @@ def imagesList (out : Array (String × String)) : List Node → Array (String ×
   | n :: rest => imagesList (imagesOne out n) rest
 
 def imagesOne (out : Array (String × String)) : Node → Array (String × String)
-  | .leaf _ l =>
-    match l with
-    | .image src alt => out.push (src, alt)
-    | .text _ | .picture | .linebreak => out
+  | .leaf _ l => l.imageCensus out
   | .node _ kids => imagesList out kids.toList
 
 end
@@ -391,48 +415,41 @@ def imageAltPush (out : Array (String × String)) (x : Inline) : Array (String �
 def irImages (bs : Array Block) : Array (String × String) :=
   foldBlocks (fun out _ => out) imageAltPush #[] bs
 
--- The census lemmas the projection theorems stand on: each census over an
--- appended list folds the halves in turn, so a pushed node is the census
--- of the array then of the node.
+-- **The censuses' interface**: the equations a prover may cite, stated. A
+-- definition is not an interface — it becomes one the moment a downstream
+-- proof unfolds it, and then the census cannot be refactored without
+-- breaking a file that cannot see the change. So each census states the four
+-- equations it is built from (nil, cons, leaf, node) and its entry point,
+-- and every proof below — here and in `PdfStruct` — cites those rather than
+-- the definitions. The outline's node equation reads the kind classification
+-- rather than a kind pattern, so it fires on any kind with no hypothesis:
+-- the two classifiers reduce, the match follows.
 
-theorem leafTextList_append (acc : String) (a b : List Node) :
-    leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b := by
-  induction a generalizing acc with
-  | nil => rfl
-  | cons n rest ih => rw [List.cons_append, leafTextList, leafTextList, ih]
+theorem leafTextList_nil_exact (acc : String) : leafTextList acc [] = acc := rfl
 
-theorem leafTextList_snoc (acc : String) (l : List Node) (n : Node) :
-    leafTextList acc (l ++ [n]) = leafTextOne (leafTextList acc l) n := by
-  rw [leafTextList_append]
-  rfl
+theorem leafTextList_cons_exact (acc : String) (n : Node) (rest : List Node) :
+    leafTextList acc (n :: rest) = leafTextList (leafTextOne acc n) rest := rfl
 
-theorem leafTextList_push (acc : String) (out : Array Node) (n : Node) :
-    leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n := by
-  rw [Array.toList_push, leafTextList_snoc]
+theorem leafTextOne_leaf_exact (acc : String) (id : Nat) (l : Leaf) :
+    leafTextOne acc (.leaf id l) = acc ++ l.census := rfl
 
-theorem headingsList_append (out : Array Nat) (a b : List Node) :
-    headingsList out (a ++ b) = headingsList (headingsList out a) b := by
-  induction a generalizing out with
-  | nil => rfl
-  | cons n rest ih => rw [List.cons_append, headingsList, headingsList, ih]
+theorem leafTextOne_node_exact (acc : String) (kind : Kind) (kids : Array Node) :
+    leafTextOne acc (.node kind kids) = leafTextList acc kids.toList := rfl
 
-theorem headingsList_snoc (out : Array Nat) (l : List Node) (n : Node) :
-    headingsList out (l ++ [n]) = headingsOne (headingsList out l) n := by
-  rw [headingsList_append]
-  rfl
+theorem leafText_eq_exact (ns : Array Node) : leafText ns = leafTextList "" ns.toList := rfl
 
-theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
-    headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n := by
-  rw [Array.toList_push, headingsList_snoc]
+theorem leavesList_nil_exact (out : Array (Nat × Leaf)) : leavesList out [] = out := rfl
 
--- **The outline census's interface**: the equations a prover may cite,
--- stated. A definition is not an interface — it becomes one the moment a
--- downstream proof unfolds it, and then the census cannot be refactored
--- without breaking a file that cannot see the change. So the four
--- equations the walk is built from are theorems here, and `PdfStruct`
--- reads those rather than `headingsList`/`headingsOne` themselves. The
--- descent case is stated once over the kinds that are neither an outline
--- heading nor a side channel, so a citation need not enumerate them.
+theorem leavesList_cons_exact (out : Array (Nat × Leaf)) (n : Node) (rest : List Node) :
+    leavesList out (n :: rest) = leavesList (leavesOne out n) rest := rfl
+
+theorem leavesOne_leaf_exact (out : Array (Nat × Leaf)) (id : Nat) (l : Leaf) :
+    leavesOne out (.leaf id l) = out.push (id, l) := rfl
+
+theorem leavesOne_node_exact (out : Array (Nat × Leaf)) (kind : Kind) (kids : Array Node) :
+    leavesOne out (.node kind kids) = leavesList out kids.toList := rfl
+
+theorem leaves_eq_exact (ns : Array Node) : leaves ns = leavesList #[] ns.toList := rfl
 
 theorem headingsList_nil_exact (out : Array Nat) : headingsList out [] = out := rfl
 
@@ -441,6 +458,15 @@ theorem headingsList_cons_exact (out : Array Nat) (n : Node) (rest : List Node) 
 
 theorem headingsOne_leaf_exact (out : Array Nat) (id : Nat) (l : Leaf) :
     headingsOne out (.leaf id l) = out := rfl
+
+/-- The outline's descent equation, over any kind: the classification says
+whether the content is read and what the node ships, so a citation names no
+kind and carries no hypothesis. -/
+theorem headingsOne_node_exact (out : Array Nat) (kind : Kind) (kids : Array Node) :
+    headingsOne out (.node kind kids)
+      = match kind.outlineDescends with
+        | true => headingsList (kind.outlineEmit out) kids.toList
+        | false => kind.outlineEmit out := rfl
 
 theorem headingsOne_heading_exact (out : Array Nat) (level : Nat) (kids : Array Node) :
     headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList :=
@@ -459,6 +485,64 @@ theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array 
 
 theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := rfl
 
+theorem imagesList_nil_exact (out : Array (String × String)) : imagesList out [] = out := rfl
+
+theorem imagesList_cons_exact (out : Array (String × String)) (n : Node) (rest : List Node) :
+    imagesList out (n :: rest) = imagesList (imagesOne out n) rest := rfl
+
+theorem imagesOne_leaf_exact (out : Array (String × String)) (id : Nat) (l : Leaf) :
+    imagesOne out (.leaf id l) = l.imageCensus out := rfl
+
+theorem imagesOne_node_exact (out : Array (String × String)) (kind : Kind) (kids : Array Node) :
+    imagesOne out (.node kind kids) = imagesList out kids.toList := rfl
+
+theorem images_eq_exact (ns : Array Node) : images ns = imagesList #[] ns.toList := rfl
+
+/-- The outline's contribution builds onto its accumulator: the classifier's
+half of `headingsOne_acc`. -/
+theorem Kind.outlineEmit_acc (out : Array Nat) (kind : Kind) :
+    kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
+  cases kind <;> simp [Kind.outlineEmit]
+
+-- The census lemmas the projection theorems stand on: each census over an
+-- appended list folds the halves in turn, so a pushed node is the census
+-- of the array then of the node.
+
+theorem leafTextList_append (acc : String) (a b : List Node) :
+    leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b := by
+  induction a generalizing acc with
+  | nil => rfl
+  | cons n rest ih =>
+    rw [List.cons_append, leafTextList_cons_exact, leafTextList_cons_exact, ih]
+
+theorem leafTextList_snoc (acc : String) (l : List Node) (n : Node) :
+    leafTextList acc (l ++ [n]) = leafTextOne (leafTextList acc l) n := by
+  rw [leafTextList_append]
+  rfl
+
+theorem leafTextList_push (acc : String) (out : Array Node) (n : Node) :
+    leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n := by
+  rw [Array.toList_push, leafTextList_snoc]
+
+theorem headingsList_append (out : Array Nat) (a b : List Node) :
+    headingsList out (a ++ b) = headingsList (headingsList out a) b := by
+  induction a generalizing out with
+  | nil => rfl
+  | cons n rest ih =>
+    rw [List.cons_append, headingsList_cons_exact, headingsList_cons_exact, ih]
+
+theorem headingsList_snoc (out : Array Nat) (l : List Node) (n : Node) :
+    headingsList out (l ++ [n]) = headingsOne (headingsList out l) n := by
+  rw [headingsList_append]
+  rfl
+
+theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
+    headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n := by
+  rw [Array.toList_push, headingsList_snoc]
+
+-- The accumulator extraction each projection proof needs of the outline
+-- walk, in place of its equations.
+
 mutual
 
 /-- The outline census builds onto its accumulator: the census of a list is
@@ -467,22 +551,22 @@ the walk, in place of its equations. -/
 theorem headingsList_acc (out : Array Nat) (ns : List Node) :
     headingsList out ns = out ++ headingsList #[] ns := by
   match ns with
-  | [] => simp [headingsList]
+  | [] => simp [headingsList_nil_exact]
   | n :: rest =>
-    rw [headingsList, headingsList_acc _ rest, headingsOne_acc out n, headingsList,
-      headingsList_acc (headingsOne #[] n) rest, Array.append_assoc]
+    rw [headingsList_cons_exact, headingsList_acc _ rest, headingsOne_acc out n,
+      headingsList_cons_exact, headingsList_acc (headingsOne #[] n) rest, Array.append_assoc]
 
 theorem headingsOne_acc (out : Array Nat) (n : Node) :
     headingsOne out n = out ++ headingsOne #[] n := by
   match n with
-  | .leaf id l => simp [headingsOne]
+  | .leaf id l => simp [headingsOne_leaf_exact]
   | .node kind kids =>
-    simp only [headingsOne]
-    split
-    · rw [headingsList_acc, headingsList_acc (#[].push _)]
-      simp
-    · simp
-    all_goals exact headingsList_acc out kids.toList
+    rw [headingsOne_node_exact, headingsOne_node_exact]
+    cases hd : kind.outlineDescends
+    · simpa using Kind.outlineEmit_acc out kind
+    · simp only []
+      rw [headingsList_acc (kind.outlineEmit out) kids.toList, Kind.outlineEmit_acc out kind,
+        headingsList_acc (kind.outlineEmit #[]) kids.toList, Array.append_assoc]
 
 end
 
@@ -490,7 +574,8 @@ theorem imagesList_append (out : Array (String × String)) (a b : List Node) :
     imagesList out (a ++ b) = imagesList (imagesList out a) b := by
   induction a generalizing out with
   | nil => rfl
-  | cons n rest ih => rw [List.cons_append, imagesList, imagesList, ih]
+  | cons n rest ih =>
+    rw [List.cons_append, imagesList_cons_exact, imagesList_cons_exact, ih]
 
 theorem imagesList_snoc (out : Array (String × String)) (l : List Node) (n : Node) :
     imagesList out (l ++ [n]) = imagesOne (imagesList out l) n := by
@@ -505,7 +590,8 @@ theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
     leavesList out (a ++ b) = leavesList (leavesList out a) b := by
   induction a generalizing out with
   | nil => rfl
-  | cons n rest ih => rw [List.cons_append, leavesList, leavesList, ih]
+  | cons n rest ih =>
+    rw [List.cons_append, leavesList_cons_exact, leavesList_cons_exact, ih]
 
 theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : Node) :
     leavesList out (l ++ [n]) = leavesOne (leavesList out l) n := by
@@ -543,15 +629,18 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
     leafTextList acc (inlineRaw out x).toList
       = leafTextList acc out.toList ++ plainTextOne x := by
   match x with
-  | .text s => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .text s =>
+    simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census, plainTextOne]
   | .math d src =>
-    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+    simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
   | .formula d src body =>
-    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+    simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
   | .styled style body =>
     match style with
     | .lang tag =>
-      simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+      simp only [inlineRaw, leafTextList_push, leafTextOne_node_exact, plainTextOne]
       rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
@@ -565,19 +654,21 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
   | .link url body =>
-    simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+    simp only [inlineRaw, leafTextList_push, leafTextOne_node_exact, plainTextOne]
     rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
     rfl
   | .label key => simp [inlineRaw, plainTextOne]
   | .ref key form text target =>
-    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+    simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
   | .underline body =>
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
   | .fill => simp [inlineRaw, plainTextOne]
   | .pageNumber => simp [inlineRaw, plainTextOne]
   | .pageCount => simp [inlineRaw, plainTextOne]
-  | .linebreak extra => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .linebreak extra => simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census,
+    plainTextOne]
   | .strut h => simp [inlineRaw, plainTextOne]
   | .step n l body =>
     simp only [inlineRaw, plainTextOne]
@@ -587,11 +678,13 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
     rw [inlinesRaw_text acc (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_text acc out active.toList, String.append_assoc]
   | .image src size alt =>
-    simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
-  | .icon sc label => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
-  | .cite tx keys => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+    simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census, plainTextOne]
+  | .icon sc label => simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census,
+    plainTextOne]
+  | .cite tx keys => simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census,
+    plainTextOne]
   | .footnote num body =>
-    simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+    simp only [inlineRaw, leafTextList_push, leafTextOne_node_exact, plainTextOne]
     rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
     rfl
 
@@ -609,8 +702,8 @@ theorem titleRaw_text (acc : String) (title : Array Inline) :
   unfold titleRaw
   split
   · rename_i h
-    simp [plainText, toList_of_isEmpty title h, plainTextList, leafTextList]
-  · simp only [leafTextList, leafTextOne]
+    simp [plainText, toList_of_isEmpty title h, plainTextList, leafTextList_nil_exact]
+  · simp only [leafTextList_nil_exact, leafTextList_cons_exact, leafTextOne_node_exact]
     exact inlinesRaw_text_nil acc title
 
 theorem captionRaw_text (acc : String) (caption : Array Inline) :
@@ -618,8 +711,8 @@ theorem captionRaw_text (acc : String) (caption : Array Inline) :
   unfold captionRaw
   split
   · rename_i h
-    simp [plainText, toList_of_isEmpty caption h, plainTextList, leafTextList]
-  · simp only [leafTextList, leafTextOne]
+    simp [plainText, toList_of_isEmpty caption h, plainTextList, leafTextList_nil_exact]
+  · simp only [leafTextList_nil_exact, leafTextList_cons_exact, leafTextOne_node_exact]
     exact inlinesRaw_text_nil acc caption
 
 theorem cellsRaw_text (acc : String) (out : Array Node) (cells : List (Array Inline)) :
@@ -629,7 +722,7 @@ theorem cellsRaw_text (acc : String) (out : Array Node) (cells : List (Array Inl
   | nil => rfl
   | cons cell rest ih =>
     rw [cellsRaw, ih, leafTextList_push, blockTextTableCells]
-    simp only [leafTextOne]
+    simp only [leafTextOne_node_exact]
     rw [inlinesRaw_text_nil]
 
 theorem rowsRaw_text (acc : String) (out : Array Node) (rows : List (Array (Array Inline))) :
@@ -639,7 +732,7 @@ theorem rowsRaw_text (acc : String) (out : Array Node) (rows : List (Array (Arra
   | nil => rfl
   | cons row rest ih =>
     rw [rowsRaw, ih, leafTextList_push, blockTextTableRows]
-    simp only [leafTextOne]
+    simp only [leafTextOne_node_exact]
     rw [cellsRaw_text]
     rfl
 
@@ -650,7 +743,8 @@ theorem bibRaw_text (acc : String) (out : Array Node) (items : List BibItem) :
   | nil => rfl
   | cons item rest ih =>
     rw [bibRaw, ih, leafTextList_push, blockTextBibItems]
-    simp [leafTextOne, leafTextList, Leaf.census]
+    simp [leafTextOne_leaf_exact, leafTextOne_node_exact, leafTextList_nil_exact,
+      leafTextList_cons_exact, Leaf.census]
 
 theorem algRaw_text (acc : String) (out : Array Node) (lines : List AlgLine) :
     leafTextList acc (algRaw out lines).toList
@@ -679,13 +773,13 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
       = blockTextOne (leafTextList acc out.toList) b := by
   match b with
   | .para content =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     exact inlinesRaw_text_nil _ content
   | .section level st num title =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     exact inlinesRaw_text_nil _ title
   | .list ordered items =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [itemsRaw_text]
     rfl
   | .center body =>
@@ -701,29 +795,31 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
   | .quote body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text]
     rfl
   | .abstract body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text]
     rfl
   | .titled kind title body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text, titleRaw_text]
   | .equation number content =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [inlinesRaw_text_nil]
-    simp [leafTextList, leafTextOne, Leaf.census]
+    simp [leafTextList_nil_exact, leafTextList_cons_exact, leafTextOne_leaf_exact, Leaf.census]
   | .verbatim covered content spec =>
     simp only [blockRaw, blockTextOne]
     split
     · rename_i n cap h
-      simp [leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, ListingSpec.capText, h]
+      simp [leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+        leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, ListingSpec.capText, h]
     · rename_i h
-      simp [leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, ListingSpec.capText, h]
+      simp [leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+        leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, ListingSpec.capText, h]
   | .algorithm n sm lines =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [algRaw_text]
     rfl
   | .columns cols =>
@@ -737,37 +833,38 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
     rw [blocksRaw_text acc (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_text acc out active.toList]
   | .note body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text]
     rfl
   | .only targets body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
   | .nav spec body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text]
     rfl
   | .logo content =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     exact inlinesRaw_text_nil _ content
   | .pagebreak => simp [blockRaw, blockTextOne]
   | .frame title st v _ body =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text, titleRaw_text]
   | .framefoot content =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     exact inlinesRaw_text_nil _ content
   | .setPalette pal => simp [blockRaw, blockTextOne]
   | .setTokens tk => simp [blockRaw, blockTextOne]
   | .rule c n th => simp [blockRaw, blockTextOne]
   | .picture pic =>
-    simp [blockRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, blockTextOne]
+    simp [blockRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
+      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, blockTextOne]
   | .table cols pl pr rows rules =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [rowsRaw_text]
     rfl
   | .float k n ca body caption =>
-    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text, captionRaw_text]
   | .bibliography src style items =>
     simp only [blockRaw, blockTextOne]
@@ -780,7 +877,7 @@ theorem itemsRaw_text (acc : String) (out : Array Node) (items : List (Array Blo
   | [] => rfl
   | item :: rest =>
     rw [itemsRaw, itemsRaw_text acc _ rest, leafTextList_push, blockTextItems]
-    simp only [leafTextOne, leafTextList]
+    simp only [leafTextOne_node_exact, leafTextList_nil_exact, leafTextList_cons_exact]
     rw [blocksRaw_text]
     rfl
 
@@ -806,7 +903,7 @@ theorem numberList_text (acc : String) (k : Nat) (out : Array Node) (ns : List N
   match ns with
   | [] => rfl
   | n :: rest =>
-    rw [numberList, leafTextList, numberList_text acc _ _ rest, leafTextList_push,
+    rw [numberList, leafTextList_cons_exact, numberList_text acc _ _ rest, leafTextList_push,
       numberOne_text]
 
 theorem numberOne_text (acc : String) (k : Nat) (n : Node) :
@@ -814,7 +911,7 @@ theorem numberOne_text (acc : String) (k : Nat) (n : Node) :
   match n with
   | .leaf id l => rfl
   | .node kind kids =>
-    simp only [numberOne, leafTextOne]
+    simp only [numberOne, leafTextOne_node_exact]
     rw [numberList_text]
     rfl
 
@@ -859,13 +956,18 @@ theorem inlinesRaw_headings (hs : Array Nat) (out : Array Node) (xs : List Inlin
 theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
     headingsList hs (inlineRaw out x).toList = headingsList hs out.toList := by
   match x with
-  | .text s => simp [inlineRaw, headingsList_snoc, headingsOne]
-  | .math d src => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
-  | .formula d src body => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
+  | .text s => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
+  | .math d src => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact,
+    headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
+    headingsList_cons_exact]
+  | .formula d src body => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact,
+    headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
+    headingsList_cons_exact]
   | .styled style body =>
     match style with
     | .lang tag =>
-      simp only [inlineRaw, headingsList_push, headingsOne]
+      simp only [inlineRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+        Kind.outlineEmit]
       rw [inlinesRaw_headings]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
@@ -879,18 +981,21 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
   | .link url body =>
-    simp only [inlineRaw, headingsList_push, headingsOne]
+    simp only [inlineRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit]
     rw [inlinesRaw_headings]
     rfl
   | .label key => rfl
-  | .ref key form text target => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
+  | .ref key form text target => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact,
+    headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
+    headingsList_cons_exact]
   | .underline body =>
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
   | .fill => rfl
   | .pageNumber => rfl
   | .pageCount => rfl
-  | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
   | .strut h => rfl
   | .step n l body =>
     simp only [inlineRaw]
@@ -899,11 +1004,12 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
     simp only [inlineRaw]
     rw [inlinesRaw_headings hs (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_headings hs out active.toList]
-  | .image src size alt => simp [inlineRaw, headingsList_snoc, headingsOne]
-  | .icon sc label => simp [inlineRaw, headingsList_snoc, headingsOne]
-  | .cite tx keys => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .image src size alt => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
+  | .icon sc label => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
+  | .cite tx keys => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
   | .footnote num body =>
-    simp only [inlineRaw, headingsList_push, headingsOne]
+    simp only [inlineRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit]
     rw [inlinesRaw_headings]
     rfl
 
@@ -919,7 +1025,8 @@ theorem titleRaw_headings (hs : Array Nat) (title : Array Inline) :
   unfold titleRaw
   split
   · rfl
-  · simp only [headingsList, headingsOne]
+  · simp only [headingsList_nil_exact, headingsList_cons_exact, headingsOne_node_exact,
+    Kind.outlineDescends, Kind.outlineEmit]
     exact inlinesRaw_headings_nil hs title
 
 theorem captionRaw_headings (hs : Array Nat) (caption : Array Inline) :
@@ -927,7 +1034,8 @@ theorem captionRaw_headings (hs : Array Nat) (caption : Array Inline) :
   unfold captionRaw
   split
   · rfl
-  · simp only [headingsList, headingsOne]
+  · simp only [headingsList_nil_exact, headingsList_cons_exact, headingsOne_node_exact,
+    Kind.outlineDescends, Kind.outlineEmit]
     exact inlinesRaw_headings_nil hs caption
 
 theorem cellsRaw_headings (hs : Array Nat) (out : Array Node) (cells : List (Array Inline)) :
@@ -936,7 +1044,7 @@ theorem cellsRaw_headings (hs : Array Nat) (out : Array Node) (cells : List (Arr
   | nil => rfl
   | cons cell rest ih =>
     rw [cellsRaw, ih, headingsList_push]
-    simp only [headingsOne]
+    simp only [headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit]
     rw [inlinesRaw_headings_nil]
 
 theorem rowsRaw_headings (hs : Array Nat) (out : Array Node) (rows : List (Array (Array Inline))) :
@@ -945,7 +1053,7 @@ theorem rowsRaw_headings (hs : Array Nat) (out : Array Node) (rows : List (Array
   | nil => rfl
   | cons row rest ih =>
     rw [rowsRaw, ih, headingsList_push]
-    simp only [headingsOne]
+    simp only [headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit]
     rw [cellsRaw_headings]
     rfl
 
@@ -955,7 +1063,8 @@ theorem bibRaw_headings (hs : Array Nat) (out : Array Node) (items : List BibIte
   | nil => rfl
   | cons item rest ih =>
     rw [bibRaw, ih, headingsList_push]
-    simp [headingsOne, headingsList]
+    simp [headingsOne_leaf_exact, headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit,
+      headingsList_nil_exact, headingsList_cons_exact]
 
 theorem algRaw_headings (hs : Array Nat) (out : Array Node) (lines : List AlgLine) :
     headingsList hs (algRaw out lines).toList = headingsList hs out.toList := by
@@ -983,13 +1092,16 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
       = headingLevelOne (headingsList hs out.toList) b := by
   match b with
   | .para content =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     exact inlinesRaw_headings_nil _ content
   | .section level st num title =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     exact inlinesRaw_headings_nil _ title
   | .list ordered items =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [itemsRaw_headings]
     rfl
   | .center body =>
@@ -1005,27 +1117,34 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
   | .quote body =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings]
     rfl
   | .abstract body =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings]
     rfl
   | .titled kind title body =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings, titleRaw_headings]
   | .equation number content =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [inlinesRaw_headings_nil]
-    simp [headingsList, headingsOne]
+    simp [headingsList_nil_exact, headingsList_cons_exact, headingsOne_leaf_exact]
   | .verbatim covered content spec =>
     simp only [blockRaw, headingLevelOne]
     split
-    · simp [headingsList_snoc, headingsOne, headingsList]
-    · simp [headingsList_snoc, headingsOne, headingsList]
+    · simp [headingsList_snoc, headingsOne_leaf_exact, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingsList_nil_exact, headingsList_cons_exact]
+    · simp [headingsList_snoc, headingsOne_leaf_exact, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingsList_nil_exact, headingsList_cons_exact]
   | .algorithm n sm lines =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [algRaw_headings]
     rfl
   | .columns cols =>
@@ -1038,34 +1157,43 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
     simp only [blockRaw, headingLevelOne]
     rw [blocksRaw_headings hs (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_headings hs out active.toList]
-  | .note body => simp [blockRaw, headingsList_snoc, headingsOne, headingLevelOne]
+  | .note body => simp [blockRaw, headingsList_snoc, headingsOne_node_exact, Kind.outlineDescends,
+    Kind.outlineEmit, headingLevelOne]
   | .only targets body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
   | .nav spec body =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings]
     rfl
   | .logo content =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     exact inlinesRaw_headings_nil _ content
   | .pagebreak => rfl
   | .frame title st v _ body =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings, titleRaw_headings]
   | .framefoot content =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     exact inlinesRaw_headings_nil _ content
   | .setPalette pal => rfl
   | .setTokens tk => rfl
   | .rule c n th => rfl
-  | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne, headingsList, headingLevelOne]
+  | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne_leaf_exact,
+    headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
+    headingsList_cons_exact, headingLevelOne]
   | .table cols pl pr rows rules =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [rowsRaw_headings]
     rfl
   | .float k n ca body caption =>
-    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings, captionRaw_headings]
   | .bibliography src style items =>
     simp only [blockRaw, headingLevelOne]
@@ -1078,7 +1206,8 @@ theorem itemsRaw_headings (hs : Array Nat) (out : Array Node) (items : List (Arr
   | [] => rfl
   | item :: rest =>
     rw [itemsRaw, itemsRaw_headings hs _ rest, headingsList_push, headingLevelItems]
-    simp only [headingsOne, headingsList]
+    simp only [headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit,
+      headingsList_nil_exact, headingsList_cons_exact]
     rw [blocksRaw_headings]
     rfl
 
@@ -1101,7 +1230,7 @@ theorem numberList_headings (hs : Array Nat) (k : Nat) (out : Array Node) (ns : 
   match ns with
   | [] => rfl
   | n :: rest =>
-    rw [numberList, headingsList, numberList_headings hs _ _ rest, headingsList_push,
+    rw [numberList, headingsList_cons_exact, numberList_headings hs _ _ rest, headingsList_push,
       numberOne_headings]
 
 theorem numberOne_headings (hs : Array Nat) (k : Nat) (n : Node) :
@@ -1109,7 +1238,7 @@ theorem numberOne_headings (hs : Array Nat) (k : Nat) (n : Node) :
   match n with
   | .leaf id l => rfl
   | .node kind kids =>
-    simp only [numberOne, headingsOne]
+    simp only [numberOne, headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit]
     split <;> first | rfl | (rw [numberList_headings]; rfl)
 
 end
@@ -1144,15 +1273,18 @@ theorem inlinesRaw_images (is : Array (String × String)) (out : Array Node) (xs
 theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x : Inline) :
     imagesList is (inlineRaw out x).toList = foldInline imageAltPush (imagesList is out.toList) x := by
   match x with
-  | .text s => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .text s => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus, foldInline,
+    imageAltPush]
   | .math d src =>
-    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
+      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
   | .formula d src body =>
-    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
+      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
   | .styled style body =>
     match style with
     | .lang tag =>
-      simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+      simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
       rw [inlinesRaw_images]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
@@ -1166,19 +1298,21 @@ theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x :
     simp only [inlineRaw, foldInline, imageAltPush]
     exact inlinesRaw_images is out body.toList
   | .link url body =>
-    simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+    simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
     rw [inlinesRaw_images]
     rfl
   | .label key => simp [inlineRaw, foldInline, imageAltPush]
   | .ref key form text target =>
-    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
+      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
   | .underline body =>
     simp only [inlineRaw, foldInline, imageAltPush]
     exact inlinesRaw_images is out body.toList
   | .fill => simp [inlineRaw, foldInline, imageAltPush]
   | .pageNumber => simp [inlineRaw, foldInline, imageAltPush]
   | .pageCount => simp [inlineRaw, foldInline, imageAltPush]
-  | .linebreak extra => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .linebreak extra => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
+    foldInline, imageAltPush]
   | .strut h => simp [inlineRaw, foldInline, imageAltPush]
   | .step n l body =>
     simp only [inlineRaw, foldInline, imageAltPush]
@@ -1187,11 +1321,14 @@ theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x :
     simp only [inlineRaw, foldInline, imageAltPush]
     rw [inlinesRaw_images is (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_images is out active.toList]
-  | .image src size alt => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
-  | .icon sc label => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
-  | .cite tx keys => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .image src size alt => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
+    foldInline, imageAltPush]
+  | .icon sc label => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
+    foldInline, imageAltPush]
+  | .cite tx keys => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
+    foldInline, imageAltPush]
   | .footnote num body =>
-    simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+    simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
     rw [inlinesRaw_images]
     rfl
 
@@ -1209,7 +1346,7 @@ theorem titleRaw_images (is : Array (String × String)) (title : Array Inline) :
   · rename_i h
     rw [toList_of_isEmpty title h]
     rfl
-  · simp only [imagesList, imagesOne]
+  · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
     exact inlinesRaw_images_nil is title
 
 theorem captionRaw_images (is : Array (String × String)) (caption : Array Inline) :
@@ -1219,7 +1356,7 @@ theorem captionRaw_images (is : Array (String × String)) (caption : Array Inlin
   · rename_i h
     rw [toList_of_isEmpty caption h]
     rfl
-  · simp only [imagesList, imagesOne]
+  · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
     exact inlinesRaw_images_nil is caption
 
 theorem cellsRaw_images (is : Array (String × String)) (out : Array Node)
@@ -1230,7 +1367,7 @@ theorem cellsRaw_images (is : Array (String × String)) (out : Array Node)
   | nil => rfl
   | cons cell rest ih =>
     rw [cellsRaw, ih, imagesList_push, foldTableCells]
-    simp only [imagesOne]
+    simp only [imagesOne_node_exact]
     rw [inlinesRaw_images_nil]
 
 theorem rowsRaw_images (is : Array (String × String)) (out : Array Node)
@@ -1241,7 +1378,7 @@ theorem rowsRaw_images (is : Array (String × String)) (out : Array Node)
   | nil => rfl
   | cons row rest ih =>
     rw [rowsRaw, ih, imagesList_push, foldTableRows]
-    simp only [imagesOne]
+    simp only [imagesOne_node_exact]
     rw [cellsRaw_images]
     rfl
 
@@ -1251,7 +1388,8 @@ theorem bibRaw_images (is : Array (String × String)) (out : Array Node) (items 
   | nil => rfl
   | cons item rest ih =>
     rw [bibRaw, ih, imagesList_push]
-    simp [imagesOne, imagesList]
+    simp [imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus, imagesList_nil_exact,
+      imagesList_cons_exact]
 
 theorem algRaw_images (is : Array (String × String)) (out : Array Node) (lines : List AlgLine) :
     imagesList is (algRaw out lines).toList
@@ -1280,13 +1418,13 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
       = foldBlock (fun out _ => out) imageAltPush (imagesList is out.toList) b := by
   match b with
   | .para content =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     exact inlinesRaw_images_nil _ content
   | .section level st num title =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     exact inlinesRaw_images_nil _ title
   | .list ordered items =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [itemsRaw_images]
     rfl
   | .center body =>
@@ -1302,27 +1440,29 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
     simp only [blockRaw, foldBlock]
     exact blocksRaw_images is out body.toList
   | .quote body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images]
     rfl
   | .abstract body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images]
     rfl
   | .titled kind title body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images, titleRaw_images]
   | .equation number content =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [inlinesRaw_images_nil]
-    simp [imagesList, imagesOne]
+    simp [imagesList_nil_exact, imagesList_cons_exact, imagesOne_leaf_exact, Leaf.imageCensus]
   | .verbatim covered content spec =>
     simp only [blockRaw, foldBlock]
     split
-    · simp [imagesList_snoc, imagesOne, imagesList]
-    · simp [imagesList_snoc, imagesOne, imagesList]
+    · simp [imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
+      imagesList_nil_exact, imagesList_cons_exact]
+    · simp [imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
+      imagesList_nil_exact, imagesList_cons_exact]
   | .algorithm n sm lines =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [algRaw_images]
     rfl
   | .columns cols =>
@@ -1336,36 +1476,37 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
     rw [blocksRaw_images is (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_images is out active.toList]
   | .note body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images]
     rfl
   | .only targets body =>
     simp only [blockRaw, foldBlock]
     exact blocksRaw_images is out body.toList
   | .nav spec body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images]
     rfl
   | .logo content =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     exact inlinesRaw_images_nil _ content
   | .pagebreak => rfl
   | .frame title st v _ body =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images, titleRaw_images]
   | .framefoot content =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     exact inlinesRaw_images_nil _ content
   | .setPalette pal => rfl
   | .setTokens tk => rfl
   | .rule c n th => rfl
-  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne, imagesList, foldBlock]
+  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact,
+    Leaf.imageCensus, imagesList_nil_exact, imagesList_cons_exact, foldBlock]
   | .table cols pl pr rows rules =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [rowsRaw_images]
     rfl
   | .float k n ca body caption =>
-    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [blocksRaw_images, captionRaw_images]
   | .bibliography src style items =>
     simp only [blockRaw, foldBlock]
@@ -1379,7 +1520,7 @@ theorem itemsRaw_images (is : Array (String × String)) (out : Array Node)
   | [] => rfl
   | item :: rest =>
     rw [itemsRaw, itemsRaw_images is _ rest, imagesList_push, foldBlockItems]
-    simp only [imagesOne, imagesList]
+    simp only [imagesOne_node_exact, imagesList_nil_exact, imagesList_cons_exact]
     rw [blocksRaw_images]
     rfl
 
@@ -1403,7 +1544,7 @@ theorem numberList_images (is : Array (String × String)) (k : Nat) (out : Array
   match ns with
   | [] => rfl
   | n :: rest =>
-    rw [numberList, imagesList, numberList_images is _ _ rest, imagesList_push,
+    rw [numberList, imagesList_cons_exact, numberList_images is _ _ rest, imagesList_push,
       numberOne_images]
 
 theorem numberOne_images (is : Array (String × String)) (k : Nat) (n : Node) :
@@ -1411,7 +1552,7 @@ theorem numberOne_images (is : Array (String × String)) (k : Nat) (n : Node) :
   match n with
   | .leaf id l => rfl
   | .node kind kids =>
-    simp only [numberOne, imagesOne]
+    simp only [numberOne, imagesOne_node_exact]
     rw [numberList_images]
     rfl
 
@@ -1437,17 +1578,17 @@ accumulator, then the list's own. -/
 theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
     leavesList out ns = out ++ leavesList #[] ns := by
   match ns with
-  | [] => simp [leavesList]
+  | [] => simp [leavesList_nil_exact]
   | n :: rest =>
-    rw [leavesList, leavesList_acc _ rest, leavesOne_acc out n, leavesList,
+    rw [leavesList_cons_exact, leavesList_acc _ rest, leavesOne_acc out n, leavesList_cons_exact,
       leavesList_acc (leavesOne #[] n) rest, Array.append_assoc]
 
 theorem leavesOne_acc (out : Array (Nat × Leaf)) (n : Node) :
     leavesOne out n = out ++ leavesOne #[] n := by
   match n with
-  | .leaf id l => simp [leavesOne]
+  | .leaf id l => simp [leavesOne_leaf_exact]
   | .node kind kids =>
-    simp only [leavesOne]
+    simp only [leavesOne_node_exact]
     exact leavesList_acc out kids.toList
 
 end
@@ -1482,7 +1623,7 @@ theorem numberList_id (k : Nat) (ns : List Node) :
         = List.range' k ((numberList k #[] ns).2 - k)
       ∧ k ≤ (numberList k #[] ns).2 := by
   match ns with
-  | [] => simp [numberList, leavesList]
+  | [] => simp [numberList, leavesList_nil_exact]
   | n :: rest =>
     obtain ⟨hn, hkn⟩ := numberOne_id k n
     obtain ⟨hr, hkr⟩ := numberList_id (numberOne k n).2 rest
@@ -1494,7 +1635,7 @@ theorem numberList_id (k : Nat) (ns : List Node) :
     have hone : (leavesList #[] (#[].push (numberOne k n).1).toList).toList.map Prod.fst
         = List.range' k ((numberOne k n).2 - k) := by
       rw [Array.toList_push]
-      simpa [leavesList] using hn
+      simpa [leavesList_nil_exact, leavesList_cons_exact] using hn
     rw [hone]
     exact range'_join hkn hkr
 
@@ -1503,9 +1644,9 @@ theorem numberOne_id (k : Nat) (n : Node) :
         = List.range' k ((numberOne k n).2 - k)
       ∧ k ≤ (numberOne k n).2 := by
   match n with
-  | .leaf id l => simp [numberOne, leavesOne]
+  | .leaf id l => simp [numberOne, leavesOne_leaf_exact]
   | .node kind kids =>
-    simp only [numberOne, leavesOne]
+    simp only [numberOne, leavesOne_node_exact]
     exact numberList_id k kids.toList
 
 end
@@ -1674,23 +1815,23 @@ shape had. -/
 theorem numberList_leafCount (k : Nat) (ns : List Node) :
     (leavesList #[] (numberList k #[] ns).1.toList).size = (leavesList #[] ns).size := by
   match ns with
-  | [] => simp [numberList, leavesList]
+  | [] => simp [numberList, leavesList_nil_exact]
   | n :: rest =>
     obtain ⟨h1, h2⟩ := numberList_acc (numberOne k n).2 (#[].push (numberOne k n).1) rest
     simp only [numberList]
     rw [h1, Array.toList_append, leavesList_append, leavesList_acc, Array.size_append,
-      Array.toList_push, leavesList, leavesList_acc (leavesOne #[] n) rest,
+      Array.toList_push, leavesList_cons_exact, leavesList_acc (leavesOne #[] n) rest,
       Array.size_append]
     rw [numberList_leafCount (numberOne k n).2 rest]
-    simp only [List.nil_append, leavesList]
+    simp only [List.nil_append, leavesList_nil_exact, leavesList_cons_exact]
     rw [numberOne_leafCount k n]
 
 theorem numberOne_leafCount (k : Nat) (n : Node) :
     (leavesOne #[] (numberOne k n).1).size = (leavesOne #[] n).size := by
   match n with
-  | .leaf id l => simp [numberOne, leavesOne]
+  | .leaf id l => simp [numberOne, leavesOne_leaf_exact]
   | .node kind kids =>
-    simp only [numberOne, leavesOne]
+    simp only [numberOne, leavesOne_node_exact]
     exact numberList_leafCount k kids.toList
 
 end
