@@ -11306,3 +11306,107 @@ naming exactly the six engine tokens an independent shell sweep of the
 same 76 pages found, and passes after, with `frametitlepadding` off the
 ratchet. No golden moves — the goldens record IR dumps and no CSS — and
 the reader matrix names neither the header nor the token.
+
+
+### 2026-09-24 — a gate that tested a spelling reported twenty offences, all false
+
+`artBandParityChecks` claimed to hold each fixture's painted furniture band
+against the HTML the same document emits, and its docstring said, in its own
+words, that "the claim is parity, not a spelling." It tested a spelling. It
+searched the emitted HTML for eight guessed class names — `slide-title`,
+`frame-title`, `titlebar` and five more — **none of which this backend has
+ever emitted**: the band is `section.slide > header`, carrying no class at
+all, painted by `background: var(--frametitlebg)`, a rule that was present,
+read, and visible on a raster the whole time.
+
+**What made it worse than no gate.** The check's only assertion for a
+painted fixture was that its recorded offence still fires, i.e. that no
+guessed class is present. Since none is ever emitted, that clause was true
+by construction — it would have passed with the entire HTML backend
+deleted. So the block was green, carried a twenty-row ratchet, and was
+insensitive to the defect it was named for. A ratchet of false positives is
+a standing invitation to lower it on the assumption the rows were real.
+
+**How false, measured.** Of the 77 golden fixtures, exactly seven paint a
+furniture band: `themed` (5 bands), `chrome` (3), `footer-mixed` (3),
+`lists-deck` (3), `footer-left` (2), `footer-collide` (1),
+`poster-headline` (1). All seven already carried the rule *and* the
+element. So seven rows were false positives. The other thirteen named
+fixtures that paint no band at all — three decks are unthemed, so no
+`frametitlebg` resolves and neither artifact paints, which is agreement,
+not a gap — and because the judgement sat under `unless !painted`, the gate
+never reached those rows to contradict them. Thirteen inert rows and seven
+false ones: the list emptied entirely.
+
+**The invariant, written down first.** A furniture band's *existence* is a
+fact of the document, not of an artifact: one palette key declares it
+(`frametitlebg`, a declared consumed role), and `Ir.Design.frametitle` is
+the resolved value each backend reads. So the claim is the chain that one
+declaration forms — a painted band ⟹ the design declares the pair ⟹ the
+HTML carries it — with the last link's converse closing the loop. Composed
+that is parity; separated, a break names which end lost the band.
+
+`declares ⟹ paints` is deliberately **not** claimed. The PDF resolves the
+band per frame against the palette epoch in force
+(`Layout.collectFrameTitle` reads `a.pal`); the HTML emits one
+document-level rule from `Ir.Design.ofDoc doc`. A document that declares
+the pair and titles no frame paints nothing and is correct. Asserting the
+converse would pass on today's corpus — every declaring fixture happens to
+title a frame — and fire falsely on the first legitimate one that does not,
+which is precisely the failure being repaired.
+
+**Keyed on the declaration, resolved against the tree.** The role is what
+a document declares and the engine registers; a class is the emitter's
+private choice. So the check reads the emitted stylesheet for a rule whose
+`background` declaration references `--frametitlebg` (both forms, bare and
+with a fallback — the measurement `Tests/HtmlTokens.lean` records), then
+resolves *that rule's own selector* against the typed tree, ancestor chain
+included. Matching the chain rather than the subject is what makes a moved
+element a failure: a header lifted out of `section.slide` stops being
+painted, and a subject-only check would report it carried. The one
+subtlety: `emitTree` returns the *children* of `head` and `body`, so the
+path is seeded with `html`/`body` or `body > header.headline` resolves
+against nothing.
+
+**Demonstrated failing, twice synthetically and twice for real.** The judge
+is pure in its four arguments, so fifteen mutants exercise it directly:
+nine must be refused (rule gone, element gone, rule moved and element left
+behind, element lifted out of the slide, property misspelled, reference
+moved off the ground onto a border, orphan rule, bytes painting an
+undeclared band, unreadable selector) and six accepted — including **the
+element and its rule renamed together**, which is the commemoration of this
+defect, and the fallback reference form. Then end to end on the real
+emitter: gating the slide rule off makes six fixtures fail with "the design
+declares a band pair and no rule paints a background from
+--frametitlebg"; renaming the element `header` → `div` while leaving the
+rule alone makes the same six fail with "every rule painting the band
+selects an element the tree does not ship: [section.slide > header]".
+`poster-headline` correctly survives both, because its band rides a
+different carrier that is still there — carrier-agnosticism demonstrated
+rather than asserted.
+
+**Bottom-edge bands are out of scope, and say so.** `ArtPage.bands` also
+reads a chrome footer's ground, and the HTML footer carries no background
+at all, so folding the two would diagnose a painted footer as a missing
+title bar. No corpus fixture paints one; the footer's parity is left
+unclaimed rather than claimed vacuously.
+
+**The theorem this wants to be, and the one factorization in the way.**
+Unlike a token's reads — which are not a value either backend projects, the
+blocker recorded in the token-closure entry — the band *is* a value:
+`Ir.Design.frametitle`. The `_agree` form is one refactor away. The PDF
+resolves the pair at `Layout.collectFrameTitle` with its own default chain
+(`frametitlefg` → `bg` → white), the same chain `Ir.Design.ofDoc` applies,
+whose docstring claims to be "the one construction site". That is two
+resolving sites for one declared role, which the obligation table's palette
+row forbids. Factor the chain into a `Design.ofPalette` that
+`collectFrameTitle` calls with its epoch palette and `Design.ofDoc` calls
+with the document's, and `frametitle_agree` becomes statable in `Ir.lean`:
+the pair the PDF resolves at a frame is `(Design.ofPalette pal).frametitle`
+— one value, two projections. Routed, not half-built: `Ir.lean` and
+`Layout.lean` are not this change's files.
+
+Evidence: `lake test` green, run-only 46.4–46.7 s against a 46.7–47.4 s
+baseline — neutral, the corpus PDF build being paid either way and
+`emitTree` costing less than `emit`. No golden moves; the goldens record IR
+dumps and this claim reads the artifact.

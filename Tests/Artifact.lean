@@ -1119,69 +1119,365 @@ def artifactChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   artifactCorpusChecks ref oneFace pats
 
 
-/-! ## Backend parity: a band both artifacts must honour
+/-! ## Backend parity: the furniture band both artifacts carry
 
-A furniture band is one IR declaration (`Ir.Chrome`), so it is a fact both
-artifacts must honour — the shape AGENTS.md calls a projection corollary
-(`footBand_projects`, `backend_gaps_agree`). The PDF paints the frame-title
-band as a full-width fill; whether the HTML declares one is checked here,
-because nothing else checks it: `deckCssChecks` and `deckStructureChecks`
-read the emitted tree for the elements they know about, and an element the
-emitter never writes is invisible to a test that never asks for it.
+**The invariant.** A furniture band's *existence* is a fact of the
+document, not of an artifact. One palette key declares it — `frametitlebg`,
+a declared consumed role (`Ir.Design.consumedRoles`, which names both
+consumers) — and `Ir.Design.frametitle` is the resolved value each backend
+reads. Each then carries the band its own way: the PDF paints a full-width
+artifact fill against the page's top edge, the HTML declares a rule
+painting an element's background from the band's custom property. So the
+claim is that the two agree about existence, and it is checked as the chain
+the one declaration forms:
 
-This is the parity claim only. Which class the HTML should use is the
-emitter's decision, so the claim is satisfied by any of the spellings the
-deck stylesheet already uses for a full-width chrome element. -/
+    a painted band ⟹ the design declares the pair ⟹ the HTML carries it
 
-/-- The class names an emitted frame-title band could plausibly carry. The
-claim is parity, not a spelling, so any one of these satisfies it. -/
-def artBandClasses : List String :=
-  ["slide-title", "frame-title", "slide-head", "titlebar", "title-bar",
-   "band-top", "slide-band", "frametitle"]
+with the last link's converse — no rule without the declaration — closing
+the loop. Composed that is parity; separated, each link is a claim with its
+own witness, so a break names which end lost the band rather than only that
+the two differ.
 
-/-- The golden fixtures whose HTML is missing a band their PDF paints.
-A routed defect, not a permission, and a ratchet: a row whose fixture
-starts declaring a band fails until the row goes. -/
-def artBandParityOffences : List (String × String) := [
-  ("themed",
-    "the PDF paints the frame-title band as a full-width fill; the emitted HTML \
-carries no band element and the stylesheet no rule for one, so the themed deck's \
-title bar is absent in one artifact and present in the other"),
-  ("chrome",
-    "the same gap on the chrome fixture: a painted title band in the PDF, no band \
-element in the HTML"),
-  ("daylight",
-    "the same gap under the daylight bundle"),
-  ("poster-headline",
-    "the poster's headline band is painted in the PDF and absent from the HTML"),
-  ("talk", "the same gap on the talk deck"),
-  ("deck", "the same gap on the base deck fixture"),
-  ("deck1610", "the same gap at 16:10"),
-  ("centering", "the same gap"),
-  ("columns", "the same gap"),
-  ("overlays", "the same gap"),
-  ("overlays-blocks", "the same gap"),
-  ("overprint", "the same gap"),
-  ("notes", "the same gap"),
-  ("furniture", "the same gap"),
-  ("footer-left", "the same gap"),
-  ("footer-mixed", "the same gap"),
-  ("footer-collide", "the same gap"),
-  ("lists-deck", "the same gap"),
-  ("valign", "the same gap"),
-  ("quote-deck", "the same gap")]
+**The direction that is not claimed.** `declares ⟹ paints` is false, and
+deliberately absent: the PDF resolves the band per frame against the
+palette epoch in force (`Layout.collectFrameTitle` reads `a.pal`), while
+the HTML emits one document-level rule from `Ir.Design.ofDoc doc`. A
+document that declares the pair and titles no frame paints nothing, and is
+correct. Asserting the converse would pass on today's corpus — every
+declaring fixture happens to title a frame — and fire falsely on the first
+legitimate one that does not, which is the failure mode this block was
+repaired for.
 
-/-- Every fixture whose produced PDF paints a furniture band, held against
-the HTML the same document emits: the band is one IR declaration, so an
-artifact that drops it disagrees with the one that paints it. Offences are
-recorded and ratcheted, so the claim is armed for every future deck. -/
+**Why not a class name.** This block used to search the emitted HTML for
+eight guessed class names (`slide-title`, `titlebar`, …), none of which this
+backend has ever emitted: the band is `section.slide > header`, carrying no
+class at all, painted by a rule that was present, read, and visible on a
+raster the whole time. It therefore recorded twenty offences that were all
+false while staying green, which is worse than no gate — a ratchet of false
+positives invites being lowered, and a gate that never detected the band
+cannot fire when the band goes. The repair keys on the *declaration* (the
+role, which the engine registers) instead of the *spelling* (a class, which
+is the emitter's private choice), and resolves each painting rule's own
+selector against the tree rather than guessing what the selector says.
+Renaming the element and its rule together must keep this block green;
+`artBandMutants` pins that, beside the four ways the band can genuinely go.
+
+**Why not `htmlTokenClosureChecks`.** That block holds a declared token
+against *some* rule referencing it, over the corpus union — it cannot see
+which document, which element, or whether the element exists.
+`frametitlebg` would stay read there if one poster kept its rule while
+every deck lost its header. This block is per fixture, is joined to the
+PDF's own bytes, and demands the carrier as well as the reference.
+
+**Why a check and not a theorem.** The `_agree` form wants the two
+backends' band to be two projections of one value, and it is one
+factorization away. The PDF resolves the pair at `Layout.collectFrameTitle`
+with its own default chain (`frametitlefg` → `bg` → white) — the same chain
+`Ir.Design.ofDoc` applies, whose docstring claims to be the one
+construction site. Factor that chain into a `Design.ofPalette` the frame
+site calls with its epoch palette, and the statement becomes available in
+`Ir.lean`: the pair the PDF resolves at a frame is
+`(Design.ofPalette pal).frametitle`, so the band is one value both backends
+project. Until then the two sides are functions of different values and
+there is nothing to quantify over, so the joint is checkable only by
+reading both artifacts, which is what this block does. -/
+
+/-- The palette role that declares the band, and the custom property the
+HTML backend names after it. Keyed on the role rather than on any class:
+the role is what a document declares and the engine registers, while the
+element is the emitter's choice and is resolved below. -/
+def artBandRole : String := "frametitlebg"
+
+/-- Every innermost declaration block a stylesheet carries, as its selector
+text paired with its declarations. Brace-depth scanned rather than split on
+`}`, so a nested at-rule's inner blocks come out under their own selectors
+(the backend writes the paged deck's bar inside `@media screen`) and the
+at-rule's prelude never reads as one. Total by construction: the loop is
+bounded by the length and every step advances the position. -/
+def artCssBlocks (css : String) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  let mut sels : Array String := #[]
+  let mut cur := ""
+  for c in css.toList do
+    if c == '{' then
+      sels := sels.push cur.trimAscii.toString
+      cur := ""
+    else if c == '}' then
+      let decls := cur.trimAscii.toString
+      if decls.contains ':' then
+        out := out.push ((sels.back?.getD "").trimAscii.toString, decls)
+      sels := sels.pop
+      cur := ""
+    else
+      cur := cur.push c
+  return out
+
+/-- Does this declaration list paint a background from the band's property?
+The property is read as a declaration — `background` or `background-color`
+before the colon — so a `var()` reference in a border or a shadow does not
+answer for the ground. Both reference forms count, bare and with a
+fallback: the backend writes `var(--name, fallback)` as often as
+`var(--name)`, and a scan for the bare closing paren alone is what once
+reported a read token as unread (`Tests/HtmlTokens.lean` records it). -/
+def artPaintsBand (decls : String) : Bool :=
+  (decls.splitOn ";").any fun d =>
+    match d.splitOn ":" with
+    | [] => false
+    | prop :: rest =>
+      let value := String.intercalate ":" rest
+      (prop.trimAscii.toString == "background" ||
+          prop.trimAscii.toString == "background-color") &&
+        (hasStr value s!"var(--{artBandRole})" || hasStr value s!"var(--{artBandRole},")
+
+/-- An element as the tree carries it: its tag and its classes. -/
+abbrev ArtElem := String × Array String
+
+/-- One compound selector, and whether it must be a direct child of the
+compound before it. A selector is an array of these, root first. -/
+abbrev ArtStep := ArtElem × Bool
+
+/-- One compound selector as the element it names: its tag (empty when the
+compound is classes only) and every class it requires. Pseudo-classes and
+pseudo-elements drop, because they constrain an element's state, not which
+element it is. -/
+def artCompound (tok : String) : Option ArtElem :=
+  let bare := (tok.splitOn ":").headD tok
+  let bits := (bare.splitOn ".").filter fun s => !s.isEmpty
+  let tag := if bare.startsWith "." then "" else bits.headD ""
+  let classes := (if bare.startsWith "." then bits else bits.drop 1).toArray
+  if tag.isEmpty && classes.isEmpty then none else some (tag, classes)
+
+/-- One selector as its chain of compounds, root first. Descendant and
+child combinators only: a sibling combinator returns `none`, which the
+judge reads as a selector it cannot resolve and *reports* — an unreadable
+selector must never pass for a satisfied one. -/
+def artSelChain (part : String) : Option (Array ArtStep) := Id.run do
+  if part.any fun c => c == '+' || c == '~' then return none
+  let toks := ((part.replace ">" " > ").splitOn " ").filter fun s => !s.isEmpty
+  let mut steps : Array ArtStep := #[]
+  let mut child := false
+  for tok in toks.toArray do
+    if tok == ">" then
+      child := true
+    else
+      match artCompound tok with
+      | none => return none
+      | some e =>
+        steps := steps.push (e, child)
+        child := false
+  if steps.isEmpty then return none else return some steps
+
+/-- Every chain a selector list resolves to, one per comma-separated
+selector this check can read. -/
+def artSelChains (sel : String) : Array (Array ArtStep) :=
+  ((sel.splitOn ",").filterMap artSelChain).toArray
+
+/-- Does this element satisfy one compound? -/
+def artCompMatches (c : ArtElem) (e : ArtElem) : Bool :=
+  (c.1.isEmpty || e.1 == c.1) && c.2.all fun x => e.2.contains x
+
+/-- Does a selector chain match this ancestor path, the path's last element
+being the rule's subject? Matched right to left: the subject must be the
+element itself, a child step must match the element immediately above, and
+a descendant step may skip ancestors. Bounded by the path length, so total.
+
+The ancestor chain is matched rather than the subject alone, which is what
+makes a *moved* element a failure and not a pass: a header lifted out of
+`section.slide` stops being painted, and a check that read only the subject
+would report it carried. The walk is greedy, so a chain repeating one
+compound under a child combinator could be reported unmatched when a match
+exists — the error direction is over-strictness, which fails loudly, never
+a silent pass. -/
+def artChainMatchesPath (chain : Array ArtStep) (path : Array ArtElem) : Bool := Id.run do
+  if chain.isEmpty || path.isEmpty then return false
+  let subject := chain[chain.size - 1]!
+  unless artCompMatches subject.1 path[path.size - 1]! do return false
+  let mut ci := chain.size - 1
+  let mut pi := path.size - 1
+  let mut mustBeChild := subject.2
+  for _ in [0:path.size + 1] do
+    if ci == 0 then break
+    if pi == 0 then return false
+    let step := chain[ci - 1]!
+    if artCompMatches step.1 path[pi - 1]! then
+      ci := ci - 1
+      pi := pi - 1
+      mustBeChild := step.2
+    else if mustBeChild then
+      return false
+    else
+      pi := pi - 1
+  return ci == 0
+
+mutual
+
+/-- Does this subtree ship an element the chain selects? The path threads
+down the walk, so each element is judged against its own ancestors. The
+tree is read for the carrier, never the printed page (AGENTS.md, the
+page-claim rule). -/
+def artChainInOne (chain : Array ArtStep) (path : Array ArtElem) : Html.Node → Bool
+  | .text _ => false
+  | .style _ => false
+  | .script _ _ => false
+  | .elem t attrs kids =>
+    let cls := ((attrs.find? fun a => a.1 == "class").map (·.2)).getD ""
+    let classes := ((cls.splitOn " ").filter fun s => !s.isEmpty).toArray
+    let here := path.push (t, classes)
+    artChainMatchesPath chain here || artChainInList chain here kids.toList
+
+def artChainInList (chain : Array ArtStep) (path : Array ArtElem) :
+    List Html.Node → Bool
+  | [] => false
+  | k :: rest => artChainInOne chain path k || artChainInList chain path rest
+
+end
+
+mutual
+
+/-- Every stylesheet a typed tree carries, concatenated. `Html.Node.style`
+is the one constructor that holds CSS, so the rules are read from the node
+that will be printed rather than from a search of the rendered page. -/
+def artTreeCssOne (acc : String) : Html.Node → String
+  | .style css => acc ++ css
+  | .text _ => acc
+  | .script _ _ => acc
+  | .elem _ _ kids => artTreeCssList acc kids.toList
+
+def artTreeCssList (acc : String) : List Html.Node → String
+  | [] => acc
+  | k :: rest => artTreeCssList (artTreeCssOne acc k) rest
+
+end
+
+/-- The ancestors `emitTree` does not return. Its two arrays are the
+*children* of `head` and of `body`; `Html.document` builds those two
+elements and the root around them. A selector anchored at `body` — the
+poster's headline band is `body > header.headline` — resolves against
+nothing unless the path it is matched along starts where the document
+does. -/
+def artBodyPath : Array ArtElem := #[("html", #[]), ("body", #[])]
+
+/-- The selectors under which a stylesheet paints the band. -/
+def artBandSelectors (css : String) : Array String :=
+  (artCssBlocks css).filterMap fun (sel, decls) =>
+    if artPaintsBand decls then some sel else none
+
+/-- Every way a document's two artifacts disagree about its furniture band,
+each named with the end that lost it: the three links of the chain and
+nothing else. Whether the band *should* exist is the document's to say, and
+this judge only holds the artifacts to what it declared.
+
+Pure in its four arguments — the bytes' verdict, the design's, the emitted
+stylesheet, the emitted body — so the same judgement that runs over the
+corpus runs over the mutants. A judge reachable only through a 77-fixture
+build is a judge whose failure nobody has seen. -/
+def artBandOffences (painted declared : Bool) (css : String)
+    (body : Array Html.Node) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let sels := artBandSelectors css
+  if painted && !declared then
+    out := out.push s!"a page paints a top-edge furniture band while the design \
+declares no band pair: --{artBandRole} is unset"
+  if !sels.isEmpty && !declared then
+    out := out.push s!"the stylesheet paints from --{artBandRole} with no band \
+pair declared: {sels.toList}"
+  if declared then
+    if sels.isEmpty then
+      out := out.push s!"the design declares a band pair and no rule paints a \
+background from --{artBandRole}"
+    else
+      let readable := sels.filter fun s => !(artSelChains s).isEmpty
+      if readable.isEmpty then
+        out := out.push s!"no selector painting the band resolves to an element \
+this check can read: {sels.toList}"
+      else unless readable.any fun s =>
+          (artSelChains s).any fun c => artChainInList c artBodyPath body.toList do
+        out := out.push s!"every rule painting the band selects an element the \
+tree does not ship: {readable.toList}"
+  return out
+
+/-- The golden fixtures whose two artifacts disagree about their furniture
+band. Empty, and that is the repair: every one of the twenty rows this list
+carried was false. Seven named a fixture whose PDF paints a band and whose
+HTML already carried the rule and the element — the guessed class names were
+the only thing missing. The other thirteen named fixtures that paint no band
+at all, so the gate never reached their rows to contradict them: three decks
+are unthemed (no `frametitlebg`, hence no band in either artifact, which is
+agreement) and the rest are frame fixtures under no bundle.
+
+A ratchet in both directions all the same: a row whose fixture starts
+agreeing fails until the row goes, and a fixture that starts disagreeing
+fails until it is fixed or recorded here. -/
+def artBandParityOffences : List (String × String) := []
+
+/-- The judge broken once for each way the band can go, and each way it may
+legitimately move. Synthetic trees and stylesheets, built here: the corpus
+loop below proves the claim is reached, and these prove it can refuse.
+
+The two controls are the point. `the element and its rule renamed together`
+must pass — the claim is parity, not a spelling, and the twenty false
+offences this block once recorded came from a check that could not tell the
+two apart. `the reference carrying a fallback` must pass for the reason
+`Tests/HtmlTokens.lean` records: `var(--name, …)` is a read, and reading
+only the bare form is how a painted bar was once called missing. -/
+def artBandMutants : List (String × Bool × Bool × String × Array Html.Node × Bool) :=
+  let header := Html.elem "header" #[Html.elem "h2" #[Html.text "Title"]]
+  let slide (kid : Html.Node) : Array Html.Node :=
+    #[Html.elem "section" #[kid] #[("class", "slide")]]
+  let live := slide header
+  let bandRule (sel : String) : String :=
+    sel ++ " { background: var(--frametitlebg);\n  color: var(--frametitlefg, var(--bg, #fff)); }\n"
+  [ ("the shape the backend writes", true, true, bandRule "section.slide > header", live, false),
+    ("the poster's own carrier instead", true, true,
+      bandRule "body > header.headline",
+      #[Html.elem "header" #[] #[("class", "headline")]], false),
+    ("the bar declared only inside an at-rule", true, true,
+      "@media screen {\n" ++ bandRule "section.slide > header" ++ "}\n", live, false),
+    ("the reference carrying a fallback", true, true,
+      "section.slide > header { background: var(--frametitlebg, #333); }\n", live, false),
+    ("the element and its rule renamed together", true, true,
+      bandRule "section.slide > div.band-top",
+      slide (Html.elem "div" #[] #[("class", "band-top")]), false),
+    ("nothing declared and nothing painted", false, false, "", live, false),
+    ("the rule gone", true, true, "", live, true),
+    ("the element gone", true, true, bandRule "section.slide > header",
+      slide (Html.elem "p" #[Html.text "body"]), true),
+    ("the rule moved and the element left behind", true, true,
+      bandRule "section.slide > div.band-top", live, true),
+    ("the element lifted out of the slide", true, true,
+      bandRule "section.slide > header", #[header], true),
+    ("the property misspelled", true, true,
+      "section.slide > header { background: var(--frametitlebackground); }\n", live, true),
+    ("the reference off the ground and onto a border", true, true,
+      "section.slide > header { border-color: var(--frametitlebg); }\n", live, true),
+    ("a rule painting a band the design never declared", false, false,
+      bandRule "section.slide > header", live, true),
+    ("bytes painting a band the design never declared", true, false, "", live, true),
+    ("the selector unreadable", true, true,
+      bandRule "section.slide > header + header", live, true)]
+
+/-- Every fixture's painted furniture band held against the HTML the same
+document emits, through the one declaration both artifacts read. The judge
+is exercised on its own mutants first, so a green corpus is a claim that
+has been seen to refuse. -/
 def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
+  t s!"the band's key is a declared consumed role"
+    (Ir.Design.consumedRoles.contains artBandRole)
   for (n, _) in artBandParityOffences do
     t s!"band parity offence row {n}: names a golden fixture" (goldenNames.contains n)
+  for (label, painted, declared, css, body, wantOffence) in artBandMutants do
+    let offs := artBandOffences painted declared css body
+    if wantOffence then
+      t s!"band parity mutant, {label}: the judge refuses it" (!offs.isEmpty)
+    else
+      t s!"band parity mutant, {label}: the judge accepts it: {offs.toList}" offs.isEmpty
   let mathSet ← mathSetOf oneFace
   let shipped ← FontDb.scanRoots [testFonts]
+  let mut paintedSeen := 0
+  let mut declaredSeen := 0
+  let mut carriedSeen := 0
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
@@ -1190,15 +1486,29 @@ def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let store ← corpusStore doc
     let out := layoutOf fs doc geom (some pats) store
     match readArtifact (driverPdf fs geom doc out store) with
-    | .error _ => pure ()
+    | .error e => t s!"band parity {n}: the file reads back: {e}" false
     | .ok pages =>
-      let painted := pages.any fun p => !p.bands.isEmpty
-      unless !painted do
-        let html := (HtmlDoc.emit {} doc).1
-        let declared := artBandClasses.any fun c => hasStr html s!"\"{c}"
-        if artBandParityOffences.any fun (f, _) => f == n then
-          t s!"band parity {n}: the recorded offence no longer fires — the HTML now \
-declares a band; delete its row" (!declared)
-        else
-          t s!"band parity {n}: its PDF paints a furniture band, so its HTML must \
-declare one" declared
+      -- The band a page paints, read from its own bytes: a fill against the
+      -- top edge. The bottom edge is a different band — a chrome footer's
+      -- ground — and a different claim: the HTML footer carries no ground at
+      -- all, so folding the two would diagnose a painted footer as a missing
+      -- title bar. No corpus fixture paints one, so the footer's own parity
+      -- is unclaimed here rather than claimed vacuously.
+      let painted := pages.any fun p => p.bands.any fun b => b.y1 ≥ p.box.y1
+      let declared := (Ir.Design.ofDoc doc).frametitle.isSome
+      let (head, body, _) := HtmlDoc.emitTree {} doc
+      let css := artTreeCssList (artTreeCssList "" head.toList) body.toList
+      if painted then paintedSeen := paintedSeen + 1
+      if declared then declaredSeen := declaredSeen + 1
+      if declared && !(artBandSelectors css).isEmpty then carriedSeen := carriedSeen + 1
+      let offs := artBandOffences painted declared css body
+      if artBandParityOffences.any fun (f, _) => f == n then
+        t s!"band parity {n}: the recorded offence no longer fires — its two \
+artifacts now agree; delete its row" (!offs.isEmpty)
+      else
+        t s!"band parity {n}: {offs.toList}" offs.isEmpty
+  -- Non-vacuity: a claim no fixture reaches proves nothing, and each link
+  -- of the chain needs its own witness.
+  t s!"band parity: painted bands are reached ({paintedSeen})" (0 < paintedSeen)
+  t s!"band parity: declared band pairs are reached ({declaredSeen})" (0 < declaredSeen)
+  t s!"band parity: carried bands are reached ({carriedSeen})" (0 < carriedSeen)
