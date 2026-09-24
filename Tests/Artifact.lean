@@ -1,0 +1,1204 @@
+import Tests.Backends
+
+open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+open LeanTex.Core.PdfRead (Obj Entry)
+
+/-! # The artifact tier: what the produced bytes paint, and where
+
+`censusChecks` reads `Layout.Out` — the engine's own record of what it
+decided to ship. This tier reads the *file*: the page's `/MediaBox`, its
+content stream's operators, the glyph widths in the descendant font's
+`/W`, the characters in its `/ToUnicode`, the ascent and descent in its
+`/FontDescriptor`. Nothing here consults a `LineOut`, so a layout that
+records one position and paints another is a failure here and a pass
+there — which is the gap this tier exists to close: a private reference
+deck once matched its reference output on none of its pages while the
+whole suite was green, and every defect behind that number was found by
+rasterising a page or reading its text layer.
+
+The reading is a PDF-semantics evaluation, not a search for the writer's
+spellings: a text object's pen starts at `Tm`, advances by each glyph's
+`/W` width scaled by `Tf` size and `Tz` horizontal scale, and steps by
+each `TJ` adjustment under §9.4.4's rule. A run's box is that advance
+horizontally and the descriptor's ascent and descent vertically. So a
+defect that moves ink without changing the writer's vocabulary — a
+negative coordinate, a collapsed picture, a repeated page — is visible
+here by the same arithmetic a viewer performs.
+
+The one thing this tier takes from outside the file is the *declared*
+geometry (`Layout.Geom.ofPage`): margins, page size, furniture bands.
+That is an input to the build — what the document asked for — not a
+reading of what the engine believes it produced, and the distinction is
+what keeps the tier independent. Where the region is a fact of the
+artifact (the page box, a painted title band) it is read from the bytes.
+-/
+
+/-- One token of a content stream (ISO 32000-2 §7.2). Numbers carry their
+value in sp — parsed by the engine's own reader (`Obj.sp?`), so a
+coordinate here means what it means in a page dictionary — beside their
+raw spelling, which the integer operands (a `TJ` adjustment, an `/MCID`)
+read. -/
+inductive CTok where
+  | num (v : Dim.Sp) (raw : String)
+  | name (n : String)
+  /-- A hexadecimal string's digits, whitespace removed. -/
+  | hex (digits : String)
+  /-- A literal string's bytes, one backslash escape resolved per byte. -/
+  | lit (raw : String)
+  | arrOpen
+  | arrClose
+  | dictOpen
+  | dictClose
+  | op (name : String)
+  deriving Repr, BEq, Inhabited
+
+private def ctWs (c : Nat) : Bool :=
+  c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
+
+private def ctDelim (c : Nat) : Bool :=
+  c == 40 || c == 41 || c == 60 || c == 62 || c == 91 || c == 93 ||
+    c == 123 || c == 125 || c == 47 || c == 37
+
+private def ctAt (b : ByteArray) (i : Nat) : Nat :=
+  (b[i]?.map (·.toNat)).getD 256
+
+private def ctNumByte (c : Nat) : Bool :=
+  (48 ≤ c && c ≤ 57) || c == 43 || c == 45 || c == 46
+
+/-- A content stream's tokens, in order. Index-bounded throughout: the
+outer loop's bound is the byte count and every step advances `i`, so the
+walk terminates by structure alone. Comments and whitespace are dropped;
+everything else becomes exactly one token, so an operator's operands are
+the tokens since the last operator. -/
+def scanContent (b : ByteArray) : Array CTok := Id.run do
+  let mut out : Array CTok := #[]
+  let mut i := 0
+  for _ in [0:b.size + 1] do
+    if b.size ≤ i then break
+    let c := ctAt b i
+    if ctWs c then
+      i := i + 1
+    else if c == 37 then
+      let mut j := i + 1
+      for _ in [0:b.size + 1] do
+        let d := ctAt b j
+        if d == 256 || d == 10 || d == 13 then break
+        j := j + 1
+      i := j
+    else if c == 47 then
+      let mut j := i + 1
+      let mut s := ""
+      for _ in [0:b.size + 1] do
+        let d := ctAt b j
+        if d == 256 || ctWs d || ctDelim d then break
+        s := s.push (Char.ofNat d)
+        j := j + 1
+      out := out.push (.name s)
+      i := j
+    else if c == 60 then
+      if ctAt b (i + 1) == 60 then
+        out := out.push .dictOpen
+        i := i + 2
+      else
+        let mut j := i + 1
+        let mut s := ""
+        for _ in [0:b.size + 1] do
+          let d := ctAt b j
+          if d == 256 || d == 62 then break
+          unless ctWs d do s := s.push (Char.ofNat d)
+          j := j + 1
+        out := out.push (.hex s)
+        i := j + 1
+    else if c == 62 then
+      if ctAt b (i + 1) == 62 then
+        out := out.push .dictClose
+        i := i + 2
+      else
+        i := i + 1
+    else if c == 91 then
+      out := out.push .arrOpen
+      i := i + 1
+    else if c == 93 then
+      out := out.push .arrClose
+      i := i + 1
+    else if c == 40 then
+      let mut j := i + 1
+      let mut depth := 1
+      let mut s := ""
+      for _ in [0:b.size + 1] do
+        let d := ctAt b j
+        if d == 256 then break
+        if d == 92 then
+          s := s.push (Char.ofNat (ctAt b (j + 1)))
+          j := j + 2
+        else if d == 40 then
+          depth := depth + 1
+          s := s.push '('
+          j := j + 1
+        else if d == 41 then
+          depth := depth - 1
+          j := j + 1
+          if depth == 0 then break
+          s := s.push ')'
+        else
+          s := s.push (Char.ofNat d)
+          j := j + 1
+      out := out.push (.lit s)
+      i := j
+    else if ctNumByte c then
+      let mut j := i
+      let mut s := ""
+      for _ in [0:b.size + 1] do
+        let d := ctAt b j
+        if ctNumByte d then
+          s := s.push (Char.ofNat d)
+          j := j + 1
+        else break
+      out := out.push (.num ((Obj.real s).sp?.getD 0) s)
+      i := j
+    else
+      let mut j := i
+      let mut s := ""
+      for _ in [0:b.size + 1] do
+        let d := ctAt b j
+        if d == 256 || ctWs d || ctDelim d then break
+        s := s.push (Char.ofNat d)
+        j := j + 1
+      out := out.push (.op s)
+      i := j
+  return out
+
+private def artHexNibble (c : Char) : Option Nat :=
+  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- A hexadecimal string read as two-byte codes: the CIDs an Identity-H
+string spells (§9.7.4.2), and the code units a `/ToUnicode` value
+spells. -/
+def artCodes (digits : String) : Array Nat := Id.run do
+  let cs := digits.toList.toArray
+  let mut out : Array Nat := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if cs.size < i + 4 then break
+    let nib (k : Nat) : Nat := (artHexNibble (cs[k]!)).getD 0
+    out := out.push ((((nib i) * 16 + nib (i + 1)) * 16 + nib (i + 2)) * 16 + nib (i + 3))
+    i := i + 4
+  return out
+
+/-- A `/ToUnicode` value as text: UTF-16BE code units, surrogate pairs
+joined (§9.10.3). -/
+def artUtf16 (digits : String) : String := Id.run do
+  let us := artCodes digits
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:us.size + 1] do
+    if us.size ≤ i then break
+    let u := us[i]!
+    if 0xD800 ≤ u && u ≤ 0xDBFF && i + 1 < us.size then
+      out := out.push (Char.ofNat (0x10000 + (u - 0xD800) * 1024 + (us[i + 1]! - 0xDC00)))
+      i := i + 2
+    else
+      out := out.push (Char.ofNat u)
+      i := i + 1
+  return out
+
+/-- One face as the *file* describes it: the CID-to-character map its
+`/ToUnicode` CMap spells, the widths its `/W` array spells (thousandths
+of the em), and the vertical extent its `/FontDescriptor` declares. The
+only reading of a glyph's identity and size this tier performs. -/
+structure ArtFont where
+  toUni : Std.HashMap Nat String
+  widths : Std.HashMap Nat Int
+  defaultWidth : Int
+  ascent : Int
+  descent : Int
+  /-- `/CapHeight`: the height a line of text measures from its glyphs.
+  The engine judges its own text area against this rather than `/Ascent`
+  (`Font.inkAscent`, and `Check.Shipped.ofOut`'s stated reason: the hhea
+  ascent reserves accent headroom that is usually blank), so the artifact
+  tier reads the file's declaration of the same quantity. -/
+  capHeight : Int
+  deriving Inhabited
+
+/-- The `bfchar` pairs of a `/ToUnicode` CMap: CID, then its text. -/
+def artToUniMap (toks : Array CTok) : Std.HashMap Nat String := Id.run do
+  let mut m : Std.HashMap Nat String := {}
+  let mut inBf := false
+  let mut pend : Option String := none
+  for t in toks do
+    match t with
+    | .op "beginbfchar" =>
+      inBf := true
+      pend := none
+    | .op "endbfchar" =>
+      inBf := false
+      pend := none
+    | .hex d =>
+      if inBf then
+        match pend with
+        | none => pend := some d
+        | some g =>
+          m := m.insert ((artCodes g)[0]?.getD 0) (artUtf16 d)
+          pend := none
+    | _ => pure ()
+  return m
+
+/-- A `/W` array (§9.7.4.3), both forms: `c [w …]` and `c1 c2 w`. The
+range form is capped so a malformed pair cannot make the reading
+unbounded. -/
+def artWidthMap (o : Obj) : Std.HashMap Nat Int := Id.run do
+  let mut m : Std.HashMap Nat Int := {}
+  let .arr xs := o | return m
+  let mut i := 0
+  for _ in [0:xs.size + 1] do
+    if xs.size ≤ i then break
+    match xs[i]!, xs[i + 1]? with
+    | .int c, some (.arr ws) =>
+      for k in [0:ws.size] do
+        if let some w := (ws[k]!).int? then m := m.insert (c.toNat + k) w
+      i := i + 2
+    | .int c1, some (.int c2) =>
+      match xs[i + 2]? with
+      | some (.int w) =>
+        if c1 ≤ c2 && c2 - c1 ≤ 65535 then
+          for g in [c1.toNat:c2.toNat + 1] do m := m.insert g w
+        i := i + 3
+      | _ => i := i + 1
+    | _, _ => i := i + 1
+  return m
+
+/-- A Type0 font dictionary read as an `ArtFont`: its `/ToUnicode` stream
+decoded and scanned, its descendant's `/W` and `/DW`, its descriptor's
+`/Ascent` and `/Descent`. -/
+def artFontOf (es : Array Entry) (o : Obj) : ArtFont :=
+  let deref := PdfCensus.deref es
+  let toUni := match o.get? "ToUnicode" with
+    | some (.ref n _) =>
+      match es.find? (·.num == n) with
+      | some e =>
+        match e.decoded with
+        | .ok (some data) => artToUniMap (scanContent data)
+        | _ => {}
+      | none => {}
+    | _ => {}
+  let cid := match deref ((o.get? "DescendantFonts").getD .null) with
+    | .arr xs => deref (xs[0]?.getD .null)
+    | d => d
+  let fd := deref ((cid.get? "FontDescriptor").getD .null)
+  let intOf (d : Obj) (k : String) (dflt : Int) : Int :=
+    ((d.get? k).bind Obj.int?).getD dflt
+  { toUni
+    widths := artWidthMap ((cid.get? "W").getD .null)
+    defaultWidth := intOf cid "DW" 1000
+    ascent := intOf fd "Ascent" 1000
+    descent := intOf fd "Descent" (-300)
+    capHeight := intOf fd "CapHeight" (intOf fd "Ascent" 1000) }
+
+/-- The marked-content sequence a painting operator stands inside
+(§14.6). Real content carries the structure type the writer gave it and
+its identifier on the page; an artifact carries its declared type, or
+none. The distinction is what lets a claim say "no *body* ink here"
+about a region running furniture legitimately occupies. -/
+inductive ArtMark where
+  | artifact (kind : Option String)
+  | content (tag : String) (mcid : Nat)
+  deriving Repr, BEq, Inhabited
+
+def ArtMark.isArtifact : ArtMark → Bool
+  | .artifact _ => true
+  | .content _ _ => false
+
+def ArtMark.render : ArtMark → String
+  | .artifact none => "/Artifact"
+  | .artifact (some k) => s!"/Artifact /{k}"
+  | .content t n => s!"/{t} /MCID {n}"
+
+/-- One glyph run the file paints: the pen where `Tm` and the preceding
+`TJ` elements put it, the advance its glyphs' own widths give it, and the
+text its `/ToUnicode` map spells. Nothing is read from layout. -/
+structure ArtRun where
+  marks : Array ArtMark
+  x : Dim.Sp
+  y : Dim.Sp
+  w : Dim.Sp
+  size : Dim.Sp
+  /-- The face's declared `/Ascent` at this size: the generous box, which
+  the page-box claim reads. -/
+  ascent : Dim.Sp
+  /-- The face's declared `/CapHeight` at this size: the measure the
+  engine judges its own text area by. -/
+  inkAscent : Dim.Sp
+  descent : Dim.Sp
+  /-- The widest advance among this run's own glyphs. Character
+  protrusion hangs a boundary glyph into the margin by at most its own
+  advance (`Layout.protrusionLR_covers` bounds the factor by 1000‰), so
+  this is the declared slack a text-area claim must allow — read from the
+  file's `/W`, not from a constant. -/
+  widest : Dim.Sp
+  text : String
+  deriving Repr, Inhabited
+
+/-- One non-text mark the file paints, as its bounding box in PDF user
+space: a fill, a stroked or filled path, an image, or the outlined box
+standing where an image did not load. -/
+structure ArtBox where
+  marks : Array ArtMark
+  kind : String
+  x0 : Dim.Sp
+  y0 : Dim.Sp
+  x1 : Dim.Sp
+  y1 : Dim.Sp
+  deriving Repr, Inhabited
+
+def ArtRun.x1 (r : ArtRun) : Dim.Sp := r.x + r.w
+
+/-- A run's top edge under the generous box: the baseline plus the
+declared `/Ascent` at the set size. -/
+def ArtRun.top (r : ArtRun) : Dim.Sp := r.y + r.ascent
+
+/-- A run's top edge under the engine's own ink measure: the baseline plus
+the declared `/CapHeight`. -/
+def ArtRun.inkTop (r : ArtRun) : Dim.Sp := r.y + r.inkAscent
+
+/-- A run's bottom edge: the baseline plus the descriptor's descent
+(negative) at the set size. -/
+def ArtRun.bottom (r : ArtRun) : Dim.Sp := r.y + r.descent
+
+def ArtRun.isArtifact (r : ArtRun) : Bool := r.marks.any ArtMark.isArtifact
+
+def ArtBox.isArtifact (b : ArtBox) : Bool := b.marks.any ArtMark.isArtifact
+
+private def ctName? : CTok → Option String
+  | .name n => some n
+  | _ => none
+
+/-- The name following `/key` among an operator's operands: how `/Type`
+is read out of an artifact's property dictionary. -/
+private def artNameAfter (stack : Array CTok) (key : String) : Option String := do
+  let i ← stack.findIdx? (· == CTok.name key)
+  (stack[i + 1]?).bind ctName?
+
+private def artIntAfter (stack : Array CTok) (key : String) : Option Int := do
+  let i ← stack.findIdx? (· == CTok.name key)
+  match stack[i + 1]? with
+  | some (.num _ raw) => raw.toInt?
+  | _ => none
+
+/-- The state the evaluation threads: the marked-content stack, the pen,
+the face and size in force, the horizontal scale in per mille, the open
+path's box, and the transformation the last `cm` set (for `Do`). -/
+private structure ArtSt where
+  runs : Array ArtRun := #[]
+  boxes : Array ArtBox := #[]
+  marks : Array ArtMark := #[]
+  stack : Array CTok := #[]
+  x : Dim.Sp := 0
+  y : Dim.Sp := 0
+  size : Dim.Sp := 0
+  th : Int := 1000
+  font : Option ArtFont := none
+  path : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
+  cm : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
+
+private def artExtend (p : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp))
+    (x y : Dim.Sp) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  match p with
+  | none => some (x, y, x, y)
+  | some (x0, y0, x1, y1) => some (min x0 x, min y0 y, max x1 x, max y1 y)
+
+/-- The numeric operands of an operator, in order. -/
+private def artNums (stack : Array CTok) : Array Dim.Sp :=
+  stack.filterMap fun t => match t with
+    | .num v _ => some v
+    | _ => none
+
+/-- The painting operators that put ink on the page (§8.5.3, Table 60);
+`n` ends a path without painting and is not among them. -/
+private def artPaintOps : List String :=
+  ["f", "F", "f*", "B", "B*", "b", "b*", "S", "s"]
+
+/-- The face a `TJ` with no `Tf` in force would set in: none, spelled so
+a malformed stream's ink is still recorded rather than silently dropped —
+its glyphs read as unmapped and its box as zero-height. -/
+def artNoFont : ArtFont :=
+  { toUni := {}, widths := {}, defaultWidth := 1000, ascent := 0, descent := 0,
+    capHeight := 0 }
+
+/-- What a CID with no `/ToUnicode` entry reads as: U+FFFD, so an
+unmapped glyph is visible to a text claim rather than silently absent. -/
+def artUnmapped : String := String.singleton (Char.ofNat 0xFFFD)
+
+/-- What a content stream paints, evaluated: every glyph run with its own
+box, and every fill, path and image with theirs. The arithmetic is
+§9.4.4's — the pen advances by each glyph's width times the size times
+the horizontal scale, and a `TJ` number displaces it by `-d/1000` of the
+same — so the positions are a viewer's, not the writer's record of its
+intent. -/
+def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
+    Array ArtRun × Array ArtBox := Id.run do
+  let mut s : ArtSt := {}
+  for t in toks do
+    match t with
+    | .op o =>
+      let ns := artNums s.stack
+      if o == "BT" then
+        s := { s with x := 0, y := 0 }
+      else if o == "Tm" then
+        if 6 ≤ ns.size then s := { s with x := ns[4]!, y := ns[5]! }
+      else if o == "Td" then
+        if 2 ≤ ns.size then s := { s with x := s.x + ns[0]!, y := s.y + ns[1]! }
+      else if o == "Tf" then
+        let f := (s.stack.findSome? ctName?).bind fun nm => fonts[nm]?
+        s := { s with font := f, size := (ns[0]?).getD s.size }
+      else if o == "Tz" then
+        -- The operand is a percentage; the scale is kept in per mille.
+        s := { s with th := (((ns[0]?).getD (Dim.pt 100)) * 10) / Dim.spPerPt }
+      else if o == "TJ" || o == "Tj" then
+        for it in s.stack do
+          match it with
+          | .hex d =>
+            let f := s.font.getD artNoFont
+            let cids := artCodes d
+            let mut adv : Dim.Sp := 0
+            let mut widest : Dim.Sp := 0
+            let mut txt := ""
+            for g in cids do
+              let one := (f.widths[g]?.getD f.defaultWidth) * s.size * s.th / 1000000
+              adv := adv + one
+              widest := max widest one
+              txt := txt ++ (f.toUni[g]?.getD artUnmapped)
+            s := { s with
+              runs := s.runs.push
+                { marks := s.marks, x := s.x, y := s.y, w := adv, size := s.size,
+                  ascent := f.ascent * s.size / 1000,
+                  inkAscent := f.capHeight * s.size / 1000,
+                  descent := f.descent * s.size / 1000, widest := widest, text := txt }
+              x := s.x + adv }
+          | .num _ raw =>
+            let d := raw.toInt?.getD 0
+            s := { s with x := s.x - d * s.size * s.th / 1000000 }
+          | _ => pure ()
+      else if o == "m" || o == "l" then
+        if 2 ≤ ns.size then s := { s with path := artExtend s.path ns[0]! ns[1]! }
+      else if o == "c" then
+        if 6 ≤ ns.size then
+          let mut p := s.path
+          for k in [0:3] do p := artExtend p (ns[2 * k]!) (ns[2 * k + 1]!)
+          s := { s with path := p }
+      else if o == "v" || o == "y" then
+        if 4 ≤ ns.size then
+          let mut p := s.path
+          for k in [0:2] do p := artExtend p (ns[2 * k]!) (ns[2 * k + 1]!)
+          s := { s with path := p }
+      else if o == "re" then
+        if 4 ≤ ns.size then
+          let p := artExtend s.path (ns[0]!) (ns[1]!)
+          s := { s with path := artExtend p (ns[0]! + ns[2]!) (ns[1]! + ns[3]!) }
+      else if artPaintOps.contains o then
+        if let some (x0, y0, x1, y1) := s.path then
+          let kind := if o == "S" || o == "s" then "stroke" else "fill"
+          s := { s with
+            boxes := s.boxes.push { marks := s.marks, kind := kind
+                                    x0 := x0, y0 := y0, x1 := x1, y1 := y1 }
+            path := none }
+      else if o == "n" then
+        s := { s with path := none }
+      else if o == "cm" then
+        if 6 ≤ ns.size then s := { s with cm := some (ns[0]!, ns[3]!, ns[4]!, ns[5]!) }
+      else if o == "Do" then
+        if let some (a, d, e, f) := s.cm then
+          s := { s with
+            boxes := s.boxes.push { marks := s.marks, kind := "image"
+                                    x0 := min e (e + a), y0 := min f (f + d)
+                                    x1 := max e (e + a), y1 := max f (f + d) } }
+      else if o == "q" || o == "Q" then
+        s := { s with cm := none }
+      else if o == "BMC" || o == "BDC" then
+        let tag := (s.stack.findSome? ctName?).getD ""
+        let m : ArtMark := if tag == "Artifact" then .artifact (artNameAfter s.stack "Type")
+          else .content tag ((artIntAfter s.stack "MCID").getD 0).toNat
+        s := { s with marks := s.marks.push m }
+      else if o == "EMC" then
+        s := { s with marks := s.marks.pop }
+      s := { s with stack := #[] }
+    | other => s := { s with stack := s.stack.push other }
+  return (s.runs, s.boxes)
+
+/-- One page as the file describes it: its declared media box, the faces
+its resources name, its content stream's bytes, and the ink those bytes
+paint. -/
+structure ArtPage where
+  media : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
+  runs : Array ArtRun
+  boxes : Array ArtBox
+  content : ByteArray
+  deriving Inhabited
+
+def ArtPage.mediaW (p : ArtPage) : Dim.Sp := p.media.2.2.1 - p.media.1
+
+def ArtPage.mediaH (p : ArtPage) : Dim.Sp := p.media.2.2.2 - p.media.2.1
+
+/-- A rectangle array read in sp, or the null rectangle. -/
+private def artRect (o : Obj) : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp :=
+  match o with
+  | .arr xs =>
+    let v (k : Nat) : Dim.Sp := ((xs[k]?).bind Obj.sp?).getD 0
+    (v 0, v 1, v 2, v 3)
+  | _ => (0, 0, 0, 0)
+
+/-- Every page a file carries, in the order its page tree lists them.
+`/Kids` is followed one level of nesting deep — the writer emits a flat
+tree, and a deeper one would show up as a missing page rather than a
+silently wrong order. -/
+private def artPageDicts (es : Array Entry) (trailer : Obj) : Array Obj := Id.run do
+  let deref := PdfCensus.deref es
+  let root := deref (((PdfCensus.catalogOf es trailer).get? "Pages").getD .null)
+  let mut out : Array Obj := #[]
+  let .arr kids := deref ((root.get? "Kids").getD .null) | return out
+  for k in kids do
+    let d := deref k
+    if PdfCensus.kindOf d == .pages then
+      if let .arr inner := deref ((d.get? "Kids").getD .null) then
+        for j in inner do out := out.push (deref j)
+    else out := out.push d
+  return out
+
+/-- A produced file read as pages of ink: the cross-reference followed by
+the engine's own reader, each page's faces built from its own resources,
+each page's content stream decoded and evaluated. A file the reader
+refuses is a named error, never an empty reading. -/
+def readArtifact (pdf : ByteArray) : Except String (Array ArtPage) := do
+  let es ← PdfRead.objects pdf
+  let trailer ← PdfRead.trailer pdf
+  let esv := es.val
+  let deref := PdfCensus.deref esv
+  let mut out : Array ArtPage := #[]
+  for page in artPageDicts esv trailer do
+    let mut fonts : Std.HashMap String ArtFont := {}
+    let resources := deref ((page.get? "Resources").getD .null)
+    if let .dict fs := deref ((resources.get? "Font").getD .null) then
+      for (nm, v) in fs do fonts := fonts.insert nm (artFontOf esv (deref v))
+    let content ← match page.get? "Contents" with
+      | some (.ref n _) =>
+        match esv.find? (·.num == n) with
+        | some e =>
+          match e.decoded with
+          | .ok (some data) => pure data
+          | .ok none => throw "page content stream: not a stream"
+          | .error err => throw s!"page content stream: {err}"
+        | none => throw s!"page /Contents names object {n}, which the cross-reference does not list"
+      | _ => throw "page has no /Contents reference"
+    let (runs, boxes) := evalContent fonts (scanContent content)
+    out := out.push { media := artRect ((page.get? "MediaBox").getD .null)
+                      runs, boxes, content }
+  return out
+
+
+/-- The bytes the *driver* writes, not a reduced variant: the structure
+tree the layout attributed against, the typed operators built from it, and
+`Pdf.write` given both. `Pdf.write`'s `tree` argument defaults to the
+empty tree, and a file written that way carries no structure elements and
+marks every line `/Artifact` — so a tier that read it could not tell body
+ink from running furniture, and would be judging a file no build ships.
+This is the one spelling every artifact claim reads. -/
+def driverPdf (fs : Font.FontSet) (geom : Layout.Geom) (doc : Ir.Doc)
+    (out : Layout.Out) (store : Image.Store := {}) : ByteArray :=
+  let tree := Struct.ofDoc (Layout.pdfView doc)
+  let ops := Pdf.pageOps geom fs out.pages store tree
+  Pdf.write geom fs out.pages doc.info store out.outline #[] tree ops
+
+/-- A rectangle in PDF user space, as the region vocabulary the claims
+read: `x0 ≤ x1` and `y0 ≤ y1`. -/
+structure ArtRect where
+  x0 : Dim.Sp
+  y0 : Dim.Sp
+  x1 : Dim.Sp
+  y1 : Dim.Sp
+  deriving Repr, Inhabited
+
+def ArtRect.render (r : ArtRect) : String :=
+  s!"[{r.x0.toPtString} {r.y0.toPtString} {r.x1.toPtString} {r.y1.toPtString}]"
+
+/-- Does the box `(bx0, by0, bx1, by1)` lie inside `r`, allowing `hslack`
+left and right and `vslack` above and below? The two are separate because
+the slack a text-area claim must allow is horizontal: character protrusion
+hangs a boundary glyph into the margin by design, and nothing hangs a
+baseline out of the measure. A vertical slack of a glyph's width would
+excuse half a line of ink in a furniture band. -/
+def ArtRect.holds (r : ArtRect) (hslack vslack bx0 by0 bx1 by1 : Dim.Sp) : Bool :=
+  r.x0 - hslack ≤ bx0 && r.y0 - vslack ≤ by0 && bx1 ≤ r.x1 + hslack && by1 ≤ r.y1 + vslack
+
+/-- Do two rectangles share area? Touching edges do not count: a band's
+bottom edge and a body line's top edge may coincide. -/
+def ArtRect.overlaps (a b : ArtRect) : Bool :=
+  a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+
+/-- The page's own declared medium, read from `/MediaBox`. The one region
+in these claims that is a fact of the file rather than of the
+document's declaration. -/
+def ArtPage.box (p : ArtPage) : ArtRect :=
+  { x0 := p.media.1, y0 := p.media.2.1, x1 := p.media.2.2.1, y1 := p.media.2.2.2 }
+
+/-- The body area a geometry declares, in PDF user space: the measure
+between the horizontal margins, and between `bodyTop` and `bodyBottom`
+(which is where the engine's own placement decisions read the page's
+vertical limits from). Derived from the document's declaration — an input
+to the build — never from what the layout recorded. -/
+def artBodyArea (geom : Layout.Geom) : ArtRect :=
+  { x0 := geom.bleed + geom.hmargin
+    y0 := geom.bleed + geom.pageH - geom.bodyBottom
+    x1 := geom.bleed + geom.pageW - geom.hmargin
+    y1 := geom.bleed + geom.pageH - geom.bodyTop }
+
+/-- The least share of the page width a fill must span to read as a
+furniture band rather than as a rule, a marker or a node's ground. Nine
+tenths: the bands the engine paints (a frame's title bar, a poster's
+headline, a chrome footer's ground) run the full trim width, and the
+widest non-band fill in the corpus is a heading's underline. -/
+def artBandWidthShare : Nat := 9
+
+/-- The most a band may be of the page height. A band is a strip; a fill
+spanning the whole page is the page's ground, which every themed deck
+paints and which holds all of its ink by design — reading that as a band
+would make the band claim vacuous on exactly the documents it is for. One
+third: the tallest band the corpus paints is a poster's headline at a
+fifth of the page. -/
+def artBandHeightShare : Nat := 3
+
+/-- The structure types a furniture band legitimately holds: the title a
+frame's own band carries, and the headings a poster's headline band does.
+Body prose, a table cell, a formula, a figure's label — none of these
+belong in a band, and the eight-node picture that once collapsed into a
+frame's title band carried `/Figure`. -/
+def artBandTags : List String := ["Title", "H1", "H2", "H3", "H4", "H5", "H6"]
+
+/-- The furniture bands a page paints, read from the file: a fill running
+(almost) the whole medium, touching its top or bottom edge, and no taller
+than `artBandHeightShare` of the page. The engine paints these as
+`/Artifact` sequences, and a band is the one region where ink outside the
+body area is the design rather than a defect — so the region a text-area
+claim must allow is read from the bytes that painted it, not from a layout
+record of the decision to paint it. -/
+def ArtPage.bands (p : ArtPage) : Array ArtRect :=
+  let box := p.box
+  let wide := (box.x1 - box.x0) * artBandWidthShare / 10
+  let short := (box.y1 - box.y0) / artBandHeightShare
+  p.boxes.filterMap fun b =>
+    if b.kind == "fill" && b.isArtifact && wide ≤ b.x1 - b.x0 && b.y1 - b.y0 ≤ short
+        && (b.y1 ≥ box.y1 || b.y0 ≤ box.y0) then
+      some { x0 := b.x0, y0 := b.y0, x1 := b.x1, y1 := b.y1 }
+    else none
+
+/-- The characters no page may paint as glyph ink. `inkMarkupWatch`'s
+artifact twin, and deliberately the same three: a backslash or a brace is
+the unambiguous signature of a page showing its source. -/
+def artMarkupWatch : List Char := ['\\', '{', '}']
+
+
+/-- The structure type a piece of content ink sits under, innermost
+first: what a claim reads to tell a frame's own title from body prose
+that has wandered into its band. Empty for artifact ink. -/
+def ArtMark.tag? : ArtMark → Option String
+  | .artifact _ => none
+  | .content t _ => some t
+
+def artInnerTag (marks : Array ArtMark) : Option String :=
+  (marks.reverse.findSome? ArtMark.tag?)
+
+/-- The precision at which the artifact can express a coordinate at all:
+one hundredth of a point, comfortably above the writer's thousandth-of-a-
+point spelling (`Sp.toPtString`) and the two roundings a box's far edge
+accumulates when width and origin are spelled separately — a page-wide
+fill's `x + w` misses the `/MediaBox` edge by a few millipoints every
+time. Far below any defect this tier is for: the node label that shipped
+at negative page x was 6.6 pt out. -/
+def artSpellSlack : Dim.Sp := Dim.pt 1 / 100
+
+/-- The one artifact claim this tier makes, per shape. Written as a
+vocabulary so a recorded offence names the property it breaks and cannot
+silently move to another. -/
+inductive ArtProp where
+  /-- Every mark the file paints lies inside the page's own `/MediaBox`. -/
+  | pageBox
+  /-- Every content-marked mark lies inside the declared body area, a
+  painted band, or is accounted for by a named loss. -/
+  | bodyArea
+  /-- No body content — prose, a cell, a formula, a figure's ink — stands
+  outside the text area and inside a painted furniture band. The guard on
+  `bodyArea`'s band escape: without it, that escape would excuse exactly
+  the eight-node picture that once collapsed into a frame's title band. -/
+  | bandFree
+  /-- No glyph the file paints decodes to a markup character. -/
+  | markupInk
+  /-- No two consecutive pages carry identical content streams. -/
+  | pageBytes
+  /-- Every CID the file shows is named by its own `/ToUnicode`. -/
+  | glyphNames
+  deriving BEq, Repr, Inhabited
+
+def ArtProp.name : ArtProp → String
+  | .pageBox => "ink inside the page box"
+  | .bodyArea => "content ink inside the text area"
+  | .bandFree => "no body ink outside the text area in a furniture band"
+  | .markupInk => "no markup character as ink"
+  | .pageBytes => "no two consecutive pages identical"
+  | .glyphNames => "every shown glyph is named"
+
+def artProps : List ArtProp :=
+  [.pageBox, .bodyArea, .bandFree, .markupInk, .pageBytes, .glyphNames]
+
+/-- The diagnostic codes whose declared meaning accounts for ink that did
+not fit where it was asked to go: `W0005` (overfull line, no feasible
+break) and `W0335` (picture larger than the text area; it may overrun the
+page). A document that ships ink outside its own area and says one of
+these has reported the loss; one that says nothing has not. No code in
+the registry says "ink left the medium", which is why the page-box claim
+is the stricter of the two and the escape is the same narrow pair. -/
+def artOverflowCodes : List String := ["W0005", "W0335"]
+
+/-- A fixture's reading, with the two facts a claim needs beside it: the
+body area the document declared, and whether its build named a loss that
+accounts for ink outside it. -/
+structure ArtReading where
+  pages : Array ArtPage
+  area : ArtRect
+  accounted : Bool
+  deriving Inhabited
+
+/-- Every way a reading breaks one claim, each named with the page, the
+box, and the ink. Both the gate and the offence ratchet read this one
+function, so a recorded offence cannot be recorded against a judgement
+nothing computes. -/
+def artOffences (r : ArtReading) : ArtProp → Array String
+  | .pageBox => Id.run do
+    let mut out : Array String := #[]
+    for h : i in [0:r.pages.size] do
+      let p := r.pages[i]
+      let box := p.box
+      for run in p.runs do
+        unless box.holds artSpellSlack artSpellSlack run.x run.bottom run.x1 run.top || r.accounted do
+          out := out.push s!"p{i + 1} glyph run [{run.x.toPtString} {run.bottom.toPtString} \
+{run.x1.toPtString} {run.top.toPtString}] outside {box.render}: {run.text}"
+      for b in p.boxes do
+        unless box.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 || r.accounted do
+          out := out.push s!"p{i + 1} {b.kind} [{b.x0.toPtString} {b.y0.toPtString} \
+{b.x1.toPtString} {b.y1.toPtString}] outside {box.render}"
+    return out
+  | .bodyArea => Id.run do
+    let mut out : Array String := #[]
+    if r.accounted then return out
+    for h : i in [0:r.pages.size] do
+      let p := r.pages[i]
+      let bands := p.bands
+      for run in p.runs do
+        unless run.isArtifact do
+          let rect : ArtRect := { x0 := run.x, y0 := run.bottom, x1 := run.x1, y1 := run.inkTop }
+          unless r.area.holds run.widest artSpellSlack run.x run.bottom run.x1 run.inkTop
+              || bands.any (·.overlaps rect) do
+            out := out.push s!"p{i + 1} glyph run {rect.render} outside \
+{r.area.render}: {run.text}"
+      for b in p.boxes do
+        unless b.isArtifact do
+          let rect : ArtRect := { x0 := b.x0, y0 := b.y0, x1 := b.x1, y1 := b.y1 }
+          unless r.area.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 || bands.any (·.overlaps rect) do
+            out := out.push s!"p{i + 1} {b.kind} {rect.render} outside {r.area.render}"
+    return out
+  | .bandFree => Id.run do
+    let mut out : Array String := #[]
+    for h : i in [0:r.pages.size] do
+      let p := r.pages[i]
+      let bands := p.bands
+      if bands.isEmpty then continue
+      for run in p.runs do
+        let tag := artInnerTag run.marks
+        unless tag.isNone || (tag.map artBandTags.contains).getD false do
+          let rect : ArtRect := { x0 := run.x, y0 := run.bottom, x1 := run.x1, y1 := run.inkTop }
+          unless r.area.holds run.widest artSpellSlack run.x run.bottom run.x1 run.inkTop do
+            if bands.any (·.overlaps rect) then
+              out := out.push s!"p{i + 1} /{tag.getD ""} run {rect.render} stands outside \
+{r.area.render} and inside a band: {run.text}"
+      for b in p.boxes do
+        unless b.isArtifact do
+          let rect : ArtRect := { x0 := b.x0, y0 := b.y0, x1 := b.x1, y1 := b.y1 }
+          unless r.area.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 do
+            if bands.any (·.overlaps rect) then
+              out := out.push s!"p{i + 1} {b.kind} {rect.render} stands outside \
+{r.area.render} and inside a band"
+    return out
+  | .markupInk => Id.run do
+    let mut out : Array String := #[]
+    for h : i in [0:r.pages.size] do
+      for run in r.pages[i].runs do
+        for c in artMarkupWatch do
+          if run.text.any (· == c) then
+            out := out.push s!"p{i + 1} ships '{c}' as ink: {run.text}"
+    return out
+  | .pageBytes => Id.run do
+    let mut out : Array String := #[]
+    for h : i in [1:r.pages.size] do
+      if r.pages[i - 1]!.content.data == r.pages[i].content.data then
+        out := out.push s!"p{i} and p{i + 1} carry identical content streams \
+({r.pages[i].content.size} bytes)"
+    return out
+  | .glyphNames => Id.run do
+    let mut out : Array String := #[]
+    let repl := Char.ofNat 0xFFFD
+    for h : i in [0:r.pages.size] do
+      for run in r.pages[i].runs do
+        if run.text.any (· == repl) then
+          out := out.push s!"p{i + 1} shows a glyph its /ToUnicode does not name: {run.text}"
+    return out
+
+/-- The artifact offences the corpus ships today: the fixture, the claim
+it breaks, and what the engine does wrong. These are not permissions —
+they are routed defects, recorded so the claim stays armed on the other
+seventy-odd fixtures instead of being weakened for these. The ratchet:
+`artifactChecks` fails a row whose offence has stopped firing, so the
+table can only shrink, and a fix must delete its row in the same commit. -/
+def artKnownOffences : List (String × ArtProp × String) := [
+  ("footer-collide", .pageBox,
+    "an unbreakable footer token 140 pt wider than the medium paints past its right \
+edge; W0333 names the slot collision, nothing names the ink that left the page"),
+  ("algorithm", .bodyArea,
+    "a numbered algorithm's line numbers set 10.7 pt left of the measure, in the page \
+margin, with no diagnostic — algorithm2e sets them inside the algorithm's own box")]
+
+
+/-! ## The mutants: each claim broken once, on real bytes
+
+A gate that does not catch the shape it commemorates grants false
+confidence, so every claim above is shown failing on a produced PDF whose
+ink was moved. The mutation is applied to the writer's own typed
+operators, which `Pdf.write` accepts as an argument — so the mutant is a
+whole file written by the real writer, cross-reference, fonts and
+`/ToUnicode` included, differing from the fixture only in where the ink
+went. That is the defect shape: the layout's record says one thing, the
+painted page another, and this tier reads the page. -/
+
+def artTagIsArtifact : Pdf.MarkTag → Bool
+  | .artifact _ => true
+  | .content _ _ _ => false
+
+mutual
+
+/-- Every `Tm` inside a text object displaced, optionally only inside
+content sequences (leaving running furniture where it was). -/
+def artMoveTextOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.TextOp → Pdf.TextOp
+  | .move x y => .move (x + dx) (y + dy)
+  | .marked t body =>
+    if onlyContent && artTagIsArtifact t then .marked t body
+    else .marked t (artMoveTextList onlyContent dx dy #[] body.toList)
+  | o@(.scale _) => o
+  | o@(.font _ _) => o
+  | o@(.color _) => o
+  | o@(.show _) => o
+
+def artMoveTextList (onlyContent : Bool) (dx dy : Dim.Sp) (acc : Array Pdf.TextOp) :
+    List Pdf.TextOp → Array Pdf.TextOp
+  | [] => acc
+  | o :: rest => artMoveTextList onlyContent dx dy (acc.push (artMoveTextOp onlyContent dx dy o)) rest
+
+end
+
+mutual
+
+/-- One page's operators with its text displaced. Fills and paths stay
+where they were, so a band keeps its place while the ink moves. -/
+def artMoveOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.ContentOp → Pdf.ContentOp
+  | .text ops => .text (artMoveTextList onlyContent dx dy #[] ops.toList)
+  | .marked t body => .marked t (artMoveList onlyContent dx dy #[] body.toList)
+  | o@(.fill _ _ _ _ _) => o
+  | o@(.path _ _ _) => o
+  | o@(.image _ _ _ _ _) => o
+  | o@(.imageMissing _ _ _ _) => o
+
+def artMoveList (onlyContent : Bool) (dx dy : Dim.Sp) (acc : Array Pdf.ContentOp) :
+    List Pdf.ContentOp → Array Pdf.ContentOp
+  | [] => acc
+  | o :: rest => artMoveList onlyContent dx dy (acc.push (artMoveOp onlyContent dx dy o)) rest
+
+end
+
+mutual
+
+/-- The first glyph of every run replaced by `gid`: a glyph the file's own
+`/ToUnicode` never names, because the CMap is built from the pages the
+layout produced and this identifier is not among them. -/
+def artRegidTextOp (gid : Nat) : Pdf.TextOp → Pdf.TextOp
+  | .show items => .show (items.map fun it => match it with
+      | .glyphs gs => .glyphs (if gs.isEmpty then gs else gs.set! 0 gid)
+      | a@(.adjust _) => a)
+  | .marked t body => .marked t (artRegidTextList gid #[] body.toList)
+  | o@(.scale _) => o
+  | o@(.move _ _) => o
+  | o@(.font _ _) => o
+  | o@(.color _) => o
+
+def artRegidTextList (gid : Nat) (acc : Array Pdf.TextOp) :
+    List Pdf.TextOp → Array Pdf.TextOp
+  | [] => acc
+  | o :: rest => artRegidTextList gid (acc.push (artRegidTextOp gid o)) rest
+
+end
+
+mutual
+
+def artRegidOp (gid : Nat) : Pdf.ContentOp → Pdf.ContentOp
+  | .text ops => .text (artRegidTextList gid #[] ops.toList)
+  | .marked t body => .marked t (artRegidList gid #[] body.toList)
+  | o@(.fill _ _ _ _ _) => o
+  | o@(.path _ _ _) => o
+  | o@(.image _ _ _ _ _) => o
+  | o@(.imageMissing _ _ _ _) => o
+
+def artRegidList (gid : Nat) (acc : Array Pdf.ContentOp) :
+    List Pdf.ContentOp → Array Pdf.ContentOp
+  | [] => acc
+  | o :: rest => artRegidList gid (acc.push (artRegidOp gid o)) rest
+
+end
+
+/-- A file written from the fixture's own inputs with one page's operators
+replaced. The writer, the fonts, the structure tree and the cross-
+reference are the real ones. -/
+def artWriteWith (fs : Font.FontSet) (geom : Layout.Geom) (doc : Ir.Doc)
+    (out : Layout.Out) (store : Image.Store)
+    (f : Array (Array Pdf.ContentOp) → Array (Array Pdf.ContentOp)) : ByteArray :=
+  let tree := Struct.ofDoc (Layout.pdfView doc)
+  let ops := Pdf.pageOps geom fs out.pages store tree
+  Pdf.write geom fs out.pages doc.info store out.outline #[] tree (f ops)
+
+/-- Page `i`'s operators rewritten, the rest untouched. -/
+def artOnPage (i : Nat) (g : Array Pdf.ContentOp → Array Pdf.ContentOp)
+    (ops : Array (Array Pdf.ContentOp)) : Array (Array Pdf.ContentOp) :=
+  if h : i < ops.size then ops.set i (g ops[i]) else ops
+
+/-- Page `j`'s operators replaced by page `i`'s: the overlay increment
+that vanished, which left two deck pages byte-identical while the page
+count still matched its reference. -/
+def artCopyPage (i j : Nat) (ops : Array (Array Pdf.ContentOp)) :
+    Array (Array Pdf.ContentOp) :=
+  match ops[i]? with
+  | some src => if j < ops.size then ops.set! j src else ops
+  | none => ops
+
+
+/-- A file read as a reading, with the declared area and whether the build
+named a loss that accounts for ink outside it. -/
+def artReadingOf (geom : Layout.Geom) (accounted : Bool) (pdf : ByteArray) :
+    Except String ArtReading :=
+  (readArtifact pdf).map fun pages =>
+    { pages := pages, area := artBodyArea geom, accounted := accounted }
+
+/-- Did this build name a loss that accounts for ink outside the declared
+area? Read from the whole build's diagnostics — elaboration and layout
+alike, since a picture that will overrun is a layout finding. -/
+def artAccounted (diags : Array Diag) : Bool :=
+  diags.any fun d => artOverflowCodes.contains d.code
+
+/-- The artifact tier over the golden corpus: every fixture built the way
+the driver builds it, its bytes read back, and every claim judged on what
+they paint. A recorded offence inverts the judgement — the row must still
+fire — so a fix that removes an offence fails until its row goes too. -/
+def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  for (n, p, _) in artKnownOffences do
+    t s!"artifact offence row {n}/{p.name}: names a golden fixture" (goldenNames.contains n)
+  t "artifact offence rows are distinct"
+    (artKnownOffences.length ==
+      (artKnownOffences.map fun (n, p, _) => s!"{n}/{p.name}").eraseDups.length)
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  let mut bandsSeen := 0
+  let mut multiPage := 0
+  let mut contentPaths := 0
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, diags) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let store ← corpusStore doc
+    let out := layoutOf fs doc geom (some pats) store
+    let pdf := driverPdf fs geom doc out store
+    match artReadingOf geom (artAccounted (diags ++ out.diags)) pdf with
+    | .error e => t s!"artifact {n}: the file reads back: {e}" false
+    | .ok rd =>
+      t s!"artifact {n}: the file's page count is the layout's \
+({rd.pages.size} vs {out.pages.size})" (rd.pages.size == out.pages.size)
+      if 1 < rd.pages.size then multiPage := multiPage + 1
+      for p in rd.pages do
+        bandsSeen := bandsSeen + p.bands.size
+        contentPaths := contentPaths + (p.boxes.filter fun b => !b.isArtifact).size
+      for prop in artProps do
+        let offs := artOffences rd prop
+        if artKnownOffences.any fun (f, q, _) => f == n && q == prop then
+          t s!"artifact {n}: the recorded offence against {prop.name} no longer \
+fires — delete its row from artKnownOffences" (!offs.isEmpty)
+        else
+          t s!"artifact {n}: {prop.name}: {offs.toList}" offs.isEmpty
+  -- Non-vacuity: a claim about a region no fixture paints proves nothing.
+  t s!"artifact corpus: furniture bands are reached ({bandsSeen})" (0 < bandsSeen)
+  t s!"artifact corpus: multi-page fixtures are read ({multiPage})" (1 < multiPage)
+  t s!"artifact corpus: content paths and images are reached ({contentPaths})" (0 < contentPaths)
+
+/-- Each claim broken once, on a file the real writer produced, and each
+one's untouched control passing. The mutation moves ink or re-identifies a
+glyph in the writer's own typed operators; nothing else about the file
+changes, so a claim that stays silent here is a claim that would have
+stayed silent on the defect it commemorates. -/
+def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  let build (n : String) :
+      IO (Font.FontSet × Layout.Geom × Ir.Doc × Layout.Out × Image.Store) := do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let store ← corpusStore doc
+    return (fs, geom, doc, layoutOf fs doc geom (some pats) store, store)
+  let judge (label : String) (prop : ArtProp) (geom : Layout.Geom) (pdf : ByteArray)
+      (wantOffence : Bool) : IO Unit :=
+    match artReadingOf geom false pdf with
+    | .error e => t s!"artifact mutant {label}: reads back: {e}" false
+    | .ok rd =>
+      let offs := artOffences rd prop
+      if wantOffence then
+        t s!"artifact mutant {label}: {prop.name} refuses it" (!offs.isEmpty)
+      else
+        t s!"artifact mutant {label}: the control passes {prop.name}: {offs.toList}" offs.isEmpty
+  let (fs, geom, doc, out, store) ← build "paragraphs"
+  let plain := driverPdf fs geom doc out store
+  let moved (onlyContent : Bool) (dx dy : Dim.Sp) (page : Nat)
+      (f : Font.FontSet) (g : Layout.Geom) (d : Ir.Doc) (o : Layout.Out)
+      (s : Image.Store) : ByteArray :=
+    artWriteWith f g d o s (artOnPage page (artMoveList onlyContent dx dy #[] ·.toList))
+  judge "every Tm 200pt left of the page" .pageBox geom
+    (moved false (-(Dim.pt 200)) 0 0 fs geom doc out store) true
+  judge "paragraphs untouched" .pageBox geom plain false
+  judge "content Tm 30pt into the margin" .bodyArea geom
+    (moved true (-(Dim.pt 30)) 0 0 fs geom doc out store) true
+  judge "paragraphs untouched" .bodyArea geom plain false
+  judge "a glyph the /ToUnicode does not name" .glyphNames geom
+    (artWriteWith fs geom doc out store (artOnPage 0 (artRegidList 60000 #[] ·.toList))) true
+  judge "paragraphs untouched" .glyphNames geom plain false
+  -- The band claim needs a page that paints one: chrome's third frame.
+  let (cf, cg, cd, co, cs) ← build "chrome"
+  judge "body prose lifted 100pt into a title band" .bandFree cg
+    (moved true 0 (Dim.pt 100) 2 cf cg cd co cs) true
+  judge "chrome untouched" .bandFree cg (driverPdf cf cg cd co cs) false
+  -- The vanished overlay increment: two consecutive pages, one content stream.
+  let (of_, og, od, oo, os) ← build "overlays"
+  judge "an overlay step's page replaced by the previous one" .pageBytes og
+    (artWriteWith of_ og od oo os (artCopyPage 0 1)) true
+  judge "overlays untouched" .pageBytes og (driverPdf of_ og od oo os) false
+  -- Markup as ink: the check judges the character, not its provenance
+  -- (as `inkMarkupChecks` does, exemption table and all), so an authored
+  -- backslash is its witness. The corpus ships none; the recovery paths
+  -- that could leak one (`\verb`, an unmodelled command's argument) are
+  -- checked silent beside it.
+  for (label, src, want) in [
+      ("an authored backslash", dvDoc "" "a \\textbackslash{} b", true),
+      ("authored braces", dvDoc "" "a \\{x\\} b", true),
+      ("a verbatim run's own markup", dvDoc "" "\\verb|\\foo{bar}|", false),
+      ("an unmodelled command's argument", dvDoc "" "\\parbox{.25\\textwidth}{x}", false)] do
+    let (d, _) := elabStr src
+    let g := Layout.Geom.ofPage d.page
+    let o := layoutOf oneFace d g (some pats)
+    judge s!"markup ink: {label}" .markupInk g (driverPdf oneFace g d o) want
+
+def artifactChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  artifactMutantChecks ref oneFace pats
+  artifactCorpusChecks ref oneFace pats
+
+
+/-! ## Backend parity: a band both artifacts must honour
+
+A furniture band is one IR declaration (`Ir.Chrome`), so it is a fact both
+artifacts must honour — the shape AGENTS.md calls a projection corollary
+(`footBand_projects`, `backend_gaps_agree`). The PDF paints the frame-title
+band as a full-width fill; whether the HTML declares one is checked here,
+because nothing else checks it: `deckCssChecks` and `deckStructureChecks`
+read the emitted tree for the elements they know about, and an element the
+emitter never writes is invisible to a test that never asks for it.
+
+This is the parity claim only. Which class the HTML should use is the
+emitter's decision, so the claim is satisfied by any of the spellings the
+deck stylesheet already uses for a full-width chrome element. -/
+
+/-- The class names an emitted frame-title band could plausibly carry. The
+claim is parity, not a spelling, so any one of these satisfies it. -/
+def artBandClasses : List String :=
+  ["slide-title", "frame-title", "slide-head", "titlebar", "title-bar",
+   "band-top", "slide-band", "frametitle"]
+
+/-- The golden fixtures whose HTML is missing a band their PDF paints.
+A routed defect, not a permission, and a ratchet: a row whose fixture
+starts declaring a band fails until the row goes. -/
+def artBandParityOffences : List (String × String) := [
+  ("themed",
+    "the PDF paints the frame-title band as a full-width fill; the emitted HTML \
+carries no band element and the stylesheet no rule for one, so the themed deck's \
+title bar is absent in one artifact and present in the other"),
+  ("chrome",
+    "the same gap on the chrome fixture: a painted title band in the PDF, no band \
+element in the HTML"),
+  ("daylight",
+    "the same gap under the daylight bundle"),
+  ("poster-headline",
+    "the poster's headline band is painted in the PDF and absent from the HTML"),
+  ("talk", "the same gap on the talk deck"),
+  ("deck", "the same gap on the base deck fixture"),
+  ("deck1610", "the same gap at 16:10"),
+  ("centering", "the same gap"),
+  ("columns", "the same gap"),
+  ("overlays", "the same gap"),
+  ("overlays-blocks", "the same gap"),
+  ("overprint", "the same gap"),
+  ("notes", "the same gap"),
+  ("furniture", "the same gap"),
+  ("footer-left", "the same gap"),
+  ("footer-mixed", "the same gap"),
+  ("footer-collide", "the same gap"),
+  ("lists-deck", "the same gap"),
+  ("valign", "the same gap"),
+  ("quote-deck", "the same gap")]
+
+/-- Every fixture whose produced PDF paints a furniture band, held against
+the HTML the same document emits: the band is one IR declaration, so an
+artifact that drops it disagrees with the one that paints it. Offences are
+recorded and ratcheted, so the claim is armed for every future deck. -/
+def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  for (n, _) in artBandParityOffences do
+    t s!"band parity offence row {n}: names a golden fixture" (goldenNames.contains n)
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let store ← corpusStore doc
+    let out := layoutOf fs doc geom (some pats) store
+    match readArtifact (driverPdf fs geom doc out store) with
+    | .error _ => pure ()
+    | .ok pages =>
+      let painted := pages.any fun p => !p.bands.isEmpty
+      unless !painted do
+        let html := (HtmlDoc.emit {} doc).1
+        let declared := artBandClasses.any fun c => hasStr html s!"\"{c}"
+        if artBandParityOffences.any fun (f, _) => f == n then
+          t s!"band parity {n}: the recorded offence no longer fires — the HTML now \
+declares a band; delete its row" (!declared)
+        else
+          t s!"band parity {n}: its PDF paints a furniture band, so its HTML must \
+declare one" declared

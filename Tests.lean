@@ -9,6 +9,7 @@ import Tests.Themes
 import Tests.FontMath
 import Tests.Struct
 import Tests.PdfConformance
+import Tests.Artifact
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -153,6 +154,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   objTableChecks ref oneFace
   featureCensusChecks ref oneFace
   pdfConformanceChecks ref oneFace
+  artifactChecks ref oneFace pats
+  artBandParityChecks ref oneFace pats
   leafAttributionChecks ref oneFace pats
   inlineAttributionChecks ref oneFace pats
 

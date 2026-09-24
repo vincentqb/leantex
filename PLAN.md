@@ -873,6 +873,128 @@ optional. `Elab.runRawsSpanned` likewise stands unchanged as a thin wrapper
 over the new `prepare`/`runPrepared` split, so no caller outside this tree has
 to move.
 
+2026-09-24 — the artifact tier: assertions over the produced PDF bytes.
+`censusChecks` reads `Layout.Out`, which is the engine's own belief about
+what it shipped, and that was not enough: a private reference deck matched
+its reference output on **0 of 41 pages** while the suite was entirely
+green — zero build warnings, all tests passing, pre-commit clean, no
+phantom citations, the owed ratchet held. All thirteen defects behind that
+number were found by rasterising a page or reading its text layer. Three
+examples that passed the census: a `\parbox` width argument shipped as
+visible ink; glyph runs painted at negative page x (`pdftotext -bbox`
+reported `xMin="-6.638"`, so a node label read "e Cream Sales"); two
+consecutive deck pages byte-identical because an overlay increment
+vanished, with the page count still matching.
+
+The tier below `Layout.Out` is `Tests/Artifact.lean`: a PDF-semantics
+evaluation of the written bytes. `scanContent` tokenises a decoded content
+stream; `evalContent` walks it under §9.4.4's arithmetic — the pen starts
+at `Tm`, advances by each glyph's own `/W` width times the `Tf` size times
+the `Tz` scale, and steps by each `TJ` adjustment — so every position is a
+viewer's, not a reading of the writer's intent. A run's characters come
+from the file's own `/ToUnicode`, its vertical extent from the
+descriptor's `/Ascent` and `/CapHeight`, its protrusion allowance from the
+widest `/W` entry among its own glyphs. Six claims, each an `ArtProp` so a
+recorded offence names what it breaks: ink inside `/MediaBox`; content ink
+inside the declared body area; no body ink outside that area inside a
+painted furniture band; no markup character as glyph ink; no two
+consecutive pages sharing a content stream; every shown CID named by
+`/ToUnicode`.
+
+Three decisions, and what each costs.
+
+**What reads the PDF: the engine's own reader in the suite, an external
+tool in a `scripts/` oracle outside it.** `PdfRead` keeps `lake test`
+hermetic — AGENTS.md's "fixtures never depend on what this host has
+installed" is not negotiable, and a suite that needed Poppler would be a
+suite that reports differently on two machines. The cost is real and
+named: a reader built from the same understanding as the writer can be
+wrong in the same direction twice, and every defect this tier exists for
+was in fact found by an outside tool. So `scripts/ink-oracle.lean` holds
+the engine reader against `pdftotext -bbox` on the same bytes — ink extent
+per page, content as sorted letters, and the off-page verdict — and is
+deliberately not in `lake test`. 73 of 76 fixtures agree exactly. The
+three that do not are findings, not noise, and one of them is the reason
+the oracle exists: on `footer-collide` Poppler reports `xMax` clipped to
+the page edge and returns **24 fewer characters** than the engine reader,
+because it cannot show the ink that left the medium. An independent tool
+losing characters is stronger evidence than either reader alone.
+
+**Which corpus: every golden fixture.** The obligation table already says
+a golden fixture owes a `censusTable` row; a fixture owing a `Layout.Out`
+assertion and no artifact one is exactly the fixture where the two can
+diverge unnoticed, and divergence is the whole subject. No subset, no
+judgement call about which decks matter.
+
+**Runtime: +1.62 s on a 42.97 s suite (+3.8 %).** Measured compiled, three
+runs each, same tree with and without the two call sites: 42.97 s ± 0.15
+→ 44.59 s ± 0.20. The band-parity sweep and the log-only gate bring the
+total to 45.82 s (+2.85 s, +6.6 %). Cheap because `pdfConformanceChecks`
+already writes every fixture twice; the marginal cost is the structure
+tree, one more write, and the content scan. The external oracle costs
+2 m 32 s and is why it is not in `lake test`.
+
+Every claim is shown failing on bytes the real writer produced. `Pdf.write`
+takes its typed operators as an argument, so a mutant is a whole file —
+cross-reference, fonts and `/ToUnicode` included — differing from the
+fixture only in where the ink went: every `Tm` 200 pt left of the page
+(the negative-x defect, literally); content `Tm` 30 pt into the margin; a
+`/P` run lifted 100 pt into `chrome`'s title band; a glyph re-identified
+past the CMap; an overlay page replaced by its predecessor (the vanished
+increment). Two claims fire on the corpus as it stands, recorded in
+`artKnownOffences` as routed defects with a ratchet — a row whose offence
+stops firing fails the suite, so the table can only shrink:
+`footer-collide` paints an unbreakable footer token 140 pt past the medium
+with nothing naming the loss, and `algorithm` sets its line numbers
+10.7 pt into the page margin with no diagnostic at all.
+
+Two things the tier cannot see, said rather than left implicit. It does
+not descend into form XObjects, so text inside a placed PDF page is
+invisible to it — which is what `figures` disagreeing 88-to-46 with
+Poppler means. And the `.25` defect (a `\parbox` width argument inked) is
+not expressible here: its glyphs carry no markup character, and no
+artifact-level property distinguishes a leaked argument from authored
+digits. Its home is the elaborator's argument-consumption invariant, and
+`\parbox{.25\textwidth}{x}` no longer reproduces it.
+
+Two judge bugs were found by running the tier rather than by reading it,
+and both are recorded because both were the tempting kind. A page-wide
+fill's `x + w` misses the `/MediaBox` edge by a few millipoints, because
+origin and width are spelled separately at thousandth-of-a-point
+precision — hence `artSpellSlack`, the precision at which a coordinate can
+be expressed at all, not a tolerance for defects. And applying the
+horizontal protrusion allowance vertically excused half a line of ink in a
+title band: `ArtRect.holds` takes horizontal and vertical slack
+separately, because character protrusion hangs a boundary glyph into the
+margin by design and nothing hangs a baseline out of the measure.
+
+2026-09-24 — the frame-title band ships in one artifact and not the other.
+Reported as a themed deck rendering wrongly in HTML; reproduced on the
+synthetic corpus, where it is two defects. `themed.html`'s first slide
+renders 1280×2400 — portrait, the title at display size wrapping onto two
+lines — where the same document's PDF page 1 is 16:9 and the *unthemed*
+`deck.html` is a correct 1280×720, so the aspect constraint is lost on the
+themed title-page path specifically. And the frame-title band is not
+emitted at all: the PDF paints it as a full-width fill (visible as the dark
+navy bar on `themed`'s page 3), while the emitted HTML's class census
+carries `slide`, `slide-foot`, `band-right`, `slide-track`, `progress` and
+no band element, and the stylesheet no rule for one.
+
+The band is one IR declaration, so this is the shape `footBand_projects`
+and `backend_gaps_agree` are named for: a fact both artifacts must honour,
+stated once and projected per backend. The foot has its projection; the
+title band had none, and nothing asked for it — `deckCssChecks` and
+`deckStructureChecks` read the tree for the elements they know about, and
+an element the emitter never writes is invisible to a test that never
+mentions it. `artBandParityChecks` closes that: for every golden fixture
+whose produced PDF paints a furniture band, the HTML the same document
+emits must declare one. It fires on all twenty banded fixtures today, each
+recorded in `artBandParityOffences` with the same ratchet — a fixture that
+starts declaring a band fails until its row goes. The emitter's choice of
+class name is left open (`artBandClasses`): the claim is parity, not a
+spelling. Both HTML defects are routed, not fixed.
+
+
 2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
 outside it, `inventory` and `value` set side by side look misaligned, the
 descender giving the impression the word is bumped up; correct it, keep
