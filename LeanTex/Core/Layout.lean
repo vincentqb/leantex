@@ -6843,9 +6843,83 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
       (counted := !j.inFloat) (leaf := j.leaf)), brk, false)
 
+/-- How many lines the document declared for a paragraph: one per forced
+break in its items. Every paragraph carries a trailing forced break —
+`itemsOfInlines` appends one where the content does not end in the
+author's own — so the count is the segment count exactly: a paragraph
+with no `\\` declares one line, `k` interior breaks declare `k + 1`, and
+a `\\` with nothing after it ends its own segment rather than opening a
+new one. -/
+private def declaredLines (items : Array Item) : Nat :=
+  items.foldl (fun n it => match it with
+    | .pen _ cost _ _ _ _ => if cost ≤ forcedCost then n + 1 else n
+    | _ => n) 0
+
+/-- W0386, the declared shape's account: the author ended a line where they
+meant it to end, the segment did not fit the measure, and the breaker found
+a legal break inside it — so the remainder returns to the flush-left margin
+and the page shows one shape where another was declared. Named, not
+refused: the degraded state at full strength, since refusing the break
+would run ink off the measure instead (display type is ragged and
+unhyphenated, so the breaker has nowhere to put it). Silent where nothing
+was declared — a paragraph of continuous prose declares one line and may
+set as many as it needs — and silent where every declared break held. -/
+private def B.warnReflow (b : B) (declared shipped : Nat) : B :=
+  if 2 ≤ declared ∧ declared < shipped then
+    let loc := match b.curFrame with
+      | some n => s!" in frame {n}"
+      | none => ""
+    { b with diags := b.diags.push (Diag.of .W0386
+        (s!"a declared line break did not hold{loc}: " ++
+          s!"{declared} lines were declared, {shipped} ship")
+        (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
+to widen the measure, or declare a narrower face")
+        (subject := b.curFrame.map toString)) }
+  else b
+
+@[simp] private theorem warnReflow_pages (b : B) (d s : Nat) :
+    (b.warnReflow d s).pages = b.pages := by
+  simp only [B.warnReflow]
+  split <;> rfl
+
+@[simp] private theorem warnReflow_geom (b : B) (d s : Nat) :
+    (b.warnReflow d s).geom = b.geom := by
+  simp only [B.warnReflow]
+  split <;> rfl
+
+@[simp] private theorem warnReflow_docBg (b : B) (d s : Nat) :
+    (b.warnReflow d s).docBg = b.docBg := by
+  simp only [B.warnReflow]
+  split <;> rfl
+
+@[simp] private theorem warnReflow_cur (b : B) (d s : Nat) :
+    (b.warnReflow d s).cur = b.cur := by
+  simp only [B.warnReflow]
+  split <;> rfl
+
+@[simp] private theorem warnReflow_noBreak (b : B) (d s : Nat) :
+    (b.warnReflow d s).noBreak = b.noBreak := by
+  simp only [B.warnReflow]
+  split <;> rfl
+
+/-- `warnReflow_accounts`: the declared shape and the diagnostic in the same
+step — a paragraph that declared a break and shipped more lines than it
+declared adds exactly one W0386, and one that declared none, or whose
+breaks all held, adds none. The `_accounts` shape
+(`rewriteCtrl_accounts`, `warnSpill_accounts`): the re-flow is paid for by
+the warning, decided on the two counts the builder already holds — the
+forced breaks in the items it is about to place and the breaks the breaker
+returned — never by reading the shipped pages back afterwards. -/
+private theorem warnReflow_accounts (b : B) (declared shipped : Nat) :
+    (b.warnReflow declared shipped).diags.size =
+      b.diags.size + (if 2 ≤ declared ∧ declared < shipped then 1 else 0) := by
+  unfold B.warnReflow
+  split <;> simp_all
+
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
-    ({ b with diags := b.diags ++ j.diags }, 0, true)).1
+    (({ b with diags := b.diags ++ j.diags }).warnReflow
+      (declaredLines j.items) breaks.size, 0, true)).1
 
 /-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
 become literal text. Running content is laid out after the body, so both
@@ -7531,7 +7605,7 @@ private theorem placePara_noBreak (fs : FontSet) (b : B) (j : ParaJob)
   exact Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) =>
       acc.1.pages = b.pages ∧ acc.1.noBreak = true)
-    ⟨rfl, h⟩
+    ⟨by simp, by simp [h]⟩
     (fun _ acc hacc =>
       have step := placeParaLine_noBreak fs j acc _ hacc.2
       ⟨step.1.trans hacc.1, step.2⟩)
@@ -7698,7 +7772,7 @@ private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
   unfold placePara
   exact Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) => BgStep b acc.1)
-    (BgStep.of_eq rfl rfl (by simp))
+    (BgStep.of_eq (by simp) (by simp) (by simp))
     (fun _ acc hacc => hacc.trans (bgStep_placeParaLine ..))
 
 private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)

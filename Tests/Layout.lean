@@ -3298,7 +3298,17 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
 strand one word on a line (the finite-stretch ragged setting plus the
 minimum-last-line parfill, `Layout.displayItems`). Greedy ragged packing
 sets everything-but-the-last-word on line one here and strands
-"Functions". -/
+"Functions".
+
+The second half is the shape the *author* declared, not the one the breaker
+prefers: a `\\` in a title is a decision about where a line ends, and a
+declared segment too wide for the measure loses it — the breaker finds a
+legal break inside the segment and the remainder returns to the flush-left
+margin, which reads as a broken indent. W0005 has nothing to say (no line
+is overfull), so the loss went unnamed; these rows read the count off
+`Layout.Out` and the naming off the run's own diagnostics, with both floors
+pinned — a break that holds is silent, and a title declaring no break has
+no shape to lose. -/
 def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -3315,6 +3325,40 @@ def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "the break balances: no one-word last line"
     (((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Functions").map
       fun l => hasStr l.text "Zeta").getD false)
+  -- A break the author declared is a decision about shape, and a segment
+  -- that does not fit the measure loses it: the breaker finds a legal
+  -- break inside the declared line and the remainder returns to the
+  -- flush-left margin, which reads as a broken indent. The page shows it,
+  -- so the page is what says so — and W0005 correctly does not fire,
+  -- because no line is overfull.
+  let narrow := "\\page{ width = 260pt, hmargin = 30pt, height = 500pt }\n"
+  let declared (title : String) : Ir.Doc :=
+    (elabStr (narrow ++ s!"\\title\{{title}}\n" ++
+      "\\begin{document}\n\\maketitle\nBody.\n\\end{document}")).1
+  let lost := declared "Coordinating Placeholder Schedules\\\\\\quad A Second Declared Line"
+  let lostOut := layoutOf oneFace lost
+  let lostC := censusOf #[] lostOut
+  let titleWords := ["Coordinating", "Placeholder", "Schedules", "Second", "Declared", "Line"]
+  let titleLines (c : Array CensusPage) : Nat :=
+    (c[0]?.map fun p =>
+      (p.lines.filter fun l => titleWords.any (hasStr l.text ·)).size).getD 0
+  t "a declared two-line title that does not fit ships more than two lines"
+    (decide (titleLines lostC > 2))
+  t "a declared break destroyed by re-flow is named"
+    (lostOut.diags.any (·.code == "W0386"))
+  t "the re-flow is not an overfull line, so W0005 stays silent"
+    (!lostOut.diags.any (·.code == "W0005"))
+  t "the loss is named once for the paragraph that lost it"
+    ((lostOut.diags.filter (·.code == "W0386")).size == 1)
+  -- Two floors the account must not cross: a declared break that holds is
+  -- silent, and a title that declared no break has no shape to lose.
+  let keptOut := layoutOf oneFace (declared "Short Title\\\\Second Line")
+  t "a declared break that holds is silent"
+    (!keptOut.diags.any (·.code == "W0386"))
+  t "a title declaring no break never reports one"
+    (!(layoutOf oneFace
+      (declared "Coordinating Placeholder Schedules Across Several Regions")).diags.any
+        (·.code == "W0386"))
 
 /-- xcolor's `\color{n}` at the flow's top level is the document's ink:
 the declared body colour routes through the palette's one resolving site

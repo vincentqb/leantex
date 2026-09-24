@@ -371,6 +371,14 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- presentation does not, because a math list carries neither.
   | .W0385 =>
     dvE "$\\textcolor{indigo}{x}$" ++ dvE "$\\text{\\textbf{bold} word}$"
+  -- A title whose author declared two lines and whose first does not fit
+  -- the measure: the breaker finds a legal break inside the declared line,
+  -- so a third line ships and its remainder returns to the flush-left
+  -- margin. No line is overfull, so W0005 has nothing to say.
+  | .W0386 => dvL one (dvDoc
+      ("\\page{ width = 220pt, margin = 20pt }\n" ++
+       "\\title{Coordinating Placeholder Schedules\\\\A Second Declared Line}\n")
+      "\\maketitle")
   | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++

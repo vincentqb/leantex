@@ -468,6 +468,9 @@ warning[W0384]: frame 1 is 5.821pt taller than its page; it continues on the nex
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 warning[W0385]: the colour 'indigo' inside math sets in the surrounding style
 warning[W0385]: '\textbf' inside math sets in the surrounding style
+── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
+warning[W0386]: a declared line break did not hold: 2 lines were declared, 4 ship
+  help: shorten the declared line, reduce \page{ hmargin = ... } to widen the measure, or declare a narrower face
 ── W0387 (config) a known construct was read and had no effect
 warning[W0387]: '\thispagestyle' was read and had no effect
   help: \allow{W0387} accepts the skip
