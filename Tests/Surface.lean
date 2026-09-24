@@ -4754,13 +4754,20 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the diagram's edge ships beside its labels"
     ((c11[0]?.map (·.paths == 1)).getD false)
 
-/-- **A `(` where an operation would begin starts a new subpath**
-(`Picture.subpaths`). A pgf author writes several edges of one diagram in a
+/-- **A construct outside the subset costs only itself.** Two halves of one
+rule, both read off the shipped page.
+
+A `(` where an operation would begin starts a new subpath
+(`Picture.subpaths`): a pgf author writes several edges of one diagram in a
 single statement — `\path (a) edge (b) (c) edge (d);` — and the evaluator
 read one chain, so the `(` that opened the second edge was a construct
 outside the subset and the whole statement went with it: four edges of a
-real diagram, lost to one token. Read off the shipped strokes, since the
-claim is that the page carries them. -/
+real diagram, lost to one token.
+
+And a construct that stays refused pays for itself alone: `baseline` aligns
+a picture's baseline with a node's, which needs an inline picture the engine
+does not have, so it is named and dropped — and the page must be the page
+the same picture ships without it. -/
 def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -4809,6 +4816,25 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (_, ds7) := elabStr ("\\pictures{ tool = none }" ++ pic "\\draw (0,0);\n")
   t "a path with one endpoint is still named, not silently dropped"
     (ds7.any fun d => d.code == "E0333")
+  -- The other half of the same rule, for a construct that stays refused:
+  -- `baseline` aligns a picture's baseline with a node's, which needs an
+  -- inline picture the engine does not have, so it is named and dropped —
+  -- and the drop must cost *only* that alignment. Stated as an equality
+  -- between the shipped pages of the same picture with and without the
+  -- option, since only the page can say the drop moved nothing.
+  let bl := "\\node (c) {P};\\node (d) [right =of c] {Q};\\path (c) edge (d);\n"
+  let (withOpt, dsb) := run ("[baseline={(c.base)}]\n" ++ bl)
+  let (without, _) := run bl
+  t "the dropped baseline option is named at the picture"
+    (dsb.any fun d => d.code == "W0334" && hasStr d.message "baseline")
+  t "dropping the baseline option moves nothing on the page"
+    (withOpt.size == without.size &&
+      (match withOpt[0]?, without[0]? with
+       | some a, some b =>
+         a.paths == b.paths && a.pathBoxes == b.pathBoxes &&
+           a.lines.map (fun l => (l.text, l.x, l.y, l.size)) ==
+             b.lines.map fun l => (l.text, l.x, l.y, l.size)
+       | _, _ => false))
 
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is
