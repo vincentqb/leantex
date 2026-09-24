@@ -230,6 +230,21 @@ list.
   machine's pending state — the same accumulator-statability work
   `floorChars_id` waits on. The witness meanwhile is the whole-label rows
   in `pictureNodeFloorChecks`, read off the shipped page.
+- `reflow_named` — a declared break is honoured or named, weak public form:
+  for a one-paragraph document that declared at least one break, a flow
+  shipping more ink lines than were declared carries W0386 in the run's
+  diagnostics. The accounting half is proved at the step
+  (`Layout.warnReflow_accounts`); what is owed is that the warning survives
+  the placement fold and reaches the `Out` a caller reads. Blocked on three
+  factorizations: there is no diagnostic-monotonicity notion across
+  placement (a `DiagsExtend` beside `PagesExtend` — every step only appends
+  and no lemma says so), the breaker's `breaks.size` is not yet connected
+  to the ink lines a paragraph ships, and `declaredLines`' forced-penalty
+  count is not yet connected to the `.linebreak` count of the inlines
+  (`itemsOfInlines`'s own census, the `Acc` split again). The same three
+  hold `warnSpill_accounts` one level below its artifact, so discharging
+  them closes both. The witness meanwhile is the four declared-break rows
+  of `titleBreakChecks`, read off `Layout.run`'s own diagnostics.
 
 ### Log
 

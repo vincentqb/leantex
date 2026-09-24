@@ -493,4 +493,38 @@ theorem nodeLabel_mem (cx : Picture.Cx) (env : List (String × Picture.Val))
           c ∉ Ir.markupChars := by
   sorry
 
+/-- The lines a set of inlines declares: one per `\\`, plus the line the
+last segment ends. The measure the re-flow statement compares the shipped
+count against, over the public inline type. -/
+def declaredBreakLines (xs : Array Ir.Inline) : Nat :=
+  1 + xs.foldl (fun n x => match x with | .linebreak _ => n + 1 | _ => n) 0
+
+/-- The flow's own lines that carry ink: furniture stands in the margin by
+design and the note apparatus belongs to the page, so neither is a line the
+document's paragraphs declared. -/
+def inkLines (o : Out) : List LineOut :=
+  o.pages.toList.flatMap fun p =>
+    p.lines.toList.filter fun l => !l.furniture && !l.note && lineInk l ≠ []
+
+-- owed: reflow_named
+-- owner: LeanTex.Core.Layout
+-- source: the declared-break slice (PLAN 2026-09-24, the re-flow entry): a deck's title shipped three lines where its author declared two and said nothing, because the engine had no code for "the shape you declared is not the shape shipped". W0386 and its step account (`Layout.warnReflow_accounts`) close the accounting half — the warning is pushed in the same step that reads the two counts — but the step is not the artifact: nothing yet states that the diagnostic survives the placement fold and reaches the `Out` a caller reads, so a future refactor between the two could drop it and leave the account green. The in-suite witness is the "a declared break destroyed by re-flow is named" row of `titleBreakChecks`, which reads `Layout.run`'s own diagnostics off a title whose first declared line does not fit, with three sibling rows pinning the floors (a break that holds is silent, a title declaring no break reports nothing, and W0005 stays silent because no line is overfull).
+-- blocker: three factorizations, none of them a tactic. (1) There is no diagnostic-monotonicity notion across placement: `placePara` folds `placeParaLine` through `placeParaTrailer`, `placeLine`, `fitCommit`, `commit`, `finishPage`, `spillPage` and `warnSpill`, and while every one of them only appends, no lemma says so — `PagesExtend` is the shape this wants, a `DiagsExtend` beside it, which is what makes "pushed at the step" mean "present in the `Out`". (2) The shipped count is not connected to the breaker's: `breaks.size` is what `warnReflow` reads, and that it equals the ink lines a one-paragraph document ships needs the placement induction (one line committed per break, the same lines re-placed after a spill). (3) The declared count is not connected to the item stream: `declaredLines` counts forced penalties in `Array Item`, and that this is the `.linebreak` count of the inlines is `itemsOfInlines`'s own census — the `Acc`-split work the emission-conservation rows already wait on. The same three hold `warnSpill_accounts` (W0384) one level below its artifact, so discharging them closes both.
+-- goldens: no
+/-- A declared break is honoured or named, weak public form: for a document
+that is one paragraph declaring at least one break and not ending in one,
+if the flow ships more ink lines than the paragraph declared, the run's
+diagnostics name the loss. The restriction to a single paragraph is what
+makes the shipped count readable from `Out` at all — there is no channel
+recording which paragraph a line came from, and adding one for this
+statement alone would be the spec copy the queue forbids. -/
+theorem reflow_named
+    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc) (xs : Array Ir.Inline)
+    (hone : doc.body = #[Ir.Block.para xs])
+    (hdecl : 2 ≤ declaredBreakLines xs)
+    (hlast : ∀ e, xs.back? ≠ some (Ir.Inline.linebreak e))
+    (hlost : declaredBreakLines xs < (inkLines (Layout.run geom fs none doc)).length) :
+    (Layout.run geom fs none doc).diags.any (·.kind == .W0386) = true := by
+  sorry
+
 end Obligations
