@@ -689,10 +689,16 @@ structure Cx where
   scale : Int := 1000
   styles : List (String × Array Tok) := []
   transformShape : Bool := false
+  /-- What the document's `\tikzset` lines set for every picture in it
+  (`documentOpts`): the outermost bracket every statement inherits, so a
+  key declared once in the preamble — an arrow tip is the motivating one —
+  is read where the statement's own bracket declared nothing. The picture's
+  own entries and the statement's own both beat it (`mergeOpts`). -/
+  global : Array (Array Tok) := #[]
   /-- The picture-level option entries its contents inherit: what a style
-  named in `\begin{tikzpicture}[...]` expanded to, already split into
-  entries. Every path and node reads them before its own
-  (`inheritOpts`). -/
+  named in `\begin{tikzpicture}[...]` expanded to, and the keys that
+  bracket set itself, already split into entries. Every path and node reads
+  them before its own (`inheritOpts`). -/
   opts : Array (Array Tok) := #[]
   /-- What `every node/.style={...}` declared, split into entries: pgf runs
   it inside the node's own scope, so it stands between the picture's
@@ -894,11 +900,15 @@ def arrowTipName : List Tok → Option String
   | _ => none
 
 /-- Does a name draw as this subset's arrow head? A tip the document
-declared with `/.tip`, or one of the two built-in kinds the plain head has
-always stood in for (`latex`, pgf manual §16.3; `>` is the shorthand
-itself). Anything else stays outside the subset and is named. -/
+declared with `/.tip`, or one of the built-in kinds the plain head has
+always stood in for: `latex` (pgf manual §16.3, the `arrows` library) and
+`Latex`, which is `arrows.meta`'s spelling of that same tip — one shape
+under two library names, so admitting it claims no new substitution. `>` is
+the shorthand itself. Anything else stays outside the subset and is named,
+which is what keeps a genuinely different tip kind a visible loss rather
+than a silent head of the wrong shape. -/
 def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
-  n == ">" || n == "latex" || (styles.lookup (tipKey n)).isSome
+  n == ">" || n == "latex" || n == "Latex" || (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
 folds into the bundles, in source order so a later definition may name an
@@ -943,14 +953,6 @@ private def engineKeyNames : List String := ["node distance"]
 /-- Does this entry set a key the engine reads? -/
 def setsEngineKey (entry : Array Tok) : Bool :=
   engineKeyNames.contains (keyPath entry.toList)
-
-/-- What one `\tikzset` key list leaves unread, named for a diagnostic at
-the line that wrote it. The elaborator's one caller; the fold the pictures
-read is `documentStyles`. A key the engine reads (`setsEngineKey`) is not
-among them: it is honoured, not dropped. -/
-def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
-  ((readStyleList styles keys).2.filter (!setsEngineKey ·)).filterMap fun e =>
-    (e[0]?).map tokText
 
 /-- Split an option bracket into entries and expand a declared bundle's
 name one level into the bundle's own entries. One level is all a use site
@@ -1021,43 +1023,63 @@ theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
   · exact Or.inl h
   · exact Or.inr h
 
-/-- The three levels one bracket's entries are read under, outermost first.
+/-- The four levels one bracket's entries are read under, outermost first.
 
-**picture < every X < the bracket's own.** pgf sets a picture's keys in the
-picture's scope; an `every node`/`every path` style is executed inside the
-node's or path's own scope, which is *inside* the picture's; and the
-bracket's own keys are read there too, after it. So `every X` beats what the
-picture set and loses to what the X itself says — and because each level is
-an `inheritOpts`, a key a later level names is *dropped* from the earlier
-one rather than merely preceded by it: the `minimum` family accumulates by
-maximum within one bracket, so a surviving outer `minimum size=9mm` would
-beat an inner `4mm` and draw the opposite of what the document says.
+**document < picture < every X < the bracket's own.** pgf executes a
+`\tikzset` key list in the scope it stands in, so a key set once in the
+preamble is set for every picture; a picture's keys are set in the
+picture's scope, inside that; an `every node`/`every path` style is
+executed inside the node's or path's own scope, which is inside the
+picture's; and the bracket's own keys are read there too, after it. So each
+level beats the ones outside it and loses to the ones inside — and because
+each is an `inheritOpts`, a key a later level names is *dropped* from the
+earlier one rather than merely preceded by it: the `minimum` family
+accumulates by maximum within one bracket, so a surviving document-level
+`minimum size=12mm` would beat an inner `4mm` and draw the opposite of what
+the node says.
 
-`merge_own_exact` and `merge_every_exact` are the two boundaries,
-`merge_covers` that nothing the bracket said is lost. -/
-def mergeOpts (picture every own : Array (Array Tok)) : Array (Array Tok) :=
-  inheritOpts (inheritOpts picture every) own
+`merge_own_exact`, `merge_every_exact` and `merge_picture_exact` are the
+three boundaries, `merge_covers` that nothing the bracket said is lost, and
+`merge_global_covers` that a key set once for the document reaches a
+bracket that renamed nothing. -/
+def mergeOpts (global picture every own : Array (Array Tok)) : Array (Array Tok) :=
+  inheritOpts (inheritOpts (inheritOpts global picture) every) own
 
 /-- Precedence, innermost level: an entry whose key the bracket's own also
 names is the bracket's own. -/
-theorem merge_own_exact {picture every own : Array (Array Tok)} {o : Array Tok}
-    (hm : o ∈ mergeOpts picture every own)
+theorem merge_own_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ own, optKey e = optKey o) : o ∈ own :=
   inherit_inner_exact hm hk
 
-/-- Precedence, middle level: an entry whose key `every X` names and the
+/-- Precedence, third level: an entry whose key `every X` names and the
 bracket's own does not is the `every X` style's. -/
-theorem merge_every_exact {picture every own : Array (Array Tok)} {o : Array Tok}
-    (hm : o ∈ mergeOpts picture every own)
+theorem merge_every_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ every, optKey e = optKey o)
     (ho : ¬ ∃ e ∈ own, optKey e = optKey o) : o ∈ every := by
   rcases inherit_mem hm with h | h
   · exact inherit_inner_exact h hk
   · exact absurd ⟨o, h, rfl⟩ ho
 
-/-- Nothing the bracket's own entries said is lost to either level. -/
-theorem merge_covers {picture every own : Array (Array Tok)} {o : Array Tok}
-    (h : o ∈ own) : o ∈ mergeOpts picture every own :=
+/-- Precedence, second level: an entry whose key the picture names and
+neither inner level does is the picture's, not the document's. Without this
+the outermost level could shadow the picture's own and the boundaries
+further in would not notice. -/
+theorem merge_picture_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+    (hm : o ∈ mergeOpts global picture every own)
+    (hk : ∃ e ∈ picture, optKey e = optKey o)
+    (he : ¬ ∃ e ∈ every, optKey e = optKey o)
+    (ho : ¬ ∃ e ∈ own, optKey e = optKey o) : o ∈ picture := by
+  rcases inherit_mem hm with h | h
+  · rcases inherit_mem h with h2 | h2
+    · exact inherit_inner_exact h2 hk
+    · exact absurd ⟨o, h2, rfl⟩ he
+  · exact absurd ⟨o, h, rfl⟩ ho
+
+/-- Nothing the bracket's own entries said is lost to any outer level. -/
+theorem merge_covers {global picture every own : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ own) : o ∈ mergeOpts global picture every own :=
   inherit_covers h
 
 /-- Nothing the outer level said is lost where no inner entry names its
@@ -1071,14 +1093,31 @@ theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     decide_eq_false_iff_not, Array.mem_map, not_exists, not_and]
   exact fun e he => hk e he
 
-/-- Precedence, outermost level: what the picture set reaches the merge
-where neither later level names its key. Without this the picture's entries
-could be dropped wholesale and the two boundary facts would still hold. -/
-theorem merge_picture_covers {picture every own : Array (Array Tok)} {o : Array Tok}
+/-- Precedence, third level from the outside: what the picture set reaches
+the merge where neither later level names its key. Without this the
+picture's entries could be dropped wholesale and the boundary facts would
+still hold. -/
+theorem merge_picture_covers {global picture every own : Array (Array Tok)}
+    {o : Array Tok}
     (h : o ∈ picture) (he : ∀ e ∈ every, optKey e ≠ optKey o)
     (ho : ∀ e ∈ own, optKey e ≠ optKey o) :
-    o ∈ mergeOpts picture every own :=
-  inherit_outer_covers (inherit_outer_covers h he) ho
+    o ∈ mergeOpts global picture every own :=
+  inherit_outer_covers (inherit_outer_covers (inherit_covers h) he) ho
+
+/-- **A key the document set for every picture is set on this bracket.** The
+outermost level reaches the merge wherever no level inside it names that
+key — so an arrow tip declared once in the preamble is read at an edge that
+carries no bracket of its own, exactly as if the edge had carried it. The
+statement the arrowhead defect needed: before it the entry was dropped
+between the `\tikzset` line and the picture, and every edge relying on it
+was drawn headless. -/
+theorem merge_global_covers {global picture every own : Array (Array Tok)}
+    {o : Array Tok}
+    (h : o ∈ global) (hp : ∀ e ∈ picture, optKey e ≠ optKey o)
+    (he : ∀ e ∈ every, optKey e ≠ optKey o)
+    (ho : ∀ e ∈ own, optKey e ≠ optKey o) :
+    o ∈ mergeOpts global picture every own :=
+  inherit_outer_covers (inherit_outer_covers (inherit_outer_covers h hp) he) ho
 
 /-- A picture-level key outside the subset, named at the bracket that
 wrote it. -/
@@ -1962,6 +2001,99 @@ private def readNodeDistance (toks : List Tok) : Option (Sp × Sp) := do
     some (v, h)
   | _ => none
 
+/-- The keys a path statement's option loop reads, so an entry declared for
+the whole document or for the picture can be carried into a path's bracket
+instead of dropped. A tip counts only where this subset can draw it
+(`drawsAsArrow`): an undrawable one is a real loss, and is named once at
+the line that declared it rather than at every edge that inherited it. -/
+def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
+  match arrowTipName opt.toList with
+  | some tip => drawsAsArrow styles tip
+  | none =>
+    match opt.toList with
+    | .sym '>' :: .sym '=' :: rest =>
+      match tipName rest with
+      | some tip => drawsAsArrow styles tip
+      | none => false
+    | ts => ["thick", "draw", "dashed", "dotted", "densely dotted"].contains (keyPath ts)
+
+/-- The keys a node statement's option loop reads. A placement and a size
+switch are read through the same functions the loop reads them with, so the
+vocabulary cannot drift from the loop that consumes it. -/
+def readsNodeOpt (opt : Array Tok) : Bool :=
+  if (readPlace (0, 0) opt.toList).isSome then true
+  else match opt.toList with
+  | [.ident "font", .sym '=', .ctrl size] => (Ir.sizeScale.lookup size).isSome
+  | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
+      "thick", "text", "fill", "minimum size", "minimum width", "minimum height",
+      "inner sep", "node contents"].contains (keyPath ts)
+
+/-- An entry some statement of this subset reads: what a declaration made
+once for the document, or once for the picture, carries into the brackets
+below it. An entry no shape reads is honoured by nobody, so it stays a
+named loss at the line that wrote it. -/
+def readsOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
+  readsPathOpt styles opt || readsNodeOpt opt
+
+/-- The two outer brackets as the shape at hand reads them. Neither was
+written at this statement, so an entry for the other shape is not a loss
+here — a document-level arrow tip is no complaint at a node — and the
+entries no shape reads are named where they were declared. -/
+def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) :
+    Array (Array Tok) × Array (Array Tok) :=
+  (global.filter reads, picture.filter reads)
+
+/-- One `\tikzset` line folded into what the document has set so far: its
+definitions into the bundles, and the entries the subset reads into the
+outermost bracket — a later line's value replacing an earlier one's rather
+than standing beside it, the rule `inheritOpts` holds within a bracket and
+for the same reason. The fold's body as its own function, so
+`documentOptsStep_covers` can state what one line contributes without
+reducing the fold. -/
+def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
+    (keys : Array Tok) : List (String × Array Tok) × Array (Array Tok) :=
+  let (after, unread) := readStyleList sa.1 keys
+  (after, inheritOpts sa.2 (unread.filter (readsOpt after)))
+
+/-- What a document's `\tikzset` lines set for every picture in it: the
+entries that are not definitions and that the subset reads, folded in
+source order. The definitions those lines carry are `documentStyles`; what
+neither reads is `unreadKeys`. -/
+def documentOpts (sets : Array (Array Tok)) : Array (Array Tok) :=
+  (sets.foldl documentOptsStep ([], #[])).2
+
+/-- **A line's read entry is one the document has set.** An entry of a
+`\tikzset` line that is no definition and that the subset reads enters the
+outermost bracket, whatever the lines before it set — so a tip declared
+once in the preamble is a key of the document and not a dropped one. With
+`outerRead_covers` and `merge_global_covers` this is the chain from the line
+that wrote the key to the bracket a statement reads. -/
+theorem documentOptsStep_covers {styles : List (String × Array Tok)}
+    {acc : Array (Array Tok)} {keys o : Array Tok}
+    (h : o ∈ (readStyleList styles keys).2)
+    (hr : readsOpt (readStyleList styles keys).1 o = true) :
+    o ∈ (documentOptsStep (styles, acc) keys).2 := by
+  simp only [documentOptsStep, inheritOpts, Array.mem_append, Array.mem_filter]
+  exact Or.inr ⟨h, hr⟩
+
+/-- The shape filter keeps what this shape reads: an entry a statement's own
+loop would read is not dropped on its way in from an outer bracket. -/
+theorem outerRead_covers {reads : Array Tok → Bool}
+    {global picture : Array (Array Tok)} {o : Array Tok}
+    (h : o ∈ global) (hr : reads o) : o ∈ (outerRead reads global picture).1 := by
+  simp only [outerRead, Array.mem_filter]
+  exact ⟨h, hr⟩
+
+/-- What one `\tikzset` key list leaves unread, named for a diagnostic at
+the line that wrote it. The elaborator's one caller; the fold the pictures
+read is `documentStyles`. A key the engine reads (`setsEngineKey`) is not
+among them, nor is one a statement reads (`readsOpt`, carried into every
+bracket by `documentOpts`): those are honoured, not dropped. -/
+def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
+  let (after, unread) := readStyleList styles keys
+  (unread.filter fun e => !setsEngineKey e && !readsOpt after e).filterMap fun e =>
+    (e[0]?).map tokText
+
 /-- A `(name)` group at `i`: the name and the index past its `)`. A name
 holding a `,` is a coordinate, not a name. -/
 private def readName (ts : Array Tok) (i : Nat) : Option (String × Nat) := Id.run do
@@ -2035,7 +2167,8 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let dsc : Sp × Sp := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
   let mut place : Option (Dir × String × (Sp × Sp)) := none
   let mut contents : Option (Array LabelLine) := none
-  for opt in mergeOpts cx.opts cx.everyNode own do
+  let (gOuter, pOuter) := outerRead readsNodeOpt cx.global cx.opts
+  for opt in mergeOpts gOuter pOuter cx.everyNode own do
     match readPlace dsc opt.toList with
     | some p => place := some p
     | none =>
@@ -2372,7 +2505,8 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     own := expandOpts cx.styles inner
     i := j + 1
   ev := { ev with readOpts := true }
-  for opt in mergeOpts cx.opts cx.everyPath own do
+  let (gOuter, pOuter) := outerRead (readsPathOpt cx.styles) cx.global cx.opts
+  for opt in mergeOpts gOuter pOuter cx.everyPath own do
     match arrowTipName opt.toList with
     | some tip =>
       if drawsAsArrow cx.styles tip then arrow := true
@@ -2940,14 +3074,21 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         -- A bare name that resolves is a style applied to the picture
         -- itself: pgf sets it in the picture's scope, so its options are
         -- what the contents inherit (`Cx.opts`, merged by `mergeOpts`).
-        -- A name that resolves to nothing is a key, and is named here.
+        -- A name that resolves to no bundle, and any other entry, is a key:
+        -- carried to the statements that read it, and named here where no
+        -- shape does — the same rule the document's own lines follow, so
+        -- one entry means one thing wherever it was written.
         | [.ident n] =>
           match styles.lookup n with
           | some bundle => inherited := inherited ++ splitTop bundle ','
-          | none => diags := diags.push (outsideOpt (.ident n))
+          | none =>
+            if readsOpt styles #[.ident n] then inherited := inherited.push #[.ident n]
+            else diags := diags.push (outsideOpt (.ident n))
         | [] => pure ()
-        | o :: _ =>
-          diags := diags.push (outsideOpt o)
+        | o :: rest =>
+          if readsOpt styles (o :: rest).toArray then
+            inherited := inherited.push (o :: rest).toArray
+          else diags := diags.push (outsideOpt o)
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := parseList (toks.toList.drop i) {}
@@ -2957,22 +3098,27 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     | none => #[]
   let cx : Cx := { pal := pal, scale := scale
                    styles := styles, transformShape := transformShape
+                   global := documentOpts (sets.map fun keys => ofRaws keys)
                    opts := inherited
                    everyNode := everyOf everyNodeKey
                    everyPath := everyOf everyPathKey
                    dist := dist
                    math := math }
   let ev := evalFixed cx st.out.toList
-  -- Nothing in the picture reads keys (a picture of nothing but `\fill`,
-  -- whose bracket is a colour spelling), so the inherited entries reached
-  -- no loop that could name them. Naming them here keeps the standing
-  -- rule: a key the subset does not use is never silently dropped.
+  -- What the inherited entries cost, named at the picture rather than at a
+  -- statement, because neither is where they were written. An entry no
+  -- shape reads is honoured by nobody, whatever the picture contains; one
+  -- some shape reads is lost only where no statement read keys at all (a
+  -- picture of nothing but `\fill`, whose bracket is a colour spelling).
+  -- Either way the standing rule holds: a key the subset does not use is
+  -- never silently dropped.
   let mut unread : Array PDiag := #[]
-  unless ev.readOpts do
-    for opt in inherited do
-      match opt.toList with
-      | [] => pure ()
-      | o :: _ =>
+  for opt in inherited do
+    match opt.toList with
+    | [] => pure ()
+    | o :: _ =>
+      if !readsOpt styles opt then unread := unread.push (outsideOpt o)
+      else unless ev.readOpts do
         unread := unread.push (.W0334, s!"picture option {tokText o} reached no path \
 or node; the option is dropped")
   let all := diags ++ st.bad ++ ev.diags ++ unread

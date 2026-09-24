@@ -9617,3 +9617,123 @@ vocabulary stay W0334, which is then a smaller and truer set. Routed to
 `Picture.lean`, with the inheritance rule beside it: a global entry is the
 outermost bracket, so the picture's own and the path's own both win over it
 (`inherit_inner_exact` is the shape that already says how).
+
+
+
+### 2026-09-24 — a key set once for the document is set on every picture
+
+The follow-up the entry above routed here, and it draws the arrowheads: 0 →
+66 heads on a real deck, on 15 pages, measured as filled triangles in the
+content stream and confirmed on a raster.
+
+**The invariant, decided before the code.** *An option entry the subset
+reads means the same thing wherever it was declared — on the statement's own
+bracket, on the picture's, or once in the document's `\tikzset` — and an
+inner declaration wins over an outer one.* The ladder was already three
+levels with that shape (`picture < every X < own`); a document-global entry
+is a fourth at the left, so `mergeOpts` gains a term and every boundary fact
+it already had still holds with the extra binder. The new facts are
+`merge_global_covers` (the outermost level reaches a bracket that renamed
+nothing — the statement the defect needed) and `merge_picture_exact` (the
+second level is not shadowed by the first, which the three old boundaries
+could not see). `merge_picture_covers` lost its hypotheses about the new
+level rather than gaining any: the picture's entries are the inner side of
+that merge, so they survive it unconditionally.
+
+Two smaller facts close the chain from the line that wrote the key to the
+bracket that reads it, so the invariant is not only about the merge:
+`documentOptsStep_covers` (a line's read entry enters the outermost bracket,
+whatever the lines before it set) and `outerRead_covers` (the shape filter
+below keeps what that shape reads). The fold's body is now its own function
+(`documentOptsStep`) precisely so the first is stateable without reducing a
+loop — the statement is per line and general in the accumulator, which is
+stronger than the single-line form a `for` would have forced.
+
+**The trap the 2026-09-23 entries record twice, at a fourth level.** Each
+level must *drop* an entry whose key a later level names, not merely precede
+it, because the `minimum` family accumulates by maximum within one bracket.
+A surviving document-level `minimum size=8mm` would beat a node's own `4mm`
+and draw the opposite of what the node says. Every level is an
+`inheritOpts`, so this holds by construction rather than by care; the row
+that would fail otherwise is in the suite.
+
+**What the vocabulary is, and why it is per shape.** An entry is carried
+only where some statement reads it — a key no shape reads is honoured by
+nobody and stays a named loss at its own line, which is what keeps the
+W0334 shrink a *truer* set rather than a smaller one. The per-shape half was
+forced by measurement, not taste: an inherited path-only key already made
+the **node** reader claim a loss ("node option '-' is outside the rendered
+picture subset"), which was false — the tip was for the path and the path
+drew it. Carrying the global tip without fixing that would have traded a
+silent loss for a false one, the mirror of the failure mode this repo warns
+about. So `readsPathOpt`/`readsNodeOpt` filter the two shape-ambiguous
+levels (document and picture) at each call site; `every node`/`every path`
+need no filter, being shape-scoped already, and a statement's **own**
+bracket is never filtered — an author who writes a tip on a node still hears
+about it, because that entry was written there. The floor that costs
+nothing: an inherited entry no shape reads is named at the picture, so the
+filter cannot make a loss silent.
+
+**The picture's own bracket was the same defect one level in.** A bare
+in-vocabulary key there (`[->]`, `[thick]`, `[minimum size=8mm]`) was named
+and dropped, because only a *resolving style name* reached the inherited
+level. It is now carried by the same `readsOpt`, which is what makes the
+invariant's "wherever it was declared" true rather than aspirational.
+
+**One tip name admitted, and what that costs.** The deck's tip is
+`arrows.meta`'s spelling of the tip the subset already draws, so
+`drawsAsArrow` admits `Latex` beside `latex` — the same shape under two
+library names, no new substitution claim. Anything else stays named: a
+genuinely different tip kind is a real loss and a head of the wrong shape
+would be worse than none. On the question the routing entry left open —
+whether honouring the global tip makes the one-head substitution more
+visible, and so worth naming at the use site — it multiplies the *sites*
+(66 edges now draw a head where none did) but not the *set of names* that
+substitute, which is unchanged. A document declaring a kind this subset
+cannot draw still hears about it once per line, so nothing became silent;
+no new use-site naming is owed. The standing caveat is untouched and still
+recorded: a `/.tip`-declared body is stored and never read, so every
+declared tip draws the one head.
+
+**Evidence.** Seventeen `pictureGlobalKeyChecks` rows, written before the
+change and red on the rows that assert it: the head on an edge that carries
+no bracket, its triangle's extent and the absence of any boundary box, the
+`arrows.meta` spelling, a tip kind still refused, the four-level ladder one
+level per picture (a colour each level wins exactly once), the accumulating
+`minimum size` in both directions, a document-level tip claiming no loss at
+a node, the same one level in, the W0334 pair (a read key stops firing, an
+unread key from the same line keeps firing), and the inherited-entry floor.
+Of the first run's failures two were the test's own errors, not the
+engine's — an `every path` expectation that forgot `every X` is declared
+document-wide, and a `Dim.mm 12` that differs by one unit from the engine's
+own `12mm`; both corrected before the fix was accepted, the second by
+choosing a size whose spelling round-trips.
+
+`pictureKeyGateChecks` moved as that entry predicted: its arrow-tip default
+is now honoured rather than named, so its key list reads two instead of
+three, and a new row pins that the tip is not among them. **No golden
+moved** — the fixtures that exercise `\tikzset` declare only styles, and the
+`\tikzset` key lists in the corpus carry no in-vocabulary entry.
+
+On the private reference corpus: 26 → 25 warning lines, W0334 8 → 7, and the
+picture-key lines 4 → 3 — one key moved, the tip, and three stayed, none of
+them a tip. The artifact *does* move here, unlike the gate change that
+preceded it: **0 → 66 three-point filled paths**, spread over exactly the 15
+pages that carry a node-and-edge diagram, each 3.0–4.8 pt, which is
+arrowhead-sized and matches the 66 stroked edges counted before the change.
+Verified on a raster at 110 dpi and inspected at 16×: a solid wedge stands
+where each edge terminates, against a bare line end before. Two measurement
+traps are worth recording because both were hit: at page-fit zoom a glyph
+stroke at an edge end reads as a head (the first crop pair was read
+backwards for this reason), and a naive fill-operator count over the content
+stream over-counts by including rectangle fills — the honest measure is a
+fill whose path is exactly three points and holds no `re`.
+
+**Not this slice, and observed while verifying.** The new heads land *on*
+the node labels rather than outside them, because a node with no declared
+extent is its own centre, so an edge runs to the centre and the head sits
+there. That is the node-extent measurement the picture walk cannot make
+(`nodeExtent_covers`, owed) and it belongs to that owner, not here. Also
+noted: the elaborator's help for this diagnostic still reads "the rendered
+subset reads 'name/.style={...}' definitions", which is now half the truth —
+it reads in-vocabulary keys too. That string is in `Elab.lean`.

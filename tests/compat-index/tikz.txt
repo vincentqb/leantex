@@ -44,11 +44,18 @@ body impl \begin{tikzpicture}\node (u) {\hphantom{p}x};\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) -- (1,0) (2,0) -- (3,0);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) {x};\node (v) [right =of u] {y};\node (w) [below =of u] {z};\path (u) edge (v) (u) edge (w);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) {x};\node (v) [right =of u] {y};\path[draw=blue] (u) edge (v) (v) edge (u);\end{tikzpicture}
+body impl \begin{tikzpicture}[->]\node[draw, minimum size=8mm] (u) at (0,0) {x};\node[draw, minimum size=8mm] (v) at (2,0) {y};\draw (u) -- (v);\end{tikzpicture}
+body impl \begin{tikzpicture}[thick]\draw (0,0) -- (1,1);\end{tikzpicture}
+body impl \begin{tikzpicture}[minimum size=8mm]\node[draw] (u) at (0,0) {x};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
 pre impl \tikzset{node distance = 1cm and 1cm}
 pre impl \tikzset{zz/.style={}}
+pre impl \tikzset{->}
+pre impl \tikzset{-Latex}
+pre impl \tikzset{thick}
+pre impl \tikzset{minimum size=8mm}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize
 pre inert:default \pictures{ tool = lualatex }
@@ -69,3 +76,13 @@ pre impl \pictures{ tool = lualatex }\usetikzlibrary{arrows}
 # \tikzexternalize and \pictures{ tool = lualatex } both pin the tool the
 # boundary is already open with, so they move no ink (inert:default); the
 # declared refusal tool = none is the row that changes the document.
+# A \tikzset key list that is not a definition, and a picture's own bracket,
+# both carry the keys the subset reads into every statement below them, the
+# statement's own bracket winning (Picture.mergeOpts, four levels:
+# document < picture < every X < own). An arrow-tip default declared once in
+# the preamble is the motivating one -- pgf's -Latex is arrows.meta's
+# spelling of pgflibraryarrows' latex tip, one shape under two names, so both
+# draw this subset's head. A key no statement reads stays W0334 at the line
+# that wrote it, so these rows are impl for the command while the key-level
+# facts are witnessed in Tests/Surface.lean's pictureGlobalKeyChecks (a
+# per-row preamble cannot spell them).

@@ -5074,9 +5074,11 @@ on the tool, only the honesty does. Invented content and design. -/
 def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  -- Three keys the subset does not read, two of them plain switches and one
-  -- an arrow-tip default — the shape whose silent loss leaves a diagram's
-  -- edges without their heads — beside one style definition it does read.
+  -- Two keys the subset does not read, beside an arrow-tip default it now
+  -- honours (`Picture.readsOpt`, the outermost bracket) and one style
+  -- definition it reads. The tip is in the source deliberately: it is the
+  -- shape whose silent loss left a diagram's edges headless, and the row
+  -- below pins that it is no longer counted as dropped.
   let keys := "\\tikzset{>=latex, overlay, sloped}\n" ++
     "\\tikzset{box/.style={rectangle, draw, minimum width=9mm, minimum height=6mm}}\n"
   -- A picture the subset draws itself: both nodes carry their own extent, so
@@ -5096,7 +5098,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (refusedDoc, refusedDs) := elabStr refusedSrc
   -- The honesty half: the default build names exactly what the refusal does.
   t "the engine's own drawing names every key it did not read"
-    (keyNames openDs == [">", "overlay", "sloped"])
+    (keyNames openDs == ["overlay", "sloped"])
   t "the declared refusal names the same keys, no more"
     (keyNames refusedDs == keyNames openDs)
   -- The artifact half, and the whole point: the drawing does not depend on
@@ -5117,10 +5119,145 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- drew itself.
   t "one boundary picture beside an engine-drawn one still names the keys"
     (keyNames (elabStr (dvDoc keys ("Prose.\n\n" ++ wholePic ++ "\nMore prose.\n\n" ++
-      native))).2 == [">", "overlay", "sloped"])
+      native))).2 == ["overlay", "sloped"])
+  -- The tip default among them is honoured, not named: the set is smaller
+  -- and truer, which is the only shrink this diagnostic may take.
+  t "the arrow-tip default is honoured rather than named as dropped"
+    (!(keyNames openDs).contains ">")
   -- A style definition is read, so it is never among them.
   t "a style definition the subset reads is not named as dropped"
     (!(keyNames openDs).contains "box")
+
+/-- **A key the document sets for every picture is set on every picture**,
+read off the shipped page (`Picture.mergeOpts`'s outermost level, whose
+facts are `merge_global_covers` and `merge_picture_exact`). A `\tikzset`
+entry that is not a style definition but is one the subset reads at a
+statement — an arrow-tip default is the shape that motivated it — used to
+be dropped whole, so a deck declaring its tip once in the preamble shipped
+every edge headless. It is now the outermost bracket: the picture's own and
+the statement's own both win over it, and a statement reads it only where
+its own shape does, since neither outer bracket was written at that site.
+Invented content and design. -/
+def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let box := "\\tikzset{box/.style={rectangle, draw, minimum width=9mm, " ++
+    "minimum height=6mm}}\n"
+  -- The defect, at its smallest: the tip is declared once for the document
+  -- and the edge carries no bracket of its own.
+  let pair := "\\node[box] (a) at (0, 0) {A};\n\\node[box] (b) at (3, 0) {B};\n"
+  let globalTip := censusSrc (box ++ "\\tikzset{->}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
+    "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
+  t "a tip declared once for the document ships a head on an edge that carries none"
+    ((globalTip[0]?.map (·.paths == 4)).getD false)
+  -- The head is the engine's own ink: a filled triangle beside the edge, no
+  -- boundary box and no external tool.
+  t "the head is a triangle the engine drew itself"
+    ((globalTip[0]?.map (·.images == 0)).getD false &&
+     ((globalTip[0]?.bind (·.pathSpans[3]?)).map fun (w, h) =>
+        w < Dim.mm 4 && h < Dim.mm 4 && w > 0 && h > 0) == some true)
+  -- The `arrows.meta` spelling of the same tip is the same head, declared
+  -- once for the document: the shape the defect was reported on.
+  let metaTip := censusSrc (box ++ "\\tikzset{-Latex}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
+    "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
+  t "the arrows.meta spelling of the tip ships the same head"
+    ((metaTip[0]?.map (·.paths == 4)).getD false)
+  -- A tip kind this subset cannot draw stays a named loss: the head is
+  -- missing, and a substitution would be a head of the wrong shape.
+  let otherTip := elabStr (box ++ "\\tikzset{-Stealth}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
+    "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
+  t "a tip kind the subset cannot draw is still named as dropped"
+    (otherTip.2.any fun d => d.code == DiagCode.W0334.code &&
+      hasStr d.message "picture key")
+  -- Precedence, document < picture < own. `every X` is declared for the
+  -- document too, so it stands in its own source below rather than here.
+  let ladder := censusSrc (box ++ "\\tikzset{draw=blue}\n" ++
+    "\\tikzset{wire/.style={draw=green}}\n" ++
+    "\\begin{document}\n" ++
+    "\\begin{tikzpicture}\n\\draw (0, 0) -- (3, 0);\n\\end{tikzpicture}\n" ++
+    "\\begin{tikzpicture}[wire]\n\\draw (0, 0) -- (3, 0);\n\\end{tikzpicture}\n" ++
+    "\\begin{tikzpicture}\n\\draw[draw=red] (0, 0) -- (3, 0);\n" ++
+    "\\end{tikzpicture}\n\\end{document}")
+  t "an edge declaring nothing anywhere ships the document's colour"
+    ((ladder[0]?.bind (·.pathStrokes[0]?)).map (·.1 == { r := 0, g := 0, b := 255 })
+      == some true)
+  t "the picture's own bracket beats the document's"
+    ((ladder[0]?.bind (·.pathStrokes[1]?)).map (·.1 == { r := 0, g := 255, b := 0 })
+      == some true)
+  t "the statement's own bracket beats every outer level"
+    ((ladder[0]?.bind (·.pathStrokes[2]?)).map (·.1 == { r := 255, g := 0, b := 0 })
+      == some true)
+  -- `every path` is the level between: it beats the document's and the
+  -- picture's, and loses to the statement's own.
+  let everyMid := censusSrc (box ++ "\\tikzset{draw=blue}\n" ++
+    "\\tikzset{wire/.style={draw=green}}\n" ++
+    "\\tikzset{every path/.style={draw=orange}}\n" ++
+    "\\begin{document}\n" ++
+    "\\begin{tikzpicture}[wire]\n\\draw (0, 0) -- (3, 0);\n" ++
+    "\\draw[draw=red] (0, 0.6) -- (3, 0.6);\n\\end{tikzpicture}\n\\end{document}")
+  t "every path beats both the picture's bracket and the document's"
+    ((everyMid[0]?.bind (·.pathStrokes[0]?)).map
+      (·.1 == { r := 255, g := 128, b := 0 }) == some true)
+  t "the statement's own bracket still beats every path"
+    ((everyMid[0]?.bind (·.pathStrokes[1]?)).map (·.1 == { r := 255, g := 0, b := 0 })
+      == some true)
+  -- The accumulating family is the trap: `minimum size` takes a maximum
+  -- within one bracket, so a surviving document-level 8mm would beat the
+  -- node's own 4mm and draw the opposite of what the node says.
+  let sized := censusSrc ("\\tikzset{minimum size=8mm}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node[draw] (a) at (0, 0) {A};\n" ++
+    "\\node[draw, minimum size=4mm] (b) at (4, 0) {B};\n" ++
+    "\\end{tikzpicture}\n\\end{document}")
+  t "a document-level size reaches the node that declared none"
+    ((sized[0]?.bind (·.pathSpans[0]?)).map (· == (Dim.mm 8, Dim.mm 8)) == some true)
+  t "the node's own size is not beaten by the document's larger one"
+    ((sized[0]?.bind (·.pathSpans[1]?)).map (· == (Dim.mm 4, Dim.mm 4)) == some true)
+  -- A document-level entry is read where its own shape reads it and nowhere
+  -- else: neither outer bracket was written at this node, so a path-only
+  -- key is no loss here. Claiming one is how honouring the tip would have
+  -- traded a silent loss for a false one.
+  let (_, tipDs) := elabStr (box ++ "\\tikzset{->}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
+    "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
+  t "a document-level tip is no loss at a node"
+    (tipDs.isEmpty)
+  -- The W0334 set is smaller and truer, not smaller: a key the subset reads
+  -- stops firing and a key outside it keeps firing, from one line.
+  let mixedKeys (s : String) : List String :=
+    ((elabStr (box ++ s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
+      "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")).2.filter fun d =>
+        d.code == DiagCode.W0334.code && hasStr d.message "picture key").toList.map
+      fun d => (d.message.splitOn "'").getD 1 ""
+  t "a document key the subset reads is no longer named as dropped"
+    (mixedKeys "\\tikzset{->, overlay}\n" == ["overlay"])
+  t "a document key outside the subset is still named from the same line"
+    (mixedKeys "\\tikzset{overlay}\n" == ["overlay"])
+  -- A picture-level applied style carrying a key of the other shape is the
+  -- same claim one level in, and it was firing before this.
+  let (_, inheritDs) := elabStr (box ++ "\\tikzset{head/.style={->}}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}[head]\n" ++ pair ++
+    "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
+  t "a picture-level tip is no loss at a node either"
+    (inheritDs.isEmpty)
+  t "a picture-level tip still ships the head"
+    (((censusSrc (box ++ "\\tikzset{head/.style={->}}\n" ++
+      "\\begin{document}\n\\begin{tikzpicture}[head]\n" ++ pair ++
+      "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}"))[0]?.map
+        (·.paths == 4)).getD false)
+  -- The floor the shape filter must not cost: an inherited entry no shape
+  -- reads is still named, because nobody read it.
+  t "an inherited key no shape reads is still named"
+    ((elabStr (box ++ "\\tikzset{ghost/.style={overlay}}\n" ++
+      "\\begin{document}\n\\begin{tikzpicture}[ghost]\n" ++ pair ++
+      "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")).2.any fun d =>
+        d.code == DiagCode.W0334.code && hasStr d.message "overlay")
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no
