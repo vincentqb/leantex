@@ -674,6 +674,201 @@ def bareStateMutation (l : String) : Bool :=
 diagnostic, `write` counts the mutation, `account` is the guard itself. -/
 def compatStateDoors : List String := ["say", "write", "account"]
 
+/-- The reads that name the document's declared *setup* rather than the
+content under judgement: the elaboration context, the driver's config, the
+scanned declaration list, and the monadic state read through `get`. A
+condition built from one of these decides something about the configuration;
+a condition built from the content decides something about the loss. That is
+the whole distinction the stale-premise defects turned on — `picTool` said
+which tool was configured, and the fact the gate needed was whether anything
+had drawn the picture. -/
+def premiseSources : List String := ["ctx.", "cfg.", "decls", "(← get)."]
+
+/-- The diagnostic doors: the calls that name a loss to the reader. `say` and
+`sayOnce` are separate tokens to `hasWord`, so both are listed. -/
+def premiseEmitters : List String := ["say", "sayOnce", "warnOnce", "noteOnce", "diag"]
+
+/-- Does the text call a diagnostic door? -/
+def emitsDiag (t : String) : Bool := premiseEmitters.any (hasWord t ·)
+
+/-- Does the text read the declared setup? -/
+def readsSetup (t : String) : Bool := premiseSources.any (containsSub t ·)
+
+/-- The indentation of a line, in leading spaces. -/
+def indentOf (l : String) : Nat := (l.toList.takeWhile (· == ' ')).length
+
+/-- The condition text of a conditional opening at line `i`, continuation
+lines included up to the `then`/`do` that closes it, with the line the
+condition ends on. `none` when the line opens no conditional. Four lines is
+the bound: the longest condition in this tree spans two, and the gate whose
+`ctx.` read sat on the continuation line is why this is not line-local. -/
+def condSpan (lines : Array String) (i : Nat) : Option (String × Nat) := Id.run do
+  let l := stripLineComment (lines[i]?.getD "")
+  unless hasWord l "if" || hasWord l "unless" do return none
+  let mut cond := l
+  let mut j := i
+  for _ in [0:4] do
+    if hasWord cond "then" || hasWord cond "do" then break
+    j := j + 1
+    cond := cond ++ " " ++ stripLineComment (lines[j]?.getD "")
+  return some (cond, j)
+
+/-- The block a conditional opens (the following more-indented lines) and the
+forty lines after it: the two texts the site judgement reads. -/
+def premiseBlock (lines : Array String) (i j : Nat) : String × String := Id.run do
+  let ind := indentOf (lines[i]?.getD "")
+  let mut body := ""
+  let mut k := j + 1
+  for _ in [0:400] do
+    if k ≥ lines.size then break
+    let lk := lines[k]?.getD ""
+    let t := lk.trimAscii.toString
+    if !t.isEmpty && indentOf lk ≤ ind then break
+    if !t.isEmpty then
+      let piece := stripLineComment lk
+      body := body ++ "\n" ++ piece
+    k := k + 1
+  let mut after := ""
+  for d in [0:40] do
+    let piece := stripLineComment (lines[k + d]?.getD "")
+    after := after ++ "\n" ++ piece
+  return (body, after)
+
+/-- What a premise site claims, in the two spellings a line scanner can see.
+`.gate`: the engine speaks only under this configuration, so the other
+configuration is claimed to be covered elsewhere. `.silence`: the engine goes
+quiet under this configuration and names the loss below, so the quiet branch
+claims another subsystem names it. `.demote`: the loss is delivered at
+reduced strength because the reader is claimed to be unable to act — a fact
+about who wrote the file, never about the loss. -/
+inductive PremiseKind where
+  | gate
+  | silence
+  | demote
+  deriving BEq
+
+def PremiseKind.what : PremiseKind → String
+  | .gate => "names a loss only under a declared configuration"
+  | .silence => "goes quiet under a declared configuration, naming the loss below"
+  | .demote => "computes a demotion: the reader is claimed unable to act"
+
+/-- A demotion whose value is computed rather than written. `demote := true`
+is a decision about this loss; `demote := f x` is a claim about the reader —
+who wrote the file the site sits in — which is a fact about another
+subsystem, and the `.sty` proxy defect is what it cost. The door's own
+signature (`demote : Bool := false`) spells no `:=` after the name and does
+not match. -/
+def computedDemote (l : String) : Bool :=
+  ((stripLineComment (stripStrings l)).splitOn "demote := ").drop 1 |>.any fun rest =>
+    let w := (rest.trimAscii.toString.takeWhile isWordChar).toString
+    !w.isEmpty && w != "true" && w != "false"
+
+/-- The premise site a line opens, if any: a computed demotion, or a
+conditional on the declared setup that either names a loss in its block or
+skips one named below it. A conditional whose block both reads the setup and
+emits is a `.gate`; one that returns without emitting while an emission
+follows is a `.silence`. -/
+def premiseSite (lines : Array String) (i : Nat) : Option PremiseKind := Id.run do
+  let l := lines[i]?.getD ""
+  if computedDemote l then return some .demote
+  match condSpan lines i with
+  | none => return none
+  | some (cond, j) =>
+    unless readsSetup cond do return none
+    let (body, after) := premiseBlock lines i j
+    if emitsDiag body || emitsDiag cond then return some .gate
+    if hasWord body "return" && emitsDiag after then return some .silence
+    return none
+
+/-- The marker beside a premise site: `-- premise: <pin> — <why>`, naming the
+check that fails when the premise breaks, or `-- premise: none — <why>` as
+the reasoned refusal. The `conserves: none` refusal is the precedent; the pin
+resolving against the tree is what `scripts/cites.lean` does for a cited
+theorem, one step over. -/
+def premiseMark : String := "premise:"
+
+/-- The pin and reason a marker line carries: `some (none, why)` for the
+refusal spelling, `none` when the line carries the mark with no reason after
+the pin — a marker that names nothing is not a marker. -/
+def premisePin (l : String) : Option (Option String × String) :=
+  if !containsSub l premiseMark then none
+  else
+    match tokens ((l.splitOn premiseMark).getLastD "") with
+    | [] => none
+    | pin :: rest =>
+      let why := String.intercalate " " (rest.filter (fun w => w != "—" && w != "-"))
+      if (why.trimAscii.toString).isEmpty then none
+      else some (if pin == "none" then (none, why) else (some pin, why))
+
+/-- Does `pin` name something that fails when the premise breaks: a theorem
+the build checks, or a check block the suite runs — defined in a test file and
+invoked, so a block the suite never calls cannot pin anything. Text-scanned,
+with the blind spots `scripts/cites.lean` records for the technique (a name on
+a declaration's continuation line is invisible); a pin is a short registered
+name, and the resolver there cannot be reached from here without a compiled
+environment. -/
+def pinResolves (treeText testText : String) (testDefs : List String)
+    (pin : String) : Bool :=
+  containsSub treeText s!"theorem {pin}" ||
+    (testDefs.contains pin && ((testText.splitOn pin).length ≥ 3))
+
+/-- A premise site that cannot carry its marker in place, with the pin that
+holds it. Every row is a migration step, not a parking space: when the
+marker lands beside the site, the row goes. `pin := none` is recorded debt —
+the premise is not falsified by anything, and the reason says what is
+missing. The rows are checked in both directions: the site text must still
+occur in the file (an edited condition invalidates the row, which is the
+point — a changed gate owes a fresh reading of its premise), and a named pin
+must resolve. -/
+structure PremiseRow where
+  file : String
+  site : String
+  pin : Option String
+  why : String
+
+/-- The premise sites of this tree, 2026-09-24. Each was found by the gate
+below and read by hand; none can carry an in-place marker yet, because the
+engine files belong to other slices. -/
+def premiseRegistry : List PremiseRow := [
+  { file := "LeanTex/Core/Elab.lean", site := "ctx.picTool.isSome && !body.isEmpty"
+    pin := some "pictureKeyGateChecks"
+    why := "the two-build table: one extra tool = none line, byte-identical PDFs" },
+  { file := "LeanTex/Core/Elab.lean", site := "Compat.boundaryCtrls.contains name"
+    pin := none
+    why := "premise false when no picture reached the boundary: the set lines \
+ride into a standalone only for a picture that went there whole, so a \
+natively drawn document swallows them unnamed -- W0334's fix, unapplied to W0301" },
+  { file := "LeanTex/Core/Elab.lean", site := "hnb : ctx.noteBody"
+    pin := none
+    why := "the premise (a note's frame has no side channel to drain into) is \
+carried by an inline have, not a named statement; noteChecks exercises the \
+refusal without falsifying the premise" },
+  { file := "LeanTex/Core/Elab.lean", site := "(← get).titleDone"
+    pin := some "titleChecks"
+    why := "the once-only rule the premise cites (classes.dtx) is exercised there" },
+  { file := "LeanTex/Core/Elab.lean", site := "(← get).declaredKeys.contains"
+    pin := some "layerDiagChecks"
+    why := "breaks if declaredKeys stops meaning document-declared" },
+  { file := "LeanTex/Core/Compat.lean", site := "(← get).deck && modeSilencesPresentation"
+    pin := some "frameSpecChecks"
+    why := "pins that a silenced frame ships no page, which is what buys the silence" },
+  { file := "LeanTex/Core/Compat.lean", site := "(← get).inDoc"
+    pin := some "compatChecks"
+    why := "asserts a body \\usepackage draws the placement refusal and never W0103, \
+which is the premise (the dispatch below never judges it)" },
+  { file := "LeanTex/Core/Elab.lean", site := "ctx.user.any (·.name == element)"
+    pin := some "classHookChecks"
+    why := "asserts an authored role's class reaches the page, which is the premise \
+that makes styling a \\define'd name meaningful rather than silently inert" },
+  { file := "LeanTex/Core/Compat.lean", site := "styInternal"
+    pin := none
+    why := "the proxy defect: the load-bearing fact is whether the author wrote \
+the file, and the predicate also asks whether the name is a TeX internal, so a \
+vendor .sty's own macro names stay full warnings under --werror" },
+  { file := "LeanTex/Core/Elab.lean", site := "Compat.styInternal"
+    pin := none
+    why := "the same proxy, at the preamble's unknown-command and refused-set sites" }]
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -874,7 +1069,114 @@ def selftest : IO UInt32 := do
       if p line != want then
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
 
+  expect "computedDemote" computedDemote [
+    -- the proxy defect's spelling: a demotion decided by a predicate over
+    -- the file and the name, at every site that carries it
+    ("        (demote := styInternal (← get).file name)", true),
+    ("      (demote := Compat.styInternal ctx.file name)", true),
+    ("        let d := { d with x := 1 } -- demote := f x", false),
+    -- a written decision about this loss stays legal, as does the door's own
+    -- signature default and a mention in a comment or string
+    ("  say .W0301 msg pos (demote := true)", false),
+    ("  sayOnce key .W0357 msg pos (demote := false)", false),
+    ("    (demote : Bool := false) (subject : Option String := none) : M Unit :=", false),
+    ("  -- demote := styInternal file name would need a pin", false),
+    ("  say s!\"a message naming demote := f x\" pos", false)]
+
+  expect "premisePin" (fun l => (premisePin l).isSome) [
+    -- the two legal spellings
+    ("  -- premise: pictureKeyGateChecks — the two builds ship the same bytes", true),
+    ("  -- premise: none — nothing falsifies this yet; recorded as debt", true),
+    -- a marker that names nothing is not a marker
+    ("  -- premise: pictureKeyGateChecks", false),
+    ("  -- premise: none", false),
+    ("  -- premise:", false),
+    -- an ordinary comment carries no marker
+    ("  -- the boundary tool reads what the subset refused", false)]
+
+  -- the pin and reason a marker yields, refusal spelling included
+  if premisePin "  -- premise: fooChecks — because bar" != some (some "fooChecks", "because bar") then
+    fails.modify ("premisePin did not read the pin and reason" :: ·)
+  if premisePin "  -- premise: none — nothing pins it" != some (none, "nothing pins it") then
+    fails.modify ("premisePin did not read the refusal" :: ·)
+
+  -- pinResolves: a theorem the build checks, or a check block the suite
+  -- runs — defined AND invoked. A block the suite never calls pins nothing.
+  let treeSrc := "theorem footBand_projects : True := trivial"
+  let testSrc := "def liveChecks (ref : IO.Ref (List String)) : IO Unit := do\n  liveChecks ref\ndef deadChecks : IO Unit := pure ()"
+  let pinCases : List (String × Bool) := [
+    ("footBand_projects", true),
+    ("liveChecks", true),
+    ("deadChecks", false),
+    ("neverWrittenChecks", false)]
+  for (pin, want) in pinCases do
+    if pinResolves treeSrc testSrc ["liveChecks", "deadChecks"] pin != want then
+      fails.modify (s!"pinResolves {pin}: want {want}" :: ·)
+
+  -- condSpan: the condition read continues past the line, which is how the
+  -- W0301 boundary gate's `ctx.` read (on its continuation line) is seen at
+  -- all; a line opening no conditional yields nothing.
+  let twoLine : Array String :=
+    #["    if Compat.nativeSetCtrls.contains name ||",
+      "        (s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then",
+      "      return s"]
+  match condSpan twoLine 0 with
+  | some (cond, j) =>
+    if !readsSetup cond || j != 1 then
+      fails.modify ("condSpan did not reach the continuation line's setup read" :: ·)
+  | none => fails.modify ("condSpan missed a two-line condition" :: ·)
+  if (condSpan #["  let x := 3"] 0).isSome then
+    fails.modify ("condSpan fired on a plain let" :: ·)
+
+  -- premiseSite, the gate's core: the three shapes that rotted must fire,
+  -- and the healthy spellings of this tree must not.
+  let siteCase (name : String) (src : List String) (want : Option PremiseKind) : IO Unit := do
+    if premiseSite src.toArray 0 != want then
+      fails.modify (s!"premiseSite {name}" :: ·)
+  -- the picture gate as it stands: a diagnostic named only under a
+  -- configuration the drawing does not depend on
+  siteCase "configuration-gated diagnostic"
+    ["  if ctx.picTool.isSome && pic.shapes.isEmpty then",
+     "    warnOnce ctx key .N0023 msg pos",
+     "    return blocks"] (some .gate)
+  -- the silencer: quiet under the configuration, named below it
+  siteCase "configuration-gated silence"
+    ["    if Compat.nativeSetCtrls.contains name ||",
+     "        (s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then",
+     "      return s",
+     "    warnOnce s.ctx (\"ctrl:\" ++ name) .W0301 msg pos"] (some .silence)
+  -- the computed demotion, on its own line
+  siteCase "computed demotion"
+    ["      (demote := Compat.styInternal ctx.file name)"] (some .demote)
+  -- the healthy shape, and the one the naive version of this gate fired on
+  -- 212 times: the condition IS the loss, so nothing is claimed elsewhere
+  siteCase "the condition is the loss"
+    ["  unless dropped.isEmpty do",
+     "    say .W0104 s!\"dropped {dropped}\" pos"] none
+  siteCase "a content condition naming its own loss"
+    ["  if b.kind.isNone && refFormNeedsKind form then",
+     "    diag ctx .W0380 msg (some rpos)"] none
+  -- a configuration read with no diagnostic either way is not a premise
+  siteCase "configuration read, no loss named"
+    ["  if ctx.slides then",
+     "    blocks := blocks.push (.frame title inner)"] none
+  -- a quiet configuration branch with nothing named below claims nothing
+  siteCase "configuration-gated return, no loss below"
+    ["  if ctx.literalText then",
+     "    return st",
+     "  pure (flatten st)"] none
+  -- STATED BLIND SPOT, pinned so closing it is a deliberate change: the
+  -- defect's own historical spelling read a local bound from the
+  -- declarations two lines above, and a line scanner cannot see through the
+  -- binding. Tainting locals was measured at 30% precision (ten sites, three
+  -- real), so the vocabulary stays the direct reads; both of that gate's
+  -- sites today read `ctx.` and are caught.
+  siteCase "a knob hoisted into a local is not seen"
+    ["  if picTool0.isNone then",
+     "    say .W0334 s!\"picture key '{k}' is not read\" pos"] none
+
   expect "scaleStepRespell" scaleStepRespell [
+
     -- the drift shapes the collapse deleted, default divergence included
     ("  let markSize := around * ((Ir.sizeScale.lookup \"scriptsize\").getD 700) / 1000", true),
     ("  milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit", true),
@@ -1497,7 +1799,97 @@ def main (args : List String) : IO UInt32 := do
   walk genuinely conserves nothing, the one-line refusal
   `-- conserves: none — <why>` beside the def."
 
-  -- The seal/unseal mirror (asked by q-elab), whole tree over LeanTex/:
+  -- The premise gate: a decision about whether the engine speaks, or how
+  -- loudly, that rests on a fact about ANOTHER subsystem owes the check that
+  -- holds the fact. Three defects shared this shape, each a conditional
+  -- whose comment asserted a premise that later became false with nothing
+  -- watching: a picture gate that read which tool was configured when the
+  -- load-bearing fact was whether anything had drawn the picture (and dropped
+  -- a deck's arrowheads in silence), a recovery justified by what no other
+  -- path could then do, and a demotion asking whether a name is a TeX
+  -- internal when the fact it needs is whether the author wrote the file.
+  -- AGENTS.md already says a guarantee stated in prose is not a guarantee and
+  -- cites.lean enforces it for theorem citations; this is the same rule where
+  -- the claim is about a sibling subsystem rather than a proof.
+  -- Whole tree, not the diff: a gate and its pin land in different hunks, and
+  -- the next gate must not ship without one.
+  let mut premiseTexts : Array (String × Array String) := coreTexts
+  if (← System.FilePath.pathExists "Main.lean") then
+    premiseTexts := premiseTexts.push
+      ("Main.lean", ((← IO.FS.readFile "Main.lean").splitOn "\n").toArray)
+  let mut testDefs : List String := []
+  let mut testText := ""
+  for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap
+      (fun p => if p.toString.endsWith ".lean" then some p.toString else none) do
+    if (← System.FilePath.pathExists f) then
+      let txt ← IO.FS.readFile f
+      testText := testText ++ txt
+      for l in txt.splitOn "\n" do
+        if let some n := topLevelDefName l then testDefs := n :: testDefs
+  let treeText := allCore
+  -- Every marker in the tree resolves, wherever it stands: a pin naming
+  -- nothing reads as a premise held and holds nothing, which is the failure
+  -- mode this gate exists to close. This half needs no site detection, so it
+  -- covers the sites the detector cannot see.
+  for (f, lines) in premiseTexts do
+    for i in [0:lines.size] do
+      let l := lines[i]?.getD ""
+      if containsSub (stripLineComment l) premiseMark then
+        match premisePin l with
+        | none =>
+          say s!"pre-commit: a premise marker with no reason, in {f}:{i + 1}:
+  {l.trimAscii}
+  A marker names the check that fails when the premise breaks, and why:
+  `-- {premiseMark} <pin> — <why>`, or `-- {premiseMark} none — <why>` when
+  nothing falsifies it."
+        | some (some pin, _) =>
+          unless pinResolves treeText testText testDefs pin do
+            say s!"pre-commit: the premise marker in {f}:{i + 1} names `{pin}`, which resolves to nothing.
+  A pin is a theorem the build checks, or a check block the suite runs — one
+  that fails when the premise breaks. A block the suite never calls pins
+  nothing.
+  Fix: name the real check, or write `{premiseMark} none — <why>` and say what is missing."
+        | some (none, _) => pure ()
+  -- Each registry row is checked in both directions, so it cannot rot either
+  -- way: the site text must still occur, and a named pin must resolve.
+  for row in premiseRegistry do
+    let txt := ((premiseTexts.find? (·.1 == row.file)).map
+      (fun e => String.intercalate "\n" e.2.toList)).getD ""
+    unless containsSub txt row.site do
+      say s!"pre-commit: the premise row for {row.file} no longer matches its site:
+  {row.site}
+  A premise row records a gate whose honesty rests on another subsystem. The
+  site moved or its condition changed, so the premise owes a fresh reading.
+  Fix: update the row, or move the marker beside the site and delete the row."
+    match row.pin with
+    | some pin =>
+      unless pinResolves treeText testText testDefs pin do
+        say s!"pre-commit: the premise row for {row.file} ({row.site}) names `{pin}`, which resolves to nothing.
+  Fix: name the check that falsifies the premise, or record the row with no
+  pin and say what is missing."
+    | none => pure ()
+  for (f, lines) in premiseTexts do
+    for i in [0:lines.size] do
+      if let some kind := premiseSite lines i then
+        let (cond, _) := (condSpan lines i).getD ((lines[i]?.getD ""), i)
+        let marked := (List.range 13).any fun d =>
+          i ≥ d && (premisePin (lines[i - d]?.getD "")).isSome
+        let registered := premiseRegistry.any fun row =>
+          row.file == f && (containsSub cond row.site
+            || containsSub (lines[i]?.getD "") row.site)
+        unless marked || registered do
+          say s!"pre-commit: a premise with no pin, in {f}:{i + 1} — it {kind.what}:
+  {(lines[i]?.getD "").trimAscii}
+  A gate that rests on a fact about another subsystem owes the check that
+  holds the fact; a premise recorded in prose alone rots silently — that is
+  how a deck lost every arrowhead with a green suite. The decisive shape is
+  two builds differing by the gate's own condition: if the artifact is
+  byte-identical and only the diagnostics move, nothing else was handling the
+  case (`pictureKeyGateChecks` is the worked example).
+  Fix: write `-- {premiseMark} <pin> — <why>` beside it, naming that check;
+  `-- {premiseMark} none — <why>` records it as debt instead."
+
+
   -- a knot's seal list and its unseal list are hand-kept in pairs, and a
   -- name sealed but never unsealed degrades every later elaboration in
   -- the file silently. Multiset equality per file; the deliberately
