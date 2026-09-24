@@ -365,7 +365,11 @@ accepted or demoted diagnostic delivers as a note, whatever its loss.
 `subject` is the key or source of the unresolved node a diagnostic names —
 a `\ref` key, a `\cite` key, an image source — structured so that "this
 loss is named" is a lookup, never a search of the message text
-(`Ir.Diag.mentions`, the resolution gate `pending_named`). -/
+(`Ir.Diag.mentions`, the resolution gate `pending_named`). `sites` is how
+many times this loss occurs in the document: a once-per-document warning
+carries the total so the default log states it, and each further site rides
+beside it as a note. One writer, `tallySites`, and its default is the
+honest one for a diagnostic nothing else counted. -/
 structure Diag where
   kind : DiagCode
   message : String
@@ -373,6 +377,7 @@ structure Diag where
   help : Option String := none
   demoted : Bool := false
   subject : Option String := none
+  sites : Nat := 1
   deriving Repr, BEq
 
 /-- The rendered code string: the kind's own spelling, derived. -/
@@ -435,6 +440,63 @@ written here beside `Diag.accept`, the other policy door: severity is a
 function of the declared loss and of policy declared in this module,
 never of a call site. -/
 def Diag.demote (d : Diag) : Diag := { d with demoted := true }
+
+/-- Two diagnostics are sites of the *same* loss when they carry the same
+code and the same structured subject. The code alone would merge two
+unrelated constructs refused for the same reason; the subject alone would
+merge two codes that happen to name one key. -/
+def Diag.sameLoss (a b : Diag) : Bool :=
+  a.kind == b.kind && a.subject == b.subject && a.subject.isSome
+
+/-- **The losses add up.** A once-per-document diagnostic names its
+construct at the first site and delivers every later site as a note, so
+the default log shows one line where the document has many. That line
+therefore has to carry the total, or a reader sizing the damage from it
+undercounts — ten lines standing for fifty losses is how a document full of
+silent drops reads as nearly clean.
+
+This is the one writer of `sites`: each diagnostic is told how many
+diagnostics in the same run share its code and subject, which is exactly
+the number of sites the run reports. Nothing else moves — no diagnostic is
+added, removed, reordered, demoted or reworded — so counting cannot change
+what was lost, only what the reader is told about it. A diagnostic with no
+subject is not part of any census and keeps the default 1. -/
+def Diag.tallySites (ds : Array Diag) : Array Diag :=
+  ds.map fun d =>
+    if d.subject.isNone then d
+    else { d with sites := (ds.filter (Diag.sameLoss d ·)).size }
+
+/-- Counting is not filtering: the tally holds every diagnostic it was
+given, in order. -/
+theorem Diag.tallySites_length (ds : Array Diag) :
+    (Diag.tallySites ds).size = ds.size := Array.size_map
+
+/-- Counting changes only the count: each diagnostic keeps its code,
+message, span, help, demotion and subject, so no loss is created,
+silenced or reworded by being counted. -/
+theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+    ∃ d, (Diag.tallySites ds)[i]? = some d ∧ d.kind = (ds[i]).kind ∧
+      d.message = (ds[i]).message ∧ d.span = (ds[i]).span ∧
+      d.help = (ds[i]).help ∧ d.demoted = (ds[i]).demoted ∧
+      d.subject = (ds[i]).subject := by
+  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
+  simp only [Option.map_some]
+  exact ⟨_, rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl,
+    by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
+
+/-- **The number on the line is the number of sites in the log.** Every
+tallied diagnostic's `sites` is the count of diagnostics sharing its loss,
+so a reader who trusts the default line's total and a reader who counts the
+`-v` sites by hand reach the same number. -/
+theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
+    (hs : (ds[i]).subject.isSome) :
+    ((Diag.tallySites ds)[i]?).map (·.sites) =
+      some (ds.filter (Diag.sameLoss ds[i] ·)).size := by
+  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
+  simp only [Option.map_some]
+  split
+  · simp_all
+  · rfl
 
 /-- One phase's diagnostics resolved against the document's acceptance,
 with the counts the driver's exit contract reads: errors and warnings are

@@ -391,28 +391,36 @@ def styInternal (file name : String) : Bool :=
   file.endsWith ".sty" && texInternal name
 
 /-- The one door a diagnostic lands through here: a push, never a write —
-the silence guard reads `diags.size` growth on its own. -/
+the silence guard reads `diags.size` growth on its own. `subject` is the
+census key of the loss, so "this loss is named" stays a lookup and
+`Diag.tallySites` can count its sites. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
-    (demote : Bool := false) : M Unit :=
+    (demote : Bool := false) (subject : Option String := none) : M Unit :=
   modify fun st => { st with
     diags := st.diags.push (
-      let d := Diag.of code msg (some ⟨st.file, pos⟩) help
+      let d := Diag.of code msg (some ⟨st.file, pos⟩) help subject
       if demote then d.demote else d) }
 
 /-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
 catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
-let a future entry claim a literal arm's key and silence it. -/
+let a future entry claim a literal arm's key and silence it.
+
+Once per construct, counted per site: the first occurrence carries the
+message and the help, every later one rides beside it as a note with the
+same code, the same words and the same structured `subject`, and
+`Diag.tallySites` puts the total on the visible line. The suppression that
+used to happen here spent one key for every site of a construct, so a
+document losing a macro at twenty-nine places reported one. -/
 private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false) : M Unit := do
-  if (← get).warned.contains key then
-    -- The construct was named at its first occurrence; the suppression is
-    -- that decision replayed, accounted as a write so the silence guard
-    -- (W0387) does not re-name per repeat what once-per-document
-    -- deliberately says once.
-    write id
-  else
+  let first := !(← get).warned.contains key
+  if first then
     write fun st => { st with warned := st.warned.push key }
-    say code msg pos help demote
+  else
+    -- The repeat is accounted as a write too, so the silence guard (W0387)
+    -- does not re-name per repeat what once-per-construct says once.
+    write id
+  say code msg pos (if first then help else none) (demote || !first) (subject := some key)
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/

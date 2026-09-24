@@ -556,4 +556,56 @@ theorem nodeExtent_covers (cx : Picture.Cx) (m : Ir.Pic.LabelMetric)
       ((g.x - g.a, g.y - g.b), (g.x + g.a, g.y + g.b)) := by
   sorry
 
+
+
+-- owed: pictureKeys_named
+-- owner: LeanTex.Core.Elab
+-- source: the stale picture-key gate (PLAN 2026-09-24, the unread-picture-key entry): the keys a `\tikzset` line leaves outside the rendered subset were named only under the declared refusal, on the premise that the real TikZ read them at the edge whenever a tool was configured. Native drawing killed that premise — the boundary became the fallback — and the diagnostic went silent for every picture the engine drew itself, an arrow-tip default among the keys dropped without a word on a 41-page deck. The gate now reads `Elab.enginePictures`, the count of `.picture` nodes the body walk produced, which is who drew it rather than which tool was configured. The in-suite witness is `pictureKeyGateChecks`, whose decisive row is a pair of builds differing by one `\pictures{ tool = none }` line: byte-identical PDFs, the same keys named on both sides, which is what separates the drawing from the honesty. Its siblings pin the two floors (a document whose every picture went whole to the boundary claims no loss, a document with no picture has no drawing to have lost them) and the mixed case the previous gate got wrong.
+-- blocker: the same diagnostic-monotonicity wall `reflow_named` names, one module over: the naming happens inside `elabDoc`'s `EM` fold and nothing states that a diagnostic pushed there survives to the array `runRaws` returns — every step only appends and no lemma says so. Two further factorizations are specific to this statement. The gate's premise reads the elaborated body, so relating it to the source needs `elabBlocks`' own census (which `.picture` nodes a source produces), the `Acc` split again. And the fold over the set lines accumulates the style table, so a statement over more than one `\tikzset` line needs an invariant carried through that fold; the single-line form below avoids it, which is why it is stated weakly rather than generally.
+-- goldens: no
+/-- The keys a drawing did not read are named, weak public form: for a
+document whose whole `\tikzset` census is one line, if the engine drew a
+picture of its own then every key of that line the rendered subset does not
+read carries a W0334 whose structured subject is the key. The restriction to
+one set line is what keeps the unread set readable without re-running the
+elaborator's style fold; the restriction to the engine's own drawing is the
+statement's content, since a picture that went whole to the boundary is read
+by the real TikZ and has no loss to name. -/
+theorem pictureKeys_named (file : String) (raws : Array Parse.Raw)
+    (pos : Pos) (keys : Array Parse.Raw)
+    (hone : Compat.tikzsetKeys raws = #[(pos, keys)])
+    (hdrew : 0 < Elab.enginePictures (Elab.runRaws file raws).1.body) :
+    ∀ k ∈ Picture.unreadKeys [] (Picture.ofRaws keys),
+      (Elab.runRaws file raws).2.any (fun d =>
+        d.kind == .W0334 && d.subject == some ("picture:set:" ++ k)) = true := by
+  sorry
+
+/-- How many diagnostics of one run are sites of the same loss as `d`: the
+census `Diag.tallySites` counts, read back over the public array so a
+statement can compare it with what the source contains. -/
+def lossSites (ds : Array Diag) (d : Diag) : Nat :=
+  (ds.filter (Diag.sameLoss d ·)).size
+
+-- owed: warnOnce_sites_exact
+-- owner: LeanTex.Core.Elab
+-- source: the per-construct diagnostic census (PLAN 2026-09-24, the counted-sites entry): `warnOnce` keyed on the construct and dropped every later occurrence, so on one real document ten diagnostics stood for roughly fifty losses and two node labels were dropped with no diagnostic at all, an earlier site having spent the key. Each site now delivers a note beside the named first, and `Diag.tallySites` puts the total on the visible line. The in-log half is proved: `Diag.tallySites_exact` says the number on the line is the number of diagnostics of that loss in the run, and `tallySites_length`/`tallySites_id` say counting adds, drops and rewords nothing. What is owed is the other half — that the number of diagnostics equals the number of *sites in the source*, which is the claim a reader sizing the damage from the log actually relies on. The in-suite witnesses are `diagSiteCountChecks` (three occurrences, three diagnostics, one visible line carrying 3, each note at its own position, the count equal to the diagnostics of that loss, and a single occurrence carrying neither count nor note) and the four fixture goldens whose second site stopped being silent.
+-- blocker: the source side has no census to compare against. There is no function from a raw tree to "the occurrences of construct c", and writing one here would be the spec copy the queue forbids — the occurrences are exactly the sites `elabBlocks` reaches, so the honest measure is that walk's own, which is the `Acc` split the emission-conservation rows already wait on. The form below sidesteps it by counting occurrences through repetition instead: appending a block to a document whose loss it already carries must raise that loss's count by exactly its own contribution, which is stateable over `Elab.runRaws` alone. That still needs the diagnostic-monotonicity notion `reflow_named` names (a `DiagsExtend` beside `PagesExtend`) plus the fact that elaborating a concatenation elaborates each part — neither exists, and the second is the compositionality `compose-fuzz.lean` currently stands in for.
+-- goldens: no
+/-- No site is silent, stated through repetition: elaborating a document's
+body twice over names every loss twice as often. The site count a reader
+takes from the default line is then the number of occurrences in the source
+and not merely the number in the log — which is the whole claim, since a
+census that undercounts is exactly the defect this replaced. Restricted to
+losses the single copy already names, because a repetition can create a loss
+of its own (a second `\maketitle` is refused where a first is not), and
+those have no count in the single copy to double. -/
+theorem warnOnce_sites_exact (file : String) (pre body : String) :
+    ∀ d ∈ (Elab.run file (pre ++ "\\begin{document}" ++ body ++ "\\end{document}")).2,
+      d.subject.isSome →
+        lossSites (Elab.run file
+            (pre ++ "\\begin{document}" ++ body ++ body ++ "\\end{document}")).2 d =
+          2 * lossSites (Elab.run file
+            (pre ++ "\\begin{document}" ++ body ++ "\\end{document}")).2 d := by
+  sorry
+
 end Obligations

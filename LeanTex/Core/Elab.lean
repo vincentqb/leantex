@@ -397,8 +397,8 @@ abbrev EM := StateM ESt
 both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
 so a message exists in exactly one spelling. -/
 private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
-    (help : Option String := none) : Diag :=
-  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help
+    (help : Option String := none) (subject : Option String := none) : Diag :=
+  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject
 
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) : EM Unit :=
@@ -440,16 +440,26 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
 private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
   modify fun st => evs.foldl (applyEvent ctx) st
 
-/-- A warning deduplicated by `key`: the same unsupported construct in forty
-frames is one problem, not forty. `demote` delivers it as a note instead —
-the spliced-`.sty` TeX-internal refusal (`Compat.styInternal`), correct and
-unactionable per line, counted once by N0020 and listed under `-v`. -/
+/-- A warning delivered once per construct and *counted* every time: the
+same unsupported construct in forty frames is one problem, not forty, but it
+is also not one loss. The first site carries the message, the help, and —
+after `Diag.tallySites` — the total; each later site rides beside it as a
+note with the same code, the same words and the same structured `subject`,
+so it reads under `-v` at its own position and the count on the visible line
+is the number of sites the log holds. Keying on the construct alone is what
+made ten lines stand for fifty losses, two of them node labels dropped with
+no diagnostic at all because an earlier site had spent the key.
+`demote` delivers the first site as a note instead — the spliced-`.sty`
+TeX-internal refusal (`Compat.styInternal`), correct and unactionable per
+line, counted once by N0020 and listed under `-v`. -/
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false) : EM Unit := do
-  unless (← get).warnedUnknown.contains key do
+  let first := !(← get).warnedUnknown.contains key
+  if first then
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
-    let d := diagOf ctx code msg (some pos) help
-    modify fun st => { st with diags := st.diags.push (if demote then d.demote else d) }
+  let d := diagOf ctx code msg (some pos) (if first then help else none) (subject := some key)
+  modify fun st =>
+    { st with diags := st.diags.push (if demote || !first then d.demote else d) }
 
 /-- Record a citation group's keys with their `\cite`'s span, first
 occurrence per key: the no-bibliography judge's sites (elabDoc). A
@@ -1028,7 +1038,7 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     for note in notes do
       mathNote ctx note s!"'\{{name}}': " pos
     if numbered then
-      warnOnce ctx "math:eqnum" .W0015
+      warnOnce ctx ("math:eqnum:" ++ name) .W0015
         s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
         (help := s!"'\{{name}*}' spells the unnumbered form, which renders the same")
     return .formula true (Parse.rawSrc body) l
@@ -2771,7 +2781,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           recordLabel ctx key (← get).refTarget pos
           acc := acc.push (.label key)
         if numbered then
-          warnOnce ctx "math:eqnum" .W0015
+          warnOnce ctx ("math:eqnum:" ++ name) .W0015
             s!"equation numbers are not rendered here; '\{{name}}' sets unnumbered" pos
             (help := s!"'\{{name}}*' spells the unnumbered form, which renders the same")
         let x ← elabMathInline ctx true cleaned pos
@@ -3069,7 +3079,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let j1 := skipStar raws j0
           have hj1 := skipStar_ge raws j0
           if scanBracketArg raws j1 pos matches .took _ then
-            warnOnce ctx "section:short" .N0103
+            warnOnce ctx ("section:short:" ++ name) .N0103
               s!"'\\{name}[short]' short title is unused: nothing consumes it yet" pos
           let j := skipShortTitle raws j1 pos
           have hjst := skipShortTitle_ge raws j1 pos
@@ -5764,7 +5774,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
           -- booktabs' optional [width] per rule is not modelled:
           -- the three weights are the design, one source.
           if let .took j' := scanBracketArg body j rpos then
-            warnOnce ctx "tabular:rulewidth" .N0102
+            warnOnce ctx ("tabular:rulewidth:" ++ name) .N0102
               s!"'\\{name}' [width] is ignored: rule weights come \
   from the design tokens" rpos
             j := j'
@@ -6733,7 +6743,7 @@ private def algorithmArm (ctx : Ctx) (n : String) (body : Array Raw)
   for _ in [0:body.size] do
     match scanBracketArg body k pos with
     | .took k' =>
-      warnOnce ctx "algorithm:placement" .N0102
+      warnOnce ctx ("float:placement:" ++ n) .N0102
         s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
 nowhere for a float to float" pos
       k := k'
@@ -7084,7 +7094,7 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
         for _ in [0:3] do
           match scanBracketArg sbody m spos with
           | .took m' =>
-            warnOnce ctx "subfigure:options" .N0102
+            warnOnce ctx ("subfigure:options:" ++ sn) .N0102
               s!"'\{{sn}}' [pos] options are ignored: the box \
 stands top-aligned in its row" spos
             m := m'
@@ -7099,7 +7109,7 @@ stands top-aligned in its row" spos
           let src := rawSrc wRaws
           width := columnWidth ctx src
           if width.isNone then
-            warnOnce ctx "env:subfigure-width" .W0314
+            warnOnce ctx ("env:subfigure-width:" ++ sn ++ ":" ++ src) .W0314
               s!"'\{{sn}}' width '{src}' is not a fraction of the \
 text width; the box shares the leftover" spos
               (help := "write a factor like {0.48\\textwidth}")
@@ -7483,7 +7493,7 @@ the box takes the whole measure" pos
     for _ in [0:fbody.size] do
       match scanBracketArg fbody k pos with
       | .took k' =>
-        warnOnce ctx "figure:placement" .N0102
+        warnOnce ctx ("float:placement:" ++ n) .N0102
           s!"'\{{n}}' [placement] is ignored: a single-pass engine \
 has nowhere for a float to float" pos
         k := k'
@@ -7914,7 +7924,7 @@ when it is empty — '{}'")
     -- scanner. The malformed run of an unclosed bracket is content
     -- here, exactly as in the scanner's sibling paths.
     if let .took _ := scanBracketArg raws i1 pos then
-      warnOnce ctx "section:short" .N0103
+      warnOnce ctx ("section:short:" ++ n) .N0103
         s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
     let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx n raws i1 pos
     if let some p ← mkPara ctx junk then
@@ -10624,6 +10634,16 @@ def macroScan (raws : Array Raw) : Array (String × String) :=
     (all[i]?).bind fun p =>
       if (all.extract (i + 1) all.size).any (fun q => q.1 == p.1) then none else some p
 
+/-- The pictures the engine drew *itself*: the `.picture` nodes the body walk
+produced, at any depth. Those nodes have exactly two sources — the shapes the
+rendered subset evaluated, and the placeholder that marks a picture the
+subset refused whole — so a positive count says the engine, not the boundary
+tool, put the diagram on the page. The gate on the `\tikzset` key diagnostic
+reads it, and `pictureKeys_named` states over it. -/
+def enginePictures (blocks : Array Block) : Nat :=
+  Ir.foldBlocks (fun n b => match b with | .picture _ => n + 1 | _ => n)
+    (fun n _ => n) 0 blocks
+
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
@@ -10809,9 +10829,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
   -- Read here rather than in the preamble fold because *who drew it* is a
   -- fact of the elaborated body — the `.picture` nodes this walk produced —
   -- never of a configuration, and never of how layout will resolve them.
-  let enginePictures : Nat := Ir.foldBlocks
-    (fun n b => match b with | .picture _ => n + 1 | _ => n) (fun n _ => n) 0 blocks
-  if enginePictures > 0 then
+  if enginePictures blocks > 0 then
     let mut styles : List (String × Array Picture.Tok) := []
     for (pos, keys) in picSets do
       let toks := Picture.ofRaws keys
@@ -11076,7 +11094,8 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
+  (doc, Diag.tallySites
+    (earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
@@ -11095,7 +11114,7 @@ document, since no bibliography resolution follows here. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let (doc, diags, rs) := runRawsSpanned file raws earlier
-  (doc, diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc)
+  (doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

@@ -42,5 +42,6 @@ para
   text " sets its characters and names the construct, and no control sequence reaches the page."
 -- diagnostics
 warning[W0385] 16:25 the colour 'ink' inside math sets in the surrounding style
+note[W0385] 24:1 '{align*}': the colour 'ink' inside math sets in the surrounding style
 warning[W0385] 24:1 '{align*}': '\textbf' inside math sets in the surrounding style
 warning[W0012] 29:59 math with \overset is not rendered yet; the formula sets as its text content

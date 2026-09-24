@@ -937,3 +937,103 @@ def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (ok, okDs) := elabStr (dvDoc "" "\\section{A}\\label{a} See \\ref{a}.")
   t "pending: a resolved reference is not pending, and W0349 stays silent"
     ((Ir.pending ok { entries := #[] }).isEmpty && okDs.all (·.code != "W0349"))
+
+
+/-- **The losses add up.** A construct refused once per document is named
+once and *counted* every time: the visible line carries the total, and every
+further site rides beside it as a note at its own position, so the number a
+reader takes from the default log is the number of sites the log holds.
+
+Before this, the key was spent at the first site and every later one was
+dropped whole — ten lines standing for fifty losses on one real document,
+two of them content dropped with no diagnostic at all. The rows below pin
+both directions: the count is the site count (never the construct count),
+and the notes are the sites (never a re-run of the first). Invented content
+and design. -/
+def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- One construct at three sites: three positions, one visible line.
+  let thrice := dvDoc "" "\\raggedleft One.\n\n\\raggedleft Two.\n\n\\raggedleft Three."
+  let ds := (elabStr thrice).2
+  let of (code : String) (ds : Array Diag) : Array Diag := ds.filter (·.code == code)
+  let visible (ds : Array Diag) : Array Diag := ds.filter (·.severity != .note)
+  t "three sites of one construct are three diagnostics"
+    ((of "W0104" ds).size == 3)
+  t "three sites of one construct are one visible line"
+    ((visible (of "W0104" ds)).size == 1)
+  t "the visible line carries the site count"
+    ((visible (of "W0104" ds)).all (·.sites == 3))
+  -- The sites are the sites: each note stands where its own occurrence is,
+  -- so `-v` locates every loss rather than repeating the first.
+  t "every site is named at its own position"
+    (((of "W0104" ds).filterMap fun d => d.span.map (·.pos.line)).toList == [3, 5, 7])
+  -- Each site names the same loss, so "this loss is named" stays a lookup
+  -- on the structured subject rather than a search of the message text.
+  t "every site of one loss carries the same subject"
+    (((of "W0104" ds).map (·.subject)).toList.eraseDups.length == 1 &&
+      (of "W0104" ds).all (·.subject.isSome))
+  -- The count is the number of sites the log holds — read off the log, which
+  -- is the property a reader sizing the damage relies on.
+  t "the count on the line is the number of diagnostics of that loss"
+    ((visible (of "W0104" ds)).all fun d =>
+      d.sites == (ds.filter (Diag.sameLoss d ·)).size)
+  -- Only the first site is actionable prose: the help is advice about the
+  -- construct, not about the occurrence, so it is never repeated.
+  let helped := (elabStr (dvDoc ""
+    "\\parbox{3cm}{One.}\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
+  t "the help is given once, at the first site"
+    (((of "W0104" helped).filter (·.help.isSome)).size == 1 &&
+      ((of "W0104" helped)[0]?.map (·.help.isSome)).getD false &&
+      (of "W0104" helped).size == 3)
+  -- A single site is a single loss: no count, no note, nothing added.
+  let once := (elabStr (dvDoc "" "\\raggedleft Only one.")).2
+  t "a construct at one site carries no count and no note"
+    ((of "W0104" once).size == 1 && (of "W0104" once).all fun d =>
+      d.sites == 1 && d.severity != .note)
+  -- Two distinct losses under one code do not merge: the census is keyed by
+  -- the loss, not by the code, so a count never borrows another's sites.
+  let two := (elabStr (dvDoc ""
+    "\\raggedleft One.\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
+  t "two losses sharing a code keep their own counts"
+    ((visible (of "W0104" two)).size == 2 &&
+      ((visible (of "W0104" two)).map (·.sites)).toList == [1, 2])
+  -- Counting adds and silences nothing: the tally is the identity on every
+  -- field but the count (`Diag.tallySites_id`), and idempotent, so a second
+  -- pass cannot inflate a total.
+  t "counting is idempotent"
+    (Diag.tallySites ds == ds)
+  t "counting neither adds nor drops a diagnostic"
+    ((Diag.tallySites (of "W0104" two)).size == (of "W0104" two).size)
+  -- What the reader actually sees, through the one renderer the driver uses.
+  let rendered := ((visible (of "W0104" ds))[0]?.map (Render.human false)).getD ""
+  t "the rendered line states the total"
+    (hasStr rendered "(3 sites)")
+  t "a single site renders no total"
+    (!hasStr (((of "W0104" once)[0]?.map (Render.human false)).getD "") "sites)")
+  -- The machine-readable channel carries it too, so a consumer reading one
+  -- record knows the loss's multiplicity without scanning for the first.
+  t "porcelain carries the site count on every site"
+    ((of "W0104" ds).all fun d => hasStr (Render.porcelainDiag d) "\"sites\":3")
+  -- The exit contract does not move: the further sites are notes, so a
+  -- construct at three sites is still one warning under --werror.
+  t "the further sites are not warnings"
+    ((Diag.resolveAll #[] false ds).warnings == (Diag.resolveAll #[] false once).warnings)
+  -- **A census key names its construct.** Counting made the keys legible and
+  -- several were too coarse: one key stood for a family, so the family's
+  -- *second* construct was dropped whole rather than merely uncounted. A
+  -- float's ignored placement was such a key — the first float spent it and
+  -- the next kind of float said nothing, in a message that would have named
+  -- itself correctly had it been allowed to speak.
+  let floats := (elabStr (dvDoc ""
+    ("\\begin{figure}[htbp]\\caption{One.}\\end{figure}\n\n" ++
+     "\\begin{table}[htbp]\\caption{Two.}\\end{table}"))).2
+  t "two kinds of float each name their own ignored placement"
+    (((of "N0102" floats).map (·.message)).toList.eraseDups.length == 2 &&
+      (of "N0102" floats).all (·.sites == 1))
+  -- Two heading levels likewise: the unused-short-title note used one key
+  -- for every sectioning command, so only the first level ever said so.
+  let shorts := (elabStr (dvDoc ""
+    "\\section[One]{Section one}\n\n\\subsection[Two]{Subsection two}")).2
+  t "two heading levels each name their own unused short title"
+    (((of "N0103" shorts).map (·.message)).toList.eraseDups.length == 2 &&
+      (of "N0103" shorts).all (·.sites == 1))

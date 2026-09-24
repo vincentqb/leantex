@@ -261,6 +261,28 @@ list.
   `pictureInkBoxChecks`, and W0336 beside it: a diagram whose labels
   collide inside a correct box is named, which is the loss this obligation
   would remove.
+- `pictureKeys_named` — a drawing names what it did not read, weak public
+  form: for a document whose whole `\tikzset` census is one line, if the
+  engine drew a picture of its own then every unread key of that line
+  carries a W0334 whose subject is the key. The gate is proved *in* the
+  code (it reads `Elab.enginePictures`, the `.picture` nodes the body walk
+  produced); what is owed is that the naming survives the `EM` fold and
+  reaches the array `runRaws` returns — `reflow_named`'s
+  diagnostic-monotonicity wall, plus `elabBlocks`' own census of which
+  sources produce a `.picture` node. The witness is the two-build byte
+  identity and its five siblings in `pictureKeyGateChecks`.
+- `warnOnce_sites_exact` — no site is silent, stated through repetition:
+  elaborating a body twice names every loss the single copy already names
+  twice as often, so the count on the visible line is the number of
+  occurrences in the *source* and not merely the number in the log. The
+  in-log half is proved (`Diag.tallySites_exact`, with
+  `tallySites_length`/`tallySites_id` saying counting adds, drops and
+  rewords nothing). Blocked on there being no census from a raw tree to
+  "the occurrences of a construct" — the occurrences are the sites
+  `elabBlocks` reaches, so the honest measure is that walk's own `Acc`
+  split — and on the compositionality of elaborating a concatenation,
+  which `scripts/compose-fuzz.lean` stands in for. The witness is
+  `diagSiteCountChecks`.
 
 ### Log
 
@@ -9251,3 +9273,107 @@ What this does *not* do is draw the arrowheads. The arrow-tip default among
 those keys is now named rather than honoured, which is the floor this repo
 declares and not the fix a reader of the page wants; reading the key is
 `Picture.lean`'s to do and is routed there.
+
+
+### 2026-09-24 — ten diagnostics stood for fifty losses, so a loss is counted
+
+`warnOnce` keyed on the construct and dropped every later occurrence whole.
+Measured against one real document: 29 occurrences of one alignment command
+reported once, 15 declared breaks inside node bodies reported once, two
+box-width refusals reported once, four box refusals reported once — ten
+visible diagnostics standing for roughly fifty distinct losses. Worse than
+the undercount: on one page two node labels were dropped with **no
+diagnostic at all**, because an earlier site had already spent the key. That
+is the mechanism that made every other defect in the document invisible — a
+green suite, a clean build, and a log understating the loss fivefold.
+
+**The policy, and why it is the middle one.** Three were available.
+
+*One per construct per document* is what the engine had. It keeps the log
+short and it under-reports, which is the defect: a reader sizing the damage
+cannot, because the log's length is the number of *kinds* of loss and not
+the number of losses.
+
+*One per site* is honest and is what the code's own docstring argues
+against, correctly — "a macro used forty times is one problem, not forty".
+Forty identical warnings is its own failure mode: it buries the other
+thirty-nine diagnostics, and `--werror` then counts one authoring mistake
+forty times. The exit contract is the concrete objection, not taste.
+
+*One per construct with the count, every site under `-v`* is what landed.
+The first site carries the message, the help and the total; every later site
+rides beside it as a note with the same code, the same words and the same
+structured subject, at its own position. So the default log has one line per
+construct — the short log the original policy wanted — and that line states
+how many sites it stands for, which is the number the reader needed. The
+further sites are notes, so they print under `-v`, they do not count as
+warnings, and a construct at twenty-nine sites is still one `--werror`
+failure. The help is prose about the construct rather than the occurrence,
+so it is given once.
+
+**The invariant is that the losses add up**, and it is where the count comes
+from rather than something asserted about it. `Diag.tallySites` is the one
+writer of `Diag.sites`: it tells each diagnostic how many diagnostics in the
+run share its code *and* its structured subject, which is exactly the number
+of sites the run reports. `tallySites_exact` states that equality, so the
+reader who trusts the line's total and the reader who counts the `-v` sites
+by hand reach the same number. `tallySites_length` and `tallySites_id` state
+that counting adds, drops, reorders, demotes and rewords nothing — counting
+cannot change what was lost, only what the reader is told. The remaining
+half — that the number in the log is the number of sites in the *source* —
+is `warnOnce_sites_exact` in the owed queue, stated through repetition
+because there is no census from a raw tree to "the occurrences of a
+construct" and inventing one would be the spec copy the queue forbids.
+
+The count is structured, not prose: a `sites` field the renderer prints as
+`(29 sites)` and porcelain emits as `"sites":29`. Prose would have put the
+number inside a message the voice lint measures against a character cap and
+a consumer would have to parse. It rides on every site's record rather than
+the first alone, deliberately: a `--porcelain` consumer reading one record
+then knows the loss's multiplicity without scanning backwards for the head,
+and the field means one thing everywhere. The cost is that a `-v` log
+repeats the total on each note of a run, which is the one place the
+repetition shows.
+
+**A census key names its construct.** Counting made the keys legible, and
+seven of them were too coarse: one key stood for a *family*, so the family's
+second construct was not merely uncounted but dropped whole — in a message
+that would have named itself correctly had it been allowed to speak. A
+float's ignored `[placement]` was one key for `{figure}`, `{table}` and
+`{algorithm}`; an unused short title one key for every sectioning command;
+an unrendered equation number one key for every display environment; and a
+subfigure's unreadable width one key for every width. Each now carries the
+construct (and, for the width, the value) it names. The general rule, and
+the thing to check when adding a `warnOnce`: **the key must determine the
+message**, or two losses share a census slot. The residual, recorded rather
+than fixed: a key may still see two messages that differ by *context*
+rather than construct — a colour refused inside math says so with the
+enclosing environment's name when there is one — and splitting on that would
+give one loss two heads, which is the opposite mistake.
+
+**Evidence.** Twenty-one `diagSiteCountChecks` rows: three occurrences are
+three diagnostics and one visible line carrying 3, each note at its own
+line, every site sharing one subject, the count equal to the diagnostics of
+that loss read off the log, the help given once, a single occurrence
+carrying neither count nor note, two losses under one code keeping separate
+counts, the rendered line and the porcelain record both stating the total,
+the `--werror` count unmoved, and the two key splits each naming both of
+their constructs.
+
+Four fixture goldens moved, each gaining exactly one line, and each is a
+loss that used to be silent — which is the finding, not noise. Three are
+second sites of an ignored layout option (`columns`, `subfigures`,
+`float-center`); the fourth is the one that shows the shape of the damage:
+`math-text` carries two colour refusals inside math and reported one, so a
+fixture written to exercise that refusal was silently exercising half of
+it. `float-center`'s is the key-coarseness case caught in the corpus — a
+`{table}`'s placement dropped in silence because a `{figure}` had spent the
+key — and after the key split both are named as heads. The diagnostics
+golden did not move: every voice witness is a single fire, so the renderer's
+new clause has nothing to add there.
+
+On the private reference corpus: 18 visible lines before, 22 after (the
+four picture keys from the entry above), and seven of those lines now carry
+counts summing to 65 — so the default log accounts for 80 losses where it
+used to account for 18, with 160 diagnostics readable under `-v` against 98.
+The artifact is byte-identical across both changes.

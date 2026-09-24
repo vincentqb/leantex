@@ -54,3 +54,4 @@ frame
         text "Third third, level with both."
 -- diagnostics
 note[N0102] 9:1 'columns' alignment options are ignored: columns are top-aligned
+note[N0102] 32:1 'columns' alignment options are ignored: columns are top-aligned

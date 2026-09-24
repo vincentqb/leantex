@@ -14,7 +14,10 @@ private def severityColor : Severity → String
 
 def human (color : Bool) (d : Diag) : String :=
   let head := sgr color (severityColor d.severity) s!"{d.severity.label}[{d.code}]"
-  let base := s!"{head}: {d.message}"
+  -- A once-per-document loss shows one line, so the line carries the total:
+  -- the further sites ride beside it as notes and read under -v.
+  let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
+  let base := s!"{head}: {d.message}{count}"
   let withSpan := match d.span with
     | some sp => base ++ "\n" ++ sgr color "1;34" "  --> " ++ s!"{sp.file}:{sp.pos.line}:{sp.pos.col}"
     | none => base
@@ -80,6 +83,7 @@ def porcelainDiag (d : Diag) : String :=
   let all := match d.help with
     | some h => withSpan ++ [("help", jstr h)]
     | none => withSpan
+  let all := if d.sites ≤ 1 then all else all ++ [("sites", toString d.sites)]
   obj all
 
 def porcelainPhase (name detail : String) (ms : Nat) : String :=

@@ -34,3 +34,4 @@ para
 -- diagnostics
 note[N0100] 7:1 '\usepackage{subcaption}' → nothing: the engine does this itself
 note[N0102] 18:1 '{subfigure}' [pos] options are ignored: the box stands top-aligned in its row
+note[N0102] 27:1 '{subfigure}' [pos] options are ignored: the box stands top-aligned in its row

@@ -34,3 +34,4 @@ para
   text " are referenced by the numbers their captions carry."
 -- diagnostics
 note[N0102] 12:1 '{figure}' [placement] is ignored: a single-pass engine has nowhere for a float to float
+note[N0102] 20:1 '{table}' [placement] is ignored: a single-pass engine has nowhere for a float to float
