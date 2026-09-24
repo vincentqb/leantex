@@ -11026,3 +11026,110 @@ Evidence: the row fails before and passes after (`\cancelto{0}{x}` inking
 `0x` then `x`), and the package's compat-index rows are unchanged — the
 refusal still fires, which is the point: the loss is still named at full
 strength, it just no longer prints a falsehood beside its own warning.
+
+
+### 2026-09-24 — a premise about another subsystem is a claim, so it names its check
+
+Three defects this session were one defect. A conditional decided whether
+the engine speaks, its comment justified that decision with a fact about a
+*different* part of the system, the fact later stopped being true, and
+nothing noticed. The picture-key gate read which tool the document
+configured when the load-bearing fact was whether anything had drawn the
+picture (§ *a stale gate dropped every unread picture key in silence*), and
+it cost a real deck every arrowhead on every diagram page with a fully green
+suite. W0012's recovery set unrenderable math as its own LaTeX source,
+defensible while nothing better existed and catastrophic once it reached
+slides. `styInternal` asks whether a name is a TeX internal when the fact it
+needs is whether the author wrote the file, so a vendor `.sty` spliced
+beside a document promotes that vendor's macro names to warnings the author
+cannot act on, and fails their `--werror` build on someone else's file.
+
+AGENTS.md already holds the general rule — a guarantee stated in prose is
+not a guarantee — and `scripts/cites.lean` enforces it where the claim is a
+theorem citation. This is the same rule one step over, where the claim is
+about a sibling subsystem, and it was unenforced.
+
+**What the enforceable invariant is.** Not "comments must be true", which no
+checker can read, but: *a decision about whether the engine speaks, or how
+loudly, that rests on a fact about another subsystem owes the check that
+holds the fact.* The check is named beside the gate
+(`-- premise: <pin> — <why>`), and the pin must resolve — a theorem the
+build checks, or a check block the suite actually runs. `-- premise: none —
+<why>` records the premise as debt instead. The `conserves: none` refusal is
+the precedent for the escape, and cites.lean is the precedent for resolving
+the name rather than trusting it: a pin that resolves to nothing reads as a
+premise held and holds nothing, which is the failure mode in its purest
+form.
+
+**What the shape of such a check is, and why the pin can be demanded at
+all.** Two builds differing by the gate's own condition. If the artifact
+comes out byte-identical and only the diagnostics move, then nothing else
+was handling the case and the gate is a silencer, not a boundary. That is
+`pictureKeyGateChecks`, and it is what makes this convention cost something
+real rather than being a comment ritual: the pin is falsifiable.
+
+**Detection was the hard half, and it was settled by measurement rather than
+taste.** Five candidate site-detectors, scored on this tree:
+
+| detector | sites | genuine | precision |
+|---|---|---|---|
+| any conditional whose block emits a diagnostic | 212 | ~6 | 3% |
+| + transitive taint from a configuration read | 42 | 3 | 7% |
+| + depth-1 taint | 14 | 3 | 21% |
+| + taint bounded to def-top-level bindings | 4 | 3 | 75% |
+| direct configuration reads, no taint | 8 | 8 | 100% |
+
+The 212-site version is the one that would have been disabled within a
+week — a convention that cries wolf gets turned off, so precision is not a
+nicety here but the whole viability question. What separates the healthy
+conditional from the rotting one is whether the condition is *about the
+loss* or *about the setup*: `unless dropped.isEmpty do say …` names what it
+just found, while `if ctx.picTool.isSome then …` names a loss only under a
+configuration, which asserts that the other configuration is covered
+somewhere else. That distinction has a mechanical spelling, because the
+declared setup enters through a small closed vocabulary — the elaboration
+context, the driver's config, the scanned declarations, the state read
+through `get`. Taint tracking through local bindings was the obvious way to
+widen the net and it is measurably the wrong trade: it multiplies sites by
+five and finds nothing new.
+
+So the gate reads three shapes. A conditional on the declared setup that
+**names** a loss in its block (the engine speaks only under this
+configuration). One that goes **quiet** — returns without emitting — while
+an emission stands below it (the quiet branch claims another subsystem names
+it; this is the W0301 spelling of the picture defect, and the condition's
+configuration read sits on a continuation line, which is why the scan is not
+line-local). And a **computed demotion**, `demote := <expr>` rather than
+`demote := true`: a demotion claims the reader cannot act, which is a fact
+about who wrote the file and never about the loss, so every computed one
+carries a cross-subsystem premise by construction.
+
+**The stated blind spot, pinned in the selftest so closing it is
+deliberate.** The picture defect's own historical spelling read a local
+hoisted out of the declarations two lines above (`if picTool0.isNone`), and
+a line scanner cannot see through the binding. Both of that gate's sites
+today read the context directly and are caught, but the gate does not catch
+the shape as it was originally written, and that is recorded rather than
+argued away.
+
+**Thirteen premise sites exist, and saying which are sound is the valuable
+half.** Six are pinned by a check that genuinely falsifies them; four are
+recorded debt. Two of the four are live defects rather than untested
+assumptions: the W0301 boundary gate is the picture defect unfixed (a
+document whose every picture the engine drew itself still swallows the
+boundary-only set commands unnamed, because they ride into a standalone only
+for a picture that went there whole), and `styInternal` is the proxy defect
+itself. Both are recorded with the reason and routed; they sit in engine
+files this slice does not own.
+
+**Why no new runtime witness.** The convention demands the two-build shape,
+and the tree already holds it once. A second copy would be the fifteen-deck-
+builders mistake in miniature, so the hook's selftest covers the predicates
+and the commit-time resolution covers the pins.
+
+Evidence: the selftest fails before and passes after — with `readsSetup`
+stubbed to `false` it misses all three commemorated shapes and reports them
+by name. The gate over the whole tree reports every unregistered site and
+goes silent once each is pinned or recorded, and the registry is checked in
+both directions, so an edited condition invalidates its row rather than
+passing quietly on a premise nobody re-read.
