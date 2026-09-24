@@ -1488,13 +1488,6 @@ inductive SalMode where
   | colorBody (c : Ir.Color) (role : Option String)
   deriving Repr, BEq, Inhabited
 
-/-- How many naming groups an option run is holding open. -/
-def SalMode.pending : SalMode → Nat
-  | .optMaybe k => k
-  | .optDrop k => k
-  | .dropArgs k => k
-  | .text | .colorRole | .colorBody _ _ => 0
-
 /-- A node label under construction: the lines already closed, the current
 line's inlines and its pending text run, the size that line sets at, and
 the losses named so far. `fresh` is whether the current line has had
