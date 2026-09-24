@@ -2,6 +2,69 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- **The extent a node registers, and the separation it buys.** The site
+`Ir.Pic.nodeExtent` is the one answer to "how far does this node reach",
+and the defect it closes is that the answer used to be the declared minimum
+alone — zero for a node body that declared none, so `right =of` parted node
+*centres* and a row of labels landed on top of one another.
+
+The measurement is a stated invention here, not this host's face: the
+statements (`nodeExtent_covers`, `nodeExtent_separates`) are quantified over
+every `Ir.Pic.LabelMetric`, so what a test adds is the site's arithmetic on
+real numbers — and a fixture that measured with an installed font would be
+pinning the font, not the site. -/
+def nodeExtentChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- An invented face: every character 6 pt wide, ink 7 pt over the
+  -- baseline and 2 pt under it, scaled per mille as a real metric is.
+  let metric : Ir.Pic.LabelMetric := fun content scale =>
+    let n := (Ir.plainText content).length
+    { w := Dim.pt 6 * n * scale / 1000
+      height := Dim.pt 7 * scale / 1000
+      depth := Dim.pt 2 * scale / 1000 }
+  let label (text : String) : Array Ir.Inline := #[.text text]
+  let extent (text : String) (declA declB : Dim.Sp) : Dim.Sp × Dim.Sp :=
+    Ir.Pic.nodeExtent metric (label text) 1000 .center declA declB
+  -- The input the placement was given before there was a face to ask.
+  t "a node body with no declared minimum still registers an extent"
+    (extent "Placeholder" 0 0 == (Dim.pt 33, Dim.pt 9 / 2))
+  -- The declared minimum is a floor, never a ceiling (pgf's own reading:
+  -- extent = max(minimum, text extent)).
+  t "a declared minimum wider than the text keeps its own extent"
+    ((extent "Tiny" (Dim.pt 40) (Dim.pt 30)).1 == Dim.pt 40)
+  t "a declared minimum narrower than the text loses to the text"
+    ((extent "A Very Wide Label Indeed" (Dim.pt 10) 0).1 == Dim.pt 72)
+  -- An anchored label is not symmetric about its anchor: a `west` label
+  -- puts its whole width to the right, so a centred extent must hold the
+  -- whole of it, not half.
+  t "an anchored label asks for its whole width, not half of it"
+    ((Ir.Pic.nodeExtent metric (label "Placeholder") 1000 .west 0 0).1 == Dim.pt 66)
+  -- The scale a node's `font=` sets reaches the measurement.
+  t "a smaller label asks for less"
+    ((extent "Placeholder" 0 0).1 > (Ir.Pic.nodeExtent metric (label "Placeholder") 700 .center 0 0).1)
+  -- **The fact the site exists for**, on numbers rather than in general:
+  -- two nodes whose centres stand one separation plus both half-extents
+  -- apart — which is what `right =of` computes — set label ink that does
+  -- not overlap. With the extents at zero, as they were, the same
+  -- arithmetic puts the second label's ink 47 pt left of where the first
+  -- one's ends.
+  let inkRight (x : Dim.Sp) (text : String) : Dim.Sp :=
+    (Ir.Pic.labelInkBox x 0 .center (metric (label text) 1000)).2.1
+  let inkLeft (x : Dim.Sp) (text : String) : Dim.Sp :=
+    (Ir.Pic.labelInkBox x 0 .center (metric (label text) 1000)).1.1
+  let sep := Dim.mm 10
+  let placed (declA : Dim.Sp) : Dim.Sp :=
+    sep + (extent "Widest Placeholder" declA 0).1 + (extent "Second Placeholder" declA 0).1
+  t "two measured nodes one separation apart do not overlap"
+    (inkRight 0 "Widest Placeholder" < inkLeft (placed 0) "Second Placeholder")
+  t "the gap the placement leaves is the separation the document declared"
+    (inkLeft (placed 0) "Second Placeholder" - inkRight 0 "Widest Placeholder" == sep)
+  -- The defect, as the number it was: with no extent registered, the
+  -- separation is measured from the anchors and the text overlaps.
+  let unmeasured : Dim.Sp := sep
+  t "with no extent registered the same arithmetic overlaps the text"
+    (inkLeft unmeasured "Second Placeholder" < inkRight 0 "Widest Placeholder")
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -4926,13 +4989,15 @@ reserves space the ink does not use.
 
 What this does *not* fix is the separation: `right =of` puts one node
 distance between node *centres* because no body's extent is measured at
-elaboration, so labels in a row still overlap. That half needs the face at
-elaboration, which the driver cannot supply (it builds the font set from
-the elaborated document); it is `nodeExtent_covers`, owed and staged. The
-last rows below are the honest floor meanwhile: a diagram whose ink leaves
-the text area is named (W0335), and one whose labels collide inside a
-correct box is named too (W0336) — the case the box cannot show, because
-the box holds both labels and is right to. -/
+elaboration, so labels in a row still overlap. The extent a node should
+register, and the separation it buys, are stated and proved on the IR
+(`Ir.Pic.nodeExtent`, `nodeExtent_covers`, `nodeExtent_separates`, pinned by
+`nodeExtentChecks`); what is left is the walk reading that site and the
+driver supplying a measurement, which is `nodeExtent_covers`, owed and
+staged. The last rows below are the honest floor meanwhile: a diagram whose
+ink leaves the text area is named (W0335), and one whose labels collide
+inside a correct box is named too (W0336) — the case the box cannot show,
+because the box holds both labels and is right to. -/
 def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref

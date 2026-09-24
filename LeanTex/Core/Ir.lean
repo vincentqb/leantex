@@ -2444,6 +2444,117 @@ theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le 
   exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
          h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
 
+/-- The half-extents a label of this width and height asks of the node it
+hangs on: how far its ink reaches either side of the anchor, read off
+`labelInkSpan` so this and the box a picture reserves cannot disagree about
+where a label's ink stands. An anchored label is not symmetric about its
+anchor — a `west` label puts its whole width to the right of it — so each
+axis takes the larger reach, which is what a *centred* extent must cover. -/
+def labelHalfExtent (align : LabelAlign) (w tall : Sp) : Sp × Sp :=
+  let ((x0, y0), (x1, y1)) := labelInkSpan 0 0 align w tall
+  (max (-x0) x1, max (-y0) y1)
+
+/-- The box a node of these half-extents occupies: the centred extent a
+relative placement leaves `node distance` between, border to border. -/
+def nodeExtentBox (x y a b : Sp) : Box := ((x - a, y - b), (x + a, y + b))
+
+/-- A label's ink is inside the extent its own reach asks for. The
+arithmetic is spelled over bare `Int` binders and applied, because `omega`
+does not read an `Sp`-typed goal — the workaround `labelInkSpan_covers_anchor`
+records, one lemma per anchor shape rather than one per anchor. -/
+theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
+    Box.le (labelInkSpan x y align w tall)
+      (nodeExtentBox x y (labelHalfExtent align w tall).1
+        (labelHalfExtent align w tall).2) := by
+  have mid : ∀ v d : Int,
+      v - max (-(0 - d / 2)) (0 - d / 2 + d) ≤ v - d / 2 ∧
+      v - d / 2 + d ≤ v + max (-(0 - d / 2)) (0 - d / 2 + d) := by
+    intro v d; omega
+  have near : ∀ v d : Int,
+      v - max (-0) (0 + d) ≤ v ∧ v + d ≤ v + max (-0) (0 + d) := by
+    intro v d; omega
+  have far : ∀ v d : Int,
+      v - max (-(0 - d)) 0 ≤ v - d ∧ v ≤ v + max (-(0 - d)) 0 := by
+    intro v d; omega
+  cases align
+  · exact ⟨(mid x w).1, (mid y tall).1, (mid x w).2, (mid y tall).2⟩
+  · exact ⟨(near x w).1, (mid y tall).1, (near x w).2, (mid y tall).2⟩
+  · exact ⟨(far x w).1, (mid y tall).1, (far x w).2, (mid y tall).2⟩
+  · exact ⟨(mid x w).1, (near y tall).1, (mid x w).2, (near y tall).2⟩
+  · exact ⟨(mid x w).1, (far y tall).1, (mid x w).2, (far y tall).2⟩
+
+/-- A wider extent covers more: what makes the declared minimum a floor
+rather than an alternative to the measurement. -/
+theorem nodeExtentBox_monotone (x y a b a' b' : Sp) (ha : a ≤ a') (hb : b ≤ b') :
+    Box.le (nodeExtentBox x y a b) (nodeExtentBox x y a' b') := by
+  have step : ∀ v p q : Int, p ≤ q → v - q ≤ v - p ∧ v + p ≤ v + q := by
+    intro v p q h; omega
+  exact ⟨(step x a a' ha).1, (step y b b' hb).1, (step x a a' ha).2, (step y b b' hb).2⟩
+
+/-- **The extent a node registers, given a measurement.** The half-extents
+every relative placement measures border to border from: the declared
+minimum, or the label's own reach where the text stands proud of it. The
+minimum alone is what a walk with no face knows, and it is *zero* for a node
+body that declared none — which is why `right =of` parted node centres and
+long labels landed on top of one another.
+
+One site, so the extent a node registers and the extent a placement reads
+are the same number; `nodeExtent_covers` is the fact it exists for. -/
+def nodeExtent (m : LabelMetric) (content : Array Inline) (scale : Nat)
+    (align : LabelAlign) (declA declB : Sp) : Sp × Sp :=
+  let ink := m content scale
+  let (a, b) := labelHalfExtent align (max ink.w 0) (max (ink.height + ink.depth) 0)
+  (max declA a, max declB b)
+
+/-- **A node's registered extent covers its label's ink.** Whatever face
+resolves — the statement is quantified over the measurement, as every box
+fact here is — a label standing at a node's anchor is inside the extent that
+node places against. This is what makes the exact border arithmetic
+(`Picture.placeRight_border_exact` and its three siblings) exact about the
+right box: two nodes one `node distance` apart by these borders part the
+*text* they set by at least that much, so neither can overlap the other.
+
+The declared minimum is a floor, never a ceiling (`nodeExtentBox_monotone`):
+a node declaring more than its text keeps what it declared, which is the pgf
+reading — extent = max(minimum, text extent), manual §"Shapes". -/
+theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (scale : Nat)
+    (align : LabelAlign) (declA declB x y : Sp) :
+    Box.le (labelInkBox x y align (m content scale))
+      (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
+        (nodeExtent m content scale align declA declB).2) := by
+  have grow : ∀ p q : Int, p ≤ max q p := by intro p q; omega
+  exact Box.le_trans (labelHalfExtent_covers align x y _ _)
+    (nodeExtentBox_monotone x y _ _ _ _ (grow _ declA) (grow _ declB))
+
+/-- **What the extent is for: a relative placement parts text.** Two nodes
+whose centres stand `sep` apart *plus* both half-extents — which is what
+`right =of` computes, and what `Picture.placeRight_border_exact` says
+exactly — set label ink that does not overlap, for any positive separation
+and whatever face resolves. The defect this closes is the composition
+failing at its input: the arithmetic was exact about an extent of zero, so
+three labels in a row landed on top of one another.
+
+A separation rather than a containment, so a new shape by the naming
+registry's leave: it is the fact `nodeExtent_covers` exists *for*, and it
+reads as the containment used twice — A's ink ends inside A's extent, B's
+begins inside B's, and the extents are `sep` apart by construction. -/
+theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
+    (sa sb : Nat) (alignA alignB : LabelAlign) (aA aB bA bB : Sp)
+    (x y sep : Sp) (hsep : 0 < sep) :
+    (labelInkBox x y alignA (m ca sa)).2.1 <
+      (labelInkBox
+        (x + (sep + (nodeExtent m ca sa alignA aA aB).1
+          + (nodeExtent m cb sb alignB bA bB).1)) y alignB (m cb sb)).1.1 := by
+  have ha := (nodeExtent_covers m ca sa alignA aA aB x y).2.2.1
+  have hb := (nodeExtent_covers m cb sb alignB bA bB
+    (x + (sep + (nodeExtent m ca sa alignA aA aB).1
+      + (nodeExtent m cb sb alignB bA bB).1)) y).1
+  simp only [nodeExtentBox] at ha hb
+  have chain : ∀ p u q s b v a : Int,
+      p ≤ u → v + (s + a + b) - b ≤ q → 0 < s → u = v + a → p < q := by
+    intro p u q s b v a h1 h2 h3 h4; omega
+  exact chain _ _ _ sep _ x _ ha hb hsep rfl
+
 /-- The hull fold over a list of boxes, `List` companion first as every
 walk here. Polymorphic in what it reads a box from, so one walk and one set
 of containment lemmas serve the declared hull, the measured hull, and a
