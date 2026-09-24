@@ -205,6 +205,7 @@ inductive DiagCode where
   | W0384
   | W0385
   | W0386
+  | W0388
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -379,6 +380,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
   | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed")
+  | .W0388 => ("0388", .degraded, "ink is painted off the medium; a viewer clips to the page and cannot show it")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

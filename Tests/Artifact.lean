@@ -752,12 +752,17 @@ def artProps : List ArtProp :=
 
 /-- The diagnostic codes whose declared meaning accounts for ink that did
 not fit where it was asked to go: `W0005` (overfull line, no feasible
-break) and `W0335` (picture larger than the text area; it may overrun the
-page). A document that ships ink outside its own area and says one of
-these has reported the loss; one that says nothing has not. No code in
-the registry says "ink left the medium", which is why the page-box claim
-is the stricter of the two and the escape is the same narrow pair. -/
-def artOverflowCodes : List String := ["W0005", "W0335"]
+break), `W0335` (picture larger than the text area; it may overrun the
+page), and `W0388` (ink painted off the medium, which a viewer clips). A
+document that ships ink outside its own area and says one of these has
+reported the loss; one that says nothing has not.
+
+`W0388` is the page box's own account, and it arrived with this tier: a
+band slot sets one line at a fixed position and at a width it does not
+control, so a token with no legal break reached 140 pt past the right page
+edge and no registered code said so. That was the offence recorded here
+until the code existed. -/
+def artOverflowCodes : List String := ["W0005", "W0335", "W0388"]
 
 /-- A fixture's reading, with the two facts a claim needs beside it: the
 body area the document declared, and whether its build named a loss that
@@ -858,10 +863,7 @@ they are routed defects, recorded so the claim stays armed on the other
 seventy-odd fixtures instead of being weakened for these. The ratchet:
 `artifactChecks` fails a row whose offence has stopped firing, so the
 table can only shrink, and a fix must delete its row in the same commit. -/
-def artKnownOffences : List (String × ArtProp × String) := [
-  ("footer-collide", .pageBox,
-    "an unbreakable footer token 140 pt wider than the medium paints past its right \
-edge; W0333 names the slot collision, nothing names the ink that left the page")]
+def artKnownOffences : List (String × ArtProp × String) := []
 
 
 /-! ## The mutants: each claim broken once, on real bytes

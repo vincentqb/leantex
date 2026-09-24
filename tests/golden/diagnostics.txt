@@ -477,6 +477,9 @@ warning[W0386]: a declared line break did not hold: 2 lines were declared, 4 shi
 ── W0387 (config) a known construct was read and had no effect
 warning[W0387]: '\thispagestyle' was read and had no effect
   help: \allow{W0387} accepts the skip
+── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
+warning[W0388]: the \framefoot note reaches 231.57 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
+  help: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

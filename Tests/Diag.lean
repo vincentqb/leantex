@@ -385,6 +385,13 @@ def diagWitness (one mapped withMath : Font.FontSet)
       ("\\page{ width = 220pt, margin = 20pt }\n" ++
        "\\title{Coordinating Placeholder Schedules\\\\A Second Declared Line}\n")
       "\\maketitle")
+  -- A footer slot holding one unbreakable token wider than the medium: the
+  -- slot's position is fixed and the token has no legal break, so the box
+  -- sets at its natural width and reaches past the page edge. W0333 names
+  -- the collision with the folio; this names the ink no viewer can show.
+  | .W0388 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
+      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 100 '0')}}\n" ++
+       "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++

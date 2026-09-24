@@ -11501,3 +11501,71 @@ column strictly wider. All four fail before the fix (55.6 pt and 49.8 pt
 against a 72 pt margin) and pass after. No golden moves — the reserve is a
 layout decision and the goldens record elaboration.
 
+### 2026-09-24 — ink off the medium was a loss with no name
+
+**The invariant.** Ink the engine paints outside the page's own medium is
+named. Nothing said so, and nothing in the registry could.
+
+The `footer-collide` fixture's left footer slot carries one unbreakable
+hundred-character token. The band holds one line, the token has no legal
+break, so the line sets at its natural width — and a slot's position is
+fixed by the geometry alone (`bandSlotX`, whose whole point is that nothing
+a slot contains moves another slot's box). The box therefore reaches
+**140.09 pt past the right page edge**: 593.6 pt against a `/MediaBox`
+ending at 453.5 pt. `W0333` fires, but it names the *collision* with the
+folio — a different fact about the same page. An independent reader of that
+page returns **24 fewer characters** than the file spells and reports the
+box's far edge clipped to the page edge, because `/MediaBox` is "the
+boundaries of the physical medium" (ISO 32000-2 §7.7.3.3) and every viewer
+clips to it. So a reader loses twenty-four characters and the engine said
+nothing.
+
+**Why a diagnostic and not a placement change.** Four answers were on the
+table and three are worse.
+
+*Clip.* Clipping is the loss, not a fix for it: the engine would be doing
+deliberately and silently what the viewer already does by accident. A
+*named* clip is this entry's answer plus a clip path the reader gains
+nothing from — the characters are gone either way.
+
+*Refuse, or drop the slot.* The content is the author's. Dropping loses
+strictly more than overflowing, and it contradicts the band's own declared
+policy: when running content wraps, W0328 keeps the first line and names
+the rest. Keep what can be kept, name what cannot.
+
+*Move the box.* Forbidden by the design, and rightly: `bandSlotX`'s fixed
+positions are what keep the folio's anchor independent of its neighbour
+(`bandSlotX_right_pinned`). A slot that yielded position would make every
+slot's placement a function of every other slot's content.
+
+*Overflow loudly.* An unbreakable token wider than the medium genuinely
+cannot be placed. No break exists, the position may not move, and scaling
+or breaking would be the engine inventing what the author did not declare.
+The placement is already the only placement the design permits; what was
+missing was the name. So: no placement change, one new code.
+
+**The code.** `W0388`, `degraded` — the content is in the output, and not
+as declared, which is `degraded`'s own definition and gives it the
+`.content` floor: ink does stand in the construct's place, just less of it
+than the file spells. Not `dropped`: that is an error with a `refuse`
+floor, and refusing to produce the document over a footer is the wrong
+trade by the same policy that makes `pending` a warning.
+
+The guard is `Geom.onMedium`, which reads the medium as layout space sees
+it — `-bleed … pageW + bleed`, `cutMarks`' own reading — and
+`Geom.offMedium` reports how far off it a box reaches.
+`offMedium_agree` holds the two together: the reported distance is zero
+exactly when the judgement passes, so the number a reader is told cannot
+disagree with the judgement that fired. It is checked in the band-slot path
+because that is the one place the engine sets a box at a position it will
+not move and at a width it does not control. Body ink that overruns is
+already accounted where it breaks (`W0005`), which is why the registry's
+gap was exactly slot-shaped.
+
+Evidence: the artifact tier's `footer-collide`/`.pageBox` offence row
+deleted — the table is now empty — and `artOverflowCodes` grew its third
+member, the account the page-box claim had been missing rather than a
+weakening of it. `W0388`'s firing witness is the same shape as `W0333`'s
+(the collision fixture's own hundred-zero `\framefoot`), its rendered form
+lands in the diagnostics golden, and the tier's six mutants keep the
+page-box claim armed on a file the real writer produced.

@@ -301,6 +301,38 @@ theorem bandSlotX_right_pinned (g : Geom) (w : Sp) :
   simp only [bandSlotX]
   exact key g.pageW g.hmargin w
 
+/-- Does a box of width `w` whose left edge stands at `x` lie on the medium
+the page declares? Layout space is the trim's, so the medium runs
+`-bleed … pageW + bleed` — `cutMarks`' own reading of it.
+
+Ink outside it is ink no reader can see. `/MediaBox` is "the boundaries of
+the physical medium" (ISO 32000-2 §7.7.3.3) and a viewer clips to it: an
+independent reader of a page that shipped a band slot past the right edge
+returned 24 fewer characters than the file spells and reported the box's
+far edge at the page edge. So a box that fails this is a loss to report,
+not a placement to keep quiet about. -/
+def Geom.onMedium (g : Geom) (x w : Sp) : Bool :=
+  -g.bleed ≤ x && x + w ≤ g.pageW + g.bleed
+
+/-- How far off the medium a box reaches, on whichever side it leaves —
+zero when it is inside. What the loss report states, so the number a reader
+is told is the number `onMedium` judged. -/
+def Geom.offMedium (g : Geom) (x w : Sp) : Sp :=
+  max 0 (max (x + w - (g.pageW + g.bleed)) (-g.bleed - x))
+
+/-- The two agree: a box reaches nothing off the medium exactly when it is
+on it, so the number a loss reports and the judgement that fired it cannot
+disagree. -/
+theorem offMedium_agree (g : Geom) (x w : Sp) :
+    g.offMedium x w = 0 ↔ g.onMedium x w = true := by
+  have key : ∀ b pw x w : Int,
+      max 0 (max (x + w - (pw + b)) (-b - x)) = 0 ↔
+        ((-b ≤ x && x + w ≤ pw + b) = true) := by
+    intro b pw x w
+    simp only [Bool.and_eq_true, decide_eq_true_eq]
+    omega
+  exact key g.bleed g.pageW x w
+
 /-- Resolve a document's `\page` declaration into layout geometry. One source
 of truth: layout reads geometry only from here. -/
 def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
@@ -8550,6 +8582,14 @@ private def runPost (sh : Shipped) : Out := Id.run do
     -- yields — painted first, so every higher slot paints over it — and the
     -- yield is reported by name (W0333). No box moves: yielding is by ink,
     -- never by position.
+    --
+    -- A slot is the one place the engine sets a box at a position it will
+    -- not move and at a width it does not control: the band holds one line,
+    -- so a token with no legal break sets at its natural width wherever
+    -- that reaches. Body ink that overruns is already named where it breaks
+    -- (W0005); a slot's had no name, and a page whose ink leaves the medium
+    -- loses it to every viewer's clip — so `onMedium` is checked here and
+    -- the loss reported with the distance (W0388).
     if let some band := page.foot then
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
@@ -8557,7 +8597,15 @@ private def runPost (sh : Shipped) : Out := Id.run do
           footSize { color := mutedC } cache
         diags := diags ++ ds
         cache := c
-        if let some l := l? then placed := placed.push (slot, { l with furniture := true })
+        if let some l := l? then
+          unless geom.onMedium l.x l.setWidth do
+            diags := diags.push (Diag.of .W0388
+              s!"{slot.label} reaches \
+{(geom.offMedium l.x l.setWidth).toPtString} pt off the page on page \
+{i + 1}: that much of it cannot be shown, whatever reads the file"
+              (help := "a band holds one line at a fixed position: shorten \
+the content, or widen the page (\\page{ width = ... })"))
+          placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
         for hk : k in [j+1:slots.size] do
