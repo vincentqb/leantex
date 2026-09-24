@@ -5803,15 +5803,21 @@ argument — the defect these rows close shipped `\vphantom{y}`'s letter as a
 visible glyph beside the word it was propping, which is why every row here
 reads the shipped lines rather than the IR.
 
-The axes divide the family. `\vphantom` props height and depth only, and a
-line already holds both from its fonts' declared metrics at each run's size
-(`Layout.line_box_glyph_free`: emptying every run's glyphs changes no
-component of the line box), so the prop is in force before it is asked for
-and the hand-written alignment fix is inert rather than lost — silent by
-design, and the one case a reader of this file should expect no diagnostic
-for. `\hphantom` and `\phantom` reserve a *width* as well, and this engine
-carries no width a document did not declare, so that axis is a named loss
-(W0104) exactly as `\makebox`'s declared width is. -/
+The axes divide the family, and `Elab.phantomAxes` is the table that says
+which member reserves which — `\vphantom` height and depth, `\hphantom`
+width, `\phantom` all three, none of them ink. Getting a column wrong is a
+subtler defect than the one here: an `\hphantom` propping a height, or a
+`\vphantom` claiming a width, is wrong in a direction no page shows plainly,
+so both are read off the diagnostics below rather than trusted.
+
+A line already holds its height and depth from its fonts' declared metrics
+at each run's size (`Layout.line_box_glyph_free`: emptying every run's glyphs
+changes no component of the line box), so a prop whose argument *borrows*
+that face is in force before it is asked for — the hand-written alignment fix
+is inert rather than lost, and the note says so. An argument in another face
+or size is a triple the line may not carry, and that prop really does go
+unreserved: named, never dropped quietly. The width axis has no carrier at
+all and is a named loss (W0104) exactly as `\makebox`'s declared width is. -/
 def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pageText (src : String) : String := pageTextOf oneFace src
@@ -5849,13 +5855,30 @@ def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       (!has (allText src) "qy")
     t s!"phantomCtrl row '{n}' keeps the text around it"
       (has (pageText src) "A" && has (pageText src) "B")
-    -- The axis table is the arm's only authority on which member reserves a
-    -- width, so the two must agree exactly: a member whose row says it
-    -- reserves one and whose page says nothing was named would be a page
-    -- lying about its spacing, quietly.
+    -- The axis table is the arm's only authority on which axes a member
+    -- reserves, so the two must agree exactly. A width claimed and not
+    -- named, or a height named for a member that props none, is a page
+    -- lying about its spacing — quietly, in the second case.
+    let axes := (Elab.phantomAxes.lookup n).getD ⟨false, false⟩
     t s!"phantomCtrl row '{n}' names a width exactly when its axis reserves one"
-      ((warnCodes src).contains "W0104" ==
-        (Elab.phantomReservesWidth.lookup n).getD false)
+      ((warnCodes src).contains "W0104" == axes.width)
+    t s!"phantomCtrl row '{n}' speaks of height and depth only if it props them"
+      (((dvE src).any fun d =>
+        d.code == "N0100" && hasStr d.message "height and depth") == axes.extent)
+  -- `\hphantom` props nothing vertically (its height and depth are zero by
+  -- definition), so the inertness note is not its to carry. The subtler
+  -- defect the axis table exists to prevent, read off the diagnostics.
+  t "an hphantom claims no height it does not reserve"
+    ((dvE h).all fun d => !(d.code == "N0100" && hasStr d.message "height and depth"))
+  -- The hypothesis under the silence, checked rather than assumed: an
+  -- argument in another face or size is a (font, size, raise) triple the
+  -- line may not carry, so the prop really does go unreserved — and is
+  -- named, not dropped quietly.
+  let big := "A\\vphantom{\\Large y}B"
+  t "an argument in another size is a named loss, never a silent one"
+    ((warnCodes big).contains "W0104" && !has (allText big) "y")
+  t "and an argument that only borrows the running face is not named"
+    ((dvE "A\\vphantom{\\'e}B").all (·.severity == .note))
   -- A phantom's argument is sizing, so nothing inside it is content: a
   -- label, a reference or a citation in there names nothing and resolves
   -- nothing. The group is never elaborated at all.
@@ -5864,14 +5887,14 @@ def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (!has (allText inner) "qy")
   t "and nothing in it is a reference target"
     ((dvE "A\\vphantom{\\label{ghost}}B\\ref{ghost}").any fun d => d.code == "W0349")
-  -- A bare word is the argument, as it is for `\textbf` and `\underline`:
-  -- one convention for a one-token argument across the dispatch. So the
-  -- word is sizing and goes, and the words around it stay — the shape that
-  -- ate the rest of the label in the picture path once.
-  let bare := "A\\vphantom B kept"
-  t "a bare word is the phantom's argument, and so is not ink"
-    (!has (allText bare) "B")
-  t "and it takes only that word: what follows stays on the page"
-    (has (pageText bare) "kept" && has (pageText bare) "A")
+  -- TeX takes one token, so a bare word gives its first character and keeps
+  -- the rest — `\vphantom value` props a `v` and still ships "alue".
+  -- Consuming the whole word would drop content in silence, which is the one
+  -- recovery no phantom may choose.
+  let bare := "G\\vphantom value H"
+  t "a bare word gives the phantom one character, not the word"
+    (has (pageText bare) "alue")
+  t "and the character it gave is not ink"
+    (!has (allText bare) "value")
   t "a phantom with no argument at all is named, never silently empty"
     ((dvE "A\\vphantom\n\n\\par").any fun d => d.code == "E0304")

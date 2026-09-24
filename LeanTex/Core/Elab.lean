@@ -638,8 +638,12 @@ def overlayCtrls : List String :=
 def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
    -- Underline is native; a document's own \varul (soul-style) is ignored.
-   "underline", "uline", "ul", "varul"] ++
-  Picture.phantomCtrl ++
+   "underline", "uline", "ul", "varul",
+   -- The phantom family, spelled out rather than spliced from
+   -- `Picture.phantomCtrl`: a registry that derived itself from the family
+   -- could not witness a member missing from it, which is what
+   -- `phantom_rendered_covers` is for.
+   "vphantom", "hphantom", "phantom"] ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
@@ -674,8 +678,8 @@ def renderedBuiltins : List String :=
    "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
-   "section", "subsection", "subsubsection"] ++
-  Picture.phantomCtrl ++
+   "section", "subsection", "subsubsection",
+   "vphantom", "hphantom", "phantom"] ++
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
@@ -695,57 +699,77 @@ theorem builtin_verdict_total :
       structuralNames.contains n || renderedBuiltins.contains n) = true := by
   decide +kernel
 
-/-- The invariant the phantom defect wanted: a command whose whole meaning
-is *size without ink* is a name this dispatch gives a meaning of its own, so
-no member of the family can reach the unknown-command recovery — whose rule
-is "keep the braced arguments as text", and which therefore shipped
-`\vphantom{y}`'s letter onto the page as a visible glyph. The family is one
-list (`Picture.phantomCtrl`, where the label salvage reads it too), so
-adding a fourth member without wiring it into the dispatch fails here
-rather than on a reader's page.
+/-- The invariant the phantom defect wanted, registry half: a command whose
+whole meaning is *size without ink* is a name this dispatch gives a meaning
+of its own. The family (`Picture.phantomCtrl`, where the label salvage reads
+it) and the two registries are written out apart on purpose — a registry
+spliced from the family would read `xs ⊆ A ++ xs ++ B` and could not witness
+a member missing from it, which is the shape this statement had on its first
+attempt and the reason it is spelled this way now.
 
-This is the registry half. The page half — no page ships the argument —
-is `phantomChecks`, read off `Layout.Out`: a name can be registered here
-and still be inked by an arm, which no statement over a list can see. -/
+What it does *not* reach is the arm: a name can be registered here and still
+fall through to the unknown-command recovery, whose rule is "keep the braced
+arguments as text" and which is how `\vphantom{y}`'s letter reached the page.
+The arm's own gate is `phantomReservesWidth`, held to the family by
+`phantom_axes_set_eq`; the page is `phantomChecks`, over `Layout.Out`. Three
+statements, because no one of them can see the other two's failure. -/
 theorem phantom_rendered_covers :
-    (Picture.phantomCtrl.all fun n => renderedBuiltins.contains n) = true := by
+    (Picture.phantomCtrl.all fun n =>
+      renderedBuiltins.contains n && builtinNames.contains n) = true := by
   decide +kernel
 
 /-- The same family against the *salvage* tables: every member's group is a
 naming argument (`Ir.floorNamedArgs`), so a recovery path that keeps content
 groups — the math floor, a picture label — drops a phantom's group instead
-of setting it. Two tables maintained apart, held together here: a member
-added to the family and not to the arity table would ink its argument
-wherever a construct degraded around it, which is the original defect in its
-second-cheapest disguise. -/
+of setting it. This one held before the fix as well: it is the reason
+`$a\phantom{=}b$` never shipped an `=`, and it stays here as drift
+insurance, not as the defect's witness. -/
 theorem phantom_named_covers :
     (Picture.phantomCtrl.all fun n =>
       (Ir.floorNamedArgs.lookup n) == some 1) = true := by
   decide +kernel
 
-/-- Which member of the family reserves a *width*, the one axis this engine
-cannot reproduce: `\hphantom{x}` and `\phantom{x}` take x's width,
-`\vphantom{x}` takes none (plain.tex ll. 1024-1031, where `\vphantom` is a
-`\null` carrying box 0's height and depth and nothing else). There is no
-height-and-depth column because there is nothing to record: a line's box is
-its fonts' declared metrics at each run's size and never a glyph
-(`Layout.line_box_glyph_free`), so the prop those two axes ask for is in
-force before the document asks, for every member and every argument set in
-a face already on the line.
+/-- Which axes each member of the family reserves, which is the whole of
+what tells them apart (plain.tex ll. 1024-1031): `\vphantom{x}` takes x's
+height and depth and no width, `\hphantom{x}` takes its width and no height
+or depth, `\phantom{x}` takes all three. None takes ink — that is what makes
+them one family. Getting a column wrong here is a subtler defect than the
+one this table was written for: an `\hphantom` that propped a height, or a
+`\vphantom` that claimed a width, would be wrong in a direction no page
+shows plainly.
 
-A table rather than a name test in the arm, so the axis is data with its
-source beside it and a fourth family member cannot inherit a default. -/
-def phantomReservesWidth : List (String × Bool) :=
-  [("vphantom", false), ("hphantom", true), ("phantom", true)]
+This table is also the *arm's gate*: the dispatch fires on a key of this
+list, not on the family list, so `phantom_axes_set_eq` below is what ties
+the arm to the family. -/
+structure PhantomAxes where
+  /-- Reserves the argument's width. No width this engine sets was
+  undeclared, so this axis has no carrier and is a named loss. -/
+  width : Bool
+  /-- Reserves the argument's height and depth. Already in force when the
+  argument borrows the running face — `Layout.line_box_glyph_free` plus
+  idempotence of the line box's componentwise `max` — which is the
+  hypothesis `phantomBorrows` checks rather than assumes. -/
+  extent : Bool
+  deriving Repr, BEq, Inhabited
 
-/-- Family and axes, exactly each other's keys. The arm reads the axis with
-a `false` default that this makes unreachable: a member added to the family
-and not here would silently claim to reserve no width — and so name no
-loss — which is the quietest way back to a page that lies about its
-spacing. -/
+def phantomAxes : List (String × PhantomAxes) :=
+  [("vphantom", ⟨false, true⟩), ("hphantom", ⟨true, false⟩),
+   ("phantom", ⟨true, true⟩)]
+
+/-- Family and axes, exactly each other's keys, and one row per key. This is
+the statement that reaches the arm: the dispatch fires on this table, so a
+member added to `Picture.phantomCtrl` and not here does not merely lose a
+default — it is not dispatched at all, and falls to the unknown-command
+recovery that shipped the letter. The no-duplicates conjunct pins the value
+too: `lookup` takes the first row, so two rows for one name would leave the
+axes decided by list order rather than by the table. The last conjunct is
+the family's defining property — no member inks, so none of them is a
+content wrapper that wandered in. -/
 theorem phantom_axes_set_eq :
-    ((Picture.phantomCtrl.all fun n => (phantomReservesWidth.lookup n).isSome) &&
-      phantomReservesWidth.all fun e => Picture.phantomCtrl.contains e.1) = true := by
+    ((Picture.phantomCtrl.all fun n => (phantomAxes.lookup n).isSome) &&
+      (phantomAxes.all fun e => Picture.phantomCtrl.contains e.1) &&
+      (phantomAxes.map (·.1)).Nodup &&
+      (phantomAxes.all fun e => e.2.width || e.2.extent)) = true := by
   decide +kernel
 
 /-- TeX's accent commands the engine composes to NFC: the control-symbol
@@ -788,6 +812,46 @@ def escapeOf (name : String) : Option String :=
   match escapes.lookup name with
   | some lit => some lit
   | none => (Bib.charCommands.find? (·.1 == name)).map (·.2)
+
+mutual
+
+/-- Does a phantom's argument borrow only the face, size and raise the line
+already carries? That is the *hypothesis* under which the height and depth a
+phantom props are already in force — `Layout.line_box_glyph_free` says the
+line box is the metric extent of the (font, size, raise) triples on the line
+and never a glyph, and the box is a componentwise `max`, which is idempotent
+for a triple the line already holds. Under this predicate the construct is
+inert; outside it the extent really does go unreserved, and the arm names
+that rather than dropping it in silence.
+
+Words, spaces, reserved symbols, accents, escapes and named symbols set
+characters in the running face, and which characters they are is exactly
+what the line box does not read. A size switch, a face switch, a raise,
+math, an environment: each is a triple the line may not carry.
+
+Conservative in the safe direction — an unknown control word answers
+`false`, so a construct this engine gains later is named until someone
+decides it borrows. The cost is a name where nothing was lost; the
+alternative is silence where something was. -/
+def phantomBorrowsOne : Raw → Bool
+  | .word _ _ | .space | .sym _ _ => true
+  | .group body _ => phantomBorrowsList body.toList
+  | .ctrl n _ =>
+    (accentMarkOf n).isSome || (escapeOf n).isSome ||
+      (Lex.textSymbols.lookup n).isSome
+  | _ => false
+
+/-- The `List` companion: the tail drives the recursion, the group's body is
+a field of its head, so the walk is structural and owes no measure —
+`Compat.boxShape`'s neighbour `boundaryLevel`/`boundaryRaw` is the shape. -/
+def phantomBorrowsList : List Raw → Bool
+  | [] => true
+  | r :: rest => phantomBorrowsOne r && phantomBorrowsList rest
+
+end
+
+/-- A phantom's whole argument, as the predicate above judges it. -/
+def phantomBorrows (raws : Array Raw) : Bool := phantomBorrowsList raws.toList
 
 /-- The declaration styles by name, plus two unforgeable markers (`@` never
 lexes into a control word): `@lang:fr` → `Style.lang "fr"` (Compat's
@@ -3094,7 +3158,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
-        else if Picture.phantomCtrl.contains name then
+        else if let some axes := phantomAxes.lookup name then
           -- A phantom sets a box of its argument's size and no ink
           -- (plain.tex ll. 1024-1031): the group is sizing, never content,
           -- so it is consumed unread — no ink, no label, no reference, no
@@ -3102,26 +3166,50 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- flushed, so the words on either side stay one run and a
           -- zero-width box costs the line nothing.
           --
-          -- The axes, and what each costs here. `\vphantom` props height and
-          -- depth, and a line already holds both from its fonts' declared
-          -- metrics at each run's size (`Layout.line_box_glyph_free`), so
-          -- the prop is in force before the document asks for it: inert, not
-          -- lost, and silent. A member that reserves a width
-          -- (`phantomReservesWidth`) asks for the one axis no width this
-          -- engine sets was not declared for, so that axis is a named
-          -- loss — W0104, the code `\makebox`'s declared width already takes.
+          -- One answer per axis the member actually reserves (`phantomAxes`),
+          -- and none of them silent by accident. The height and depth are
+          -- already in force when the argument borrows the running face
+          -- (`phantomBorrows`, the hypothesis `Layout.line_box_glyph_free`
+          -- earns): the hand-written alignment fix is then inert rather than
+          -- lost, and N0100 says so in the shape every read-and-no-effect
+          -- idiom uses. An argument in another face or size is a triple the
+          -- line may not carry, so that prop really goes unreserved — named,
+          -- never dropped quietly. A width has no carrier at all: W0104, the
+          -- code `\makebox`'s declared width already takes.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
-          match hj : raws[j]? with
-          | some (.group _ _) | some (.word _ _) =>
-            have hjlt := getElem?_lt hj
-            if (phantomReservesWidth.lookup name).getD false then
+          let say (borrows : Bool) : EM Unit := do
+            if axes.width then
               warnOnce ctx ("ctrl:" ++ name) .W0104
                 s!"'\\{name}' reserves its argument's width; no width is set for it" pos
                 (help := "a declared width reads \\hspace{1em}")
+            if axes.extent then
+              if borrows then
+                warnOnce ctx ("ctrl:nothing:" ++ name) .N0100
+                  s!"'\\{name}' → nothing: a line's height and depth are its \
+fonts' declared metrics, so the prop is already in force" pos
+              else
+                warnOnce ctx ("ctrl:extent:" ++ name) .W0104
+                  s!"'\\{name}' props its argument in another face or size; \
+no extent is reserved for it" pos
+                  (help := "a declared height reads \\rule{0pt}{1ex}")
+          match hj : raws[j]? with
+          | some (.group body _) =>
+            have hjlt := getElem?_lt hj
+            say (phantomBorrows body)
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) acc sb
+          | some (.word s _) =>
+            -- TeX takes one token, so a bare word gives its first character
+            -- and keeps the rest: `\vphantom value` props a `v` and still
+            -- ships "alue". Consuming the whole word would drop content in
+            -- silence, which is the one recovery no phantom may choose.
+            have hjlt := getElem?_lt hj
+            say true
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) acc (sb ++ (s.drop 1).toString)
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb

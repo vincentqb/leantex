@@ -10000,60 +10000,88 @@ unknown.
 **The invariant, decided before the code.** *A command whose whole meaning
 is size without ink is a name the inline dispatch gives a meaning of its
 own, so no member of the family can reach the unknown-command recovery.*
-Stated as `phantom_rendered_covers` (Elab.lean): every member of
-`Picture.phantomCtrl` is in `renderedBuiltins`. It fails before this commit
-and passes after — the registry is the mechanism the defect defeated, not a
-restatement of the fix. Its sibling `phantom_named_covers` holds the family
-against `Ir.floorNamedArgs`: every member's group is a *naming* argument, so
-a recovery path that keeps content groups — the math floor, a picture
-label — drops a phantom's group rather than setting it. Two tables
-maintained apart, held together by one `decide +kernel`; a fourth family
-member added to one and not the other is a build failure, which is the
-original defect in its second-cheapest disguise. The family is one list
-(`Picture.phantomCtrl`, read by the label salvage and now by the
-dispatch) — a second list would drift from the first, and the drift is
-exactly what shipped the letter.
+It takes three statements, because no one of them can see the other two's
+failure, and the first attempt got this wrong in a way worth recording.
 
-Which member reserves a *width* is data, not a name test in the arm:
-`phantomReservesWidth`, with plain.tex beside it, held to the family in both
-directions by `phantom_axes_set_eq`. The arm reads the axis with a `false`
-default that the theorem makes unreachable — a member added to the family
-and not to the axis table would silently claim to reserve no width, and so
-name no loss, which is the quietest way back to a page that lies about its
-spacing. There is no height-and-depth column, for the reason the next
-paragraph gives.
+`phantom_axes_set_eq` is the one that reaches the arm. `phantomAxes` is both
+the axis table *and the dispatch's gate*, and the theorem pins its keys equal
+to `Picture.phantomCtrl` (the family list the label salvage reads), one row
+per key, every row reserving at least one axis. So a fourth member added to
+the family and not to the table is not merely defaulted — it is not
+dispatched at all, and falls to the recovery that shipped the letter. The
+build fails first.
 
-Both theorems are over *lists*, which is their limit: a name can be
-registered and still be inked by an arm, and no statement over a list can
-see that. The page half is `phantomChecks` (Tests/Surface.lean), read off
-`Layout.Out` through `pageTextOf`/`allTextOf` — never the IR dump, which
-was green throughout the defect's life, as was every golden.
+`phantom_rendered_covers` is the registry half: every member is in
+`renderedBuiltins` and `builtinNames`. The names are written out in those
+two lists rather than spliced from the family — the first attempt spliced
+them, which made the statement `xs ⊆ A ++ xs ++ B`, true for any family
+whatsoever. A registry derived from the family cannot witness a member
+missing from it; an adversarial review caught that the headline theorem was
+therefore unfalsifiable, and it is spelled this way now.
+
+`phantom_named_covers` holds the family against `Ir.floorNamedArgs`, the
+arity table the salvage paths read. It held before the fix as well — it is
+why `$a\phantom{=}b$` never shipped an `=` — so it is drift insurance, not
+the defect's witness, and is labelled as such.
+
+The claim none of the three reaches is *no page ships the argument*. That is
+`phantomChecks` (Tests/Surface.lean), read off `Layout.Out` through
+`pageTextOf`/`allTextOf` — never the IR dump, which was green throughout the
+defect's life, as was every golden.
 
 **What each member now does, per axis.** All three consume their argument
-unread — no ink, and nothing inside it is content, so a `\label` in there
-names nothing and a `\ref` to it still reports W0349.
+unread — nothing inside it is content, so a `\label` in there names nothing
+and a `\ref` to it still reports W0349.
 
 | | width | height and depth | ink | says |
 |---|---|---|---|---|
-| `\vphantom{x}` | none, by definition | propped — and already in force | none | nothing |
-| `\hphantom{x}` | **not reproduced** | none, by definition | none | W0104 |
-| `\phantom{x}` | **not reproduced** | propped — and already in force | none | W0104 |
+| `\vphantom{x}` | none, by definition | propped | none | note, or W0104 |
+| `\hphantom{x}` | **not reproduced** | none, by definition | none | W0104 (width) |
+| `\phantom{x}` | **not reproduced** | propped | none | both |
+
+The columns are the whole of what tells the family apart, so they are data
+(`phantomAxes`) with plain.tex beside them, not a name test in the arm. The
+subtler defect the table prevents is an `\hphantom` propping a height or a
+`\vphantom` claiming a width — wrong in a direction no page shows plainly,
+which is why two test rows read the axes off the diagnostics rather than
+trusting them. `\hphantom` gets no vertical note precisely because it props
+nothing vertically.
 
 The height/depth column is the interesting one, and the answer is stronger
-than the question assumed. A line's box here is the metric extent of the
-(font, size, raise) triples on it — the fonts' *declared* vertical metrics
-at each run's size, glyphs never consulted (`Layout.line_box_glyph_free`:
-emptying every run's glyph array changes no component). So the depth a
-`\vphantom{y}` props is in force before the document asks for it, and the
-fold it would join is a componentwise `max` over metric boxes, which is
-idempotent for a run of the same triple. The hand fix is therefore **inert,
-not lost** — which is why `\vphantom` says nothing: there is no loss to
-name. This holds for `\vphantom{(}` too, where TeX's own box model would
-not: in TeX a parenthesis's depth (2.50 pt at cmr10 10 pt) exceeds the
-font's descent band, so it really does prop; here no glyph is consulted at
-all, so it cannot. The user-visible effect asked for — that `inventory` and
-`value` share a baseline — is already delivered by the declared-metrics
-rule, and the phantom neither adds to it nor disturbs it.
+than the question assumed — but it is conditional, and the condition is now
+checked rather than asserted. A line's box here is the metric extent of the
+(font, size, raise) triples on it — the fonts' *declared* vertical metrics at
+each run's size, glyphs never consulted (`Layout.line_box_glyph_free`:
+emptying every run's glyph array changes no component). The fold is a
+componentwise `max`, which is idempotent for a triple the line already
+carries. So when the argument *borrows* the running face, the depth a
+`\vphantom{y}` props is in force before the document asks: the hand fix is
+**inert, not lost**. This holds for `\vphantom{(}` too, where TeX's own box
+model would not — in TeX a parenthesis's depth (2.50 pt at cmr10 10 pt)
+exceeds the font's descent band, so it really does prop; here no glyph is
+consulted at all, so it cannot.
+
+`phantomBorrows` is that hypothesis as a predicate: words, spaces, reserved
+symbols, accents, escapes and named symbols borrow the running face, and
+which characters they are is exactly what the line box does not read. A size
+switch, a face switch, a raise, math, an environment do not, and there the
+prop really goes unreserved — so it is named (W0104), never dropped in
+silence. Conservative in the safe direction: an unknown control word answers
+`false`, so a construct the engine gains later is named until someone decides
+it borrows. The cost is a name where nothing was lost; the alternative,
+which the first attempt took, is silence where something was —
+`\vphantom{\Large y}` and `\vphantom{\texttt{y}}` are hand fixes too, and
+they are the ones a glyph-free line box does *not* make inert.
+
+**Silence is declared, not assumed.** An earned no-op is never wordless here
+(`Compat.meaningFree`'s policy, and `rewriteCtrl_accounts`'s guard — which
+does *not* reach the Elab path, so moving the arm out of Compat moved it out
+from under the only mechanism that enforces that). The inert case therefore
+carries the same note every read-and-no-effect idiom does: N0100,
+`'\vphantom' → nothing: a line's height and depth are its fonts' declared
+metrics, so the prop is already in force`, once per name and quiet unless
+`-v`. The `latex-idioms` golden now shows it beside `\noindent`'s, which is
+the shape it was modelled on.
 
 The width column is a real loss and says so. No width this engine sets was
 not declared, and the width of `\hphantom{x}` is the width of *x* in the
@@ -10061,22 +10089,24 @@ face in force, which needs a box the IR can measure — there is no carrier
 for it. W0104 is the code, not a new one: it is already what `\makebox`'s
 declared width takes (`Compat.boxShape`, whose docstring records this same
 defect for the box family — "the unknown-command recovery … set a width as
-prose beside a label"). The help names `\hspace{1em}` as the declared
-spelling. `DiagCode.count` is unchanged at 166.
+prose beside a label"). `DiagCode.count` is unchanged at 166.
 
 **Layer.** The arm is in `Elab.lean`'s inline dispatch, not `Compat.lean`'s
-rewrite, deliberately. Compat's walk descends into `tikzpicture` bodies, so
-a rewrite there would strip the family before `Picture`'s label salvage saw
+rewrite, deliberately. Compat's walk descends into `tikzpicture` bodies
+unconditionally (`pictureEnvs` is consulted only by `boundaryScan`), so a
+rewrite there would strip the family before `Picture`'s label salvage saw
 it — making a working handler (`Picture.phantomCtrl`, `salCtrl`, its own
 tests and `nodeLabel_accounts`) dead, and firing a width diagnostic inside
 labels where the salvage loses nothing. The gap was the body-text path
-specifically, and that is where it is closed.
+specifically, and that is where it is closed. The cost, named above, is that
+Compat's silence guard does not reach here.
 
-**A bare word is the argument**, as it is for `\textbf` and `\underline`:
-`\vphantom B kept` takes `B` as sizing and keeps `kept`. One convention for
-a one-token argument across the dispatch — a test row first asserted E0304
-there, which contradicted the file's own convention and was corrected to
-match it. A phantom with no argument at all is still E0304.
+**A bare word gives one character**, as TeX does: `\vphantom value` props a
+`v` and still ships `alue`. The first attempt consumed the whole word — the
+dispatch's convention for `\textbf B` and `\underline B` — which for those
+is cosmetic because the word still ships, and for a phantom is a content
+drop in silence: by `Loss.dropped`'s own test an error, delivered as
+nothing. A phantom with no argument at all is still E0304.
 
 **Math mode: not this slice, and already safe.** `$x\vphantom{\sum}y$` does
 not ship a stray glyph today — the math parser refuses the construct
@@ -10084,9 +10114,12 @@ not ship a stray glyph today — the math parser refuses the construct
 floor drops the group because `Ir.floorNamedArgs` lists all three with
 arity 1, which is the fact `phantom_named_covers` now pins. So the page
 reads `xy`, not `x∑y`. What is missing there is *rendering*, not
-containment: `\vphantom{\sum}` to align equation rows is common, and it
-needs the math path to model a metric-only box. Named as a remainder, owner
-`MathParse.lean` / `Math.lean`, not this unit's file.
+containment: `\vphantom{\sum}` to align equation rows is common, and
+`\phantom{=}` to reserve a relation's width is commoner still, and both need
+the math path to model a metric-only box. Named as a remainder, owner
+`MathParse.lean` / `Math.lean`, not this unit's file. The new arm cannot
+affect it: `.math` is its own `Raw` case in the same dispatch, so a formula
+never reaches the `.ctrl` arm at all.
 
 **Two adjacent findings, and one of them is the same defect.**
 `\hspace{2em}` in body text is *also* unimplemented and ships `2em` onto
@@ -10102,13 +10135,20 @@ deserves, and the honest version is one constructor away.
 Second: `Ir.Inline.strut` carries `height : SymGlue` and no depth, and
 becomes `Seg.rule 0 h 0`. A `Seg.rule 0 (h + d) (-d)` would express both
 axes, so the seg vocabulary can already carry a two-axis prop; the *inline*
-cannot. That is the constructor a phantom whose argument sets a larger size
-would need — `\vphantom{\Huge y}` contributes no extent here, silently,
-because the drop cannot distinguish it. Left silent rather than warned: a
-conservative test (is the argument plain text?) would fire on
-`\vphantom{\'e}`, where the glyph-free line box means nothing is lost
-either, and a diagnostic that cries on the inert case is worse than one
-that waits for the carrier. Named here as the remainder it is.
+cannot. That is the constructor the non-borrowing case needs — a phantom
+whose argument sets another face or size is named here rather than reserved,
+and the name is an admission, not a resolution. It belongs to `Ir.lean`'s
+owner, alongside the `\hspace` carrier.
+
+**Review.** An adversarial read of the first commit found the certification
+wrong in three places, each fixed in the second: the headline theorem was
+`xs ⊆ A ++ xs ++ B` and could not fail; the silence was undeclared where the
+repo has both a policy and a note for it; and the inertness that justified
+the silence held under a hypothesis nothing checked — which was exactly the
+case the request cared about, since `\vphantom{\Large y}` is a manual fix too.
+The engineering it did not fault: the module choice, the axis table's shape,
+W0104 as the width's code, `line_box_glyph_free` saying what was claimed of
+it, and no math regression.
 
 **Corpus.** `latex-idioms.tex` — the résumé fixture, where the idiom
 actually lives — gains the hand-aligned pair, `\textbf{Awards\vphantom{qy}}`
