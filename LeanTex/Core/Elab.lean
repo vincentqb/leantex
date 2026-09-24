@@ -138,6 +138,13 @@ structure Ctx where
   style reaches its picture whether it was declared in the preamble or
   beside the figure. Set once by the elaborator, as `picPreamble` is. -/
   picSets : Array (Array Raw) := #[]
+  /-- How a node label's content measures at a per-mille size: the face,
+  arriving as a function rather than a font set, because the elaborator has
+  no face of its own and does not acquire one by knowing this. The driver
+  resolves it and passes it in; the default answers nothing, which is what a
+  first pass — the one that discovers which face the document declared —
+  must use. -/
+  picMetric : Ir.Pic.LabelMetric := fun _ _ => {}
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -5986,7 +5993,8 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula {floorWording (Parse.rawSrc raws)}")])
-  let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf ctx.picSets
+  let (pic, pdiags) :=
+    Picture.elabPicture ctx.palette body mathOf ctx.picSets ctx.picMetric
   -- **Native first; the boundary is the fallback.** What the engine's own
   -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
   -- the constructs it refused are named beside the shapes that landed
@@ -10648,7 +10656,8 @@ def enginePictures (blocks : Array Block) : Nat :=
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
-    (picMacros : Array (String × String) := #[]) :
+    (picMacros : Array (String × String) := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -10687,6 +10696,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
       | _ => none).getD (some "lualatex")
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, picTool := picTool0, picPreamble := picPre
+               picMetric := picMetric
                picMacros := picMacros
                picSets := picSets.map (·.2) } }
   -- What a `\tikzset` left unread is named at the line that wrote it, and
@@ -11070,7 +11080,8 @@ unresolved-reference judge (`Ir.refDiags`) is not run here: the driver
 runs it after `Bib.apply`, over the very document the backends read, so
 the resolution gate (`pending_named`) is one statement over that tail;
 `runRaws`, the face that fulfils nothing, runs it itself. -/
-def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
+def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Doc × Array Diag × ReqSpans :=
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
@@ -11082,7 +11093,8 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   let ((doc, table), st) :=
-    (elabDoc file raws picScan.pre picScan.sets picMacros).run { warnedUnknown := warned }
+    (elabDoc file raws picScan.pre picScan.sets picMacros picMetric).run
+      { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry
@@ -11111,9 +11123,10 @@ def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :
 /-- The span-free face: what every caller that fulfils no file requests
 reads — with the unresolved-reference judge run over the elaborated
 document, since no bibliography resolution follows here. -/
-def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
+def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Doc × Array Diag :=
-  let (doc, diags, rs) := runRawsSpanned file raws earlier
+  let (doc, diags, rs) := runRawsSpanned file raws earlier picMetric
   (doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
 
 def run (file input : String) : Doc × Array Diag :=

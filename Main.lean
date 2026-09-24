@@ -744,9 +744,44 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
     written := written.push path
   return written
 
+/-- **Elaborate, with whatever face the caller has.** Everything from the
+elaborator on is a function of the parsed source and one measurement
+(`Ir.Pic.LabelMetric`) — so the driver can run it twice: once with nothing
+to measure against, which is what discovers the face the document declared,
+and once with that face, which is what lets a node's extent cover its label.
+The measurement is a parameter, never a flag and never read from a config:
+the artifact stays a function of the document and the font environment
+(`artifact_flag_free`). -/
+def elaborate (ui : Ui) (file : String) (raws : Array Parse.Raw)
+    (earlier : Array Diag) (spliced : Array (String × Option String × Pos))
+    (metric : Ir.Pic.LabelMetric) (phases : Bool := true) :
+    IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
+  let t ← IO.monoMsNow
+  let (doc, elabDiags, reqSpans) := Elab.runRawsSpanned file raws earlier metric
+  -- N0020 says a `.sty` was read and how much of it took; its counts
+  -- are read off the elaborated diagnostics, so it is built after them.
+  -- A record from inside an `\input` wrapper names that file, not the
+  -- document: the `\RequirePackage` lives there.
+  let elabDiags := elabDiags ++
+    spliced.map fun (sty, src, pos) =>
+      Compat.styRead (src.getD file) sty pos elabDiags
+  if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
+  let t ← IO.monoMsNow
+  let (doc, bibDiags) ← Input.resolveBibliography file doc reqSpans.bib
+  unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
+    ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
+  -- The unresolved-reference judge, over the document the backends read
+  -- (`Ir.refDiags`): with the images fulfilled below, this is the tail
+  -- `pending_named` quantifies over.
+  let refDiags := Ir.refDiags reqSpans.labels (Elab.ReqSpans.spanOf reqSpans.refs) doc
+  return (doc, elabDiags ++ bibDiags ++ refDiags, reqSpans)
+
 /-- Read and decode the file, then run the front end, reporting phases.
-Returns the document, all diagnostics, and whether reading itself failed. -/
-def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Elab.ReqSpans)) := do
+Returns the document, all diagnostics, the parsed source the elaborator read
+(so a second pass can measure), and whether reading itself failed. -/
+def frontend (ui : Ui) (file : String) :
+    IO (Option (Ir.Doc × Array Diag × Elab.ReqSpans × Array Parse.Raw ×
+      Array Diag × Array (String × Option String × Pos))) := do
   let t0 ← IO.monoMsNow
   let bytes ← match ← Input.readSource file with
     | .error d =>
@@ -769,28 +804,11 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Ela
     let t ← IO.monoMsNow
     let (raws, parseDiags) := Parse.parse file toks
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
-    let t ← IO.monoMsNow
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file raws
-    let (doc, elabDiags, reqSpans) := Elab.runRawsSpanned file raws
-      (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags)
-    -- N0020 says a `.sty` was read and how much of it took; its counts
-    -- are read off the elaborated diagnostics, so it is built after them.
-    -- A record from inside an `\input` wrapper names that file, not the
-    -- document: the `\RequirePackage` lives there.
-    let elabDiags := elabDiags ++
-      spliced.map fun (sty, src, pos) =>
-        Compat.styRead (src.getD file) sty pos elabDiags
-    ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
-    let t ← IO.monoMsNow
-    let (doc, bibDiags) ← Input.resolveBibliography file doc reqSpans.bib
-    unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
-      ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
-    -- The unresolved-reference judge, over the document the backends read
-    -- (`Ir.refDiags`): with the images fulfilled below, this is the tail
-    -- `pending_named` quantifies over.
-    let refDiags := Ir.refDiags reqSpans.labels (Elab.ReqSpans.spanOf reqSpans.refs) doc
-    return some (doc, elabDiags ++ bibDiags ++ refDiags, reqSpans)
+    let earlier := lexDiags ++ parseDiags ++ inputDiags ++ dataDiags
+    let (doc, diags, reqSpans) ← elaborate ui file raws earlier spliced (fun _ _ => {})
+    return some (doc, diags, reqSpans, raws, earlier, spliced)
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -798,7 +816,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
   | none =>
     ui.summary file 1 (← since t0)
     return 1
-  | some (doc, diags, reqSpans) =>
+  | some (doc, diags, reqSpans, raws, earlier, spliced) =>
     let allowAll := ui.cfg.bestEffort
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
@@ -830,6 +848,22 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
+      -- **The measurement, and the second pass that can use it.** A node's
+      -- extent is a font question, and until here there was no face to ask:
+      -- the font set is built *from* the elaborated document, because
+      -- `\fonts` is a preamble declaration. So the elaborator runs again
+      -- with the measurement the face answers, and a relative placement
+      -- parts label *text* rather than node centres. Only a document that
+      -- drew a picture of its own pays for it (`Elab.enginePictures`), and
+      -- only the document is taken from the second pass: a metric moves
+      -- picture geometry and nothing else, so its diagnostics and its
+      -- request spans are the first pass's (`Tests/Surface` pins that).
+      let doc ← if Elab.enginePictures doc.body == 0 then pure doc else do
+        let t ← IO.monoMsNow
+        let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
+        let (doc2, _, _) ← elaborate ui file raws earlier spliced metric (phases := false)
+        ui.phase "measure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
+        pure doc2
       let t ← IO.monoMsNow
       let (pics, refused) ← resolvePictures ui doc reqSpans.images
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused

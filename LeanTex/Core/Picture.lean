@@ -726,6 +726,12 @@ structure Cx where
   label's *set* size is resolved in layout, against the geometry, and only
   the vertical gap between two of them has to be decided here. -/
   bodySize : Sp := Ir.baseFontSize
+  /-- How a label's content measures at a per-mille size: the face,
+  arriving as a function because the walk has none of its own. The driver
+  resolves it and the elaborator passes it down; the default answers
+  nothing, which is the pre-face behaviour (a node's extent is its declared
+  minimum alone). -/
+  metric : Ir.Pic.LabelMetric := fun _ _ => {}
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
@@ -2254,10 +2260,38 @@ picture subset; the option is dropped")
       | none => false)
   let dimF (d : Sp) : Sp :=
     if cx.transformShape then d * cx.scale / 1000 else d
+  let bodyOf : Except PDiag (Array LabelLine × Array PDiag) :=
+    match ts[i]? with
+    | some (.group body) =>
+      if h : i + 1 < ts.size then
+        .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
+outside the rendered picture subset; the label is not drawn")
+      else
+        .ok (nodeLabel cx env body)
+    | _ =>
+      match contents with
+      | some c => .ok (c, #[])
+      | none =>
+        .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
+  -- The extent the label's own ink asks for, measured through the face the
+  -- driver resolved (`Cx.metric`): the shapes this node's body would emit,
+  -- hulled at the origin, which is the same measurement the picture's box
+  -- reads (`Ir.Pic.Shape.inkBox`) and so cannot drift from it.
+  let inkHalf : Sp × Sp :=
+    match bodyOf with
+    | .ok (lines, _) =>
+      let ls := stackLabels 0 0 cx.bodySize scale color .center lines #[]
+      let ((bx0, by0), (bx1, by1)) := Ir.Pic.Box.hull (ls.map (Ir.Pic.Shape.inkBox cx.metric))
+      (max (-bx0) bx1, max (-by0) by1)
+    | .error _ => (0, 0)
   -- The placed node's own half-extents, its side of the border-to-border
-  -- gap a relative placement leaves.
-  let ownA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
-  let ownB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
+  -- gap a relative placement leaves: the declared minimum, or the label's
+  -- own reach where the text stands proud of it (`Ir.Pic.nodeExtent`, whose
+  -- `nodeExtent_covers` is why a placement parts text and not centres).
+  let declA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
+  let declB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
+  let ownA : Sp := max declA inkHalf.1
+  let ownB : Sp := max declB inkHalf.2
   let pos : Except PDiag (Sp × Sp) :=
     match atCoord with
     | some (xs, ys) =>
@@ -2294,19 +2328,6 @@ this one against; the node is not drawn")
   -- in: `nodeLabel` keeps the text the body says and names what it could
   -- not draw, because an empty diagram tells a reader nothing where a
   -- degraded word tells them almost everything.
-  let bodyOf : Except PDiag (Array LabelLine × Array PDiag) :=
-    match ts[i]? with
-    | some (.group body) =>
-      if h : i + 1 < ts.size then
-        .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
-outside the rendered picture subset; the label is not drawn")
-      else
-        .ok (nodeLabel cx env body)
-    | _ =>
-      match contents with
-      | some c => .ok (c, #[])
-      | none =>
-        .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
   match pos with
   | .ok (sx, sy) =>
         -- A named node registers its anchoring geometry whether or not
@@ -2315,10 +2336,9 @@ outside the rendered picture subset; the label is not drawn")
         if let some nm := nodeName then
           let geom : NodeGeom :=
             if isCircle then
-              let r := dimF (max minW minH) / 2
-              { x := sx, y := sy, a := r, b := r, circle := true }
+              { x := sx, y := sy, a := ownA, b := ownB, circle := true }
             else
-              { x := sx, y := sy, a := dimF minW / 2, b := dimF minH / 2 }
+              { x := sx, y := sy, a := ownA, b := ownB }
           ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. Extent is the declared minimum: pgf manual §"Shapes"
@@ -3014,7 +3034,8 @@ line that declared it. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
-    (sets : Array (Array Parse.Raw) := #[]) :
+    (sets : Array (Array Parse.Raw) := #[])
+    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let toks := ofRaws raws
   let mut scale : Int := 1000
@@ -3103,7 +3124,8 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    everyNode := everyOf everyNodeKey
                    everyPath := everyOf everyPathKey
                    dist := dist
-                   math := math }
+                   math := math
+                   metric := metric }
   let ev := evalFixed cx st.out.toList
   -- What the inherited entries cost, named at the picture rather than at a
   -- statement, because neither is where they were written. An entry no

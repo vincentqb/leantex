@@ -5613,6 +5613,19 @@ private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight
   | some (_, _, ink) => ink
   | none => {}
 
+/-- **The label measurement, for a caller that needs it before layout.**
+A node's extent is a font question and the picture walk has no face, so the
+driver resolves one and hands it to the elaborator as a parameter.
+That measurement must be *this* measurement — a second implementation would
+place nodes against one face and set them against another with nothing
+stating the two agree — so the one function both sides read is exported
+here rather than copied there. The x-height is the body face's at the
+document's own size, as `runCore` resolves it. -/
+def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
+    Ir.Pic.LabelMetric :=
+  let font := fs.body
+  picMetric fs imgs geom (font.xHeight * geom.fontSize / font.unitsPerEm)
+
 /-- Stage one picture. The theorem side of the stays-in-its-box contract
 bounds every shape's *ink* by the picture's measured box
 (`Ir.Pic.Picture.inkBbox_covers`); this is the diagnostic side, bounding
