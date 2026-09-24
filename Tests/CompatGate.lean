@@ -114,23 +114,30 @@ def logOnlyQuiet (d : Ir.Doc) : Bool :=
   && d.logoLeft.isNone && d.logoRight.isNone && d.headline.isNone
   && d.info.title.isNone
 
-/-- Is this construct's consumption accounted *by name*? `Compat.became`
-emits the note through the plain `say` door, which leaves `Diag.subject`
-unset, so the note can only be recognised by the text it renders — which
-is what `compatChecks` does for the keys `\DocumentMetadata` drops. An
-assertion that merely asks whether *some* N0100 fired is satisfied by
-`\AtBeginDocument`'s own note, and passes on a document that never names
-the control. -/
+/-- Is this construct's consumption accounted *by name*? Two accountings
+are legitimate and the invariant is that one of them fired, not which:
+`Compat.became` earns the silence with an N0100 when the table carries a
+justification, and a table row whose justification is `none` — the `Error`
+spellings, where a signal is genuinely lost — is named by W0387 instead.
+A control that consumed its groups and said neither still fails, which is
+the loss this gate exists to catch.
+
+Both are recognised by the text they render rather than by
+`Diag.subject`: `became` emits through the plain `say` door, which leaves
+the subject unset. An assertion that merely asks whether *some* N0100
+fired is satisfied by `\AtBeginDocument`'s own note, and passes on a
+document that never names the control. -/
 def logOnlyAccounted (name : String) (ds : Array Diag) : Bool :=
-  ds.any fun d => d.code == "N0100" && hasStr d.message s!"\\{name}"
+  ds.any fun d =>
+    (d.code == "N0100" || d.code == "W0387") && hasStr d.message s!"\\{name}"
 
 /-- The surface half: every log-only control the engine claims to consume
 is probed in the body and through a deferred hook, and must leave nothing
 behind — no ink anywhere in the document, no unknown-command warning, no
-error from the reserved characters, and an N0100 naming it. The arity the
-table declares is held against the public LaTeX definition, which is the
-check that stops `\PackageError` from entering at two groups and inking
-its help text. -/
+error from the reserved characters, and an accounting that names it. The
+arity the table declares is held against the public LaTeX definition,
+which is the check that stops `\PackageError` from entering at two groups
+and inking its help text. -/
 def logOnlySurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let listed := logOnlyControls.filter fun (n, _) => (Compat.meaningFree.lookup n).isSome
