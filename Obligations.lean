@@ -633,4 +633,59 @@ theorem elementSpace_monotone
           { doc with body := #[.para a, .spaced g #[.para b]] })).getLast?.getD 0 := by
   sorry
 
+
+
+
+/-- How far the glyphs of a label's text reach above their baseline, read
+from the face's own outlines rather than from any declared metric: the
+measure the containment claim below is about, and exactly what
+`Layout.labelVExtent` declines to consult. Font units scaled to the label's
+size — the arithmetic only, no engine decision restated. The body face,
+because that is the face a plain label sets in; a label switching face
+mid-line is the same claim over more runs. -/
+def labelInkReach (geom : Geom) (fs : Font.FontSet) (content : Array Ir.Inline)
+    (scale : Nat) : Dim.Sp :=
+  let font := fs.body
+  let size := geom.fontSize * (scale : Int) / 1000
+  (Ir.plainText content).toList.foldl (fun acc ch =>
+    match font.gid ch with
+    | some g =>
+      match font.yExtent g with
+      | some (_, hi) => max acc (hi * size / (font.unitsPerEm : Int))
+      | none => acc
+    | none => acc) 0
+
+-- owed: ink_covered_or_named
+-- owner: LeanTex.Core.Layout
+-- source: the label-centring slice (PLAN 2026-09-24, the what-cannot-move-a-baseline entry). A label's band is the face's declared cap height up and hhea descent down (`Layout.labelVStep`), and that band is read for two different jobs: it *places* the baseline, where being glyph-blind is the whole point (`Layout.label_centre_glyph_free`, the wobble's absence), and it is also the box a picture reserves space by (`Ir.Pic.labelInkBox` into `Ir.Pic.Picture.inkBbox`), where being glyph-blind means the box can be smaller than the ink. Measured on the three shipped faces at 10 pt: a diacritic inks 2.07–2.25 pt above the declared cap height (É in Source Serif Pro and Open Sans, Î in Fira Sans), and plain lowercase ascenders do too — six of `bdfhklt` in every face, by 0.51–0.79 pt — as do round capitals by their overshoot (0.10–0.14 pt) and, in two faces of three, every fence (`(` by 1.56 pt in Fira Sans). The descent side is sound: no descender of `gjpqy` reaches below the declared descent in any of the three. So the overflow is one-sided and it is the common case, not the exception, which is what makes this owed rather than fixed: the two consumers want different bands, and the placement band must stay where it is. The design being protected is the one the report named — an extent-derived box exists so diacritics and descenders cannot clip or collide (CSS 2.1 §10.6.1, css-inline-3 §5.2) — so the honest resolution is a second, wider *declared* band for containment (hhea ascent, which is the room a face reserves for exactly this and which all three faces' worst glyph fits inside) with the residue named, never a crop and never a diagnostic on every label carrying a `b`. The in-suite witness is the third group of `labelBaselineChecks`, which pins the overflow above the cap and the clearance under the descent as the numbers they are.
+-- blocker: the statement is the honest restatement of what was proposed as "ink outside the band either grows the frame or fires a diagnostic"; that shape presumed the cap band was a containment claim, and the measurement above says it is not and cannot become one without undoing the placement. What is left is two things, neither a tactic. (1) There is no diagnostic for the residual case, so the disjunct below is stated over `Diag.subject` rather than a code: registering one is a `DiagCode` constructor with its declared `Loss`, a `diagWitness` arm and a golden, and it must fire on the genuine residue — ink outside the *ascent* band — not on the ordinary ascender, which means the band swap lands first. (2) Proving the covered disjunct needs the glyph-ink census over the picture walk, which is outline decoding inside a theorem (`Font.yExtent` is a memoized `Thunk` over per-gid outline data, with no equational theory) plus the `Acc` split the emission-conservation rows already wait on; and the containment is in any case not a theorem of the format — hhea ascent is not guaranteed to bound every glyph, `usWinAscent` being OpenType's declared clipping metric and its use for line spacing "strongly discouraged" — which is precisely why the statement is a disjunction and not a `_covers`.
+-- goldens: yes
+/-- **A label's ink is inside a declared band, or it is named.** The box a
+picture reserves for a label is built from the band the label's faces
+declare, and the glyphs may reach past it: so either the ink above the
+baseline fits under the box's top, or the run carries a diagnostic naming
+that label.
+
+Stated as a disjunction rather than a containment because the containment is
+not a fact of the font format — no OpenType metric is guaranteed to bound
+every outline — and stated over the *reserved* box rather than the placement
+band because those are the two jobs one band is doing today, and only the
+second may move. This is the report's third constraint as an enforceable
+obligation: the reason extent-derived boxes exist is that ink must not clip,
+so a rule that places by declared metric owes an account of the ink it
+thereby stops measuring. -/
+theorem ink_covered_or_named
+    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc) (pic : Ir.Pic.Picture)
+    (x y : Dim.Sp) (content : Array Ir.Inline) (c : Ir.Color) (scale : Nat)
+    (al : Ir.Pic.LabelAlign)
+    (hpic : Ir.Block.picture pic ∈ doc.body)
+    (hs : Ir.Pic.Shape.label x y content c scale al ∈ pic.shapes) :
+    Ir.Pic.labelBaseline y al (Layout.labelMetric geom fs {} content scale)
+          + labelInkReach geom fs content scale
+        ≤ (Ir.Pic.labelInkBox x y al
+            (Layout.labelMetric geom fs {} content scale)).2.2
+      ∨ (Layout.run geom fs none doc).diags.any
+          (fun d => d.subject == some (Ir.plainText content)) := by
+  sorry
+
 end Obligations

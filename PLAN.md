@@ -301,10 +301,159 @@ list.
   equational theory, since `Acc.addvspace`'s maximum makes the gap monotone
   only against a named prefix. Both are waited on by the re-flow and
   emission-conservation rows too.
+- `ink_covered_or_named` — a label's glyph ink is inside the box a picture
+  reserved for it, or the run names that label. One band does two jobs: it
+  places the baseline, where being glyph-blind is the whole point
+  (`Layout.label_centre_glyph_free`), and it sizes the reserved box, where
+  being glyph-blind means the box can be narrower than the ink. Measured on
+  the three shipped faces at 10 pt: a diacritic inks 2.07–2.25 pt above the
+  declared cap height, and plain lowercase ascenders do too — six of
+  `bdfhklt` in every face, by 0.51–0.79 pt — while no descender of `gjpqy`
+  reaches past the declared descent in any of them. So the overflow is
+  one-sided and ordinary, which is why this is owed rather than fixed: the
+  placement band must stay where it is, so containment needs a second and
+  wider declared band (hhea ascent, the room a face reserves for exactly
+  this) with the residue named. Blocked on that band swap landing before a
+  diagnostic could fire on the genuine residue rather than on every label
+  carrying a `b`, and on the glyph-ink census over the picture walk —
+  outline decoding inside a theorem, plus the same `Acc` split. Stated as a
+  disjunction and not a `_covers` because no OpenType metric is guaranteed
+  to bound every outline.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
+outside it, `inventory` and `value` set side by side look misaligned, the
+descender giving the impression the word is bumped up; correct it, keep
+hand-written `\vphantom{y}` working, and do not discard whatever reason the
+original design had. Three constraints, and the answer to the first turned
+out to be *nothing to do* — so this entry is the measurement that establishes
+that, the theorems that pin it so it stays true, and the one thing the
+measurement found that is genuinely owed.
+
+**The mechanism upstream, and the number.** TikZ centres a node on
+`(ht − dp)/2` of its hbox (`pgfmoduleshapes.code.tex`, the rectangle
+shape's saved anchors), so depth enters the baseline with slope one half:
+give a word a descender and its ink rises by `dp/2`. Measured under LuaTeX
+with Computer Modern at 10 pt, `value` places at −3.415 pt and `inventory`
+at −2.260 pt from the anchor — **1.155 pt = 0.116 em** of wobble, and in the
+counter-intuitive direction, the word *with* the descender floating up. The
+pgf manual names the effect (§17.5.1's example carries the comment
+`% First, center alignment -> wobbles`) and offers `anchor=mid`, which is
+half an x-height, against it.
+
+**This engine's number is zero.** Not argued from the code — read off the
+artifact. Four sibling pairs in one document, each pair at one anchor
+height, rendered and the text matrices pulled from the content stream:
+`value`/`inventory` both at y = 713.3, `WAX`/`gjpqy` both at 696.25,
+`value`/`\vphantom{y}value` both at 679.2, unaccented/accented both at
+662.15. Identical to the scaled point in every pair, and in the third pair
+the glyph strings are byte-identical too. The reason is `labelInk`: a
+label's height is the face's declared `sCapHeight` and its depth the
+declared `hhea` descender, both at the run's size, and no arm of the fold
+reads the glyph payload. So there was no wobble to correct, and **no
+rendered output moved in this slice** — both probes and the whole golden
+corpus render byte for byte as before.
+
+**The wobble's absence is now a theorem, not an accident.** The fold was a
+closure inside `labelInk` where nothing could be said about it; factored to
+`Layout.labelVStep` and `Layout.labelVExtent`, value for value, and
+`Layout.label_centre_glyph_free` states the property the sibling
+`line_box_glyph_free` states one layer up — emptying every run's glyphs
+changes neither reach — by the same fold congruence, for the same reason.
+Verified to bite at build time: a step amended to add a scaled point when
+the glyph array is non-empty fails `labelVStep_glyph_id`'s `rfl`. A
+content-dependent band is now unrepresentable, not merely absent.
+
+**Constraint two inverts, and that is the elegant part.** The worry was that
+a font-stable rule would *double-correct* a hand-written `\vphantom{y}`. It
+cannot: the author's correction acts only through depth, and the new rule is
+constant in depth, so Δ_old = (max(d,δ) − d)/2 while Δ_new ≡ 0 identically.
+The correction is annihilated, not composed with. Stated twice here, at the
+two layers it could break at, and neither statement mentions `\vphantom`:
+`Ir.Pic.phantom_extent_between` says an extra metric box grows the band or,
+where the label already declares those metrics, changes nothing — idempotence
+of `max`, so every hand fix inside the declared band is inert by
+construction; and `Layout.vphantom_absorbed` says the same of a metric-only
+copy of a run on the line. The engine is stricter than either: a picture
+label's `\vphantom` group is dropped in salvage (`Picture.phantomCtrl`), so
+not even a dominated box arrives. Three independent reasons, of which the two
+theorems are the ones that hold whatever the surface later decides. The
+brief this slice started from recorded `\vphantom` as unimplemented here; it
+is implemented, and the correction is therefore stronger than predicted —
+upstream a phantom still moves the *frame* (measured −1.94 pt on `.south`
+under `anchor=mid`), and here it moves nothing at all.
+
+**The seat that remains, named rather than changed.** The band is cap height
+up and descent down, centred on the anchor, so a centred baseline stands
+`(depth − height)/2` from it — `Ir.Pic.labelBaseline` is now the one site
+that says so, with `labelBaseline_between` pinning the closed form to within
+the single scaled point the box's odd unit is assigned by, and
+`labelBaseline_width_id` saying the set width cannot enter. Against a band
+trimmed to the alphabetic baseline — css-inline-3 §6's
+`text-box-edge: cap alphabetic`, the sanctioned modern rule — every label
+therefore sits `depth/2` higher: 1.67 pt at 10 pt in Source Serif Pro,
+1.46 in Open Sans, 1.32 in Fira Sans. Uniform per face, so it is not a
+wobble and no two labels disagree; it is a reference choice, and changing it
+would move every centred label in every document. Left where it is
+deliberately, quantified so the decision is visible.
+
+**Constraint three is where the measurement found real work.** The reason
+extent-derived boxes exist is that ink must not clip or collide
+(CSS 2.1 §10.6.1; css-inline-3 §5.2 states the cost of the alternative in
+its own note). That reason is load-bearing here, because the same band does
+two jobs — it places the baseline, where glyph-blindness is the whole point,
+and it sizes the box a picture reserves, where glyph-blindness means the box
+can be narrower than the ink. Measured over the three shipped faces at
+10 pt: a diacritic inks 2.07–2.25 pt above the declared cap height (`É`,
+`Î`), and plain lowercase ascenders do too — six of `bdfhklt` in every
+face, by 0.51–0.79 pt — as do round capitals by their overshoot
+(0.10–0.14 pt) and, in two faces of three, every fence (`(` by 1.56 pt in
+Fira Sans). The descent side is sound: no descender of `gjpqy` reaches past
+the declared descent in any of them. So the overflow is **one-sided and
+ordinary**, not exceptional.
+
+That reshapes the obligation that was proposed for it. "Ink outside the band
+either grows the frame or fires a diagnostic" presumes the cap band is a
+containment claim; the numbers say it is not, and making it one would either
+fire on nearly every label or force the band to the ascent and undo the
+placement. `ink_covered_or_named` is therefore staged over the *reserved*
+box, with the resolution named as a second and wider declared band (hhea
+ascent — the room a face reserves for exactly this, and which all three
+faces' worst glyph fits inside) and the residue named after that. It stays a
+disjunction rather than a `_covers` because the containment is not a fact of
+the format: no OpenType metric is guaranteed to bound every outline,
+`usWinAscent` being the declared *clipping* metric whose use for line
+spacing the spec strongly discourages.
+
+**`sTypoAscender`/`sTypoDescender` are not needed, and are not parsed.**
+Three reasons, in order of force. The invariant is indifferent: it asks only
+that the reference be a *declared* metric, so any declared pair satisfies it
+and swapping one for another changes numbers, not the theorem. The visual
+rule is specific: css-inline-3 §3.2 maps `cap` to `sCapHeight` and
+`alphabetic` to the baseline, so the sanctioned centre-the-text rule needs
+`sCapHeight` — which is parsed, OS/2 offset 88, with a 0.7·upm fallback —
+and nothing else; the typographic pair is what `text-box-edge: text` wants,
+which is the untrimmed box this rule exists to move away from. And the
+containment bound the obligation needs is already declared and already
+sufficient: `hhea` ascent is 10.36 pt at 10 pt in Source Serif Pro against a
+worst glyph at 8.77, so the tighter `sTypoAscender` would buy no fact the
+statement lacks — while being optional (OS/2 v2+) and so needing a fallback
+of its own. Parsing them would add a metric with no consumer, which is the
+kind of unpaid generality the obligation table exists to refuse.
+
+**What is checked, and where.** `labelBaselineChecks` (Tests/Layout.lean),
+one group per constraint, asserted over `Layout.Out` and the exported
+measurement — never over an IR dump, per the census convention. The group
+that earns its place is the absolute one: the placement recomputes
+`box top + height` rather than calling `Ir.Pic.labelBaseline`, and it must,
+because under `[scale=]` the height rides untransformed while a mapped point
+would not — so nothing at build time ties the two, and only this check does.
+Verified to bite: adding `ink.depth` at the placement site fails it while
+passing both relative checks, which is exactly the uniform shift a
+relative-only test cannot see.
 
 2026-09-24 — the face a node must be measured against, and why the driver
 cannot hand the elaborator one. The extent defect's remaining half
