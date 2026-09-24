@@ -1,3 +1,4 @@
+import LeanTex.Core.Loop
 import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
 import LeanTex.Core.Flate

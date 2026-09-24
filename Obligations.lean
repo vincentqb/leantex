@@ -1,4 +1,5 @@
 import LeanTex.Core.Layout
+import LeanTex.Core.Loop
 import LeanTex.Core.Contrast
 import LeanTex.Core.Theme
 import LeanTex.Core.Elab
@@ -412,19 +413,128 @@ theorem place_order_agree (cx : Picture.Cx) (pre post : List Picture.Stmt)
         = (Picture.evalFixed cx (pre ++ b :: a :: post)).nodes.lookup nm := by
   sorry
 
--- owed: floorChars_id
--- owner: LeanTex.Core.Ir
--- source: the math recovery floor (PLAN 2026-09-24, the floor entries): the lower bound on the salvage a degraded formula inks. `floorChars_mem` is the upper bound — nothing invented, no markup — and it holds for a mask that dropped every character, so on its own it permits a blank page where an equation stood; this is the other side, that a source already free of control sequences and markup salvages to itself. The executable witness is the whole-string rows in `recoveryChecks` ("a plain content run passes through the floor unchanged" and its six siblings), which pin seven shapes exactly and fail under both an all-dropping and an all-keeping mask.
--- blocker: `floorMask` is three imperative index loops over a mutable `Array Bool` with no equational theory, so the statement needs the loop invariant "every index of a markup-free source is still marked kept" carried through the naming-argument scan, the whitespace squeeze and the trailing trim. The shape is fixed here so the invariant is proved against it rather than around it; the same `Acc`-split work the emission-conservation rows wait on is what makes an imperative accumulator statable.
--- goldens: no
+/-! ## Discharged here, awaiting a move
+
+`floorChars_id` below is proved. Its owner is `LeanTex.Core.Ir`, which
+another agent holds in this wave, so it stands here with a real proof
+rather than a hole until that file can take it — with its `floorMask_id`
+lemma and the `filterMap_eq_map_fst` helper, which move with it. The queue
+is not a home: these three lines go into Ir.lean beside `floorChars_mem`,
+whose converse this is, in the commit that can touch that file.
+
+The proof is the loop-reading layer (`LeanTex.Core.Loop`) applied three
+times, once per loop of `floorMask`, and it needed no change to
+`floorMask` itself. -/
+
+/-- A `filterMap` that keeps every element is the projection it keeps.
+Moves into `LeanTex.Core.Ir` with `floorChars_id`. -/
+private theorem filterMap_eq_map_fst {α β : Type} (l : List (α × β)) (g : α × β → Option α)
+    (hg : ∀ p ∈ l, g p = some p.1) : l.filterMap g = l.map Prod.fst := by
+  induction l with
+  | nil => simp
+  | cons p rest ih =>
+    rw [List.filterMap_cons, hg p (by simp), List.map_cons,
+      ih (fun q hq => hg q (by simp [hq]))]
+
+/-- **The mask of a markup-free source keeps every index.** Each of
+`floorMask`'s three loops preserves "the mask is still all-true": the
+naming-argument scan because no character is a backslash, so the branch
+that drops one is unreachable; the whitespace squeeze and the trailing trim
+because no character is whitespace — and the trim's own `survives` test
+supplies the bound that makes its character readable, so the invariant
+needs nothing about the descending cursor.
+
+Moves into `LeanTex.Core.Ir` with `floorChars_id`. -/
+theorem floorMask_id (src : String)
+    (h : ∀ c ∈ src.toList, c ≠ '\\' ∧ c ∉ Ir.markupChars ∧ c.isWhitespace = false) :
+    Ir.floorMask src = Array.replicate src.toList.length true := by
+  have hat : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ∈ src.toList := by
+    intro i hi
+    rw [List.getElem?_eq_getElem hi]
+    simp [List.getElem_mem]
+  have hws : ∀ i, i < src.toList.length →
+      (src.toList[i]?.getD ' ').isWhitespace = false :=
+    fun i hi => (h _ (hat i hi)).2.2
+  have hbs : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ≠ '\\' :=
+    fun i hi => (h _ (hat i hi)).1
+  have hrep : ∀ j, ((Array.replicate src.toList.length true)[j]?).getD false = true →
+      j < src.toList.length := by
+    intro j hj
+    simp only [Array.getElem?_replicate] at hj
+    split at hj
+    · assumption
+    · simp at hj
+  simp only [Ir.floorMask, List.size_toArray]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step1) ?rest
+  case step1 =>
+    intro i _ _ b hb
+    split
+    · exact hb
+    · rename_i hlt
+      split
+      · exact hb
+      · rename_i hne
+        exact absurd (by simpa using hne) (hbs b.2 (by omega))
+  case rest =>
+  intro b hb
+  rw [hb]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Bool) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Bool) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step2) ?rest2
+  case step2 =>
+    intro i _ hi c hc
+    split
+    · split
+      · rename_i hw; exact absurd hw (by simp [hws i hi])
+      · exact hc
+    · exact hc
+  case rest2 =>
+  intro c hc
+  rw [hc]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step3) ?rest3
+  case step3 =>
+    intro i _ _ d hd
+    split
+    · exact hd
+    · split
+      · rename_i hsv
+        have hlt : d.2 - 1 < src.toList.length := hrep _ (by
+          simpa using (Bool.and_eq_true _ _ ▸ hsv : _ ∧ _).1)
+        split
+        · rename_i hw; exact absurd hw (by simp [hws _ hlt])
+        · exact hd
+      · exact hd
+  case rest3 =>
+  intro d hd
+  exact hd
+
 /-- A math source with no control sequence, no LaTeX punctuation and no
 whitespace salvages to exactly itself: the floor keeps content, it is not
-merely free to drop it. -/
+merely free to drop it.
+
+Moves into `LeanTex.Core.Ir` beside `floorChars_mem`, whose converse this
+is: that bound permits a mask which dropped everything, and so on its own
+permits a blank page where an equation stood. -/
 theorem floorChars_id (src : String)
     (h : ∀ c ∈ src.toList,
       c ≠ '\\' ∧ c ∉ Ir.markupChars ∧ c.isWhitespace = false) :
     Ir.floorChars src = src.toList := by
-  sorry
+  simp only [Ir.floorChars, floorMask_id src h]
+  rw [filterMap_eq_map_fst]
+  · exact List.zipIdx_map_fst 0 src.toList
+  · intro p hp
+    have hmem : p.1 ∈ src.toList := by
+      have hm := List.mem_map_of_mem (f := Prod.fst) hp
+      rwa [List.zipIdx_map_fst] at hm
+    simp [Array.getElem?_replicate, (h _ hmem).2.1]
+    split <;> simp
 
 mutual
 
