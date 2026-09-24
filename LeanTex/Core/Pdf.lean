@@ -281,10 +281,12 @@ end"
 
 private def wArray (font : Font) (used : Array (Nat × Char)) : String := Id.run do
   let mut s := "["
+  let mut first := true
   for (g, _) in used do
     let w := (font.widths[g]?.getD 0) * 1000 / font.unitsPerEm
-    s := s ++ s!" {g} [{w}]"
-  return s ++ " ]"
+    s := s ++ (if first then s!"{g} [{w}]" else s!" {g} [{w}]")
+    first := false
+  return s ++ "]"
 
 /-- Escape a PDF literal string: balance-sensitive characters only. -/
 private def pdfString (s : String) : String := Id.run do
