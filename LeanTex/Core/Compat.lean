@@ -3472,7 +3472,15 @@ private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw × Na
       let mut out : Array Raw := #[.par p]
       for r in lead do
         out := out.push r
-      for r in overprintAlt p tail numbered.toList do
+      -- Last item outermost: the nesting is a priority chain, and beamer's
+      -- overprint gives priority to the item written last (its items stack in
+      -- one overlay area, so a later one covers an earlier). Head-first the
+      -- chain is dead code from the first item whose range covers the whole
+      -- window: `\onslide<1->` then `\onslide<2->` made item 1 win on every
+      -- step, item 2 reachable from none, and the frame shipped two
+      -- byte-identical pages with no diagnostic. Point specs are unaffected —
+      -- their partitions are singletons either way.
+      for r in overprintAlt p tail numbered.toList.reverse do
         out := out.push r
       return out.push (.par p), loose.size)
 

@@ -406,6 +406,69 @@ W0335 where it had no diagnostic at all. Both are rows of
 `pictureInkBoxChecks`, read off the shipped lines rather than an IR dump,
 and all four new rows fail on the parent commit.
 
+2026-09-24 — a lost overlay increment, and the condition that should have
+named it. A deck shipped two consecutive step pages with identical rasters
+(one md5 for both) where the reference output's second page adds content.
+Reproduced synthetically: an `{overprint}` whose items carry *open* ranges —
+`\onslide<1->` then `\onslide<2->` — ships two pages, both inking item 1.
+Item 2 reaches no page. One note, no warning.
+
+**Mechanism.** Two rules, composed by nobody. `Compat.overprintAlt` encodes
+an overprint as a right-nested `\alt` chain, head-first, so item 1 is the
+outermost test and every later item lives inside item 1's *other* group.
+Selection is `Ir.altShowsFirst`, which is not "is k in the range" but a
+two-valued partition of ℕ by pendingness *relative to step 1*. For
+`(n, last) = (1, none)` that partition is constant: `stepPending 1 none k`
+is false at every k ≥ 1, so `altShowsFirst` is true at every step and the
+other group is dead. Demand, meanwhile, is counted structurally —
+`Ir.maxStepBlock`'s `.alt` arm maxes over **both** groups — so the buried
+`<2->` still bought a second page. A page demanded by content no step can
+reach: two identical pages, silently.
+
+The page *count* agreed with the reference throughout, which is why nothing
+caught it. It is not evidence: one increment vanished and the count still
+matched, because the vanished node is exactly the node that paid for the
+page.
+
+**Fix.** The chain is a priority chain, and priority belongs to the item
+written *last* — beamer stacks overprint items in one overlay area, so a
+later item covers an earlier. `overprintAlt`'s caller now feeds the items
+reversed. Point specs are unaffected: their partitions are singletons either
+way, and the three-item fixture still ships three distinct pages (verified on
+rasters, three md5s). The open-range shape now ships the increment on the
+step that asked for it. `overprintAlt` itself is untouched, so its four
+`_exact`/`_id` theorems stand.
+
+**Caught by construction, at the shape rather than the pages.** The sharper
+question is worth the answer it has: two consecutive identical pages is
+*detectable*, but not *diagnosable* — a deck whose step genuinely repeats
+itself is legal (`\onslide<2-5>` alone in a frame ships four identical pages
+in beamer too), so "consecutive pages differ" would refuse valid documents.
+What is decidable, and decidable *before* the pages are built, is the shape
+that loses an increment: an alternation whose pendingness is constant over
+its own frame's step window inks one group on every page and the other on
+none. That is `Ir.altReachesOther` and the document-level count
+`Ir.altUnreachable`, a leaf function over `foldBlocks`. Only the group stored
+second can be unreachable (`altShowsFirst_id` gives step 1 to the first), and
+only a non-empty one is a loss — the empty other group is what a chain's last
+link carries. The suite now holds **every fixture in `goldenNames`** to
+`altUnreachable = 0`, beside the two synthetic overprint shapes. The
+remaining step, not taken here, is to make the engine itself say it: that
+wants a diagnostic code, and four landed today from parallel work, so the
+registration is left to the code owner rather than raced.
+
+**Two remainders, named.** (1) Fidelity: beamer's overprint *overlays* the
+items whose specs match, so on step 2 both readings would stand; the chain
+shows one. Where the later item is a superset of the earlier — the common
+authoring shape, and the shape the reference deck used — the visible result
+agrees. It does not in general. (2) The reversal moves which item sits
+innermost, and the innermost item is the one whose single-line content is
+elaborated inline rather than as a block (the outermost is fenced by the
+`.par` pair `overprintPlan` writes). So a one-line *first* item now ships as
+an inline alternation inside a paragraph, carrying its surrounding spaces,
+where a one-line *last* item did before. Symmetric, pre-existing, and
+content-dependent rather than order-dependent; the golden records it.
+
 2026-09-24 — vertical-skip composition: a positive skip that narrowed the
 gap. On a four-paragraph `article`, `\smallskip` between two paragraphs
 shipped **15.0 pt** of separation where a plain paragraph break shipped

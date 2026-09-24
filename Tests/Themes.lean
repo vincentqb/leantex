@@ -2516,6 +2516,38 @@ def deckOverprintChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "the HTML tree declares each reading once and shows exactly one"
     (readings.all (fun r => treeOccurs body r == 1) &&
      ((readings.map fun r => treeShownOccurs body r) == [1, 0, 0]))
+  -- An overprint whose items carry *open* ranges. Chained head-first this
+  -- shipped two byte-identical pages: item 1's `<1->` covers every step of
+  -- the window, so it won on both and item 2 was reachable from none — an
+  -- overlay increment lost with no diagnostic. The chain gives priority to
+  -- the item written last, as beamer's overlay area does, so the increment
+  -- lands on the step that asked for it.
+  let openReadings := ["Delta reading.", "Echo reading."]
+  let (odoc, ods) := elabStr (deck169Frame
+    "\\begin{overprint}\n\\onslide<1-> Delta reading.\n\
+\\onslide<2-> Echo reading.\n\\end{overprint}")
+  t "an open-range overprint elaborates clean"
+    (ods.all fun d => d.severity == .note)
+  let oc := censusOf (coveredColorsOf odoc) (layoutOf oneFace odoc)
+  t "two open-range alternatives give the frame two step pages" (oc.size == 2)
+  t "an open-range overprint ships a different reading on each step page"
+    ((List.range 2).all fun i =>
+      (openReadings.map fun r => pageOccurs oc i r) == (List.range 2).map fun j =>
+        if i == j then 1 else 0)
+  -- The same loss, caught before the pages are built: an alternation group no
+  -- step of its own frame can ink is decidable from the range and the window.
+  t "no alternation group of an open-range overprint is unreachable"
+    (Ir.altUnreachable odoc == 0)
+  t "nor of a point-spec overprint" (Ir.altUnreachable doc == 0)
+  -- And across the corpus: every shipped fixture reaches both groups of every
+  -- alternation it declares. A step page that repeats its predecessor is
+  -- either a document that meant it or an engine that lost something, and the
+  -- engine cannot tell after the fact — so the decidable shape is the gate.
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (cdoc, _) := Elab.run s!"{n}.tex" src
+    t s!"corpus {n}: every alternation reaches both of its groups"
+      (Ir.altUnreachable cdoc == 0)
 
 /-- An overprint the rewrite refuses to read as an alternation degrades to
 ONE reading with its loss named, never to several stacked: an `\onslide`

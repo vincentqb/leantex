@@ -6728,6 +6728,16 @@ theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
     altShowsFirst n last 1 = true := by
   simp [altShowsFirst]
 
+/-- Does any step of a frame's window ink the group stored *second*? An
+alternation whose pendingness is constant over `[1, steps]` partitions
+nothing: it inks one group on every page of the frame and the other on none,
+which is an overlay increment the artifact loses and a step page that ships
+nothing its predecessor did not. The condition is decidable from the range
+and the window alone, which is why it is a definition here rather than a
+judgement each consumer makes. -/
+def altReachesOther (n : Nat) (last : Option Nat) (steps : Nat) : Bool :=
+  (List.range steps).any fun i => !altShowsFirst n last (i + 1)
+
 /-- Is the group stored first the one a *pending* step inks? The side of the
 spec page order put it on, and the only per-node fact an artifact needs
 beyond the range itself: a consumer that can test `stepPending` at a step
@@ -6863,6 +6873,35 @@ is attributed to a frame, and frame k's pages number exactly its overlay
 steps — this count, summed over the body. -/
 def frameSteps (b : Block) : Nat :=
   if let .frame _ _ _ _ body := b then max 1 (maxStepBlocks body) else 0
+
+/-- Alternation groups no step of their own frame inks, counted over the
+document's frames — block alternations and inline ones alike. **Zero is the
+contract.** Two consecutive step pages that ship the same ink are either a
+document that meant it or an engine that lost an increment, and the engine
+cannot tell those apart after the fact; an unreachable group, though, is
+decidable *before* the pages are built, from the range and the frame's own
+step window. An overprint whose items were chained head-first produced
+exactly this — `\onslide<1->` then `\onslide<2->` left item 1 winning on
+every step and item 2 reachable from none, two byte-identical pages, no
+diagnostic — so the shape is checked rather than trusted. Only the group
+stored *second* can be unreachable (`altShowsFirst_id` gives step 1 to the
+first), and only a non-empty one is a loss: the empty other group is what a
+chain's last link carries, and it inks nothing whether a step reaches it or
+not. A leaf function over `foldBlocks`, not a new walk. -/
+def altUnreachable (doc : Doc) : Nat :=
+  doc.body.foldl (init := 0) fun n b =>
+    match b with
+    | .frame _ _ _ _ body =>
+      let steps := frameSteps b
+      n + foldBlocks
+        (fun k blk => match blk with
+          | .alt a l _ o => if altReachesOther a l steps || o.isEmpty then k else k + 1
+          | _ => k)
+        (fun k x => match x with
+          | .alt a l _ o => if altReachesOther a l steps || o.isEmpty then k else k + 1
+          | _ => k)
+        0 body
+    | _ => n
 
 mutual
 
