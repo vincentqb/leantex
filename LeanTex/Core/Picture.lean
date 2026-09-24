@@ -1946,6 +1946,10 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- `\path` paints nothing of itself; an `edge` operation or an explicit
   -- `draw` key is what makes it stroke (pgf's `every edge` carries `draw`).
   let mut strokes := !isPath
+  -- Did one of the chain's operation brackets already declare a stroke?
+  -- The subset draws one stroke per edge, so a second declaration is a
+  -- loss to name rather than resolve in silence.
+  let mut opStroke := false
   let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
     let mut j := 1
@@ -2088,6 +2092,42 @@ not drawn")
               | .ok m => inA := some ((m + 500) / 1000)
               | .error e =>
                 return ev.diag (.E0333, s!"in 'in=', {e}; the edge is not drawn")
+            -- An operation's own bracket carries stroke keys too, and on
+            -- `\path (a) edge [dashed] (b)` they are the whole point: the
+            -- dash is what the diagram means by that edge. The subset has
+            -- one stroke per edge shape, so a chain whose operations
+            -- declare *different* strokes can only draw one — named, not
+            -- silently resolved.
+            | [.ident "dashed"] =>
+              if opStroke then ev := ev.diag (.W0334, "a chain whose \
+operations declare more than one stroke is outside the rendered picture \
+subset; the last one is drawn")
+              opStroke := true
+              dash := .dashed
+            | [.ident "dotted"] | [.ident "densely", .ident "dotted"] =>
+              if opStroke then ev := ev.diag (.W0334, "a chain whose \
+operations declare more than one stroke is outside the rendered picture \
+subset; the last one is drawn")
+              opStroke := true
+              dash := .dotted
+            | [.ident "thick"] =>
+              if opStroke then ev := ev.diag (.W0334, "a chain whose \
+operations declare more than one stroke is outside the rendered picture \
+subset; the last one is drawn")
+              opStroke := true
+              thick := true
+            | .ident "draw" :: .sym '=' :: rest =>
+              match evalColor cx env rest.toArray with
+              | .ok c =>
+                if opStroke then ev := ev.diag (.W0334, "a chain whose \
+operations declare more than one stroke is outside the rendered picture \
+subset; the last one is drawn")
+                opStroke := true
+                color := c
+                strokes := true
+              | .error e =>
+                ev := ev.diag (.E0333, s!"in an edge's 'draw=', {e}; the \
+colour is dropped")
             | [] => pure ()
             | o :: _ =>
               ev := ev.diag (.W0334, s!"'to' option {tokText o} is outside the \

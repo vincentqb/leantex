@@ -4607,6 +4607,19 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let cu := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
   t "the refused node costs itself, not the picture"
     (pageHas cu 0 "Pear" && ((cu[0]?.map (·.images == 0)).getD false))
+  -- An operation's own bracket carries the stroke: on `edge [dashed]` the
+  -- dash is what the diagram means by that edge, so it has to reach the
+  -- page. Read off the shipped strokes, since only the page can say.
+  let dashed := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of aa" ++
+    "\\path (aa) edge [dashed, draw=blue] (bb);\n"))
+  t "an edge operation's own bracket reaches the shipped stroke"
+    ((dashed[0]?.map (·.pathStrokes.any fun (c, _) =>
+      c == { r := 0, g := 0, b := 255 })).getD false)
+  -- A `\path` that asks for no drawing paints nothing: pgf's `\path` is
+  -- the unpainted one, and only an `edge` or a `draw` key changes that.
+  let quiet := censusSrc (pic ("\\path (0,0) -- (2,0);\n"))
+  t "a path that asks for no drawing ships no stroke"
+    ((quiet[0]?.map (·.paths == 0)).getD false)
 
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is

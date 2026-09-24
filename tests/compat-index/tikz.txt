@@ -1,8 +1,11 @@
 # source: TikZ/PGF manual part I tutorials and §12 (\tikz, tikzpicture),
-# §12.4.2 (\tikzset), §12.2.1 (\usetikzlibrary), §17 (nodes; §17.2.2
-# minimum size, §17.2.3 draw/fill on the node's shape), §15.3.1-2 (line
-# width and dash patterns), §14 paths (\draw, the -- line-to, §14.13 to
-# paths with out=/in=; the circle path operation is outside the subset),
+# §12.4.2 (\tikzset), §12.2.1 (\usetikzlibrary), §17 (nodes; §17.2.1 node
+# contents, §17.2.2 minimum size, §17.2.3 draw/fill on the node's shape,
+# §17.5.2 anchors and the positioning library's relative placement with
+# node distance), §15.3.1-2 (line
+# width and dash patterns), §14 paths (\draw, \path, the -- line-to,
+# §14.13 to paths with out=/in= and the edge operation whose every edge
+# carries draw; the circle path operation is outside the subset),
 # part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
 # tip). tikzpicture renders its subset natively; a picture with a
 # construct outside it routes whole to the graphics boundary (§53's
@@ -25,7 +28,14 @@ body impl \begin{tikzpicture}\node[circle, draw, minimum size=8mm] (u) at (0,0) 
 body impl \begin{tikzpicture}\draw (0,0) to[out=90,in=180] (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) -- node {m} (2,0);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) circle (1);\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x};\node (v) [right =of u] {y};\path (u) edge (v);\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x};\node (v) [right of=u] {y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x};\node (v) [above left =of u] {y};\node (w) [below right =of u] {z};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x};\node (v) [right =2cm of u] {y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[draw, minimum size=4mm, node contents={x}] (u) at (0,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\path[draw] (0,0) -- (1,1);\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
+pre impl \tikzset{node distance = 1cm and 1cm}
 pre impl \tikzset{zz/.style={}}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize

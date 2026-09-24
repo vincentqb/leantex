@@ -303,6 +303,52 @@ the new request — confirmed by the private reference corpus, where the
 tree that stops at each definer's own body, and it is not measurable here.
 `scripts/compose-fuzz.lean` green (the preamble apply sites moved).
 
+2026-09-24 — an edge operation's own bracket reaches the page, and the two
+gaps that still cost visible ink are named (M8b slice 3, second
+increment). `\path (a) edge [dashed] (b)` drew a solid line and said
+`'to' option 'dashed' is outside the rendered picture subset`: the
+operation bracket read `out=`/`in=` and nothing else. In a node-and-edge
+diagram the dash *is* the statement — it is what the picture means by that
+edge — so a named loss there loses the reading, not a decoration. The
+bracket now reads `dashed`, `dotted`, `thick` and `draw=`, and because the
+subset draws one stroke per edge shape, a chain whose operations declare
+*more than one* stroke says so rather than resolving it in silence. The
+check reads the shipped stroke's colour off `Layout.Out`; a rendered page
+carries the dash.
+
+Also pinned here: **a `\path` that asks for no drawing ships no stroke.**
+pgf's `\path` is the unpainted path and only an `edge` operation (whose
+`every edge` carries `draw`) or an explicit `draw` key changes that, so
+`strokes` starts false for `\path` and the check asserts zero shipped
+paths for `\path (0,0) -- (2,0);`. Without it the new statement kind would
+have quietly painted every `\path` in every document.
+
+Two gaps that still cost ink on the reference corpus, named rather than
+smoothed over, because each is a slice and not an oversight.
+
+A **statement wrapped in a colour** is skipped whole. The beamer idiom
+`\alert{\path (a) edge (b);}` rewrites to `\textcolor{alert}{…}` before
+the picture walk, and the walk's statement machine has no scope
+vocabulary: an unknown control word is named and skipped to the next `;`,
+so the wrapped statement and its group go with it. That is why some edges
+of an otherwise native diagram are missing while its nodes all stand. The
+slice it wants is statement-level colour scoping — a `Mode` that parses a
+group's contents as statements with a colour in force — which is a new
+mechanism rather than a placement fix, and it belongs in its own unit with
+its own invariant (a scoped statement draws what the same statement draws
+unscoped, in the declared colour).
+
+And a **label's box is its anchor point**, so a picture whose nodes run
+leftward from the origin reports a box narrower than its ink and the page
+lets that ink hang past the measure. `Shape.box` gives a `.label` the
+degenerate box `((x,y),(x,y))`, which was honest while every label was
+small beside a drawn outline and is not once nodes carry prose. The fix is
+a label box that carries its measured extent, which needs the font and so
+belongs to layout, not to this walk — and until it lands, `node distance`
+between two *declared* borders is the whole separation even where the two
+bodies are much wider than their minimums, which is the same unmeasured
+extent seen from the other side.
+
 2026-09-24 — nodes place themselves, and a picture stops being a
 typographic island (M8b slice 3, native nodes and anchors). The defect this
 closes is not one picture: **every** picture in the private reference
