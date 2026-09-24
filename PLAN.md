@@ -381,10 +381,81 @@ list.
   own walk over `Math.MList` instead of reusing
   `Math.MList.scalarsList`, whose job is the coverage census and whose
   omissions (no radical sign is ever pushed) are right there and wrong here.
+- `themeAsking_candidates` — every slot of beamer's theme-loading family
+  asks the input path for exactly its prefixed file, quantified over the
+  registry the candidate scan and the splice both read. Closed and finite
+  but kernel-irreducible: the argument readers it runs through are
+  well-founded recursions with no equation lemmas. `themeAskingChecks` is
+  the executable oracle meanwhile.
+- `nameRefusals_asked` — the general form: a declaration the engine refuses
+  as unknown-by-name asked the input path first, so no refusal outlives a
+  file beside the document that would have defined it. Waits on a declared
+  refused-name channel on the diagnostic (`Diag.subject` is the dedup key,
+  and nothing holds a name-refusal to putting the name there) — which is
+  `Diag`'s and `Elab`'s, not `Compat`'s.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — `\usetheme{X}` is `\usepackage{beamerthemeX}`, and a theme
+beside the document is read. A deck reported W0319 ("unknown theme"; the
+document unthemed) and 39 W0304 sites ("'fg!50!bg' is not in the palette")
+as if they were two defects. They are one: an unthemed document has no `fg`
+or `bg` role, so every mix over them fails and no `frametitlebg` resolves, so
+the frame-title band is never painted. The theme file was sitting beside the
+document. Measured on a synthetic probe: `\usetheme{acme}` warned and never
+opened `beamerthemeacme.sty`, while `\usepackage{beamerthemeacme}` read the
+same file and resolved the mix — so the engine already had every part it
+needed, and `\usetheme` simply never asked. beamer defines the whole loading
+family through the package loader (beamerbasethemes.sty), so the input path
+was always the right place to look; the candidate scan just did not offer the
+prefixed name.
+
+The fix is one registry, `Compat.themeAsking`, read by both the candidate
+scan and the splice, covering all five slots — `\usetheme`,
+`\usecolortheme`, `\usefonttheme`, `\useinnertheme`, `\useoutertheme` — where
+only `\usecolortheme` had a hand-written arm before and the other four sat
+one keystroke from the same bug. Options ride into the file's own option
+machinery, because that is what `\usetheme[opts]{X}` expands to.
+
+**Precedence is composition, not a contest.** Where the engine also ships a
+bundle of that name, the bundle installs first and the file's declarations
+land on top: a role the file declares is the file's, a role it leaves alone
+keeps the bundle's. Neither extreme survives inspection. Reading only the
+bundle drops an author's deliberate edit to a theme in their own directory,
+and would need a new diagnostic to avoid dropping it silently. Reading only
+the file — LaTeX's literal rule — trades a complete, contrast-proved design
+for the fragments this engine can absorb: `Contrast.builtin_designs_legible`
+and its siblings range over `Theme.builtin` and over nothing a spliced `.sty`
+can add, and because dropping the native `\theme` also drops `sawTheme`, a
+deck would then fall to the *default* bundle plus fragments — further from
+the author's ask than the bundle they named. Composition is already the
+engine's rule for a `\theme` followed by `\palette`, so nothing is invented
+and nothing is silent: `styRead`'s N0020 names the file and the bundle it
+overrides in the same line.
+
+**Partial absorption does not fall back to W0319.** A theme the engine reads
+and cannot absorb is not an *unknown* theme; saying so would be false. What
+is owed instead is that the shortfall is measured and the document is not
+left half-designed, and both hold: N0020's three counts report exactly how
+much took (`honoured: 0` on the probe whose every construct is refused), and
+the deck is floored — a shipped name by its bundle, an unshipped one by the
+slides default bundle, so no mix is left resolving for some roles and not
+others. The one uncovered corner is an unshipped local theme under a
+non-slides class, where `\usetheme` already draws W0355 for inert slides
+furniture.
+
+Measured relief, on the artifact and not the IR: the local theme's
+`frametitlebg` paints as an 18-row band at the top of the rendered first page
+where the unthemed build has white, and the grey value matches the declared
+colour. The invariant is stated in its general form and owed —
+`nameRefusals_asked`: a declaration refused as unknown-by-name asked the
+input path first. That form generalises past themes, which is why it was
+taken over the narrower "a theme the document ships is a theme the engine
+reads"; the narrow form would have fixed `\usetheme` and left the other four
+slots, and it is a fact about themes where the defect is a fact about
+refusals.
 
 2026-09-24 — package and class diagnostics are control-plane, never body
 recovery. A venue style deferred `\PackageWarning{package}{message}` through

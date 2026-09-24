@@ -760,4 +760,57 @@ theorem formulaFloor_separates (num den : Math.MList)
       ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
   sorry
 
+/-- The prefix LaTeX puts before a refused name on its way to a filename,
+per refusing code: an unknown package is its own file (ltfiles.dtx
+`\@onefilewithoptions`), an unknown theme is `beamertheme<name>`
+(beamerbasethemes.sty). The measure the statement below needs, and the
+reason it is a table: the two codes refuse the same *kind* of thing — a name
+the engine does not know — and differ only in what file would have defined
+it. -/
+def nameRefusalAsk : List (String × String) :=
+  [("W0103", ""), ("W0319", "beamertheme")]
+
+/-- The name a refusal is about, as the diagnostic carries it today: the
+structured dedup key, which for these codes is the refused name. Nothing
+guarantees that — it is the gap the blocker names. -/
+def refusedName (d : Diag) : Option String := d.subject
+
+-- owed: themeAsking_candidates
+-- owner: LeanTex.Core.Compat
+-- source: theme-loading audit 2026-09-24 (a deck's `\usetheme{X}` never opened `beamerthemeX.sty` beside it; W0319 then cost the document its whole palette and every `fg!50!bg` mix with it)
+-- blocker: the statement is closed and finite — `themeAsking` is five literal pairs — but it does not reduce in the kernel, so `decide +kernel` cannot discharge it. The scan reaches its answer through `takeOpt`, `takeGroups`, `rawSrc` and `trimAscii`, and those are well-founded recursions with no equation lemmas an unfolding can use; `decide` reports "did not reduce" rather than a counterexample. The factorization it wants is an argument-reading layer over `Array Raw` — one function per shape (optional group, n mandatory groups, a group's source text) with its own equations proved once — after which this is `simp [equations]` and so is every other statement about a compat arm's arguments, which is why the layer is worth more than the single proof. `themeAskingChecks` runs the quantification executably meanwhile, over the registry itself rather than over samples
+-- goldens: no
+/-- Every slot of beamer's theme-loading family asks the input path for
+exactly its prefixed file: a preamble holding only that command yields
+exactly that one candidate, options or not. Quantified over the registry the
+candidate scan and the splice both read (`Compat.themeAsking`), so adding a
+slot is entering the contract rather than adding a case. -/
+theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toString = nm)
+    (hnz : nm ≠ "") :
+    ∀ p ∈ Compat.themeAsking,
+      Compat.localStyCandidates #[.ctrl p.1 pos, .group #[.word nm pos] pos]
+        = #[p.2 ++ nm] := by
+  sorry
+
+-- owed: nameRefusals_asked
+-- owner: LeanTex.Core.Compat
+-- source: theme-loading audit 2026-09-24, the generalised invariant: the defect was not about themes but about a refusal that never asked, and `\usefonttheme`/`\useinnertheme`/`\useoutertheme` sat one keystroke from the same bug
+-- blocker: the statement needs a machine-readable "this refusal is about a name" channel, and there is none. `Diag.subject` is the dedup key: W0103 and W0319 happen to put the refused name there, nothing holds them to it, and a third name-refusal could arrive carrying a message instead — which is exactly how `\usetheme` escaped, by being refusable without being enumerable. The refactor is a declared field on the refusal (a `refusedName` beside `subject`, or a `Loss`-adjacent classification marking name-refusals) so the registry can be closed against the code list instead of against a hand-kept table, and that field is `LeanTex.Core.Diag`'s and `LeanTex.Core.Elab`'s, not this module's. Second wall behind the first: the quantification runs over `Elab.runRaws`'s whole diagnostic surface, an imperative preamble fold with no equational theory an induction can enter — the same wall the nine loop-shaped rows name
+-- goldens: no
+/-- **A declaration the engine refuses as unknown has no file beside the
+document that would define it.** The pure half, which is the half the engine
+owns: whenever a document's elaboration refuses a name, the file that would
+have defined it was among the candidates the scan offered, so the driver
+looked before the refusal was spoken. The effect half is
+`Cli.Input.expandLocalSty`'s — a candidate whose file exists is read and
+spliced, and the declaration is then consumed, so no refusal survives a file
+that answers it. -/
+theorem nameRefusals_asked (file : String) (raws : Array Parse.Raw) :
+    ∀ d ∈ (Elab.runRaws file raws).2,
+      ∀ p ∈ nameRefusalAsk,
+        d.code = p.1 →
+          ∀ nm, refusedName d = some nm →
+            (Compat.localStyCandidates raws).contains (p.2 ++ nm) = true := by
+  sorry
+
 end Obligations
