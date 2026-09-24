@@ -331,6 +331,9 @@ warning[W0334]: '\draw' continues with 'circle', outside the rendered picture su
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 warning[W0335]: the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page
   help: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
+── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
+warning[W0336]: 1 pair(s) of node labels overlap: a relative placement parts node centres, not the text they set
+  help: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
 warning[W0337]: a row carries 3 cells but the column spec declares 2; the grid widens
   help: declare one column type per cell: l, c, r, or p{width}

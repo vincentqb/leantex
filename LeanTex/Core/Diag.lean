@@ -101,7 +101,7 @@ inductive DiagCode where
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
   | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338 | W0358
+  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0336 | W0337 | W0338 | W0358
   | W0340 | W0341 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
   | W0349 | W0350 | W0356 | W0357
   | W0351 | W0352 | W0353
@@ -256,6 +256,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0333 => ("0333", .degraded, "band slots collide; the lower-priority slot is painted over")
   | .W0334 => ("0334", .pending, "picture construct outside the rendered subset; not drawn")
   | .W0335 => ("0335", .degraded, "picture larger than the text area; it may overrun the page")
+  | .W0336 => ("0336", .degraded, "node labels overlap; a relative placement parts centres, not text")
   | .W0337 => ("0337", .degraded, "table row disagrees with its column spec; padded to the grid")
   | .W0338 => ("0338", .degraded, "table is wider than the measure")
   | .W0358 => ("0358", .degraded, "a float taller than the text block overruns its page")
@@ -337,7 +338,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 165
+def DiagCode.count : Nat := 166
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never

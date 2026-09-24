@@ -5473,6 +5473,34 @@ private def collectTable (r : Rd) (a0 : Acc)
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
 
+/-- How many pairs of a picture's node labels have overlapping ink: the
+label boxes, compared pairwise, counting a pair whose boxes intersect on
+both axes. Reads the boxes the hull already measured, so naming the
+collision costs no second measurement.
+
+**The loss the engine cannot prevent, measured so it can be named.** A
+relative placement (`right =of`) parts node *centres* by one node distance,
+because the extent a node registers is its declared minimum and the walk
+that registers it has no face (`nodeExtent_covers`, owed). So a label wider
+than its minimum collides with its neighbour, and nothing in the picture's
+own box says so — the box contains both, correctly. Only a pairwise
+comparison at the face can see it, and this is where the face is. -/
+private def labelCollisions (pic : Ir.Pic.Picture) (boxes : Array Ir.Pic.Box) :
+    Nat := Id.run do
+  -- A label's own box; a fill, an outline and an edge overlap by design.
+  let mut ls : Array Ir.Pic.Box := #[]
+  for i in [0:pic.shapes.size] do
+    if let (some s, some b) := (pic.shapes[i]?, boxes[i]?) then
+      if s matches .label _ _ _ _ _ _ then
+        if b.1.1 < b.2.1 then ls := ls.push b
+  let mut n := 0
+  for i in [0:ls.size] do
+    for j in [i + 1:ls.size] do
+      if let (some p, some q) := (ls[i]?, ls[j]?) then
+        if p.1.1 < q.2.1 && q.1.1 < p.2.1 && p.1.2 < q.2.2 && q.1.2 < p.2.2 then
+          n := n + 1
+  return n
+
 /-- One label line of a picture, set and measured: the segments its
 inlines make, the size they set at, and the ink the line occupies — its
 set width and its reach above and below the baseline.
@@ -5527,7 +5555,9 @@ that were silent. The reserved box fitted while glyphs left the page, and
 the centring it drives put the leftmost label's ink at negative page x. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     (indent : Sp) (center : Bool) : Acc :=
-  let bb := pic.inkBbox (picMetric r.fs r.imgs r.geom r.xHeight)
+  let metric := picMetric r.fs r.imgs r.geom r.xHeight
+  let boxes := pic.inkBoxes metric
+  let bb := Ir.Pic.Box.hull boxes
   let ((px0, py0), (px1, py1)) := bb
   let w := px1 - px0
   let h := py1 - py0
@@ -5540,6 +5570,17 @@ the page")
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
+  -- The collision the box cannot show: two labels inside one correct box.
+  -- Named, not fixed — the extent a node places against is its declared
+  -- minimum, and measuring it needs a face the elaborator does not have.
+  let a := match labelCollisions pic boxes with
+    | 0 => a
+    | n =>
+      { a with diags := a.diags.push (Diag.of .W0336
+        (s!"{n} pair(s) of node labels overlap: a relative placement parts \
+node centres, not the text they set")
+        (help := "declare the extent ([minimum width = ...]) or widen the \
+separation ([node distance = ...])")) }
   let x := if center then indent + max 0 ((avail - w) / 2) else indent
   let a := a.flushGap r
   -- The picture's one `.picture` leaf: its label lines name it.

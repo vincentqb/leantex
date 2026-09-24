@@ -4925,8 +4925,10 @@ distance between node *centres* because no body's extent is measured at
 elaboration, so labels in a row still overlap. That half needs the face at
 elaboration, which the driver cannot supply (it builds the font set from
 the elaborated document); it is `nodeExtent_covers`, owed and staged. The
-overrun row below is the honest floor meanwhile: a diagram whose ink
-leaves the text area is named. -/
+last rows below are the honest floor meanwhile: a diagram whose ink leaves
+the text area is named (W0335), and one whose labels collide inside a
+correct box is named too (W0336) — the case the box cannot show, because
+the box holds both labels and is right to. -/
 def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -4995,6 +4997,31 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match dbox 0, dbox 1 with
      | some (ax, aw), some (bx, bw) => bx - ax == Dim.mm 10 + aw + bw
      | _, _ => false)
+  -- **The collision the box cannot show.** A correct box holds two labels
+  -- that overlap each other, so the overrun row above is silent on a
+  -- diagram whose text collides inside the measure — which is the state
+  -- every unmeasured `right =of` row is in. Named at the face, the one
+  -- place the comparison can be made, and measured rather than guessed.
+  let layoutDiags (src : String) : Array Diag :=
+    let (doc, _) := elabStr src
+    (layoutOf oneFace doc).diags
+  let tight := layoutDiags (frame (row 3))
+  t "a row whose labels overlap is named"
+    (tight.any fun d => d.code == "W0336")
+  -- The floor: a diagram whose labels clear one another says nothing.
+  -- Without this row the fact passes under a check that fires always.
+  let clear := layoutDiags (frame
+    ("\\node (a) {x};\n\\node (b) [right =of a] {y};\n"))
+  t "a row whose labels clear one another is not named"
+    (!clear.any fun d => d.code == "W0336")
+  t "a picture of one label is not named"
+    (!(layoutDiags (frame "\\node (a) {A Very Wide Label Indeed That Runs On};\n")).any
+      fun d => d.code == "W0336")
+  -- Two labels of one node's own body stack rather than collide: `\\`
+  -- opens a real line, and a multi-line label may not read as an overlap.
+  t "the two lines of one node's label are not an overlap"
+    (!(layoutDiags (frame "\\node (a) {A Wide First Line\\\\A Wide Second Line};\n")).any
+      fun d => d.code == "W0336")
 
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is

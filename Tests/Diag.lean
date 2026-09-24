@@ -359,6 +359,12 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
   | .W0335 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\fill (0,0) rectangle (40,1);\n\\end{tikzpicture}"))
+  -- Two nodes one node distance apart by their centres, each label wider
+  -- than that: the collision the picture's own box cannot show, because
+  -- the box contains both labels correctly.
+  | .W0336 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\node (a) {A Wide Enough Label};\n" ++
+      "\\node (b) [right =of a] {Another Wide Label};\n\\end{tikzpicture}"))
   | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}")
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))

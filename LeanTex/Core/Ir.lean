@@ -2444,42 +2444,53 @@ theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le 
   exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
          h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
 
-/-- The bounding-box fold over a per-shape box function, `List` companion
-first as every walk here. One walk, two instantiations — the declared hull
-(`Picture.bbox`) and the measured one (`Picture.inkBbox`) — so the
-containment lemmas below are proved once and hold for both. -/
-def boxFoldList (f : Shape → Box) (acc : Box) : List Shape → Box
+/-- The hull fold over a list of boxes, `List` companion first as every
+walk here. Polymorphic in what it reads a box from, so one walk and one set
+of containment lemmas serve the declared hull, the measured hull, and a
+caller that already holds the boxes. -/
+def boxFoldList {α : Type} (f : α → Box) (acc : Box) : List α → Box
   | [] => acc
   | s :: rest => boxFoldList f (Box.join acc (f s)) rest
+
+/-- The smallest box holding every box in an array. Empty is the empty box
+at the origin. -/
+def Box.hull (bs : Array Box) : Box :=
+  match bs.toList with
+  | [] => ((0, 0), (0, 0))
+  | b :: rest => boxFoldList id b rest
 
 /-- The declared hull's fold. -/
 def bboxList (acc : Box) : List Shape → Box := boxFoldList Shape.box acc
 
-/-- The hull of a per-shape box over a picture. An empty picture is the
-empty box at the origin. -/
+/-- The hull of a per-shape box over a picture, read through `Box.hull` so
+a caller that needs the boxes themselves — to compare them pairwise, say —
+computes them once and folds the same way. -/
 def Picture.boxFold (p : Picture) (f : Shape → Box) : Box :=
-  match p.shapes.toList with
-  | [] => ((0, 0), (0, 0))
-  | s :: rest => boxFoldList f (f s) rest
+  Box.hull (p.shapes.map f)
 
 /-- The picture's bounding box: the join of its shapes' declared boxes. -/
 def Picture.bbox (p : Picture) : Box := p.boxFold Shape.box
 
-/-- The picture's **ink** box under a measurement: the join of its shapes'
+/-- Every label's ink box, in shape order: what a pairwise comparison
+reads, and what the measured hull folds. One measurement per label. -/
+def Picture.inkBoxes (p : Picture) (m : LabelMetric) : Array Box :=
+  p.shapes.map (Shape.inkBox m)
+
+/-- The picture's **ink** box under a measurement: the hull of its shapes'
 ink boxes, so a node label's set text is inside it and not merely its
 anchor. This is the box a caller must reserve; `bbox` is what the IR knows
 with no face. -/
 def Picture.inkBbox (p : Picture) (m : LabelMetric) : Box :=
-  p.boxFold (Shape.inkBox m)
+  Box.hull (p.inkBoxes m)
 
-theorem boxFoldList_le (f : Shape → Box) (acc : Box) (xs : List Shape) :
+theorem boxFoldList_le {α : Type} (f : α → Box) (acc : Box) (xs : List α) :
     Box.le acc (boxFoldList f acc xs) := by
   induction xs generalizing acc with
   | nil => exact Box.le_refl acc
   | cons s rest ih =>
     exact Box.le_trans (Box.le_join_left acc (f s)) (ih (Box.join acc (f s)))
 
-theorem boxFoldList_mem (f : Shape → Box) (acc : Box) (xs : List Shape) (s : Shape)
+theorem boxFoldList_mem {α : Type} (f : α → Box) (acc : Box) (xs : List α) (s : α)
     (h : s ∈ xs) : Box.le (f s) (boxFoldList f acc xs) := by
   induction xs generalizing acc with
   | nil => cases h
@@ -2495,20 +2506,25 @@ theorem bboxList_le (acc : Box) (xs : List Shape) : Box.le acc (bboxList acc xs)
 theorem bboxList_mem (acc : Box) (xs : List Shape) (s : Shape) (h : s ∈ xs) :
     Box.le s.box (bboxList acc xs) := boxFoldList_mem _ acc xs s h
 
-/-- **The hull covers what it folds**: every shape's box lies inside the
-picture's hull, for any per-shape box function. The registered `_covers`
-shape, and the one fact both hulls below are instances of. -/
-theorem Picture.boxFold_covers (p : Picture) (f : Shape → Box) (s : Shape)
-    (h : s ∈ p.shapes) : Box.le (f s) (p.boxFold f) := by
-  have h' : s ∈ p.shapes.toList := by simpa using h
-  unfold Picture.boxFold
+/-- **The hull covers what it folds**: every box of the array lies inside
+the hull. The registered `_covers` shape, and the one fact every hull below
+is an instance of. -/
+theorem Box.hull_covers (bs : Array Box) (b : Box) (h : b ∈ bs) :
+    Box.le b (Box.hull bs) := by
+  have h' : b ∈ bs.toList := by simpa using h
+  unfold Box.hull
   split
   · next heq => rw [heq] at h'; cases h'
   · next t rest heq =>
     rw [heq] at h'
     cases h' with
     | head => exact boxFoldList_le _ _ rest
-    | tail _ hmem => exact boxFoldList_mem _ _ rest s hmem
+    | tail _ hmem => exact boxFoldList_mem _ _ rest b hmem
+
+/-- The per-shape hull covers every shape's box. -/
+theorem Picture.boxFold_covers (p : Picture) (f : Shape → Box) (s : Shape)
+    (h : s ∈ p.shapes) : Box.le (f s) (p.boxFold f) :=
+  Box.hull_covers _ (f s) (Array.mem_map_of_mem h)
 
 /-- The picture stays in its declared box: the bounding box contains the
 declared box of every shape it emits (labels bound at their anchors, see
@@ -2530,7 +2546,7 @@ artifact's version is this fact projected through the metric it can
 answer. -/
 theorem Picture.inkBbox_covers (p : Picture) (m : LabelMetric) (s : Shape)
     (h : s ∈ p.shapes) : Box.le (s.inkBox m) (p.inkBbox m) :=
-  p.boxFold_covers (Shape.inkBox m) s h
+  Box.hull_covers _ (s.inkBox m) (Array.mem_map_of_mem h)
 
 /-- The measured box loses nothing the declared box held: a shape's own
 geometry is its ink box unchanged, and a label's anchor is inside the

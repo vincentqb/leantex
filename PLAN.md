@@ -258,12 +258,44 @@ list.
   `Ir.Pic.LabelMetric` is the seam the measurement arrives through and every
   box statement already quantifies over it; what this needs is `Picture.Cx`
   carrying one. The witness meanwhile is the overrun row of
-  `pictureInkBoxChecks`: a diagram whose measured ink leaves the text area
-  is named rather than shipped in silence.
+  `pictureInkBoxChecks`, and W0336 beside it: a diagram whose labels
+  collide inside a correct box is named, which is the loss this obligation
+  would remove.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — the collision a correct box cannot show is now named. The
+entry below closes the half of the extent defect that sends glyphs off the
+page and says plainly that the other half — `right =of` parting node
+*centres* rather than their text — stays wrong. What it left is a reader
+with no signal: the picture's box holds both overlapping labels, and holds
+them correctly, so the overrun check is right to stay quiet. On the private
+reference corpus twenty pairs of label runs overlap and every one of them
+was silent.
+
+So W0336, the registry's 166th code, a `degraded` loss: a relative
+placement parts node centres, not the text they set. Measured rather than
+guessed — the label boxes are compared pairwise at the face, the one place
+the comparison can be made — and free, because the boxes are the ones the
+hull just measured (`Picture.inkBoxes`, folded by `Box.hull`, which is now
+the single hull for both the declared and the measured box). Three
+diagrams of the reference corpus name it where nothing named anything;
+`pictureInkBoxChecks` pins the firing and three floors beside it, the
+floors being what stops a check that always fires from passing: two
+labels that clear one another, a picture of one label, and the two lines
+of a single node's own body, which stack by design and are not a
+collision.
+
+**Cost.** The box measurement is two passes per label (the reserved box in
+`collectPicture`, the set line in `placePicture`) and the collision scan is
+none, because it reads boxes already in hand — the first cut called the
+metric a third time and cost 28% on a picture-heavy deck, which is the
+whole reason `Box.hull` takes an array. Measured on a synthetic 30-frame,
+180-label deck: 111 ms before this work, 114 ms after, +2.7%. The bench
+corpus itself carries no pictures, so `scripts/bench.lean` is blind to this
+and its numbers are unchanged; that document is the measurement.
 
 2026-09-24 — a picture's box now contains its ink, and the measurement that
 makes that possible lives where the face does. A node's extent was never
