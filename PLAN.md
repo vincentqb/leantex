@@ -873,6 +873,51 @@ optional. `Elab.runRawsSpanned` likewise stands unchanged as a thin wrapper
 over the new `prepare`/`runPrepared` split, so no caller outside this tree has
 to move.
 
+2026-09-24 — an accidental word is not an artifact-tier fact, and the
+theorem it wants does not exist. A probe paper began painting the word
+`fullpage`, which is the letters-only twin of the `\parbox` width argument
+that once shipped as `.25`: control-plane vocabulary reaching the page,
+carrying no backslash or brace for `markupInk` to catch. The question was
+whether the artifact tier could catch this class, since an external text
+layer is exactly where such words are visible.
+
+It cannot, and the attempt is the proof. Probed on this base, none of
+`\usepackage{fullpage}`, `\usepackage[margin=1in]{fullpage}`,
+`\RequirePackage{fullpage}`, `\pagestyle{fancyhdr}` or `\setlength` inks
+its operand in either the preamble or the body position — W0103 names the
+preamble case, W0340 the body one — and `\parbox{.25\textwidth}{body}` now
+inks only `body`, so the `.25` leak is gone. The reported `fullpage` comes
+from a path outside this tree.
+
+The general claim was then written and run: no content-marked run may
+spell a word that appears in a `\usepackage`, `\RequirePackage`,
+`\documentclass`, `\usetheme` or `\pagestyle` argument and nowhere in the
+source's body region. It accused two innocent fixtures, and one of them
+settles the design question in a single line: `deck.tex` carries
+`\usetheme{example}` and `\institute{example.org}`, so the word `example`
+is a machinery name in one declaration and printed content in another,
+and the bytes cannot tell which one painted it. `daylight` fails the same
+way. Closing that hole means listing which preamble declarations print,
+which is re-deriving the elaborator's own knowledge inside a test. The
+check was written, run, and deleted rather than weakened; only this entry
+remains.
+
+So the discriminator lives where a declaration is interpreted, and the
+missing statement is an IR one:
+
+  a preamble declaration contributes no body ink —
+  `Ir.blocksText (elab (pre ++ [decl]) body).body
+     = Ir.blocksText (elab pre body).body`
+
+for `decl` drawn from the declaration vocabulary. This is not owed: no
+row in `Obligations/` states it. `scripts/compose-fuzz.lean` checks
+declaration *commutation* as T1's oracle, and commutation is the weaker
+fact — two declarations agreeing with each other says nothing about
+either adding a word. The artifact tier's role under such a theorem is to
+witness it on the page, not to decide it; `markupInk` is the half that
+needs no interpretation, because a brace is markup whoever wrote it.
+
+
 2026-09-24 — the artifact tier: assertions over the produced PDF bytes.
 `censusChecks` reads `Layout.Out`, which is the engine's own belief about
 what it shipped, and that was not enough: a private reference deck matched
