@@ -5077,7 +5077,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- Three keys the subset does not read, two of them plain switches and one
   -- an arrow-tip default — the shape whose silent loss leaves a diagram's
   -- edges without their heads — beside one style definition it does read.
-  let keys := "\\tikzset{>=stealth, auto, semithick}\n" ++
+  let keys := "\\tikzset{>=latex, overlay, sloped}\n" ++
     "\\tikzset{box/.style={rectangle, draw, minimum width=9mm, minimum height=6mm}}\n"
   -- A picture the subset draws itself: both nodes carry their own extent, so
   -- shapes land and nothing routes to the boundary.
@@ -5096,7 +5096,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (refusedDoc, refusedDs) := elabStr refusedSrc
   -- The honesty half: the default build names exactly what the refusal does.
   t "the engine's own drawing names every key it did not read"
-    (keyNames openDs == [">", "auto", "semithick"])
+    (keyNames openDs == [">", "overlay", "sloped"])
   t "the declared refusal names the same keys, no more"
     (keyNames refusedDs == keyNames openDs)
   -- The artifact half, and the whole point: the drawing does not depend on
@@ -5117,7 +5117,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- drew itself.
   t "one boundary picture beside an engine-drawn one still names the keys"
     (keyNames (elabStr (dvDoc keys ("Prose.\n\n" ++ wholePic ++ "\nMore prose.\n\n" ++
-      native))).2 == [">", "auto", "semithick"])
+      native))).2 == [">", "overlay", "sloped"])
   -- A style definition is read, so it is never among them.
   t "a style definition the subset reads is not named as dropped"
     (!(keyNames openDs).contains "box")
