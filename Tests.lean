@@ -269,6 +269,7 @@ def main (args : List String) : IO UInt32 := do
   posterCompatChecks ref
   columnFormChecks ref
   styParityChecks ref
+  themeStyChecks ref
   missingFileSpanChecks ref
   citeNoBibChecks ref
   surfaceSuiteChecks ref

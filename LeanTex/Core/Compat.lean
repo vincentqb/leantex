@@ -3863,6 +3863,20 @@ wrapper carries the file name). Reading the file is the driver's effect
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 
+/-- beamer's theme-loading family, and the file each member asks the input
+path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
+the whole family through the package loader (beamerbasethemes.sty), so the
+only thing that differs between the five slots is the prefix. The candidate
+scan and the splice both read this one list, so a slot named here is a slot
+both honour and neither can drift from the other
+(`themeAsking_candidates`). -/
+def themeAsking : List (String × String) :=
+  [("usetheme", "beamertheme"),
+   ("usecolortheme", "beamercolortheme"),
+   ("usefonttheme", "beamerfonttheme"),
+   ("useinnertheme", "beamerinnertheme"),
+   ("useoutertheme", "beameroutertheme")]
+
 mutual
 
 /-- One level of the candidate scan: the list drives the recursion, the
@@ -3881,17 +3895,22 @@ private def styCandList (raws : Array Raw) (out : Array String) :
       if p.isEmpty || nativePackages.contains p || out.contains p then out
       else out.push p
     styCandList raws out rest (i + 1) (k - (i + 1))
-  | .ctrl "usecolortheme" _ :: rest, i, 0 =>
-    -- beamer's own file rule (beamerbasethemes.sty, `\usecolortheme{n}`
-    -- reads `beamercolorthemen.sty` from the input path): the prefixed
-    -- name is the candidate a colour theme beside the document answers.
-    let (_, j) := takeOpt raws (i + 1)
-    let (args, k) := takeGroups raws j 1
-    let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    let out := if nm.isEmpty then out else
-      let p := "beamercolortheme" ++ nm
-      if out.contains p then out else out.push p
-    styCandList raws out rest (i + 1) (k - (i + 1))
+  | .ctrl cn _ :: rest, i, 0 =>
+    -- beamer's own file rule for the theme family (beamerbasethemes.sty:
+    -- `\usetheme{n}` reads `beamerthemen.sty` from the input path, and so
+    -- for each sub-theme slot): the prefixed name is the candidate a theme
+    -- beside the document answers. A shipped bundle of the same name does
+    -- not suppress the candidate — the two compose (`spliceTheme`).
+    match themeAsking.lookup cn with
+    | some pre =>
+      let (_, j) := takeOpt raws (i + 1)
+      let (args, k) := takeGroups raws j 1
+      let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
+      let out := if nm.isEmpty then out else
+        let p := pre ++ nm
+        if out.contains p then out else out.push p
+      styCandList raws out rest (i + 1) (k - (i + 1))
+    | none => styCandList raws out rest (i + 1) 0
   | r :: rest, i, 0 => styCandList raws (styCandRaw out r) rest (i + 1) 0
 
 /-- Descend into an `\\input` wrapper — a `\\usepackage` in an `\\input`'ed
@@ -3907,9 +3926,21 @@ private def styCandRaw (out : Array String) : Raw → Array String
 
 end
 
-/-- The package names the preamble asks for — at any `\\input` depth — that
-the engine does not know: the candidates a local `.sty` beside the
-document may answer. -/
+/-- **The invariant this engine owes every declaration it can refuse by
+name: it asks the input path first.** `\usetheme` was refusable — W0319,
+"unknown theme", the document left with no palette at all — and offered no
+candidate, so a theme file sitting beside the document was never opened and
+one unloaded theme cost the document its whole colour design.
+
+Two halves. The *structural* half holds by construction and needs no
+theorem: `themeAsking` is one list, read by the candidate scan and by the
+splice, so a slot cannot be asked for and then not spliced, or spliced under
+a prefix the scan never offered. The *behavioural* half — every slot asks
+for exactly its prefixed file, and no refusable-by-name declaration exists
+outside the registry — is stated and owed
+(`Obligations.themeAsking_candidates`, `Obligations.nameRefusals_asked`);
+`themeAskingChecks` is the executable oracle standing in for the first,
+running the quantification over the registry itself. -/
 def localStyCandidates (raws : Array Raw) : Array String :=
   styCandList raws #[] raws.toList 0 0
 
@@ -3991,23 +4022,44 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
     out := out.push (.group #[.word (String.intercalate "," keep.toList) pos] pos)
   return some (out ++ splice, recs, k)
 
-/-- The replacement for one `\\usecolortheme` at `i`: the colour theme's
-input fragment when the prefixed file was read (beamer's own file rule —
-the command reads `beamercolortheme<name>.sty`), `none` otherwise, leaving
-the command to the configuration warning. No option machinery: the sty's
-constructs are honoured or named by the same passes a document goes
-through, `\\setbeamercolor`'s role mapping first among them. -/
-private def spliceColorTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
-    (pos : Pos) (i : Nat) :
+/-- The replacement for one member of the theme family at `i`: the theme
+file's input fragment when the prefixed file was read (beamer's own file
+rule — `\\usetheme{X}` reads `beamerthemeX.sty`), `none` otherwise, leaving
+the command to its existing arm. Options ride into the file's own option
+machinery, as `\\usepackage[opts]{}` does, because that is what beamer's
+family expands to.
+
+**Where the engine also ships a bundle of that name, the two compose**: the
+bundle installs first and the file's declarations land on top, so a role the
+file declares is the file's and a role it leaves alone keeps the bundle's.
+Neither extreme is right on its own. Reading only the bundle would drop the
+author's deliberate edit to a theme sitting in their own directory. Reading
+only the file would trade a complete, contrast-proved design
+(`Contrast.builtin_designs_legible` ranges over `Theme.builtin` and over
+nothing a `.sty` can add) for the fragments of it this engine can absorb —
+and since dropping the native `\\theme` also drops `sawTheme`, a deck would
+then fall to the *default* bundle plus fragments, which is further from the
+author's ask than the bundle they named. Composition is the engine's own
+rule for a `\\theme` followed by `\\palette`, so nothing new is invented and
+nothing is silently ignored: `styRead` names both sides. -/
+private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
+    (pre : String) (pos : Pos) (i : Nat) :
     Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
   if stys.isEmpty then return none
-  let (_, j) := takeOpt raws (i + 1)
+  let (opt, j) := takeOpt raws (i + 1)
   let (args, k) := takeGroups raws j 1
   if args.isEmpty then return none
-  let p := "beamercolortheme" ++ (rawSrc (args.getD 0 #[])).trimAscii.toString
+  let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
+  let p := pre ++ nm
   match stys.find? (·.1 == p) with
   | some (_, sraws) =>
-    return some (#[.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions [] sraws) pos],
+    let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+    let floor : Array Raw :=
+      if pre == "beamertheme" && (Theme.find? nm).isSome then
+        #[.ctrl "theme" pos, .group #[.word nm pos] pos]
+      else #[]
+    return some (floor.push
+      (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos),
       #[(p ++ ".sty", none, pos)], k)
   | none => return none
 
@@ -4029,13 +4081,15 @@ private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
       | some (repl, rs, k) =>
         applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
       | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
-    else if cn == "usecolortheme" then
-      match spliceColorTheme stys raws pos i with
-      | some (repl, rs, k) =>
-        applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
-      | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
     else
-      applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
+      match themeAsking.lookup cn with
+      | some pre =>
+        match spliceTheme stys raws pre pos i with
+        | some (repl, rs, k) =>
+          applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
+        | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
+      | none =>
+        applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
   | r :: rest, i, 0 =>
     let (r', rs) := applyStyRaw stys r
     applyStyList stys raws (out.push r') (recs ++ rs) rest (i + 1) 0
@@ -4074,8 +4128,8 @@ def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
 private theorem spliceUse_empty (raws : Array Raw) (cn : String) (pos : Pos) (i : Nat) :
     spliceUse #[] raws cn pos i = none := rfl
 
-private theorem spliceColorTheme_empty (raws : Array Raw) (pos : Pos) (i : Nat) :
-    spliceColorTheme #[] raws pos i = none := rfl
+private theorem spliceTheme_empty (raws : Array Raw) (pre : String) (pos : Pos) (i : Nat) :
+    spliceTheme #[] raws pre pos i = none := rfl
 
 mutual
 
@@ -4095,7 +4149,7 @@ private theorem applyStyList_empty :
         rw [applyStyList_empty raws _ recs rest (i + 1)]
         simp
       · split
-        · rw [spliceColorTheme_empty]
+        · rw [spliceTheme_empty]
           dsimp only
           rw [applyStyList_empty raws _ recs rest (i + 1)]
           simp
@@ -4148,13 +4202,22 @@ def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
 at, and how much of it took. Built after elaboration, from the splice
 records `applyLocalSty` returns: the counts do not exist before it. The
 spelling is compact — three counts and a long file name must fit the
-message-length lint. -/
+message-length lint.
+
+A theme file that shadows a shipped bundle says so instead: the two compose
+(`spliceTheme`), and a note that named only one of them would leave the
+other silent. -/
 def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
   let (honoured, named, refused) := styCounts sty diags
-  Diag.of .N0020
-    (s!"'{sty}' beside the document is read into the preamble — " ++
-     s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}")
-    (some ⟨docFile, pos⟩)
+  let counts := s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}"
+  let over := if sty.startsWith "beamertheme" && sty.endsWith ".sty" then
+      let nm := (sty.drop "beamertheme".length).dropEnd ".sty".length
+      if (Theme.find? nm.toString).isSome then some nm.toString else none
+    else none
+  let lead := match over with
+    | some nm => s!"'{sty}' overrides the {nm} bundle"
+    | none => s!"'{sty}' beside the document is read into the preamble"
+  Diag.of .N0020 (lead ++ " — " ++ counts) (some ⟨docFile, pos⟩)
 
 /-! # listings and siunitx (pkg-text's section)
 

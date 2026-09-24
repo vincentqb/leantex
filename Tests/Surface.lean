@@ -3939,17 +3939,7 @@ one-shot, top-level-only, and ran after `\input` expansion. A `.sty` that
 loops. Fixtures live in tests/corpus/sty-parity, synthetic and invented. -/
 def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let run (name : String) :
-      IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
-    let path := s!"tests/corpus/sty-parity/{name}.tex"
-    let src ← IO.FS.readFile path
-    let (raws, _) := Parse.parse path (Lex.lex path src).1
-    let (raws, inputDs, spliced) ← Input.expandInputs path raws
-    let (doc, ds) := Elab.runRaws path raws
-    -- N0020 built after elaboration, exactly as Main.frontend builds it.
-    let ds := ds ++ spliced.map fun (sty, srcF, pos) =>
-      Compat.styRead (srcF.getD path) sty pos ds
-    return (doc, inputDs ++ ds, spliced)
+  let run := runStyParity
   -- (a) was: W0103 "package 'venuea' is not supported" — the candidate scan
   -- saw only top-level raws and the \input wrapper hid the \usepackage.
   let (docA, dsA, splicedA) ← run "inputpre"
@@ -4012,6 +4002,97 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
      !Compat.texInternal "bf" &&
      Compat.styInternal "venue.sty" "begingroup" &&
      !Compat.styInternal "main.tex" "begingroup")
+
+/-- **`\usetheme{X}` is `\usepackage{beamerthemeX}`** — beamer defines the
+whole loading family in terms of the package loader (beamerbasethemes.sty),
+so a theme file beside the document is on the input path and the engine
+reads it. The defect this closes: `\usetheme` rewrote straight to `\theme`,
+matched four shipped bundles, and declared the theme unknown without ever
+looking — one unloaded theme then cost the document its whole colour design,
+because an unthemed document has no `fg`/`bg` for a `fg!50!bg` mix to reach
+and no `frametitlebg` for either backend to paint.
+
+The invariant, stated over the candidate registry (`Compat.themeAsking`) and
+proved there (`themeAsking_candidates`): a declaration the engine can refuse
+as unknown-by-name asks the input path first. What the fixtures add is the
+end of that sentence — that the read file's colours arrive in the palette,
+which is the user-visible payoff and the thing W0304 measures.
+
+**Precedence is composition, not a contest** (PLAN 2026-09-24): the shipped
+bundle installs first and the local file overrides it per role, so a role
+the file declares is the file's and a role it does not keep the bundle's.
+Neither side is silently dropped — the translation note names the bundle,
+N0020 names the file. Fixtures in tests/corpus/sty-parity, synthetic. -/
+def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let run := runStyParity
+  -- was: W0319 "unknown theme 'venue'; the document is unthemed", the file
+  -- beside the document never opened, and every mix over its roles W0304.
+  let (docL, dsL, splicedL) ← run "themelocal"
+  t "a local beamertheme<name>.sty answers \\usetheme — never W0319"
+    (dsL.all (·.code != "W0319") &&
+     splicedL.toList.map (·.1) == ["beamerthemevenue.sty"])
+  t "the read theme's normal text lands on the fg/bg roles"
+    ((docL.palette.find? "fg").isSome && (docL.palette.find? "bg").isSome &&
+     docL.palette.find? "frametitlebg" == some { r := 0x3A, g := 0x5A, b := 0x7A })
+  -- The W0304 consequence, measured: 39 sites failed in one private deck
+  -- because no theme loaded, not because the mix was wrong.
+  t "a mix over the read theme's roles resolves — the W0304 consequence"
+    (dsL.all (·.code != "W0304"))
+  t "N0020 names the theme file and what took"
+    (dsL.any fun d => d.code == "N0020" &&
+      (d.message.splitOn "beamerthemevenue.sty").length == 2 &&
+      Compat.styCounts "beamerthemevenue.sty" dsL == (4, 0, 0))
+  -- \usetheme[options]{name} passes its options to the file, as
+  -- \usepackage[options]{} does: the option's body runs, and only then.
+  let (docO, _, _) ← run "themeopt"
+  t "\\usetheme[option]{name} passes the option to the file"
+    ((docO.palette.find? "blocktitlebg").isSome &&
+     (docL.palette.find? "blocktitlebg").isNone)
+  -- Precedence: the shipped bundle is the floor, the local file the override.
+  let (docS, dsS, splicedS) ← run "themeshadow"
+  t "a file shadowing a shipped bundle overrides the roles it declares"
+    (docS.palette.find? "frametitlebg" == some { r := 0x12, g := 0x34, b := 0x56 } &&
+     splicedS.toList.map (·.1) == ["beamerthememoloch.sty"])
+  t "the shipped bundle still supplies the roles the file leaves alone"
+    (docS.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+  t "neither side is silent: N0020 names the file and the bundle it overrides"
+    (dsS.any fun d => d.code == "N0020" &&
+      (d.message.splitOn "beamerthememoloch.sty").length == 2 &&
+      (d.message.splitOn "moloch bundle").length == 2)
+  -- Partial absorption: a theme whose every construct the engine refuses is
+  -- read and yields no role. It is not an *unknown* theme, so W0319 would be
+  -- a false statement; what is owed is that the shortfall is measured, and
+  -- that the deck is still painted — the slides default bundle is the floor
+  -- under a theme the engine could not absorb, so no mix is left half-resolved.
+  let (docH, dsH, _) ← run "themehollow"
+  t "a theme that yields no role is read, not called unknown"
+    (dsH.all (·.code != "W0319") &&
+     Compat.styCounts "beamerthemehollow.sty" dsH == (0, 2, 0) &&
+     dsH.any fun d => d.code == "N0020" &&
+      (d.message.splitOn "honoured: 0").length == 2)
+  t "the default bundle floors a theme the engine could not absorb"
+    ((docH.palette.find? "fg").isSome && dsH.all (·.code != "W0304"))
+  -- The fallback stands: no file, no theme, W0319 and the unthemed path.
+  t "an unknown theme with no file beside the document still warns"
+    ((Elab.run "d.tex" (deck169 "\\usetheme{nosuchvenue}" "x")).2.any (·.code == "W0319"))
+  -- The registry quantification, executed: the oracle standing in for
+  -- `Obligations.themeAsking_candidates` (the argument readers the scan runs
+  -- through do not reduce in the kernel, so `decide` cannot discharge it).
+  -- Every slot of the family, the whole family and nothing else.
+  for (cn, pre) in Compat.themeAsking do
+    let pos : Pos := ⟨1, 1⟩
+    t s!"\\{cn} asks the input path for {pre}<name>.sty"
+      (Compat.localStyCandidates
+        #[.ctrl cn pos, .group #[.word "venue" pos] pos] == #[pre ++ "venue"])
+    t s!"\\{cn} passes its options through and still asks for one file"
+      (Compat.localStyCandidates
+        #[.ctrl cn pos, .sym '[' pos, .word "wide" pos, .sym ']' pos,
+          .group #[.word "venue" pos] pos] == #[pre ++ "venue"])
+  t "the family is beamer's five slots, each under its own prefix"
+    (Compat.themeAsking.length == 5 &&
+     (Compat.themeAsking.map (·.2)).eraseDups.length == 5 &&
+     Compat.themeAsking.all fun (_, pre) => pre.startsWith "beamer")
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

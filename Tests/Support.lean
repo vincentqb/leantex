@@ -233,6 +233,23 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
         throw s!"object {e.num}: {err}"
   return verified
 
+/-- A `tests/corpus/sty-parity` fixture run the way the driver runs it: the
+splice fixpoint (`Input.expandInputs`) first, so a local `.sty` beside the
+fixture is read, then elaboration, then the N0020 records built from the
+splice records exactly as `Main.frontend` builds them — the counts do not
+exist before elaboration. Shared because two blocks drive this directory:
+the `\input`-parity cases and the theme-loading family. -/
+def runStyParity (name : String) :
+    IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
+  let path := s!"tests/corpus/sty-parity/{name}.tex"
+  let src ← IO.FS.readFile path
+  let (raws, _) := Parse.parse path (Lex.lex path src).1
+  let (raws, inputDs, spliced) ← Input.expandInputs path raws
+  let (doc, ds) := Elab.runRaws path raws
+  let ds := ds ++ spliced.map fun (sty, srcF, pos) =>
+    Compat.styRead (srcF.getD path) sty pos ds
+  return (doc, inputDs ++ ds, spliced)
+
 /-- A fixture elaborated the way the driver builds it: the `\data` effect
 fulfilled from the corpus directory before elaboration (the expansion
 needs the records where `\begin{foreach}` stands), then elaboration, then
