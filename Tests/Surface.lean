@@ -2785,21 +2785,25 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
       (fun m => hasStr m "'ellipse'"))
   -- A `\tikzset` entry the native reader does not understand is named at
-  -- the line that wrote it — but only under the refusal: with the boundary
-  -- open the real TikZ still reads it, so naming a loss there would be a
-  -- claim the document does not have. `every label` is such an entry: the
-  -- option loops read `every node` and `every path`, and a key path with no
-  -- loop behind it is left unread rather than stored as a bundle nothing
-  -- will ever look up (`Picture.readableKey`).
+  -- the line that wrote it, and the tool the document configures does not
+  -- change that: the engine drew this picture itself, so the entry is read
+  -- by nobody. `every label` is such an entry: the option loops read
+  -- `every node` and `every path`, and a key path with no loop behind it is
+  -- left unread rather than stored as a bundle nothing will ever look up
+  -- (`Picture.readableKey`). This pair used to differ — silent with the
+  -- boundary open, named under the refusal — on the premise that the real
+  -- TikZ read it at the edge; native drawing killed that premise, and
+  -- `pictureKeyGateChecks` holds the artifact half (same bytes either way).
   t "elab tikzset entry outside the native reading is named under the refusal"
     (((elabStr ("\\pictures{ tool = none }\\tikzset{every label/.style={draw}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
       == ["W0334"])
-  t "elab tikzset entry outside the native reading is silent with the boundary open"
-    ((elabStr ("\\tikzset{every label/.style={draw}}\n" ++
+  t "elab tikzset entry outside the native reading is named with the boundary open too"
+    (((elabStr ("\\tikzset{every label/.style={draw}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
-      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.code)).toList
+      == ["W0334"])
   -- A `\tikzset` the engine reads is never an unknown command, and its
   -- group never reaches the sentence — under the refusal too, which is
   -- where the definition's own source used to print into the paragraph.
@@ -5057,6 +5061,66 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!bodyFaces.isEmpty && !labelFaces.isEmpty)
   t "the node label sets in the face the body sets in"
     (labelFaces.all fun f => bodyFaces.contains f)
+
+/-- **Whatever drew a picture, the keys that drawing did not read are
+named.** The gate on the key diagnostic is the engine's own drawing, never
+the boundary tool the document nominally configures: a `\tikzset` key the
+subset does not read is dropped by every picture the engine drew itself,
+and the real TikZ only ever sees a picture that went *whole* to the
+boundary. The decisive shape is the pair of builds below — one source, one
+extra `\pictures{ tool = none }` line, byte-identical PDFs — because it
+separates the two things the old gate confused: the drawing does not depend
+on the tool, only the honesty does. Invented content and design. -/
+def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  -- Three keys the subset does not read, two of them plain switches and one
+  -- an arrow-tip default — the shape whose silent loss leaves a diagram's
+  -- edges without their heads — beside one style definition it does read.
+  let keys := "\\tikzset{>=stealth, auto, semithick}\n" ++
+    "\\tikzset{box/.style={rectangle, draw, minimum width=9mm, minimum height=6mm}}\n"
+  -- A picture the subset draws itself: both nodes carry their own extent, so
+  -- shapes land and nothing routes to the boundary.
+  let native := "\\begin{tikzpicture}\n\\node[box] (a) at (0, 0) {A};\n" ++
+    "\\node[box] (b) at (3, 0) {B};\n\\draw[->] (a) -- (b);\n\\end{tikzpicture}\n"
+  -- A picture the subset draws nothing of, so it goes whole to the boundary.
+  let wholePic := "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}\n"
+  let body := "A paragraph stands first.\n\n" ++ native ++ "\nText resumes after it.\n"
+  let openSrc := dvDoc keys body
+  let refusedSrc := dvDoc ("\\pictures{ tool = none }\n" ++ keys) body
+  let keyNames (ds : Array Diag) : List String :=
+    ((ds.filter fun d => d.code == DiagCode.W0334.code &&
+      hasStr d.message "picture key").map fun d =>
+        (d.message.splitOn "'").getD 1 "").toList
+  let (openDoc, openDs) := elabStr openSrc
+  let (refusedDoc, refusedDs) := elabStr refusedSrc
+  -- The honesty half: the default build names exactly what the refusal does.
+  t "the engine's own drawing names every key it did not read"
+    (keyNames openDs == [">", "auto", "semithick"])
+  t "the declared refusal names the same keys, no more"
+    (keyNames refusedDs == keyNames openDs)
+  -- The artifact half, and the whole point: the drawing does not depend on
+  -- the tool. Same bytes, so nothing but the naming moved.
+  let pdfOf (doc : Ir.Doc) : ByteArray :=
+    let geom := Layout.Geom.ofPage doc.page
+    Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info
+  t "the two builds ship byte-identical PDFs"
+    (pdfOf openDoc == pdfOf refusedDoc)
+  -- The boundary is the one reader that makes the claim false, and only for
+  -- a picture that went there whole.
+  t "a document whose every picture went to the boundary claims no loss"
+    (keyNames (elabStr (dvDoc keys ("Prose.\n\n" ++ wholePic))).2 == [])
+  t "a key with no picture to lose it is not named"
+    (keyNames (elabStr (dvDoc keys "Prose alone, with no diagram at all.\n")).2 == [])
+  -- The mixed document is the case the old gate got wrong on real input: one
+  -- picture at the boundary does not buy silence for the twelve the engine
+  -- drew itself.
+  t "one boundary picture beside an engine-drawn one still names the keys"
+    (keyNames (elabStr (dvDoc keys ("Prose.\n\n" ++ wholePic ++ "\nMore prose.\n\n" ++
+      native))).2 == [">", "auto", "semithick"])
+  -- A style definition is read, so it is never among them.
+  t "a style definition the subset reads is not named as dropped"
+    (!(keyNames openDs).contains "box")
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no

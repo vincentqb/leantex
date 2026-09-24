@@ -9181,3 +9181,73 @@ and the artifact's own text layer puts its three title lines at x = 28.35,
 `scripts/bench.lean` (median of 5) after the new per-paragraph fold: 101,
 329, 498, 96, 166 ms against the boundary-macro entry's 99/327/489/93/167 —
 inside the noise, as a fold over items already in cache should be.
+
+
+### 2026-09-24 — a stale gate dropped every unread picture key in silence
+
+The keys a `\tikzset` line leaves outside the rendered subset were named
+only under `\pictures{ tool = none }`. The gate's own justification was
+that with the boundary open the real TikZ still reads them, so naming them
+would claim a loss the document does not have. That premise died the day
+pictures started drawing natively: the boundary is now the *fallback*, not
+the path, so for every picture the engine draws itself nobody reads those
+keys and the gate suppressed a loss that was entirely real.
+
+**The decisive shape is two builds, not a reading of the code.** One
+synthetic source and its twin with one extra `\pictures{ tool = none }`
+line: the default build was silent, the refusal named three keys, and the
+PDFs were byte-identical (md5 `3aaa497e…`, unchanged by the fix). The
+drawing does not depend on the tool; only the honesty does. That pair is
+now `pictureKeyGateChecks`, and it is the shape any future gate on this
+diagnostic has to survive — a test that asserts silence with the boundary
+open and naming under the refusal is asserting that the two artifacts
+differ, which they do not. One such row existed and is rewritten
+("…is named with the boundary open too"); it is the test that held the dead
+premise in place.
+
+**The new gate is who drew it, read as a value.** A `\tikzset` entry
+outside the subset has exactly one other reader — the real TikZ — and it
+only ever sees a picture that went *whole* to the boundary, since `tikzArm`
+routes there only when the subset drew nothing of it. So the loss is real
+as soon as the engine drew one picture of its own, whatever tool the
+document nominally configures. The value is the count of `.picture` nodes
+in the elaborated body: those two constructor sites are the engine's own
+drawing (the shapes it evaluated, and the placeholder that marks an
+all-refused picture), and nothing else builds one. Read after the body walk
+rather than in the preamble fold, which is the point — *who drew it* is a
+fact of the elaborated document, never of a configuration, and never of how
+layout will later resolve a box. The effects-as-data rule is what makes
+this available at all: the boundary request rides the IR, so the
+elaborator can ask what it decided without asking what the driver will do.
+
+Three gates were considered and two rejected. Gating on "no picture went to
+the boundary" reads well as "the key was read by nobody", but it is wrong on
+exactly the input that motivated the work: a deck with one unrenderable
+picture beside a dozen drawn ones would still be silent, because the one
+boundary request would buy silence for the twelve. Gating per picture is
+the fully honest form and has no place to land — the diagnostic belongs to
+the `\tikzset` line, one per key per document, and a per-picture version
+would name the same key once per diagram. What is owed, and stated as such:
+the mixed document reports the key once, which is the line that wrote it,
+not once per drawing that lost it.
+
+A document with no picture at all now says nothing where the refusal used
+to name its keys. That is deliberate: there is no drawing to have lost
+them, so there is no loss, and the old behaviour claimed one.
+
+**Evidence.** Six `pictureKeyGateChecks` rows — the two-build byte identity,
+the naming on both sides of it, the all-boundary and no-picture floors, the
+mixed document, and a style definition never named as dropped; three were
+red before and green after. No golden moved: the block emits diagnostics and
+nothing else, and the fixtures that exercise `\tikzset` declare only styles
+the subset reads. On the private reference corpus the diagnostic count goes
+16 → 22 with four keys named where none was, and the artifact is
+byte-identical (md5 `00c7c77e…` both sides) — measured against a binary
+built from this branch's base, not from a neighbouring worktree, which is
+worth saying because a stale sibling binary made the first comparison look
+like a rendering change.
+
+What this does *not* do is draw the arrowheads. The arrow-tip default among
+those keys is now named rather than honoured, which is the floor this repo
+declares and not the fix a reader of the page wants; reading the key is
+`Picture.lean`'s to do and is routed there.

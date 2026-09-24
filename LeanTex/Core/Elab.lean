@@ -10669,22 +10669,9 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     { ctx := { file := file, picTool := picTool0, picPreamble := picPre
                picMacros := picMacros
                picSets := picSets.map (·.2) } }
-  -- What a `\tikzset` left unread is named at the line that wrote it —
-  -- but only under the refusal. With the boundary open the entries the
-  -- engine does not read are still read by the real TikZ at the edge, so
-  -- naming them there would claim a loss the document does not have; under
-  -- `tool = none` nothing else reads them, and this is the honest place to
-  -- say so, per entry rather than per line.
-  if picTool0.isNone then
-    let mut styles : List (String × Array Picture.Tok) := []
-    for (pos, keys) in picSets do
-      let toks := Picture.ofRaws keys
-      for key in Picture.unreadKeys styles toks do
-        warnOnce s.ctx ("picture:set:" ++ key) .W0334
-          s!"picture key {key} is outside the rendered picture subset; \
-the key is dropped" pos
-          (help := "the rendered subset reads 'name/.style={...}' definitions")
-      styles := (Picture.readStyleList styles toks).1
+  -- What a `\tikzset` left unread is named at the line that wrote it, and
+  -- the gate is *who drew the picture* — read below, off the elaborated
+  -- body, once the drawings are facts rather than a configuration.
   -- What a refused `\maketitle` redefinition still declares, applied once
   -- the fold has bound everything its body names.
   let s ← applyRefusedTitleStyle s
@@ -10808,6 +10795,32 @@ the key is dropped" pos
   -- number in document order (`numberFloats_exact` is the fact `\ref`
   -- will resolve against), once, before any backend reads the body.
   let blocks := Ir.numberFloats (← elabBlocks ctx body)
+  -- **Whatever drew a picture, the keys that drawing did not read are
+  -- named.** A `\tikzset` entry outside the rendered subset has exactly one
+  -- other reader: the real TikZ, and only for a picture that went *whole*
+  -- to the boundary (`tikzArm` routes there only when the subset drew
+  -- nothing of it). So the loss is real as soon as the engine drew one
+  -- picture itself — whatever `\pictures{ tool = ... }` nominally says, and
+  -- a mixed document is the case that matters, since one boundary picture
+  -- buys no silence for the twelve beside it. The gate the refusal used to
+  -- carry claimed the boundary read them whenever a tool was configured;
+  -- native drawing made that premise false and the keys were dropped in
+  -- silence, an arrow-tip default among them.
+  -- Read here rather than in the preamble fold because *who drew it* is a
+  -- fact of the elaborated body — the `.picture` nodes this walk produced —
+  -- never of a configuration, and never of how layout will resolve them.
+  let enginePictures : Nat := Ir.foldBlocks
+    (fun n b => match b with | .picture _ => n + 1 | _ => n) (fun n _ => n) 0 blocks
+  if enginePictures > 0 then
+    let mut styles : List (String × Array Picture.Tok) := []
+    for (pos, keys) in picSets do
+      let toks := Picture.ofRaws keys
+      for key in Picture.unreadKeys styles toks do
+        warnOnce ctx ("picture:set:" ++ key) .W0334
+          s!"picture key {key} is outside the rendered picture subset; \
+the key is dropped" pos
+          (help := "the rendered subset reads 'name/.style={...}' definitions")
+      styles := (Picture.readStyleList styles toks).1
   -- The label table, complete: the float rows are read off the numbered IR
   -- just produced (`Ir.floatLabelRows`), so a label under a captioned
   -- float binds to the number the node carries — one numbering,
