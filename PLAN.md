@@ -627,6 +627,62 @@ verbose log. Ten synthetic rows (`pictureAnchorChecks`, read off
 commit and pass here, and seven compat-index rows cover the resolved
 spellings against one `refuse:W0334` row for the `mid` family.
 
+2026-09-24 — a construct whose diagnostic names its own translation is
+translated. `\setbeamercolor`'s W0104 help read "declare the colour with
+`\palette{ name = #RRGGBB }`" — the engine naming the exact mechanical
+translation and asking the author to perform it by hand, thirteen times in
+one theme of the private reference corpus. Every fact needed was in the
+source. A help text naming a mechanical translation is a translation the
+engine should perform, and that generalisation is the finding; the colour
+table is the first instance of it.
+
+**Two rows had never fired.** The mapping spelled beamer's elements `block
+alerted title` and `block example title`; beamer writes `block title
+alerted` and `block title example` (beamercolorthemedefault.sty — and
+`Ir.lean`'s own `titledLook` docstring already cited that file with the
+right spelling, so the two files disagreed about a foreign vocabulary and
+the Compat side was dead). Every alerted and example block title any theme
+declared was being dropped by a transposition no check could see. The
+element names now come from that file's element list, with the moloch
+lineage's additions from beamercolorthememoloch.sty, and the table says so.
+
+Mapped: `frametitle` (absent entirely before — the single most visible
+colour a deck declares), `standout`, `progress bar` and its two placement
+variants, `title separator`, `footline` and `page number in head/foot` onto
+`muted`, plus the corrected block-title pair and the three rows that
+already worked. Where several beamer elements share one engine role the
+engine has one piece of furniture for beamer's several names, and the
+collapse is sourced rather than assumed: moloch itself derives its two
+progress-bar placements from `progress bar` with `parent=`.
+
+**What is not translated is named, and named specifically.** The old arm
+emitted one blanket W0104 for every unmapped element, deduped on the
+construct — so thirteen distinct elements collapsed into one line that said
+only that the construct was unsupported. Three losses are now separately
+named: an element the engine has no role for names *that element*; a key
+whose side has no role names the element and the key; and beamer's
+inheritance (`parent=`, `use=`) names itself, because the engine has no
+palette inheritance and an inherited value is one nobody declared.
+Composition is otherwise covered by `\palette`'s own per-role install:
+`fg=` alone leaves an already-declared `bg` standing.
+
+The warning *count* rises where the losses are real — on the private
+reference corpus W0104 goes 6 → 13 and the total 34 → 41 — and that is the
+trade, not a regression: one line hiding thirteen sites became eight lines
+each naming what it dropped, while eight elements that used to drop now
+reach the palette. Five of the eight remaining are unmappable by
+construction (a theme's own private element names, which beamer does not
+define either); the rest are a missing `framesubtitle` role, a missing
+section-page colour role, and two `parent=`-only declarations whose source
+element was itself taken.
+
+Measured on the artifact, not the IR: the declared frame-title ground paints
+a 17-row full-width band at the top of the rendered page (rows 0–16 of 142,
+40 dpi) where the previous build had white; the progress bar's ground moves
+to the theme's own declared value, and the title-page accent to the value
+the bundle chain resolves. `beamerColorChecks` states the invariant over the
+palette and closes with the band on `Layout.Out`.
+
 2026-09-24 — a theme's file name resolves to what its slot spelling
 resolves to. `\usepackage{beamerthemeX}` **is** `\usetheme{X}` — the identity
 `Compat.themeAsking` already encoded in the candidate-scan direction

@@ -44,6 +44,48 @@ def nativePackages : List String :=
    "cleveref", "listings", "minted", "siunitx",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno"]
 
+/-- Beamer's colour elements, each mapped onto the engine's palette roles:
+the role its `fg=` declares and the role its `bg=` declares. An empty role
+is a side the engine has nowhere to put, and its value is *named* rather
+than dropped.
+
+**The element names are beamer's own, not invented here**: they are the
+element list beamer's default colour theme sets
+(beamercolorthemedefault.sty, which names every element beamer itself
+colours, documented as the colour-element list of the beamer user guide's
+"Colors" part), plus the moloch lineage's own additions
+(beamercolorthememoloch.sty: `progress bar` and its two placements,
+`standout`, `title separator`). Sourcing matters more here than in most
+tables: a key beamer never writes is a row that can never fire, and two
+rows spelled `block alerted title` — beamer writes `block title
+alerted` — sat here dropping every alerted and example block title a theme
+declared.
+
+Where several beamer elements share one engine role, the engine has one
+piece of furniture where beamer has several names for it, and the last
+declaration wins: `frametitle` and `headline` are the same title band (the
+poster lineage draws it under the second name), the three `progress bar`
+placements are one bar — moloch itself derives its two placement variants
+from `progress bar` with `parent=`, so the collapse is the inheritance it
+declares — and `footline` and `page number in head/foot` are the one footer
+ink. -/
+def beamerColorRoles : List (String × String × String) :=
+  [("normal text", "fg", "bg"),
+   ("frametitle", "frametitlefg", "frametitlebg"),
+   ("headline", "frametitlefg", "frametitlebg"),
+   ("block title", "blocktitlefg", "blocktitlebg"),
+   ("block title alerted", "alerttitlefg", "alerttitlebg"),
+   ("block title example", "exampletitlefg", "exampletitlebg"),
+   ("alerted text", "alert", ""),
+   ("example text", "example", ""),
+   ("standout", "standoutfg", "standoutbg"),
+   ("progress bar", "progressfg", "progressbg"),
+   ("progress bar in head/foot", "progressfg", "progressbg"),
+   ("progress bar in section page", "progressfg", "progressbg"),
+   ("title separator", "separator", ""),
+   ("footline", "muted", ""),
+   ("page number in head/foot", "muted", "")]
+
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
@@ -2355,51 +2397,57 @@ the definition is skipped" pos
             "; \\allow{E0111} accepts the loss")
       return some (#[], k)
   | "setbeamercolor" =>
-    -- The beamer colour elements the engine has a role for, mapped onto
-    -- the palette (each right side is `Ir.Design.consumedRoles`' own
-    -- vocabulary): `headline` is the poster lineage's title band, read
-    -- by the same `frametitle` pair the deck bar resolves
-    -- (beamerthemegemini.sty draws its headline in exactly these keys);
-    -- the block-title triple is beamer's own (beamercolorthemedefault.sty
-    -- names the elements); `alerted text`/`example text` colour content.
-    -- The value side rides verbatim into `\palette`, where names and `!`
-    -- mixes evaluate at the one resolving site (`Ir.Palette.resolve`).
-    -- An element with no role — page furniture, `structure`, body
-    -- backgrounds — keeps the configuration warning.
+    -- The translation the help text has been naming all along: a beamer
+    -- colour element the engine has a role for *is* a `\palette` entry
+    -- (`beamerColorRoles` carries the mapping and its source). The value
+    -- side rides verbatim into `\palette`, where names and `!` mixes
+    -- evaluate at the one resolving site (`Ir.Palette.resolve`).
+    --
+    -- What is not translated is named, and named *specifically*: an
+    -- element with no role names that element, a key whose side has no
+    -- role names the element and the key, and beamer's inheritance
+    -- (`parent=`/`use=`) names itself — the engine has no palette
+    -- inheritance, so an inherited value is a value nobody declared. A
+    -- blanket "the engine does not have this construct" over thirteen
+    -- distinct elements told the author nothing about which it dropped.
     let j := skipStar raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
       let element := (rawSrc args[0]).trimAscii.toString
-      let roles : List (String × String × String) :=
-        [("normal text", "fg", "bg"),
-         ("headline", "frametitlefg", "frametitlebg"),
-         ("block title", "blocktitlefg", "blocktitlebg"),
-         ("block alerted title", "alerttitlefg", "alerttitlebg"),
-         ("block example title", "exampletitlefg", "exampletitlebg"),
-         ("alerted text", "alert", ""),
-         ("example text", "example", "")]
-      let entries : List String := match roles.lookup element with
-        | some (fgRole, bgRole) =>
-          ((rawSrc args[1]).splitOn ",").filterMap fun e =>
-            match e.splitOn "=" with
-            | [key, v] =>
-              let role := match key.trimAscii.toString with
-                | "fg" => fgRole
-                | "bg" => bgRole
-                | _ => ""
-              if role.isEmpty then none
-              else some s!"{role} = {v.trimAscii.toString}"
-            | _ => none
-        | none => []
-      if entries.isEmpty then
-        sayOnce "beamer:setbeamercolor" .W0104
-          "'\\setbeamercolor' is beamer configuration the engine does not have; skipped" pos
+      match beamerColorRoles.lookup element with
+      | none =>
+        sayOnce ("beamer:setbeamercolor:" ++ element) .W0104
+          s!"'\\setbeamercolor\{{element}}' names a beamer colour element the \
+engine has no role for; skipped" pos
           (help := beamerNative.lookup "setbeamercolor")
         return some (#[], k)
-      else
-        let native := s!"\\palette\{ {String.intercalate ", " entries} }"
-        became s!"\\setbeamercolor\{{element}}" native pos
-        return some (← synthAt native pos, k)
+      | some (fgRole, bgRole) =>
+        let mut entries : Array String := #[]
+        for e in (rawSrc args[1]).splitOn "," do
+          match (e.splitOn "=").map (·.trimAscii.toString) with
+          | [key, v] =>
+            if key == "parent" || key == "use" then
+              sayOnce ("beamer:setbeamercolor:" ++ element ++ ":" ++ key) .W0104
+                s!"'\\setbeamercolor\{{element}}' inherits with '{key}'; the engine \
+has no palette inheritance, so only declared values are taken" pos
+                (help := beamerNative.lookup "setbeamercolor")
+            else
+              let role := if key == "fg" then fgRole
+                else if key == "bg" then bgRole else ""
+              if role.isEmpty then
+                sayOnce ("beamer:setbeamercolor:" ++ element ++ ":" ++ key) .W0104
+                  s!"'\\setbeamercolor\{{element}}' key '{key}' has no engine role; \
+its value is skipped" pos
+                  (help := beamerNative.lookup "setbeamercolor")
+              else
+                entries := entries.push s!"{role} = {v}"
+          | _ => pure ()
+        if entries.isEmpty then
+          return some (#[], k)
+        else
+          let native := s!"\\palette\{ {String.intercalate ", " entries.toList} }"
+          became s!"\\setbeamercolor\{{element}}" native pos
+          return some (← synthAt native pos, k)
     else return none
   | "mbox" | "makebox" =>
     -- An hbox's geometry is not modelled — neither command breaks lines, so

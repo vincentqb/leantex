@@ -279,6 +279,7 @@ def main (args : List String) : IO UInt32 := do
   styParityChecks ref
   themeStyChecks ref
   themeSpellingChecks ref
+  beamerColorChecks ref
   missingFileSpanChecks ref
   citeNoBibChecks ref
   surfaceSuiteChecks ref

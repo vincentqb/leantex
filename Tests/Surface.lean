@@ -4172,6 +4172,87 @@ def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
      docF.palette.find? "frametitlebg" == some { r := 0x12, g := 0x34, b := 0x56 } &&
      docF.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
 
+/-- **A construct whose diagnostic names its own translation is translated,
+not dropped.** `\setbeamercolor`'s help text named `\palette` and told the
+author to perform the translation by hand — thirteen times in one theme of
+the private reference corpus, every colour it declares. A help text naming a
+mechanical translation is a translation the engine should perform: every fact
+needed is in the source.
+
+The element names are beamer's own (beamercolorthemedefault.sty, the default
+colour theme's element list; beamercolorthememoloch.sty for the moloch
+lineage's own elements), not invented here — and two rows already in the
+table spelled them `block alerted title`, which beamer never writes, so they
+had never fired. What the engine has no role for stays a **named** loss
+carrying that element's name, because a blanket "the engine does not have
+this construct" cannot be acted on. Fixtures in tests/corpus/sty-parity,
+synthetic and invented. -/
+def beamerColorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (docP, dsP, _) ← runStyParity "themepalette"
+  let has (role : String) (r g b : UInt8) : Bool :=
+    docP.palette.find? role == some { r := r, g := g, b := b }
+  -- was: one blanket W0104 for all thirteen, every colour dropped.
+  t "the frame title's declared pair reaches the frametitle roles"
+    (has "frametitlefg" 0xFF 0xFF 0xFF && has "frametitlebg" 0x20 0x40 0x60)
+  -- The two rows that never fired: beamer writes `block title alerted`,
+  -- the table spelled it `block alerted title`, so a theme's alerted and
+  -- example block titles were dropped by a transposition.
+  t "the alerted block title reaches its roles under beamer's own spelling"
+    (has "alerttitlefg" 0xFF 0xFF 0xFF && has "alerttitlebg" 0x80 0x30 0x30)
+  t "the example block title reaches its roles under beamer's own spelling"
+    (has "exampletitlefg" 0xFF 0xFF 0xFF && has "exampletitlebg" 0x30 0x60 0x30)
+  t "the plain block title still reaches its roles"
+    (has "blocktitlefg" 0xFF 0xFF 0xFF && has "blocktitlebg" 0x2C 0x4A 0x66)
+  -- The moloch lineage's own elements, which a theme built on it declares.
+  t "the standout frame's declared pair reaches the standout roles"
+    (has "standoutfg" 0xFF 0xFF 0xFF && has "standoutbg" 0x10 0x18 0x20)
+  t "the progress bar's declared pair reaches the progress roles"
+    (has "progressfg" 0xC0 0x80 0x40 && has "progressbg" 0xE0 0xD0 0xC0)
+  t "the title separator's declared colour reaches the separator role"
+    (has "separator" 0xC0 0x80 0x40)
+  t "the footline's declared colour reaches the muted role"
+    (has "muted" 0x60 0x60 0x60)
+  -- The named loss: an element the engine has no role for names *itself*.
+  -- A blanket warning over thirteen distinct elements told the author
+  -- nothing about which one it dropped.
+  t "an element with no engine role is named, with its own element name"
+    (dsP.any fun d => d.code == "W0104" &&
+      (d.message.splitOn "sidebar").length == 2)
+  t "two elements with no role are two diagnostics, not one blanket"
+    (dsP.any fun d => d.code == "W0104" &&
+      (d.message.splitOn "palette primary").length == 2)
+  -- Composition, the half that is not covered: a key whose side has no
+  -- role (`alerted text` has no background here) and beamer's inheritance
+  -- (`parent=`) are named rather than silently discarded.
+  t "a key whose side has no role is named with the element and the key"
+    (dsP.any fun d => d.code == "W0104" &&
+      (d.message.splitOn "alerted text").length == 2 &&
+      (d.message.splitOn "bg").length ≥ 2)
+  t "beamer's colour inheritance is named, never silently dropped"
+    (dsP.any fun d => d.code == "W0104" &&
+      (d.message.splitOn "parent").length == 2)
+  -- Composition, the half that is covered: `fg=` alone leaves `bg`
+  -- standing, because `\palette` installs per role.
+  let (docC, _) := Elab.run "d.tex" (deck169
+    "\\palette{frametitlebg = #010203}\\setbeamercolor{frametitle}{fg=#FFFFFF}" "x")
+  t "fg= alone leaves an already-declared bg standing"
+    (docC.palette.find? "frametitlebg" == some { r := 0x01, g := 0x02, b := 0x03 } &&
+     docC.palette.find? "frametitlefg" == some { r := 0xFF, g := 0xFF, b := 0xFF })
+  -- The artifact, not the IR: a declared frame-title ground paints a bar.
+  -- Skipped only where no test face is readable; the roles above stand
+  -- either way.
+  if let some fontData ← findFont then
+    if let .ok font := Font.parse fontData then
+      let oneFace := oneFaceOf font
+      let barFills (pre : String) : Nat :=
+        ((layoutOf oneFace (elabStr ("\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+          "\n\\begin{document}\n\\begin{frame}{Head}\nbody text\n\\end{frame}\n" ++
+          "\\end{document}")).1).pages.flatMap (·.fills)).size
+      t "a theme's declared frame-title ground paints a bar on the page"
+        (barFills "\\setbeamercolor{frametitle}{fg=#FFFFFF,bg=#204060}" >
+         barFills "\\setbeamercolor{sidebar}{fg=#204060}")
+
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a
