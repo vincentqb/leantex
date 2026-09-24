@@ -626,7 +626,8 @@ holds. Positive glue narrowing a gap is impossible under any convention,
 and the engine does not yet earn that here. -/
 theorem elementSpace_monotone
     (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc)
-    (a b : Array Ir.Inline) (g : Dim.SymGlue) (hpos : (0 : Int) ≤ g.width.sp) :
+    (a b : Array Ir.Inline) (g : Ir.Sourced Dim.SymGlue)
+    (hpos : (0 : Int) ≤ g.value.width.sp) :
     ((inkBaselines (Layout.run geom fs none
         { doc with body := #[.para a, .para b] })).getLast?.getD 0 : Int)
       ≤ (inkBaselines (Layout.run geom fs none

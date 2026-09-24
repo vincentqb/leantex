@@ -1,7 +1,9 @@
 % Invented themed deck exercising M5b end to end: \usetheme selecting a
 % built-in token bundle through the compat layer, the document overriding a
 % theme entry afterwards, colour mixing at a use site, the frame-title bar,
-% a section page with its progress bar, and a standout closing frame.
+% a section page with its progress bar, and a standout closing frame. The
+% title page declares every part the bundle's inter-part gap tokens govern,
+% so each of them reaches a rule rather than being declared and unread.
 % Nothing here derives from any private document.
 \documentclass[aspectratio=169]{beamer}
 
@@ -17,7 +19,10 @@
 \palette{ alert = #C2185B }
 
 \title{A Themed Deck}
+\subtitle{One IR, two artifacts}
 \author{Pat Placeholder}
+\institute{example.org}
+\date{Placeholder date}
 
 \begin{document}
 

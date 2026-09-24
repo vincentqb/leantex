@@ -488,6 +488,52 @@ structure Tokens where
 def Tokens.find? (t : Tokens) (name : String) : Option SymGlue :=
   (t.entries.find? (·.1 == name)).map (·.2)
 
+/-- A resolved value beside the declaration it was resolved from. The
+engine resolves a token at elaboration because the page needs a length;
+the HTML needs the *name* as well, since a rule can only defer to a
+reader's override by referencing the custom property by name
+(`var(--separatorgap, …)`). A field carrying the bare value therefore
+reaches one backend complete and the other blind — the shape that left
+five declared tokens wired to nothing while `separator`, whose name rode
+beside its colour on the same constructor, worked.
+
+The name belongs here rather than inside `SymGlue` because provenance is
+a property of the *reference*, not of the length: `SymGlue.add` has no
+answer for the name of a sum of two tokens, and a derived `BEq` over a
+value carrying its origin would call two equal lengths unequal. A
+computed glue is `none` by construction, which is the honest answer. -/
+structure Sourced (α : Type) where
+  value : α
+  /-- The declared name the value came from, when it came from one. -/
+  token : Option String
+  deriving Repr, BEq, Inhabited
+
+/-- A value with no declaration behind it: a computed glue, a class
+default, an engine rhythm quantum. -/
+def Sourced.bare {α : Type} (v : α) : Sourced α := { value := v, token := none }
+
+/-- A token read for a value a backend will show, which is the only kind
+of read that needs the name: the answer carries the name it was asked
+for, so nothing downstream can resolve a token and forget where it came
+from. `Tokens.find?` stays for the reads whose answer is consumed
+arithmetically and has no name to keep. -/
+def Tokens.findSourced? (t : Tokens) (name : String) : Option (Sourced SymGlue) :=
+  (t.find? name).map fun g => { value := g, token := some name }
+
+/-- The lookup names what it was asked for and changes nothing else: the
+value is `find?`'s, and the name is the key. This is what holds the
+provenance channel honest — a `findSourced?` that dropped or renamed the
+key would fail here rather than silently emitting a rule no reader can
+override. -/
+theorem findSourced?_names (t : Tokens) (name : String) :
+    (t.findSourced? name).map (·.value) = t.find? name ∧
+      ∀ s ∈ t.findSourced? name, s.token = some name := by
+  constructor
+  · cases h : t.find? name <;> simp [Tokens.findSourced?, h]
+  · intro s hs
+    cases h : t.find? name <;> simp [Tokens.findSourced?, h] at hs
+    exact hs ▸ rfl
+
 /-- Replace-on-redeclare: a later declaration overrides, keeping one entry
 per name. The one install mechanism — a document's `\tokens` and a theme's
 bundle go through the same door. -/
@@ -3411,8 +3457,11 @@ inductive Block where
   Right-ragged setting (`\flushright`/`\raggedleft`) stays a named loss:
   line placement knows no right origin yet. -/
   | ragged (body : Array Block)
-  /-- `\block[before = <len>]{...}`: content with declared space above. -/
-  | spaced (before : SymGlue) (body : Array Block)
+  /-- `\block[before = <len>]{...}`: content with declared space above.
+  The glue rides as `Sourced` so a token-declared gap reaches the HTML
+  with the name a reader would override (`var(--subtitlegap, …)`); a
+  computed or class-default gap carries `none`. -/
+  | spaced (before : Sourced SymGlue) (body : Array Block)
   /-- The block half of `Inline.role`: a document-defined command whose
   expansion is block content (`\entry{...}` producing whole paragraphs)
   keeps its authored name the same way — `<div class="u-name">` in HTML,
@@ -3550,8 +3599,11 @@ inductive Block where
   | setTokens (tokens : Tokens)
   /-- A full-measure horizontal rule: the title page's separator. `name` is
   the palette entry the colour came from, when it had one, as `.colored`;
-  the thickness is symbolic so a token may state it in em. -/
-  | rule (color : Color) (name : Option String) (thickness : SymGlue)
+  the thickness is symbolic so a token may state it in em, and `Sourced`
+  so the token's name travels with it — the colour's name always did,
+  which is why `separator` was readable from a stylesheet and
+  `separatorheight` was not. -/
+  | rule (color : Color) (name : Option String) (thickness : Sourced SymGlue)
   /-- An elaborated `tikzpicture` subset: concrete shapes in picture
   coordinates, everything evaluated at elaboration (loops unrolled,
   expressions reduced, colours resolved, `scale=` applied). Layout places
@@ -5239,6 +5291,14 @@ def dumpGlue (g : SymGlue) : String :=
   let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
   base ++ plus ++ minus
 
+/-- A sourced glue as the golden shows it: the declared value, and the
+token name it was resolved from when it had one. The name is what the
+HTML defers to, so an elaboration that dropped it is visible here. -/
+def dumpSourcedGlue (g : Sourced SymGlue) : String :=
+  match g.token with
+  | some n => s!"{dumpGlue g.value} from {n}"
+  | none => dumpGlue g.value
+
 /-- LaTeX's own punctuation: the characters that are markup in a math
 source and never its content. A page that ships one of these is showing a
 reader its source, which is the one recovery no diagnostic may choose — the
@@ -6761,7 +6821,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     if content.isEmpty then s!"{ind}logo clear\n"
     else s!"{ind}logo\n" ++ dumpInlines (ind ++ "  ") content
   | .spaced before body =>
-    s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
+    s!"{ind}block before {dumpSourcedGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
   | .verbatim covered s spec =>
     s!"{ind}verbatim{if covered.isSome then " covered" else ""}\
 {if spec.numbers then " numbers" else ""}" ++
@@ -6809,7 +6869,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let nm := match name with
       | some n => s!" {n}"
       | none => s!" #{Color.hexByte color.r}{Color.hexByte color.g}{Color.hexByte color.b}"
-    s!"{ind}rule{nm} {dumpGlue thickness}\n"
+    s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
     -- Every evaluated shape, so a golden witnesses the whole elaboration:
     -- unrolled loops, reduced expressions, resolved colours.
@@ -7747,12 +7807,12 @@ theorem titled_text (acc : String) (kind : TitledKind) (title : Array Inline)
 
 /-- A declared vertical skip standing on its own, as `\vskip` does: glue
 the next placed line pays, no content. -/
-private def gapBlock (g : Dim.SymGlue) : Block := .spaced g #[]
+private def gapBlock (g : Dim.SymGlue) : Block := .spaced (Sourced.bare g) #[]
 
 /-- A declared bar with the skips beside it; no declared weight, no ink. -/
 private def barSide (ink : Color × Option String)
     (before after : Dim.SymGlue) : Option Dim.SymGlue → Array Block
-  | some w => #[gapBlock before, .rule ink.1 ink.2 w, gapBlock after]
+  | some w => #[gapBlock before, .rule ink.1 ink.2 (Sourced.bare w), gapBlock after]
   | none => #[]
 
 /-- One title bracketed by its declared bars, appended to the walk's

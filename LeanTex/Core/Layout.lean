@@ -6695,7 +6695,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- space — an `\addvspace`, like a role's or a list's `before` — and
     -- stands in place of the peer default as those do, so one rhythm
     -- spelled upstream and at the use site ships the same positions.
-    let a := a.vskip (r.resolve before)
+    let a := a.vskip (r.resolve before.value)
     let a := if body.isEmpty then a else { a with declaredSkip := false }
     collectBlocks r a body indent
   | .step _ _ body =>
@@ -6740,7 +6740,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `progressheight` and friends resolve against the tokens in force
     -- where the element stands, not the document's final state.
     a.setTokens tk
-  | .rule color _ thickness => collectRuleBlock r a color thickness
+  | .rule color _ thickness => collectRuleBlock r a color thickness.value
   | .picture pic =>
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.

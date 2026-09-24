@@ -28,9 +28,9 @@ meta author "Pat Placeholder"
 frame golden
   section* 0
     text "Footline Slots"
-  block before 800/1000em
-    rule separator 0.5pt
-  block before 800/1000em
+  block before 800/1000em from separatorgap
+    rule separator 0.5pt from separatorheight
+  block before 800/1000em from separatorgap
     para
       text "Pat Placeholder"
 frame

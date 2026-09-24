@@ -1247,7 +1247,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   t "the trailing vskip becomes the engine's rhythm gap after the block"
     (inTitleBlock aDoc fun b => match b with
-      | .spaced g #[] => g == Ir.titleBlockAfter
+      | .spaced g #[] => g.value == Ir.titleBlockAfter
       | _ => false)
   -- The native spellings, as rule-above fell out for the bars.
   let (nDoc, nDs) := elabStr ("\\documentclass{article}\\title{T}\\author{A. Name}" ++
@@ -1260,7 +1260,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false))
   t "style titlepage after gaps the whole title block"
     (inTitleBlock nDoc fun b => match b with
-      | .spaced g #[] => g.width == Dim.Length.ofSp (Dim.pt 30)
+      | .spaced g #[] => g.value.width == Dim.Length.ofSp (Dim.pt 30)
       | _ => false)
   -- A body that only echoes its parameter is not "empty": the probe
   -- binding sees the echo, so LaTeX's identity-renew idiom wins.
@@ -3403,7 +3403,7 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
     some { width := Dim.Length.ofSp (Dim.pt 18) })
   t "block carries declared spacing" (tokDoc.body.any fun b =>
     match b with
-    | .spaced before _ => before.width.ex == 1500
+    | .spaced before _ => before.value.width.ex == 1500
     | _ => false)
   -- A bare name is a well-formed value of the wrong type (E0323); text that
   -- parses as nothing at all is E0321. Both rejected, code says which.

@@ -11569,3 +11569,105 @@ weakening of it. `W0388`'s firing witness is the same shape as `W0333`'s
 (the collision fixture's own hundred-zero `\framefoot`), its rendered form
 lands in the diagnostics golden, and the tier's six mutants keep the
 page-box claim armed on a file the real writer produced.
+
+
+### 2026-09-24 — a value reached the backends without the name it came from
+
+Five design tokens were declared in `:root` and read by no rule
+(`htmlUnreadTokenOffences`, the five rows the token-closure entry above
+recorded and left owed). A reader overriding `--authorgap` got nothing and
+no diagnostic. The PDF honoured all five, because a resolved length is all
+a page needs; the HTML could reference none, because a CSS rule can only
+defer to an override by naming the property.
+
+**The invariant, written before the fix.** *A resolved value a backend will
+show carries the name it was resolved from.* Its absence is the whole
+defect, and the control that proves it is about carriers rather than luck
+was already in the tree: `separator` is read and `separatorheight` is not,
+on the same `Ir.Block.rule`, in the same fixture, differing only in whether
+the name travelled — the colour's did, the thickness's did not.
+
+**Carrier, wrapper, or provenance on the value.** Three candidates, and the
+choice is the whole entry.
+
+*A field beside the value* (`spaced (before : SymGlue) (beforeToken : Option
+String)`) fixes these five and nothing after them. It costs an arity change
+on two constructors, so all forty `.rule` arms and sixty-five `.spaced`
+sites reopen across seven modules — and it does not compound: the next
+constructor carrying a resolved token repeats the pair, with nothing holding
+the two fields together. That is precisely the shape that let one
+constructor name its colour and forget its thickness.
+
+*Provenance inside `SymGlue`* would fix every future token at once, and is
+the wrong layer. `SymGlue.add` has no answer for the name of a sum of two
+tokens; `Layout` does glue arithmetic on every line; a derived `BEq` over a
+length carrying its origin would call two equal lengths unequal. A length is
+a value, and a token name is a property of the *reference* that produced it.
+Putting the name in the value forces every arithmetic operator to invent an
+answer to a question it cannot have one for.
+
+*A typed carrier on the field* — `Ir.Sourced α`, the value beside the name
+it was resolved from. Chosen, on three counts. It compounds: the next
+backend-visible token value declares `Sourced α` and inherits provenance,
+with the type itself the reminder. It changes no arity, so every walk's
+`| .spaced _ body` arm compiles untouched and only the two sites that *read*
+the glue are forced. And the arithmetic question never arises, because
+`Sourced` carries no arithmetic: a computed glue is `Sourced.bare`, which is
+the honest answer rather than a defaulted one.
+
+**The compounding half is where the pairing happens.** The name is known at
+the token *lookup*, so that is what hands it back attached:
+`Ir.Tokens.findSourced?` returns the value with the key already on it, and
+`findSourced?_names` holds it to that — you cannot resolve a token for a
+backend-visible value and forget where it came from without failing a build.
+`Tokens.find?` stays for reads whose answer is consumed arithmetically and
+has no name to keep.
+
+**What the HTML now writes.** `cssSourced` emits `var(--<token>, <resolved
+length>)`, with `cssSourced_projects` pinning the reference form the closure
+check measures and `cssSourced_bare` pinning the complement — an unnamed
+value prints the length and references nothing, so no rule defers to a
+property the engine never declared. The fallback is not belt-and-braces: a
+token a bundle declares but a document's own table does not carry is absent
+from `:root`, and an unresolved `var()` with no fallback invalidates the
+whole declaration, collapsing the gap to zero.
+
+**Two things had to change beyond the carrier.** `themed.tex` declared only
+a title and an author, so three of the five tokens had no occasion to be
+read at all and would have stayed recorded as offences with a now-false
+reason. Its title page grew a subtitle, an institute and a date — invented,
+as the fixture's header says of everything in it — which is also what makes
+the five reachable from one page. And the closure check's union over the
+corpus answers "can any rule read this name"; it does not answer "does
+*this* declaration defer", which is the question a reader overriding a
+property is asking, and it would go quiet the moment the one fixture
+exercising a part lost it. `htmlSourcedGapChecks` measures that on one
+synthetic document, with `\block[before = 7pt]` as the negative control: a
+`Sourced` that named every value would pass the positive rows and be wrong.
+The control is read off the element's own inline style, not off the page —
+the static stylesheet defers plenty of its own margins to properties, and a
+whole-document scan would read those as this block's.
+
+**Left undone, deliberately.** `Ir.Block.rule` still spells its colour as
+`(color : Color) (name : Option String)` rather than `Sourced Color`. Folding
+it in is the same idiom and strictly tidier, and it is an arity change across
+forty arms in files this change does not own. Recorded here so the next edit
+to that constructor does it rather than adding a third spelling.
+
+**Arms opened in another agent's file.** `Layout.lean`: two, both forced by
+the field's type and neither a judgement — `collectBlock`'s `.spaced` arm
+resolves `before.value`, and its `.rule` arm passes `thickness.value` to
+`collectRuleBlock`. Layout reads the value and never the name, which is the
+carrier working: provenance is invisible to placement.
+`Obligations.lean`: one, `elementSpace_monotone`'s glue binder, generalised
+to `Sourced Dim.SymGlue` rather than pinned to `Sourced.bare` so the staged
+statement is not narrowed on its way through this change.
+
+Evidence: `lake build` and `lake test` green; `precommit`, `cites`, `owed`
+clean; `compose-fuzz` green (synthetic + 77 corpus files). `bench.lean`
+medians of 5: paragraphs 91 ms, lorem 321 ms, underline 523 ms, themed
+87 ms (90 ms to HTML), paper 156 ms (146 ms to HTML) — paragraphs on its
+recorded 91 ms band, so threading a field through every walk costs nothing
+measurable. Goldens: eight files, and the diff is exactly `from <token>`
+on fourteen `block before` lines and seven `rule separator` lines, plus
+`themed.txt`'s new title-page parts.

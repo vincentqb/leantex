@@ -29,11 +29,22 @@ meta author "Pat Placeholder"
 frame golden
   section* 0
     text "A Themed Deck"
-  block before 800/1000em
-    rule separator 0.5pt
-  block before 800/1000em
+  block before 300/1000em from subtitlegap
+    para
+      styled size:large
+        text "One IR, two artifacts"
+  block before 800/1000em from separatorgap
+    rule separator 0.5pt from separatorheight
+  block before 800/1000em from separatorgap
     para
       text "Pat Placeholder"
+  block before 500/1000em from authorgap
+    para
+      styled size:small
+        text "example.org"
+  block before 1000/1000em from institutegap
+    para
+      text "Placeholder date"
 section 1
   text "Bundles"
 frame
@@ -129,8 +140,8 @@ frame standout
   para
     text "One language, two backends."
 -- diagnostics
-note[N0100] 6:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 8:1 '\usetheme' → \theme{moloch}
-note[N0100] 31:11 '\alert' → \textcolor{alert}{\textbf ...}
-note[N0100] 38:6 '\alert' → \textcolor{alert}{\textbf ...}
+note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 10:1 '\usetheme' → \theme{moloch}
+note[N0100] 36:11 '\alert' → \textcolor{alert}{\textbf ...}
+note[N0100] 43:6 '\alert' → \textcolor{alert}{\textbf ...}
 warning[W0315] - text coloured #8F999B reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #8F999B }

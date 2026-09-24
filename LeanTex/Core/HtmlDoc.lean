@@ -185,6 +185,40 @@ def cssLength (l : Length) : String :=
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
+/-- A sourced length in CSS: the custom property the value was declared
+under, with the resolved length as its fallback. This is the whole reason
+`Ir.Sourced` exists — `tokenVars` emits every declared token into `:root`
+so a reader's stylesheet can override it, and an override only reaches the
+page through a rule that names the property. A value with no declaration
+behind it has nothing to defer to and prints as the length, which is also
+what a rule wants for an engine rhythm quantum: a reader cannot override
+what the engine did not declare.
+
+The fallback is not redundant belt-and-braces. A token declared by a
+theme's bundle but absent from the document's own table is not in `:root`,
+and an unresolved `var()` with no fallback makes the whole declaration
+invalid — the gap would collapse to zero. -/
+def cssSourced (g : Ir.Sourced SymGlue) : String :=
+  match g.token with
+  | some n => s!"var(--{n}, {cssLength g.value.width})"
+  | none => cssLength g.value.width
+
+/-- A declared token reaches the stylesheet as a reference to its own
+custom property, in exactly the form the closure check measures, and its
+resolved length rides along as the fallback. The artifact-level half of
+`Ir.findSourced?_names`: the name the lookup kept is the name the rule
+defers to, so a reader's override lands. -/
+theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
+    (h : g.token = some n) :
+    cssSourced g = s!"var(--{n}, {cssLength g.value.width})" := by
+  simp [cssSourced, h]
+
+/-- The complement: a value no declaration named prints as the bare length,
+so nothing references a property the engine never emitted. -/
+theorem cssSourced_bare (g : SymGlue) :
+    cssSourced (Ir.Sourced.bare g) = cssLength g.width := by
+  simp [cssSourced, Ir.Sourced.bare]
+
 /-- The content measure, as the page declared it: text width over the base
 font size, in `em` so it scales with the browser font. `article` is PDF-first
 and its HTML is a faithful degradation, so the measure comes from `\page`
@@ -4191,7 +4225,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- element behind.
     Html.text ""
   | .spaced before body =>
-    let style := s!"margin-top: {cssLength before.width}"
+    -- A token-declared gap defers to its own custom property, so a reader
+    -- overriding `--subtitlegap` moves this margin; a computed gap prints
+    -- the length it was handed (`cssSourced`).
+    let style := s!"margin-top: {cssSourced before}"
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       #[("class", "spaced"), ("style", style)]
   | .verbatim covered s spec =>
@@ -4246,13 +4283,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
         #[] (algNest lines).toList)
       #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
-    -- The title page's separator: an <hr> carrying the palette variable,
-    -- so a host page can override it as it can any colour.
+    -- The title page's separator: an <hr> carrying the palette variable for
+    -- its colour and the token variable for its thickness, so a host page
+    -- can override either. The thickness deferred to nothing until the IR
+    -- carried its token name beside the resolved length.
     let c := match name with
       | some n => s!"var(--{n}, {cssColor color})"
       | none => cssColor color
     Html.elem "hr" #[] #[("class", "separator"),
-      ("style", s!"border: none; height: {cssLength thickness.width}; background: {c}")]
+      ("style", s!"border: none; height: {cssSourced thickness}; background: {c}")]
   | .frame title standout valign _ body =>
     -- One slide of the deck: a linear readable section in every class. On
     -- the paged deck (`cfg.deck`) the slide is a flex column the height of

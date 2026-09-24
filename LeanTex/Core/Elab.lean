@@ -4594,12 +4594,12 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   let tps : ElementStyle := (ctx.styles.find? "titlepage").getD {}
   let part (v : Option (Array Inline)) : Option (Array Inline) :=
     v.bind fun xs => if xs.isEmpty then none else some xs
-  let push (inner : Array Block) (before : Option SymGlue) (b : Block) : Array Block :=
+  let push (inner : Array Block) (before : Option (Sourced SymGlue)) (b : Block) : Array Block :=
     match before, inner.isEmpty with
     | some g, false => inner.push (.spaced g #[b])
     | _, _ => inner.push b
   let mut inner : Array Block := #[]
-  let mut pending : Option SymGlue := none
+  let mut pending : Option (Sourced SymGlue) := none
   if let some xs := part st.title then
     -- The document title is a heading at level 0, not a decorated
     -- paragraph: the heading outline starts here (HTML §4.3.11 renders it
@@ -4608,15 +4608,17 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     -- {\LARGE \@title \par}. Starred: a title is never numbered.
     inner := push inner none (.section 0 true none xs)
   if let some xs := part st.subtitle then
-    inner := push inner (ctx.tokens.find? "subtitlegap") (.para #[.styled (.size "large") xs])
+    inner := push inner (ctx.tokens.findSourced? "subtitlegap") (.para #[.styled (.size "large") xs])
   if let some (c, nm) := tps.separator then
     unless inner.isEmpty && (part st.author).isNone && (part st.institute).isNone
         && (part st.date).isNone do
       -- moloch's own default, `titleseparator linewidth=0.5pt`
       -- (beamerinnerthememoloch.dtx, \moloch@inner@setdefaults), when no
-      -- token names one.
-      let th := (ctx.tokens.find? "separatorheight").getD
-        { width := Dim.Length.ofSp (Dim.pt 1 / 2) }
+      -- token names one. A default is nobody's declaration, so it carries no
+      -- name and the HTML prints the length rather than deferring to a
+      -- property `tokenVars` never emitted.
+      let th := (ctx.tokens.findSourced? "separatorheight").getD
+        (Ir.Sourced.bare { width := Dim.Length.ofSp (Dim.pt 1 / 2) })
       -- The separator stands its declared gap on both sides — the one
       -- `separatorgap` token, above the rule here and below it through
       -- `pending`: under the rule convention (`Layout.interlineFor`) the
@@ -4624,8 +4626,8 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       -- and from its bottom edge to the author's cap line, so one token
       -- means equal visible gaps. It used to stand on the rule line's
       -- phantom body strut, which the convention removed.
-      inner := push inner (ctx.tokens.find? "separatorgap") (.rule c nm th)
-      pending := ctx.tokens.find? "separatorgap"
+      inner := push inner (ctx.tokens.findSourced? "separatorgap") (.rule c nm th)
+      pending := ctx.tokens.findSourced? "separatorgap"
   if let some xs := part st.author then
     -- The declared author styling: the font template wraps the name (the
     -- lineage's \bf, or author-font), and the strut props its line open
@@ -4637,10 +4639,10 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       | some h => #[Ir.Inline.strut h] ++ xs
       | none => xs
     inner := push inner pending (.para xs)
-    pending := ctx.tokens.find? "authorgap"
+    pending := ctx.tokens.findSourced? "authorgap"
   if let some xs := part st.institute then
     inner := push inner pending (.para #[.styled (.size "small") xs])
-    pending := ctx.tokens.find? "institutegap"
+    pending := ctx.tokens.findSourced? "institutegap"
   if let some xs := part st.date then
     inner := push inner pending (.para xs)
   -- A separator with nothing else declared is no title page at all.
@@ -4657,7 +4659,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     -- The declared gap after the whole block (`after` on titlepage): a
     -- standalone skip the next placed line pays, no ink of its own.
     return match tps.after with
-      | some g => blocks.push (.spaced g #[])
+      | some g => blocks.push (.spaced (Ir.Sourced.bare g) #[])
       | none => blocks
 
 /-- One keyed declaration accepted from the document, remembered for the
@@ -8711,7 +8713,7 @@ a side channel, never slide content" cpos
           have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
             slicePars_le raws (by omega)
           elabBlocksGo ctx' raws (jf + 1)
-            (blocks.push (.spaced before inner)) #[] gen'
+            (blocks.push (.spaced (Ir.Sourced.bare before) inner)) #[] gen'
         | _ =>
           diag ctx' .E0304 "'\\block' needs a {body}" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'

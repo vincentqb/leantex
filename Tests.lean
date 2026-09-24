@@ -53,6 +53,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlAssetChecks ref
   anchorCostChecks ref
   htmlTokenClosureChecks ref
+  htmlSourcedGapChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.
