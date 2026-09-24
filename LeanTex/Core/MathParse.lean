@@ -239,7 +239,34 @@ def alphaCtrl : List (String × Math.MathAlphabet) :=
   [("mathbb", .bb), ("mathcal", .cal), ("cal", .cal),
    ("mathfrak", .frak), ("frak", .frak),
    ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
-   ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm)]
+   ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm),
+   -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
+   -- upright bold roman x, which is exactly what `\mathbf` does, so they
+   -- resolve to the same alphabets rather than leaving the formula
+   -- unrenderable. `\textrm` keeps the word arm above, which sets its
+   -- letters as one upright word instead of letter by letter.
+   ("textbf", .bf), ("textit", .it), ("textsf", .sf), ("texttt", .tt),
+   ("textnormal", .rm), ("emph", .it)]
+
+/-- A loss the parser can name without failing the formula: the
+mathematics renders, something about its presentation does not. Typed
+rather than a bare string so the elaborator dispatches each kind to its own
+diagnostic — a ragged alignment row and a dropped colour are different
+losses and may not share a code. -/
+inductive Note where
+  | ragged (msg : String)
+  /-- A colour or font change inside math whose content renders in the
+  surrounding style: `what` names the change for the message. -/
+  | styleDropped (what : String)
+  deriving Repr, BEq
+
+/-- Text-style commands whose styling cannot be carried inside `\text`:
+there the body is one upright word, so the command contributes its letters
+and the styling is named as lost. At the formula's own level these resolve
+through `alphaCtrl` instead, with no loss. -/
+def textStyleCtrl : List String :=
+  ["textbf", "textit", "textsf", "texttt", "textrm", "textnormal", "textup",
+   "textsc", "emph", "text", "mbox", "bf", "it", "rm", "sf", "tt"]
 
 /-- The math accent commands: the combining mark set over the base
 (unicode-math's accent table — `\hat` is U+0302), and whether it
@@ -486,6 +513,30 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
     | .grid _ _ _ :: _ => throw "an unbalanced group"
   throw "an unbalanced group"
 
+/-- A command's naming argument: the `{...}` whose content is a name rather
+than content, read as a string and stepped over. `\textcolor{alert}{x}`'s
+first group is the one case today. Returns the name and the index past the
+group's closer. -/
+private def skipNamedArg (toks : Array MTok) (i : Nat) (cmd : String) :
+    Except String (String × Nat) := do
+  let mut j := if toks[i]? == some .ws then i + 1 else i
+  let some .openGrp := toks[j]? | throw s!"'\\{cmd}' without its group"
+  j := j + 1
+  let mut name := ""
+  for _ in [j:toks.size + 1] do
+    match toks[j]? with
+    | some (.ch c) =>
+      name := name.push c
+      j := j + 1
+    | some .ws =>
+      name := name.push ' '
+      j := j + 1
+    | some .closeGrp => break
+    | some t => throw s!"{tokName t} inside '\\{cmd}'"
+    | none => throw "an unbalanced group"
+  let some .closeGrp := toks[j]? | throw "an unbalanced group"
+  return (name, j + 1)
+
 /-- amsmath's even alignment columns open with an empty Ord (`{}#` in
 `\align@preamble`, amsmath.dtx), so a cell beginning with a relation keeps
 its thick space and a leading `+` stays binary. -/
@@ -506,20 +557,20 @@ and padded with empty cells (`MRows.pad`, whose rectangularity and
 conservation are theorems); a row overrunning an `array`'s column spec is
 named too, its extra columns centring. -/
 private def buildGrid (kind : GridKind) (rows : Array (Array MList)) :
-    MNucleus × Array String := Id.run do
-  let mut notes : Array String := #[]
+    MNucleus × Array Note := Id.run do
+  let mut notes : Array Note := #[]
   let widths := rows.map (·.size)
   let maxCols := widths.foldl Nat.max 0
   for k in [0:rows.size] do
     if widths[k]! != maxCols then
-      notes := notes.push
+      notes := notes.push (.ragged
         s!"row {k + 1} has {widths[k]!} cell(s) where {maxCols} align; \
-padded with empty cells"
+padded with empty cells")
   if let GridKind.array cols := kind then
     if maxCols > cols.size then
-      notes := notes.push
+      notes := notes.push (.ragged
         s!"a row has {maxCols} cells where the column spec declares \
-{cols.size}; extra columns centre"
+{cols.size}; extra columns centre")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
   return (.grid kind (rs.pad rs.maxCols), notes)
 
@@ -532,12 +583,12 @@ bottom of the stack (`align`/`gather` bodies); notes name ragged rows.
 innermost first — `x^\frac{a}{b}` stacks the fraction's request on the
 script's — and `resolveChain` is where every argument lands. -/
 private def parseToks (toks : Array MTok) (top : Option GridKind) :
-    Except String (MList × Array String) := do
+    Except String (MList × Array Note) := do
   let mut stack : Array PFrame := #[]
   let mut acc : Array MItem := #[]
   let mut overNum : Option (Array MItem) := none
   let mut pending : List Dest := []
-  let mut notes : Array String := #[]
+  let mut notes : Array Note := #[]
   if let some kind := top then
     stack := stack.push { acc := #[], overNum := none, dests := [.grid kind #[] #[]] }
   let mut i := 0
@@ -716,12 +767,19 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       -- \text sets its letters upright as an Ord atom; \operatorname is
       -- the same word as an Op atom, binding with a thin space like the
       -- built-in function names (TeXbook p. 162's class).
+      --
+      -- The body is one upright word, so a group inside it is grouping and
+      -- nothing more, a known symbol contributes its scalar, and a style or
+      -- colour command contributes its letters with the change named as
+      -- lost — the mathematics is what a reader needs, and a formula that
+      -- degraded whole over an inner `\textbf` gave them neither.
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
       let some .openGrp := toks[j]? | throw s!"{tokName tok} without its group"
       j := j + 1
       let mut s := ""
-      for _ in [j:toks.size] do
+      let mut depth := 0
+      for _ in [j:toks.size + 1] do
         match toks[j]? with
         | some (.ch c) =>
           s := s.push c
@@ -729,7 +787,35 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | some .ws =>
           s := s.push ' '
           j := j + 1
-        | some .closeGrp => break
+        | some .openGrp =>
+          depth := depth + 1
+          j := j + 1
+        | some .closeGrp =>
+          if depth == 0 then break
+          depth := depth - 1
+          j := j + 1
+        | some (.ctrl n) =>
+          -- A space after a control word is the word's, as in LaTeX: the
+          -- token stream keeps it, so each arm below steps over it.
+          let afterCmd (k : Nat) : Nat := if toks[k]? == some .ws then k + 1 else k
+          if n == "textcolor" then
+            let (name, j') ← skipNamedArg toks (j + 1) n
+            notes := notes.push (.styleDropped s!"the colour '{name}'")
+            j := j'
+          else if textStyleCtrl.contains n then
+            notes := notes.push (.styleDropped s!"'\\{n}'")
+            j := afterCmd (j + 1)
+          else
+            match ctrlAtom.lookup n with
+            | some (_, c) =>
+              s := s.push c
+              j := afterCmd (j + 1)
+            | none =>
+              match ctrlWord.lookup n with
+              | some w =>
+                s := s ++ w
+                j := afterCmd (j + 1)
+              | none => throw s!"\\{n} inside {tokName tok}"
         | some t => throw s!"{tokName t} inside {tokName tok}"
         | none => throw "an unbalanced group"
       let some .closeGrp := toks[j]? | throw "an unbalanced group"
@@ -743,6 +829,15 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         pending := pending'
       i := j + 1
     | .ctrl n =>
+      if n == "textcolor" then
+        -- `\textcolor{name}{body}`: the colour is a name, not content, so
+        -- its group is consumed here and the body's group is then an
+        -- ordinary one. The mathematics renders; the colour is named as
+        -- lost, because the math list carries no colour to put it in.
+        let (name, j) ← skipNamedArg toks (i + 1) n
+        notes := notes.push (.styleDropped s!"the colour '{name}'")
+        i := j
+      else
       match alphaCtrl.lookup n with
       | some a =>
         pending := .alpha a :: pending
@@ -809,13 +904,13 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
 /-- Parse a formula's raw body into a math list, or name the construct that
 puts it outside this slice. Notes name ragged alignment rows (an `array`
 inside the formula). -/
-def parseMath (raws : Array Parse.Raw) : Except String (MList × Array String) := do
+def parseMath (raws : Array Parse.Raw) : Except String (MList × Array Note) := do
   parseToks (← flattenList #[] raws.toList) none
 
 /-- Parse an alignment environment's body (`align`/`gather` rows split at
 `&` and `\\`) into one grid formula. -/
 def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) :
-    Except String (MList × Array String) := do
+    Except String (MList × Array Note) := do
   parseToks (← flattenList #[] raws.toList) (some kind)
 
 end LeanTex.Core.MathParse

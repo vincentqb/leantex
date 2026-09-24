@@ -195,8 +195,8 @@ warning[W0010]: lists nest four levels; level 5 reuses the fourth's marker
 ── W0011 (degraded) declared math face has no OpenType MATH table
 warning[W0011]: 'Open Sans' (tests/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
   help: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
-── W0012 (degraded) math construct not rendered yet; set as source text
-warning[W0012]: math with \overset is not rendered yet; the formula is set as source text
+── W0012 (degraded) math construct not rendered yet; set as its text content
+warning[W0012]: math with \overset is not rendered yet; the formula sets as its text content
 ── W0013 (config) an \allow'd code never fired
 warning[W0013]: '\allow' lists E0333, which never fired
   help: the document no longer needs it; drop the entry from \allow
@@ -462,6 +462,9 @@ warning[W0383]: '\lIf' is an algorithm construct outside the modeled subset; its
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
 warning[W0384]: frame 1 is 19.021pt taller than its page; it continues on the next page
   help: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
+── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
+warning[W0385]: the colour 'indigo' inside math sets in the surrounding style
+warning[W0385]: '\textbf' inside math sets in the surrounding style
 ── W0387 (config) a known construct was read and had no effect
 warning[W0387]: '\thispagestyle' was read and had no effect
   help: \allow{W0387} accepts the skip

@@ -361,6 +361,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0384 => dvL one (dvDeck "\\theme{moloch}\n"
       ("\\begin{frame}{Too tall}\n" ++
        String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}"))
+  -- A colour and a font change inside math: the formula renders, the
+  -- presentation does not, because a math list carries neither.
+  | .W0385 =>
+    dvE "$\\textcolor{indigo}{x}$" ++ dvE "$\\text{\\textbf{bold} word}$"
   | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++

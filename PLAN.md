@@ -8254,3 +8254,69 @@ is evidence, not a theorem.
 
   What this entry does not do is narrow the gap: after it, the same three
   W0012 constructs still degrade, only honestly. That is the next entry.
+
+
+- 2026-09-24: **LaTeX's text and colour commands inside math render, and
+  what a math list cannot carry is named rather than shown.** The floor
+  entry above made every gap honest; this one narrows the gap that was
+  costing whole equations. Three findings, in the order they mattered.
+
+  A text-style command inside math is a *math alphabet* under another name:
+  `\textbf{x}` sets an upright bold roman x, which is precisely
+  `\mathbf{x}`, so `textbf`/`textit`/`textsf`/`texttt`/`textnormal`/`emph`
+  join `alphaCtrl` and resolve through the same `MathAlphabet.remapList`
+  the `\math…` family already used. Six table rows where the formula used to
+  degrade whole. `\textrm` deliberately stays on the word arm beside
+  `\text`, which sets its letters as one upright word rather than letter by
+  letter.
+
+  A colour is presentation, and the math list carries none — `MNucleus` has
+  no colour field and giving it one is an IR-constructor-scale change
+  (every walk, both backends, a census fact). So `\textcolor{name}{body}`
+  consumes its naming argument in the parser, leaves the body as an
+  ordinary group, and records the loss: the *mathematics* renders and the
+  colour is named. That trade is the whole judgement here. Degrading the
+  formula to keep the colour faithful gives a reader neither; rendering the
+  formula and naming the colour gives them the equation, which is what they
+  came for. Recorded as W0385 (degraded) rather than a new loss class,
+  because the content sets and one thing about its presentation does not.
+
+  Inside `\text{...}` the body is one upright word, so three things that
+  used to abort the whole formula now do not: a brace group is grouping and
+  contributes nothing, a known symbol contributes its scalar (`\ldots` → …),
+  and a style or colour command contributes its letters with the change
+  named as lost (W0385 again — one code, one meaning, and the meaning is
+  the same one). A space after a control word is the word's, as in LaTeX,
+  so each of those arms steps over it: without that, `first\ldots last`
+  shipped `first… last`.
+
+  The note channel is typed now (`MathParse.Note`), not a string array. It
+  had to be: a ragged alignment row and a dropped colour are different
+  losses and may not share a code, and the old channel mapped every note to
+  W0014 by construction. Two constructors, one dispatch site in the
+  elaborator (`mathNote`), and the next kind of note cannot quietly inherit
+  someone else's code.
+
+  W0012's registry meaning changed with its recovery — "set as source text"
+  → "set as its text content" — and the code kept its identity, because
+  what it *means* did not change: this construct is not rendered yet. A new
+  code would have claimed a new meaning for the same fact. Its declared
+  `Loss` was already `degraded` and stays so.
+
+  Measured on the private reference corpus, which is where the defect was
+  found: 30 lines of markup ink before, 0 after, the two remaining brace
+  lines being the document's own set notation in prose. W0012 fell from
+  three firings to one, that one naming a command outside standard LaTeX
+  math. Two consequences the numbers make visible and neither of which is a
+  regression to chase: W0014 now fires on a ragged alignment row that the
+  parser previously never reached, and W0005 fires twice — the equations
+  set as real mathematics are genuinely wider than a 16:9 slide's measure,
+  where as wrapped prose they had folded. A synthetic three-column
+  alignment of the same shape fits the article measure with no overfull, so
+  the grid distributes columns correctly and what the diagnostic reports is
+  the document's content, honestly, for the first time.
+
+  What still degrades, so the boundary is on the record: `\overset` and the
+  other stacking constructs, an accent inside `\text`, nested math, and any
+  control word outside `ctrlAtom`/`ctrlWord`/`alphaCtrl`/`accentCtrl`. All
+  of them now reach the floor rather than the page.

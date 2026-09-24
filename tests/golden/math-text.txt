@@ -1,0 +1,46 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "Text Inside Math"
+para
+  text "A text-style command resolves to the alphabet it means, so "
+  formula inline "\\textbf {u}"
+    ord:{ord:𝐮}
+  text " is the upright bold letter and "
+  formula inline "\\textit {v}"
+    ord:{ord:𝑣}
+  text " the italic one, exactly as "
+  formula inline "\\mathbf {u}"
+    ord:{ord:𝐮}
+  text " and "
+  formula inline "\\mathit {v}"
+    ord:{ord:𝑣}
+  text " set them. A colour is presentation the math list does not carry, so "
+  formula inline "\\textcolor {ink}{w}"
+    ord:{ord:𝑤}
+  text " renders its letter and the colour is named as lost. A word stands upright inside a formula: "
+  formula inline "\\text {gain} + \\text {loss}"
+    ord:"gain" bin:+ ord:"loss"
+  text ", a brace group inside one is grouping alone in "
+  formula inline "\\text {a{b}c}"
+    ord:"abc"
+  text ", and a symbol inside one contributes its scalar in "
+  formula inline "\\text {first\\ldots  last}"
+    ord:"first…last"
+  text "."
+para
+  text "An alignment carries all of it at once:"
+center
+  para
+    formula display "\\textcolor {ink}{\\textbf {\\sum _k}} a_k &= b \\\\  &= \\text {\\textbf {bound} above}"
+      ord:align[(|ord:{ord:{op:lim:∑_{ord:𝐤}}} ord:𝑎_{ord:𝑘}|ord:{} rel:= ord:𝑏)(||ord:{} rel:= ord:"bound above")]
+para
+  text "What the engine still does not model degrades to content: "
+  math inline "\\overset {?}{=}"
+  text " sets its characters and names the construct, and no control sequence reaches the page."
+-- diagnostics
+warning[W0385] 16:25 the colour 'ink' inside math sets in the surrounding style
+warning[W0385] 24:1 '{align*}': '\textbf' inside math sets in the surrounding style
+warning[W0012] 29:59 math with \overset is not rendered yet; the formula sets as its text content

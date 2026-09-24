@@ -1029,8 +1029,9 @@ font's own advances, sharing nothing with the layout walk), script sizes
 and shifts from the constants, Bin degradation, script-style spacing
 suppression, the italic/upright convention, and that nothing is silently
 dropped: a glyph the math face lacks earns E0405 naming it, a document with
-no math face earns one W0003 and its formulas set as source text, and every
-out-of-scope construct earns a W0010 naming it while its source survives. -/
+no math face earns one W0003 and its formulas set as their glyph text, and
+every out-of-scope construct earns a code naming it while its text content
+survives — never its markup (`Ir.mathFloor_mem`). -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -1228,14 +1229,58 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "equation* is display math"
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
-  -- What still is not modelled keeps its source and its name.
-  t "an out-of-scope construct keeps its source and warns by name"
+  -- What still is not modelled keeps its text content and its name.
+  t "an out-of-scope construct degrades to its content and warns by name"
     (warnCodes "$\\overset{?}{=}$" == ["W0012"] &&
       ((Elab.run "t" "$\\overset{?}{=}$").1.body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .math false _ => true
           | _ => false
         | _ => false))
+  -- LaTeX's text-style commands inside math resolve to the math alphabets
+  -- they mean, so a formula wrapped in one renders instead of degrading:
+  -- `\textbf{x}` is an upright bold roman x, which is `\mathbf{x}`.
+  t "the text-style commands render as their alphabets, no W0012"
+    (warnCodes "$\\textbf{v} + \\textit{w} + \\texttt{m} + \\textsf{s}$" == [] &&
+      glyphChars "$\\textbf{v}$" == #['𝐯'] &&
+      glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$")
+  -- A colour inside math: the mathematics renders, the colour is named as
+  -- lost (W0385) because the math list carries no colour to put it in.
+  t "a colour inside math keeps its content and names the colour"
+    (warnCodes "$\\textcolor{indigo}{x}$" == ["W0385"] &&
+      glyphChars "$\\textcolor{indigo}{x}$" == glyphChars "$x$")
+  t "a colour wrapping a styled operator renders both"
+    (warnCodes "$\\textcolor{indigo}{\\textbf{\\sum_z}}$" == ["W0385"] &&
+      (glyphChars "$\\textcolor{indigo}{\\textbf{\\sum_z}}$").contains '∑')
+  -- A group inside \text is grouping, a known symbol contributes its
+  -- scalar, and a style command contributes its letters with the styling
+  -- named as lost — none of the three degrades the formula any more.
+  t "a group inside \\text is grouping, not a construct"
+    (warnCodes "$\\text{a{b}c}$" == [] &&
+      glyphChars "$\\text{a{b}c}$" == glyphChars "$\\text{abc}$")
+  t "a style command inside \\text keeps its letters, names the styling"
+    (warnCodes "$\\text{\\textbf{bold} word}$" == ["W0385"] &&
+      glyphChars "$\\text{\\textbf{bold} word}$" == glyphChars "$\\text{bold word}$")
+  t "a symbol inside \\text contributes its scalar"
+    (warnCodes "$\\text{a\\ldots b}$" == [] &&
+      (glyphChars "$\\text{a\\ldots b}$").contains '…')
+  t "a colour inside \\text keeps its content, names the colour"
+    (warnCodes "$\\text{\\textcolor{indigo}{red} ink}$" == ["W0385"] &&
+      glyphChars "$\\text{\\textcolor{indigo}{red} ink}$" ==
+        glyphChars "$\\text{red ink}$")
+  -- An alignment body carries the same coverage: this is the shape a talk's
+  -- coloured, styled align rows take, and it used to degrade whole.
+  t "a coloured styled alignment renders as a grid, never as source"
+    (let src := "\\begin{align*} &P(A) \\\\ &= \
+\\textcolor{indigo}{\\textbf{\\sum_z}} P(B) \\end{align*}"
+     warnCodes src == ["W0385"] &&
+       ((Elab.run "t" src).1.body.any fun b => match b with
+         | .center xs => xs.any fun bb => match bb with
+           | .para ys => ys.any fun x => match x with
+             | .formula _ _ _ => true
+             | _ => false
+           | _ => false
+         | _ => false))
   -- Literal Greek in math is unicode-math's second spelling of the control
   -- word (math-style=TeX): the two spellings elaborate to one atom list
   -- (the formula's source field alone differs), and the shipped glyph is

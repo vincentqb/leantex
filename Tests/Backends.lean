@@ -2384,6 +2384,7 @@ def pdfCensusTable :
   ("float-center", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-companion", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-first", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("math-text", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("greek-literal", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("abstract", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("crossref", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

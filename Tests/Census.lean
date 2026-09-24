@@ -790,8 +790,29 @@ def censusTable :
     ("\\mathrm sets upright", hasStr (censusText c) "Err"),
     ("a document macro's expansion ships", hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),
-  ("math-companion", fun _ c => [
+  -- The coverage boundary for LaTeX's text and colour commands in math,
+  -- read off the shipped page: the constructs that render, and the one that
+  -- does not degrading to content. The colour itself is not asserted — it
+  -- is the declared loss (W0385), so the page carries the letter and not
+  -- its colour.
+  ("math-text", fun _ c => [
     ("one page", c.size == 1),
+    ("\\textbf and \\textit ship the alphabets \\mathbf and \\mathit mean",
+      hasStr (censusText c) "𝐮" && hasStr (censusText c) "𝑣"),
+    ("a coloured letter ships its glyph", hasStr (censusText c) "𝑤"),
+    ("\\text sets its words upright",
+      hasStr (censusText c) "gain" && hasStr (censusText c) "loss"),
+    ("a brace group inside \\text is grouping alone",
+      hasStr (censusText c) "abc"),
+    ("a symbol inside \\text ships its scalar",
+      hasStr (censusText c) "first…last"),
+    ("the coloured styled alignment ships its operator and its word",
+      hasStr (censusText c) "∑" && hasStr (censusText c) "bound above"),
+    ("the unmodelled construct ships its content", hasStr (censusText c) "?="),
+    ("no page of this fixture ships a control sequence",
+      !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"
+        && !hasStr (censusText c) "textbf")]),
+  ("math-companion", fun _ c => [    ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
     ("the display sum ships as a glyph", hasStr (censusText c) "∑"),
     ("the fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1),

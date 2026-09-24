@@ -94,8 +94,7 @@ inductive DiagCode where
   | E0501 | E0502 | E0503
   | N0100 | N0102 | N0103 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
-  | W0011 | W0012 | W0013 | W0014 | W0015
-  | N0016 | N0018 | N0017 | N0019 | N0020
+  | W0011 | W0012 | W0013 | W0014 | W0015  | N0016 | N0018 | N0017 | N0019 | N0020
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
@@ -138,6 +137,7 @@ inductive DiagCode where
   | W0603
   | W0604
   | W0384
+  | W0385
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -201,7 +201,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0009 => ("0009", .degraded, "no glyph in the declared face; set from a fallback face")
   | .W0010 => ("0010", .degraded, "lists nest four levels; deeper levels reuse the fourth marker")
   | .W0011 => ("0011", .degraded, "declared math face has no OpenType MATH table")
-  | .W0012 => ("0012", .degraded, "math construct not rendered yet; set as source text")
+  | .W0012 => ("0012", .degraded, "math construct not rendered yet; set as its text content")
   | .W0013 => ("0013", .config, "an \\allow'd code never fired")
   | .W0014 => ("0014", .degraded, "alignment row disagrees with its grid's columns; padded")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
@@ -308,6 +308,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
+  | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -332,7 +333,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 162
+def DiagCode.count : Nat := 163
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never

@@ -1097,7 +1097,8 @@ structure FontSet where
   untouched by construction. -/
   fallback : Array (Char × Nat) := #[]
   /-- Index of the document's math face: declared, resolved, and carrying a
-  MATH table. `none` sets math as source text with the W0003 warning. -/
+  MATH table. `none` sets a formula as its glyph text (`Ir.formulaFloor`)
+  with the W0003 warning. -/
   math : Option Nat := none
   /-- Per-face deflated file bytes, filled by the driver through its
   content-hash cache (`deflateCached` in the driver): `zdata[i]`, when

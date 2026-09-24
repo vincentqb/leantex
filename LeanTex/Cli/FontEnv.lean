@@ -73,7 +73,7 @@ over a directory the suite ships.
 
 A declared face is resolved like any named family and installed only when
 it carries an OpenType MATH table: constants are never invented, so a face
-without the table earns W0011 naming it and math is set as source text
+without the table earns W0011 naming it and math sets as its glyph text
 (PLAN, M6 design decision 1). With no declaration and formulas on the
 page, the body family's designed companion answers when the scan holds it,
 else the first scanned MATH-table face — either way N0016 names it, so a

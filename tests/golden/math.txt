@@ -104,4 +104,4 @@ center
     formula display "e^{i\\pi} + 1 = 0"
       ord:𝑒^{ord:𝑖 ord:𝜋} bin:+ ord:1 rel:= ord:0
 -- diagnostics
-warning[W0012] 51:1 math with \overset is not rendered yet; the formula is set as source text
+warning[W0012] 51:1 math with \overset is not rendered yet; the formula sets as its text content

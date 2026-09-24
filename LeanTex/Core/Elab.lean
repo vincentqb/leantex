@@ -967,39 +967,55 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- One parser note to its own diagnostic: the two losses a formula can
+carry while still rendering are different kinds, so each takes its own
+code. `where` prefixes the environment's name when the note came from an
+alignment body. -/
+private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
+    (pos : Pos) : EM Unit := do
+  match note with
+  | .ragged msg =>
+    warnOnce ctx ("math:ragged:" ++ msg) .W0014
+      (if where_.isEmpty then s!"alignment {msg}" else where_ ++ msg) pos
+  | .styleDropped what =>
+    warnOnce ctx ("math:style:" ++ what) .W0385
+      s!"{where_}{what} inside math sets in the surrounding style" pos
+
 /-- One formula: parsed into math atoms when this slice can model it, kept
-as source text with a warning naming the construct when it cannot — out of
-scope is a named warning, never a silent drop. User commands expand first
+as its text content with a warning naming the construct when it cannot —
+out of scope is a named warning, never a silent drop, and never its source
+on the page (`Ir.mathFloor`). User commands expand first
 (`expandMathList`), so a `\define`d macro renders instead of degrading its
-formula. A ragged alignment row inside the formula (an `array`) is W0014:
-padded with empty cells, named. -/
+formula. A ragged alignment row inside the formula (an `array`) is W0014,
+padded; a colour or font change the math list cannot carry is W0385, its
+content kept. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
   match MathParse.parseMath expanded with
   | .ok (l, notes) =>
     for note in notes do
-      warnOnce ctx ("math:ragged:" ++ note) .W0014
-        s!"alignment {note}" pos
+      mathNote ctx note "" pos
     return .formula display (Parse.rawSrc body) l
   | .error what =>
     warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; the formula is set as source text" pos
+      s!"math with {what} is not rendered yet; the formula sets as its \
+text content" pos
     return .math display (Parse.rawSrc body)
 
 /-- One alignment environment (`align`/`gather` and their starred forms):
 its rows parsed into one display grid formula. A construct the parser
-cannot model keeps the whole environment as source, named (W0012); a
-ragged row is W0014, padded; a numbered form warns W0015 once — the
-equation numbers are owed, the mathematics is not. -/
+cannot model keeps the whole environment as its text content, named
+(W0012); a ragged row is W0014, padded; a colour or font change the math
+list cannot carry is W0385, its content kept; a numbered form warns W0015
+once — the equation numbers are owed, the mathematics is not. -/
 private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
   match MathParse.parseMathRows kind expanded with
   | .ok (l, notes) =>
     for note in notes do
-      warnOnce ctx ("math:ragged:" ++ note) .W0014
-        s!"'\{{name}}': {note}" pos
+      mathNote ctx note s!"'\{{name}}': " pos
     if numbered then
       warnOnce ctx "math:eqnum" .W0015
         s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
@@ -1007,7 +1023,8 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     return .formula true (Parse.rawSrc body) l
   | .error what =>
     warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; '\{{name}}' is set as source text" pos
+      s!"math with {what} is not rendered yet; '\{{name}}' sets as its text \
+content" pos
     return .math true (Parse.rawSrc body)
 
 /-- The run an unclosed `[` still owns: tokens on its command's own line —
@@ -5947,7 +5964,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \
-formula is set as source text")])
+formula sets as its text content")])
   let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf ctx.picSets
   -- **Native first; the boundary is the fallback.** What the engine's own
   -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
