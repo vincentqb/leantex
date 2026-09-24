@@ -12136,3 +12136,22 @@ typed dictionaries and again across the serialize split, aggregate
 unchanged from the respell baseline through both commits. `lake test`
 green after each, `Tests/PdfConformance`'s reference walk and six mutants
 included.
+
+**Cost.** `scripts/bench.lean`, the pre-split tree against the post-split
+tree, both rebuilt on this host. Second run of each, medians of five
+(`paragraphs`, `lorem`, `underline`, `themed`, `themed -o html`, `paper`,
+`paper -o html`):
+
+    before  94  326  491  90  91  157  148 ms
+    after   92  330  495  88  89  160  151 ms
+
+Neutral: ±4 ms, ±1%. The two HTML rows are the control — no change here can
+reach them — and they move by the same magnitude as the PDF rows, which is
+what sets the noise floor. The first run of each was discarded as cold: it
+read 98/359/434/106/121/178/150 before and 94/331/502/90/90/162/179 after,
+a spread wider than any effect worth measuring, including a 26% *drop* on a
+row the change cannot touch. Materialising every object as a `Row` value
+before writing costs nothing measurable because a row holds references to
+byte arrays that already exist — the font program, the deflated content
+stream — and `rowInto` appends into the file's own buffer rather than
+building each object beside it.
