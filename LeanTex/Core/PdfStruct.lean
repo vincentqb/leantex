@@ -1,5 +1,6 @@
 import LeanTex.Core.Struct
 import LeanTex.Core.PdfContent
+import LeanTex.Core.PdfRead
 
 /-!
 # The PDF structure tree, as a typed model
@@ -68,7 +69,7 @@ structure StructElem where
   alt : Option String := none
   lang : Option String := none
   actualText : Option String := none
-  attrs : Array (String × String) := #[]
+  attrs : Array (String × PdfRead.Obj) := #[]
   deriving Repr, BEq, Inhabited
 
 /-- The PDF 2.0 standard structure type of a tree node kind (ISO 32000-2

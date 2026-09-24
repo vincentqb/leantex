@@ -29,6 +29,21 @@ def Rect.within (inner outer : Rect) : Prop :=
 def Rect.render (r : Rect) : String :=
   s!"[{Sp.toPtString r.x0} {Sp.toPtString r.y0} {Sp.toPtString r.x1} {Sp.toPtString r.y1}]"
 
+/-- A length in points as an object: an integer when its rounded spelling
+is one, a real otherwise. The distinction is the reader's — `parseVal`
+answers `.int` for a dotless number — so a writer that spelled every
+length `.real` would build a value its own reader never returns, and
+`parseVal_render_id` would be false of it. -/
+def ptObj (x : Sp) : PdfRead.Obj :=
+  let milli := (x.natAbs * 1000 + 32768) / 65536
+  if milli % 1000 == 0 then
+    .int (if x < 0 then -(milli / 1000 : Int) else (milli / 1000 : Int))
+  else .real x.toPtString
+
+/-- The page box as an object — the four corners, each `ptObj`. -/
+def Rect.obj (r : Rect) : PdfRead.Obj :=
+  .arr #[ptObj r.x0, ptObj r.y0, ptObj r.x1, ptObj r.y1]
+
 /-- The page boxes, as consequences of the declared trim size and bleed —
 never hand-rolled numbers. ISO 32000-2 §14.11.2 (Table 361) gives each its
 meaning: **TrimBox** is "the intended dimensions of the finished page
@@ -95,6 +110,19 @@ private def ratString (p q : Int) : String :=
     let frs := ("".pushn '0' (9 - frs.length)) ++ frs
     let frs := (frs.dropEndWhile (· == '0')).toString
     s!"{sign}{ip}.{frs}"
+
+/-- `ratString`'s value as an object, integer when its spelling is one —
+`ptObj`'s reason. -/
+private def ratObj (p q : Int) : PdfRead.Obj :=
+  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
+  if v % 1000000000 == 0 then
+    .int (if p < 0 && v != 0 then -(v / 1000000000 : Int) else (v / 1000000000 : Int))
+  else .real (ratString p q)
+
+/-- A PDF string object from a spelling that already carries its
+delimiters (`(text)` or `<hex>`) — what `pdfTextString` and `pdfString`
+produce, kept verbatim as `Obj.str` does. -/
+private def litObj (s : String) : PdfRead.Obj := .str s.toUTF8
 
 /-- Copied-graph chunks rendered against the writer's numbering: each hole
 is `base + local`, and `resources_closed` is what makes every hole point
@@ -279,14 +307,11 @@ end
 end"
   return s
 
-private def wArray (font : Font) (used : Array (Nat × Char)) : String := Id.run do
-  let mut s := "["
-  let mut first := true
-  for (g, _) in used do
-    let w := (font.widths[g]?.getD 0) * 1000 / font.unitsPerEm
-    s := s ++ (if first then s!"{g} [{w}]" else s!" {g} [{w}]")
-    first := false
-  return s ++ "]"
+/-- The `/W` array: each used glyph's advance in thousandths of the em
+(§9.7.4.3), as a typed object — `Obj.render` decides its bytes. -/
+private def wArray (font : Font) (used : Array (Nat × Char)) : PdfRead.Obj :=
+  .arr (used.flatMap fun (g, _) =>
+    #[PdfRead.Obj.int g, .arr #[.int ((font.widths[g]?.getD 0) * 1000 / font.unitsPerEm)]])
 
 /-- Escape a PDF literal string: balance-sensitive characters only. -/
 private def pdfString (s : String) : String := Id.run do
@@ -352,65 +377,80 @@ private def Wr.put (w : Wr) (s : String) : Wr :=
 private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
   { out := w.out ++ b }
 
-/-- The catalog's language entry: `/Lang` spelled from the declared tag —
-the document's main language over every text run that carries no finer
-mark (ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document
-declares none. The same `Ir.Meta` field the HTML root's `lang` attribute
-reads (`HtmlDoc.emit_lang_declared`). -/
-def langEntry : Option String → String
-  | some tag => s!" /Lang ({pdfString tag})"
-  | none => ""
+/-- The catalog's language entry: `/Lang` from the declared tag — the
+document's main language over every text run that carries no finer mark
+(ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document declares
+none. The same `Ir.Meta` field the HTML root's `lang` attribute reads
+(`HtmlDoc.emit_lang_declared`). -/
+def langEntry : Option String → Array (String × PdfRead.Obj)
+  | some tag => #[("Lang", .str s!"({pdfString tag})".toUTF8)]
+  | none => #[]
 
 /-- The catalog's tagging entries: `/MarkInfo << /Marked true >>` (§14.7.1
-— the file's content is marked) and the structure tree root. Spelled
+— the file's content is marked) and the structure tree root. Present
 unconditionally: every PDF this writer ships is tagged, whatever the
 document declares — tagging is a fact of the artifact, the profile claim
 (`pdfuaid`) is a separate, withheld statement. -/
-def markedEntry (structTreeRoot : Nat) : String :=
-  " /MarkInfo << /Marked true >> /StructTreeRoot " ++ toString structTreeRoot ++ " 0 R"
+def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
+  #[("MarkInfo", .dict #[("Marked", .bool true)]), ("StructTreeRoot", .ref structTreeRoot 0)]
+
+/-- `/ViewerPreferences /DisplayDocTitle`: the reader's window titles from
+the document's own metadata title rather than its file name (§12.2;
+PDF/UA requires it). -/
+def viewerEntry : Array (String × PdfRead.Obj) :=
+  #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
 /-- The document catalog (ISO 32000-2 §7.7.2): the page tree, an outline
 when the layout carried one, the XMP metadata stream, the declared
-language, the mark information and structure tree root, and
-`/ViewerPreferences /DisplayDocTitle` — the reader's window titles from
-the document's own metadata title rather than its file name (§12.2;
-PDF/UA requires it). -/
-def viewerEntry : String := " /ViewerPreferences << /DisplayDocTitle true >> >>"
+language, the mark information and structure tree root, and the viewer
+preference. A typed object, not a spelling: `Obj.render` is the only place
+its bytes are decided. -/
+def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
+    (structTreeRoot : Nat) : PdfRead.Obj :=
+  .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
+    ++ (match outlineRoot with
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ #[("Metadata", .ref xmpId 0)]
+    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry)
 
-def catalogDict (outlinesRef : String) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) : String :=
-  s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R"
-    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry
-
-/-- The PDF twin of `emit_lang_declared`: the catalog is the language
-entry of the document's declared tag between two fixed dictionary halves,
-by construction — so `/Lang` appears exactly when the document declares a
-language, reading the same `Ir.Meta` field as the HTML root's `lang`.
-The webMetaChecks census in Tests/Backends is the wiring witness that
-`write` ships this dictionary. -/
-theorem pdf_lang_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String)
+/-- The PDF twin of `emit_lang_declared`: the catalog's entries carry the
+language entry of the document's declared tag between two fixed runs, by
+construction — so `/Lang` appears exactly when the document declares a
+language, reading the same `Ir.Meta` field as the HTML root's `lang`. A
+statement over the typed entries rather than a substring of a spelling:
+the value is what both the writer and a reader see. The webMetaChecks
+census in Tests/Backends is the wiring witness that `write` ships this
+dictionary. -/
+theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
-    ∃ pre post,
-      catalogDict outlinesRef xmpId lang structTreeRoot = pre ++ langEntry lang ++ post :=
-  ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R",
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
+      = .dict (pre ++ langEntry lang ++ post) :=
+  ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
+    ++ (match outlineRoot with
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ #[("Metadata", .ref xmpId 0)],
    markedEntry structTreeRoot ++ viewerEntry, by
-    simp only [catalogDict, String.append_assoc]⟩
+    simp only [catalogDict, Array.append_assoc]⟩
 
 /-- **`pdf_marked_declared`** (the `pdf_lang_declared` shape): the catalog
 carries `/MarkInfo << /Marked true >>` and `/StructTreeRoot` between two
-fixed halves, whatever the language, the outline, or the document declares
+fixed runs, whatever the language, the outline, or the document declares
 — tagging is unconditional. The structTreeChecks round trip in
 Tests/Backends is the wiring witness that `write` ships this dictionary
 with a tree behind the reference. -/
-theorem pdf_marked_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String)
+theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
-    ∃ pre post,
-      catalogDict outlinesRef xmpId lang structTreeRoot
-        = pre ++ " /MarkInfo << /Marked true >> /StructTreeRoot "
-          ++ toString structTreeRoot ++ " 0 R" ++ post :=
-  ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R" ++ langEntry lang,
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
+      = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
+  ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
+    ++ (match outlineRoot with
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ #[("Metadata", .ref xmpId 0)] ++ langEntry lang,
    viewerEntry, by
-    simp only [catalogDict, markedEntry, String.append_assoc]⟩
+    simp only [catalogDict, Array.append_assoc]⟩
 
 /-- Face index → resource number, over the faces `keepFaces` embeds. -/
 private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
@@ -965,19 +1005,23 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- second pass and no row is left to a default.
   let t := objTable keep imgs usedImgs np nOut es.size
 
-  -- compressed (non-stream) objects, serialized bare
-  let kids := String.intercalate " " ((List.range np).map fun i => s!"{t.pageId i} 0 R")
-  let outlinesRef := if nOut == 0 then "" else s!" /Outlines {t.outlineRootId} 0 R"
+  -- compressed (non-stream) objects, as typed values: `Obj.render` is the
+  -- only place their bytes are decided, so what the census reads back is
+  -- the value this writer built (`parseVal_render_id`).
+  let outlineRoot := if nOut == 0 then none else some t.outlineRootId
   -- The catalog: `catalogDict`, whose `/Lang` is `pdf_lang_declared`'s
   -- statement — present exactly when the document declares a language.
-  let catalog := catalogDict outlinesRef t.xmpId info.language t.structTreeRoot
-  let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
-  let fontResources := String.intercalate " "
-    ((List.range nf).map fun k => s!"/F{k + 1} {ObjTable.type0Id k} 0 R")
-  let fontObjs : List (Nat × String) := (List.range nf).flatMap fun k =>
+  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
+  let pagesObj : PdfRead.Obj := .dict
+    #[("Type", .name "Pages"),
+      ("Kids", .arr ((Array.range np).map fun i => .ref (t.pageId i) 0)),
+      ("Count", .int np)]
+  let fontResources : PdfRead.Obj :=
+    .dict ((Array.range nf).map fun k => (s!"F{k + 1}", PdfRead.Obj.ref (ObjTable.type0Id k) 0))
+  let fontObjs : List (Nat × PdfRead.Obj) := (List.range nf).flatMap fun k =>
     let font := fs.get keep[k]!
     let used := usedPerFont[k]!
-    let baseFont := pdfName font.psName
+    let baseFont := font.psName
     let ascent1000 := font.ascent * 1000 / font.unitsPerEm
     let descent1000 := font.descent * 1000 / font.unitsPerEm
     -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
@@ -987,7 +1031,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- keeps the conventional -12°.
     let capHeight1000 := font.capHeight * 1000 / font.unitsPerEm
     let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
-    let cidToGid := if font.isCff then "" else " /CIDToGIDMap /Identity"
+    let cidToGid : Array (String × PdfRead.Obj) :=
+      if font.isCff then #[] else #[("CIDToGIDMap", .name "Identity")]
     let fontFileKey := if font.isCff then "FontFile3" else "FontFile2"
     let italicAngle := if font.italicAngle == 0 && font.isItalic then -12
       else font.italicAngle
@@ -998,21 +1043,33 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- hinting data the parser does not keep), so these are the trade's
     -- usual values, not measurements.
     let stemV := if font.isBold then 140 else 80
-    [(ObjTable.type0Id k,
-      s!"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{ObjTable.cidId k} 0 R] /ToUnicode {ObjTable.toUniId k} 0 R >>"),
-     (ObjTable.cidId k,
-      s!"<< /Type /Font /Subtype /{cidSubtype} /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {ObjTable.fdId k} 0 R /DW 1000 /W {wArray font used}{cidToGid} >>"),
-     (ObjTable.fdId k,
-      s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {capHeight1000} /StemV {stemV} /{fontFileKey} {t.fileId k} 0 R >>")]
-  let annots (i : Nat) : String :=
+    [(ObjTable.type0Id k, PdfRead.Obj.dict
+      #[("Type", .name "Font"), ("Subtype", .name "Type0"), ("BaseFont", .name baseFont),
+        ("Encoding", .name "Identity-H"),
+        ("DescendantFonts", .arr #[.ref (ObjTable.cidId k) 0]),
+        ("ToUnicode", .ref (ObjTable.toUniId k) 0)]),
+     (ObjTable.cidId k, PdfRead.Obj.dict
+      (#[("Type", PdfRead.Obj.name "Font"), ("Subtype", .name cidSubtype),
+         ("BaseFont", .name baseFont),
+         ("CIDSystemInfo", .dict #[("Registry", litObj "(Adobe)"),
+           ("Ordering", litObj "(Identity)"), ("Supplement", .int 0)]),
+         ("FontDescriptor", .ref (ObjTable.fdId k) 0), ("DW", .int 1000),
+         ("W", wArray font used)] ++ cidToGid)),
+     (ObjTable.fdId k, PdfRead.Obj.dict
+      #[("Type", .name "FontDescriptor"), ("FontName", .name baseFont), ("Flags", .int flags),
+        ("FontBBox", .arr #[.int (-1000), .int descent1000, .int 2000, .int ascent1000]),
+        ("ItalicAngle", .int italicAngle), ("Ascent", .int ascent1000),
+        ("Descent", .int descent1000), ("CapHeight", .int capHeight1000),
+        ("StemV", .int stemV), (fontFileKey, .ref (t.fileId k) 0)])]
+  let annots (i : Nat) : Array (String × PdfRead.Obj) :=
     let rects := linkRects geom pages[i]!
-    if rects.isEmpty then "" else
-      let entries := rects.toList.map fun (x0, y0, x1, y1, url) =>
-        s!"<< /Type /Annot /Subtype /Link /Rect [{x0.toPtString} {y0.toPtString} " ++
-        s!"{x1.toPtString} {y1.toPtString}] /Border [0 0 0] /F 4 " ++
-        s!"/A << /S /URI /URI ({pdfString url}) >> >>"
-      " /Annots [" ++ String.intercalate " " entries ++ "]"
-  let pageDict (i : Nat) :=
+    if rects.isEmpty then #[] else
+      #[("Annots", .arr (rects.map fun (x0, y0, x1, y1, url) =>
+        .dict #[("Type", .name "Annot"), ("Subtype", .name "Link"),
+          ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
+          ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4),
+          ("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString url})")])]))]
+  let pageDict (i : Nat) : PdfRead.Obj :=
     -- With bleed the medium is larger than the finished page, and the
     -- boxes follow from the declared trim size and bleed (`pageBoxes`,
     -- nesting proved by `pageBoxes_nest`) — the file itself tells
@@ -1023,43 +1080,53 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- — and the zero-bleed output stays byte-identical.
     let b := geom.bleed
     let (media, bleedBox, trim) := pageBoxes geom.pageW geom.pageH b
-    let boxes := if b == 0 then "" else
-      s!" /TrimBox {trim.render} /BleedBox {bleedBox.render} /ArtBox {trim.render}"
-    let xobj := if ni == 0 then "" else
-      " /XObject << " ++ String.intercalate " "
-        (t.imgIds.toList.zipIdx.map fun (id, n) => s!"/Im{n + 1} {id} 0 R") ++ " >>"
+    let boxes : Array (String × PdfRead.Obj) := if b == 0 then #[] else
+      #[("TrimBox", trim.obj), ("BleedBox", bleedBox.obj), ("ArtBox", trim.obj)]
+    let xobj : Array (String × PdfRead.Obj) := if ni == 0 then #[] else
+      #[("XObject", .dict (t.imgIds.zipIdx.map fun (id, n) =>
+        (s!"Im{n + 1}", PdfRead.Obj.ref id 0)))]
     -- `/StructParents` (§14.7.5.4): the page's key in the parent tree,
     -- under which its marked-content identifiers map back to elements.
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {t.contentId i} 0 R /StructParents {i} >>"
+    let ann := annots i
+    .dict (#[("Type", PdfRead.Obj.name "Page"), ("Parent", .ref 2 0), ("MediaBox", media.obj)]
+      ++ boxes
+      ++ #[("Resources", .dict (#[("Font", fontResources)] ++ xobj))]
+      ++ ann
+      ++ #[("Contents", .ref (t.contentId i) 0), ("StructParents", .int i)])
   -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
   -- with the BOM past ASCII — never raw UTF-8 bytes, which a reader
   -- decodes as PDFDocEncoding.
-  let infoEntry (key : String) (v : Option String) : String :=
+  let infoEntry (key : String) (v : Option String) : Array (String × PdfRead.Obj) :=
     match v with
-    | some s => s!" /{key} {pdfTextString s}"
-    | none => ""
-  let infoDict :=
-    "<<" ++ infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
-    infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
-    s!" /Producer (leantex) >>"
+    | some s => #[(key, litObj (pdfTextString s))]
+    | none => #[]
+  let infoDict : PdfRead.Obj := .dict
+    (infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
+      infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
+      #[("Producer", litObj "(leantex)")])
 
   -- Outline items: /Title and /Parent always; a resolved in-document
   -- target is a /Dest to its page (/XYZ null null null keeps the reader's
   -- view), an external target a URI action, and a target that resolved to
   -- neither is a bare item — an outline item need carry no destination.
-  let outlineObjs : List (Nat × String) :=
+  let outlineObjs : List (Nat × PdfRead.Obj) :=
     if nOut == 0 then [] else
-      (t.outlineRootId,
-        s!"<< /Type /Outlines /First {t.outlineItemId 0} 0 R /Last {t.outlineItemId (nOut - 1)} 0 R /Count {nOut} >>") ::
+      (t.outlineRootId, PdfRead.Obj.dict
+        #[("Type", .name "Outlines"), ("First", .ref (t.outlineItemId 0) 0),
+          ("Last", .ref (t.outlineItemId (nOut - 1)) 0), ("Count", .int nOut)]) ::
       outline.toList.zipIdx.map fun (e, k) =>
-        let prev := if k == 0 then "" else s!" /Prev {t.outlineItemId (k - 1)} 0 R"
-        let next := if k + 1 == nOut then "" else s!" /Next {t.outlineItemId (k + 1)} 0 R"
-        let target := match e.page, e.url with
-          | some p, _ => s!" /Dest [{t.pageId p} 0 R /XYZ null null null]"
-          | none, some u => s!" /A << /S /URI /URI ({pdfString u}) >>"
-          | none, none => ""
-        (t.outlineItemId k,
-          s!"<< /Title {pdfTextString e.title} /Parent {t.outlineRootId} 0 R{prev}{next}{target} >>")
+        let prev : Array (String × PdfRead.Obj) :=
+          if k == 0 then #[] else #[("Prev", .ref (t.outlineItemId (k - 1)) 0)]
+        let next : Array (String × PdfRead.Obj) :=
+          if k + 1 == nOut then #[] else #[("Next", .ref (t.outlineItemId (k + 1)) 0)]
+        let target : Array (String × PdfRead.Obj) := match e.page, e.url with
+          | some p, _ =>
+            #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
+          | none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString u})")])]
+          | none, none => #[]
+        (t.outlineItemId k, PdfRead.Obj.dict
+          (#[("Title", litObj (pdfTextString e.title)),
+             ("Parent", PdfRead.Obj.ref t.outlineRootId 0)] ++ prev ++ next ++ target))
   -- The structure tree (§14.7): the root over the `Document` element, the
   -- parent tree as one number-tree node keyed by page (`/StructParents`),
   -- the PDF 2.0 namespace the elements name (§14.7.4 — `Title`, `FENote`,
@@ -1068,52 +1135,56 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- its type, parent, kids as marked-content references (`/MCR`, §14.7.5.3
   -- — the page travels with the identifier, so an element may span
   -- pages), and the alternative or language it carries.
-  let elemRef (i : Nat) : String := s!"{t.structElemId i} 0 R"
-  let structRoot :=
-    s!"<< /Type /StructTreeRoot /K [{elemRef 0}] /ParentTree {t.parentTree} 0 R \
-/ParentTreeNextKey {np} /Namespaces [{t.namespaceId} 0 R] >>"
-  let parentEntry (i : Nat) : String :=
-    let refs := (parentTree[i]?.getD #[]).toList.map fun o => match o with
+  let elemRef (i : Nat) : PdfRead.Obj := .ref (t.structElemId i) 0
+  let structRoot : PdfRead.Obj := .dict
+    #[("Type", .name "StructTreeRoot"), ("K", .arr #[elemRef 0]),
+      ("ParentTree", .ref t.parentTree 0), ("ParentTreeNextKey", .int np),
+      ("Namespaces", .arr #[.ref t.namespaceId 0])]
+  let parentEntries : Array PdfRead.Obj := (Array.range np).flatMap fun (i : Nat) =>
+    #[PdfRead.Obj.int (i : Int), .arr ((parentTree[i]?.getD #[]).map fun o => match o with
       | some e => elemRef e
-      | none => "null"
-    s!"{i} [{String.intercalate " " refs}]"
-  let parentTreeObj :=
-    "<< /Nums [" ++ String.intercalate " " ((List.range np).map parentEntry) ++ "] >>"
-  let namespaceObj := "<< /Type /Namespace /NS (http://iso.org/pdf2/ssn) >>"
-  let kidRef (k : StructKid) : String := match k with
-    | .elem i => elemRef i
-    | .mcid p m => s!"<< /Type /MCR /Pg {t.pageId p} 0 R /MCID {m} >>"
-    -- a placeholder `fill` did not replace: none remain after `fill`, and
-    -- one would be a leaf with no marked content, which lists nothing
-    | .leaf _ => ""
-  let optText (key : String) : Option String → String
-    | some v => s!" /{key} {pdfTextString v}"
-    | none => ""
-  let structElemObj (e : StructElem) : String :=
-    let parentRef := match e.parent with
+      | none => .null)]
+  let parentTreeObj : PdfRead.Obj := .dict #[("Nums", .arr parentEntries)]
+  let namespaceObj : PdfRead.Obj := .dict
+    #[("Type", .name "Namespace"), ("NS", litObj "(http://iso.org/pdf2/ssn)")]
+  -- a placeholder `fill` did not replace: none remain after `fill`, and
+  -- one would be a leaf with no marked content, which lists nothing
+  let kidObj (k : StructKid) : Array PdfRead.Obj := match k with
+    | .elem i => #[elemRef i]
+    | .mcid p m => #[.dict #[("Type", .name "MCR"), ("Pg", .ref (t.pageId p) 0), ("MCID", .int m)]]
+    | .leaf _ => #[]
+  let optText (key : String) : Option String → Array (String × PdfRead.Obj)
+    | some v => #[(key, litObj (pdfTextString v))]
+    | none => #[]
+  let structElemObj (e : StructElem) : PdfRead.Obj :=
+    let parentRef : PdfRead.Obj := match e.parent with
       | some p => elemRef p
-      | none => s!"{t.structTreeRoot} 0 R"
-    let kids := (e.kids.toList.map kidRef).filter (· != "")
-    let kidsEntry := if kids.isEmpty then "" else s!" /K [{String.intercalate " " kids}]"
-    let attrsEntry := if e.attrs.isEmpty then "" else
-      " /A << " ++ String.intercalate " " (e.attrs.toList.map fun (k, v) => s!"/{k} {v}") ++ " >>"
-    let nsEntry := if e.ns20 then s!" /NS {t.namespaceId} 0 R" else ""
-    s!"<< /Type /StructElem /S /{e.s} /P {parentRef}{nsEntry}{kidsEntry}\
-{optText "Alt" e.alt}{optText "Lang" e.lang}{optText "ActualText" e.actualText}{attrsEntry} >>"
-  let structObjs : List (Nat × String) :=
+      | none => .ref t.structTreeRoot 0
+    let kids := e.kids.flatMap kidObj
+    let kidsEntry : Array (String × PdfRead.Obj) :=
+      if kids.isEmpty then #[] else #[("K", .arr kids)]
+    let attrsEntry : Array (String × PdfRead.Obj) := if e.attrs.isEmpty then #[] else
+      #[("A", .dict e.attrs)]
+    let nsEntry : Array (String × PdfRead.Obj) :=
+      if e.ns20 then #[("NS", .ref t.namespaceId 0)] else #[]
+    .dict (#[("Type", PdfRead.Obj.name "StructElem"), ("S", .name e.s), ("P", parentRef)]
+      ++ nsEntry ++ kidsEntry
+      ++ optText "Alt" e.alt ++ optText "Lang" e.lang ++ optText "ActualText" e.actualText
+      ++ attrsEntry)
+  let structObjs : List (Nat × PdfRead.Obj) :=
     [(t.structTreeRoot, structRoot), (t.parentTree, parentTreeObj), (t.namespaceId, namespaceObj)]
     ++ es.toList.zipIdx.map fun (e, i) => (t.structElemId i, structElemObj e)
-  let compressed : List (Nat × String) :=
+  let compressed : List (Nat × PdfRead.Obj) :=
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
     (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs
 
   -- object stream payload
   let mut header := ""
-  let mut payload := ""
+  let mut payload := ByteArray.empty
   for (id, body) in compressed do
-    header := header ++ s!"{id} {payload.utf8ByteSize} "
-    payload := payload ++ body ++ "\n"
-  let objStmData := header ++ payload
+    header := header ++ s!"{id} {payload.size} "
+    payload := (payload ++ PdfRead.Obj.render body).push 10
+  let objStmData := header.toUTF8 ++ payload
   let first := header.utf8ByteSize
 
   -- assemble the file
@@ -1273,7 +1344,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   offs := offs.set! t.xmpId (some xmpOff)
 
   let (w3, osOff) := putFlate w t.objStmId
-    s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData.toUTF8
+    s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData
   w := w3
   offs := offs.set! t.objStmId (some osOff)
   -- Where the object stream holds each compressed object, by id.

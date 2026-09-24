@@ -134,22 +134,34 @@ list.
 - `write_fonts_embedded` — the writer's own output passes the census
   `fonts.all_embedded` now reads: for an image-free document, every font
   `Pdf.write` names is embedded by the bytes' own account
-  (`PdfCensus.census`). Blocked on the dictionary typing — `write` spells
-  its dictionaries as strings, and nothing equates a spelled `/FontFile2`
-  with the `Obj` the parser returns for it; the factorization is the
-  sites as `PdfRead.Obj` plus one `Obj.render` with `parseVal_render_id`.
-  The in-suite witness is the written-PDF census row in Tests/Backends,
-  the oracle `pdffonts` over the corpus.
+  (`PdfCensus.census`). Blocked on two walls: the census reads the fonts
+  out of the deflated object stream, so the row sits behind
+  `inflate_deflate_id`; and the inversion of the writer's own spelling,
+  `parseVal_render_id`. The dictionary typing the record asked for is
+  done (2026-09-24). The in-suite witness is the written-PDF census row
+  in Tests/Backends, the oracle `pdffonts` over the corpus.
 - `write_readXref_exact` — the writer and the engine's reader agree on the
   cross-reference: `readXref` follows every file `Pdf.write` emits to a
   catalog at object 1 and a trailer `/Size` equal to the listed objects
   plus one (the `/Index [0 size]` the writer computed, read back).
-  Artifact-specific (`_exact`), no IR statement behind it. Blocked on
-  `write` being one `Id.run` over a mutable writer whose size and offsets
-  are locals; the factorization is the layout/serialize split
-  (`ObjTable`, then `serialize` with offsets by construction). The
+  Artifact-specific (`_exact`), no IR statement behind it. Blocked on the
+  deflated cross-reference stream (hence on `inflate_deflate_id`) and on
+  `write` still being one `Id.run` over a mutable writer whose offsets are
+  locals; the layout half of the factorization is done (`ObjTable` with
+  `objTable_ids_exact`, and the typed dictionaries), what remains is
+  `serialize` with offsets by construction. The
   executable witness is the reference walk in Tests/PdfConformance over
   every corpus PDF and its six mutants.
+- `parseVal_render_id` — the writer's spelling and the engine's reader are
+  inverse on every object the writer can build: parsing the bytes
+  `Obj.render` emits yields that object and consumes exactly them. The
+  keystone `write_fonts_embedded` and `write_readXref_exact` both need.
+  Blocked on `parseVal` being one `Id.run` whose `Frame` stack is mutated
+  inside a bounded `for` with eight early returns, with every helper it
+  calls the same shape; the factorization is the reader's core as explicit
+  recursion on the remaining bytes, the stack becoming the recursion. The
+  executable witnesses are the reference walk in Tests/PdfConformance and
+  the written-census rows in Tests/Backends.
 - `lines_attributed_covers` — the attribution channel covers the ink, weak
   public form: in a document of plain text paragraphs, every non-furniture
   line that ships ink names a structure leaf (`LineOut.leaf`), an index
@@ -11981,3 +11993,110 @@ Evidence: `lake build` and `lake build Obligations` clean, zero warnings;
 the queue is 25 rows, down three. `scripts/bench.lean` was not run and is not
 owed: no executable code changed — `Loop.lean` is five theorems, `Compat`
 gained two, and `Obligations` is outside the build. No goldens move.
+
+
+### 2026-09-24 — a dictionary spelled as a string cannot be read back, and hid two defects doing it
+
+`Pdf.write` spelled its twelve dictionaries as interpolated strings. Two
+owed statements — `write_fonts_embedded` (the writer's own output passes
+the font census) and `write_readXref_exact` (the engine's reader follows
+the engine's writer) — both named the same wall: nothing equates a spelled
+`/FontFile2 n 0 R` with the `Obj` the parser returns for it. The
+factorization both records prescribed: the dictionary sites typed as
+`PdfRead.Obj`, rendered by one `Obj.render`, with `parseVal_render_id` the
+inversion between them.
+
+**The split, as landed.** `Obj.render` lives in `PdfRead.lean`, beside the
+`parseVal` it inverts and the `parseName` its `escapeName` inverts: the
+render/parse pair is one module's fact. It emits `ByteArray`, not `String`
+— `Obj.str` keeps its verbatim payload with delimiters, by design, and a
+literal string's bytes need not be valid UTF-8, so a `String` renderer
+would corrupt exactly the constructor whose point is that it cannot be
+corrupted. The walk threads the buffer it appends to (`renderInto` with
+`List` companions for arrays and entries), so a nested dictionary copies
+nothing already written. Arrays separate elements with one space,
+dictionaries pad their delimiters and follow each entry with a space:
+`<< /Type /Catalog /Pages 2 0 R >>`.
+
+On the writer's side every compressed object is now a value: the catalog
+(and `langEntry`/`markedEntry`/`viewerEntry` with it), the page tree, the
+three font objects per face, the descriptor, `/W`, the Info dictionary, the
+outline root and its items, every page dictionary with its link
+annotations and boxes, the structure tree root, the parent tree, the
+namespace, and every structure element. `ptObj` and `ratObj` decide
+integer-versus-real by the same arithmetic the point spelling uses, because
+a writer that spelled every length `.real` would build values its own
+reader never returns and `parseVal_render_id` would be false of it rather
+than merely unproved. `StructElem.attrs` changed from
+`Array (String × String)` to `Array (String × PdfRead.Obj)`: it was the one
+dictionary slot that could still smuggle pre-rendered bytes past the
+renderer, and it is empty in every document today, so the type change costs
+nothing and closes the hole before it is used.
+
+`pdf_lang_declared` and `pdf_marked_declared` moved with the catalog. They
+were statements about a substring of a spelling; they are now statements
+about the typed entries — strictly stronger, and about the thing a reader
+sees.
+
+**Two spelling defects only a renderer could see.** A single canonical
+`Obj.render` cannot reproduce two of the writer's spellings, because both
+were accidents of interpolating an empty fragment:
+
+- `/W [ 3 [500] 7 [600] ]` — the CID font's width array carried a space
+  inside each delimiter, where every other array in the file carries none.
+- `<<  /Filter /FlateDecode /Length 999 >>` — a stream whose dictionary has
+  no extra entries spells `<< {dict} /Length …` with `dict` empty, leaving
+  two spaces. Every content stream and every ToUnicode in every file.
+
+Both are semantically null: PDF treats the whitespace as a separator, every
+reader on the matrix accepts both, and no test in the suite could tell them
+apart. That is the point. Twelve sites were canonical and two were not, and
+nothing in the tree knew — a string spelling has no invariant to violate.
+The respell is the first commit, isolated so the split itself is
+byte-identical, and measured: 178 `/W` lines across the 76 golden fixtures
+change, plus the object-stream header offsets that follow from them; no
+other content line moves in any file. The `<<  /Filter` defect is the
+serialize half's and is recorded in `write_readXref_exact`'s blocker,
+because the split that fixes it is the one that row still needs.
+
+**Byte-identity.** Every golden fixture built the way the driver builds it
+(`Tests.Artifact.driverPdf`, the one spelling every artifact claim reads)
+and hashed before and after. The typed split moves nothing: 76 of 76
+fixtures identical, aggregate
+`d98c4f5a8baa93a66bf745c5886731e85289a897ed3fcab77eee0613e5bd7a87` over the
+per-file sums, unchanged across the change. `lake test` green throughout,
+`Tests/PdfConformance`'s reference walk and its six mutants included. No
+golden moves; the goldens record IR dumps and a writer change is not
+elaboration.
+
+**What the split did not close, and the wall that was not in the record.**
+Neither owed statement closes, and the reason is one the records did not
+name. `PdfCensus.census` reads its font dictionaries out of the object
+stream, and `readXref` reads its rows out of the cross-reference stream.
+`write` deflates both whenever deflate is smaller, which on this corpus is
+always: measured, 76 of 76 fixtures carry `/Filter /FlateDecode` on both
+their `/Type /ObjStm` and their `/Type /XRef` object. So both rows compose
+through `Flate.inflate` and both sit behind `inflate_deflate_id` — an owed
+statement of another module, whose own blocker is the encoder's shape. A
+perfect split of the writer would not have moved either row. Both blockers
+now say so.
+
+The keystone is staged as its own row, `parseVal_render_id`, with the wall
+it actually has: `parseVal` is one `Id.run` whose `Frame` stack is mutated
+inside `for _ in [0:b.size + 2]` with eight early returns, and `forIn` over
+a `Std.Range` carries no equational theory an induction over `Obj` can
+enter. Every helper its arms call — `parseName`, `scanNumber`,
+`scanLitString` — is a bounded `for` of the same shape, so the wall is
+uniform rather than confined to the driver, and the factorization is the
+reader's core as explicit recursion on the remaining bytes with the stack
+becoming the recursion. This is the same class of wall the loop-shaped rows
+elsewhere name; it is not a tactic problem and no budget raise touches it.
+The statement's side conditions (`renderable`: a name is non-empty, a
+real's spelling holds a point, a string's payload opens with its own
+delimiter) are honest consequences of what the reader returns, and `ptObj`,
+`ratObj` and `litObj` produce exactly them.
+
+**The rule this leaves.** A dictionary is a value, not a spelling. The
+writer emits bytes at one site, `Obj.render`, and a dictionary entry whose
+value is a pre-rendered fragment is a defect waiting for a renderer to find
+it — two were.

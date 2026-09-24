@@ -110,7 +110,7 @@ inductive Obj where
   | arr (xs : Array Obj)
   | dict (es : Array (String × Obj))
   | ref (num : Nat) (gen : Nat)
-  deriving Inhabited
+  deriving Inhabited, BEq
 
 def Obj.get? (o : Obj) (k : String) : Option Obj :=
   match o with
@@ -342,6 +342,82 @@ def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) := Id.run d
         | none, _ => return .error "malformed PDF: a dictionary key is not a name"
         | some k, _ => stack := stack.set! (stack.size - 1) (.dct (es.push (k, v)) none)
   return .error "malformed PDF: an object nests deeper than the file is long"
+
+-- ## Rendering an object back to bytes (§7.3)
+
+/-- A nibble as its uppercase hex digit — the spelling `#xx` escapes and
+`parseName`'s `hexVal` read back. -/
+private def hexChar (n : Nat) : Char :=
+  let d := n % 16
+  if d < 10 then Char.ofNat (48 + d) else Char.ofNat (55 + d)
+
+/-- A name's escape (§7.3.5), the inverse of `parseName`'s decoding: a byte
+a name may carry stands, anything else rides as `#xx`. The writer's
+escaper, stated beside the reader's decoder so the pair's inversion is one
+module's fact. An empty name is not writable — `/` alone names nothing —
+so the fallback names the object instead, and every inversion over names
+carries `s ≠ ""` as its side condition. -/
+def escapeName (s : String) : String := Id.run do
+  let mut out := ""
+  for c in s.toList do
+    if c.isAlphanum || c == '-' || c == '.' then
+      out := out.push c
+    else
+      out := out ++ "#" ++ String.ofList [hexChar (c.toNat / 16), hexChar c.toNat]
+  return if out == "" then "Embedded" else out
+
+/-! ### `render`, the writer's one spelling
+
+The bytes one object is written as. Bytes rather than a `String` because
+`.str` keeps its verbatim payload, delimiters included, and a literal
+string's bytes need not be valid UTF-8. Arrays separate their elements
+with one space; a dictionary pads its delimiters and follows every entry
+with a space — the canonical spelling `<< /Type /Catalog >>` reads as.
+The walk threads the buffer it appends to, so a nested dictionary costs no
+copy of the bytes already written. -/
+
+mutual
+
+def Obj.renderInto (acc : ByteArray) : Obj → ByteArray
+  | .null => acc ++ "null".toUTF8
+  | .bool true => acc ++ "true".toUTF8
+  | .bool false => acc ++ "false".toUTF8
+  | .int n => acc ++ (toString n).toUTF8
+  | .real raw => acc ++ raw.toUTF8
+  | .str raw => acc ++ raw
+  | .name n => acc ++ ("/" ++ escapeName n).toUTF8
+  | .arr xs => (Obj.renderList (acc.push 91) xs.toList).push 93
+  | .dict es => Obj.renderEntries (acc ++ "<< ".toUTF8) es.toList ++ ">>".toUTF8
+  | .ref num gen => acc ++ (s!"{num} {gen} R").toUTF8
+
+/-- The `List` companion for an array's elements, one space between. -/
+def Obj.renderList (acc : ByteArray) : List Obj → ByteArray
+  | [] => acc
+  | [x] => Obj.renderInto acc x
+  | x :: rest => Obj.renderList ((Obj.renderInto acc x).push 32) rest
+
+/-- The `List` companion for a dictionary's entries: `/Key value`, each
+followed by a space. -/
+def Obj.renderEntries (acc : ByteArray) : List (String × Obj) → ByteArray
+  | [] => acc
+  | (k, v) :: rest =>
+    Obj.renderEntries ((Obj.renderInto (acc ++ ("/" ++ escapeName k ++ " ").toUTF8) v).push 32) rest
+
+end
+
+/-- The bytes one object is written as — the writer's single spelling, so
+what a dictionary *is* and how it reads are one value and one function
+(`parseVal_render_id`). -/
+def Obj.render (o : Obj) : ByteArray := Obj.renderInto ByteArray.empty o
+
+/-- An object shows as the bytes it is written as: the one spelling, so a
+diagnostic and a file never disagree. A payload outside UTF-8 (a hex
+string's raw bytes) shows its size instead. -/
+instance : Repr Obj where
+  reprPrec o _ :=
+    match String.fromUTF8? (Obj.render o) with
+    | some s => Std.Format.text s
+    | none => Std.Format.text s!"<{(Obj.render o).size} bytes>"
 
 -- ## The cross-reference (§7.5)
 

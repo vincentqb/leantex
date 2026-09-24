@@ -308,7 +308,7 @@ theorem decodeBin_encodeBin_id (i : Image.Plan) (hb : binBounded i) :
 -- owed: write_fonts_embedded
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
--- blocker: the statement crosses the string writer and the byte parser: `write` spells its twelve dictionaries as interpolated strings, and no equation connects a spelled `/FontFile2 n 0 R` to the `Obj` `parseVal` returns for it. The factorization: the dictionary sites typed as `PdfRead.Obj`, rendered by one `Obj.render`, with `parseVal_render_id` (`_id`, stated when `render` exists) — then the census over `write`'s output is the census over the values `write` built, and the font arm is a fold over `keepFaces`.
+-- blocker: two walls, one of them not the record's original. (1) The census reads the fonts out of the *object stream*, which `write` always deflates (measured: 76 of 76 golden fixtures), so `PdfCensus.census ∘ Pdf.write` runs through `Flate.inflate` and this row sits behind `inflate_deflate_id` — a statement this module does not own and whose own blocker is the encoder's shape. (2) The string/parser crossing the record named is now half closed: the dictionary sites are `PdfRead.Obj` values rendered by one `Obj.render` (2026-09-24), so what remains of it is `parseVal_render_id` — the inversion, blocked on `parseVal`'s loop. With both, the census over `write`'s output becomes the census over the values `write` built and the font arm is a fold over `keepFaces`.
 -- goldens: no
 /-- The writer embeds every font it names: for an image-free document
 (no copied graph can bring a foreign face), the census of the bytes
@@ -325,6 +325,7 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-conformance-gate slice (modern output, wave 1 S3; pdf-validation F/gap 1–2, S3 red 1–2): the engine's own reader accepts every file the engine writes — today the executable witness is the reference walk over every corpus PDF in Tests/PdfConformance (`walkPdf`) and the six mutants it refuses by name.
 -- blocker: `write` is one `Id.run` with a mutable `Wr` and a `locs` table it fills as it goes, and what is owed of it is a *value* claim — which offset stands where — so the loop-reading layer (`LeanTex.Core.Loop`, 2026-09-24) does not reach it: an invariant over the writer's state cannot say what the table holds at row k. No equation connects the offsets it wrote into the cross-reference stream to the positions `readXref` parses them back from; the size it computed (`xrefId + 1`) is a local of that block, which is why the statement reads the trailer's `/Size` instead. The factorization: the layout/serialize split — an `ObjTable` of typed objects with their ids (M7-12 begins it) and a later `serialize : ObjTable → … → ByteArray × Array Loc` whose offsets are the table's by construction; then `readXref ∘ serialize` is a fold over the rows and `/Size` is the table's length plus one.
+-- blocker: two walls, one of them not the record's original. (1) `readXref` parses the cross-reference *stream*, which `write` always deflates (measured: 76 of 76 golden fixtures carry `/Filter /FlateDecode` on their `/Type /XRef` object), so `readXref ∘ Pdf.write` runs through `Flate.inflate` and this row sits behind `inflate_deflate_id` — a statement this module does not own. (2) `write` is still one `Id.run` with a mutable `Wr` and a `locs` table it fills as it goes, so no equation connects the offsets it wrote into the cross-reference stream to the positions `readXref` parses them back from; the size it computed (`xrefId + 1`) is a local of that block, which is why the statement reads the trailer's `/Size` instead. The layout half of the factorization is done — `ObjTable` holds every id with `objTable_ids_exact`/`_inj`/`_covers`, and the dictionaries are now typed values (2026-09-24) — so what remains is `serialize : Array Row → ByteArray × Array Loc` whose offsets are the fold's by construction; then `readXref ∘ serialize` is a fold over the rows and `/Size` is the table's length plus one. Note the serialize split cannot be byte-identical as the writer stands: a stream whose dictionary carries no extra entries spells `<<  /Filter` with the stray space an empty interpolation leaves, which one canonical renderer cannot reproduce.
 -- goldens: no
 /-- The writer and the engine's reader agree on the cross-reference
 (`_exact`, artifact-specific: a fact of the file's own bookkeeping, with
@@ -338,6 +339,63 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     ∃ x, PdfRead.readXref (Pdf.write geom fs pages info imgs outline streams) = .ok x ∧
       x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
+  sorry
+
+/-! The objects this writer can build, as the side conditions its spelling
+carries — Bool with `List` companions so the walk is structural: a name is
+non-empty (`escapeName` renames the empty name), a real's spelling holds a
+point (a dotless real reads back `.int`), and a string's payload opens with
+its own delimiter, `(` or `<`, as `Obj.str` keeps it. The writer's `ptObj`,
+`ratObj` and `litObj` produce exactly these. -/
+mutual
+
+def renderableB : PdfRead.Obj → Bool
+  | .null => true
+  | .bool _ => true
+  | .int _ => true
+  | .ref _ _ => true
+  | .real raw => raw.contains '.'
+  | .str raw => 2 ≤ raw.size && (raw[0]? == some 40 || raw[0]? == some 60)
+  | .name n => n != ""
+  | .arr xs => renderableList xs.toList
+  | .dict es => renderableEntries es.toList
+
+def renderableList : List PdfRead.Obj → Bool
+  | [] => true
+  | x :: rest => renderableB x && renderableList rest
+
+def renderableEntries : List (String × PdfRead.Obj) → Bool
+  | [] => true
+  | (k, v) :: rest => k != "" && renderableB v && renderableEntries rest
+
+end
+
+def renderable (o : PdfRead.Obj) : Prop := renderableB o = true
+
+-- owed: parseVal_render_id
+-- owner: LeanTex.Core.PdfRead
+-- source: the pdfobj factorization (2026-09-24), the keystone `write_fonts_embedded` and `write_readXref_exact` both name: `Obj.render` now exists, so every dictionary the writer emits is a typed value and the census over `write`'s bytes can become the census over the values `write` built — once the round trip is a theorem. The executable witnesses are the reference walk over every corpus PDF in Tests/PdfConformance and the written-census rows in Tests/Backends, which read back exactly these values.
+-- blocker: `parseVal` is one `Id.run` whose state is a `Frame` stack mutated inside `for _ in [0:b.size + 2]` with eight early returns, and `forIn` over a `Std.Range` carries no equational theory an induction over `Obj` can enter — the same wall the nine loop-shaped rows name. Every helper the arms call (`parseName`, `scanNumber`, `scanLitString`) is a bounded `for` of the same shape, so the wall is uniform and not confined to the driver. The factorization: the reader's core as explicit recursion on the remaining bytes (`b.size - i` decreases because every arm consumes at least one byte, so the advance lemmas per helper are the measure facts), the stack becoming the recursion, and then the inversion is induction on the object with one arm per constructor. The side conditions the statement carries are honest and not the wall: a name is non-empty (`escapeName` renames the empty name), a `.real` spelling contains a point (a dotless real reads back `.int`), and a `.str` payload is a balanced literal or a closed hex string — the writer's `ptObj`, `ratObj` and `litObj` produce exactly these.
+-- goldens: no
+/-- The writer's spelling and the engine's reader are inverse on every
+object the writer can build (`_id`): parsing the bytes `render` emits
+yields that object and consumes exactly them. The keystone both write-side
+census statements need — with it, the census over the file's bytes is the
+census over the values `write` built. -/
+theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
+    PdfRead.parseVal (PdfRead.Obj.render o) 0 = .ok (o, (PdfRead.Obj.render o).size) := by
+  sorry
+
+-- owed: skeleton_leafKids_nodup
+-- owner: LeanTex.Core.PdfStruct
+-- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the structure elements hold each leaf's marked content once — the hypothesis `parentTree_covers` reads, and what makes the leaf tags a function (`leafTags`) rather than a last-writer-wins fold; the executable witness is the per-fixture row "every leaf placeholder is held by exactly one element" in Tests/Backends.
+-- blocker: the skeleton walk threads an element accumulator through a mutual recursion (`skelList`/`skelStep`) that also modifies earlier elements in place (`pushElem`, `addKid`), so the census of its `.leaf` placeholders needs the accumulator-generalised statement `leafKids (skelList es …) = leafKids es ++ <the tree's leaf ids outside asides>` proved through `Array.modify`'s equational theory before `structTree_leaves_id` (the ids are `range n`) gives the nodup; the heading census (`pdf_headings_covers`) went the same route and is closed — this row is the leaf half of that induction.
+-- goldens: no
+/-- The skeleton holds every leaf of a document's structure tree at most
+once: no two elements carry the same `.leaf k` placeholder, so a leaf's
+marked content lands in one element and the parent tree names it. -/
+theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
+    (Pdf.leafKids (Pdf.skeleton (Struct.ofDoc doc))).Nodup := by
   sorry
 
 -- owed: parentTree_covers
