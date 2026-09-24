@@ -4093,6 +4093,18 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Compat.themeAsking.length == 5 &&
      (Compat.themeAsking.map (·.2)).eraseDups.length == 5 &&
      Compat.themeAsking.all fun (_, pre) => pre.startsWith "beamer")
+  -- With no file to answer it, every slot is still *named* as a theme slot.
+  -- The inner and outer slots used to draw W0301 "unknown command" with
+  -- help offering `\define` — advice for a macro, not for a sub-theme — so
+  -- the one slot in the family the engine could not read was also the one it
+  -- could not describe.
+  let dsF := (Elab.run "d.tex" (deck169
+    "\\useinnertheme{invented}\\useoutertheme{invented}" "x")).2
+  t "a theme slot with no file beside the document is named as configuration"
+    (dsF.all (·.code != "W0301") &&
+     (dsF.filter (·.code == "W0104")).size ≥ 2 &&
+     dsF.all fun d => d.code != "W0104" ||
+       ((d.help.getD "").splitOn "\\theme").length == 2)
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

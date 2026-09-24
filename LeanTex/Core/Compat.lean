@@ -202,6 +202,8 @@ neither are `\usefonttheme` and `\setbeameroption`, whose own arms silence
 the one argument each that asks for what the engine already does. -/
 def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
+   ("useinnertheme", 1),
+   ("useoutertheme", 1),
    ("addtobeamertemplate", 3),
    ("setbeamerfont", 2),
    ("metroset", 1),
