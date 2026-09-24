@@ -323,6 +323,14 @@ structure CensusLine where
   /-- A counted body line (`Layout.LineOut.counted`): a galley text line
   the line-number census counts — what a margin number attaches to. -/
   counted : Bool := false
+  /-- The face every glyph run on the line sets in, in run order: the
+  `FontSet` index the layout resolved. What a fact about *which family*
+  ink sets in reads — a picture's node label must set in the face the
+  body sets in, and only the shipped run can say which face that was
+  (`Picture.labelFace_agree`'s page side). Under a one-face set every
+  entry is 0 and the channel says nothing; `twoSlotOf` is the set that
+  distinguishes the slots. -/
+  runFonts : Array Nat := #[]
 
 structure CensusPage where
   lines : Array CensusLine
@@ -353,6 +361,13 @@ structure CensusPage where
   (`Picture.merge_own_exact`, `Picture.merge_every_exact`), and only the
   page can say which. -/
   pathSpans : Array (Dim.Sp × Dim.Sp) := #[]
+  /-- Every shipped path's bounding box, in paint order: `(x, y, w, h)` in
+  page coordinates. `pathSpans` is its extent half; this adds *where* the
+  path stands, which is what a fact about relative node placement reads —
+  `left=of` and `right=of` are claims about position, and a node's
+  resolved centre is only visible on the page
+  (`Picture.placeRel_exact`, `Picture.place_order_agree`). -/
+  pathBoxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
   /-- Image boxes shipped on the page: an embedded figure, or a boundary
   request's box (fulfilled or placeholder) — what the diagram-boundary
   row reads to pin that the request ships ink where the picture stood. -/
@@ -385,10 +400,12 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     for l in p.lines do
       let mut chars := ""
       let mut runSize : Dim.Sp := 0
+      let mut runFonts : Array Nat := #[]
       for seg in l.segs do
         match seg with
-        | .run _ color _ _ glyphs size _ _ _ _ =>
+        | .run idx color _ _ glyphs size _ _ _ _ =>
           runSize := max runSize size
+          runFonts := runFonts.push idx
           if coveredColors.contains color then
             for (_, c) in glyphs do
               chars := chars.push c
@@ -410,7 +427,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
       -- `l.hang` left of it (`Layout.protrudeLeft`).
       lines := lines.push { x := l.x + l.hang, y := l.y, size := runSize
                             width := l.setWidth, text := chars
-                            furniture := l.furniture, counted := l.counted }
+                            furniture := l.furniture, counted := l.counted
+                            runFonts := runFonts }
       covered := covered.push ' '
     pages := pages.push { lines := lines
                           covered := covered
@@ -437,6 +455,27 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                                 | .cubic _ y1 _ _ _ _ _ y2 => #[y1, y2]
                               (xs.foldl max (xs[0]?.getD 0) - xs.foldl min (xs[0]?.getD 0),
                                ys.foldl max (ys[0]?.getD 0) - ys.foldl min (ys[0]?.getD 0))
+                          pathBoxes := p.paths.map fun q =>
+                            match q.path with
+                            | .circle x y r =>
+                              let r := max r (-r)
+                              (x - r, y - r, 2 * r, 2 * r)
+                            | .rect x y w h => (x, y, w, h)
+                            | .tri x1 y1 x2 y2 x3 y3 =>
+                              let lo := (min x1 (min x2 x3), min y1 (min y2 y3))
+                              (lo.1, lo.2, max x1 (max x2 x3) - lo.1,
+                                max y1 (max y2 y3) - lo.2)
+                            | .segs segs =>
+                              let xs := segs.flatMap fun s => match s with
+                                | .line x1 _ x2 _ => #[x1, x2]
+                                | .cubic x1 _ _ _ _ _ x2 _ => #[x1, x2]
+                              let ys := segs.flatMap fun s => match s with
+                                | .line _ y1 _ y2 => #[y1, y2]
+                                | .cubic _ y1 _ _ _ _ _ y2 => #[y1, y2]
+                              let x0 := xs.foldl min (xs[0]?.getD 0)
+                              let y0 := ys.foldl min (ys[0]?.getD 0)
+                              (x0, y0, xs.foldl max (xs[0]?.getD 0) - x0,
+                                ys.foldl max (ys[0]?.getD 0) - y0)
                           images := images }
   return pages
 
@@ -807,6 +846,19 @@ def oneFaceOf (font : Font.Font) : Font.FontSet := {
   index := ((List.range 3).flatMap fun slot =>
     [((slot, 400, false), 0), ((slot, 700, false), 0),
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
+}
+
+/-- Two faces in two slots: the roman slot (0) and the sans slot (1) hold
+different files, so a claim about *which family* ink set in has something
+to read. `oneFaceOf` maps every slot to one file and cannot tell a serif
+run from a sans one — the set a font-role fact needs is this one.
+`CensusLine.runFonts` is the channel. -/
+def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
+  fonts := #[roman, sans]
+  index := ((List.range 3).flatMap fun slot =>
+    let f := if slot == 1 then 1 else 0
+    [((slot, 400, false), f), ((slot, 700, false), f),
+     ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
 }
 
 /-- The read-side census of produced PDF bytes, for a claim about what a

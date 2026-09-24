@@ -195,6 +195,15 @@ list.
   duplicate-free index array in a subtype) instead of a name set. The direct
   half is proved (`macroDecls_covers`); the witness is the transitive row of
   `boundaryChecks`.
+- `place_order_agree` — a node's resolved position is a function of the
+  nodes it references, not of the order they were written in: the table
+  `Picture.evalFixed` settles on is the same whichever order two node
+  statements stand in. Blocked on the factorization, not the tactic —
+  `Ev` threads the node table as one field among five through a mutual
+  recursion, so no equation names "the table after run k"; the refactor is
+  an `Ev` split into the resolved table and the report. The in-suite
+  witness is the two-orders row of `pictureNodePlaceChecks`, read off two
+  shipped pages.
 
 ### Log
 
@@ -293,6 +302,122 @@ the new request — confirmed by the private reference corpus, where the
 484/490, 92/91, 163/163 — the scan is a single pass over the unrewritten
 tree that stops at each definer's own body, and it is not measurable here.
 `scripts/compose-fuzz.lean` green (the preamble apply sites moved).
+
+2026-09-24 — nodes place themselves, and a picture stops being a
+typographic island (M8b slice 3, native nodes and anchors). The defect this
+closes is not one picture: **every** picture in the private reference
+corpus — eighteen of them — drew nothing natively and went whole to the
+boundary, because `pic.shapes.isEmpty` is the only door to it and the
+subset refused every construct those pictures used. Two of the eighteen
+then met a fatal `lualatex`, which is `E0382`, which is a dropped loss,
+which means the document produced **no artifact at all**. One
+un-drawable picture cost the whole deck.
+
+Four refusals were doing it, and each is a gap rather than a judgement.
+A `\node` with no `at` was outside the subset — but pgf places it at the
+path's current point, which at the start of a node statement is the
+origin, and a deck-shaped diagram never writes `at` because it places
+nodes against each other. A name written *before* the option bracket
+(`\node (n) [keys] {body}`) was not read as a name, though pgf reads both
+orders alike. `left=of a` and its seven siblings were unread keys. And
+`\path` was not a statement at all, so every edge in every such picture
+was skipped to its `;`.
+
+The fifth was the one that cascaded, and it is the interesting one: **a
+body the subset could not read cost the whole node, name included.** One
+unknown macro inside one node's braces meant that node never registered
+its name — and then every node placed against it, and every edge touching
+it, was refused in turn for a name nothing carried. A single inline took a
+diagram of seven nodes and six edges. A node's position and outline are
+functions of its options alone, so the body is now a separate answer: an
+unreadable body costs the label, named, and the node still stands, still
+registers, still anchors.
+
+The invariant behind relative placement is pgf's own and it is stated:
+**a relative placement leaves exactly the declared separation between the
+two borders**, not between the two centres. `placeRight_border_exact` and
+its three siblings say so as arithmetic over the values the walk threads —
+the reference centre, both half-extents, the declared separation — and they
+caught the first version of this slice, which put centres one `node
+distance` apart and drew a diagram whose boxes touched (seen on the
+rendered page, not in a golden). `offset_opposite_exact` pins the four
+sides as two opposite pairs, `offset_corners_exact` each corner as exactly
+its two sides, and `offset_mem` that a direction moves by a member of the
+declared pair or by nothing — a direction cannot quietly scale the gap.
+What the subset still cannot measure is a node *body*'s extent, so the
+borders those theorems reason about are the declared minimums; that limit
+is old, stated where it stands, and it is why a label still stands proud
+of a small box.
+
+Placement is a function of the reference graph, not of writing order.
+TikZ rejects a forward reference outright; the engine resolves it, because
+the reference graph is declarative and order-independence is the better
+semantics. The mechanism is a fixed point rather than a second parser:
+`evalFixed` re-runs the walk seeded with the table the previous run
+learned. No fuel — `Ev.deferred` counts the nodes a run refused for a
+reference not yet in scope, each re-run that resolves one strictly
+decreases it, so the first run's count is the exact bound. A count that
+stops falling is a cycle or a name no node carries, and the run carrying
+those refusals is the one returned: the loss is named, never silent, and
+it costs one node instead of one document. The common case costs one
+run — a picture written the way TikZ demands defers nothing and returns
+immediately, so no existing document pays for this. The order-independence
+statement itself is owed (`place_order_agree`, registered above): `Ev`
+threads the table as one field among five through a mutual recursion, so
+no equation names "the table after run k", and the refactor the proof
+needs is an `Ev` split into the resolved table and the report. The
+in-suite witness meanwhile reads two shipped pages and asks that the
+offset be the same either way round.
+
+**On `E0382`'s severity: it is right, and coverage was the fix.** The
+question is worth asking and the answer is no change. A boundary render
+that drew nothing leaves an empty unlabelled box, which is the one
+degradation that tells the reader nothing — the 2026-09-22 promotion
+reasoned that out and `\allow{E0382}` is the declared door. What made it
+feel disproportionate was not the severity but the *reach*: with native
+coverage this thin, a picture using the ordinary core of TikZ had no path
+except the boundary, so a tool's bad day was the document's. Widening the
+subset removes the reach. Nor does a separate "the engine can name this
+precisely" code belong here: the engine's refusals already are their own
+codes (`W0334` pending, `E0333` unresolvable), they fire at the picture's
+own source position, and they cost the construct rather than the picture —
+E0382 names something else entirely, an *external* tool that ran and
+produced nothing, about which the engine knows only what the log said. Two
+codes, two meanings; the table needs no third.
+
+The font defect resolves with it rather than beside it. Node text set in a
+serif face on all sixteen shipped boundary pages because the text was
+`lualatex`'s, drawn in its own default roman while the document was set in
+another family — a boundary picture is a typographic island by
+construction, as its own N0023 says ("its text is not in the document's
+census"). Native labels are the engine's ink in the document's own face,
+and `pictureLabelFaceChecks` now pins that as an equality between the two
+shipped faces rather than against a slot number, through a new
+`CensusLine.runFonts` channel and a two-slot fixture font set — with one
+face in every slot, the old set could not tell a serif run from a sans one
+and the fact was unsayable.
+
+Evidence is the artifact. The private corpus builds: exit 0, a PDF where
+there was none, and zero `E0382`, zero `N0023`, zero `W0376` — no picture
+reaches the boundary any more, where eighteen did. The whole file carries
+zero form XObjects and zero image XObjects, and no tool line appears in
+the verbose log. A synthetic deck-shaped fixture rendered at 110 dpi
+carries five stroked boxes, a `node contents={}` dot as its own circle, six
+border-anchored edges, and node text in the document's sans; the four
+sides and the four corners each land where they were declared.
+`pictureNodePlaceChecks` holds the same facts as census over `Layout.Out`
+through a new `pathBoxes` channel — extent alone could not say *where* a
+node stood, and placement is entirely a claim about where.
+
+Two things this slice does not fix, recorded rather than smoothed over.
+A label's box in the IR is its anchor point (`Shape.box`), so a picture
+whose nodes run leftward from the origin reports a box narrower than its
+ink and the page lets that ink hang past the measure; the honest fix is a
+label box that carries its measured extent, which needs the font and so
+belongs to layout, not here. And `ellipse` as a node shape and a
+double-ended arrow (`Latex-Latex`) both want an `Ir` constructor —
+`ellipse` a shape, the second head a field on `Shape.edge` — so both stay
+named refusals that cost their own outline and nothing else.
 
 2026-09-23 — three defects in the two entries below, found by review rather
 than by the suite, and one caveat they should have carried (m8b-keys, M8b

@@ -4155,8 +4155,11 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the declared font roles travel — the math face through unicode-math.
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
   let pal := "\\palette{ ember = #C0431F, quietbg = #F2EEE8 }\n"
-  let picC := "\\begin{tikzpicture}\\node[fill=ember!20, text=ember] {x};" ++
-    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  -- The keys ride on the `\shade`, the construct still outside the subset:
+  -- a `\node` with no `at` draws natively now (M8b slice 3), so a fixture
+  -- about the boundary request has to name something the engine cannot draw.
+  let picC := "\\begin{tikzpicture}\\shade[fill=ember!20, text=ember] (0,0) rectangle (1,1);" ++
+    "\\end{tikzpicture}"
   let (cdoc, _) := elabStr (dvDoc pal picC)
   t "a palette role the picture mentions is declared in the standalone"
     (hasStr (reqOf cdoc) "\\definecolor{ember}{RGB}{192,67,31}")
@@ -4170,16 +4173,16 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.pictureRefs cdoc != Ir.pictureRefs cdoc'' &&
      (Ir.pictureRefs cdoc).map (·.1) == (Ir.pictureRefs cdoc'').map (·.1))
   let (ldoc, _) := elabStr (dvDoc (pal ++ "\\colorlet{ember2}{ember!50!black}\n")
-    ("\\begin{tikzpicture}\\node[text=ember2] {x};" ++
-     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+    ("\\begin{tikzpicture}\\shade[text=ember2] (0,0) rectangle (1,1);" ++
+     "\\end{tikzpicture}"))
   t "a colorlet role rides with its resolved value"
     (match ldoc.palette.find? "ember2" with
      | some c => hasStr (reqOf ldoc) (Ir.colorDeclLine ("ember2", c)) &&
          hasStr (reqOf ldoc) "\\definecolor{ember2}{RGB}{"
      | none => false)
   let (kdoc, _) := elabStr (dvDoc "\\palette{ ink = cmyk(0, 0.83, 0.76, 0.07), key = cmyk(0, 1, 1, 0) }\n"
-    ("\\begin{tikzpicture}\\node[text=ink, fill=key] {x};" ++
-     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+    ("\\begin{tikzpicture}\\shade[text=ink, fill=key] (0,0) rectangle (1,1);" ++
+     "\\end{tikzpicture}"))
   t "a cmyk role rides in its declared model"
     ((kdoc.palette.find? "ink" |>.any (·.cmyk.isSome)) &&
       hasStr (reqOf kdoc) "\\definecolor{ink}{cmyk}{0,0.83,0.76,0.07}" &&
@@ -4372,7 +4375,10 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- picture that reads them.
   let sets := "\\usetikzlibrary{arrows.meta}\n\\tikzset{scmarrow/.tip={Latex[round]}}\n\n"
   -- A picture the subset draws nothing of, so the boundary is its route.
-  let outside := "\\begin{tikzpicture}\\path[draw,-scmarrow] (0,0) -- (3,0);\\end{tikzpicture}"
+  -- `\shade` is the construct outside it: a `\path` of drawn segments is
+  -- native now (M8b slice 3), and a fixture that routes has to name
+  -- something the engine genuinely cannot draw.
+  let outside := "\\begin{tikzpicture}\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (bodyDoc, bodyDs) := elabStr (dvDoc "" (sets ++ outside))
   let (preDoc, _) := elabStr (dvDoc sets outside)
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
@@ -4515,6 +4521,127 @@ def pictureStyleHandlerChecks (ref : IO.Ref (List String))
   t "no boundary box stands where the tip pictures are"
     ((cd[0]?.map (·.images == 0)).getD false &&
      (cu[0]?.map (·.images == 0)).getD false)
+
+/-- Native node placement, read off the shipped page (M8b slice 3). Four
+facts, each a defect the deck-shaped picture showed:
+
+* A `\node` with no `at` stands at the picture origin — pgf's current
+  point at the start of a path — instead of being refused for lack of a
+  coordinate. That refusal is what sent a whole picture to the boundary,
+  since `pic.shapes.isEmpty` is the only door to it.
+* A name written before the option bracket (`\node (n) [keys] {body}`) is
+  the same name as one written after it: pgf reads the two orders alike.
+* `left=of`/`right=of`/`above=of`/`below=of` place the node at `node
+  distance` from the named one, centre to centre (`Picture.placeRel_exact`).
+* The placement is a function of the reference graph, not of declaration
+  order: the page is the same whichever of two nodes is written first
+  (`Picture.place_order_agree`). TikZ rejects the forward reference; the
+  engine resolves it, and only a reference to a name no node carries — or
+  a cycle — is refused, by name.
+
+`\path (a) edge (b)` ships the edge beside them: pgf's `every edge` carries
+`draw`, so a `\path` whose operation is `edge` strokes. -/
+def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  -- The centre and the half-extents of the k-th shipped path, so a
+  -- placement fact reads a point and the borders around it.
+  let box (c : Array CensusPage) (k : Nat) :
+      Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    (c[0]?.bind (·.pathBoxes[k]?)).map fun (x, y, w, h) =>
+      (x + w / 2, y + h / 2, w / 2, h / 2)
+  let node (nm body extra : String) : String :=
+    "\\node (" ++ nm ++ ") [draw, minimum size=6mm" ++ extra ++ "] {" ++ body ++ "};\n"
+  let pic (body : String) : String :=
+    "\\tikzset{node distance = 1cm and 1cm}\n\\begin{document}\n" ++
+    "\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n\\end{document}"
+  let src := pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of aa" ++
+    node "cc" "Fig" ", below =of aa" ++ "\\path (aa) edge (bb);\n")
+  let (doc, ds) := elabStr src
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  t "a picture of placed nodes and a path edge elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  t "three node outlines and the path's edge ship as page paths"
+    ((c[0]?.map (·.paths == 4)).getD false)
+  t "no boundary box stands where the placed-node picture is"
+    ((c[0]?.map (·.images == 0)).getD false)
+  t "every placed node's body ships as ink"
+    (pageHas c 0 "Pear" && pageHas c 0 "Plum" && pageHas c 0 "Fig")
+  -- `right =of aa` leaves one node distance between the two *borders*, as
+  -- pgf's `positioning` does — so the centres stand that far apart plus a
+  -- half-extent from each node. Stated against the extents the page
+  -- shipped rather than against a computed total, so the fact is the
+  -- invariant and not a restatement of one rounding.
+  t "'right =of' leaves one node distance between the borders, at the same height"
+    (match box c 0, box c 1 with
+     | some (ax, ay, aw, _), some (bx, byy, bw, _) =>
+       bx - ax == Dim.mm 10 + aw + bw && byy == ay
+     | _, _ => false)
+  t "'below =of' leaves one node distance below, at the same x"
+    (match box c 0, box c 2 with
+     | some (ax, ay, _, ah), some (cx, cy, _, ch) =>
+       cy - ay == Dim.mm 10 + ah + ch && cx == ax
+     | _, _ => false)
+  -- The same two nodes, the referenced one written second: TikZ rejects
+  -- this, and the offset the page carries must not know the difference.
+  let fwd := censusSrc (pic (node "bb" "Plum" ", right =of aa" ++ node "aa" "Pear" ""))
+  let bwd := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of aa"))
+  t "a forward reference resolves: the offset is the same either way round"
+    (match box fwd 0, box fwd 1, box bwd 0, box bwd 1 with
+     | some (bx, byy, bw, _), some (ax, ay, aw, _),
+       some (ax', ay', aw', _), some (bx', byy', bw', _) =>
+       bx - ax == bx' - ax' && byy - ay == byy' - ay' &&
+         bx - ax == Dim.mm 10 + aw + bw && aw' + bw' == aw + bw
+     | _, _, _, _ => false)
+  t "no boundary box stands where either order's picture is"
+    (((fwd[0]?.map (·.images == 0)).getD false) &&
+     ((bwd[0]?.map (·.images == 0)).getD false))
+  -- A name no node carries is the one refusal left, and it costs that
+  -- node alone: the picture's other node still ships.
+  let (_, unknownDs) := elabStr (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
+  t "a reference to a name no node carries is refused by that name"
+    (unknownDs.any fun d => d.code == "E0333" && hasStr d.message "zz")
+  let cu := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
+  t "the refused node costs itself, not the picture"
+    (pageHas cu 0 "Pear" && ((cu[0]?.map (·.images == 0)).getD false))
+
+/-- A node's label sets in the face the body sets in: a picture is not its
+own typographic island (`Picture.labelFace_agree`). The defect this pins is
+not a slot the engine chose wrongly — it is a picture that drew nothing
+natively and went to the boundary, where the external tool's own default
+roman drew the node text while the document was set in another family. The
+fact is stated as an equality between the two shipped faces rather than
+against a slot number, so it still says what it means if the body moves. -/
+def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (n : String) : IO (Option Font.Font) := do
+    let p := testFonts ++ "/" ++ n
+    unless ← System.FilePath.pathExists p do return none
+    return (Font.parse (← IO.FS.readBinFile p)).toOption
+  let some roman ← load "SourceSerifPro-Regular.otf" | return ()
+  let some sans ← load "FiraSans-Regular.otf" | return ()
+  let fs := twoSlotOf roman sans
+  let src :=
+    "\\begin{document}\nA plain body reading.\n\n" ++
+    "\\begin{tikzpicture}\n\\node (aa) {Quince};\n\\end{tikzpicture}\n\\end{document}"
+  let (doc, ds) := elabStr src
+  let c := censusOf (coveredColorsOf doc) (layoutOf fs doc)
+  t "the label-face document elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  t "no boundary box stands where the label-face picture is"
+    ((c[0]?.map (·.images == 0)).getD false)
+  let facesOf (needle : String) : Array Nat :=
+    (c[0]?.map fun p =>
+      (p.lines.filter fun l => hasStr l.text needle).flatMap (·.runFonts)).getD #[]
+  let bodyFaces := facesOf "plain body"
+  let labelFaces := facesOf "Quince"
+  t "the body and the node label both ship ink"
+    (!bodyFaces.isEmpty && !labelFaces.isEmpty)
+  t "the node label sets in the face the body sets in"
+    (labelFaces.all fun f => bodyFaces.contains f)
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no

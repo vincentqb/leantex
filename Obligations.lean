@@ -388,4 +388,28 @@ theorem macroDecls_fixed_point (macros : Array (String × String)) (body n d : S
     (n, d) ∈ Ir.macroDecls macros body := by
   sorry
 
+-- owed: place_order_agree
+-- owner: LeanTex.Core.Picture
+-- source: the M8b native-node slice (PLAN 2026-09-24, slice 3): a picture whose nodes are placed relative to one another drew nothing at all before it, and every such picture went to the boundary, where one un-drawable picture cost the whole artifact (E0382). The fix makes placement a function of the reference graph rather than of writing order; this is the statement of that, and the in-suite witness is the "a forward reference resolves: the offset is the same either way round" row of `pictureNodePlaceChecks`, read off two shipped pages.
+-- blocker: the factorization, not the tactic. `evalFixed` is a `for` loop over `Id.run do` whose body is `evalList` — a mutual recursion whose node table is threaded through `Ev` as one field among five, so no equation names "the table after run k". The refactor the statement needs is a split of `Ev` into the *resolved table* and the *report* (shapes, diags, deferred, readOpts), making `evalList`'s table component a function of the seed alone; with that, order-independence is the statement that the least fixed point of the seeding map does not depend on the order `evalList` visits its statements, which is provable by induction on the statement list because each node's placement reads the table and nothing else. Until the split, the statement would have to quantify over a state the language cannot name — the case AGENTS.md calls a factorization finding.
+-- goldens: no
+/-- **A node's resolved position is a function of the nodes it references,
+not of the order they were written in.** TikZ rejects a forward reference
+outright (`No shape named 'x' is known`); the engine resolves it, and the
+statement of that is this: the node table `evalFixed` settles on is the
+same whichever order two independent node statements stand in, so the page
+cannot tell the two documents apart.
+
+Stated over the engine's own walk, on the table rather than the shapes,
+because the table is what every relative placement and every edge endpoint
+reads — the shapes follow from it. `sts₁` and `sts₂` range over the same
+statements in two orders, spelled as one list with two elements
+transposed, which is the case a document actually writes and the weakest
+form that still names the fact. -/
+theorem place_order_agree (cx : Picture.Cx) (pre post : List Picture.Stmt)
+    (a b : Picture.Stmt) :
+    ∀ nm, (Picture.evalFixed cx (pre ++ a :: b :: post)).nodes.lookup nm
+        = (Picture.evalFixed cx (pre ++ b :: a :: post)).nodes.lookup nm := by
+  sorry
+
 end Obligations
