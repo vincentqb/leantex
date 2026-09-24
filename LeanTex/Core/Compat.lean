@@ -221,6 +221,45 @@ styles elements; \\runningfoot sets a document footer"),
 against — beamer's article mode keeps a frame the presentation omits. -/
 def presentationClasses : List String := ["beamer", "slides"]
 
+/-- beamer's theme-loading family, and the file each member asks the input
+path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
+the whole family through the package loader (beamerbasethemes.sty), so the
+only thing that differs between the five slots is the prefix. The candidate
+scan and the splice both read this one list, so a slot named here is a slot
+both honour and neither can drift from the other
+(`themeAsking_candidates`). The package dispatch reads it too, through
+`themeSlotOfPackage?`: the identity runs in both directions, so the file
+name a theme writes to inherit another resolves to the slot it names
+(`themeSpellingChecks`). -/
+def themeAsking : List (String × String) :=
+  [("usetheme", "beamertheme"),
+   ("usecolortheme", "beamercolortheme"),
+   ("usefonttheme", "beamerfonttheme"),
+   ("useinnertheme", "beamerinnertheme"),
+   ("useoutertheme", "beameroutertheme")]
+
+/-- moloch is the maintained fork of metropolis, and `m` was that theme's
+original name (moloch README): a deck asking for any of the three gets the
+bundle the engine ships. One function because three spellings reach the
+same bundle and two surfaces ask — the `\usetheme` slot and the
+`beamertheme<name>` package name — and an alias honoured on one surface
+only is the drift this closes. -/
+def themeAlias (nm : String) : String :=
+  if nm == "metropolis" || nm == "m" then "moloch" else nm
+
+/-- beamer's file-name spelling of a theme-family member, resolved to the
+slot it names, that slot's prefix, and the theme name: `beamerthemeX` is
+`\usetheme{X}`, `beamercolorthemeX` is `\usecolortheme{X}`, and so for each
+slot. `themeAsking` read backwards — the same identity, so neither spelling
+can mean something the other does not. The prefixes are mutually exclusive
+(they differ at the character after `beamer`), so the first match is the
+only match. -/
+def themeSlotOfPackage? (p : String) : Option (String × String × String) :=
+  themeAsking.findSome? fun (slot, pre) =>
+    if p.startsWith pre && p.length > pre.length then
+      some (slot, pre, (p.drop pre.length).toString)
+    else none
+
 /-- The kernel's box commands, as the two numbers that tell them apart: how
 many `[...]` runs stand before the content, and how many mandatory `{...}`
 groups stand before the content group. `\\mbox{text}` declares no box;
@@ -2412,10 +2451,7 @@ the definition is skipped" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    -- moloch is the maintained fork of metropolis (and `m` was that
-    -- theme's original name): a deck asking for either spelling gets the
-    -- bundle the engine ships, named in the note.
-    let tname := if tname == "metropolis" || tname == "m" then "moloch" else tname
+    let tname := themeAlias tname
     let native := s!"\\theme\{{tname}}"
     became "\\usetheme" native pos
     -- Only a theme the engine ships turns the themed mappings on: an
@@ -2779,6 +2815,32 @@ dropped: {String.intercalate ", " dropped}" pos
         became s!"\\{name}\{{p}}"
           "the boundary standalone's preamble; each picture outside the \
 rendered subset is drawn whole at the boundary" pos
+      else if let some (slot, _, nm) := themeSlotOfPackage? p then
+        -- beamer's own identity, read backwards: `beamerthemeX` **is**
+        -- `\usetheme{X}` (beamerbasethemes.sty defines the family through
+        -- the package loader), and a theme inheriting another writes that
+        -- file name. W0103 answered it as a CTAN support question, so a
+        -- bundle the engine ships was refused under the one spelling an
+        -- inheriting theme uses. The candidate scan has already offered
+        -- `p.sty`; reaching here means no file answered, so what is left
+        -- is the slot's own meaning.
+        if slot == "usetheme" then
+          let nm := themeAlias nm
+          let native := s!"\\theme\{{nm}}"
+          became s!"\\{name}\{{p}}" native pos
+          if (Theme.find? nm).isSome then
+            write fun st => { st with themed := true }
+          out := out ++ (← synthAt native pos)
+        else
+          -- The four sub-theme slots have no bundle of their own here: a
+          -- token bundle is whole. Their file name gets the slot's named
+          -- configuration warning, which is what the slot spelling gets —
+          -- never a claim about package support.
+          sayOnce ("beamer:" ++ slot) .W0104
+            s!"'\\{slot}' is beamer configuration the engine does not have; skipped" pos
+            (help := (beamerNative.lookup slot).getD
+              "a theme is a token bundle here: \\theme selects one, and \\palette \
+and \\tokens declare the design directly")
       else
         say .W0103 s!"package '{p}' is not supported; skipped" pos
           (refused := some p)
@@ -3882,20 +3944,6 @@ wrapper carries the file name). Reading the file is the driver's effect
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 
-/-- beamer's theme-loading family, and the file each member asks the input
-path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
-the whole family through the package loader (beamerbasethemes.sty), so the
-only thing that differs between the five slots is the prefix. The candidate
-scan and the splice both read this one list, so a slot named here is a slot
-both honour and neither can drift from the other
-(`themeAsking_candidates`). -/
-def themeAsking : List (String × String) :=
-  [("usetheme", "beamertheme"),
-   ("usecolortheme", "beamercolortheme"),
-   ("usefonttheme", "beamerfonttheme"),
-   ("useinnertheme", "beamerinnertheme"),
-   ("useoutertheme", "beameroutertheme")]
-
 /-- **The name-refusal registry: every code that refuses a declaration by
 name, with the file prefix that would have defined it.** The invariant behind
 it is that a refusal asks the input path first, and the registry is what lets
@@ -4084,6 +4132,21 @@ def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := I
         i := i + 1
   return (out : Array Raw)
 
+/-- The shipped bundle a theme file stands on, as the raws that install it
+before the file's own content. **Precedence is composition, not a contest**
+(PLAN 2026-09-24): the bundle installs first and the file's declarations
+land on top, so a role the file declares is the file's and a role it leaves
+alone keeps the bundle's. One function because both splice paths owe the
+same floor — a theme read under `\usetheme{X}` and the same theme read
+under `\usepackage{beamerthemeX}` are one ask, and only the slot path had
+it. Only the full-theme prefix carries a bundle: a token bundle is whole,
+so no sub-theme slot installs one. -/
+private def bundleFloor (pre nm : String) (pos : Pos) : Array Raw :=
+  let nm := themeAlias nm
+  if pre == "beamertheme" && (Theme.find? nm).isSome then
+    #[.ctrl "theme" pos, .group #[.word nm pos] pos]
+  else #[]
+
 /-- The replacement for one `\\usepackage`/`\\RequirePackage` at `i`, given
 the style files read: the raws standing in its place, the splice records,
 and the index past its arguments — `none` when nothing it names is a local
@@ -4103,6 +4166,10 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
   for p in pkgs do
     match stys.find? (·.1 == p) with
     | some (_, sraws) =>
+      -- A theme file named as a package floors on its shipped bundle, as
+      -- the slot spelling does: the two spellings are one ask.
+      if let some (_, pre, nm) := themeSlotOfPackage? p then
+        splice := splice ++ bundleFloor pre nm pos
       splice := splice.push
         (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos)
       recs := recs.push (p ++ ".sty", none, pos)
@@ -4148,10 +4215,7 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
   match stys.find? (·.1 == p) with
   | some (_, sraws) =>
     let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-    let floor : Array Raw :=
-      if pre == "beamertheme" && (Theme.find? nm).isSome then
-        #[.ctrl "theme" pos, .group #[.word nm pos] pos]
-      else #[]
+    let floor := bundleFloor pre nm pos
     return some (floor.push
       (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos),
       #[(p ++ ".sty", none, pos)], k)

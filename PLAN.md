@@ -627,6 +627,44 @@ verbose log. Ten synthetic rows (`pictureAnchorChecks`, read off
 commit and pass here, and seven compat-index rows cover the resolved
 spellings against one `refuse:W0334` row for the `mid` family.
 
+2026-09-24 — a theme's file name resolves to what its slot spelling
+resolves to. `\usepackage{beamerthemeX}` **is** `\usetheme{X}` — the identity
+`Compat.themeAsking` already encoded in the candidate-scan direction
+(beamerbasethemes.sty defines the whole family through the package loader) —
+but only one direction was read. A deck in the private reference corpus
+declares a local theme whose first line inherits a bundle *the engine
+ships*, under that bundle's file name; the name reached the CTAN dispatch
+and drew W0103 "package is not supported; skipped", so the shipped design
+was refused under the one spelling an inheriting theme actually writes.
+`\usetheme{moloch}` worked and `beamerthememoloch` did not.
+
+The fix reads the registry backwards: `themeSlotOfPackage?` resolves a
+package name to the slot it names, and the package dispatch answers as that
+slot. Only the full-theme prefix carries a bundle — a token bundle is whole,
+so the four sub-theme prefixes get their slot's own named configuration
+warning instead of a false claim about package support. Two further drifts
+closed in the same place, both of the same shape (one surface honouring what
+the other does not): `themeAlias` is now one function, so the
+metropolis/`m` aliases ride the package spelling as they always rode the
+slot; and `bundleFloor` is one function, so a *local* theme file named as a
+package floors on its shipped bundle exactly as one named through the slot
+already did — `spliceUse` had no floor, so that spelling took the file alone
+and silently lost the bundle it was written on top of.
+
+The invariant is the equivalence itself, quantified over the registry rather
+than stated per slot, because all five sat one keystroke apart:
+`themeSpellingChecks` requires no member of the family to be a CTAN support
+question under its file name, and requires the two spellings of one theme to
+yield the same palette and the same styles. The narrower "a shipped bundle is
+reachable under its file name" would have fixed the one prefix and left the
+other four.
+
+Measured on the artifact, not the IR: on the private reference corpus the
+second page's progress-bar ground moves from the slides default bundle's
+value to `#CBC0B6`, which is moloch's own `progressfg!50!black!30` computed
+from `#A55A13` — the bundle's design reaching the page. W0103 falls from 2
+to 1 (the remaining one a genuine CTAN package), total warnings 35 → 34.
+
 2026-09-24 — `\usetheme{X}` is `\usepackage{beamerthemeX}`, and a theme
 beside the document is read. A deck reported W0319 ("unknown theme"; the
 document unthemed) and 39 W0304 sites ("'fg!50!bg' is not in the palette")

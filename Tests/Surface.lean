@@ -4124,6 +4124,54 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
      dsF.all fun d => d.code != "W0104" ||
        ((d.help.getD "").splitOn "\\theme").length == 2)
 
+/-- **A theme's file-name spelling resolves to what its slot spelling
+resolves to.** `\usepackage{beamerthemeX}` *is* `\usetheme{X}` — the
+identity `Compat.themeAsking` already encodes in the candidate-scan
+direction (beamerbasethemes.sty defines the whole family through the
+package loader), so the two spellings may not disagree about what a name
+means. They did: a theme built on a shipped bundle wrote the bundle's file
+name, which reached the CTAN dispatch and drew W0103 "not supported", so
+the bundle the engine ships was refused under the one spelling a theme
+inheriting it actually uses. Quantified over the registry rather than
+per slot, because all five sat one keystroke apart. Fixtures in
+tests/corpus/sty-parity, synthetic. -/
+def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- was: W0103 "package 'beamerthememoloch' is not supported; skipped",
+  -- and with it moloch's whole design — every role, every token, every
+  -- style — for a theme whose first line inherits it.
+  let (docP, dsP) := Elab.run "d.tex" (deck169 "\\usepackage{beamerthememoloch}" "x")
+  t "a shipped bundle under its file name installs the bundle — never W0103"
+    (dsP.all (·.code != "W0103") &&
+     docP.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+  -- The equivalence itself, both directions of one name.
+  let (docS, _) := Elab.run "d.tex" (deck169 "\\usetheme{moloch}" "x")
+  t "the file-name spelling and the slot spelling resolve to one palette"
+    (docP.palette.entries == docS.palette.entries &&
+     docP.styles.entries == docS.styles.entries)
+  -- The alias rides the package spelling too: metropolis is moloch's
+  -- former name, and a deck writing either reaches the shipped bundle.
+  let (docM, _) := Elab.run "d.tex" (deck169 "\\usepackage{beamerthememetropolis}" "x")
+  t "the metropolis alias resolves under the file-name spelling"
+    (docM.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+  -- The registry quantification: no member of the family is a CTAN
+  -- support question under its file name. The four sub-theme slots have
+  -- no bundle concept here, so what they owe is the slot's own named
+  -- configuration warning, not a wrong claim about package support.
+  for (slot, pre) in Compat.themeAsking do
+    let ds := (Elab.run "d.tex" (deck169 s!"\\usepackage\{{pre}invented}" "x")).2
+    t s!"{pre}<name> is answered as \\{slot}, not as an unsupported package"
+      (ds.all (·.code != "W0103"))
+  -- Composition holds under the file-name spelling, exactly as under the
+  -- slot: the bundle floors and the local file overrides the roles it
+  -- declares. `spliceUse` had no floor, so this spelling took the file
+  -- alone and lost the bundle it was written on top of.
+  let (docF, _, splicedF) ← runStyParity "themepkgshadow"
+  t "a local file under the file-name spelling still floors on the bundle"
+    (splicedF.toList.map (·.1) == ["beamerthememoloch.sty"] &&
+     docF.palette.find? "frametitlebg" == some { r := 0x12, g := 0x34, b := 0x56 } &&
+     docF.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a
