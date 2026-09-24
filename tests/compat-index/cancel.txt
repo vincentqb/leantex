@@ -1,0 +1,24 @@
+# source: cancel.sty v2.2, its documented command list — \cancel (a
+# positive-slope strike), \bcancel (negative slope), \xcancel (both), and
+# \cancelto{value}{expr} (a northeast strike carrying an arrow to a value
+# set at script size). All four draw a diagonal through a measured
+# subformula, which is the one shape the inline layout vocabulary cannot
+# express: every rule in a line is axis-aligned, and the vocabulary that
+# does carry slopes and arrow tips is reachable only from a block-level
+# picture. So the package stays OFF nativePackages — its load warns W0103
+# and every use is named where it stands — and this file records that as a
+# decision rather than an accident, with the code each use actually fires.
+#
+# The \cancelto row is the one that is not merely lossy: the floor inks
+# both arguments, so "x cancels to 0" reads as the product 0x. Its
+# arguments name rather than carry, which is a row the naming-arity table
+# owes and does not yet have.
+#
+# \CancelColor is not a row: it is a colour hook a document redefines, and
+# a redefinition is read as a definition here, so it fires no refusal of
+# its own. The makeroom option rides with the load's W0103.
+body refuse:W0012 $\cancelto{0}{x}$
+body refuse:W0012 $\cancel{y}$
+body refuse:W0012 $\bcancel{z}$
+body refuse:W0012 $\xcancel{w}$
+body refuse:W0301 \cancel{q}

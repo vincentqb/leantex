@@ -10162,3 +10162,63 @@ where `\mathstrut` is literally `\vphantom(`), not a package, so no
 already stood and still pass.
 
 § Owed obligations is unchanged: nothing was staged, both theorems closed.
+
+
+### 2026-09-24 — the cancel package cannot load, because nothing can
+
+Asked to implement `\cancelto` after a real document reported `math with
+\cancelto is not rendered yet; '{align*}' sets as its text content (2
+sites)`, with the reporter surprised the package does not load. The surprise
+has a precise answer worth writing down once: **there is no package loader.**
+`\usepackage` is a rewrite-or-refuse dispatch — a name on `nativePackages`
+is rewritten into a native declaration, anything else is dropped with W0103
+and its commands then meet the ordinary unknown paths (W0301 in text, W0012
+in math). No `.sty` is ever read. `nativePackages` is a hand-written
+compatibility *claim* list, every entry Lean. The one route to real LaTeX is
+the graphics boundary, and it is block-level pictures only
+(`Ir.Block.picture`, `pictureEnvs = ["tikzpicture", "external"]`): a formula
+is an inline, so math cannot reach it, and routing it there would put the
+formula's ink outside the document's text census, which is N0023's own
+declared cost. A native implementation is not the better long-term option;
+it is the only option that exists.
+
+**Why `\cancelto` is not landing in this slice.** All four `cancel`
+commands draw a *diagonal* through a measured subformula, and that is the
+one shape the inline layout vocabulary cannot express: `Layout.Item` and
+`Layout.Seg` each carry exactly one rule, axis-aligned (`w`, `thickness`,
+`raise`). The vocabulary that does have slopes and precomputed arrow tips
+(`Ir.Pic.PathSeg`, `Ir.Pic.Tip`, `Ir.Pic.Shape.edge` — geometrically
+*exactly* a cancel strike) is reachable only from a block-level picture. And
+the strike's endpoints are a function of the subformula's measured width and
+extent, so unlike a picture's author-given coordinates they cannot be
+precomputed at elaboration: the geometry has to live in `Layout.lean`. That
+means a new `Item`/`Seg` constructor and an arm at every one of ~18 match
+sites, plus the extent, breakpoint and census facts that move with them —
+3–5 days across three owners, serialised on a collision no one can avoid,
+since the `MNucleus` constructor cannot even compile until the `Ir.lean` and
+`Layout.lean` arms exist in files this slice does not hold.
+
+**What landed instead, because it collides with nobody and is checked.**
+`tests/compat-index/cancel.txt`, on the `todonotes.txt` pattern — the
+package's documented command list, one row per command, each claiming the
+code it actually fires, all five verified by `compatIndexChecks` rather than
+asserted. That turns "surprised it does not load" into a written stance the
+suite defends: if `\cancel` ever stops firing W0012, the row fails.
+
+**The one genuinely wrong thing found, and it is one line in another
+owner's file.** `\cancelto{0}{x}` ships `0x` today. Its arguments are absent
+from `Ir.floorNamedArgs`, so the floor inks both and concatenates them, and
+a reader sees a *product* where the mathematics says "x cancels to 0". That
+is not lossy, it is false — worse than the honest text floor the other three
+commands get, which keep the expression and lose only the strike. One table
+entry fixes it (`("cancelto", 1)`), it is worth doing whether or not
+`\cancelto` is ever drawn, and it belongs to `Ir.lean`'s owner. Recorded
+here as the hand-off.
+
+Rendering the strike without the arrow was considered and rejected: it costs
+the whole diagonal capability anyway (the tip is a triangle fill the PDF
+writer already does), buys a reader less than the honest floor plus a named
+warning, and would need a new diagnostic code to retire later. The strike
+and the arrow ship together or not at all — and when they do, the whole
+family (`\cancel`, `\bcancel`, `\xcancel`) should ride one direction field
+rather than earn a second visit.
