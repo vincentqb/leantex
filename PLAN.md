@@ -406,6 +406,52 @@ W0335 where it had no diagnostic at all. Both are rows of
 `pictureInkBoxChecks`, read off the shipped lines rather than an IR dump,
 and all four new rows fail on the parent commit.
 
+2026-09-24 — a right origin for a line, and what still has no way to ask for
+it. `\raggedleft` and `\flushright` are named losses (W0104, "content keeps
+its alignment") and the diagnostic's own reason was structural: *line
+placement knew no right origin*. `paraLineGeom` had two branches — centre
+`(width - w0)/2` and left `-hang` — and nothing else. The one flush-right
+thing in the engine, a table's `r` column, works by padding the indent
+argument of a cell measured beforehand as a single unbreakable line, which
+cannot generalise to a broken paragraph whose per-line natural width only
+`setLine` knows.
+
+**The capability.** `Geom.flushRight` (a structure field, so no call site
+moved) threads to `ParaJob.flushRight`, and `paraLineGeom` gains the third
+branch: `hmargin + indent + (width - w0)`, the same arithmetic centring
+halves. It must also suppress justification — a justified line fills the
+measure and lands back at the left — so `setLine` is told ragged for
+flush-right exactly as it is for centred.
+
+**The defect it closes now.** `Ir.ElementStyle.align` documents `left`,
+`center`, `right`, and every consumer read it two-way (`align != some
+"left"` → centred), so a declared `right` *silently centred*: measured, the
+abstract heading under `\style{abstract}{ align = right }` shipped centred
+while the HTML backend passed `right` straight through to CSS. One
+declaration, two artifacts disagreeing — an `_agree`-shaped violation with
+nothing stating it. Both readers (the abstract heading, the headline's
+`titlepage`) are now three-way, and each scopes the right origin to the
+furniture its style names: the first cut leaked it through a shadowed
+reader into the abstract *body*, which the rendered page caught.
+Regression asserted over `Layout.Out` as a strict ordering of origins
+(left < centre < right), content-free so no heading width is baked in; it
+fails before and passes after.
+
+**What is still owed, and why it was not attempted here.** `\raggedleft`
+itself. The surface work is small — nine Elab sites and two `Compat`
+`configSkip` rows — but the IR cannot express the direction: `Ir.Block.ragged`
+is direction-free by construction ("the lines break ragged and keep the
+engine's left origin"), so `\raggedright` and `\flushleft` already map onto
+it and `\raggedleft` has nowhere to land. Giving it a direction is a
+65-occurrence constructor change across `Ir`, `Struct`, `MarkdownDoc`,
+`BibStyle`, `Layout` and `HtmlDoc` — every walk arm, both bare pattern
+lists, the `dump` arm (so every golden holding a ragged block), plus
+`collectCentered`'s per-block dispatcher, which a right-set scope needs a
+twin of or a picture and a table inside `\raggedleft` stay left. That is a
+single reviewable change and it is not this one; splitting it would leave
+the tree with a direction the backends half-read. The capability it needs
+now exists, which is the part that was missing rather than merely unwired.
+
 2026-09-24 — a lost overlay increment, and the condition that should have
 named it. A deck shipped two consecutive step pages with identical rasters
 (one md5 for both) where the reference output's second page adds content.

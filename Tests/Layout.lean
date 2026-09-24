@@ -1468,6 +1468,27 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "beyond its shrink the page breaks" (pagesOf tooTight three == 2)
   t "an unshrunk page says nothing"
     (!(layoutOf oneFace (Elab.run "t" three).1 geom).diags.any (·.code == "N0200"))
+  -- The three horizontal origins a declared alignment names, judged over
+  -- `Layout.Out`: left, centred, and — the one line placement had no
+  -- arithmetic for — flush right. Read two-way, `align = right` fell into the
+  -- centred arm, so the PDF centred a heading the HTML backend right-aligned
+  -- from the same declaration. The ordering is the content-free half:
+  -- whatever the heading's width, its origin moves strictly right as the
+  -- declaration does.
+  let alignSrc (al : String) := "\\documentclass{article}" ++
+    (if al.isEmpty then "" else "\\style{abstract}{ align = " ++ al ++ " }") ++
+    "\\begin{document}\\begin{abstract}Placeholder abstract body.\\end{abstract}" ++
+    "Body text.\\end{document}"
+  let alignX (al : String) : Option Dim.Sp :=
+    let (d, _) := elabStr (alignSrc al)
+    lineXOf (censusOf (coveredColorsOf d) (layoutOf oneFace d geom)) 0 "Abstract"
+  match alignX "left", alignX "", alignX "right" with
+  | some l, some c, some rgt =>
+    t "a declared alignment moves the heading's origin: left, centre, right"
+      (decide (l < c) && decide (c < rgt))
+    t "an undeclared abstract heading keeps the class's centred origin"
+      (decide (l < c))
+  | _, _, _ => t "the alignment probe produced its heading" false
 
 /-- Title bars stand their declared gap from the type's body: the cap line
 above the text, the baseline below it (`Layout.interlineFor`,

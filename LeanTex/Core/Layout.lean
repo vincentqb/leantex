@@ -45,6 +45,15 @@ structure Geom where
   /-- Whether paragraphs justify. Off means ragged right: word spaces stay
   natural, an underfull line costs nothing, and only real overfull is bad. -/
   justify : Bool := true
+  /-- Whether a paragraph's lines hang from the *right* edge of the measure:
+  LaTeX's `\raggedleft` setting, and what `align = right` on an element asks
+  for. Off is the engine's left origin, which every path had before a right
+  one existed — line placement knew only "centred" and "left", so a declared
+  `right` silently centred while the HTML backend passed it through to CSS
+  and the two artifacts disagreed. Lines set ragged, as a centred line does:
+  a flush-right line that justified would fill the measure and land back at
+  the left. -/
+  flushRight : Bool := false
   /-- Whether boundary glyphs protrude into the margin (microtype's
   character protrusion). Layout owns the gate, as it owns `hyphenate`'s. -/
   protrude : Bool := true
@@ -4672,6 +4681,9 @@ private structure ParaJob where
   indent : Sp
   center : Bool
   size : Sp
+  /-- The line hangs from the right edge of the measure (`Geom.flushRight`):
+  the third horizontal origin, beside centred and left. -/
+  flushRight : Bool := false
   /-- Justified or ragged, from the page: ragged lines break free of
   stretch badness and are set at their natural width. -/
   justify : Bool := true
@@ -5181,6 +5193,7 @@ private def collectPara (r : Rd) (a : Acc)
       items := items, extras := extras, diags := ds
       target := measure
       indent := indent, center := center, size := size
+      flushRight := r.geom.flushRight
       justify := r.geom.justify
       protrude := r.geom.protrude
       expand := r.geom.expand
@@ -6172,13 +6185,17 @@ private def collectBlock (r : Rd) (a : Acc)
     -- and the outer state is restored the way a quote restores its measure.
     let small := Ir.scaleStep r.geom.fontSize "small"
     let hst := Ir.abstractHeadingStyle r.styles
-    let hcenter := hst.align != some "left"
+    let hcenter := hst.align != some "left" && hst.align != some "right"
+    -- The heading's own origin, and only the heading's: the abstract body
+    -- keeps the page's setting, as the style names the heading.
+    let rh := if hst.align == some "right"
+      then { r with geom := { r.geom with flushRight := true } } else r
     let a := match hst.font with
       | some tpl =>
-        collectDisplay r a (Ir.fillTemplate tpl #[.text r.locale.abstract]) indent
+        collectDisplay rh a (Ir.fillTemplate tpl #[.text r.locale.abstract]) indent
           hcenter r.geom.fontSize
       | none =>
-        collectDisplay r a #[.text r.locale.abstract] indent hcenter small
+        collectDisplay rh a #[.text r.locale.abstract] indent hcenter small
           (baseStyle := { weight := .b })
     let a := a.wantGap
     let saved := a.measure
@@ -6526,17 +6543,23 @@ private def collectBlock (r : Rd) (a : Acc)
                      ground := some barBg }
           | none => a
         let tps := r.style "titlepage"
-        let center := tps.align != some "left"
+        -- Three-way, as the declaration's own vocabulary is: `left`, `right`,
+        -- or centred where nothing is declared. Read two-way, a declared
+        -- `right` fell into the centred arm and the page silently centred
+        -- while the HTML backend passed `right` through to CSS.
+        let center := tps.align != some "left" && tps.align != some "right"
+        let rt := if tps.align == some "right"
+          then { r with geom := { r.geom with flushRight := true } } else r
         let a := match tps.font with
           | some tpl =>
-            collectDisplay r a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
+            collectDisplay rt a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
           | none =>
-            collectDisplay r a hl.title 0 center
+            collectDisplay rt a hl.title 0 center
               (Ir.scaleStep r.geom.fontSize "Huge") (baseStyle := { weight := .b })
         let a := if hl.author.isEmpty then a else
-          collectDisplay r a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
+          collectDisplay rt a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
         let a := if hl.institute.isEmpty then a else
-          collectDisplay r a hl.institute 0 center r.geom.fontSize
+          collectDisplay rt a hl.institute 0 center r.geom.fontSize
         let a := match bar with
           | some barBg =>
             { a with fg := saved.1, ground := saved.2
@@ -6899,8 +6922,14 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   let width := j.target
   let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
   let (segs0, w0, overfull, hang, exf) :=
-    setLine j.items a brk width (!j.center && j.justify) j.protrude j.expand
+    setLine j.items a brk width (!j.center && !j.flushRight && j.justify)
+      j.protrude j.expand
+  -- Three horizontal origins, and the right one is the line's own natural
+  -- width measured back from the far edge — the same arithmetic centring
+  -- halves. It cannot be a justified line: filling the measure would put the
+  -- line back at the left, which is why `setLine` is told ragged here too.
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
+    else if j.flushRight then b.geom.hmargin + j.indent + (width - w0)
     else b.geom.hmargin + j.indent - hang
   -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
   -- own separation (classes.dtx: \setlength\labelsep{.5em}).
