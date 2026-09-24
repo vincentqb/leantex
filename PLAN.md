@@ -626,6 +626,121 @@ as before.
 § Owed obligations grows by two rows, `formulaFloor_covers` and
 `formulaFloor_separates`.
 
+2026-09-24 — the font environment is an input, and one elaboration is the
+fixed point. The stopgap landed hours earlier (`Measure a node against the
+face its labels set in`) elaborated the document **twice**: once with nothing
+to measure against, to discover the face, once with that face, so a node's
+extent could cover its label. It worked and it was verified; it cost +12.3%
+on a picture-heavy deck and +7.2% on a 42-page reference deck (medians of 31,
+measured here against a binary built at the commit before it), and the
+re-elaboration was the whole of that. This entry replaces it.
+
+**The circle, restated correctly.** The prior entry framed it as
+`fs = F(doc)` against `doc = E(src, μ(fs))` and concluded that a first pass
+could build *a* face but never *the* face, because `F` reads
+`Layout.docWeightKeys`, `docScalars` and `docMathScalars` off the whole body,
+not off the preamble. That reading is right about `F` and wrong about what
+follows. A metric is consumed at exactly **one** site in the whole engine —
+`Picture.evalNode`'s `inkHalf` hull, the only `cx.metric` in `Core/Picture.lean`
+— and what it changes there is `Sp` numbers: extents, and the placements
+computed from them. It changes no inline, no style, no scalar. So every input
+`F` reads is the same under any metric, `F(E(src, μ₁)) = F(E(src, μ₂))`, and
+the recursion has a fixed point reachable in one step from *any* starting
+face that happens to measure the document's labels the way its own face does.
+
+That turns an ordering problem into a **decidable question**, which is the
+shape landed: resolve a face from the preamble alone, elaborate once against
+it, then ask whether the face the document settles on would have measured any
+label differently. Where it would not, the document in hand *is* the fixed
+point and no second elaboration can change it. Where it would, elaborate
+again against the settled face — the stopgap's path, now the exception.
+
+**What makes the question cheap to ask.** `Cli/FontFix.lean` holds the policy
+as values, on `Cli/PicCache.lean`'s precedent, so it is checkable with no font
+installed. `probes` is every `m content scale` call an elaboration made, read
+off the label shapes of the document's pictures and **deduplicated** — a deck
+of 180 labels over twelve distinct words asks twelve questions, not a hundred
+and eighty, which is the difference between a check that costs 0–1 ms and one
+that costs what it saves. Four facts are proved over it:
+`agree_refl` (a face agrees with itself, so the fast path is the common case
+by construction and not by luck), `agree_probe` (extraction),
+`probesOfPic_covers` (every label a picture carries is probed — the coverage
+the check rests on), and `extent_agree`: two metrics agreeing on a label's
+ink give the *same* `Ir.Pic.nodeExtent`, hence the same placement, hence the
+same document. That last one is why an affirmative answer is a licence to
+skip and not a guess.
+
+**What is owed, and it is the load-bearing half.** `fontEnvInputs_agree` —
+that two metrics yield documents whose font-environment inputs agree — is
+*not* proved: it is a parametricity claim about the whole elaborator
+(`elabDoc` is a mutual recursion of thousands of lines) and no hand proof of
+it is honest. `elaboration_fontenv_fixed_point` is its corollary and the fact
+the driver actually leans on. Both statements belong in `Obligations/`, which
+this slice does not own, so they are handed to that owner with their full
+owed/owner/source/blocker/goldens records rather than registered here
+half-done — the ratchet names what is staged, and staging is the other
+slice's to do. Recorded so the debt is visible meanwhile.
+The engine's own `mayDrawPicture`/`picWants` gate is sound in the direction that
+matters without them — a source with no picture environment measures nothing,
+because `.picture` blocks have exactly one producer — and a false positive in
+either field only buys a provisional face that the agreement check then
+discards.
+
+**Why not the other two shapes on offer.** *Fulfil per picture instead of per
+document* was the prior entry's own named next optimisation, and measurement
+retires it: on the picture-heavy deck the second pass's cost **is** the
+picture walk (`elab` 8 ms whole, 1–2 ms with the `{tikzpicture}` bodies
+stripped), so re-running only the pictures saves the 1–2 ms of prose and
+leaves the +12% almost untouched. It would have helped only the prose-heavy
+case, and only at the price of splicing re-measured pictures back into a
+document by position — an identity no channel records, since `Ir.Pic.Picture`
+carries no key. *A cheap preamble-only first pass* is the same shape as what
+landed, minus the check — and without the check it is exactly the "two faces
+with nothing stating they agree" the prior entry correctly refused, because a
+preamble face genuinely can differ: `tests/corpus/diagram-scm.tex` is the
+witness in the suite, where the settled environment's per-glyph fallback
+reaches a math glyph the provisional one measures as missing (2 of 4 labels
+disagree, and the driver re-elaborates).
+
+**Cost, measured** (medians of 31, interleaved, against a binary built at the
+commit before the stopgap; `scripts/bench.lean` unchanged and blind to this,
+its corpus carrying no pictures):
+
+| document | pre-stopgap | stopgap | this |
+|---|---|---|---|
+| synthetic 30-frame / 180-label deck | 84 ms | 94 ms (+12.3%) | 87 ms (+3.7%) |
+| 42-page reference deck, 16 pictures | 111 ms | 119 ms (+7.2%) | 117 ms (+5.4%) |
+| `tests/corpus/paragraphs.tex` (no pictures) | 66 ms | 64 ms | 62 ms |
+
+The picture-heavy case recovers most of the regression; the prose-heavy one
+recovers little, and the reason is worth writing down rather than rounding
+off. On that deck elaboration is 9 ms and the *font assembly* is 13, so the
+removed re-elaboration and the added provisional assembly are nearly the same
+number. Two caches were added to keep the second assembly from being a second
+cost — `FontEnv.Cache` memoises the face **parse** by path (never the set, since
+the order faces enter a set is what its index means) and the `resolveWeight`
+**search**, which is a linear scan of ~2,900 faces asked once per slot per
+corner for families that are usually the same family. Those pay for the final
+assembly; what remains is the provisional one's own parses, of which the math
+face is most. Named, not fixed: the provisional assembly could hand its
+slot-0 index entries to the settled one, guarded on `doc.fonts` being
+unchanged and on `docWeightKeys` adding no slot-0 key — worth ~4 ms there,
+and it must not perturb the order in which faces enter the set.
+
+**Behaviour.** Every one of the 154 corpus artifacts (77 fixtures × PDF and
+HTML) is byte-identical before and after, and so is every diagnostic; the
+42-page reference deck's PDF is byte-identical, 42 pages, same warnings, so
+the label-collision fix the stopgap bought still holds — it is the same bytes
+the stopgap produced. No golden moved. `lake test` green.
+
+**One surface kept rather than migrated.** `FontEnv.resolveMath` gained the
+cache as an `Option`, defaulting to none, because `Tests/Diag.lean` calls it
+and a required parameter would have left a sibling's file red; the cache is an
+optimisation and never an input, which is the property that lets it be
+optional. `Elab.runRawsSpanned` likewise stands unchanged as a thin wrapper
+over the new `prepare`/`runPrepared` split, so no caller outside this tree has
+to move.
+
 2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
 outside it, `inventory` and `value` set side by side look misaligned, the
 descender giving the impression the word is bumped up; correct it, keep
