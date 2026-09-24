@@ -334,11 +334,29 @@ theorem DiagCode.code_letter (c : DiagCode) :
     c.code.front = c.loss.severity.letter := by
   cases c <;> rfl
 
-/-- How many codes the registry holds: the one number a new code bumps.
-`all_complete` makes an undercount a build failure; `all_nodup` an
-overcount (`ofNat` clamps out of range, so an overcount duplicates the
-last constructor). -/
-def DiagCode.count : Nat := 166
+/-- A number at or past the last constructor's index. `ofNat` saturates —
+every index beyond the last constructor answers with the last constructor —
+so applying it here names that constructor without naming it by hand, which
+is what makes `count` derivable. It is a *ceiling*, not a count: it never
+needs touching as codes are added, and a value too small is a build failure
+rather than a wrong answer (`all_complete` stops holding). -/
+def DiagCode.ctorCeiling : Nat := 65536
+
+/-- How many codes the registry holds: read off the type, not maintained by
+hand. Four agents adding a code in one session collided on the literal this
+replaces and merged it to a number one short of the truth; the count is
+derived now, so registering a code is one constructor and one `spec` arm and
+nothing else.
+
+Derived through the two helpers `deriving DecidableEq` synthesises for an
+enum: `ofNat` saturates at the last constructor, so `ofNat ctorCeiling` *is*
+that constructor, and `ctorIdx` reads its index. If either helper ever
+changed shape the value would move, and the two theorems below would stop
+holding — `all_complete` makes an undercount a build failure, `all_nodup` an
+overcount (`ofNat` clamps out of range, so an overcount duplicates the last
+constructor), so the derivation is checked in both directions rather than
+trusted. -/
+def DiagCode.count : Nat := (DiagCode.ofNat DiagCode.ctorCeiling).ctorIdx + 1
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never
