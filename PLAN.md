@@ -8590,3 +8590,98 @@ is evidence, not a theorem.
   The engine's output for the reference deck is byte-identical across this
   round: 44 pages, no leak, the same text layer. Every one of these was a
   case the deck does not contain — which is the argument for the table.
+
+
+### 2026-09-24 — the title page's split is not the template's ratio
+
+A deck's title page sat a visible band too low, and its title set one
+scale step too large. Two defects, one page, both found by rendering a
+page and measuring it — and both invisible to a fully green suite,
+because goldens witness elaboration and neither fault is an elaboration
+fault. Neither golden moved when they were fixed.
+
+**The split.** `Ir.VAlign.shares` read `.golden` as 2618:1000, the sum of
+moloch's `title page` template glue (`\vspace{0pt plus 1.618fil}` and
+`\vfil` above, `\vspace{0pt plus 1fil}` below — its "golden ratio
+spacing"). That is the template's ratio, and the template's ratio is not
+the page's: the template sets its glue *inside* a frame that contributes
+centring glue of its own, and the two are one vertical list, so the units
+add. Beamer's centred frame contributes one fil unit on each side, so the
+page distributes (1 + 1.618 + 1) : (1 + 1) = 3618:2000 — above share
+3618/5618 = 0.64400, against the 0.72360 the template's numbers alone
+give.
+
+Measured, not fitted. The above share is scale-free, so it is read from
+the *rate* at which a block moves as its own height grows, which cancels
+the first line's height and the last line's depth — the two quantities a
+glyph-box reading cannot recover. On three synthetic beamer decks
+(invented content, moloch, one varying only the title's line count) the
+rate is 0.64400 to five places, and a centred *body* frame measures
+0.50000 — which is what pins the frame's own contribution at 1:1 and makes
+the decomposition above the only one consistent with both readings. The
+engine now measures 0.64399 by the same method: the residual is one
+integer division.
+
+The invariant is the decomposition, not the number:
+`Ir.golden_composes_center` states `.golden`'s shares as
+`composeGlue .center.shares titlePageTemplateGlue`, so the constant cannot
+be retuned without naming which half moved, and each half keeps its own
+source (the frame's centring to beamer's user guide §8.1, the template's
+glue to beamerinnerthememoloch.dtx). `Layout.VDist.golden_projects` kills
+the second copy the literal used to be.
+
+**The size.** An undeclared title took `\LARGE` — sourced, but for a flow
+page: classes.dtx's `\@maketitle` sets `{\LARGE \@title \par}`. A deck's
+own step is one below, `\Large` (beamerfontthemedefault.sty,
+`\setbeamerfont{title}{size=\Large, parent=structure}`, the step
+beamerfontthememoloch.sty re-declares for its lineage). Reading the flow
+step on a deck sets the title 20% large, which is enough to re-flow a
+title line whose breaks the author declared — the remainder returning to
+the flush-left margin, which reads as a broken indent. `Ir.titleSize` is
+the one resolving site and `Layout.titleSize_monotone` states the deck's
+step strictly below the flow page's, as an instance of
+`scaleStep_monotone` at the one adjacent pair the two page models name.
+
+The step belongs at that site and *not* in a bundle's `titlepage` font,
+which was the first attempt: a declared font template reaches the HTML
+backend too, where it nests inside `h1`'s own `LARGE` step from
+`deckBase`, so the two multiply (1.728 × 1.44) instead of one replacing
+the other. The bundle route made the HTML title worse than it found it.
+That leaves the HTML deck's `h1` still at the flow step — the one half of
+this fact the engine does not yet earn. Not staged as an obligation: the
+statement cannot be typed without making `HtmlDoc`'s `scaleSize` and the
+`deckBase` h1 rule readable from outside that module, which is the same
+refactor the fix itself performs, so it is named here and routed to the
+HtmlDoc owner instead. The fix is one literal — `deckBase`'s
+`{ selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] }`
+becomes `"Large"`, with the matching hypothesis in the `deckBase` coverage
+theorem (the `h8` binder) moved with it. Beware the h1/h2 collision that
+creates: a deck's `h2` is also `Large`, so the deck's own ladder needs the
+frame title's step (`large`, beamerfontthememoloch.sty) rather than
+`Large`, which is a second finding in the same file.
+
+### 2026-09-24 — a declared break that re-flows is a silent loss
+
+The same title page ships three lines where the author declared two, and
+says nothing. `W0005` is not the missing diagnostic and should not fire:
+there is no overfull line, because the breaker found a perfectly legal
+break — it just was not the author's. The loss is the *declared shape*,
+and the engine has no code for it.
+
+Sizing the title correctly narrows the case but does not close it: a
+declared line can still exceed the measure on its own, and then the
+engine's choice is to re-flow silently (today), to refuse and set the line
+overfull (TeX's own behaviour, which runs ink off the measure since display
+type is ragged and unhyphenated), or to re-flow and name it. The third is
+the repo's floor — the degraded state, named once at full strength — and it
+needs a `DiagCode` of its own, since one code means one thing and W0005
+already means "no feasible break". Not staged as an obligation: the
+statement's shape is `_accounts` (a shipped title-line count above the
+declared segment count is paid for by a diagnostic), and naming the
+diagnostic is the whole content — a statement that quantifies over a code
+that does not exist cannot be typed, and inventing counting helpers in the
+queue to express it would be the spec copy the queue forbids. Routed
+instead, with the registry cost stated: one `DiagCode` constructor with its
+declared `Loss`, one `spec` arm, `count + 1`, a `diagWitness` firing
+witness whose rendered form lands in the diagnostics golden, and a message
+that passes the voice lint.

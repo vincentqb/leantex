@@ -1734,6 +1734,70 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       match sg with
       | .rule w _ _ _ => w == geom.textWidth
       | _ => false)
+  -- The deck's title takes the bundle's declared title font, one scale
+  -- step over the body (`Large`), not the flow class's `\@maketitle`
+  -- fallback two steps up (`LARGE`): the fallback is sourced for an
+  -- article page, and a deck that inherits it sets its title 20% large,
+  -- which re-flows a declared title line. Judged over `Layout.Out`'s
+  -- shipped line sizes, never an IR dump.
+  let deckTitleSrc := "\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
+    "\\begin{document}\n\\title{Alpha Beta}\\author{Pat Placeholder}\n" ++
+    "\\maketitle\n\\end{document}"
+  let deckTitleSize := Ir.scaleStep geom.fontSize "Large"
+  t "a deck title sets at the bundle's declared step, not the flow fallback"
+    ((linesOf deckTitleSrc).any (·.size == deckTitleSize) &&
+      !(linesOf deckTitleSrc).any (·.size == Ir.scaleStep geom.fontSize "LARGE"))
+  -- The title page's split composes the enclosing frame's own centring
+  -- with the template's glue: the frame contributes one fil unit on each
+  -- side and the template 1.618 more above (`Ir.VAlign.shares`). The
+  -- share is scale-free, so it is read the way the oracle reads beamer's
+  -- — from the rate at which the block moves as its own height grows,
+  -- which cancels the first line's height and the last line's depth.
+  let titleBlock (extra : String) : Option (Dim.Sp × Dim.Sp) := do
+    let ls := (linesOf ("\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
+      "\\begin{document}\n\\title{Alpha" ++ extra ++ "}\\author{Pat Placeholder}\n" ++
+      "\\maketitle\n\\end{document}")).filter (!·.furniture)
+    let first ← ls[0]?
+    let last ← ls.back?
+    return (first.y, last.y - first.y)
+  match titleBlock "", titleBlock "\\\\ Beta\\\\ Gamma\\\\ Delta" with
+  | some (y1, span1), some (y2, span2) =>
+    let (above, below) := Ir.VAlign.golden.shares
+    -- Taller block, smaller leftover, so the block's top rises by the
+    -- above share of the growth.
+    let predicted := y1 - (span2 - span1) * above / (above + below)
+    t "the title page's block grew" (span1 < span2)
+    t "the title page splits its leftover by the composed golden share"
+      ((y2 - predicted).natAbs ≤ 2)
+  | _, _ => t "the title page's split probe produced its blocks" false
+  -- A title whose breaks the author declared keeps them: the second
+  -- declared line stays one line and keeps its declared indent, rather
+  -- than re-flowing and returning the remainder to the flush-left margin
+  -- — the pattern a reader sees as a broken indent. The measure here
+  -- holds the declared line at the deck's own title step.
+  let brokenSrc := "\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
+    "\\begin{document}\n\\title{Alpha beta gamma\\\\ \\quad delta epsilon zeta}" ++
+    "\\author{Pat Placeholder}\n\\maketitle\n\\end{document}"
+  let titleLines := (linesOf brokenSrc).filter fun l =>
+    !l.furniture && l.size == deckTitleSize
+  t "a declared two-line title stays two lines"
+    (titleLines.size == 2)
+  -- The declared indent survives the declared break: `\quad` sets as a
+  -- one-em run at the title's own size, and a run is not glue, so the
+  -- break does not discard it the way TeX discards leading glue.
+  let firstRunWidth (l : Layout.LineOut) : Option Dim.Sp :=
+    l.segs.findSome? fun sg => match sg with
+      | .run _ _ _ w _ _ _ _ _ _ => some w
+      | _ => none
+  t "the declared second line keeps its indent"
+    ((do
+      let a ← titleLines[0]?
+      let b ← titleLines[1]?
+      let wa ← firstRunWidth a
+      let wb ← firstRunWidth b
+      -- One em at the title's size leads the second line, and the first
+      -- line opens on type instead.
+      return wb == deckTitleSize && wa != deckTitleSize : Option Bool).getD false)
 
 /-- The running head's reserved band (`furnitureBand`/`Geom.bodyTop`): with a
 top margin too small to hold the head line, body ink still starts at least

@@ -386,10 +386,11 @@ theorem slides_lines_survive_bands (a d f : Sp)
 /-- How a page distributes its leftover vertical space: declared shares of
 the stretch above and below the content, the ratio form of beamer's
 `\vfil`-glue model. Centring is 1:1, top-flush is 0:1 (all leftover
-below), bottom-flush 1:0, and the moloch title page 2618:1000 — the sum
-of its `0pt plus 1.618fil` and `\vfil` above against the `plus 1fil`
-below (beamerinnerthememoloch.dtx, the "golden ratio spacing" of its
-`title page` template). -/
+below), bottom-flush 1:0, and the moloch title page 3618:2000 — the
+frame's own centring unit on each side composed with the template's
+`0pt plus 1.618fil` and `\vfil` above against its `plus 1fil` below
+(`Ir.golden_composes_center`; beamerinnerthememoloch.dtx, the "golden
+ratio spacing" of its `title page` template). -/
 structure VDist where
   above : Nat
   below : Nat
@@ -398,7 +399,7 @@ structure VDist where
 def VDist.top : VDist := ⟨0, 1⟩
 def VDist.center : VDist := ⟨1, 1⟩
 def VDist.bottom : VDist := ⟨1, 0⟩
-def VDist.golden : VDist := ⟨2618, 1000⟩
+def VDist.golden : VDist := ⟨3618, 2000⟩
 
 /-- The shift of a line with `k` of its page's `n` fil units above it:
 TeX's first-order infinite glue, as a share of the page's leftover.
@@ -476,9 +477,15 @@ theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
 
 /-- The distribution a frame's declaration names: a projection of the one
 IR table (`Ir.VAlign.shares`), so the PDF page cannot drift from the HTML
-deck's spacers. `golden` is the moloch title page's 2618:1000. -/
+deck's spacers. `golden` is the title page's composed 3618:2000. -/
 def VDist.of (v : Ir.VAlign) : VDist :=
   ⟨v.shares.1, v.shares.2⟩
+
+/-- The standalone `golden` is the table's own: the literal and the
+projection are one value, so a change to the sourced ratio cannot leave a
+second copy behind (the shape `VDist.golden` was, and which let the two
+drift). -/
+theorem VDist.golden_projects : VDist.golden = VDist.of .golden := rfl
 
 /-- Where a run's ink comes from, for the backends' marked content. No
 default: a construction must say. The tagger keys a run by the structure
@@ -5172,6 +5179,20 @@ theorem scaleStep_monotone (base : Int)
     | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
     | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
 
+/-- A deck's title sets strictly smaller than a flow page's, an instance of
+`scaleStep_monotone` at the one adjacent pair the two page models name
+(`Large` for the deck, beamerfontthemedefault.sty; `LARGE` for the flow
+page, classes.dtx's `\@maketitle`). The invariant whose absence let the
+deck read the larger of the two: at `LARGE` a deck title is 20% large, and
+a title line whose breaks the author declared re-flows — the remainder
+returning to the flush-left margin, which reads as a broken indent, and
+silently, since the breaker found a legal break and no line was
+overfull. -/
+theorem titleSize_monotone (base : Int)
+    (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
+    Ir.titleSize base true < Ir.titleSize base false :=
+  scaleStep_monotone base hb (("Large", 1440), ("LARGE", 1728)) (by decide)
+
 /-- Heading hierarchy (arch-design I3), an instance of `scaleStep_monotone`
 at the ladder's normalsize–large–Large run: at every base size of at least
 one point, a section sets strictly larger than a subsection, and no
@@ -5224,8 +5245,18 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
 /-- The one door the document title renders through, centred or not: a
 declared `titlepage` font template wraps it — the same template the HTML
 backend applies to its <h1>, so the two surfaces cannot diverge — and
-undeclared it takes display type at the scale's LARGE step in the bold
-face (classes.dtx's \@maketitle sets {\LARGE \@title \par}). -/
+undeclared it takes display type in the bold face at the step its own page
+model names. A flow page's is `\LARGE` (classes.dtx's `\@maketitle` sets
+`{\LARGE \@title \par}`); a deck's is one step below, `\Large`
+(beamerfontthemedefault.sty, `\setbeamerfont{title}{size=\Large,
+parent=structure}` — the step moloch's own lineage re-declares,
+beamerfontthememoloch.sty). Reading the flow step on a deck set its title
+20% large, which re-flowed a title line whose breaks the author had
+declared and returned the remainder to the flush-left margin: a broken
+indent on the shipped page, and silent, because the breaker found a legal
+break and no line was overfull. The step belongs here rather than in a
+bundle's `titlepage` font: that template nests inside the HTML backend's
+own `h1` step, so a bundle carrying the size would multiply the two. -/
 private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     (indent : Sp) (center : Bool) : Acc :=
   let (a, leaf) := a.leafRange (leafCount title)
@@ -5235,7 +5266,7 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
       (leaf := leaf) (span := leafCount title)
   | none =>
     collectDisplay r a title indent center
-      (Ir.scaleStep r.geom.fontSize "LARGE")
+      (Ir.titleSize r.geom.fontSize r.slides)
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared

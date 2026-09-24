@@ -1774,6 +1774,18 @@ itself: the identity factor, `normalsize`'s. -/
 def scaleStep (base : Sp) (name : String) : Sp :=
   base * ((sizeScale.lookup name).getD 1000) / 1000
 
+/-- The size a document title sets at when no `titlepage` font template
+declares one: the one resolving site, so the two backends read one
+function rather than each naming a step. A flow page takes `LARGE`
+(classes.dtx's `\@maketitle` sets `{\LARGE \@title \par}`); a deck takes
+`Large`, one step below (beamerfontthemedefault.sty,
+`\setbeamerfont{title}{size=\Large, parent=structure}`, the step
+beamerfontthememoloch.sty re-declares for its own lineage). Reading the
+flow step on a deck set its title 20% large, enough to re-flow a title
+line whose breaks the author declared. -/
+def titleSize (base : Sp) (slides : Bool) : Sp :=
+  scaleStep base (if slides then "Large" else "LARGE")
+
 /-- Adjacent steps of the scale, in order: what the scale theorems below
 quantify over. -/
 def sizeScaleSteps : List (Nat × Nat) :=
@@ -2100,9 +2112,10 @@ def markRaise : Nat := 333
 /-- How a frame distributes its leftover vertical space: beamer's frame
 options `[t]`/`[c]`/`[b]` on `\begin{frame}`. `center` is beamer's default
 (user guide §8.1: the `c` option "is the default behavior"). `golden` is
-the title page's declaration — moloch's golden-ratio glue — and only
-`\maketitle` produces it: a golden frame is the title page, whose content
-is display furniture. -/
+the title page's declaration — beamer's centring composed with moloch's
+golden-ratio glue (`golden_composes_center`) — and only `\maketitle`
+produces it: a golden frame is the title page, whose content is display
+furniture. -/
 inductive VAlign where
   | top
   | center
@@ -2110,20 +2123,51 @@ inductive VAlign where
   | golden
   deriving Repr, BEq, Inhabited
 
+/-- moloch's title-page template glue, in thousandths of a fil unit:
+`\vspace{0pt plus 1.618fil}` and `\vfil` above the title matter against
+`\vspace{0pt plus 1fil}` below it (beamerinnerthememoloch.dtx, the
+"golden ratio spacing" of its `title page` template). The template's own
+numbers, and *not* the page's distribution: the template sets its glue
+inside a frame that contributes centring glue of its own, and the two
+lists are one vertical list, so the units add (`golden_composes_center`).
+-/
+def titlePageTemplateGlue : Nat × Nat := (2618, 1000)
+
+/-- A frame's own distribution composed with a template's glue, both
+first-order fil in one vertical list: the units add, at the template's
+thousandths. What a page-opening path's declared distribution is — a
+template's ratio is never the page's on its own. -/
+def composeGlue (frame template : Nat × Nat) : Nat × Nat :=
+  (frame.1 * 1000 + template.1, frame.2 * 1000 + template.2)
+
 /-- The shares of a page's leftover vertical space above and below its
 content, per declared alignment: the ratio form of beamer's `\vfil`-glue
 model — top-flush 0:1 (all leftover below), centring 1:1 (beamer user
 guide §8.1: `c` is the default), bottom-flush 1:0, and the title page's
-golden 2618:1000 (beamerinnerthememoloch.dtx, the "golden ratio spacing"
-of its `title page` template). The one table both artifacts must honour:
-`Layout.VDist.of` projects it onto the PDF page, `HtmlDoc.vdistShares`
-onto the deck's flex spacers, and `vdist_shares_agree` in Tests states
-the agreement. -/
+3618:2000 — beamer's centring composed with moloch's title-page glue
+(`composeGlue`, `golden_composes_center`). The one table both artifacts
+must honour: `Layout.VDist.of` projects it onto the PDF page,
+`HtmlDoc.vdistShares` onto the deck's flex spacers, and
+`vdist_shares_agree` in Tests states the agreement. -/
 def VAlign.shares : VAlign → Nat × Nat
   | .top => (0, 1)
   | .center => (1, 1)
   | .bottom => (1, 0)
-  | .golden => (2618, 1000)
+  | .golden => composeGlue (1, 1) titlePageTemplateGlue
+
+/-- The title page's split is the enclosing frame's own centring composed
+with the template's glue, never the template's numbers alone: a frame
+contributes one fil unit on each side (`.center`) and moloch's template
+1.618 + 1 above against 1 below, so the page distributes 3618:2000 —
+above share 3618/5618. The decomposition is what makes the constant
+sourced rather than fitted: both halves are independently sourced (the
+frame's centring to beamer's user guide §8.1, the template's glue to
+beamerinnerthememoloch.dtx), and reading the template alone is the defect
+this states away — it put 2618/3618 of the leftover above and set the
+title matter a visible band too low. -/
+theorem golden_composes_center :
+    VAlign.golden.shares = composeGlue VAlign.center.shares titlePageTemplateGlue :=
+  rfl
 
 namespace Pic
 

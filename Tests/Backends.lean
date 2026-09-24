@@ -1226,7 +1226,9 @@ def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared distributions land as their ratios"
     -- golden above the title matter, its below share beneath; [t] one
     -- spacer below, [b] one above, the default centring one each side.
-    (count "flex-grow: 2618" == 1 && count "flex-grow: 1000" == 1 &&
+    -- The golden pair is the composed share (`Ir.golden_composes_center`):
+    -- the frame's own centring unit on each side plus the template's glue.
+    (count "flex-grow: 3618" == 1 && count "flex-grow: 2000" == 1 &&
      count "flex-grow: 1\"" == 4)
   t "frame ids are unique, a repeated identical title numbers quietly"
     (count "id=\"alpha\"" == 1 && count "id=\"alpha-2\"" == 1 &&
