@@ -474,7 +474,15 @@ def censusTable :
     ("the running head ships", hasStr (censusText c) "Alex Doe"),
     ("the section rules draw", c.any fun p => decide (p.rules ≥ 1)),
     ("thispagestyle empty keeps the opening page bare of the page number",
-      (c[0]?.map fun p => p.lines.all (·.text.trimAscii.toString != "1")).getD false)]),
+      (c[0]?.map fun p => p.lines.all (·.text.trimAscii.toString != "1")).getD false),
+    -- The hand-aligned pair, through the whole driver: a phantom props a
+    -- descender-less word's depth so it shares its neighbour's baseline. The
+    -- argument is sizing, never ink — this fixture is the corpus's witness
+    -- that no page ships it.
+    ("the hand-aligned pair ships both its words",
+      hasStr (censusText c) "Awards" && hasStr (censusText c) "Judged"),
+    ("and the phantom's argument reaches no page",
+      !hasStr (censusText c) "qy")]),
   ("headroom", fun geom c => [
     ("one page", c.size == 1),
     ("the head ships with its page number", hasStr (censusText c) "Invented Field Notes"),

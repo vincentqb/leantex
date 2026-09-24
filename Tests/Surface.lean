@@ -5795,3 +5795,83 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     ((warnCodes ms).contains "W0104" && !(warnCodes ms).contains "W0301")
   t "and the content beside it survives"
     (has (pageText ms) "Body sentence.")
+
+
+/-- The phantom family on the page. A phantom sets a box of its argument's
+size and no ink (plain.tex ll. 1024-1031), so no page may ship the
+argument — the defect these rows close shipped `\vphantom{y}`'s letter as a
+visible glyph beside the word it was propping, which is why every row here
+reads the shipped lines rather than the IR.
+
+The axes divide the family. `\vphantom` props height and depth only, and a
+line already holds both from its fonts' declared metrics at each run's size
+(`Layout.line_box_glyph_free`: emptying every run's glyphs changes no
+component of the line box), so the prop is in force before it is asked for
+and the hand-written alignment fix is inert rather than lost — silent by
+design, and the one case a reader of this file should expect no diagnostic
+for. `\hphantom` and `\phantom` reserve a *width* as well, and this engine
+carries no width a document did not declare, so that axis is a named loss
+(W0104) exactly as `\makebox`'s declared width is. -/
+def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pageText (src : String) : String := pageTextOf oneFace src
+  let allText (src : String) : String := allTextOf oneFace src
+  let has := hasStr
+  -- The reported defect, on the shape it was reported in: a pair of words
+  -- aligned by hand shipped the phantom's letters beside the word.
+  let v := "Inventory Value\\vphantom{qy} counted"
+  t "a vphantom's argument is not ink" (!has (allText v) "qy")
+  t "the words around it are, still one run"
+    (has (pageText v) "Value counted")
+  t "and vphantom is not an unknown command"
+    (!(warnCodes v).contains "W0301" && !(warnCodes v).contains "W0341")
+  t "the height and depth it props are already the line's, so nothing is named"
+    ((dvE v).all (·.severity == .note))
+  -- The other two axes. Content around them survives; the width does not,
+  -- and says so.
+  let h := "A\\hphantom{qy}B"
+  t "an hphantom's argument is not ink" (!has (allText h) "qy")
+  t "the text around it survives" (has (pageText h) "A" && has (pageText h) "B")
+  t "a width the engine has no carrier for is a named loss, not a silent one"
+    ((warnCodes h).contains "W0104" && !(warnCodes h).contains "W0301")
+  let p := "A\\phantom{qy}B"
+  t "a phantom's argument is not ink" (!has (allText p) "qy")
+  t "and its width is named the same way"
+    ((warnCodes p).contains "W0104" && !(warnCodes p).contains "W0301")
+  -- Table and arm must not drift: a family member the dispatch forgot would
+  -- keep its argument as prose, which is the defect itself. One list
+  -- (`Picture.phantomCtrl`), read here and by the label salvage.
+  for n in Picture.phantomCtrl do
+    let src := s!"A\\{n}\{qy}B"
+    t s!"phantomCtrl row '{n}' is a known command"
+      (!(warnCodes src).contains "W0301")
+    t s!"phantomCtrl row '{n}' ships no argument as ink"
+      (!has (allText src) "qy")
+    t s!"phantomCtrl row '{n}' keeps the text around it"
+      (has (pageText src) "A" && has (pageText src) "B")
+    -- The axis table is the arm's only authority on which member reserves a
+    -- width, so the two must agree exactly: a member whose row says it
+    -- reserves one and whose page says nothing was named would be a page
+    -- lying about its spacing, quietly.
+    t s!"phantomCtrl row '{n}' names a width exactly when its axis reserves one"
+      ((warnCodes src).contains "W0104" ==
+        (Elab.phantomReservesWidth.lookup n).getD false)
+  -- A phantom's argument is sizing, so nothing inside it is content: a
+  -- label, a reference or a citation in there names nothing and resolves
+  -- nothing. The group is never elaborated at all.
+  let inner := "A\\vphantom{\\label{ghost}qy}B"
+  t "a phantom's group is not elaborated: nothing in it is ink"
+    (!has (allText inner) "qy")
+  t "and nothing in it is a reference target"
+    ((dvE "A\\vphantom{\\label{ghost}}B\\ref{ghost}").any fun d => d.code == "W0349")
+  -- A bare word is the argument, as it is for `\textbf` and `\underline`:
+  -- one convention for a one-token argument across the dispatch. So the
+  -- word is sizing and goes, and the words around it stay — the shape that
+  -- ate the rest of the label in the picture path once.
+  let bare := "A\\vphantom B kept"
+  t "a bare word is the phantom's argument, and so is not ink"
+    (!has (allText bare) "B")
+  t "and it takes only that word: what follows stays on the page"
+    (has (pageText bare) "kept" && has (pageText bare) "A")
+  t "a phantom with no argument at all is named, never silently empty"
+    ((dvE "A\\vphantom\n\n\\par").any fun d => d.code == "E0304")

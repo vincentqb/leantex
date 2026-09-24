@@ -78,6 +78,12 @@
 
 \degree{PhD Applied Mathematics}{Example University}
 
+% The hand-aligned pair: `Awards` carries no descender, so its box is
+% shallower than `Judged`'s and the two would sit on different baselines.
+% \vphantom props the depth by hand — the idiom this line exists to keep
+% working, argument and all, without that argument ever reaching the page.
+\noindent\textbf{Awards\vphantom{qy}} \textbar\ \textbf{Judged} \hfill {\color{muted}2019}\par
+
 \ul{Selected honours} follow, judged \varul<5>[0.2ex][0.1ex]{genuinely groundbreaking} by a jury.
 
 \end{document}

@@ -639,6 +639,7 @@ def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
    -- Underline is native; a document's own \varul (soul-style) is ignored.
    "underline", "uline", "ul", "varul"] ++
+  Picture.phantomCtrl ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
@@ -674,6 +675,7 @@ def renderedBuiltins : List String :=
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection"] ++
+  Picture.phantomCtrl ++
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
@@ -691,6 +693,59 @@ cannot silently strip a built-in of both protections. -/
 theorem builtin_verdict_total :
     (builtinNames.all fun n =>
       structuralNames.contains n || renderedBuiltins.contains n) = true := by
+  decide +kernel
+
+/-- The invariant the phantom defect wanted: a command whose whole meaning
+is *size without ink* is a name this dispatch gives a meaning of its own, so
+no member of the family can reach the unknown-command recovery — whose rule
+is "keep the braced arguments as text", and which therefore shipped
+`\vphantom{y}`'s letter onto the page as a visible glyph. The family is one
+list (`Picture.phantomCtrl`, where the label salvage reads it too), so
+adding a fourth member without wiring it into the dispatch fails here
+rather than on a reader's page.
+
+This is the registry half. The page half — no page ships the argument —
+is `phantomChecks`, read off `Layout.Out`: a name can be registered here
+and still be inked by an arm, which no statement over a list can see. -/
+theorem phantom_rendered_covers :
+    (Picture.phantomCtrl.all fun n => renderedBuiltins.contains n) = true := by
+  decide +kernel
+
+/-- The same family against the *salvage* tables: every member's group is a
+naming argument (`Ir.floorNamedArgs`), so a recovery path that keeps content
+groups — the math floor, a picture label — drops a phantom's group instead
+of setting it. Two tables maintained apart, held together here: a member
+added to the family and not to the arity table would ink its argument
+wherever a construct degraded around it, which is the original defect in its
+second-cheapest disguise. -/
+theorem phantom_named_covers :
+    (Picture.phantomCtrl.all fun n =>
+      (Ir.floorNamedArgs.lookup n) == some 1) = true := by
+  decide +kernel
+
+/-- Which member of the family reserves a *width*, the one axis this engine
+cannot reproduce: `\hphantom{x}` and `\phantom{x}` take x's width,
+`\vphantom{x}` takes none (plain.tex ll. 1024-1031, where `\vphantom` is a
+`\null` carrying box 0's height and depth and nothing else). There is no
+height-and-depth column because there is nothing to record: a line's box is
+its fonts' declared metrics at each run's size and never a glyph
+(`Layout.line_box_glyph_free`), so the prop those two axes ask for is in
+force before the document asks, for every member and every argument set in
+a face already on the line.
+
+A table rather than a name test in the arm, so the axis is data with its
+source beside it and a fourth family member cannot inherit a default. -/
+def phantomReservesWidth : List (String × Bool) :=
+  [("vphantom", false), ("hphantom", true), ("phantom", true)]
+
+/-- Family and axes, exactly each other's keys. The arm reads the axis with
+a `false` default that this makes unreachable: a member added to the family
+and not here would silently claim to reserve no width — and so name no
+loss — which is the quietest way back to a page that lies about its
+spacing. -/
+theorem phantom_axes_set_eq :
+    ((Picture.phantomCtrl.all fun n => (phantomReservesWidth.lookup n).isSome) &&
+      phantomReservesWidth.all fun e => Picture.phantomCtrl.contains e.1) = true := by
   decide +kernel
 
 /-- TeX's accent commands the engine composes to NFC: the control-symbol
@@ -3036,6 +3091,37 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
               ((flushText acc sb).push (.underline #[.text s])) ""
+          | _ =>
+            diag ctx .E0304 s!"'\\{name}' needs an argument" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
+        else if Picture.phantomCtrl.contains name then
+          -- A phantom sets a box of its argument's size and no ink
+          -- (plain.tex ll. 1024-1031): the group is sizing, never content,
+          -- so it is consumed unread — no ink, no label, no reference, no
+          -- diagnostic from inside it. `sb` is carried through rather than
+          -- flushed, so the words on either side stay one run and a
+          -- zero-width box costs the line nothing.
+          --
+          -- The axes, and what each costs here. `\vphantom` props height and
+          -- depth, and a line already holds both from its fonts' declared
+          -- metrics at each run's size (`Layout.line_box_glyph_free`), so
+          -- the prop is in force before the document asks for it: inert, not
+          -- lost, and silent. A member that reserves a width
+          -- (`phantomReservesWidth`) asks for the one axis no width this
+          -- engine sets was not declared for, so that axis is a named
+          -- loss — W0104, the code `\makebox`'s declared width already takes.
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
+          | some (.group _ _) | some (.word _ _) =>
+            have hjlt := getElem?_lt hj
+            if (phantomReservesWidth.lookup name).getD false then
+              warnOnce ctx ("ctrl:" ++ name) .W0104
+                s!"'\\{name}' reserves its argument's width; no width is set for it" pos
+                (help := "a declared width reads \\hspace{1em}")
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) acc sb
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb

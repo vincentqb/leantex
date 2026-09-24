@@ -77,6 +77,16 @@ role degree
       text "PhD Applied Mathematics"
     text ", Example University"
 para
+  styled bold
+    text "Awards"
+  text " | "
+  styled bold
+    text "Judged"
+  text " "
+  fill
+  color muted #72727F
+    text "2019"
+para
   underline
     text "Selected honours"
   text " follow, judged "
@@ -127,6 +137,8 @@ note[N0100] 58:1 '\color{primary}' → \primary
 note[N0100] 62:5 '\vspace' → \block[before = 2 * sepunit]{}
 note[N0100] 63:6 '\color{muted}' → \muted
 note[N0100] 74:1 '\vspace' → \block[before = 2 * sepunit]{}
-note[N0100] 81:1 '\ul' → \underline
-note[N0100] 81:38 '\varul' → \underline
+note[N0100] 85:1 '\noindent' → nothing: no paragraph carries a first-line indent here
+note[N0100] 85:73 '\color{muted}' → \muted
+note[N0100] 87:1 '\ul' → \underline
+note[N0100] 87:38 '\varul' → \underline
 note[N0100] 16:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}
