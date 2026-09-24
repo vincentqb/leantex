@@ -283,6 +283,24 @@ list.
   split — and on the compositionality of elaborating a concatenation,
   which `scripts/compose-fuzz.lean` stands in for. The witness is
   `diagSiteCountChecks`.
+- `elementSpace_monotone` — positive declared space never narrows the gap
+  above a block, element-space half. `Layout.skip_monotone` holds the bare
+  declared skip (`\vspace`, `\smallskip`, `Ir.gapBlock`); this is the
+  `\addvspace` path, where an element's own space still stands *in place of*
+  the peer parskip. Measured live: `\style{itemize}{ before = 1pt }` after a
+  paragraph ships 13 pt of separation where the undeclared peer gap is
+  18 pt, so a 1 pt declaration narrows the gap by 5 pt. Not a one-line
+  change: the furniture rhythm constants (`Ir.titleBarGap`, the caption
+  gaps, `Ir.headingBeforeDefault` and its parskip-growth arm) were tuned
+  against the replacing behaviour and `default_rhythm_multiples` /
+  `caption_gaps_rhythm` pin those multiples, so correcting it is a
+  re-derivation of the furniture rhythm, not a swap of one operator.
+  Blocked on the `PagesExtend`-shaped locality lemma (two documents
+  differing in one block's declared space ship baselines differing only
+  below it) and on the `Acc` split that would give the owed glue an
+  equational theory, since `Acc.addvspace`'s maximum makes the gap monotone
+  only against a named prefix. Both are waited on by the re-flow and
+  emission-conservation rows too.
 
 ### Log
 
@@ -387,6 +405,90 @@ reserves space no glyph uses. An eight-node row of the same shape gains
 W0335 where it had no diagnostic at all. Both are rows of
 `pictureInkBoxChecks`, read off the shipped lines rather than an IR dump,
 and all four new rows fail on the parent commit.
+
+2026-09-24 — vertical-skip composition: a positive skip that narrowed the
+gap. On a four-paragraph `article`, `\smallskip` between two paragraphs
+shipped **15.0 pt** of separation where a plain paragraph break shipped
+**18.0 pt** — inserting 3 pt of glue brought the paragraphs 3 pt *closer*.
+`\medskip` shipped 18.0 (no change) and `\bigskip` 24.0, so the whole
+family was off by exactly one parskip. The amounts were right (3/6/12 pt,
+LaTeX's own, which `N0100` already names); the composition was wrong.
+`\smallskip` rewrites to `\block[before = 3pt …]`, and the block's declared
+glue stood *in place of* the parskip it displaced, so the 3 pt landed below
+the 6 pt it had evicted.
+
+**Add or max.** Both operators are in LaTeX and the difference is visible
+here, so it was measured rather than recalled. `pdflatex`, 10 pt `article`,
+`\parskip` forced to 6 pt, baselines read with `pdftotext -bbox`: plain
+break 17.93, `\smallskip` 20.92, `\medskip` 23.91, `\bigskip` 29.89 — each
+skip's full amount *on top of* the parskip. The decisive row is
+`\addvspace{3pt}`, which also shipped 20.92: the operator whose whole
+purpose is to take a maximum still added here. The reason is the ordering,
+and it is the thing to keep. `\addvspace`'s maximum is taken against
+`\lastskip`, and at a paragraph boundary `\lastskip` is zero — TeX
+contributes `\parskip` when the *following* paragraph starts, after the
+declared glue is already on the vertical list (TeXbook ch. 14; `\@vspace`
+in latex.ltx is a plain `\vskip`, and plain TeX's `\smallskip` likewise).
+So a paragraph break has two independent contributors and no declared skip
+can displace the one that has not arrived yet. **Addition**, and not as a
+convention but as a consequence of when parskip is contributed.
+
+The same measurement settles a second case: a display after a paragraph
+break shipped 27.90 ≈ 12 + 6 + 10, the parskip *and* `\abovedisplayskip`.
+The engine's "one emitter per boundary" note was therefore wrong as a
+general rule, and `display_skip_single_emitter` now carries the hypothesis
+that no peer boundary is open, with the composition named in its docstring.
+
+**The invariant, decided before the code.** `Layout.skip_monotone`: at any
+boundary, glue of non-negative width pays at least what the boundary paid
+without it. The parskip's own non-negativity is the single hypothesis — a
+page declaring negative parskip could narrow a gap by opening one, as it
+could in TeX. Proved, not staged. It needed `Int`-spelled binders *and* an
+`Int`-spelled goal: `omega` silently drops a goal whose `≤` or `+` reads at
+the `Sp` abbrev, which is broader than the existing note (which reads as
+being about hypotheses) and cost three rounds; the arithmetic now goes
+through `Int.add_le_add_left`/`_right` and two named width lemmas.
+
+**Where the addition applies, and where it must not.** `.spaced` carries
+both meanings, separated by its body, which the IR already records:
+- **Empty body** — a bare declared skip standing on its own. `\vspace`,
+  `\smallskip`/`\medskip`/`\bigskip`, and `Ir.gapBlock`. This is a `\vskip`
+  and it adds.
+- **A body** — that element's own space above it, `\block[before]{body}`,
+  the same thing a role's or a list's `before` is. This is an `\addvspace`
+  and it keeps standing in place of the peer default, which is what makes
+  one rhythm spelled upstream and at the use site ship the same positions
+  (`a styled role's rhythm matches the space spelled at the use site`).
+
+One further exclusion, and it is TeX's rule rather than a tuning: a rule is
+not a paragraph. `\parskip` is contributed when a paragraph *starts*, and an
+`\hrule` with its declared skips beside it starts none, so a gap declared
+next to a rule is the whole gap (`ruleBlock`, threaded through
+`collectBlockList` and `collectCentered`). Without it the engine's own title
+bars — whose gaps are `Ir.gapBlock`, empty-bodied and so otherwise
+additive — would have gained a rhythm quantum each and broken
+`title_bars_symmetric`'s declared-gap-is-visible-gap contract and the
+three-quanta rhythm claim.
+
+After: 18.0 / 21.0 / 24.0 / 30.0 against LaTeX's 17.93 / 20.92 / 23.91 /
+29.89. **No golden moved.** That is the AGENTS point about goldens rather
+than luck: goldens witness elaboration, the IR here is untouched, and a
+whole-document vertical-rhythm defect passed a fully green golden suite.
+The nine suite rows that moved are all `Layout.Out` assertions, and two of
+them asserted the defect by name (`a bare vspace replaces parskip`, and the
+list row expecting topsep without the peer gap).
+
+**The remainder, owed not hidden.** The `\addvspace` path still replaces,
+so the violation is live there: `\style{itemize}{ before = 1pt }` after a
+paragraph ships 13.0 pt where the peer gap is 18.0. That is
+`elementSpace_monotone` (§ Owed obligations, the queue's eighteenth row).
+It is not the same change: the furniture rhythm constants were tuned
+against the replacing behaviour, and `default_rhythm_multiples` /
+`caption_gaps_rhythm` pin those multiples, so correcting it re-derives the
+furniture rhythm rather than swapping an operator. Trying the unrestricted
+rule first is what showed this — it moved 22 suite rows, including the
+title-bar and caption-gap rhythm contracts, and those are the constants the
+re-derivation has to carry.
 
 2026-09-24 — the node floor's review round: a loose counter, a silent
 give-up, and a legal path turned fatal. An independent adversarial read of

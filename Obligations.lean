@@ -608,4 +608,29 @@ theorem warnOnce_sites_exact (file : String) (pre body : String) :
             (pre ++ "\\begin{document}" ++ body ++ "\\end{document}")).2 d := by
   sorry
 
+/-- The ink baselines the flow ships, in page and line order: the measure a
+vertical-monotonicity statement compares two runs by. -/
+def inkBaselines (o : Out) : List Dim.Sp := (inkLines o).map (·.y)
+
+-- owed: elementSpace_monotone
+-- owner: LeanTex.Core.Layout
+-- source: the paragraph-skip slice (PLAN 2026-09-24, the vertical-skip composition entry): inserting positive vertical glue between two paragraphs narrowed their separation, because the declared glue stood *in place of* the parskip it displaced rather than beside it. `Layout.skip_monotone` closes the half where the glue is a bare declared skip — `\vspace`, `\smallskip`, `Ir.gapBlock` — which is the half the defect was measured on and the half LaTeX's own `\vskip` semantics pin. The other half is still live and measured: an element's own space, the `\addvspace` path, still replaces the peer default, so `\style{itemize}{ before = 1pt }` after a paragraph ships a 13 pt separation where the undeclared peer gap is 18 pt — a positive declaration narrowing a gap by 5 pt. Correcting it is not the same one-line change: the engine's furniture rhythm constants (`Ir.titleBarGap`, the caption gaps, `Ir.headingBeforeDefault` and its parskip-growth arm) were tuned against the replacing behaviour, and `default_rhythm_multiples`/`caption_gaps_rhythm` pin those multiples, so the fix is a re-derivation of the furniture rhythm against a parskip that always adds, not a swap of one composition operator.
+-- blocker: two factorizations. (1) The composition lives in `Acc.gapGlue`, which is private to Layout and reads the owed-glue array and the peer flag together; the statable public form has to go through `Layout.run` and compare two whole runs, and nothing yet says that two documents differing only in one block's declared space ship baselines differing only below that block — the `PagesExtend`-shaped locality lemma the re-flow rows also wait on. (2) `Acc.addvspace` takes a maximum against the owed array's last entry, so the element-space gap is not a monotone function of the declaration alone: it is monotone only against a fixed prefix, and the statement needs the prefix named, which is the same `Acc` split (owed glue as a value with an equational theory, not an array threaded through the walk) that the emission-conservation rows wait on.
+-- goldens: no
+/-- An element's own declared space never narrows the gap above it: giving a
+block a positive declared space cannot move the line that follows it *up*
+the page. Stated over `Ir.Block.spaced` carrying a body, which is the
+element-space path — a role's, a list's or a `\block[before]{body}`'s own
+space — as against the bare declared skip `Layout.skip_monotone` already
+holds. Positive glue narrowing a gap is impossible under any convention,
+and the engine does not yet earn that here. -/
+theorem elementSpace_monotone
+    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc)
+    (a b : Array Ir.Inline) (g : Dim.SymGlue) (hpos : (0 : Int) ≤ g.width.sp) :
+    ((inkBaselines (Layout.run geom fs none
+        { doc with body := #[.para a, .para b] })).getLast?.getD 0 : Int)
+      ≤ (inkBaselines (Layout.run geom fs none
+          { doc with body := #[.para a, .spaced g #[.para b]] })).getLast?.getD 0 := by
+  sorry
+
 end Obligations

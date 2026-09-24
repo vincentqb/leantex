@@ -4874,6 +4874,14 @@ private structure Acc where
   /-- Title of the section in force: what a `\sectiontitle` slot shows. -/
   curSection : Array Inline := #[]
   wantDefault : Bool := false
+  /-- A document `\vskip` stands in the owed glue: a `\vspace`, a skip macro,
+  a `\block[before]`. TeX puts it on the vertical list where it stands and
+  contributes `\parskip` when the *following* paragraph starts, after it, so
+  it adds to the peer gap rather than replacing it (`Acc.gapGlue`,
+  `skip_monotone`). An element's own `\addvspace` — a heading's `before`, a
+  list's `topsep`, the furniture gaps — keeps the older replace-the-default
+  shape; once a skip is present the boundary pays both. -/
+  declaredSkip : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
@@ -4911,7 +4919,7 @@ private def Acc.wantGap (a : Acc) : Acc := { a with wantDefault := true }
 
 /-- `\vskip`: glue the document asked for, on top of whatever is owed. -/
 private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
-  { a with owed := a.owed.push g }
+  { a with owed := a.owed.push g, declaredSkip := true }
 
 /-- `\addvspace`: an element's own space. Against glue already owed it takes
 the larger (by natural width, as LaTeX compares them), so two elements
@@ -4921,12 +4929,63 @@ private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
   | some last => if last.width < g.width then { a with owed := a.owed.pop.push g } else a
   | none => { a with owed := #[g] }
 
+/-- The glue one boundary pays: the declared glue owed, and — when a
+document skip stands in it at a peer boundary — the page's parskip *on top
+of* it. A paragraph break has two independent contributors and TeX pays
+both: declared glue goes on the vertical list where it stands, and
+`\parskip` is contributed when the *following* paragraph starts, after it.
+So no declared skip can displace the parskip, and none can narrow the gap
+(`skip_monotone`). Even `\addvspace` adds at a paragraph boundary, where
+its maximum is taken against a `\lastskip` of zero — measured against
+LaTeX, `\addvspace{3pt}` between two paragraphs widens the gap by 3 pt,
+exactly as `\vspace{3pt}` does. The engine pays that only where a skip is
+present: an element's own space (a heading's `before`, a list's `topsep`,
+the furniture gaps) still stands in place of the default, a remainder
+carried as `elementSpace_monotone`. -/
+private def Acc.gapGlue (a : Acc) (r : Rd) : Glue :=
+  let declared := a.owed.foldl Glue.add {}
+  if a.wantDefault && a.declaredSkip then r.parskip.add declared else declared
+
 /-- Emit the gap owed, just before a line is placed. -/
 private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
   let a := if a.owed.isEmpty then
       (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
-    else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
-  { a with wantDefault := false, owed := #[] }
+    else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
+  { a with wantDefault := false, owed := #[], declaredSkip := false }
+
+/-- Glue's width grows by a non-negative addend on the right. -/
+private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
+    x.width ≤ (x.add y).width := by
+  simpa [Glue.add] using Int.add_le_add_left hy x.width
+
+/-- And by a non-negative addend on the left. -/
+private theorem glue_width_le_add_left (x y : Glue) (hx : (0 : Int) ≤ x.width) :
+    y.width ≤ (x.add y).width := by
+  simpa [Glue.add] using Int.add_le_add_right hx y.width
+
+/-- **A positive skip never narrows a gap.** Inserting glue of non-negative
+width at a boundary pays at least what the boundary paid without it. This is
+the property `\smallskip` between two paragraphs broke: its 3 pt stood *in
+place of* the 6 pt parskip it displaced, so inserting 3 pt of glue made the
+two paragraphs 3 pt *closer*. Positive glue cannot do that under any
+convention. The parskip's own non-negativity is the one hypothesis: a page
+declaring negative parskip could narrow a gap by opening one, as it could
+in TeX. -/
+private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
+    (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width) :
+    (a.gapGlue r).width ≤ ((a.vskip g).gapGlue r).width := by
+  have hf : ((a.vskip g).owed.foldl Glue.add {}) = (a.owed.foldl Glue.add {}).add g := by
+    simp [Acc.vskip]
+  have hd : (a.vskip g).declaredSkip = true := rfl
+  have hw : (a.vskip g).wantDefault = a.wantDefault := rfl
+  simp only [Acc.gapGlue, hf, hd, hw, Bool.and_true]
+  cases hwd : a.wantDefault
+  · simpa [hwd] using glue_width_le_add (a.owed.foldl Glue.add {}) g hg
+  · cases hds : a.declaredSkip
+    · simpa [hwd, hds] using Int.le_trans (glue_width_le_add (a.owed.foldl Glue.add {}) g hg)
+        (glue_width_le_add_left r.parskip ((a.owed.foldl Glue.add {}).add g) hp)
+    · simpa [hwd, hds, Glue.add] using
+        Int.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) r.parskip.width
 
 /-- The gap the walk pays at an undeclared peer boundary is the declared
 default and only it: one `.skip` of the page's parskip — the resolved
@@ -4956,7 +5015,7 @@ private def Acc.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.any (·.fil) then
       { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
     else a
-  { a with ops := a.ops.push .brk, wantDefault := false, owed := #[] }
+  { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
@@ -5675,35 +5734,50 @@ private def collectDisplayFormula (r : Rd) (a : Acc)
     (leaf := leaf) (span := leafCount content)
   a.closeDisplay r
 
-/-- With nothing else owed, opening a display owes exactly the resolved
-`abovedisplayskip`, and the line that follows pays it alone — one `.skip`
-of that glue, the peer default standing aside (`flushGap`'s owed arm):
-the PDF side of "one emitter per boundary", the twin of the base sheet's
-single-owner display rules. -/
+/-- With nothing else owed and no peer boundary open, opening a display owes
+exactly the resolved `abovedisplayskip`, and the line that follows pays it
+alone — one `.skip` of that glue: the PDF side of "one emitter per
+boundary", the twin of the base sheet's single-owner display rules. At a
+peer boundary the page's parskip stands beside it rather than under it, as
+TeX contributes the parskip when the following paragraph starts — measured
+against LaTeX, a display after a paragraph break carries both
+(`skip_monotone`, `Acc.gapGlue`). -/
 private theorem display_skip_single_emitter (a : Acc) (r : Rd)
-    (howed : a.owed = #[]) :
+    (howed : a.owed = #[]) (hpeer : a.wantDefault = false) :
     ((a.openDisplay r).flushGap r).ops = a.ops.push (.skip (a.displaySkips r).1) := by
-  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, howed, Glue.add, Acc.displaySkips,
-    Rd.resolve, SymGlue.resolve]
+  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, Acc.gapGlue, howed, hpeer, Glue.add,
+    Acc.displaySkips, Rd.resolve, SymGlue.resolve]
 
 mutual
+
+/-- A rule standing on its own is furniture, not a paragraph. TeX
+contributes `\parskip` when a paragraph *starts*, and an `\hrule` with its
+declared skips beside it starts none — so a gap declared next to a rule is
+the whole gap, and the engine's title bars keep standing their declared
+distance from the type (`Ir.titleBarGap`, `title_bars_symmetric`) rather
+than gaining a peer skip under them. -/
+private def ruleBlock : Block → Bool
+  | .rule .. => true
+  | _ => false
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
 private def collectBlocks (r : Rd) (a : Acc)
     (blocks : Array Block) (indent : Sp) : Acc :=
-  collectBlockList r a blocks.toList indent true
+  collectBlockList r a blocks.toList indent true false
 
 private def collectBlockList (r : Rd) (a : Acc)
-    (blocks : List Block) (indent : Sp) (first : Bool) : Acc :=
+    (blocks : List Block) (indent : Sp) (first prevRule : Bool) : Acc :=
   match blocks with
   | [] => a
   | blk :: rest =>
     if statefulBlock blk then
-      collectBlockList r (collectBlock r a blk indent) rest indent first
+      collectBlockList r (collectBlock r a blk indent) rest indent first prevRule
     else
     let a := if first then a else a.wantGap
+    let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := collectBlock r a blk indent
-    collectBlockList r a rest indent false
+    let a := if prevRule then { a with declaredSkip := false } else a
+    collectBlockList r a rest indent false (ruleBlock blk)
 
 /-- One list item: its leading paragraph carries the marker. -/
 private def collectItem (r : Rd) (a : Acc)
@@ -5753,10 +5827,11 @@ private def collectItems (r : Rd) (a : Acc)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (r : Rd) (a : Acc)
-    (body : List Block) (indent : Sp) : Acc :=
+    (body : List Block) (indent : Sp) (prevRule : Bool) : Acc :=
   match body with
   | [] => a
   | blk :: rest =>
+    let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := match blk with
       | .para content =>
         let (a, leaf) := a.leafRange (leafCount content)
@@ -5774,8 +5849,9 @@ private def collectCentered (r : Rd) (a : Acc)
       | .table cols pl pr rows rules =>
         collectTable r a cols pl pr rows rules indent true
       | _ => collectBlock r a blk indent
+    let a := if prevRule then { a with declaredSkip := false } else a
     collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
-      rest indent
+      rest indent (ruleBlock blk)
 
 /-- One column after another: each collects against its own measure at its
 own offset, a `colNext` marker between two so placement rewinds the
@@ -6029,7 +6105,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- centred content is the scope's.
     match Ir.displayContent? body with
     | some content => collectDisplayFormula r a content indent
-    | none => collectCentered r a body.toList indent
+    | none => collectCentered r a body.toList indent false
   -- Ragged-left setting for the scope: the sub-walk reads the same
   -- geometry with justification off (raggedItems' free-fil line ends,
   -- TeXbook ch. 14), the reader flip the ragged title door already uses.
@@ -6141,10 +6217,17 @@ private def collectBlock (r : Rd) (a : Acc)
       let a := collectPara r a content indent false r.geom.fontSize (leaf := leaf) (span := 1)
       a.wantGap
   | .spaced before body =>
-    -- Declared space above the block, resolved against the body font: the
-    -- gap in place of the default, added to any other declared glue — a
-    -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
+    -- Declared space above the block, resolved against the body font.
+    -- Standing on its own — `\vspace`, a skip macro, `Ir.gapBlock` — it is a
+    -- `\vskip`: it adds to any other declared glue, and at a peer boundary
+    -- to the page's parskip, which TeX contributes when the *following*
+    -- paragraph starts and which no declared skip can displace
+    -- (`skip_monotone`). Carrying a body it is instead that element's own
+    -- space — an `\addvspace`, like a role's or a list's `before` — and
+    -- stands in place of the peer default as those do, so one rhythm
+    -- spelled upstream and at the use site ships the same positions.
     let a := a.vskip (r.resolve before)
+    let a := if body.isEmpty then a else { a with declaredSkip := false }
     collectBlocks r a body indent
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
@@ -6381,7 +6464,7 @@ private def collectBlock (r : Rd) (a : Acc)
       (fun a slot => match slot with
         | .gap g => a.addvspace g
         | .caption => setCaption a
-        | .object => collectCentered rf a body.toList indent) a
+        | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
   | .frame title standout valign breakable body =>
     -- A frame is a page boundary, not an article paragraph. Content past

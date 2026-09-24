@@ -1398,11 +1398,33 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "the synthetic hero page sets title, two contact lines, section, entry"
     (heroLines.size == 5 && (heroLines.zip (heroLines.extract 1 heroLines.size)).all
       fun (a, b) => a.y < b.y)
-  -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
-  -- glue; an element's own space (a list's topsep, a heading's before) takes
-  -- the larger against what is owed, as LaTeX's `\addvspace` does.
+  -- Gaps: a bare `\vspace` is a `\vskip` — it adds, both to other declared
+  -- glue and to the peer parskip TeX contributes when the *following*
+  -- paragraph starts (`Layout.skip_monotone`). An element's own space (a
+  -- list's topsep, a heading's or a role's `before`, `\block[before]{body}`)
+  -- takes the larger against what is owed and stands in place of the peer
+  -- default, as LaTeX's `\addvspace` does.
+  let pq := Ir.rhythmQuantum geom.fontSize
   let vs := ysOf geom "a\n\n\\vspace{20pt}\nb"
-  t "a bare vspace replaces parskip" (vs.size == 2 && vs[1]! - vs[0]! == leading + Dim.pt 20)
+  t "a bare vspace adds to parskip"
+    (vs.size == 2 && vs[1]! - vs[0]! == leading + pq + Dim.pt 20)
+  -- The regression: a positive skip between two paragraphs must never bring
+  -- them closer. `\smallskip` did exactly that — its 3pt stood in place of
+  -- the 6pt parskip it displaced, so inserting glue narrowed the gap by 3pt.
+  let plain := ysOf geom "a\n\nb"
+  let gapOf (mid : String) : Option Dim.Sp :=
+    let ys := ysOf geom ("a\n\n" ++ mid ++ "\nb")
+    if ys.size == 2 then some (ys[1]! - ys[0]!) else none
+  let plainGap : Option Dim.Sp :=
+    if plain.size == 2 then some (plain[1]! - plain[0]!) else none
+  t "a positive skip never narrows the paragraph gap"
+    (["\\smallskip", "\\medskip", "\\bigskip", "\\vspace{1pt}"].all fun m =>
+      match gapOf m, plainGap with
+      | some g, some p => decide (g ≥ p)
+      | _, _ => false)
+  t "the skip macros add LaTeX's own 3/6/12pt above the peer gap"
+    (([("\\smallskip", 3), ("\\medskip", 6), ("\\bigskip", 12)] : List (String × Int)).all
+      fun (m, n) => gapOf m == some (leading + pq + Dim.pt n))
   let blk := ysOf geom "a\n\n\\block[before = 20pt]{b}"
   t "block before is the gap" (blk.size == 2 && blk[1]! - blk[0]! == leading + Dim.pt 20)
   let listSrc (mid : String) := "\\documentclass{article}\\style{itemize}{ before = 10pt }" ++
@@ -1411,8 +1433,8 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "list topsep stands above the list" (ls.size == 3 && ls[1]! - ls[0]! == leading + Dim.pt 10)
   t "list topsep stands below the list too" (ls.size == 3 && ls[2]! - ls[1]! == leading + Dim.pt 10)
   let lv := ysOf geom (listSrc "\\vspace{7pt}")
-  t "a vspace after a list adds to its topsep"
-    (lv.size == 3 && lv[2]! - lv[1]! == leading + Dim.pt 17)
+  t "a vspace after a list adds to its topsep and the peer gap"
+    (lv.size == 3 && lv[2]! - lv[1]! == leading + pq + Dim.pt 17)
   let secSrc := "\\documentclass{article}\\style{itemize}{ before = 10pt }" ++
     "\\style{section}{ before = 15pt, after = 4pt }" ++
     "\\begin{document}\\begin{itemize}\\item b\\end{itemize}\\section{S}c\\end{document}"
@@ -1432,13 +1454,14 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- break is taken; beyond them the page breaks.
   let firstY := geom.vmargin + scaled body font.ascent
   let three := "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc"
-  let natural := firstY + 2 * (leading + Dim.pt 20) + scaled body (-font.descent)
+  let natural := firstY + 2 * (leading + pq + Dim.pt 20) + scaled body (-font.descent)
   let tight : Layout.Geom := { geom with pageH := natural - Dim.pt 10 + geom.vmargin }
   t "within its shrink the page holds" (pagesOf tight three == 1)
   let ys := ysOf tight three
   t "the shrunk page moves later lines up, in proportion"
-    (ys.size == 3 && ys[0]! == firstY && ys[2]! < firstY + 2 * (leading + Dim.pt 20) &&
-      ys[1]! - ys[0]! == leading + Dim.pt 20 - Dim.pt 5 && ys[2]! - ys[1]! == leading + Dim.pt 20 - Dim.pt 5)
+    (ys.size == 3 && ys[0]! == firstY && ys[2]! < firstY + 2 * (leading + pq + Dim.pt 20) &&
+      ys[1]! - ys[0]! == leading + pq + Dim.pt 20 - Dim.pt 5 &&
+      ys[2]! - ys[1]! == leading + pq + Dim.pt 20 - Dim.pt 5)
   t "a shrunk page says so"
     ((layoutOf oneFace (Elab.run "t" three).1 tight).diags.any (·.code == "N0200"))
   let tooTight : Layout.Geom := { geom with pageH := natural - Dim.pt 20 + geom.vmargin }
