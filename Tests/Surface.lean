@@ -1427,7 +1427,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- must name its loss instead of vanishing — or, once implemented, map.
   t "compat raggedright maps mid-flow instead of naming a loss"
     ((elabStr "a\\raggedright b").1.body ==
-      #[.para #[.text "a"], .ragged #[.para #[.text "b"]]])
+      #[.para #[.text "a"], .ragged .left #[.para #[.text "b"]]])
   t "compat pagestyle names its loss and eats its argument"
     (let (doc, ds) := elabStr "\\pagestyle{headings}a"
      ds.any (·.code == "W0104") && doc.body == #[.para #[.text "a"]])
@@ -1512,26 +1512,43 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      warnCodes ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
        "\\item[--] a\\end{itemize}\\end{document}") == ["W0110"] &&
      doc.body == #[.list false #[#[.para #[.text "a"]]]] && ds.all (·.code != "E0310"))
-  t "alignment declarations name their loss instead of W0301"
+  -- All four ragged spellings are the engine's own, on both sides: neither
+  -- unknown (W0301) nor a named loss (W0104). The row was written when the
+  -- right pair was refused and asserted only that it was refused *by name*;
+  -- the carrier retires the refusal, so the row asserts the whole claim.
+  t "every alignment declaration is implemented, not refused"
     (let ds := (elabStr "{\\flushleft a} {\\raggedleft b} {\\flushright c}").2
-     ds.all (fun d => d.code != "W0301") && ds.any (fun d => d.code == "W0104"))
+     ds.all fun d => d.code != "W0301" && d.code != "W0104")
   -- \flushleft/\raggedright as commands map onto the alignment their
   -- environment sets (ltmiscen.dtx: {flushleft} is a trivlist under
   -- \raggedright), scoped by the group exactly as \centering is.
   t "flushleft as a command sets the rest of its scope ragged"
     (let (doc, ds) := elabStr "{\\flushleft one} two"
-     doc.body == #[.ragged #[.para #[.text "one"]], .para #[.text "two"]] &&
+     doc.body == #[.ragged .left #[.para #[.text "one"]], .para #[.text "two"]] &&
        ds.all (fun d => d.code != "W0104" && d.code != "W0301"))
   t "raggedright maps as flushleft does"
-    ((elabStr "{\\raggedright a}").1.body == #[.ragged #[.para #[.text "a"]]])
+    ((elabStr "{\\raggedright a}").1.body == #[.ragged .left #[.para #[.text "a"]]])
+  -- The right-side twins, through the same one naming site
+  -- (`Ir.raggedSideOf?`): the declaration and the environment both land on
+  -- the mirror side, and neither reports a loss.
+  t "raggedleft sets the rest of its scope flush right"
+    (let (doc, ds) := elabStr "{\\raggedleft one} two"
+     doc.body == #[.ragged .right #[.para #[.text "one"]], .para #[.text "two"]] &&
+       ds.all (fun d => d.code != "W0104" && d.code != "W0301"))
+  t "the flushright environment sets the mirror block"
+    (let (doc, ds) := elabStr "\\begin{flushright}a\\end{flushright}"
+     doc.body == #[.ragged .right #[.para #[.text "a"]]] &&
+       ds.all (fun d => d.code != "W0302" && d.code != "W0104"))
+  t "flushright as a command maps as raggedleft does"
+    ((elabStr "{\\flushright a}").1.body == #[.ragged .right #[.para #[.text "a"]]])
   t "the flushleft environment sets the same block"
     (let (doc, ds) := elabStr "\\begin{flushleft}a\\end{flushleft}"
-     doc.body == #[.ragged #[.para #[.text "a"]]] &&
+     doc.body == #[.ragged .left #[.para #[.text "a"]]] &&
        ds.all (fun d => d.code != "W0302"))
   t "flushleft inside an argument aligns nothing, named W0108"
     ((warnCodes "\\textbf{\\flushleft a}").contains "W0108")
   t "ragged text is census content"
-    (Ir.blockTextList "" [.ragged #[.para #[.text "a b"]]] == "a b")
+    (Ir.blockTextList "" [.ragged .left #[.para #[.text "a b"]]] == "a b")
   t "compat newenvironment defines; its titlegraphic content is a dropped loss"
     (let src := pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}"
      errCodes src == ["E0112"] && warnCodes src == ["W0104"])

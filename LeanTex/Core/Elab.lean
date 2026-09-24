@@ -3753,8 +3753,8 @@ a side channel, never slide content" pos
       "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
       (help := "move '\\centering' to the start of the group or environment body")
     elabInlinesFrom ctx raws (i + 1) acc sb
-  else if name == "flushleft" || name == "raggedright" then
-    -- The ragged pair are block declarations the same way.
+  else if (Ir.raggedSideOf? name).isSome then
+    -- The ragged declarations are block declarations the same way.
     warnOnce ctx ("ctrl:" ++ name) .W0108
       s!"'\\{name}' aligns nothing inside an argument; content keeps its alignment" pos
       (help := s!"move '\\{name}' to the start of the group or environment body")
@@ -3935,7 +3935,8 @@ theorem take_args_consumes_forward
 
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
-  ["itemize", "enumerate", "center", "flushleft", "document", "frame", "columns", "figure",
+  ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
+   "columns", "figure",
    "figure*", "table", "table*", "quote", "quotation", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
@@ -4138,7 +4139,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
 `\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
-    n == "centering" || n == "flushleft" || n == "raggedright"
+    n == "centering" || (Ir.raggedSideOf? n).isSome
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
 
@@ -4198,9 +4199,9 @@ wraps nothing); a style or colour declaration already reached every
 region inside through `ctx.blockDecls`. -/
 private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
   if n == "centering" then (if inner.isEmpty then #[] else #[.center inner])
-  else if n == "flushleft" || n == "raggedright" then
-    (if inner.isEmpty then #[] else #[.ragged inner])
-  else inner
+  else match Ir.raggedSideOf? n with
+    | some side => (if inner.isEmpty then #[] else #[.ragged side inner])
+    | none => inner
 
 /-- The W0304 the inline colour arm speaks, for the block form. -/
 private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit :=
@@ -4303,7 +4304,7 @@ private theorem rawPars_decl {ctx : Ctx} {r : Raw}
   | _ => simp_all [isDeclaration]
 
 private def isCenteringRaw : Raw → Bool
-  | .ctrl n _ => n == "centering" || n == "flushleft" || n == "raggedright"
+  | .ctrl n _ => n == "centering" || (Ir.raggedSideOf? n).isSome
   | _ => false
 
 /-- Is a group here an argument? It is when, looking back over spaces and
@@ -5145,8 +5146,8 @@ private def envStyleScanList (st : BarSt) : List Raw → BarSt
       envStyleScanList { st with bold := true } rest
     else if n == "centerline" || n == "centering" then
       envStyleScanList { st with align := some "center" } rest
-    else if n == "raggedright" || n == "flushleft" then
-      envStyleScanList { st with align := some "left" } rest
+    else if let some side := Ir.raggedSideOf? n then
+      envStyleScanList { st with align := some side.align } rest
     else envStyleScanList st rest
   | _ :: rest => envStyleScanList st rest
 termination_by l => sizeOf l
@@ -5212,8 +5213,8 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
       barScanList user bound { st with bold := true } events rest
     else if n == "centering" then
       barScanList user bound { st with align := some "center" } events rest
-    else if n == "raggedright" || n == "flushleft" then
-      barScanList user bound { st with align := some "left" } events rest
+    else if let some side := Ir.raggedSideOf? n then
+      barScanList user bound { st with align := some side.align } events rest
     else if n == "@title" then
       barScanList user bound st (events.push (.title st.size st.bold st.align)) rest
     else if n == "@author" then
@@ -7626,9 +7627,11 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
       (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
       (by omega) (by omega)
     blocks := blocks.push (.list (n == "enumerate") elabItems)
-  else if n == "center" || n == "flushleft" then
+  else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
-    blocks := blocks.push (if n == "center" then .center inner else .ragged inner)
+    blocks := blocks.push (match Ir.raggedSideOf? n with
+      | some side => .ragged side inner
+      | none => .center inner)
   else if n == "minipage" then
     -- A minipage is one column of declared width: the column model
     -- reused whole, never a parallel box model. LaTeX's signature
@@ -8306,7 +8309,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .ctrl n cpos =>
       let isB : Bool :=
         n == "par" || n == "block" || n == "centering" || n == "pause"
-          || n == "flushleft" || n == "raggedright"
+          || (Ir.raggedSideOf? n).isSome
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
           || n == "bibliography" || n == "bibliographystyle"
           || (n == "note" && cur.isEmpty)
@@ -8336,7 +8339,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let blocks ← flushPara ctx' blocks cur
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == "centering" || n == "flushleft" || n == "raggedright"
+      else if n == "centering" || (Ir.raggedSideOf? n).isSome
           || isDeclBlock ctx' n raws i cur then
         -- The declaration form of \begin{center} / \begin{flushleft}
         -- (ltmiscen.dtx: flushleft is a trivlist under \raggedright, and

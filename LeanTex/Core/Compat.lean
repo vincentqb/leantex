@@ -169,15 +169,9 @@ what changed, never silently: they used to sit in the silent list under a
 comment claiming they say nothing about the document, and they do. Each
 entry: arguments consumed, the message, the help. -/
 def configSkip : List (String × Nat × String × Option String) :=
-  [-- \flushleft and \raggedright are not here: the block walk gives the
-   -- rest of the scope ragged-left setting (Ir.Block.ragged). The right
-   -- pair still names its loss: line placement knows no right origin.
-   ("flushright", 0,
-    "'\\flushright' asks for right-aligned setting; content keeps its alignment",
-    none),
-   ("raggedleft", 0,
-    "'\\raggedleft' asks for right-aligned ragged setting; content keeps its alignment",
-    none),
+  [-- The four ragged-setting declarations are not here: the block walk gives
+   -- the rest of the scope the setting it declares, on the side it declares
+   -- (Ir.Block.ragged carries the flush side).
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
 its own and an overfull line warns by itself", none),

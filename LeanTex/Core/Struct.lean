@@ -239,7 +239,7 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .section level _ _ title => out.push (.node (.heading level) (inlinesRaw #[] title.toList))
   | .list ordered items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
   | .center body => blocksRaw out body.toList
-  | .ragged body => blocksRaw out body.toList
+  | .ragged _ body => blocksRaw out body.toList
   | .spaced _ body => blocksRaw out body.toList
   | .role _ body => blocksRaw out body.toList
   | .quote body => out.push (.node .quote (blocksRaw #[] body.toList))
@@ -857,7 +857,7 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .center body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
   | .spaced g body =>
@@ -1178,7 +1178,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .center body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
   | .spaced g body =>
@@ -1501,7 +1501,7 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
   | .center body =>
     simp only [blockRaw, foldBlock]
     exact blocksRaw_images is out body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     simp only [blockRaw, foldBlock]
     exact blocksRaw_images is out body.toList
   | .spaced g body =>
@@ -1818,7 +1818,7 @@ theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .list ordered items => simp [blockRaw]
   | .center body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
   | .spaced g body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList

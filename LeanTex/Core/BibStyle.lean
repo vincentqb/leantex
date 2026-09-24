@@ -791,7 +791,7 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .abstract body => out.push (.abstract (resolveBlocks style find items #[] body.toList))
   | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
   | .center body => out.push (.center (resolveBlocks style find items #[] body.toList))
-  | .ragged body => out.push (.ragged (resolveBlocks style find items #[] body.toList))
+  | .ragged s body => out.push (.ragged s (resolveBlocks style find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks style find items #[] body.toList))
   | .titled kind title body =>
     out.push (.titled kind (resolveArr style.cite find title)
@@ -1182,7 +1182,7 @@ theorem resolveBlock_pending (style : Style) (find : Resolver) (items : Array Ir
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending style.cite find title.toList _ q h
-  | .abstract body | .center body | .ragged body | .quote body | .role _ body
+  | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
   | .spaced _ body | .step _ _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h

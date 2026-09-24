@@ -1009,7 +1009,7 @@ and design. -/
 def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- One construct at three sites: three positions, one visible line.
-  let thrice := dvDoc "" "\\raggedleft One.\n\n\\raggedleft Two.\n\n\\raggedleft Three."
+  let thrice := dvDoc "" "\\sloppy One.\n\n\\sloppy Two.\n\n\\sloppy Three."
   let ds := (elabStr thrice).2
   let of (code : String) (ds : Array Diag) : Array Diag := ds.filter (·.code == code)
   let visible (ds : Array Diag) : Array Diag := ds.filter (·.severity != .note)
@@ -1042,14 +1042,14 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((of "W0104" helped)[0]?.map (·.help.isSome)).getD false &&
       (of "W0104" helped).size == 3)
   -- A single site is a single loss: no count, no note, nothing added.
-  let once := (elabStr (dvDoc "" "\\raggedleft Only one.")).2
+  let once := (elabStr (dvDoc "" "\\sloppy Only one.")).2
   t "a construct at one site carries no count and no note"
     ((of "W0104" once).size == 1 && (of "W0104" once).all fun d =>
       d.sites == 1 && d.severity != .note)
   -- Two distinct losses under one code do not merge: the census is keyed by
   -- the loss, not by the code, so a count never borrows another's sites.
   let two := (elabStr (dvDoc ""
-    "\\raggedleft One.\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
+    "\\sloppy One.\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
   t "two losses sharing a code keep their own counts"
     ((visible (of "W0104" two)).size == 2 &&
       ((visible (of "W0104" two)).map (·.sites)).toList == [1, 2])

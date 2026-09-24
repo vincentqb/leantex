@@ -105,6 +105,29 @@ theorem roleClass_inj (a b : String) (h : roleClass a = roleClass b) : a = b := 
   simp only [List.cons.injEq, true_and] at hl
   exact String.ext hl
 
+/-- The class a ragged scope carries, one per declared side. Two names
+rather than one class plus an inline style, because the side is a
+*declaration* and belongs where a reader's own sheet can address it; the
+rule text is built from `Ir.FlushSide.align` at the one site below
+(`raggedRule`), so the class and the alignment it declares cannot drift. -/
+def raggedClass : Ir.FlushSide → String
+  | .left => "ragged"
+  | .right => "ragged-right"
+
+/-- One ragged side's stylesheet rule: its class, and the alignment the IR
+declares for it. Both halves come from the IR, so the sheet cannot declare
+an edge the page does not set (`ragged_sides_agree` ties the alignment this
+prints to the origin the page's walk reads). -/
+def raggedRule (s : Ir.FlushSide) : String :=
+  "." ++ raggedClass s ++ " { text-align: " ++ Ir.FlushSide.align s ++ "; }\n"
+
+/-- The rule is the class and the IR's own alignment, nothing invented
+between them: the projection corollary of `ragged_sides_agree` on this
+backend's side. -/
+theorem raggedRule_projects (s : Ir.FlushSide) :
+    raggedRule s = "." ++ raggedClass s ++ " { text-align: " ++ s.align ++ "; }\n" :=
+  rfl
+
 /-- Every class value the engine itself puts on an element, as tokens (a
 multi-class value like `"slide standout"` is listed split). Maintained by
 grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
@@ -114,7 +137,7 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "centered", "ragged", "column", "columns", "content",
+   "bt-light-above", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -3112,7 +3135,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
     "  user-select: none; }\n"
    else "") ++
   ".centered { text-align: center; }\n" ++
-  ".ragged { text-align: left; }\n" ++
+  raggedRule .left ++ raggedRule .right ++
   ".fill { flex: 1 1 auto; }\n" ++
   s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
@@ -4149,10 +4172,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
     | none =>
       Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
-  -- Ragged-left is HTML text's resting state; the class re-declares it so
-  -- the setting survives a centred ancestor (text-align inherits).
-  | .ragged body =>
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "ragged")]
+  -- The declared side as a class, resolved through the IR's own reader
+  -- (`Ir.FlushSide.align`) so the stylesheet's `text-align` and the page's
+  -- line origin cannot name different edges (`ragged_sides_agree`). Flush
+  -- left is HTML text's resting state and the class still re-declares it,
+  -- so the setting survives a centred ancestor (text-align inherits).
+  | .ragged flush body =>
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+      #[("class", raggedClass flush)]
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper.
   | .role n body =>

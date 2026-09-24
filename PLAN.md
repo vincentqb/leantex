@@ -12393,3 +12393,102 @@ before writing costs nothing measurable because a row holds references to
 byte arrays that already exist — the font program, the deflated content
 stream — and `rowInto` appends into the file's own buffer rather than
 building each object beside it.
+
+
+
+### 2026-09-24 — a ragged scope could not say which edge it hung from
+
+`\raggedleft` and `{flushright}` were a named loss (W0104) while
+`\raggedright` and `{flushleft}` were implemented, and the asymmetry was not
+about placement: `Layout.Geom.flushRight` and its `paraLineGeom` branch had
+already landed, and the title page's `align = right` went through them.
+`Ir.Block.ragged` was direction-free *by construction*, so the declaration
+had nowhere to land. The consequence, measured on a reference deck: a frame
+alternating `\raggedright` questions with `\raggedleft` answers set all four
+lines at the left margin, and the refusal named the loss without being able
+to repair it.
+
+**The invariant, written before the fix.** *A declared alignment reaches the
+page on the side it declares.* Its absence is the whole defect. The control
+that proves the claim is about the carrier rather than about arithmetic was
+already in the tree: `align = right` on an element *did* reach the page,
+through the same three-way read, in the same layout walk, differing only in
+whether a node could carry the side.
+
+**Carrier: arity, or nothing.** Three candidates, and the entry above on
+`Ir.Sourced` is the one this has to answer.
+
+*A typed carrier on an existing field* — the `Sourced` move, and it does not
+apply here. `Sourced` buys its no-arity-change by widening the type of a
+field that already exists; `ragged`'s only field is its body. There is no
+scalar to widen, so the precedent's argument runs out rather than pointing
+somewhere. Worth recording, because "use the `Sourced` idiom" is the first
+thing a reader of that entry will reach for.
+
+*A second constructor* (`raggedRight`) is strictly worse than an arity
+change, not better. An `Ir` constructor owes an explicit arm in every walk
+and both backends (AGENTS obligation table), so it pays the arity change's
+whole cost *and* adds arms; and it splits one setting across two nodes, so
+every reader that treats ragged setting uniformly — the census, the
+conservation theorems, `keepFor` — has to remember both.
+
+*An arity change*, `ragged (flush : FlushSide) (body)`. Chosen, because the
+cost is real but bounded and the shape is honest: 47 arms across seven
+modules, of which 41 are `| .ragged _ body =>` — they do not read the side
+and say so. The side is two-valued, not `HAlign`: a ragged scope cannot
+claim to be centred, because `center` is its own node and a centred line
+leaves equal slack on both sides where a flush line leaves it all on one.
+The type is named for what is *flush* rather than what is ragged, since
+`\raggedright` means flush left and the spellings invite exactly that
+inversion — `FlushSide.left`/`.right`, with the four LaTeX spellings mapped
+at one site (`Ir.raggedSideOf?`), so the declaration form, the environment
+form and the inline diagnostic cannot disagree about which edge a name asks
+for.
+
+**One value, two readers, one theorem.** The side is legible to a backend
+through exactly two functions — `FlushSide.flushRight`, which is
+`Layout.Geom.flushRight`'s value, and `FlushSide.align`, which is the
+`ElementStyle.align` vocabulary the HTML rule prints — and
+`ragged_sides_agree` ties them: the page hangs lines from the right edge
+exactly when the stylesheet declares the right edge. The `backend_gaps_agree`
+shape, stated on the IR because both artifacts must honour it, with
+`HtmlDoc.raggedRule_projects` as this backend's corollary. The sheet's two
+rules are *built* from `FlushSide.align` rather than spelled beside it, so a
+class and the alignment it declares cannot drift — the failure mode the
+token-closure entry above spent a day closing one layer down.
+
+**What the regression asserts, and where.** `raggedSideChecks` reads
+`Layout.Out`: a left-set scope's lines start at `hmargin`, a right-set
+scope's lines *end* at `hmargin + textWidth`, and the probe first establishes
+that none of the three lines fills the measure — without that row the claim
+would hold vacuously on a justified line. A centred scope on the same content
+is the negative control, since a reading that confused centring with flushing
+would pass the right-edge row on a line that happens to fill. Both backends
+are judged from the one IR value: the typed tree's class and the sheet's
+rule stand beside the page's origins in the same block, because a side
+honoured on the page and dropped in the HTML is the defect this carrier
+exists to prevent.
+
+**Arms opened in another agent's file.** `Elab.lean`: ten, and nine are the
+same forced substitution — every site that tested `n == "flushleft" || n ==
+"raggedright"` now asks `Ir.raggedSideOf?`, which is the naming site moving
+into the IR module that owns the type rather than a judgement about
+elaboration. The tenth is `declScopeWrap`, which must now pass the side it
+matched. `blockEnvs` gains `flushright`, without which the environment's body
+is not block content. `Compat.lean`: two rows deleted from `configSkip` —
+the refusal the carrier retires. Nothing else in either file moved.
+
+**Goldens: none.** The `dump` arm now prints `ragged <side>`, and the prior
+estimate of this change expected every fixture holding a ragged block to
+move. No fixture holds one — the corpus exercises ragged setting only
+through the title page's `align`, never through the block — so the diff is
+empty. That is a gap in the corpus rather than a saving, and it is why the
+regression asserts over `Layout.Out` and the typed tree instead of over a
+dump: a golden would have witnessed elaboration and told us nothing about
+which edge the lines landed on.
+
+Evidence: `lake build` and `lake test` green; `precommit`, `cites`, `owed`
+clean. `cites` is what caught `ragged_sides_agree` cited in two docstrings
+before it was written. The rendered page: the reference deck's alternating
+frame now sets its questions from the margin and its answers at the measure's
+right edge, where before all four lines began at the margin.

@@ -2928,6 +2928,61 @@ inductive HAlign where
   | right
   deriving Repr, BEq, Inhabited
 
+/-- Which edge of the measure a ragged scope's lines hang from: LaTeX's two
+ragged settings, named for what is *flush* rather than what is ragged —
+`\raggedright` is ragged on the right and flush left, `\raggedleft` the
+mirror, and the spellings invite exactly that confusion. Two values, so a
+ragged scope cannot claim to be centred: `center` is its own block, and a
+centred line leaves equal slack on both sides where a flush line leaves it
+all on one. -/
+inductive FlushSide where
+  | left
+  | right
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The declared side as the `ElementStyle.align` vocabulary both backends
+already read — one resolving site, so the page's origin and the
+stylesheet's `text-align` cannot name different edges from one IR value
+(`ragged_sides_agree`). -/
+def FlushSide.align : FlushSide → String
+  | .left => "left"
+  | .right => "right"
+
+/-- The declared side as the page's line origin: `Layout.Geom.flushRight`'s
+value. The layout walk reads this and nothing else about the side, so the
+placement arithmetic has one source (`ragged_sides_agree`). -/
+def FlushSide.flushRight : FlushSide → Bool
+  | .left => false
+  | .right => true
+
+/-- The two readings of one declared side agree: the page hangs a scope's
+lines from the right edge exactly when the stylesheet declares the right
+edge. These are the only two functions a backend may learn the side
+through — Layout reads `flushRight`, the HTML rule reads `align` — so an
+artifact cannot align an edge the other does not, whatever either emitter
+does downstream. The `backend_gaps_agree` shape: two projections of one IR
+value, stated on the IR because both artifacts must honour it. -/
+theorem ragged_sides_agree (s : FlushSide) :
+    s.flushRight = true ↔ s.align = "right" := by
+  cases s <;> simp [FlushSide.flushRight, FlushSide.align]
+
+/-- The dump spelling, and the only place a ragged side is named in a
+golden. -/
+def FlushSide.label : FlushSide → String
+  | .left => "left"
+  | .right => "right"
+
+/-- LaTeX's four ragged-setting spellings and the side each makes flush —
+the one naming site, so the declaration form, the environment form and the
+inline diagnostic cannot disagree about which edge a name asks for.
+`\raggedright` and `{flushleft}` are the same setting (ltmiscen.dtx:
+`{flushleft}` is a trivlist under `\raggedright`), and `\raggedleft` and
+`{flushright}` its mirror. -/
+def raggedSideOf? : String → Option FlushSide
+  | "raggedright" | "flushleft" => some .left
+  | "raggedleft" | "flushright" => some .right
+  | _ => none
+
 /-- A table column's declared width. `p{0.31\linewidth}` is a fraction of
 the measure, `p{54pt}` an absolute length; `l`/`c`/`r` size to the widest
 cell (`natural`), as LaTeX's own column types do. -/
@@ -3450,13 +3505,14 @@ inductive Block where
   | section (level : Nat) (starred : Bool) (number : Option String) (title : Array Inline)
   | list (ordered : Bool) (items : Array (Array Block))
   | center (body : Array Block)
-  /-- Left-aligned unjustified setting for a scope — `\flushleft` and
-  `\raggedright`'s meaning (ltmiscen.dtx: `{flushleft}` is a trivlist under
-  `\raggedright`). The lines break ragged and keep the engine's left
-  origin; the one alignment beside `center` a page can declare per block.
-  Right-ragged setting (`\flushright`/`\raggedleft`) stays a named loss:
-  line placement knows no right origin yet. -/
-  | ragged (body : Array Block)
+  /-- Unjustified setting for a scope, hanging from the side it declares.
+  Flush left is `\flushleft` and `\raggedright`'s meaning (ltmiscen.dtx:
+  `{flushleft}` is a trivlist under `\raggedright`); flush right is
+  `{flushright}`/`\raggedleft`'s. The lines break ragged on the other edge;
+  with `center` these are the alignments a page can declare per block, and
+  the side rides here because line placement resolves an origin
+  (`Layout.Geom.flushRight`) that a direction-free node could not name. -/
+  | ragged (flush : FlushSide) (body : Array Block)
   /-- `\block[before = <len>]{...}`: content with declared space above.
   The glue rides as `Sourced` so a token-declared gap reaches the HTML
   with the name a reader would override (`var(--subtitlegap, …)`); a
@@ -3895,9 +3951,9 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .center body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .center body2)
-  | .ragged body =>
+  | .ragged s body =>
     let (c2, body2) := numberFloatList c #[] body.toList
-    (c2, .ragged body2)
+    (c2, .ragged s body2)
   | .quote body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .quote body2)
@@ -3990,7 +4046,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .section _ _ _ _ => out
   | .list _ items => floatNumsItems k out items.toList
   | .center body => floatNumsList k out body.toList
-  | .ragged body => floatNumsList k out body.toList
+  | .ragged _ body => floatNumsList k out body.toList
   | .quote body => floatNumsList k out body.toList
   | .abstract body => floatNumsList k out body.toList
   | .titled _ _ body => floatNumsList k out body.toList
@@ -4096,7 +4152,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
-  | .ragged body =>
+  | .ragged _ body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -5869,7 +5925,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
   | .list _ items => foldBlockItems fb fi (fb acc b) items.toList
   | .center body => foldBlockList fb fi (fb acc b) body.toList
-  | .ragged body => foldBlockList fb fi (fb acc b) body.toList
+  | .ragged _ body => foldBlockList fb fi (fb acc b) body.toList
   | .quote body => foldBlockList fb fi (fb acc b) body.toList
   | .abstract body => foldBlockList fb fi (fb acc b) body.toList
   | .titled _ title body =>
@@ -6031,7 +6087,7 @@ def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
   | .center body =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
-  | .ragged body =>
+  | .ragged _ body =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
   | .quote body =>
@@ -6250,7 +6306,7 @@ theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → �
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxBlockList_covers fb fi _ body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxBlockList_covers fb fi _ body.toList
@@ -6496,7 +6552,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .picture _ => out
   | .list _ items => navLinkItems out items.toList
   | .center body => navLinkList out body.toList
-  | .ragged body => navLinkList out body.toList
+  | .ragged _ body => navLinkList out body.toList
   | .quote body => navLinkList out body.toList
   | .abstract body => navLinkList out body.toList
   | .titled _ title body => navLinkList (navLinkInlineList out title.toList) body.toList
@@ -6832,7 +6888,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
-  | .ragged body => s!"{ind}ragged\n" ++ dumpBlocks (ind ++ "  ") body
+  | .ragged s body => s!"{ind}ragged {s.label}\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
   | .abstract body => s!"{ind}abstract\n" ++ dumpBlocks (ind ++ "  ") body
   | .titled kind title body =>
@@ -7287,7 +7343,7 @@ def maxStepBlock : Block → Nat
   | .equation _ content => maxStepInlines content
   | .list _ items => maxStepItems items.toList
   | .center body => maxStepBlockList body.toList
-  | .ragged body => maxStepBlockList body.toList
+  | .ragged _ body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
   | .abstract body => maxStepBlockList body.toList
   -- The title is furniture and does not multiply pages, as a frame
@@ -7444,7 +7500,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
     else .equation num (dimInlineList cover k false #[] content.toList)
   | .list o items => .list o (dimItems cover k pending #[] items.toList)
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
-  | .ragged body => .ragged (dimBlockList cover k pending #[] body.toList)
+  | .ragged s body => .ragged s (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
   | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
   | .titled kind title body =>
@@ -7631,7 +7687,7 @@ def unwrapItemStepList (out : Array Block) : List Block → Array Block
 def unwrapItemStep : Block → Block
   | .list o items => .list o (unwrapItemStepItems #[] items.toList)
   | .center body => .center (unwrapItemStepList #[] body.toList)
-  | .ragged body => .ragged (unwrapItemStepList #[] body.toList)
+  | .ragged s body => .ragged s (unwrapItemStepList #[] body.toList)
   | .quote body => .quote (unwrapItemStepList #[] body.toList)
   | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
   | .titled kind title body => .titled kind title (unwrapItemStepList #[] body.toList)
@@ -7774,7 +7830,7 @@ def blockTextOne (acc : String) : Block → String
     acc ++ t
   | .list _ items => blockTextItems acc items.toList
   | .center body => blockTextList acc body.toList
-  | .ragged body => blockTextList acc body.toList
+  | .ragged _ body => blockTextList acc body.toList
   -- A quotation's text is real census content, exactly as a paragraph's.
   | .quote body => blockTextList acc body.toList
   | .abstract body => blockTextList acc body.toList
@@ -7968,7 +8024,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .equation _ _ => out
   | .list _ items => headingLevelItems out items.toList
   | .center body => headingLevelList out body.toList
-  | .ragged body => headingLevelList out body.toList
+  | .ragged _ body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
   | .abstract body => headingLevelList out body.toList
   | .titled _ _ body => headingLevelList out body.toList
@@ -8031,7 +8087,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .section _ _ _ title => footnoteInlineList out title.toList
   | .list _ items => footnoteItems out items.toList
   | .center body => footnoteBlockList out body.toList
-  | .ragged body => footnoteBlockList out body.toList
+  | .ragged _ body => footnoteBlockList out body.toList
   | .quote body => footnoteBlockList out body.toList
   | .abstract body => footnoteBlockList out body.toList
   | .titled _ title body =>
@@ -8542,7 +8598,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .center body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
-  | .ragged body =>
+  | .ragged _ body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .quote body =>
@@ -8718,7 +8774,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
-  | .ragged body =>
+  | .ragged _ body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
@@ -8848,7 +8904,7 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .center body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
-  | .ragged body =>
+  | .ragged _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .quote body =>
@@ -8967,9 +9023,9 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .center body =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.center r.1, r.2)
-  | .ragged body =>
+  | .ragged s body =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
-    (.ragged r.1, r.2)
+    (.ragged s r.1, r.2)
   | .quote body =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.quote r.1, r.2)
@@ -9302,7 +9358,7 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
-  | .ragged body =>
+  | .ragged _ body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
@@ -9438,7 +9494,7 @@ def backendNames : List String := ["pdf", "html", "md"]
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
 def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
-  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
   | .quote _ | .abstract _
   | .role _ _
   | .titled _ _ _
@@ -9462,7 +9518,7 @@ def keepForOne (t : String) : Block → Block
   | .nav spec body => .nav spec (keepForList t body.toList).toArray
   | .list o items => .list o (keepForItems t items.toList).toArray
   | .center body => .center (keepForList t body.toList).toArray
-  | .ragged body => .ragged (keepForList t body.toList).toArray
+  | .ragged s body => .ragged s (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
   | .abstract body => .abstract (keepForList t body.toList).toArray
   | .titled kind title body => .titled kind title (keepForList t body.toList).toArray
@@ -9554,7 +9610,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .pagebreak => acc
   | .list _ items => textLeavesItems acc items.toList
   | .center body => textLeavesList acc body.toList
-  | .ragged body => textLeavesList acc body.toList
+  | .ragged _ body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
   | .abstract body => textLeavesList acc body.toList
   | .titled _ title body => textLeavesList (plainText title :: acc) body.toList
@@ -9629,7 +9685,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
     !eff.isEmpty && orphanFreeList eff body.toList
   | .list _ items => orphanFreeItems avail items.toList
   | .center body => orphanFreeList avail body.toList
-  | .ragged body => orphanFreeList avail body.toList
+  | .ragged _ body => orphanFreeList avail body.toList
   | .quote body => orphanFreeList avail body.toList
   | .abstract body => orphanFreeList avail body.toList
   | .titled _ _ body => orphanFreeList avail body.toList
@@ -9742,7 +9798,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .center body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
-  | .ragged body =>
+  | .ragged _ body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .quote body =>
@@ -9953,7 +10009,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
-  | .ragged body =>
+  | .ragged _ body =>
     intro s hs
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
@@ -10164,7 +10220,7 @@ def onlyFreeOne : Block → Bool
   | .only _ _ => false
   | .list _ items => onlyFreeItems items.toList
   | .center body => onlyFreeList body.toList
-  | .ragged body => onlyFreeList body.toList
+  | .ragged _ body => onlyFreeList body.toList
   | .quote body => onlyFreeList body.toList
   | .abstract body => onlyFreeList body.toList
   | .titled _ _ body => onlyFreeList body.toList
@@ -10233,7 +10289,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .center body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
-  | .ragged body =>
+  | .ragged _ body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .quote body =>
@@ -11107,7 +11163,7 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .section l st n title => .section l st n (mapInlines f title)
   | .list o items => .list o (mapBlockItems f #[] items.toList)
   | .center body => .center (mapBlockList f #[] body.toList)
-  | .ragged body => .ragged (mapBlockList f #[] body.toList)
+  | .ragged s body => .ragged s (mapBlockList f #[] body.toList)
   | .quote body => .quote (mapBlockList f #[] body.toList)
   | .abstract body => .abstract (mapBlockList f #[] body.toList)
   | .titled kind title body =>
@@ -11432,7 +11488,7 @@ theorem mapBlock_text (f : Inline → Inline)
     show blockTextList acc (mapBlockList f #[] body.toList).toList = _
     rw [mapBlockList_text f hf body.toList #[]]
     rfl
-  | .ragged body =>
+  | .ragged _ body =>
     show blockTextList acc (mapBlockList f #[] body.toList).toList = _
     rw [mapBlockList_text f hf body.toList #[]]
     rfl
@@ -12291,7 +12347,7 @@ def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option R
         | .figure => some { kind := some .figure, num := toString m }
         | .table => some { kind := some .table, num := toString m }
         | .algorithm => some { kind := some .algorithm, num := toString m })
-  | .para _ | .list _ _ | .center _ | .ragged _ | .quote _ | .abstract _
+  | .para _ | .list _ _ | .center _ | .ragged _ _ | .quote _ | .abstract _
   | .titled _ _ _ | .role _ _ | .spaced _ _ | .columns _ | .step _ _ _
   | .alt _ _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
   | .framefoot _ | .table _ _ _ _ _ | .algorithm _ _ _ | .logo _

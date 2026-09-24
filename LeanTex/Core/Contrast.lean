@@ -522,7 +522,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     usesInlines { headingCx cx.base level with cur := cx.cur } acc title.toList
   | .list _ items => usesItems cx acc items.toList
   | .center body => usesBlocks cx acc body.toList
-  | .ragged body => usesBlocks cx acc body.toList
+  | .ragged _ body => usesBlocks cx acc body.toList
   | .quote body => usesBlocks cx acc body.toList
   | .abstract body => usesBlocks cx acc body.toList
   | .titled kind title body =>

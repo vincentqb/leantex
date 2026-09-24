@@ -145,7 +145,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     else head
   | .list ordered items => itemsInto loc summary ind ordered 1 acc items.toList ++ "\n"
   | .center body => blocksInto loc summary ind acc body.toList
-  | .ragged body => blocksInto loc summary ind acc body.toList
+  | .ragged _ body => blocksInto loc summary ind acc body.toList
   -- Markdown's own quotation: every line of the body takes the `> `
   -- marker as part of its prefix, and the separator line between two
   -- quoted blocks keeps a bare `>` so the quotation stays one block
@@ -415,7 +415,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .list _ items =>
     extends_comp (itemsInto_extends loc summary ind _ 1 acc items.toList) ⟨"\n", rfl⟩
   | .center body => blocksInto_extends loc summary ind acc body.toList
-  | .ragged body => blocksInto_extends loc summary ind acc body.toList
+  | .ragged _ body => blocksInto_extends loc summary ind acc body.toList
   | .quote _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
@@ -676,7 +676,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .equation _ _, _, h => h
   | .list _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
-  | .ragged body, out, h => headingLevelList_mem x body.toList out h
+  | .ragged _ body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h

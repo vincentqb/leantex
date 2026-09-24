@@ -551,6 +551,75 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "pdf prose around the quotation keeps the full measure"
     (lines.any fun l => l.x == geom.hmargin)
 
+/-- A declared ragged setting reaches the page on the side it declares:
+`\raggedright`/`{flushleft}` hang their lines from the left edge of the
+measure, `\raggedleft`/`{flushright}` from the right. Asserted over
+`Layout.Out` — the claim is where lines land, never an IR dump — and the
+ordering is the content-free half: whatever the words, a right-set line's
+own right edge is the measure's, and a left-set line's origin is the
+margin. Both fail while `Ir.Block.ragged` is direction-free: every ragged
+scope kept the left origin and the right-set spellings were a named loss,
+so a staggered right-aligned scope collapsed to the left margin. -/
+def raggedSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let right := geom.hmargin + geom.textWidth
+  let doc (decl : String) : String :=
+    "\\documentclass{article}\\begin{document}" ++ decl ++
+    "One short line.\\\\ Another short line.\\\\ A third short line." ++
+    "\\end{document}"
+  let linesOf (decl : String) : Array Layout.LineOut :=
+    (allLines (layoutOf oneFace (elabStr (doc decl)).1 geom)).filter
+      fun l => !l.furniture && !l.segs.isEmpty
+  let leftSet := linesOf "\\raggedright "
+  let rightSet := linesOf "\\raggedleft "
+  -- Content-free: the three lines are short, so none fills the measure and
+  -- each side's claim is about the origin the setting chose, not the words.
+  t "the ragged probe set three unfilled lines on each side"
+    (leftSet.size == 3 && rightSet.size == 3 &&
+      rightSet.all fun l => decide (l.setWidth < geom.textWidth))
+  t "a left-set ragged scope hangs its lines from the margin"
+    (leftSet.all fun l => l.x + l.hang == geom.hmargin)
+  t "a right-set ragged scope hangs its lines from the measure's right edge"
+    (rightSet.all fun l => l.x + l.setWidth == right)
+  -- The environment spelling of the same two declarations.
+  let envLeft := linesOf "\\begin{flushleft}"
+  t "the flushleft environment sets from the margin"
+    (envLeft.size ≥ 1 && envLeft.all fun l => l.x + l.hang == geom.hmargin)
+  let envRight := (allLines (layoutOf oneFace (elabStr
+    ("\\documentclass{article}\\begin{document}\\begin{flushright}" ++
+      "One short line.\\\\ Another short line.\\end{flushright}" ++
+      "\\end{document}")).1 geom)).filter fun l => !l.furniture && !l.segs.isEmpty
+  t "the flushright environment sets from the measure's right edge"
+    (envRight.size == 2 && envRight.all fun l => l.x + l.setWidth == right)
+  -- Right-set lines are not centred: a centred scope leaves equal slack on
+  -- both sides, so the two settings must disagree on the same content.
+  let centred := (allLines (layoutOf oneFace (elabStr (doc "\\centering ")).1 geom)).filter
+    fun l => !l.furniture && !l.segs.isEmpty
+  t "a right-set line is not a centred line"
+    (centred.size == 3 && centred.all fun l => decide (l.x + l.setWidth < right))
+  -- The named loss retires: nothing is dropped, so nothing is reported.
+  t "the right-set spellings are no longer a named loss"
+    (!(warnCodes (doc "\\raggedleft ")).contains "W0104" &&
+      !(warnCodes ("\\documentclass{article}\\begin{document}" ++
+        "\\begin{flushright}x\\end{flushright}\\end{document}")).contains "W0104")
+  -- The other artifact, from the same IR value: the typed tree carries the
+  -- side's class and the sheet declares that side's edge. A width honoured
+  -- on the page and dropped in the HTML is the defect class the carrier
+  -- exists to prevent, so both projections are judged here
+  -- (`Ir.ragged_sides_agree` is the statement; these are its two emitters).
+  let treeOf (decl : String) : Html.Node :=
+    HtmlDoc.blockNode {} (elabStr (doc decl)).1.body[0]!
+  let classOf : Html.Node → Option String
+    | .elem _ attrs _ => (attrs.find? fun a => a.1 == "class").map (·.2)
+    | _ => none
+  t "the typed tree carries the declared side's class"
+    (classOf (treeOf "\\raggedright ") == some (HtmlDoc.raggedClass .left) &&
+      classOf (treeOf "\\raggedleft ") == some (HtmlDoc.raggedClass .right))
+  t "the sheet declares each side's own edge"
+    (HtmlDoc.raggedRule .left == ".ragged { text-align: left; }\n" &&
+      HtmlDoc.raggedRule .right == ".ragged-right { text-align: right; }\n")
+
 /-- `\centering` is a declaration: it centres the rest of its scope, the way
 `\bfseries` sets bold. Own function, same reason. -/
 def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do

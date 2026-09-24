@@ -116,7 +116,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- transparent wrappers splice, decorative and state-only arms vanish
   t "center/ragged/spaced/role/step/only/columns are transparent"
     (structKinds (Struct.ofBlocks
-      #[.center #[para], .ragged #[para], .spaced (Ir.Sourced.bare {}) #[para], .role "r" #[para],
+      #[.center #[para], .ragged .left #[para], .spaced (Ir.Sourced.bare {}) #[para], .role "r" #[para],
         .step 1 none #[para], .only #["html"] #[para], .columns #[(none, #[para])]])
       == #[.paragraph, .paragraph, .paragraph, .paragraph, .paragraph, .paragraph, .paragraph])
   t "rule, pagebreak, setPalette, setTokens produce no node"
