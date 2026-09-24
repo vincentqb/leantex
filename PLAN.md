@@ -145,11 +145,10 @@ list.
   catalog at object 1 and a trailer `/Size` equal to the listed objects
   plus one (the `/Index [0 size]` the writer computed, read back).
   Artifact-specific (`_exact`), no IR statement behind it. Blocked on the
-  deflated cross-reference stream (hence on `inflate_deflate_id`) and on
-  `write` still being one `Id.run` over a mutable writer whose offsets are
-  locals; the layout half of the factorization is done (`ObjTable` with
-  `objTable_ids_exact`, and the typed dictionaries), what remains is
-  `serialize` with offsets by construction. The
+  deflated cross-reference stream, hence on `inflate_deflate_id`: the
+  writer-side factorization is done (`ObjTable` with `objTable_ids_exact`,
+  the typed dictionaries, and `serialize` reporting bytes and offsets
+  together — `serialize_locs_id`, `serialize_locs_covers`). The
   executable witness is the reference walk in Tests/PdfConformance over
   every corpus PDF and its six mutants.
 - `parseVal_render_id` — the writer's spelling and the engine's reader are
@@ -12100,3 +12099,40 @@ delimiter) are honest consequences of what the reader returns, and `ptObj`,
 writer emits bytes at one site, `Obj.render`, and a dictionary entry whose
 value is a pre-rendered fragment is a defect waiting for a renderer to find
 it — two were.
+
+**The serialize half, and the one respell it did not cost.** `write` built
+the file with a mutable `Wr` and an `offs` table it filled beside the
+writing, which is why no equation connected an offset in the
+cross-reference to the position a reader parses it back from. It is now two
+phases: every physical object becomes a `Row` (a dictionary fragment with
+its stream and the filter already chosen, a form XObject with its copied
+resource bytes, or a copied object verbatim), and one `serialize` fold
+writes them and reports where each landed. `serialize_locs_id` says the
+first object lands at the head's own size; `serialize_locs_covers` that
+there is one offset per row in the rows' own order. The by-id table the
+cross-reference loop indexes is now derived from that answer rather than
+being a second record of it.
+
+The fold is structural — `serializeList` over a `List Row` with the
+accumulator threaded, `rowInto` appending into the buffer rather than
+building each object's bytes beside the file — so the equations are
+definitional and a 60 MB font program is still appended in place. The
+offset is bound to a name before the append (`let off := out.size`)
+precisely so the buffer stays uniquely owned: reading `out.size` in the
+same call that appends to `out` would raise its reference count and turn
+every append into a copy.
+
+This half cost no respell at all. The expectation recorded above — that
+typing the *stream* dictionaries would force `<<  /Filter` to become
+`<< /Filter` — still stands, but it is a separate change: `serialize` keeps
+the dictionary fragment a string, so the stray space survives and the split
+is byte-identical. Typing those dictionaries is what the `Body.form` arm
+also waits on, since a copied graph's `/Resources` is bytes with reference
+holes (`PdfRead.Chunk`), not an object.
+
+**Byte-identity, both halves.** 76 of 76 fixtures identical across the
+typed dictionaries and again across the serialize split, aggregate
+`d98c4f5a8baa93a66bf745c5886731e85289a897ed3fcab77eee0613e5bd7a87`
+unchanged from the respell baseline through both commits. `lake test`
+green after each, `Tests/PdfConformance`'s reference walk and six mutants
+included.

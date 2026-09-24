@@ -368,15 +368,6 @@ private def xmpPacket (info : Ir.Meta) : String :=
   "</x:xmpmeta>\n" ++
   "<?xpacket end=\"w\"?>"
 
-private structure Wr where
-  out : ByteArray := ByteArray.empty
-
-private def Wr.put (w : Wr) (s : String) : Wr :=
-  { out := w.out ++ s.toUTF8 }
-
-private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
-  { out := w.out ++ b }
-
 /-- The catalog's language entry: `/Lang` from the declared tag — the
 document's main language over every text run that carries no finer mark
 (ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document declares
@@ -960,6 +951,93 @@ theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   rw [List.mem_toArray, List.mem_filter]
   simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
 
+/-- One physical object as the bytes `serialize` writes for it: a
+dictionary fragment and a stream payload whose filter is already chosen, a
+form XObject whose `/Resources` is a copied graph's renumbered bytes, or a
+copied object's own value bytes with its own stream. No offset rides here —
+`serialize` decides where an object lands, and it decides it by having
+written everything before it. -/
+inductive Body where
+  | stream (dict : String) (data : ByteArray)
+  /-- The dictionary up to `/Resources`, the renumbered resource bytes, and
+  the form's content. The resources are bytes with reference holes
+  (`PdfRead.Chunk`), not an object, so this arm stays raw until a copied
+  graph's dictionary is itself typed. -/
+  | form (head : String) (resources : ByteArray) (content : ByteArray)
+  /-- A copied object: its value verbatim and its stream when it has one.
+  The filters are the source file's, never this writer's. -/
+  | copied (value : ByteArray) (stream : Option ByteArray)
+
+/-- An object with the id the table allocated it. -/
+structure Row where
+  id : Nat
+  body : Body
+
+/-- The bytes one object is written as, appended to the buffer it lands in:
+the accumulator form, so a 60 MB font program is appended in place rather
+than built beside the file and copied into it. -/
+def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
+  | .stream dict data =>
+    ((out ++ (s!"{id} 0 obj\n<< {dict} /Length {data.size} >>\nstream\n").toUTF8) ++ data)
+      ++ "\nendstream\nendobj\n".toUTF8
+  | .form h res content =>
+    ((((out ++ (s!"{id} 0 obj\n").toUTF8) ++ h.toUTF8) ++ res)
+      ++ (s!" /Length {content.size} >>\nstream\n").toUTF8) ++ content
+      ++ "\nendstream\nendobj\n".toUTF8
+  | .copied value (some raw) =>
+    (((out ++ (s!"{id} 0 obj\n").toUTF8) ++ value) ++ "\nstream\n".toUTF8) ++ raw
+      ++ "\nendstream\nendobj\n".toUTF8
+  | .copied value none =>
+    ((out ++ (s!"{id} 0 obj\n").toUTF8) ++ value) ++ "\nendobj\n".toUTF8
+
+/-- The `List` companion: the offset is bound before the append so the
+buffer stays uniquely owned and the append is in place. -/
+def serializeList (out : ByteArray) (locs : Array (Nat × Nat)) :
+    List Row → ByteArray × Array (Nat × Nat)
+  | [] => (out, locs)
+  | r :: rest =>
+    let off := out.size
+    serializeList (rowInto out r.id r.body) (locs.push (r.id, off)) rest
+
+/-- The file's objects and where each one landed. The offsets are this
+fold's own — the size the buffer had when the object's bytes began — so
+nothing can disagree with them: the cross-reference is built from this
+result, not from a table filled beside the writing. `write_readXref_exact`
+is the statement this shape exists for. -/
+def serialize (head : ByteArray) (rows : Array Row) : ByteArray × Array (Nat × Nat) :=
+  serializeList head #[] rows.toList
+
+/-- **`serialize_locs_covers`** (the `_covers` statement): `serialize`
+reports one offset per row, in the rows' own order — so a cross-reference
+built from `locs` names every object the writer wrote and no other. -/
+theorem serializeList_ids (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)) :
+    (serializeList out locs l).2.toList.map (·.1) = locs.toList.map (·.1) ++ l.map (·.id) := by
+  induction l generalizing out locs with
+  | nil => simp [serializeList]
+  | cons r rest ih => simp [serializeList, ih]
+
+theorem serialize_locs_covers (head : ByteArray) (rows : Array Row) :
+    (serialize head rows).2.toList.map (·.1) = rows.toList.map (·.id) := by
+  simp [serialize, serializeList_ids]
+
+/-- **`serialize_locs_id`** (the `_id` statement): the first object lands at
+the head's own size — the offset a reader following `startxref` arrives at,
+and the base case of the induction over the rows. -/
+theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
+    (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
+  suffices h : ∀ (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)),
+      (serializeList out locs l).2[0]? = if locs.isEmpty then
+        (match l with | [] => none | s :: _ => some (s.id, out.size)) else locs[0]? by
+    simpa [serialize] using h (r :: rest.toList) head #[]
+  intro l
+  induction l with
+  | nil => intro out locs; cases locs <;> simp [serializeList]
+  | cons s tl ih =>
+    intro out locs
+    rw [serializeList, ih]
+    cases locs with
+    | mk xs => cases xs <;> simp
+
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually
@@ -1187,48 +1265,34 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let objStmData := header.toUTF8 ++ payload
   let first := header.utf8ByteSize
 
-  -- assemble the file
-  let mut w : Wr := {}
-  -- The byte offset of every object written directly, by id. The kind of
-  -- each row is `t.kindOf`'s, never read from here.
-  let mut offs : Array (Option Nat) := Array.replicate t.size none
-  w := w.put "%PDF-2.0\n%"
-  w := w.putB ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩
-  w := w.put "\n"
+  -- assemble the file: every object as a row first, then one `serialize`
+  -- fold whose offsets are its own (`serialize_locs_covers`). Nothing
+  -- records a position beside the writing any more.
+  let fileHead : ByteArray := "%PDF-2.0\n%".toUTF8 ++ ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8
 
   -- direct stream objects
-  let putStream (w : Wr) (id : Nat) (dict : String) (data : ByteArray) : Wr × Nat :=
-    let off := w.out.size
-    let w := w.put s!"{id} 0 obj\n<< {dict} /Length {data.size} >>\nstream\n"
-    let w := w.putB data
-    let w := w.put "\nendstream\nendobj\n"
-    (w, off)
-  -- The same, compressed: every stream this writer owns (content,
-  -- ToUnicode, font files, XMP, the object and cross-reference streams)
-  -- rides as a real deflate whenever that is smaller, filter declared.
-  -- Image payloads and copied form graphs carry their own filters and
-  -- stay on `putStream`.
-  let putZ (w : Wr) (id : Nat) (dict : String) (data z : ByteArray) : Wr × Nat :=
-    if z.size < data.size then
-      putStream w id (dict ++ " /Filter /FlateDecode") z
-    else
-      putStream w id dict data
-  let putFlate (w : Wr) (id : Nat) (dict : String) (data : ByteArray) : Wr × Nat :=
-    putZ w id dict data (Flate.deflate data)
+  -- Every stream this writer owns (content, ToUnicode, font files, XMP, the
+  -- object and cross-reference streams) rides as a real deflate whenever
+  -- that is smaller, filter declared. Image payloads and copied form graphs
+  -- carry their own filters and stay uncompressed here.
+  let zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
+    if z.size < data.size then ⟨id, .stream (dict ++ " /Filter /FlateDecode") z⟩
+    else ⟨id, .stream dict data⟩
+  let flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
+    zRow id dict data (Flate.deflate data)
+  let mut rows : Array Row := #[]
 
   -- A page's stream, and its deflate when the driver already holds one
-  -- (`pageStreams`): the choice of spelling is `putZ`'s either way, so a
+  -- (`pageStreams`): the choice of spelling is `zRow`'s either way, so a
   -- cache hit and a recomputation write the same bytes.
   for i in [0:np] do
     let (data, z?) := match streams[i]?, ops[i]? with
       | some s, _ => s
       | none, some o => ((render o).toUTF8, none)
       | none, none => (ByteArray.empty, none)
-    let (w', off) := match z? with
-      | some z => putZ w (t.contentId i) "" data z
-      | none => putFlate w (t.contentId i) "" data
-    w := w'
-    offs := offs.set! (t.contentId i) (some off)
+    rows := rows.push (match z? with
+      | some z => zRow (t.contentId i) "" data z
+      | none => flateRow (t.contentId i) "" data)
 
   -- Image XObjects. A PNG's raw IDAT stream passes through as
   -- `/FlateDecode` with the PNG predictor declared (ISO 32000-2 §7.4.4.4:
@@ -1253,26 +1317,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 {Sp.toPtString fv.x1} {Sp.toPtString fv.y1}]"
         let matrix := s!"[{ratString spPerPt bw} 0 0 {ratString spPerPt bh} \
 {ratString (-fv.x0) bw} {ratString (-fv.y0) bh}]"
-        let off := w.out.size
-        w := w.put s!"{imgId} 0 obj\n<< /Type /XObject /Subtype /Form \
-/BBox {bbox} /Matrix {matrix} /Resources "
-        w := w.putB (renderChunks base fv.resources)
-        w := w.put s!" /Length {fv.content.size} >>\nstream\n"
-        w := w.putB fv.content
-        w := w.put "\nendstream\nendobj\n"
-        offs := offs.set! imgId (some off)
+        rows := rows.push ⟨imgId, .form s!"<< /Type /XObject /Subtype /Form \
+/BBox {bbox} /Matrix {matrix} /Resources " (renderChunks base fv.resources) fv.content⟩
         for (o, l) in fv.objects.zipIdx do
-          let ooff := w.out.size
-          w := w.put s!"{base + l} 0 obj\n"
-          w := w.putB (renderChunks base o.chunks)
-          match o.stream with
-          | some raw =>
-            w := w.put "\nstream\n"
-            w := w.putB raw
-            w := w.put "\nendstream\nendobj\n"
-          | none =>
-            w := w.put "\nendobj\n"
-          offs := offs.set! (base + l) (some ooff)
+          rows := rows.push ⟨base + l, .copied (renderChunks base o.chunks) o.stream⟩
       | _, _ =>
         -- The plan's three sums, spelled (ISO 32000-2 §8.9.5 Table 87).
         -- `iccBased` writes its alternate device space until the
@@ -1308,9 +1356,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
 {smaskRef}{maskRef} {filter}"
-        let (w', off) := putStream w imgId dict inf.data
-        w := w'
-        offs := offs.set! imgId (some off)
+        rows := rows.push ⟨imgId, .stream dict inf.data⟩
         if let some mid := (t.smaskIds[n]?).join then
           if let .soft plane bpc := inf.alpha then
             -- The alpha plane is the source's own filtered rows, deinterleaved
@@ -1319,34 +1365,31 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
             let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent {bpc} /Filter /FlateDecode \
 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent {bpc} /Columns {inf.pxW} >>"
-            let (w'', moff) := putStream w mid mdict plane
-            w := w''
-            offs := offs.set! mid (some moff)
+            rows := rows.push ⟨mid, .stream mdict plane⟩
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
     let tuData := (toUnicode usedPerFont[k]!).toUTF8
-    let (w', tuOff) := putFlate w (ObjTable.toUniId k) "" tuData
-    w := w'
-    offs := offs.set! (ObjTable.toUniId k) (some tuOff)
+    rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {font.data.size}"
     -- The driver may have deflated this face already, through its
     -- content-hash cache; the writer then only picks the smaller spelling.
-    let (w'', ffOff) := match fs.zdata[keep[k]!]?.getD none with
-      | some z => putZ w (t.fileId k) ffDict font.data z
-      | none => putFlate w (t.fileId k) ffDict font.data
-    w := w''
-    offs := offs.set! (t.fileId k) (some ffOff)
+    rows := rows.push (match fs.zdata[keep[k]!]?.getD none with
+      | some z => zRow (t.fileId k) ffDict font.data z
+      | none => flateRow (t.fileId k) ffDict font.data)
 
-  let (wx, xmpOff) := putFlate w t.xmpId "/Type /Metadata /Subtype /XML"
-    (xmpPacket info).toUTF8
-  w := wx
-  offs := offs.set! t.xmpId (some xmpOff)
+  rows := rows.push (flateRow t.xmpId "/Type /Metadata /Subtype /XML" (xmpPacket info).toUTF8)
+  rows := rows.push (flateRow t.objStmId
+    s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData)
 
-  let (w3, osOff) := putFlate w t.objStmId
-    s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData
-  w := w3
-  offs := offs.set! t.objStmId (some osOff)
+  -- One fold: the bytes and the offsets together, the offsets its own
+  -- (`serialize_locs_covers`). The by-id table below is an index into that
+  -- answer, not a second record of it.
+  let (body, locs) := serialize fileHead rows
+  let mut offs : Array (Option Nat) := Array.replicate t.size none
+  for (id, off) in locs do
+    if id < offs.size then
+      offs := offs.set! id (some off)
   -- Where the object stream holds each compressed object, by id.
   let mut stmIdx : Array (Option Nat) := Array.replicate t.size none
   for ((id, _), idx) in compressed.zipIdx do
@@ -1357,38 +1400,37 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- free-list head, written once; then one row per id the table allocates,
   -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
   -- kind the table's answer.
-  let xrefOff := w.out.size
+  let xrefOff := body.size
   let be4 (v : Nat) : List UInt8 :=
     [UInt8.ofNat (v / 16777216), UInt8.ofNat (v / 65536 % 256),
      UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]
   let directRow (off : Nat) : ByteArray := ⟨(1 :: be4 off ++ [0, 0]).toArray⟩
   let streamRow (idx : Nat) : ByteArray :=
     ⟨(2 :: be4 t.objStmId ++ [UInt8.ofNat (idx / 256 % 256), UInt8.ofNat (idx % 256)]).toArray⟩
-  let mut rows : ByteArray := ⟨#[0, 0, 0, 0, 0, 0xFF, 0xFF]⟩
+  let mut xrefRows : ByteArray := ⟨#[0, 0, 0, 0, 0, 0xFF, 0xFF]⟩
   for h : id in t.ids do
     match hk : t.kindOf compressedIdx id with
-    | some .xref => rows := rows ++ directRow xrefOff
-    | some (.inStream idx) => rows := rows ++ streamRow idx
+    | some .xref => xrefRows := xrefRows ++ directRow xrefOff
+    | some (.inStream idx) => xrefRows := xrefRows ++ streamRow idx
     | some .direct =>
       match (offs[id]?).join with
-      | some off => rows := rows ++ directRow off
+      | some off => xrefRows := xrefRows ++ directRow off
       | none =>
-        -- A direct id whose object was never recorded is written free: the
-        -- file then says the object is absent, which the read-side census
-        -- sees (its objects are the table's ids, per fixture), instead of a
-        -- row pointing into the object stream at another object. Gone with
-        -- the serialize split, where the offset arrives with the object.
-        rows := rows ++ ⟨#[0, 0, 0, 0, 0, 0, 0]⟩
+        -- A direct id `serialize` never wrote is written free: the file then
+        -- says the object is absent, which the read-side census sees (its
+        -- objects are the table's ids, per fixture), instead of a row
+        -- pointing into the object stream at another object. Unreachable as
+        -- the writer stands — every allocated id is a row — but the arm is
+        -- the honest answer rather than a guessed offset.
+        xrefRows := xrefRows ++ ⟨#[0, 0, 0, 0, 0, 0, 0]⟩
     | none =>
       have hs : (t.kindOf compressedIdx id).isSome = true :=
         objTable_kindOf_some keep imgs usedImgs np nOut es.size compressedIdx id h
-      rows := absurd hs (by rw [hk]; exact Bool.false_ne_true)
-  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 w.out)
-  let idB := Flate.hex16 (Flate.fnv64 1099511628211 w.out)
+      xrefRows := absurd hs (by rw [hk]; exact Bool.false_ne_true)
+  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
+  let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
   let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let w4 := (putFlate w t.xrefId xrefDict rows).1
-  w := w4
-  w := w.put s!"startxref\n{xrefOff}\n%%EOF\n"
-  return w.out
+  let (out, _) := serialize body #[flateRow t.xrefId xrefDict xrefRows]
+  return out ++ (s!"startxref\n{xrefOff}\n%%EOF\n").toUTF8
 
 end LeanTex.Core.Pdf
