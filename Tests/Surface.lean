@@ -4854,6 +4854,11 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (inkOf "\\node (a) {\\rule{1pt}{2pt}q};\n" == "q")
   t "a colour model run goes with its command"
     (inkOf "\\node (a) {\\textcolor[rgb]{1,0,0}{x}};\n" == "x")
+  -- A value argument that would read as a *product* of the expression is
+  -- worse than noise: `\cancelto{0}{x}` inked `0x`, which states the
+  -- opposite of the source. The floor may be lossy; it may not be false.
+  t "a cancel target does not ink as a factor of its expression"
+    (inkOf "\\node (a) {\\cancelto{0}{x}};\n" == "x")
   t "a line break's own option run is markup with the break"
     (inkOf "\\node (a) {x\\\\[2ex]y};\n" == "x|y")
   -- **A construct left pending at the end of a body is named.** The same

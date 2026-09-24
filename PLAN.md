@@ -10222,3 +10222,39 @@ warning, and would need a new diagnostic code to retire later. The strike
 and the arrow ship together or not at all — and when they do, the whole
 family (`\cancel`, `\bcancel`, `\xcancel`) should ride one direction field
 rather than earn a second visit.
+
+
+2026-09-24 — a floor may be lossy; it may not be false. `\cancelto{0}{x}`
+inked `0x`, because the salvage kept both of its groups and the naming-arity
+table had no row for it. That is not the ordinary cost of an unrendered
+construct: `0x` is a *product*, and the source says `x` cancels to `0`, so
+the page stated the opposite of the document. Every other row of
+`Ir.floorNamedArgs` exists because a key or a length on the page is noise to
+a reader; this one exists because a value on the page is a lie to a
+mathematician, which is a different and larger failure.
+
+The distinction is worth writing down because it bounds what the floor is
+allowed to be. The contract the math and node-label floors both took is
+"ship the text content, never the markup" — a lossy reading, named by its
+diagnostic, and better than a blank because a blank tells a reader nothing
+stood there. What neither floor may do is compose its kept fragments into a
+*different well-formed claim*. `0x` passes the markup test, passes the
+placeholder test, and is still wrong in a way no character-level check can
+see, because the defect is in the arrangement rather than in any token. So
+the naming-arity table is not only an aesthetic filter: a command whose
+dropped argument would otherwise read as an operand of the kept one owes a
+row, and that reading is what to check when adding one.
+
+The strike itself stays unrendered, for the reason `tests/compat-index/
+cancel.txt` already carries as checked rows: all four cancel commands draw a
+diagonal through a measured subformula, every rule an inline line can carry
+is axis-aligned, and the vocabulary that does have slopes and arrow tips
+(`Ir.Pic.Shape.edge` is geometrically exactly a cancel strike) is reachable
+only from a block-level picture whose endpoints must be known before
+measurement. So `x` under a W0012 is the honest floor here, and the diagonal
+is a Layout capability that has not been asked for yet.
+
+Evidence: the row fails before and passes after (`\cancelto{0}{x}` inking
+`0x` then `x`), and the package's compat-index rows are unchanged — the
+refusal still fires, which is the point: the loss is still named at full
+strength, it just no longer prints a falsehood beside its own warning.

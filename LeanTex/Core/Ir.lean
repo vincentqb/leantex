@@ -5261,13 +5261,24 @@ count the second length rode onto the page — markup-free by the character
 test and still nonsense to a reader.
 
 `\text`-like wrappers are deliberately absent: their argument *is* the
-content, and that is what the floor exists to keep. -/
+content, and that is what the floor exists to keep.
+
+`\cancelto` earns its row for a sharper reason than the rest: its value
+argument is not merely noise on the page but a *false reading* —
+`\cancelto{0}{x}` shipped `0x`, a product, where the source says `x`
+cancels to `0`. A lossy floor is the contract; a floor that states the
+opposite of the source is not. The strike itself stays unrendered
+(tests/compat-index/cancel.txt carries why: every cancel command draws a
+diagonal through a measured subformula, and an inline rule here is
+axis-aligned), so `x` under a W0012 is the honest floor until the
+diagonal exists. -/
 def floorNamedArgs : List (String × Nat) :=
   [("textcolor", 1), ("colorbox", 1), ("fcolorbox", 2), ("color", 1),
    ("pagecolor", 1), ("label", 1), ("ref", 1), ("eqref", 1), ("tag", 1),
    ("hspace", 1), ("vspace", 1), ("raisebox", 1), ("begin", 1), ("end", 1),
    ("cite", 1), ("phantom", 1), ("hphantom", 1), ("vphantom", 1),
-   ("parbox", 1), ("rule", 2), ("setlength", 2), ("addtolength", 2)]
+   ("parbox", 1), ("rule", 2), ("setlength", 2), ("addtolength", 2),
+   ("cancelto", 1)]
 
 /-- Past a balanced `{...}` beginning at `i`, or past the end when it never
 closes. An index loop, so the bound is the array and no measure is owed. -/
