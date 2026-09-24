@@ -306,6 +306,102 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — the face a node must be measured against, and why the driver
+cannot hand the elaborator one. The extent defect's remaining half
+(`right =of` parts node *centres*, so labels collide) was blocked on an
+ordering: the font set is built **from** the elaborated document, and the
+measurement is needed **during** elaboration. This entry is the judgement of
+what breaks that circle, the invariant it needs stated where both artifacts
+can read it, and the measured cost of the shape — with the wiring itself
+held back, because it crosses two modules a parallel slice owns.
+
+**The circle is wider than `doc.fonts`.** The obvious reading — "a `\fonts`
+declaration is a preamble fact, so resolve the preamble first" — does not
+survive reading `buildFontSet`. It reads `doc.fonts`, and it also reads
+`Layout.docWeightKeys doc` (which off-corner weights to load) and
+`Layout.docScalars doc` (which scalars need a fallback face). The font set is
+a function of the whole elaborated document, not of its preamble, and a
+first pass could therefore build *a* face but never *the* face. That matters
+because a metric is not a private convenience: a node placed against one
+face and set against another is two measurements with nothing stating they
+agree — the `_agree`-shaped violation this tree already has a name for, and
+exactly the silent disagreement `labelInk` was factored to prevent.
+
+**And the measurement is layout's, not a new function.** A label's extent is
+`itemsOfInlines` → `kp` → `setLine` over the resolved face — the same
+pipeline that *sets* the line. Reimplementing it in the elaborator would
+place nodes with one measurement and set them with another, so the
+elaborator must receive the *function*, not a face: `Ir.Pic.LabelMetric`,
+answered by `Layout.labelInk`, the one site both sides already read.
+
+**Which collapses two of the three candidate shapes into one.** "Parse,
+resolve the font environment, elaborate" and "elaboration emits a node whose
+extent is a request the driver fulfils" differ only in *when* the fulfilment
+happens; in both the elaborator holds a metric it did not compute, and in
+both the pure-core rule is satisfied — no IO in `Elab`, the face arriving as
+a function value, exactly as `Cx.math` already arrives. The third candidate,
+moving placement into layout where the face is, does not survive the layer
+rule: placement is a fixed point over the picture's *statement graph*
+(`Picture.evalFixed`), which is surface, so layout would be reaching back
+into the surface AST — and carrying that graph in `Ir` instead would put
+surface tokens in the IR and leave both backends resolving placement
+independently. The chosen shape is therefore: **the metric is a parameter of
+elaboration, and the driver elaborates twice — once to discover the face,
+once to use it.**
+
+**Why the second pass is sound, and what it costs.** A metric moves picture
+geometry and nothing else: `doc.fonts`, `doc.page`, the diagnostics and the
+request spans are the first pass's, and only the document is taken from the
+second. Gated on the document having drawn a picture of its own
+(`Elab.enginePictures`), so a picture-free document runs one pass exactly as
+now. Measured with the wiring applied locally, on a synthetic 30-frame,
+180-label deck: median 124 ms → 132 ms (+6.5%); on a 42-page, 16-picture
+document of the private reference corpus: 160 ms → 173 ms (+8%). The
+re-elaboration dominates and the measuring does not — 10 ms of the 13 is the
+`elab` phase — which names the next optimisation precisely rather than
+vaguely: fulfil per picture instead of per document, carrying the picture
+requests in the side channel `ReqSpans` already is, which would leave the
+measuring cost alone and drop the rest.
+
+**What lands here: the invariant, on the IR, with its resolving site.**
+`Ir.Pic.nodeExtent` is the single answer to how far a node reaches — the
+declared minimum, or the label's own reach where the text stands proud of
+it — read off `labelInkSpan`, the site that already says where a label's ink
+stands relative to its anchor, so the extent and the box a picture reserves
+cannot disagree. Two facts over it, quantified over every metric as every box
+fact here is:
+
+- `nodeExtent_covers` — a label at a node's anchor is inside the extent that
+  node places against, whatever face resolves. `nodeExtentBox_monotone` is
+  why the declared minimum is a floor and not an alternative (pgf's own
+  reading: extent = max(minimum, text extent)).
+- `nodeExtent_separates` — two nodes whose centres stand one separation plus
+  both half-extents apart, which is what `right =of` computes and what
+  `Picture.placeRight_border_exact` states exactly, set label ink that does
+  not overlap. A separation rather than a containment, so a new shape by the
+  naming registry's own leave: it is the fact `_covers` exists *for*, and it
+  reads as that containment used twice.
+
+That is the composition the defect broke at its input: the border arithmetic
+was exact about an extent of zero. `nodeExtentChecks` pins the site's
+arithmetic on numbers — including the defect as the number it was, the
+second label's ink landing left of where the first one's ends — against an
+invented metric rather than an installed face, since the statements are
+universal in the metric and a fixture measuring with this host's font would
+be pinning the font.
+
+**What does not land, and why not.** The wiring: `Picture.Cx` carrying a
+metric and `evalNode` reading the site, `Layout` exporting its measurement,
+and the driver's `elaborate`/second pass. Written and verified end to end —
+a synthetic three-node row's single 139 px ink run becomes three runs
+(88/63/52 px) parted by the declared 8 mm, W0336 silent where it named three
+pairs; on the private reference corpus W0336 falls from three firings (six
+overlapping pairs) to none, 42 pages either way, rasterised at 110 dpi to
+check. Held back because two of the four modules belong to a parallel slice,
+and a signature landed in half leaves the tree red. `nodeExtent_covers`'s
+owed record now names that remainder instead of the architecture: the
+ordering is no longer the blocker, the wiring is.
+
 2026-09-24 — the collision a correct box cannot show is now named. The
 entry below closes the half of the extent defect that sends glyphs off the
 page and says plainly that the other half — `right =of` parting node
