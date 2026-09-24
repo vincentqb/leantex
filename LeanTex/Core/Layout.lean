@@ -6140,12 +6140,39 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
   -- overrides it. Keywords, io labels, semicolons and the muted comment
   -- come generated from `Ir.AlgLine.rendered` — the one site both
   -- backends read (`algorithm_lines_agree`). A line number is a marker
-  -- in the muted role: the list-marker furniture shape, so numbers
-  -- right-align against the text edge as bullets do.
+  -- in the muted role: the list-marker furniture shape, right-aligned
+  -- against the algorithm's own left edge — the reserved number column
+  -- below, one column whatever each line's depth.
   let words := Ir.algWords r.locale.tag
   let muted := Ir.mutedOf a.pal
   let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
     { width := { em := 1500 } })).width
+  -- The number column, reserved inside the algorithm's own box.
+  -- algorithm2e sets its line numbers there and not in the page margin:
+  -- the body `\vtop` opens after an `\hbox to \algomargin{\hfill}` and its
+  -- `\hsize` is reduced by the same `\algomargin`, so the body starts one
+  -- inset in (algorithm2e.sty:2621-2624); the number is then `\llap`ped
+  -- back into that inset by `\skiptotal`, 0.5em (algorithm2e.sty:1645-1647
+  -- with `\@defaultskiptotal`, :1561). The engine's HTML path already
+  -- reserves the column — `ol.algorithm.numbered` takes 2em of padding and
+  -- sets the counter in it — so this is the print side of one column, and
+  -- the token is what both read.
+  --
+  -- The reserve is at least what the widest number needs. algorithm2e does
+  -- not guarantee that: `\llap` hangs a three-digit number straight out of
+  -- a 1.5em inset and into the page margin, which is the defect this
+  -- column exists to close, so reproducing it would be reproducing the
+  -- bug at a larger line count.
+  let numCol :=
+    if numbered then
+      let face := r.fs.get 0
+      let digit := (List.range 10).foldl (fun m k =>
+        max m (scaledAt r.geom.fontSize face (face.advance (Char.ofNat (48 + k))))) 0
+      max (r.resolve ((a.tokens.find? "algnumindent").getD
+          { width := { em := 2000 } })).width
+        (digit * (toString lines.size).length + r.geom.fontSize / 2)
+    else 0
+  let indent := indent + numCol
   let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
   -- One `.code` node holds every line's leaves (`Struct.algRaw`): a line
   -- names its own first leaf; a keyword-only line (`end`, `else`) is

@@ -3152,10 +3152,12 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "ol.algorithm li::marker, ol.algorithm ol > li::marker,\n" ++
   "ol.algorithm ol ol > li::marker, ol.algorithm ol ol ol > li::marker {\n" ++
   "  content: none; }\n" ++
-  "ol.algorithm.numbered { padding-left: 2em; position: relative; }\n" ++
+  "ol.algorithm.numbered { padding-left: var(--algnumindent, 2em); position: relative; }\n" ++
   "ol.algorithm.numbered li { counter-increment: algline; }\n" ++
-  -- one number column at the block's own left edge, whatever the line's
-  -- depth — the PDF's marker column (`markerIndent`), the same shape
+  -- one number column reserved inside the block, whatever the line's
+  -- depth — the PDF's marker column over the same token (`algnumindent`,
+  -- `Layout.collectAlgorithm`): algorithm2e's own inset, so a number
+  -- stands in the algorithm's box and never in the page margin
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
   "  color: var(--muted); font-size: 0.8em; width: 1.5em;\n" ++
   "  position: absolute; left: 0; text-align: right; }\n" ++

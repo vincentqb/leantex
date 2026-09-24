@@ -76,6 +76,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   titleBreakChecks ref oneFace
   bodyColorChecks ref oneFace
   listChecks ref oneFace font
+  algNumberColumnChecks ref oneFace
   filChecks ref oneFace
   underlineChecks ref geom oneFace font
   linkSignalChecks ref geom oneFace

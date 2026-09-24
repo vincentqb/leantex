@@ -11456,3 +11456,48 @@ record IR dumps and the palette resolves to the same colours). AGENTS.md's
 palette row now names `ofPalette` as the resolving site, since naming
 `ofDoc` is what made the second copy look legal.
 
+### 2026-09-24 — a numbered algorithm's line numbers belong in its own box
+
+**The invariant.** Body ink stands inside the text area. A line number is
+generated furniture, but it is the algorithm's furniture, and the page
+margin is not part of the algorithm.
+
+The artifact tier recorded this as an offence on its first day: the
+`algorithm` fixture's line numbers set **10.7 pt left of the measure**, in
+the page margin, with no diagnostic. The cause is one argument.
+`collectAlgorithm` asked for a marker column at the block's own indent
+(`markerIndent := some indent`), and a marker column right-aligns
+`\labelsep` — half an em — to the *left* of the offset it is given. That is
+the list-bullet shape, and it is right for a list, whose body is already
+indented by its own `\leftmargin`: the bullet hangs into an indent that
+exists. A top-level algorithm has indent zero, so the numbers hung into
+nothing and landed outside the page's text block.
+
+**Where they belong, sourced.** algorithm2e reserves the column *inside*
+the algorithm's own box. `\@algocf@start` opens the body after an `\hbox to
+\algomargin{\hfill}` and reduces the body's `\hsize` by the same
+`\algomargin` (algorithm2e.sty:2621-2624), so the pseudocode starts one
+inset in; `\algocf@printnl` then laps the number back into that inset by
+`\skiptotal`, 0.5em by default (algorithm2e.sty:1645-1647, 1561). The
+number therefore stands between the algorithm's left edge and its code,
+never in the page margin. The engine's own HTML backend already did this —
+`ol.algorithm.numbered` takes 2em of padding and sets the counter inside
+it — so the print side was the only half missing, and the two halves now
+read one token (`algnumindent`, default 2em).
+
+**One declared divergence.** The reserve is `max(token, widest number +
+\labelsep)`, not the token alone. algorithm2e's `\llap` hangs a three-digit
+number straight out of a 1.5em inset and into the page margin, which is the
+defect this column exists to close; reproducing it faithfully would
+reproduce the bug at a larger line count. The measurement is ten digit
+advances at the body size — O(1) per algorithm, not per line.
+
+Evidence: the artifact tier's `algorithm`/`.bodyArea` offence row deleted;
+the claim now armed on that fixture. `algNumberColumnChecks` over
+`Layout.Out`: thirteen lines and a synthetic hundred-and-twenty, every
+line's leftmost ink at or right of the margin; the default column measured
+at exactly two ems against an unnumbered control; the hundred-line case's
+column strictly wider. All four fail before the fix (55.6 pt and 49.8 pt
+against a 72 pt margin) and pass after. No golden moves — the reserve is a
+layout decision and the goldens record elaboration.
+

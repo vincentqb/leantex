@@ -189,6 +189,66 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (scalars.contains '•' && scalars.contains '–' &&
      scalars.contains '*' && scalars.contains '-' && !scalars.contains '∗')
 
+/-- **A numbered algorithm's line numbers stand inside the text area.**
+The invariant a `markerIndent` of the block's own indent did not hold: the
+number column right-aligns `\labelsep` left of that offset, so at indent 0
+the numbers set in the page margin (10.7 pt out on the corpus fixture, with
+no diagnostic). algorithm2e reserves the column inside the algorithm's own
+box instead — the body opens one `\algomargin` in and the number is lapped
+back into that inset (algorithm2e.sty:2621-2624, 1645-1647) — and the
+engine's own HTML path already did (`ol.algorithm.numbered`'s padding).
+
+Asserted over `Layout.Out`: the leftmost ink of every line, numbers
+included, against the margin. The corpus fixture's two-digit numbers are
+covered by the default reserve alone, so the widest-number arm is reached
+by a synthetic hundred-line algorithm, where `\llap` into a fixed inset is
+exactly what would put a three-digit number back in the margin. -/
+def algNumberColumnChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let alg (numbered : Bool) (n : Nat) : String :=
+    "\\documentclass{article}\n\\begin{document}\n\\begin{algorithm}\n" ++
+    (if numbered then "\\LinesNumbered\n" else "") ++
+    String.join ((List.range n).map fun k => s!"step {k + 1}\\;\n") ++
+    "\\end{algorithm}\n\\end{document}"
+  let linesOf (src : String) : Array Layout.LineOut :=
+    let (d, _) := Elab.run "t" src
+    bodyLines (layoutOf oneFace d geom)
+  let leftmost (ls : Array Layout.LineOut) : Dim.Sp :=
+    ls.foldl (fun m l => min m l.x) geom.pageW
+  -- Thirteen lines, the corpus fixture's own count: every line's ink,
+  -- number included, stands at or right of the margin.
+  let short := linesOf (alg true 13)
+  t s!"a numbered algorithm's numbers stand inside the measure \
+({(leftmost short).toPtString} vs {geom.hmargin.toPtString})"
+    (0 < short.size && geom.hmargin ≤ leftmost short)
+  -- The widest-number arm: three digits need more than the default inset,
+  -- so the reserve follows the number rather than the constant. `\llap`
+  -- into a fixed inset is what would put them back in the margin.
+  let long := linesOf (alg true 120)
+  t s!"a hundred-line algorithm's three-digit numbers stay inside \
+({(leftmost long).toPtString} vs {geom.hmargin.toPtString})"
+    (0 < long.size && geom.hmargin ≤ leftmost long)
+  -- The column is the numbers': an unnumbered algorithm reserves none, so
+  -- its code keeps the full measure.
+  let plain := linesOf (alg false 13)
+  t s!"an unnumbered algorithm reserves no number column \
+({(leftmost plain).toPtString})"
+    (0 < plain.size && leftmost plain == geom.hmargin)
+  -- The reserve, measured: every one of the three sets the same first line
+  -- (`step 1;`), and a line's right edge is its content's own — the marker
+  -- rides inside `setWidth` from `x` — so the difference between two right
+  -- edges is exactly the difference between two reserves.
+  let rightOf (ls : Array Layout.LineOut) : Dim.Sp :=
+    (ls[0]?.map fun l => l.x + l.setWidth).getD 0
+  t s!"the default column is two ems, algorithm2e's inset and the HTML's padding \
+({(rightOf short - rightOf plain).toPtString})"
+    (rightOf short - rightOf plain == 2 * geom.fontSize)
+  t s!"a wider number widens the column \
+({(rightOf long - rightOf short).toPtString})"
+    (rightOf plain < rightOf short && rightOf short < rightOf long)
+
 /-- Line-level typesetting checks against a one-face set. Its own function:
 `main` is a single `do` block, and Lean's elaboration budget for one block
 runs out long before the tests do. -/

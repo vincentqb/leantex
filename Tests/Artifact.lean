@@ -861,10 +861,7 @@ table can only shrink, and a fix must delete its row in the same commit. -/
 def artKnownOffences : List (String × ArtProp × String) := [
   ("footer-collide", .pageBox,
     "an unbreakable footer token 140 pt wider than the medium paints past its right \
-edge; W0333 names the slot collision, nothing names the ink that left the page"),
-  ("algorithm", .bodyArea,
-    "a numbered algorithm's line numbers set 10.7 pt left of the measure, in the page \
-margin, with no diagnostic — algorithm2e sets them inside the algorithm's own box")]
+edge; W0333 names the slot collision, nothing names the ink that left the page")]
 
 
 /-! ## The mutants: each claim broken once, on real bytes
