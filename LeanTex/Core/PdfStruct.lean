@@ -223,7 +223,7 @@ def skeleton (t : Struct.Tree) : Array StructElem :=
 /-- The element holding each leaf `k < n`: the one whose kids carry
 `.leaf k`. The soundness half — an owner listed does hold the leaf — is
 `leafOwners_mem`; that each leaf is held once is the skeleton's
-(`skeleton_leafKids_nodup`, owed). -/
+(`skeleton_leafKids_nodup`). -/
 def leafOwners (es : Array StructElem) (n : Nat) : Array (Option Nat) :=
   (es.toList.zipIdx).foldl (fun out (e, i) =>
     e.kids.foldl (fun out k =>
@@ -267,8 +267,8 @@ the elements that carry the leaf): `leafOwners` records `some i` at slot
 `j` only from the element at index `i` listing `.leaf j`, so the tag
 `leafTags` reads off an owner is the type of an element that does hold the
 leaf. The fold's inversion, by the invariant `OwnerSound`. That each leaf
-is held by *one* element is the separate census (`skeleton_leafKids_nodup`,
-owed). -/
+is held by *one* element is the separate census
+(`skeleton_leafKids_nodup`). -/
 theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
     (h : (leafOwners es n)[j]? = some (some i)) :
     ∃ e, es[i]? = some e ∧ StructKid.leaf j ∈ e.kids := by
@@ -290,7 +290,9 @@ theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
   exact main j i h
 
 /-- Every leaf placeholder the elements carry, in element order: the
-census `skeleton_leafKids_nodup` (owed) says holds each leaf once. -/
+census `skeleton_leafKids_nodup` says holds each leaf once; `leafIdsOf` is
+its element case, and `leafKids_addKid_leaf` the reason the census is a
+permutation of the ids and not an append of them. -/
 def leafKids (es : Array StructElem) : List Nat :=
   es.toList.flatMap fun e => e.kids.toList.filterMap fun k =>
     match k with
@@ -467,5 +469,304 @@ theorem structKids_mem (es : Array StructElem) (lp : Array (Array (Nat × Nat)))
     rw [← hk] at hk0
     simp only [List.mem_flatMap]
     exact ⟨e0, Array.mem_toList_iff.mpr he0, Array.mem_toList_iff.mpr hk0⟩
+
+/-- The leaf ids one element holds, in kid order: `leafKids`' element case. -/
+def leafIdsOf (e : StructElem) : List Nat :=
+  e.kids.toList.filterMap fun k =>
+    match k with
+    | .leaf j => some j
+    | .elem _ => none
+    | .mcid _ _ => none
+
+theorem leafKids_eq_flatMap (es : Array StructElem) :
+    leafKids es = es.toList.flatMap leafIdsOf := rfl
+
+theorem leafKids_push (es : Array StructElem) (e : StructElem) :
+    leafKids (es.push e) = leafKids es ++ leafIdsOf e := by
+  simp [leafKids_eq_flatMap, Array.toList_push]
+
+theorem List.flatMap_modify_of {α β : Type} (g : α → List β) (f : α → α)
+    (hf : ∀ a, g (f a) = g a) (l : List α) (i : Nat) :
+    (l.modify i f).flatMap g = l.flatMap g := by
+  induction l generalizing i with
+  | nil => simp
+  | cons a rest ih =>
+    cases i with
+    | zero => simp [hf]
+    | succ i => simp [ih]
+
+/-- A `modify` that appends to one element's own census moves the whole
+census by a permutation and not by an append: the element sits in the middle
+of the list, so what it gained lands before everything after it. -/
+theorem List.flatMap_modify_perm {α β : Type} (g : α → List β) (f : α → α) (extra : List β)
+    (hf : ∀ a, g (f a) = g a ++ extra) (l : List α) (i : Nat) (hi : i < l.length) :
+    ((l.modify i f).flatMap g).Perm (l.flatMap g ++ extra) := by
+  induction l generalizing i with
+  | nil => simp at hi
+  | cons a rest ih =>
+    cases i with
+    | zero =>
+      simp only [List.modify_zero_cons, List.flatMap_cons, hf, List.append_assoc]
+      exact List.Perm.append_left _ List.perm_append_comm
+    | succ i =>
+      simp only [List.modify_succ_cons, List.flatMap_cons, List.append_assoc]
+      exact List.Perm.append_left _ (ih i (by simpa using hi))
+
+theorem leafIdsOf_push_leaf (e : StructElem) (k : Nat) :
+    leafIdsOf { e with kids := e.kids.push (.leaf k) } = leafIdsOf e ++ [k] := by
+  simp [leafIdsOf, Array.toList_push]
+
+theorem leafIdsOf_push_elem (e : StructElem) (i : Nat) :
+    leafIdsOf { e with kids := e.kids.push (.elem i) } = leafIdsOf e := by
+  simp [leafIdsOf, Array.toList_push]
+
+/-- A `modify` whose function leaves an element's leaf ids alone leaves the
+whole census alone — the `.elem` kid `pushElem` writes onto a parent. Total
+in the index: `Array.modify` out of bounds is the identity, and so is this. -/
+theorem leafKids_modify_of (es : Array StructElem) (i : Nat) (f : StructElem → StructElem)
+    (hf : ∀ e, leafIdsOf (f e) = leafIdsOf e) :
+    leafKids (es.modify i f) = leafKids es := by
+  rw [leafKids_eq_flatMap, leafKids_eq_flatMap, Array.toList_modify]
+  exact List.flatMap_modify_of leafIdsOf f hf _ i
+
+/-- **A leaf added to an element in the middle is a permutation, not an
+append.** `addKid` is `Array.modify`, so the new id lands before every
+element after the holder: the census order changes and only the multiset is
+preserved — which is all `Nodup` needs. The index bound is a hypothesis
+because `Array.modify` out of bounds is the identity, and the leaf would
+then vanish in silence. -/
+theorem leafKids_addKid_leaf (es : Array StructElem) (holder k : Nat)
+    (h : holder < es.size) :
+    (leafKids (addKid es holder (.leaf k))).Perm (leafKids es ++ [k]) := by
+  rw [leafKids_eq_flatMap, leafKids_eq_flatMap, addKid, Array.toList_modify]
+  exact List.flatMap_modify_perm leafIdsOf _ [k]
+    (fun e => leafIdsOf_push_leaf e k) _ holder (by simpa using h)
+
+theorem leafKids_pushElem (es : Array StructElem) (parent : Nat) (e : StructElem) :
+    leafKids (pushElem es parent e).1 = leafKids es ++ leafIdsOf e := by
+  simp only [pushElem, leafKids_push]
+  rw [leafKids_modify_of _ _ _ (fun e0 => leafIdsOf_push_elem e0 es.size)]
+  simp [leafIdsOf]
+
+/-! ### The leaf census of the skeleton -/
+
+/-- The leaf ids the skeleton walk reaches, in preorder: every leaf outside a
+speaker note. The descent is the engine's own classifier — `skelStep` emits
+nothing at all for `.aside`, which is exactly what `Kind.outlineDescends`
+says — so this is the walk's census and not a transcription of it. -/
+def skelLeafFold : Struct.NodeFold (Array Nat) where
+  leaf := fun out id _ => out.push id
+  enter := fun out _ => out
+  descends := Struct.Kind.outlineDescends
+
+theorem skelLeafAppends : Struct.Appends skelLeafFold where
+  leaf := by intro out id l; simp [skelLeafFold]
+  enter := by intro out kind; simp [skelLeafFold]
+
+def skelLeafIds (l : List Struct.Node) : Array Nat := Struct.foldNodeList skelLeafFold #[] l
+
+def skelLeafIdsOne (n : Struct.Node) : Array Nat := Struct.foldNode skelLeafFold #[] n
+
+theorem skelLeafIds_nil : skelLeafIds [] = #[] := rfl
+
+theorem skelLeafIds_cons (n : Struct.Node) (l : List Struct.Node) :
+    skelLeafIds (n :: l) = skelLeafIdsOne n ++ skelLeafIds l := by
+  rw [skelLeafIds, Struct.foldNodeList_cons_exact,
+    Struct.foldNodeList_acc skelLeafAppends]
+  rfl
+
+theorem skelLeafIdsOne_leaf (k : Nat) (l : Struct.Leaf) :
+    skelLeafIdsOne (.leaf k l) = #[k] := rfl
+
+theorem skelLeafIdsOne_node (kind : Struct.Kind) (kids : Array Struct.Node) :
+    skelLeafIdsOne (.node kind kids)
+      = if kind.outlineDescends then skelLeafIds kids.toList else #[] := by
+  rw [skelLeafIdsOne, Struct.foldNode_node_exact]
+  cases hd : kind.outlineDescends <;> simp [hd, skelLeafFold, skelLeafIds]
+
+/-! ### Sizes: the walk only grows the element array -/
+
+theorem size_le_addKid (es : Array StructElem) (holder : Nat) (k : StructKid) :
+    es.size ≤ (addKid es holder k).size := by simp [addKid]
+
+theorem size_le_pushElem (es : Array StructElem) (parent : Nat) (e : StructElem) :
+    es.size < (pushElem es parent e).1.size := by simp [pushElem]
+
+theorem bibEntryElems_lb_lt (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
+    (bibEntryElems es parent openList).2.2 < (bibEntryElems es parent openList).1.size := by
+  unfold bibEntryElems
+  cases openList <;> simp [pushElem]
+
+theorem size_le_bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
+    es.size ≤ (bibEntryElems es parent openList).1.size := by
+  unfold bibEntryElems
+  cases openList <;> simp [pushElem] <;> omega
+
+mutual
+
+theorem size_le_skelList : ∀ (l : List Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat),
+    es.size ≤ (skelList es parent holder inline openList l).size
+  | [], es, _, _, _, _ => by simp [skelList]
+  | n :: rest, es, parent, holder, inline, openList => by
+    rw [skelList]
+    exact Nat.le_trans (size_le_skelStep n es parent holder inline openList)
+      (size_le_skelList rest _ parent holder inline _)
+
+theorem size_le_skelStep : ∀ (n : Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat),
+    es.size ≤ (skelStep es parent holder inline openList n).1.size
+  | .leaf k l, es, parent, holder, inline, openList => by
+    cases l <;> simp only [skelStep] <;>
+      first
+        | exact size_le_addKid es holder _
+        | exact Nat.le_of_lt (size_le_pushElem es parent _)
+  | .node kind kids, es, parent, holder, inline, openList => by
+    cases kind
+    case aside => simp [skelStep]
+    case label => simpa [skelStep] using size_le_skelList kids.toList es parent holder inline none
+    case bibEntry =>
+      simp only [skelStep]
+      exact Nat.le_trans (size_le_bibEntryElems es parent openList)
+        (size_le_skelList kids.toList _ _ _ _ none)
+    all_goals
+      simp only [skelStep]
+      exact Nat.le_trans (Nat.le_of_lt (size_le_pushElem es parent _))
+        (size_le_skelList kids.toList _ _ _ _ none)
+
+end
+
+theorem leafIdsOf_of_kids_empty (e : StructElem) (h : e.kids = #[]) : leafIdsOf e = [] := by
+  simp [leafIdsOf, h]
+
+theorem leafKids_bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
+    leafKids (bibEntryElems es parent openList).1 = leafKids es := by
+  unfold bibEntryElems
+  cases openList <;>
+    simp [leafKids_pushElem, leafIdsOf_of_kids_empty]
+
+theorem leafKids_pushElem_empty (es : Array StructElem) (parent : Nat) (e : StructElem)
+    (h : e.kids = #[]) : leafKids (pushElem es parent e).1 = leafKids es := by
+  rw [leafKids_pushElem, leafIdsOf_of_kids_empty e h, List.append_nil]
+
+mutual
+
+/-- **The skeleton's leaf census, accumulator-generalised.** The elements a
+node list produces hold exactly the leaf ids the walk reaches, on top of
+whatever the accumulator already held — as a *permutation*, because `addKid`
+writes into the middle of the array. `holder < es.size` is load-bearing:
+`Array.modify` out of bounds is the identity, so without it a text leaf
+would be dropped in silence rather than held. -/
+theorem skelList_leafKids : ∀ (l : List Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat), holder < es.size →
+    (leafKids (skelList es parent holder inline openList l)).Perm
+      (leafKids es ++ (skelLeafIds l).toList)
+  | [], es, _, _, _, _, _ => by simp [skelList, skelLeafIds_nil]
+  | n :: rest, es, parent, holder, inline, openList, hh => by
+    rw [skelList, skelLeafIds_cons]
+    have h1 := skelStep_leafKids n es parent holder inline openList hh
+    have h2 := skelList_leafKids rest (skelStep es parent holder inline openList n).1
+      parent holder inline (skelStep es parent holder inline openList n).2
+      (Nat.lt_of_lt_of_le hh (size_le_skelStep n es parent holder inline openList))
+    refine h2.trans ?_
+    simp only [Array.toList_append, ← List.append_assoc]
+    exact h1.append_right _
+
+theorem skelStep_leafKids : ∀ (n : Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat), holder < es.size →
+    (leafKids (skelStep es parent holder inline openList n).1).Perm
+      (leafKids es ++ (skelLeafIdsOne n).toList)
+  | .leaf k l, es, parent, holder, inline, openList, hh => by
+    cases l <;> simp only [skelStep, skelLeafIdsOne_leaf] <;>
+      first
+        | exact leafKids_addKid_leaf es holder k hh
+        | (rw [leafKids_pushElem]; simp [leafIdsOf])
+  | .node kind kids, es, parent, holder, inline, openList, hh => by
+    cases kind
+    case aside => simp [skelStep, skelLeafIdsOne_node, Struct.Kind.outlineDescends]
+    case label =>
+      rw [skelLeafIdsOne_node]
+      simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
+      exact skelList_leafKids kids.toList es parent holder inline none hh
+    case bibEntry =>
+      rw [skelLeafIdsOne_node]
+      simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
+      refine (skelList_leafKids kids.toList _ _ _ _ none (bibEntryElems_lb_lt es parent openList)).trans ?_
+      rw [leafKids_bibEntryElems]
+    all_goals
+      rw [skelLeafIdsOne_node]
+      simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
+      split
+      · refine (skelList_leafKids kids.toList _ _ _ _ none (by simp [pushElem])).trans ?_
+        rw [leafKids_pushElem_empty _ _ _ (by simp [elemOf])]
+      · refine (skelList_leafKids kids.toList _ _ _ _ none
+          (by simp [pushElem]; omega)).trans ?_
+        rw [leafKids_pushElem_empty _ _ _ (by simp [elemOf])]
+
+end
+
+theorem Struct.leavesList_cons (n : Struct.Node) (l : List Struct.Node) :
+    Struct.leavesList #[] (n :: l) = Struct.leavesOne #[] n ++ Struct.leavesList #[] l := by
+  rw [Struct.leavesList, Struct.foldNodeList_cons_exact,
+    Struct.foldNodeList_acc Struct.leavesAppends]
+  rfl
+
+mutual
+
+/-- The skeleton's census is a sublist of the tree's own: it visits every
+leaf the tree numbers, in the same order, except those under a speaker note
+— which it does not descend into at all. The `Nodup` of the ids follows,
+since the tree's are `List.range` (`structTree_leaves_id`). -/
+theorem skelLeafIds_sublist : ∀ (l : List Struct.Node),
+    (skelLeafIds l).toList.Sublist ((Struct.leavesList #[] l).toList.map Prod.fst)
+  | [] => by simp [skelLeafIds_nil, Struct.leavesList, Struct.foldNodeList_nil_exact]
+  | n :: rest => by
+    rw [skelLeafIds_cons, Struct.leavesList_cons]
+    simp only [Array.toList_append, List.map_append]
+    exact (skelLeafIdsOne_sublist n).append (skelLeafIds_sublist rest)
+
+theorem skelLeafIdsOne_sublist : ∀ (n : Struct.Node),
+    (skelLeafIdsOne n).toList.Sublist ((Struct.leavesOne #[] n).toList.map Prod.fst)
+  | .leaf k l => by
+    simp [skelLeafIdsOne_leaf, Struct.leavesOne, Struct.foldNode_leaf_exact, Struct.leavesFold]
+  | .node kind kids => by
+    rw [skelLeafIdsOne_node]
+    have hleaves : Struct.leavesOne #[] (.node kind kids)
+        = Struct.leavesList #[] kids.toList := by
+      rw [Struct.leavesOne, Struct.foldNode_node_exact]
+      simp [Struct.leavesFold, Struct.leavesList]
+    rw [hleaves]
+    cases hd : kind.outlineDescends
+    · simp
+    · simpa using skelLeafIds_sublist kids.toList
+
+end
+
+/-- **The skeleton holds every leaf of a document's structure tree at most
+once**: no two elements carry the same `.leaf k` placeholder, so a leaf's
+marked content lands in one element and the parent tree names it. The
+hypothesis `parentTree_covers` reads, and what makes the leaf tags a
+function (`leafTags`) rather than a last-writer-wins fold.
+
+The census is a permutation and not an equality — `addKid` is
+`Array.modify`, so a leaf lands in the middle of the element array — and a
+permutation is all `Nodup` needs. -/
+theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
+    (leafKids (skeleton (Struct.ofDoc doc))).Nodup := by
+  have hroot : leafKids #[rootElem] = [] := by
+    simp [leafKids_eq_flatMap, leafIdsOf, rootElem]
+  have hperm := skelList_leafKids (Struct.ofDoc doc).children.toList #[rootElem] 0 0 false none
+    (by simp)
+  rw [hroot, List.nil_append] at hperm
+  rw [skeleton]
+  refine hperm.nodup_iff.mpr ?_
+  refine (skelLeafIds_sublist _).nodup ?_
+  have hid := Struct.structTree_leaves_id doc.body
+  have : (Struct.leavesList #[] (Struct.ofDoc doc).children.toList).toList.map Prod.fst
+      = List.range (Struct.leaves (Struct.ofBlocks doc.body)).size := by
+    rw [← hid]
+    rfl
+  rw [this]
+  exact List.nodup_range
 
 end LeanTex.Core.Pdf

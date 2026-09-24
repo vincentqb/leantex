@@ -3624,7 +3624,7 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         && bytesContain text "/S /Document")
     -- The typed model: placeholders held once, tags from the holders.
     let sk := Pdf.skeleton tree
-    -- The executable witness of the owed `skeleton_leafKids_nodup`, and of
+    -- The per-fixture floor beside the proved `skeleton_leafKids_nodup`, and of
     -- `parentTree_covers`'s hypothesis.
     t s!"struct {n}: every leaf placeholder is held by exactly one element" (Pdf.leafKids sk).Nodup
     match PdfRead.objects pdf with

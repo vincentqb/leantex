@@ -168,13 +168,6 @@ list.
   leaf no block opens at. Same blocker plus the per-paragraph half of
   `emission_conservation_paras`; the witness is the exact-equality row of
   `leafAttributionChecks` over plain paragraphs, cells and titles.
-- `skeleton_leafKids_nodup` — the PDF structure skeleton holds each leaf of
-  `Struct.ofDoc doc` in one element: no two elements carry the same
-  `.leaf k` placeholder, so `leafTags` is a function and the parent tree
-  names one element per identifier. Blocked on the accumulator-generalised
-  leaf census of the mutual skeleton walk through `Array.modify` (the
-  heading census `pdf_headings_covers` went that route and is closed);
-  the witness is the per-fixture nodup row in `structTreeChecks`.
 - `parentTree_covers` — the parent tree entry of every marked-content
   identifier is the element that lists it (ISO 32000-2 §14.7.5.4), over the
   typed model `fill`/`leafPagesOf`/`leafOwners`/`parentTreeOf`, under
@@ -11944,16 +11937,30 @@ cluster but four, and only the first is now open:
    The blockers now say so.
 4. **Recursion with retroactive mutation** — `skeleton_leafKids_nodup`'s
    `skelList`/`skelStep` through `Array.modify`. Not a loop at all, and
-   `skelList_headings` in the same file is already the template. Reading
-   that template against this row corrected the row's own plan in three
-   ways, recorded in its blocker: the stated equality *cannot* hold
-   (`addKid` is `Array.modify`, so a leaf lands mid-array and the census
-   order is not `leafKids es ++ new` — the induction wants `List.Perm`,
-   which is all `Nodup` needs); the induction needs `holder < es.size` as a
-   hypothesis, since `Array.modify` out of bounds is the identity and a
-   leaf would silently vanish; and the id census it compares against is a
-   new aside-skipping walk whose `Nodup` comes from `structTree_leaves_id`
-   through a sublist argument, a second induction the row had not named.
+   `skelList_headings` in the same file was already the template. Reading
+   that template against this row corrected the row's plan in three ways
+   and then closed it — **discharged, in `LeanTex/Core/PdfStruct.lean`,
+   its owner**. The three corrections are why it had not closed before:
+
+   - The stated equality *cannot* hold. `addKid` is `Array.modify`, so a
+     leaf lands in the middle of the element array and the census order is
+     not `leafKids es ++ new`. The induction wants `List.Perm`, which is
+     all `Nodup` needs — `List.flatMap_modify_perm` is the general fact,
+     `leafKids_addKid_leaf` its instance.
+   - The induction needs `holder < es.size` as a hypothesis. `Array.modify`
+     out of bounds is the identity, so without it a text leaf is dropped in
+     silence rather than held; it is preserved because the walk only grows
+     the array (`size_le_skelList`/`size_le_skelStep`).
+   - The id census it compares against is an aside-skipping walk, which is
+     not a new spec: it is one `Struct.NodeFold` whose `descends` is the
+     engine's own `Kind.outlineDescends` (`skelLeafFold`). Its `Nodup`
+     comes from `structTree_leaves_id` through a sublist argument
+     (`skelLeafIds_sublist`) — the second induction the row had not named.
+
+   So the census equality this row was written against was simply the wrong
+   shape, and the reason is the same one the loop layer turns on: a write
+   into the middle of an array is not an append, and a statement that says
+   it is cannot be proved however the walk is factored.
 
 `macroDecls_fixed_point` is a fifth shape and its own thing — a pigeonhole,
 no loop — and its blocker is sharpened too: the argument cannot be "every
@@ -11971,6 +11978,6 @@ the next loop is statable by construction rather than by archaeology.
 
 Evidence: `lake build` and `lake build Obligations` clean, zero warnings;
 `lake test` green; `precommit`, `cites --check` and the owed ratchet green;
-the queue is 26 rows, down two. `scripts/bench.lean` was not run and is not
+the queue is 25 rows, down three. `scripts/bench.lean` was not run and is not
 owed: no executable code changed — `Loop.lean` is five theorems, `Compat`
 gained two, and `Obligations` is outside the build. No goldens move.

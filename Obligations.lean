@@ -340,18 +340,6 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
       (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
   sorry
 
--- owed: skeleton_leafKids_nodup
--- owner: LeanTex.Core.PdfStruct
--- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the structure elements hold each leaf's marked content once — the hypothesis `parentTree_covers` reads, and what makes the leaf tags a function (`leafTags`) rather than a last-writer-wins fold; the executable witness is the per-fixture row "every leaf placeholder is held by exactly one element" in Tests/Backends.
--- blocker: the skeleton walk threads an element accumulator through a mutual recursion (`skelList`/`skelStep`) that also modifies earlier elements in place (`pushElem`, `addKid`), so the census of its `.leaf` placeholders needs the accumulator-generalised statement proved through `Array.modify`'s equational theory before `structTree_leaves_id` (the ids are `range n`) gives the nodup; the heading census (`pdf_headings_covers`) went the same route and is closed, and `skelList_headings`/`skelStep_headings` are the template to copy. Three corrections from reading that template against this one (2026-09-24). The equality does not hold and must not be attempted: `addKid` is `Array.modify`, so a leaf lands in the *middle* of the element array and the census order is not `leafKids es ++ new` — the statement to induct on is a `List.Perm`, `leafKids (skelList es …) ~ leafKids es ++ <ids>`, which is all `Nodup` needs. The induction also needs `holder < es.size` as a hypothesis: `Array.modify` out of bounds is the identity, so a leaf would silently vanish, and the hypothesis is preserved because `pushElem` only grows the array. And `<ids>` is a new census function over `List Struct.Node` skipping `.aside`, whose `Nodup` comes from `structTree_leaves_id` via a sublist argument — that sublist relation is the second induction this row owes.
--- goldens: no
-/-- The skeleton holds every leaf of a document's structure tree at most
-once: no two elements carry the same `.leaf k` placeholder, so a leaf's
-marked content lands in one element and the parent tree names it. -/
-theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
-    (Pdf.leafKids (Pdf.skeleton (Struct.ofDoc doc))).Nodup := by
-  sorry
-
 -- owed: parentTree_covers
 -- owner: LeanTex.Core.PdfStruct
 -- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the parent tree entry of every marked-content identifier is the element that lists it — ISO 32000-2 §14.7.5.4's contract, which every reader's structure walk relies on; the executable witness is the per-fixture row "the parent tree maps every identifier back to the element listing it" in Tests/Backends, read back through the engine's reader.
