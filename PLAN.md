@@ -8507,3 +8507,45 @@ is evidence, not a theorem.
   title that leaked into the body are the characters of a title that was
   read, and only size and position say which happened. Text equality would
   have passed on the defect.
+
+- 2026-09-24: **a braced argument is not prose because it is braced.**
+  W0301's recovery — an unknown command's `{...}` arguments are kept as
+  text — is a good default for a content argument and wrong for every other
+  kind, and it is wrong *visibly*: the reader sees a dimension standing in
+  the line. `\parbox[t]{.25\textwidth}{Fork}` set `.25` as ink beside each of
+  three labels in the private deck, and `\metroset{block=fill}` set a theme
+  option list as a paragraph where a block title belonged. Two commands, one
+  root: the recovery kept an argument whose kind it had never asked about.
+
+  Both are closed by telling the engine what the command is, which is the
+  only way to know which argument is which. `\parbox` is a kernel primitive
+  (latex.ltx, `\@iiiparbox`) and joins the arm `\mbox` and `\makebox`
+  already share, now driven by `boxShape` — two numbers per box: how many
+  `[...]` runs stand before the content, and how many mandatory groups. That
+  is what separates them (`\mbox` 0/0, `\makebox` 2/0, `\parbox` 3/1), and a
+  further box is a row rather than an arm. The width is consumed and the drop
+  named once (W0104), the policy `\makebox` set: the box geometry is not
+  modelled, and dropping it silently would move ink. `\metroset` is
+  metropolis's option setter and becomes a `beamerConfig` row — one warning
+  naming it, its argument consumed, its native spelling in the help.
+
+  The general guard is **decided and owed elsewhere.** Measured, the exposure
+  is not the two commands: a five-line document shipped six dimensions as
+  prose (`\resizebox{3cm}{!}`, `\raisebox{2pt}`, `\scalebox{0.5}`, and two
+  bare macros), and `tests/compat-index/graphicx.txt` declares five of those
+  refusals `refuse:W0301` — rows that pass today while the page carries their
+  dimension as ink, because the row asks that the code fire and not that the
+  page stay clean. So the recovery does deserve the guard, in the shape
+  W0341 already uses for an option run: a braced argument whose whole content
+  parses as a pure dimension is dropped *and named*, never kept and never
+  silently dropped, read through `Dim`'s own parser so there is no second
+  dimension grammar. It cannot live in the compat pass: deciding that a
+  command is unknown needs the elaborator's table of known commands, and
+  restating that table here would make two sources of truth for what the
+  engine knows — the drift this file forbids. It belongs at the W0301 site
+  with its own code, since W0341 means "an option run went with the command"
+  and this means "a braced dimension went with it", and one code carries one
+  meaning. Recorded here rather than staged in `Obligations/`: every row of
+  that queue is a statement the engine *earns* and cannot yet *prove*, and
+  this one is behaviour not yet written — staging it would put a false
+  statement under a `sorry` and let the ratchet report a bug as a proof debt.

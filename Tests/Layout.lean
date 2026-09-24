@@ -1541,8 +1541,11 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (!has mail "[" && has mail "someone@example.org")
   t "the drop is visible, named by its own code"
     ((warnCodes "\\textls[16]{placeholder}.example.org").contains "W0341")
-  -- Consecutive runs are one parameter train; both groups are content.
-  let par := pageText "\\parbox[c][2cm]{alpha}{beta}"
+  -- Consecutive runs are one parameter train; both groups are content. The
+  -- example is a name the engine does not know: `\parbox` stood here once
+  -- and is a kernel box now, whose first group is a width rather than
+  -- content (`boxArgChecks`).
+  let par := pageText "\\zzz[c][2cm]{alpha}{beta}"
   t "consecutive option runs all go with the command"
     (!has par "[" && !has par "2cm" && has par "alpha beta")
   -- An unclosed run is malformed content, not an option: kept and named.

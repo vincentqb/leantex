@@ -151,6 +151,7 @@ def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("addtobeamertemplate", 3),
    ("setbeamerfont", 2),
+   ("metroset", 1),
    ("beamertemplatenavigationsymbolsempty", 0)]
 
 /-- The native spelling a skipped beamer construct now has, named in its
@@ -160,9 +161,23 @@ def beamerNative : List (String × String) :=
    ("usefonttheme", "\\fonts selects families; \\style{element}{ font = {...} } styles one element"),
    ("setbeamercolor", "declare the colour with \\palette{ name = #RRGGBB }"),
    ("setbeamerfont", "declare it with \\style{element}{ font = {...} }"),
+   ("metroset", "\\theme selects a token bundle; \\tokens and \\palette declare \
+its entries directly"),
    ("setbeamertemplate", "'frame footer' translates to \\framefoot{...}; \\style{element}{...} \
 styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "\\style{element}{...} styles elements; \\framefoot sets a frame footer")]
+
+/-- The kernel's box commands, as the two numbers that tell them apart: how
+many `[...]` runs stand before the content, and how many mandatory `{...}`
+groups stand before the content group. `\\mbox{text}` declares no box;
+`\\makebox[width][pos]{text}` declares one optionally (latex.ltx,
+`\\@makebox`); `\\parbox[pos][height][inner-pos]{width}{text}` declares one
+always (latex.ltx, `\\@iiiparbox`), and its width is a *dimension in a brace
+group* — which is why the unknown-command recovery, whose rule is "keep the
+braced arguments as text", set a width as prose beside a label. A further box
+command is a row here, never an arm of its own. -/
+def boxShape : List (String × Nat × Nat) :=
+  [("mbox", 0, 0), ("makebox", 2, 0), ("parbox", 3, 1)]
 
 /-- Where a deferred declaration replays. A hook is a deferred declaration,
 and every hook LaTeX documents names one of these points; the engine has one
@@ -503,6 +518,18 @@ private def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.ru
       | none => break
     return (none, i)
   | _ => (none, i)
+
+/-- Up to `n` optional `[...]` runs, and whether any of them was there. The
+box commands differ only in how many their signature allows, so the count is
+a number read from `boxShape` rather than a repeated call per arm. -/
+private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
+  let mut j := i
+  let mut any := false
+  for _ in [0:n] do
+    let (o, j') := takeOpt raws j
+    if o.isSome then any := true
+    j := j'
+  return (any, j)
 
 /-- Up to `n` brace groups. A bare control word or single word counts as a
 group too, as in TeX: `\newcommand\x` and `\textbf x` are legal. -/
@@ -2266,16 +2293,21 @@ the definition is skipped" pos
         became s!"\\setbeamercolor\{{element}}" native pos
         return some (← synthAt native pos, k)
     else return none
-  | "mbox" | "makebox" =>
-    -- LaTeX's unbreakable box: its content is content and stays in the
-    -- stream; the box itself — `\makebox`'s declared width and alignment —
-    -- is not modelled, and dropping that silently would move ink, so the
-    -- drop is named once. `\mbox` declares no width and loses nothing.
-    let (w, j) := takeOpt raws start
-    let (_, k) := takeOpt raws j
-    if name == "makebox" && w.isSome then
-      sayOnce "ctrl:makebox" .W0104
-        "'\\makebox' width and alignment are dropped; its content is kept" pos
+  | "mbox" | "makebox" | "parbox" =>
+    -- LaTeX's boxes: the content is content and stays in the stream; the box
+    -- itself — a declared width and alignment — is not modelled, and dropping
+    -- that silently would move ink, so the drop is named once. `\mbox`
+    -- declares no width and loses nothing. `\parbox`'s width is a *mandatory
+    -- brace group*, so it is consumed here: left in the stream it would set
+    -- as prose, which is the defect this arm's `boxShape` row closed.
+    let (opts, widths) := match boxShape.lookup name with
+      | some (o, w) => (o, w)
+      | none => (0, 0)
+    let (declared, j) := takeOpts raws start opts
+    let (_, k) := takeGroups raws j widths
+    if declared || widths > 0 then
+      sayOnce ("ctrl:" ++ name) .W0104
+        s!"'\\{name}' width and alignment are dropped; its content is kept" pos
         (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
     became s!"\\{name}" "its content, kept in the line" pos
     return some (#[], k)

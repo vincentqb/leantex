@@ -5043,3 +5043,37 @@ def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "while the frame beside it is untouched"
     (has (allText plus) "Beta Heading" && has (allText plus) "Kept sentence.")
 
+/-- A declared width is not prose. `\parbox[pos]{width}{text}` is a LaTeX
+kernel primitive (latex.ltx, `\@iiiparbox`) whose *first* brace group is a
+dimension, so the unknown-command recovery — keep every `{...}` as
+text — set the width as visible ink beside the label. `\metroset{key=value}`
+is the same class one table over: a theme option setter whose argument is a
+key list, kept as a paragraph because the command was unknown.
+
+Both are judged on the shipped glyphs. The dimension case is the one that
+motivated the rule: a reader saw `.25` standing in front of a label, and
+every test in the suite passed. -/
+def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pageText (src : String) : String :=
+    let (d, _) := elabStr src
+    String.join ((bodyLines (layoutOf oneFace d)).toList.map (lineText ·))
+  let has := hasStr
+  let pb := deck169Frame "\\parbox[t]{.25\\textwidth}{Label one}"
+  t "a parbox's width argument is not ink"
+    (!has (pageText pb) ".25" && !has (pageText pb) "textwidth")
+  t "a parbox's content is"
+    (has (pageText pb) "Label one")
+  t "and parbox is not an unknown command"
+    (!(warnCodes pb).contains "W0301" && !(warnCodes pb).contains "W0341")
+  -- The option run is beamer's `[t]` baseline choice: a parameter, and the
+  -- box geometry it selects is a named drop, never a silent one.
+  t "the box it declares is a named loss, not a silent one"
+    ((warnCodes pb).contains "W0104")
+  let ms := deck169Frame "\\metroset{block=fill}Body sentence."
+  t "a theme option setter's key list is not ink"
+    (!has (pageText ms) "block=fill" && !has (pageText ms) "block")
+  t "the setter is named as configuration, not as unknown"
+    ((warnCodes ms).contains "W0104" && !(warnCodes ms).contains "W0301")
+  t "and the content beside it survives"
+    (has (pageText ms) "Body sentence.")
