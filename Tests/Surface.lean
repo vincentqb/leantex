@@ -740,15 +740,68 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Package/class diagnostics address TeX's log, never the page. A deferred
   -- style hook once recovered both groups as body text, so the package name's
   -- underscore became E0311 even though the command itself was only W0301.
-  for name in ["PackageWarning", "PackageWarningNoLine", "PackageInfo",
-      "ClassWarning", "ClassWarningNoLine", "ClassInfo"] do
+  --
+  -- Two checks, because they catch different regressions. The first reads the
+  -- rows from the table, so a row added later is covered by construction —
+  -- but a row *deleted* would simply stop being iterated, so it cannot see
+  -- one go missing. The second names the LaTeX diagnostic family with the
+  -- arity LaTeX's own definitions give it (latex.ltx:8773-8947, from
+  -- lterror.dtx §"Error handling and tracing"), so a deletion or a changed
+  -- count fails here. Neither check can confirm the arity against LaTeX —
+  -- that is what the citation is for; what the first pins is that a row
+  -- consumes exactly the count it declares, leaking no group and eating no
+  -- following one, which is the property the ink defect turned on.
+  let diagFamily : List (String × Nat) :=
+    [("PackageWarning", 2), ("PackageWarningNoLine", 2), ("PackageInfo", 2),
+     ("PackageNote", 2), ("PackageNoteNoLine", 2),
+     ("ClassWarning", 2), ("ClassWarningNoLine", 2), ("ClassInfo", 2),
+     ("ClassNote", 2), ("ClassNoteNoLine", 2),
+     ("GenericWarning", 2), ("GenericInfo", 2), ("MessageBreak", 0),
+     ("@latex@warning", 1), ("@latex@warning@no@line", 1),
+     ("@latex@info", 1), ("@latex@info@no@line", 1),
+     ("@latex@note", 1), ("@latex@note@no@line", 1),
+     ("PackageError", 3), ("ClassError", 3), ("GenericError", 4),
+     ("@latex@error", 2)]
+  for row in diagFamily do
+    let (name, arity) := row
+    t s!"compat {name} is a log-only row at LaTeX's own arity {arity}"
+      ((Compat.meaningFree.lookup name).map (·.1) == some arity)
+  -- Every row of the table, whatever it is: its groups are consumed exactly,
+  -- no reserved character of them reaches the page, and the no-op is paid
+  -- for. N0100 is matched on its structured subject, never on the message and
+  -- never on "some N0100 exists" — the hook's own deferral note is an N0100
+  -- too, so the weaker form holds even when the row does nothing at all.
+  for row in Compat.meaningFree do
+    let (name, arity, note) := row
+    let groups := String.join (List.replicate arity "{ignored_message_}")
     let (diagDoc, diagDs) := elabStr ("\\documentclass{article}\n" ++
-      "\\AtBeginDocument{\\" ++ name ++ "{example_pkg}{ignored_message}}\n" ++
+      "\\AtBeginDocument{\\" ++ name ++ groups ++ "{SENTINEL}}\n" ++
       "\\begin{document}\nx\n\\end{document}")
-    t s!"compat {name} consumes its log-only groups"
-      (onlyX diagDoc && diagDs.any (·.code == "N0100") &&
-        diagDs.all fun d => d.code != "W0301" && d.code != "W0387" &&
-          d.severity != .error)
+    -- the sentinel is one group past the declared arity: it must survive
+    t s!"compat {name} consumes exactly its {arity} log-only groups"
+      (diagDoc.body == #[.para #[.text "SENTINEL x"]])
+    t s!"compat {name} lets no reserved character of a log group reach the page"
+      (diagDs.all fun d => d.code != "W0301" && d.code != "E0311" &&
+        d.severity != .error)
+    -- a row carrying a reason earns its silence through a named N0100; a row
+    -- carrying none is named by the silence guard instead (W0387)
+    if note.isSome then
+      t s!"compat {name} accounts for its no-op as N0100 naming the command"
+        (diagDs.any fun d => d.code == "N0100" &&
+          d.subject == some ("ctrl:nothing:" ++ name))
+    else
+      t s!"compat {name} is consumed with its loss named"
+        (diagDs.any fun d => d.code == "W0387")
+  -- The other half of the rule: an arbitrary unknown command still preserves
+  -- its argument content, so the table is a named exception and not a licence
+  -- to swallow groups.
+  let (unkDoc, unkDs) := elabStr ("\\documentclass{article}\n" ++
+    "\\begin{document}\n\\zzzNotAControl{kept one}{kept two} x\n\\end{document}")
+  let unkText := Ir.plainText (match unkDoc.body with
+    | #[.para xs] => xs | _ => #[])
+  t "compat an unknown command still keeps its groups as text"
+    (hasStr unkText "kept one" && hasStr unkText "kept two" &&
+      unkDs.any (·.code == "W0301"))
   -- The font-selection packages: each names families for the generic
   -- slots (psnfss §2; carlito README), landing on \fonts — the same door
   -- \setmainfont uses. carlito's sfdefault promotes sans to body; a

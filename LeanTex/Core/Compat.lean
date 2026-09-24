@@ -80,9 +80,12 @@ full meaning here, emitted as the translation note (N0100, "→ nothing:
 why") — the accounting the silence guard reads, so an earned no-op is
 never wordless (`rewriteCtrl_accounts`). Defended entry by entry: catcode
 machinery has no counterpart here (`makeatletter`, `makeatother`,
-`relax`); `PackageWarning`/`PackageInfo` and their class variants write
-TeX's package/class log, not the document, and their messages describe a
-TeX execution this engine does not perform; `frenchspacing`/`nonfrenchspacing`
+`relax`); the LaTeX diagnostic family addresses the author through TeX's
+own channels and contributes no document ink — `\PackageInfo` and its
+class and generic variants write the transcript, the `Warning` and `Error`
+spellings write `\@unused`, the terminal and transcript both
+(latex.ltx:8773-8947, from lterror.dtx §"Error handling and tracing"), and
+this engine has that channel in its own diagnostics; `frenchspacing`/`nonfrenchspacing`
 toggle inter-sentence space
 the engine sets uniformly either way; `nointerlineskip` suppresses
 interline glue that is never accumulated here; lineno's `linenomath`
@@ -97,7 +100,10 @@ this entry would become an arm emitting the paragraph's suppression.
 An entry whose drop is NOT its full meaning carries `none`: it stays
 consumed, and the dispatcher's guard names it (W0387,
 `\allow`-acceptable) instead of this table earning it silence it has
-not paid for — no entry needs that today. Table rules
+not paid for — the `Error` spellings are exactly that case. Their groups
+must be consumed, or a style's error text ships as ink (the defect the
+warning rows fixed), but an error is a signal and not a no-op, so the
+drop is named rather than earned silence. Table rules
 (`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
 vocabulary and must reach it. -/
 def meaningFree : List (String × Nat × Option String) :=
@@ -110,12 +116,44 @@ def meaningFree : List (String × Nat × Option String) :=
     some "package diagnostics address TeX's log, not the document"),
    ("PackageInfo", 2,
     some "package diagnostics address TeX's log, not the document"),
+   ("PackageNote", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("PackageNoteNoLine", 2,
+    some "package diagnostics address TeX's log, not the document"),
    ("ClassWarning", 2,
     some "class diagnostics address TeX's log, not the document"),
    ("ClassWarningNoLine", 2,
     some "class diagnostics address TeX's log, not the document"),
    ("ClassInfo", 2,
     some "class diagnostics address TeX's log, not the document"),
+   ("ClassNote", 2,
+    some "class diagnostics address TeX's log, not the document"),
+   ("ClassNoteNoLine", 2,
+    some "class diagnostics address TeX's log, not the document"),
+   ("GenericWarning", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("GenericInfo", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("MessageBreak", 0, some "a line break in a log message, not in the document"),
+   ("@latex@warning", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   ("@latex@warning@no@line", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   ("@latex@info", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   ("@latex@info@no@line", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   ("@latex@note", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   ("@latex@note@no@line", 1,
+    some "kernel diagnostics address TeX's log, not the document"),
+   -- The `Error` spellings: consumed so their text never ships as ink, but
+   -- an error is a signal, so the drop is named (W0387) rather than earned
+   -- as silence. Arities are LaTeX's own (latex.ltx:8799, 8845, 8871, 8913).
+   ("PackageError", 3, none),
+   ("ClassError", 3, none),
+   ("GenericError", 4, none),
+   ("@latex@error", 2, none),
    ("noindent", 0, some "no paragraph carries a first-line indent here"),
    ("nointerlineskip", 0,
     some "vertical space is declared per block, never accumulated interline glue"),
@@ -439,8 +477,9 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
-private def became (what native : String) (pos : Pos) : M Unit :=
-  say .N0100 s!"'{what}' → {native}" pos
+private def became (what native : String) (pos : Pos)
+    (subject : Option String := none) : M Unit :=
+  say .N0100 s!"'{what}' → {native}" pos (subject := subject)
 
 /-- The top-level brace groups of a feature value:
 `{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
@@ -2538,6 +2577,7 @@ and \\tokens declare the design directly")
       let (_, k) := takeGroups raws start n
       if let some why := note then
         became s!"\\{name}" s!"nothing: {why}" pos
+          (subject := some ("ctrl:nothing:" ++ name))
       return some (#[], k)
     | none => return none
 
