@@ -1251,12 +1251,8 @@ end
 /-- A role is transparent to layout: the flatten walk recurses into the
 body with the state and the style unchanged, so wrapping content in a role
 moves no ink and no metric — the `.step` property, and the reason the PDF
-page is byte-identical with and without the annotation. The block half —
-`collectBlock` on an unstyled `.role` delegating to `collectBlocks`
-unchanged — is an executable oracle over `Layout.run`'s shipped pages
-(roleLayoutChecks in Tests.lean), not a theorem: its `rw [collectBlock]`
-needs the collector's equation lemmas, whose generation exhausts `whnf`
-(the note above the `.role` arm carries the detail). The one exception
+page is byte-identical with and without the annotation. The block half is
+`role_transparent_collect`, beside the block walk. The one exception
 is the walk's own `leafRole` marker (a NUL-prefixed name no document can
 spell), which changes the attribution the body's tokens carry and nothing
 else. -/
@@ -5056,9 +5052,10 @@ extent", placement side: a stateful declaration emits nothing — the ops
 stream every page is placed from, the glue owed, and the pending-gap flag
 are untouched, so nothing placed before (or at) the block can differ from
 the document without it. The walk-prefix form over `collectBlock` itself
-is blocked by the collector's equation lemmas (the
-`role_transparent_layout` blocker); its executable oracle lives in
-Tests.lean (scopeChecks). -/
+now has its equation lemmas (the per-arm split made the unfold cheap, as
+`role_transparent_collect` witnesses); what it still wants is the induction
+over the block sequence. Its executable oracle lives in Tests.lean
+(scopeChecks). -/
 private theorem Acc.setPalette_emits_nothing (a : Acc) (p : Ir.Palette) :
     (a.setPalette p).ops = a.ops ∧ (a.setPalette p).owed = a.owed ∧
       (a.setPalette p).wantDefault = a.wantDefault ∧
@@ -5863,6 +5860,516 @@ private theorem display_skip_single_emitter (a : Acc) (r : Rd)
   simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, Acc.gapGlue, howed, hpeer, Glue.add,
     Acc.displaySkips, Rd.resolve, SymGlue.resolve]
 
+private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
+  -- A paragraph holding only label anchors ships no ink: no line and no
+  -- gap, or a \label on its own source line would open a blank line.
+  if !content.isEmpty && content.all (fun x => x matches .label _) then a
+  else
+    let (a, leaf) := a.leafRange (leafCount content)
+    collectPara r a content indent false r.geom.fontSize
+      (leaf := leaf) (span := leafCount content)
+
+private def collectEquation (r : Rd) (a : Acc) (num : String) (content : Array Inline) (indent : Sp) : Acc := Id.run do
+  -- A numbered display: the formula centred on the measure, the tag
+  -- right-aligned on its baseline (amsmath's equation shape). The line
+  -- is [mirror box, fil, formula, fil, tag]: a glyphless box as wide as
+  -- the tag on the left makes the two fils centre the formula on the
+  -- full measure exactly, and when formula and tag cannot share the
+  -- line the fil between them is the legal break, so the tag drops to
+  -- its own right-aligned line rather than overprinting (TeX moves the
+  -- number down in the same overlap). Justified whatever the page
+  -- declares: the fils are the alignment. The display skips stand
+  -- above and below, the formula's own space (`Acc.openDisplay`).
+  let a := (a.openDisplay r).flushGap r
+  -- The formula's leaves, then the number's `.label` leaf (`Struct`'s shape).
+  let (a, leaf) := a.leafRange (leafCount content + 1)
+  let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
+  -- Image fractions resolve against the current measure, as collectPara's.
+  let target := (a.measure.getD r.geom.textWidth) - indent
+  let (citems, ds1, cache1, extras, _) :=
+    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
+      a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
+      r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
+  -- the number is the `.label` leaf after the content's
+  let numLeaf := leaf.map (· + leafCount content)
+  let (nitems, ds2, cache2, _, _) :=
+    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
+      cache1 (LeafCtr.of numLeaf 1 #[.text num]) r.imgs target r.geom.textHeight
+      (ladder := r.geom.scale)
+  -- both walks close with parfill glue and a forced pen; the assembled
+  -- line supplies its own ending
+  let strip (xs : Array Item) : Array Item :=
+    if xs.size ≥ 2 then xs.extract 0 (xs.size - 2) else xs
+  let citems := strip citems
+  let nitems := strip nitems
+  let numW := (measure nitems 0 nitems.size).natural
+  -- the mirror box is a glyphless kern: generated, the equation's
+  let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
+  let mut items : Array Item :=
+    #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground mirrorAttr,
+      .glue { fil := true }]
+  items := items ++ citems
+  items := items.push (.glue { fil := true })
+  items := items ++ nitems
+  items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
+  return ({ a with
+    hyphCache := cache2
+    ops := a.ops.push (.para {
+      items := items, extras := extras, diags := ds1 ++ ds2
+      target := target
+      indent := indent, center := false, size := r.geom.fontSize
+      justify := true
+      markerSegs := none, rule := none
+      leaf := leaf }) } : Acc).closeDisplay r
+
+private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
+  if level == 0 then
+    -- The document title, a heading at level 0, through the one title
+    -- door (`collectTitle`). Never a divider: it stands inside the
+    -- furniture \maketitle built (the title frame, the centred block),
+    -- so it opens no page of its own even in slides.
+    collectTitle r a title indent false
+  else
+  -- The section in force, for the footer's \sectiontitle slot — and its
+  -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML
+  -- page assigns), so the outline's in-document targets can resolve to
+  -- the page the heading lands on.
+  let a := if level == 1 then
+      { a with curSection := title
+               ops := a.ops.push (.anchor (Ir.slug title)) }
+    else a
+  -- The heading's leaves are the title's alone: the number the walk sets
+  -- before it is generated ink (`Struct`'s `.section` arm reads no number).
+  let span := leafCount title
+  let (a, leaf) := a.leafRange span
+  if r.slides && level == 1 && (a.pal.find? "progressfg").isSome then
+    -- The themed section page: its own page, vertically centred, the
+    -- title ragged-left in a centred measure with the deck position
+    -- drawn under it as a progress bar.
+    let a := a.pageBreak
+    -- A divider carries no footer; the break above closed the previous
+    -- page with its own.
+    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
+    let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
+    -- The centred measure the title and the bar share: moloch's own
+    -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
+    -- progressbar template: \begin{minipage}{0.7875\linewidth}).
+    let mp : Sp := r.geom.textWidth * 7875 / 10000
+    let indent : Sp := (r.geom.textWidth - mp) / 2
+    let st := r.style "sectionpage"
+    let a := match st.font with
+      | some tpl =>
+        collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
+          (leaf := leaf) (span := span)
+      | none =>
+        collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
+          (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
+    let fgC := (a.pal.find? "progressfg").getD a.fg
+    let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
+    -- The fallback is moloch's own default, `progressbar linewidth=1pt`
+    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
+    -- value the bundles declare through the token.
+    let thick := ((a.tokens.find? "progressheight").map
+      fun g => (r.resolve g).width).getD (pt 1) -- moloch's own default: progressbar linewidth=1pt (beamerouterthememoloch.dtx, \moloch@outer@setdefaults)
+    -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
+    -- ≤ the denominator by theorem (`frameNumbers_le_count`) — moloch
+    -- clamps (beamerouterthememoloch.dtx:290) only because its total
+    -- comes from a lagging aux file, and this engine has no aux file to
+    -- lag. A deck with no countable frame has no position to show, so
+    -- it draws no bar at all rather than a fraction over a fake 1.
+    let a := if a.frameCount == 0 then a else
+      { a with ops := a.ops.push (.progress
+        a.framesDone a.frameCount fgC bgC thick
+        (r.geom.hmargin + indent) mp) }
+    a.pageBreak
+  else
+  -- In slides, a section is a divider: its own page between frames rather
+  -- than a heading dropped onto the bottom of the previous slide.
+  let a := if r.slides then a.pageBreak else a
+  let a := if a.footAllowed then
+      { a with ops := a.ops.push (.foot none none) } else a
+  let element := match level with
+    | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
+  let st := r.style element
+  -- The resolved number stands before the title with a \quad between
+  -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
+  -- carried as the em-quad kern so no face is asked for a glyph.
+  -- The number is generated: the heading's `.block`; the title's atoms
+  -- keep their leaves behind the marker.
+  let marked := markContent title
+  let title := match num with
+    | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ marked
+    | none => title
+  -- Undeclared, a heading stands one full rhythm unit above its body
+  -- and half below (`Ir.heading_space_above_ge_below` holds the shape:
+  -- more above than below) — its own tokens, so a class that zeroes
+  -- \parskip keeps its heading space; a document with a larger parskip
+  -- keeps the walk's 2-quanta growth.
+  let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
+  let two := r.parskip.add r.parskip
+  let a := a.addvspace ((st.before.map r.resolve).getD
+    (if two.width > hb.width then two else hb))
+  -- A declared font template wraps the title; without one, headings set in
+  -- the bold face of the body family at the level's size.
+  -- The rule's weight is the declared thickness, else the engine's
+  -- em-relative default; its position is the declared one, else the
+  -- x-height raise — both facts travel to the line as one record.
+  let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option String) =>
+    { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
+        (headingRuleWeight r.geom.fontSize)
+      position := st.rulePosition.getD .xHeight
+      color := rc.1 }
+  let a := match st.font with
+    | some tpl =>
+      collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
+        (rule := rule) (leaf := leaf) (span := span)
+    | none =>
+      collectDisplay r a title indent false (sectionSize r.geom level)
+        (baseStyle := { weight := .b }) (rule := rule)
+        (leaf := leaf) (span := span)
+  let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
+  let a := a.vskip ((st.after.map r.resolve).getD
+    (if r.parskip.width > ha.width then r.parskip else ha))
+  if r.slides then a.pageBreak else a
+
+private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
+  -- The reference list: each resolved entry is one paragraph led by its
+  -- style's marker, separated by the paragraph gap — thebibliography's
+  -- hanging label set flat. An unfilled marker ships nothing; the
+  -- diagnostic that left it empty already said why.
+  items.foldl (init := a) fun a item =>
+    let content := match item.marker with
+      | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
+      | none => item.content
+    -- one leaf per entry, its whole text (`Struct.bibRaw`), the marker generated
+    let (a, leaf) := a.leafRange 1
+    let a := collectPara r a content indent false r.geom.fontSize (leaf := leaf) (span := 1)
+    a.wantGap
+
+private def collectNav (a : Acc) (spec : Ir.NavSpec) (body : Array Block) : Acc :=
+  -- A nav is furniture, and each medium has its own answer. The paged
+  -- surface renders an unpinned nav as the document outline — print's
+  -- own navigation (ISO 32000-2 §12.3.3): its links become entries and
+  -- its body ships no ink. A pinned nav is viewport furniture with no
+  -- page analogue, dropped exactly as `.note` is not handout content.
+  -- HTML keeps the `<nav>` landmark element.
+  -- Its leaves are numbered whether or not the page sets them: the
+  -- counter steps over them so what follows keeps its index.
+  let a := (a.leafRange (blockLeafCount body)).1
+  if spec.pin.isSome then a
+  else { a with navEntries := a.navEntries ++ Ir.navLinks body }
+
+private def collectNote (a : Acc) (body : Array Block) : Acc :=
+  -- A speaker note is not handout content: no lines, no gap. Its leaves
+  -- (an `.aside` in the tree) are stepped over, never attributed.
+  (a.leafRange (blockLeafCount body)).1
+
+private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
+  -- A stateful declaration: the pages from here on carry this content at
+  -- their corner. No lines, no gap; placement reads the spans. Its
+  -- `.artifact` leaves are stepped over: the furniture pass lays them
+  -- flagged, never attributed.
+  let a := (a.leafRange (leafCount content)).1
+  { a with ops := a.ops.push (.setLogo content) }
+
+private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
+  -- Code lines, kept literally, at the scale's own \footnotesize (the
+  -- code-frame convention) — derived from the table, not a loose decimal.
+  -- No hyphenation patterns: the engine must never invent a hyphen inside
+  -- an identifier. A pending overlay's shade rides in `covered`: code
+  -- must read as covered like any other text.
+  -- A declared caption sets above the code (listings.sty:
+  -- `\lst@Key{captionpos}{t}` — above is the default), in the
+  -- figure-caption shape: numbered from the one site both backends read
+  -- (`Ir.listingCaption`), centred when it fits one line
+  -- (classes.dtx §\@makecaption), bound `captionsep` from the code.
+  let a := match spec.caption with
+    | some (n, cap) =>
+      let caption := Ir.listingCaption r.locale n cap
+      let avail := (a.measure.getD r.geom.textWidth) - indent
+      -- measured only (does it fit one line?), never shipped: no attribution
+      let (items, _, cache, _) :=
+        itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
+          { color := a.fg, ground := a.ground } caption
+          a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
+          (ladder := r.geom.scale) (step := r.step)
+      let a := { a with hyphCache := cache }
+      let fits := itemsNaturalWidth items ≤ avail
+      -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
+      let (a, leaf) := a.leafRange 1
+      let a := collectPara r a caption indent fits r.geom.fontSize (leaf := leaf) (span := 1)
+      a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
+        (Ir.captionSepDefault r.geom.fontSize)))
+    | none => a
+  -- Declared line numbers are furniture beside each line — generated
+  -- ink, like a list's markers: right-aligned digits in the mono face,
+  -- held to their line by no-break spaces.
+  let inner : Array Ir.Inline :=
+    if spec.numbers then Id.run do
+      let lines := Ir.verbatimLines s
+      let w := (toString lines.size).length
+      let mut out : Array Ir.Inline := #[]
+      let mut i := 0
+      for line in lines do
+        i := i + 1
+        unless out.isEmpty do
+          out := out.push (.linebreak {})
+        let numStr := toString i
+        let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
+        let kept := line.foldl
+          (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
+        out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0" ++ kept))
+      pure #[.styled .mono out]
+    else #[.styled .mono (Ir.verbatimInlines s)]
+  let inner := match covered with
+    | some c => #[.colored c none inner]
+    | none => inner
+  -- the code is one leaf, its whole content; line numbers are generated
+  let (a, leaf) := a.leafRange 1
+  collectPara { r with pats := none } a inner indent false
+    (Ir.scaleStep r.geom.fontSize "footnotesize") (leaf := leaf) (span := 1)
+
+private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
+  -- Pseudocode: each line one display-type paragraph at the body size —
+  -- never hyphenated (the engine must not invent a hyphen inside an
+  -- identifier), never justified (a short pseudocode line stretched
+  -- across the measure is the two-word display line) — indented one
+  -- `algindent` step per depth. The step's default is algorithm2e's own
+  -- indent, `\SetInd{0.5em}{1em}` plus its 0.4pt rule allowance
+  -- (algorithm2e.sty:1604,1622), ≈1.5em, following the type; the token
+  -- overrides it. Keywords, io labels, semicolons and the muted comment
+  -- come generated from `Ir.AlgLine.rendered` — the one site both
+  -- backends read (`algorithm_lines_agree`). A line number is a marker
+  -- in the muted role: the list-marker furniture shape, so numbers
+  -- right-align against the text edge as bullets do.
+  let words := Ir.algWords r.locale.tag
+  let muted := Ir.mutedOf a.pal
+  let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
+    { width := { em := 1500 } })).width
+  let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
+  -- One `.code` node holds every line's leaves (`Struct.algRaw`): a line
+  -- names its own first leaf; a keyword-only line (`end`, `else`) is
+  -- generated ink that rides the block's first leaf.
+  let codeLeaf : Option Nat :=
+    if lines.any (fun l => leafCount l.content + leafCount (l.comment.getD #[]) > 0)
+    then some a.leafNext else none
+  (lines.foldl (fun (ai : Acc × Nat) l =>
+    let (a, i) := ai
+    -- The line's content and comment are marked as its leaves; the
+    -- keywords, io labels and semicolons around them are the line's
+    -- `.block`. The content is wrapped only when it holds a non-anchor:
+    -- `rendered` asks `content.all (· matches .label _)` for the
+    -- semicolon and `content.isEmpty` for the space, and both must read
+    -- the same answer through the marker.
+    let l := { l with
+      content := if l.content.all (· matches Inline.label _) then l.content
+        else markContent l.content
+      comment := l.comment.map fun c => if leafCount c == 0 then c else markContent c }
+    let content := Ir.AlgLine.rendered words semis muted l
+    let marker : Option (Array Ir.Inline) := if numbered then
+        some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
+      else none
+    -- the line's leaves: its content's, then its comment's (`Struct.algRaw`)
+    let span := leafCount l.content + leafCount (l.comment.getD #[])
+    let (a, leaf) := a.leafRange span
+    (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
+      r.geom.fontSize (marker := marker) (markerIndent := some indent)
+      (leaf := leaf <|> codeLeaf) (span := span),
+      i + 1)) (a, 1)).1
+
+private def collectFramefoot (a : Acc) (content : Array Inline) : Acc :=
+  -- Not a line, a state change: the note the following frames' footers
+  -- carry. Empty clears back to the chrome default. Its `.artifact`
+  -- leaves are stepped over, as the logo's are.
+  let a := (a.leafRange (leafCount content)).1
+  { a with frameFoot := if content.isEmpty then none else some content }
+
+private def collectRuleBlock (r : Rd) (a : Acc) (color : Ir.Color) (thickness : SymGlue) : Acc :=
+  -- The title page's separator: colour and thickness were declared
+  -- (palette `separator`, token `separatorheight`); the measure is the
+  -- text width, as moloch draws it.
+  let a := a.flushGap r
+  { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
+
+/-- A titled block's title line: the kind's role pair (`Ir.titledLook`, the
+one resolving site — read with the palette in force at the block, as the
+frame title is), bold at the body size, with a colour bar behind it when the
+palette declares one — the frame-title rule. The bar's pad is half the body
+size, the frame bar's own derivation; the title-to-body gap is the default
+rhythm. Its own definition so the `.titled` arm's remainder is one call and
+the block walk's case analysis stays inside the elaboration budget. -/
+private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
+    (title : Array Inline) (indent : Sp) : Acc :=
+  let look := Ir.titledLook a.pal kind
+  if title.isEmpty then a else
+  let saved := (a.fg, a.ground)
+  let a := { a with fg := look.fg
+                    ground := look.bar.orElse fun _ => a.ground }
+  let (a, leaf) := a.leafRange (leafCount title)
+  let a := collectDisplay r a title indent false r.geom.fontSize
+    (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
+  let a := match look.bar with
+    | some barBg =>
+      { a with ops := a.ops.push (.blockBar barBg (r.geom.fontSize / 2)
+          (r.geom.hmargin + indent)
+          ((a.measure.getD r.geom.textWidth) - indent)) }
+    | none => a
+  { a with fg := saved.1, ground := saved.2 }.wantGap
+
+/-- The abstract's heading word: class furniture, generated here exactly as
+the HTML backend generates its `<h2>`, and its style is the section
+heading's, centred (`Ir.abstractHeadingStyle`) — restyle sections and the
+abstract follows; undeclared, the class's own small bold line. The heading
+takes its own origin, and only the heading's: the abstract body keeps the
+page's setting, as the style names the heading. -/
+private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
+  let small := Ir.scaleStep r.geom.fontSize "small"
+  let hst := Ir.abstractHeadingStyle r.styles
+  let hcenter := hst.align != some "left" && hst.align != some "right"
+  let rh := if hst.align == some "right"
+    then { r with geom := { r.geom with flushRight := true } } else r
+  let a := match hst.font with
+    | some tpl =>
+      collectDisplay rh a (Ir.fillTemplate tpl #[.text r.locale.abstract]) indent
+        hcenter r.geom.fontSize
+    | none =>
+      collectDisplay rh a #[.text r.locale.abstract] indent hcenter small
+        (baseStyle := { weight := .b })
+  a.wantGap
+
+/-- A float's caption, set where the plan puts it: classes.dtx
+`\@makecaption` — a caption that fits one line centres, a longer one sets as
+an ordinary paragraph. A declared caption margin (caption manual §2.4,
+`\captionsetup{margin = ...}`) moves both edges in, the abstract's
+narrower-measure shape; undeclared, the full measure. `rf` is the in-float
+reader the caller marked, so no line of the caption is counted by the
+line-number census. -/
+private def collectFloatCaption (r rf : Rd) (a : Acc) (caption : Array Inline)
+    (capLeaf : Option Nat) (capSpan : Nat) (indent : Sp) : Acc :=
+  if caption.isEmpty then a else
+  let cmargin := ((a.tokens.find? "captionmargin").map
+    (fun g => (r.resolve g).width)).getD 0
+  let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
+  -- measured only (does it fit one line?), never shipped: no attribution
+  let (items, _, cache, _) :=
+    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
+      a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
+      (ladder := r.geom.scale) (step := r.step)
+  let a := { a with hyphCache := cache }
+  let fits := itemsNaturalWidth items ≤ avail
+  let saved := a.measure
+  let a := { a with measure := some ((a.measure.getD r.geom.textWidth) - cmargin) }
+  let a := collectPara rf a caption (indent + cmargin) fits r.geom.fontSize
+    (leaf := capLeaf) (span := capSpan)
+  { a with measure := saved }
+
+/-- The headline band: a headline class's `\title` family as page-top
+furniture (the gemini lineage's headline template), in the `frametitle`
+roles the deck bar resolves — the one resolving site — with the sizes the
+lineage's own font templates declare (beamerthemegemini.sty: headline title
+\Huge bold, author \Large, institute \normalsize — scale steps, never point
+literals). The alignment is the `titlepage` style's declared token (gemini
+declares centred; undeclared centres, `\@maketitle`'s own rule), and a
+declared `titlepage` font template wraps the title as it wraps
+`\maketitle`'s. The `.pin` makes the band page-top chrome: the frame's
+distribution moves the body below it, never the band. -/
+private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
+  match r.headline with
+  | some hl =>
+    let bar := a.pal.find? "frametitlebg"
+    let saved := (a.fg, a.ground)
+    let a := match bar with
+      | some barBg =>
+        { a with fg := (a.pal.find? "frametitlefg").getD
+                   ((a.pal.find? "bg").getD Ir.Color.white)
+                 ground := some barBg }
+      | none => a
+    let tps := r.style "titlepage"
+    -- Three-way, as the declaration's own vocabulary is: `left`, `right`,
+    -- or centred where nothing is declared. Read two-way, a declared
+    -- `right` fell into the centred arm and the page silently centred
+    -- while the HTML backend passed `right` through to CSS.
+    let center := tps.align != some "left" && tps.align != some "right"
+    let rt := if tps.align == some "right"
+      then { r with geom := { r.geom with flushRight := true } } else r
+    let a := match tps.font with
+      | some tpl =>
+        collectDisplay rt a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
+      | none =>
+        collectDisplay rt a hl.title 0 center
+          (Ir.scaleStep r.geom.fontSize "Huge") (baseStyle := { weight := .b })
+    let a := if hl.author.isEmpty then a else
+      collectDisplay rt a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
+    let a := if hl.institute.isEmpty then a else
+      collectDisplay rt a hl.institute 0 center r.geom.fontSize
+    let a := match bar with
+      | some barBg =>
+        { a with fg := saved.1, ground := saved.2
+                 ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2) none) }
+      | none => a
+    -- The band-to-body gap is the frame title's own (`wantDefault`):
+    -- without it the first block's title bar pad reaches into the
+    -- band's fill.
+    { a with ops := a.ops.push .pin, wantDefault := true }
+  | none => a
+
+/-- A frame's title line. Themed (the palette declares `frametitlebg`) it is
+a colour bar across the whole page with its text in `frametitlefg` on it;
+undeclared it is the section-size bold line. The bar's box: a bundle that
+declares `frametitlepadding` (moloch, through its lineage table) gets the
+dtx box — the token resolved at the title's size, as `\ht\strutbox` is
+measured after `\usebeamerfont{frametitle}`, around a strut of the same size
+(`Ir.frameTitleStrut`); a bar with no token keeps the generic half-body pad
+below the title's depth. -/
+private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
+    (titleLeaf : Option Nat) (titleSpan : Nat) : Acc :=
+  if title.isEmpty then a else
+  match a.pal.find? "frametitlebg" with
+  | some barBg =>
+    let ftFg := (a.pal.find? "frametitlefg").getD
+      ((a.pal.find? "bg").getD Ir.Color.white)
+    let saved := (a.fg, a.ground)
+    let a := { a with fg := ftFg, ground := some barBg }
+    let st := r.style "frametitle"
+    let titleSize := match st.font with
+      | some tpl => Ir.templateSize r.geom.fontSize tpl
+      | none => sectionSize r.geom 1
+    let a := match st.font with
+      | some tpl =>
+        collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
+          (leaf := titleLeaf) (span := titleSpan)
+      | none =>
+        collectDisplay r a title 0 false titleSize
+          (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
+    let (pad, strut) := match a.tokens.find? "frametitlepadding" with
+      | some g => (g.width.resolve titleSize r.xHeight,
+                   some (Ir.frameTitleStrut titleSize))
+      | none => (r.geom.fontSize / 2, none)
+    -- The title itself is inline content: no `.setPalette` can stand
+    -- in it, so the saved ink is the epoch's own.
+    let a := { a with fg := saved.1
+                      ground := saved.2
+                      ops := a.ops.push (.titleBar barBg pad strut) }
+    { a with wantDefault := true }
+  | none =>
+    let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
+      (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
+    { a with wantDefault := true }
+
+/-- A frame opens a page: the boundary, the `frameOpen` marker, and the
+footer that belongs to the frame — its pages, spill pages included, carry
+the frame's own number. A frame the numbering skips — the title page, a
+standout — carries no footer at all: moloch renders both plain
+(beamerinnerthememoloch.dtx:314-320, 777-778), and a number slot with no
+number has nothing true to show. -/
+private def collectFrameOpen (a : Acc) (breakable : Bool) : Acc :=
+  let a := a.pageBreak
+  let a := { a with ops := a.ops.push (.frameOpen breakable) }
+  if a.footAllowed then
+    let foot := Op.foot (if a.frameNum.isNone then none else a.chromeFoot) a.frameNum
+    { a with ops := a.ops.push foot }
+  else a
+
 mutual
 
 /-- A rule standing on its own is furniture, not a paragraph. TeX
@@ -6017,175 +6524,9 @@ private def collectStandout (r : Rd) (a : Acc)
 private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
-  | .para content =>
-    -- A paragraph holding only label anchors ships no ink: no line and no
-    -- gap, or a \label on its own source line would open a blank line.
-    if !content.isEmpty && content.all (fun x => x matches .label _) then a
-    else
-      let (a, leaf) := a.leafRange (leafCount content)
-      collectPara r a content indent false r.geom.fontSize
-        (leaf := leaf) (span := leafCount content)
-  | .equation num content => Id.run do
-    -- A numbered display: the formula centred on the measure, the tag
-    -- right-aligned on its baseline (amsmath's equation shape). The line
-    -- is [mirror box, fil, formula, fil, tag]: a glyphless box as wide as
-    -- the tag on the left makes the two fils centre the formula on the
-    -- full measure exactly, and when formula and tag cannot share the
-    -- line the fil between them is the legal break, so the tag drops to
-    -- its own right-aligned line rather than overprinting (TeX moves the
-    -- number down in the same overlap). Justified whatever the page
-    -- declares: the fils are the alignment. The display skips stand
-    -- above and below, the formula's own space (`Acc.openDisplay`).
-    let a := (a.openDisplay r).flushGap r
-    -- The formula's leaves, then the number's `.label` leaf (`Struct`'s shape).
-    let (a, leaf) := a.leafRange (leafCount content + 1)
-    let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
-    -- Image fractions resolve against the current measure, as collectPara's.
-    let target := (a.measure.getD r.geom.textWidth) - indent
-    let (citems, ds1, cache1, extras, _) :=
-      itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
-        a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
-        r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
-    -- the number is the `.label` leaf after the content's
-    let numLeaf := leaf.map (· + leafCount content)
-    let (nitems, ds2, cache2, _, _) :=
-      itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
-        cache1 (LeafCtr.of numLeaf 1 #[.text num]) r.imgs target r.geom.textHeight
-        (ladder := r.geom.scale)
-    -- both walks close with parfill glue and a forced pen; the assembled
-    -- line supplies its own ending
-    let strip (xs : Array Item) : Array Item :=
-      if xs.size ≥ 2 then xs.extract 0 (xs.size - 2) else xs
-    let citems := strip citems
-    let nitems := strip nitems
-    let numW := (measure nitems 0 nitems.size).natural
-    -- the mirror box is a glyphless kern: generated, the equation's
-    let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
-    let mut items : Array Item :=
-      #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground mirrorAttr,
-        .glue { fil := true }]
-    items := items ++ citems
-    items := items.push (.glue { fil := true })
-    items := items ++ nitems
-    items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
-    return ({ a with
-      hyphCache := cache2
-      ops := a.ops.push (.para {
-        items := items, extras := extras, diags := ds1 ++ ds2
-        target := target
-        indent := indent, center := false, size := r.geom.fontSize
-        justify := true
-        markerSegs := none, rule := none
-        leaf := leaf }) } : Acc).closeDisplay r
-  | .section level _ num title =>
-    if level == 0 then
-      -- The document title, a heading at level 0, through the one title
-      -- door (`collectTitle`). Never a divider: it stands inside the
-      -- furniture \maketitle built (the title frame, the centred block),
-      -- so it opens no page of its own even in slides.
-      collectTitle r a title indent false
-    else
-    -- The section in force, for the footer's \sectiontitle slot — and its
-    -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML
-    -- page assigns), so the outline's in-document targets can resolve to
-    -- the page the heading lands on.
-    let a := if level == 1 then
-        { a with curSection := title
-                 ops := a.ops.push (.anchor (Ir.slug title)) }
-      else a
-    -- The heading's leaves are the title's alone: the number the walk sets
-    -- before it is generated ink (`Struct`'s `.section` arm reads no number).
-    let span := leafCount title
-    let (a, leaf) := a.leafRange span
-    if r.slides && level == 1 && (a.pal.find? "progressfg").isSome then
-      -- The themed section page: its own page, vertically centred, the
-      -- title ragged-left in a centred measure with the deck position
-      -- drawn under it as a progress bar.
-      let a := a.pageBreak
-      -- A divider carries no footer; the break above closed the previous
-      -- page with its own.
-      let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
-      let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
-      -- The centred measure the title and the bar share: moloch's own
-      -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
-      -- progressbar template: \begin{minipage}{0.7875\linewidth}).
-      let mp : Sp := r.geom.textWidth * 7875 / 10000
-      let indent : Sp := (r.geom.textWidth - mp) / 2
-      let st := r.style "sectionpage"
-      let a := match st.font with
-        | some tpl =>
-          collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
-            (leaf := leaf) (span := span)
-        | none =>
-          collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
-            (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
-      let fgC := (a.pal.find? "progressfg").getD a.fg
-      let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
-      -- The fallback is moloch's own default, `progressbar linewidth=1pt`
-      -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
-      -- value the bundles declare through the token.
-      let thick := ((a.tokens.find? "progressheight").map
-        fun g => (r.resolve g).width).getD (pt 1) -- moloch's own default: progressbar linewidth=1pt (beamerouterthememoloch.dtx, \moloch@outer@setdefaults)
-      -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
-      -- ≤ the denominator by theorem (`frameNumbers_le_count`) — moloch
-      -- clamps (beamerouterthememoloch.dtx:290) only because its total
-      -- comes from a lagging aux file, and this engine has no aux file to
-      -- lag. A deck with no countable frame has no position to show, so
-      -- it draws no bar at all rather than a fraction over a fake 1.
-      let a := if a.frameCount == 0 then a else
-        { a with ops := a.ops.push (.progress
-          a.framesDone a.frameCount fgC bgC thick
-          (r.geom.hmargin + indent) mp) }
-      a.pageBreak
-    else
-    -- In slides, a section is a divider: its own page between frames rather
-    -- than a heading dropped onto the bottom of the previous slide.
-    let a := if r.slides then a.pageBreak else a
-    let a := if a.footAllowed then
-        { a with ops := a.ops.push (.foot none none) } else a
-    let element := match level with
-      | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
-    let st := r.style element
-    -- The resolved number stands before the title with a \quad between
-    -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
-    -- carried as the em-quad kern so no face is asked for a glyph.
-    -- The number is generated: the heading's `.block`; the title's atoms
-    -- keep their leaves behind the marker.
-    let marked := markContent title
-    let title := match num with
-      | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ marked
-      | none => title
-    -- Undeclared, a heading stands one full rhythm unit above its body
-    -- and half below (`Ir.heading_space_above_ge_below` holds the shape:
-    -- more above than below) — its own tokens, so a class that zeroes
-    -- \parskip keeps its heading space; a document with a larger parskip
-    -- keeps the walk's 2-quanta growth.
-    let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
-    let two := r.parskip.add r.parskip
-    let a := a.addvspace ((st.before.map r.resolve).getD
-      (if two.width > hb.width then two else hb))
-    -- A declared font template wraps the title; without one, headings set in
-    -- the bold face of the body family at the level's size.
-    -- The rule's weight is the declared thickness, else the engine's
-    -- em-relative default; its position is the declared one, else the
-    -- x-height raise — both facts travel to the line as one record.
-    let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option String) =>
-      { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
-          (headingRuleWeight r.geom.fontSize)
-        position := st.rulePosition.getD .xHeight
-        color := rc.1 }
-    let a := match st.font with
-      | some tpl =>
-        collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
-          (rule := rule) (leaf := leaf) (span := span)
-      | none =>
-        collectDisplay r a title indent false (sectionSize r.geom level)
-          (baseStyle := { weight := .b }) (rule := rule)
-          (leaf := leaf) (span := span)
-    let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
-    let a := a.vskip ((st.after.map r.resolve).getD
-      (if r.parskip.width > ha.width then r.parskip else ha))
-    if r.slides then a.pageBreak else a
+  | .para content => collectParaBlock r a content indent
+  | .equation num content => collectEquation r a num content indent
+  | .section level _ num title => collectSection r a level num title indent
   | .list ordered items =>
     -- Depth is per list kind, as LaTeX counts it. The class defines four
     -- levels; where LaTeX errors ("Too deeply nested"), leantex warns and
@@ -6254,52 +6595,15 @@ private def collectBlock (r : Rd) (a : Acc)
     let sub := collectBlocks r sub body (indent + r.geom.listIndent)
     { sub with measure := saved }
   | .titled kind title body =>
-    -- beamer's titled block: the title line in the kind's role pair
-    -- (`Ir.titledLook`, the one resolving site — read with the palette in
-    -- force at the block, as the frame title is), bold at the body size,
-    -- with a colour bar behind it when the palette declares one — the
-    -- frame-title rule. The bar's pad is half the body size, the frame
-    -- bar's own derivation; the title-to-body gap is the default rhythm.
-    let look := Ir.titledLook a.pal kind
-    let a := if title.isEmpty then a else
-      let saved := (a.fg, a.ground)
-      let a := { a with fg := look.fg
-                        ground := look.bar.orElse fun _ => a.ground }
-      let (a, leaf) := a.leafRange (leafCount title)
-      let a := collectDisplay r a title indent false r.geom.fontSize
-        (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
-      let a := match look.bar with
-        | some barBg =>
-          { a with ops := a.ops.push (.blockBar barBg (r.geom.fontSize / 2)
-              (r.geom.hmargin + indent)
-              ((a.measure.getD r.geom.textWidth) - indent)) }
-        | none => a
-      { a with fg := saved.1, ground := saved.2 }.wantGap
-    collectBlocks r a body indent
+    collectBlocks r (collectTitledTitle r a kind title indent) body indent
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
-    -- heading, then the body on quotation margins. The heading word is
-    -- class furniture, generated here exactly as the HTML backend
-    -- generates its <h2>, and its style is the section heading's, centred
-    -- (`Ir.abstractHeadingStyle`) — restyle sections and the abstract
-    -- follows; undeclared, the class's own small bold line. The body takes
-    -- the scale's own \small, the quotation margins are the quote arm's,
-    -- and the outer state is restored the way a quote restores its measure.
+    -- heading (`collectAbstractHead`), then the body on quotation margins.
+    -- The body takes the scale's own \small, the quotation margins are the
+    -- quote arm's, and the outer state is restored the way a quote restores
+    -- its measure.
     let small := Ir.scaleStep r.geom.fontSize "small"
-    let hst := Ir.abstractHeadingStyle r.styles
-    let hcenter := hst.align != some "left" && hst.align != some "right"
-    -- The heading's own origin, and only the heading's: the abstract body
-    -- keeps the page's setting, as the style names the heading.
-    let rh := if hst.align == some "right"
-      then { r with geom := { r.geom with flushRight := true } } else r
-    let a := match hst.font with
-      | some tpl =>
-        collectDisplay rh a (Ir.fillTemplate tpl #[.text r.locale.abstract]) indent
-          hcenter r.geom.fontSize
-      | none =>
-        collectDisplay rh a #[.text r.locale.abstract] indent hcenter small
-          (baseStyle := { weight := .b })
-    let a := a.wantGap
+    let a := collectAbstractHead r a indent
     let saved := a.measure
     let sub := { a with
       measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
@@ -6322,19 +6626,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := { a with ops := a.ops.push .colOpen }
     let a := collectColumns r a cols.toList indent shareW gutter total
     { a with ops := a.ops.push .colClose }
-  | .bibliography _ _ items =>
-    -- The reference list: each resolved entry is one paragraph led by its
-    -- style's marker, separated by the paragraph gap — thebibliography's
-    -- hanging label set flat. An unfilled marker ships nothing; the
-    -- diagnostic that left it empty already said why.
-    items.foldl (init := a) fun a item =>
-      let content := match item.marker with
-        | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
-        | none => item.content
-      -- one leaf per entry, its whole text (`Struct.bibRaw`), the marker generated
-      let (a, leaf) := a.leafRange 1
-      let a := collectPara r a content indent false r.geom.fontSize (leaf := leaf) (span := 1)
-      a.wantGap
+  | .bibliography _ _ items => collectBibliography r a items indent
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font.
     -- Standing on its own — `\vspace`, a skip macro, `Ir.gapBlock` — it is a
@@ -6367,142 +6659,16 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
     collectBlocks r a body indent
-  | .nav spec body =>
-    -- A nav is furniture, and each medium has its own answer. The paged
-    -- surface renders an unpinned nav as the document outline — print's
-    -- own navigation (ISO 32000-2 §12.3.3): its links become entries and
-    -- its body ships no ink. A pinned nav is viewport furniture with no
-    -- page analogue, dropped exactly as `.note` is not handout content.
-    -- HTML keeps the `<nav>` landmark element.
-    -- Its leaves are numbered whether or not the page sets them: the
-    -- counter steps over them so what follows keeps its index.
-    let a := (a.leafRange (blockLeafCount body)).1
-    if spec.pin.isSome then a
-    else { a with navEntries := a.navEntries ++ Ir.navLinks body }
-  | .note body =>
-    -- A speaker note is not handout content: no lines, no gap. Its leaves
-    -- (an `.aside` in the tree) are stepped over, never attributed.
-    (a.leafRange (blockLeafCount body)).1
+  | .nav spec body => collectNav a spec body
+  | .note body => collectNote a body
   | .pagebreak =>
     -- The declared boundary: the builder closes only pages holding
     -- something, so adjacent breaks never make a blank page.
     a.pageBreak
-  | .logo content =>
-    -- A stateful declaration: the pages from here on carry this content at
-    -- their corner. No lines, no gap; placement reads the spans. Its
-    -- `.artifact` leaves are stepped over: the furniture pass lays them
-    -- flagged, never attributed.
-    let a := (a.leafRange (leafCount content)).1
-    { a with ops := a.ops.push (.setLogo content) }
-  | .verbatim covered s spec =>
-    -- Code lines, kept literally, at the scale's own \footnotesize (the
-    -- code-frame convention) — derived from the table, not a loose decimal.
-    -- No hyphenation patterns: the engine must never invent a hyphen inside
-    -- an identifier. A pending overlay's shade rides in `covered`: code
-    -- must read as covered like any other text.
-    -- A declared caption sets above the code (listings.sty:
-    -- `\lst@Key{captionpos}{t}` — above is the default), in the
-    -- figure-caption shape: numbered from the one site both backends read
-    -- (`Ir.listingCaption`), centred when it fits one line
-    -- (classes.dtx §\@makecaption), bound `captionsep` from the code.
-    let a := match spec.caption with
-      | some (n, cap) =>
-        let caption := Ir.listingCaption r.locale n cap
-        let avail := (a.measure.getD r.geom.textWidth) - indent
-        -- measured only (does it fit one line?), never shipped: no attribution
-        let (items, _, cache, _) :=
-          itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
-            { color := a.fg, ground := a.ground } caption
-            a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
-            (ladder := r.geom.scale) (step := r.step)
-        let a := { a with hyphCache := cache }
-        let fits := itemsNaturalWidth items ≤ avail
-        -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
-        let (a, leaf) := a.leafRange 1
-        let a := collectPara r a caption indent fits r.geom.fontSize (leaf := leaf) (span := 1)
-        a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
-          (Ir.captionSepDefault r.geom.fontSize)))
-      | none => a
-    -- Declared line numbers are furniture beside each line — generated
-    -- ink, like a list's markers: right-aligned digits in the mono face,
-    -- held to their line by no-break spaces.
-    let inner : Array Ir.Inline :=
-      if spec.numbers then Id.run do
-        let lines := Ir.verbatimLines s
-        let w := (toString lines.size).length
-        let mut out : Array Ir.Inline := #[]
-        let mut i := 0
-        for line in lines do
-          i := i + 1
-          unless out.isEmpty do
-            out := out.push (.linebreak {})
-          let numStr := toString i
-          let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
-          let kept := line.foldl
-            (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
-          out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0" ++ kept))
-        pure #[.styled .mono out]
-      else #[.styled .mono (Ir.verbatimInlines s)]
-    let inner := match covered with
-      | some c => #[.colored c none inner]
-      | none => inner
-    -- the code is one leaf, its whole content; line numbers are generated
-    let (a, leaf) := a.leafRange 1
-    collectPara { r with pats := none } a inner indent false
-      (Ir.scaleStep r.geom.fontSize "footnotesize") (leaf := leaf) (span := 1)
-  | .algorithm numbered semis lines =>
-    -- Pseudocode: each line one display-type paragraph at the body size —
-    -- never hyphenated (the engine must not invent a hyphen inside an
-    -- identifier), never justified (a short pseudocode line stretched
-    -- across the measure is the two-word display line) — indented one
-    -- `algindent` step per depth. The step's default is algorithm2e's own
-    -- indent, `\SetInd{0.5em}{1em}` plus its 0.4pt rule allowance
-    -- (algorithm2e.sty:1604,1622), ≈1.5em, following the type; the token
-    -- overrides it. Keywords, io labels, semicolons and the muted comment
-    -- come generated from `Ir.AlgLine.rendered` — the one site both
-    -- backends read (`algorithm_lines_agree`). A line number is a marker
-    -- in the muted role: the list-marker furniture shape, so numbers
-    -- right-align against the text edge as bullets do.
-    let words := Ir.algWords r.locale.tag
-    let muted := Ir.mutedOf a.pal
-    let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
-      { width := { em := 1500 } })).width
-    let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
-    -- One `.code` node holds every line's leaves (`Struct.algRaw`): a line
-    -- names its own first leaf; a keyword-only line (`end`, `else`) is
-    -- generated ink that rides the block's first leaf.
-    let codeLeaf : Option Nat :=
-      if lines.any (fun l => leafCount l.content + leafCount (l.comment.getD #[]) > 0)
-      then some a.leafNext else none
-    (lines.foldl (fun (ai : Acc × Nat) l =>
-      let (a, i) := ai
-      -- The line's content and comment are marked as its leaves; the
-      -- keywords, io labels and semicolons around them are the line's
-      -- `.block`. The content is wrapped only when it holds a non-anchor:
-      -- `rendered` asks `content.all (· matches .label _)` for the
-      -- semicolon and `content.isEmpty` for the space, and both must read
-      -- the same answer through the marker.
-      let l := { l with
-        content := if l.content.all (· matches Inline.label _) then l.content
-          else markContent l.content
-        comment := l.comment.map fun c => if leafCount c == 0 then c else markContent c }
-      let content := Ir.AlgLine.rendered words semis muted l
-      let marker : Option (Array Ir.Inline) := if numbered then
-          some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
-        else none
-      -- the line's leaves: its content's, then its comment's (`Struct.algRaw`)
-      let span := leafCount l.content + leafCount (l.comment.getD #[])
-      let (a, leaf) := a.leafRange span
-      (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
-        r.geom.fontSize (marker := marker) (markerIndent := some indent)
-        (leaf := leaf <|> codeLeaf) (span := span),
-        i + 1)) (a, 1)).1
-  | .framefoot content =>
-    -- Not a line, a state change: the note the following frames' footers
-    -- carry. Empty clears back to the chrome default. Its `.artifact`
-    -- leaves are stepped over, as the logo's are.
-    let a := (a.leafRange (leafCount content)).1
-    { a with frameFoot := if content.isEmpty then none else some content }
+  | .logo content => collectLogo a content
+  | .verbatim covered s spec => collectVerbatim r a covered s spec indent
+  | .algorithm numbered semis lines => collectAlgorithm r a numbered semis lines indent
+  | .framefoot content => collectFramefoot a content
   | .setPalette p =>
     -- A stateful declaration, like `.logo`: the palette in force from here
     -- on, in flow order — the accumulator threads it past the enclosing
@@ -6516,12 +6682,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `progressheight` and friends resolve against the tokens in force
     -- where the element stands, not the document's final state.
     a.setTokens tk
-  | .rule color _ thickness =>
-    -- The title page's separator: colour and thickness were declared
-    -- (palette `separator`, token `separatorheight`); the measure is the
-    -- text width, as moloch draws it.
-    let a := a.flushGap r
-    { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
+  | .rule color _ thickness => collectRuleBlock r a color thickness
   | .picture pic =>
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.
@@ -6557,32 +6718,10 @@ private def collectBlock (r : Rd) (a : Acc)
     -- sub-walk runs under a marked reader so no line of them is counted
     -- by the line-number census (`Rd.inFloat`).
     let rf := { r with inFloat := true }
-    -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
-    -- longer one sets as an ordinary paragraph.
-    let setCaption (a : Acc) : Acc :=
-      if caption.isEmpty then a else
-      -- A declared caption margin (caption manual §2.4, \captionsetup{
-      -- margin = ... }) moves both caption edges in, the abstract's
-      -- narrower-measure shape; undeclared, the full measure as before.
-      let cmargin := ((a.tokens.find? "captionmargin").map
-        (fun g => (r.resolve g).width)).getD 0
-      let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
-      -- measured only (does it fit one line?), never shipped: no attribution
-      let (items, _, cache, _) :=
-        itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
-          a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
-          (ladder := r.geom.scale) (step := r.step)
-      let a := { a with hyphCache := cache }
-      let fits := itemsNaturalWidth items ≤ avail
-      let saved := a.measure
-      let a := { a with measure := some ((a.measure.getD r.geom.textWidth) - cmargin) }
-      let a := collectPara rf a caption (indent + cmargin) fits r.geom.fontSize
-        (leaf := capLeaf) (span := capSpan)
-      { a with measure := saved }
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g
-        | .caption => setCaption a
+        | .caption => collectFloatCaption r rf a caption capLeaf capSpan indent
         | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
   | .frame title standout valign breakable body =>
@@ -6590,17 +6729,9 @@ private def collectBlock (r : Rd) (a : Acc)
     -- the page bottom spills to a continuation page — best effort, never
     -- clipped. The frame's number rides in from `run`'s top-level driver,
     -- read off `Ir.frameNumbers`, once per logical frame, so a stepped
-    -- frame's pages share it.
-    let a := a.pageBreak
-    let a := { a with ops := a.ops.push (.frameOpen breakable) }
-    -- The footer belongs to the frame: its pages, spill pages included,
-    -- carry the frame's own number. A frame the numbering skips — the
-    -- title page, a standout — carries no footer at all: moloch renders
-    -- both plain (beamerinnerthememoloch.dtx:314-320, 777-778), and a
-    -- number slot with no number has nothing true to show.
-    let a := if a.footAllowed then
-        { a with ops := a.ops.push (.foot (if a.frameNum.isNone then none else a.chromeFoot) a.frameNum) }
-      else a
+    -- frame's pages share it. The boundary, the marker and the frame's own
+    -- footer travel together through `frameOpen`.
+    let a := collectFrameOpen a breakable
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
     -- the builder's top-flush default.
@@ -6623,95 +6754,8 @@ private def collectBlock (r : Rd) (a : Acc)
       a.pageBreak
     else
     let a := { a with ops := a.ops.push (.pageStyle none (VDist.of valign)) }
-    -- The headline band: a headline class's `\title` family as page-top
-    -- furniture (the gemini lineage's headline template), in the
-    -- `frametitle` roles the deck bar resolves — the one resolving site —
-    -- with the sizes the lineage's own font templates declare
-    -- (beamerthemegemini.sty: headline title \Huge bold, author \Large,
-    -- institute \normalsize — scale steps, never point literals). The
-    -- alignment is the `titlepage` style's declared token (gemini
-    -- declares centred; undeclared centres, `\@maketitle`'s own rule),
-    -- and a declared `titlepage` font template wraps the title as it
-    -- wraps `\maketitle`'s. The `.pin` makes the band page-top chrome:
-    -- the frame's distribution moves the body below it, never the band.
-    let a := match r.headline with
-      | some hl =>
-        let bar := a.pal.find? "frametitlebg"
-        let saved := (a.fg, a.ground)
-        let a := match bar with
-          | some barBg =>
-            { a with fg := (a.pal.find? "frametitlefg").getD
-                       ((a.pal.find? "bg").getD Ir.Color.white)
-                     ground := some barBg }
-          | none => a
-        let tps := r.style "titlepage"
-        -- Three-way, as the declaration's own vocabulary is: `left`, `right`,
-        -- or centred where nothing is declared. Read two-way, a declared
-        -- `right` fell into the centred arm and the page silently centred
-        -- while the HTML backend passed `right` through to CSS.
-        let center := tps.align != some "left" && tps.align != some "right"
-        let rt := if tps.align == some "right"
-          then { r with geom := { r.geom with flushRight := true } } else r
-        let a := match tps.font with
-          | some tpl =>
-            collectDisplay rt a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
-          | none =>
-            collectDisplay rt a hl.title 0 center
-              (Ir.scaleStep r.geom.fontSize "Huge") (baseStyle := { weight := .b })
-        let a := if hl.author.isEmpty then a else
-          collectDisplay rt a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
-        let a := if hl.institute.isEmpty then a else
-          collectDisplay rt a hl.institute 0 center r.geom.fontSize
-        let a := match bar with
-          | some barBg =>
-            { a with fg := saved.1, ground := saved.2
-                     ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2) none) }
-          | none => a
-        -- The band-to-body gap is the frame title's own (`wantDefault`):
-        -- without it the first block's title bar pad reaches into the
-        -- band's fill.
-        { a with ops := a.ops.push .pin, wantDefault := true }
-      | none => a
-    let a := if title.isEmpty then a else
-      match a.pal.find? "frametitlebg" with
-      | some barBg =>
-        -- The themed frame title is a colour bar across the whole page,
-        -- its text in frametitlefg on it.
-        let ftFg := (a.pal.find? "frametitlefg").getD
-          ((a.pal.find? "bg").getD Ir.Color.white)
-        let saved := (a.fg, a.ground)
-        let a := { a with fg := ftFg, ground := some barBg }
-        let st := r.style "frametitle"
-        let titleSize := match st.font with
-          | some tpl => Ir.templateSize r.geom.fontSize tpl
-          | none => sectionSize r.geom 1
-        let a := match st.font with
-          | some tpl =>
-            collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
-              (leaf := titleLeaf) (span := titleSpan)
-          | none =>
-            collectDisplay r a title 0 false titleSize
-              (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
-        -- The bar's box: a bundle that declares `frametitlepadding` (moloch,
-        -- through its lineage table) gets the dtx box — the token resolved
-        -- at the title's size, as `\ht\strutbox` is measured after
-        -- `\usebeamerfont{frametitle}`, around a strut of the same size
-        -- (`Ir.frameTitleStrut`); a bar with no token keeps the generic
-        -- half-body pad below the title's depth.
-        let (pad, strut) := match a.tokens.find? "frametitlepadding" with
-          | some g => (g.width.resolve titleSize r.xHeight,
-                       some (Ir.frameTitleStrut titleSize))
-          | none => (r.geom.fontSize / 2, none)
-        -- The title itself is inline content: no `.setPalette` can stand
-        -- in it, so the saved ink is the epoch's own.
-        let a := { a with fg := saved.1
-                          ground := saved.2
-                          ops := a.ops.push (.titleBar barBg pad strut) }
-        { a with wantDefault := true }
-      | none =>
-        let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
-          (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
-        { a with wantDefault := true }
+    let a := collectHeadlineBand r a
+    let a := collectFrameTitle r a title titleLeaf titleSpan
     -- The title just placed is page-top chrome: the frame's distribution
     -- moves the body below it, never the title (beamer's frametitle).
     let a := if title.isEmpty then a else { a with ops := a.ops.push .pin }
@@ -6726,15 +6770,18 @@ private def collectBlock (r : Rd) (a : Acc)
 
 end
 
--- The block half of `role_transparent_layout` — `collectBlock` on an
--- unstyled `.role` delegates to `collectBlocks` unchanged — is pinned
--- executably over `Layout.run`'s shipped pages in Tests.lean
--- (roleLayoutChecks): an oracle, not a theorem. The statement's
--- `rw [collectBlock]` needs the collector's equation lemmas, whose
--- generation for this (very large) match exhausts `whnf` whatever the
--- heartbeat budget; the arm is reviewed where it stands (the `.role` arm
--- above — with no declared style both rhythm matches are `none` and the
--- body collects unwrapped).
+/-- The block half of `role_transparent_layout`: a role is a name, and with
+no declared style the block collector delegates to `collectBlocks` on the
+body unchanged — the wrapper contributes no op, no glue and no leaf. It
+takes that theorem's name rather than a fresh shape suffix because it is the
+same property over the other walk. Was an oracle over the shipped pages
+(roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
+whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
+cheap. -/
+private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
+    (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none) :
+    collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
+  simp only [collectBlock, Rd.style, hst, Option.getD]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open
