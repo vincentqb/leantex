@@ -5573,6 +5573,101 @@ private def labelCollisions (pic : Ir.Pic.Picture) (boxes : Array Ir.Pic.Box) :
           n := n + 1
   return n
 
+/-- One run's contribution to a label line's vertical extent, as a step over
+the accumulator. Factored out of `labelInk` so the two facts the label
+guarantee rests on can be stated about it rather than about a closure
+(`label_centre_glyph_free`, `vphantom_absorbed`).
+
+What it reads is the point: the run's font index, its size and its raise —
+and from the face, `capHeight` and `descent`, the metrics it *declares*. The
+glyph payload is not consulted, so the band a label sets in is a function of
+(face, size, raise) alone. -/
+def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
+  match seg with
+  | .run idx _ _ _ _ sz _ raise _ _ =>
+    let font := fs.get idx
+    let sz := if sz == 0 then size else sz
+    (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+     max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+  | _ => acc
+
+/-- How far a label line's ink reaches above and below its baseline: the
+componentwise maximum of its runs' declared bands. `Ir.Pic.labelInkBox`
+turns this into the box the label hangs in and `Ir.Pic.labelBaseline` into
+the baseline the line is set on. -/
+def labelVExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
+  segs.foldl (labelVStep fs size) (0, 0)
+
+/-- A run emptied of its glyphs contributes exactly what it contributed
+full: no arm of the step reads the payload. -/
+theorem labelVStep_glyph_id (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
+    labelVStep fs size acc (Seg.stripGlyphs seg) = labelVStep fs size acc seg := by
+  cases seg <;> rfl
+
+/-- Taking a run's contribution twice is taking it once: the step is a
+componentwise `max` against a value the run determines, and `max` is
+idempotent. -/
+theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
+    labelVStep fs size (labelVStep fs size acc seg) seg = labelVStep fs size acc seg := by
+  cases seg with
+  | run =>
+    have idem : ∀ a v : Int, max (max a v) v = max a v := by intro a v; omega
+    show (max (max acc.1 _) _, max (max acc.2 _) _) = (max acc.1 _, max acc.2 _)
+    rw [idem, idem]
+  | gap => rfl
+  | rule => rfl
+  | image => rfl
+
+/-- **A label's vertical placement does not depend on which glyphs it
+contains.** Emptying every run's glyph array changes neither reach, so a
+label's band — and through `Ir.Pic.labelBaseline`, the baseline its line is
+set on — is a function of the faces, sizes and raises present and nothing
+else. `value` and `inventory` place identically; so do `WAX` and `gjpqy`.
+
+This is the guarantee the report asked for, and the sibling of
+`line_box_glyph_free` one layer down: same fold congruence, same reason (no
+arm reads the payload), same accepted cost — a label with no descender keeps
+its full declared depth, so its band is deeper than its ink. Under TeX's
+node centring the reference is the *measured* box instead, which is why
+depth enters at slope one half there and a descender lifts the word
+(pgf manual §17.5.1's "wobbles"; the manual's own remedy, `anchor=mid`, is
+half an x-height — font-derived for exactly this reason, x-height being the
+only vertical shape metric TFM carries at all).
+
+The design that behaviour serves is kept, not discarded: an extent-derived
+box is what stops diacritics and descenders clipping or colliding
+(CSS 2.1 §10.6.1, css-inline-3 §5.2), so the band here is still the face's
+declared ink band rather than a magic fraction, and ink that leaves it is
+owed a name (`ink_covered_or_named`). -/
+theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array Seg) :
+    labelVExtent fs size (segs.map Seg.stripGlyphs) = labelVExtent fs size segs := by
+  unfold labelVExtent
+  rw [Array.foldl_map]
+  congr 1
+  funext acc s
+  exact labelVStep_glyph_id fs size acc s
+
+/-- **A hand-written vertical correction is inert.** A metric-only copy of a
+run already on the line — which is what `\vphantom{y}` beside a
+descender-less word *is*, the argument set in the running face at the
+running size, box only and no ink — changes neither reach, so it moves
+neither the letters nor the box around them.
+
+Note what the statement does not mention: no command, no special case. It is
+`labelVStep_idem` and `labelVStep_glyph_id` composed, so the legacy fix is
+absorbed by construction. `Ir.Pic.phantom_extent_between` is the same fact
+one layer up, over an arbitrary dominated measurement rather than a copy;
+and the engine is stricter still, a picture label's `\vphantom` group being
+dropped before it reaches the IR (`Picture.phantomCtrl`), so in practice not
+even a dominated box arrives. Three independent reasons the correction
+cannot double-correct, of which this is the one that holds whatever the
+surface decides. -/
+theorem vphantom_absorbed (fs : FontSet) (size : Sp) (segs : Array Seg) (r : Seg) :
+    labelVExtent fs size ((segs.push r).push (Seg.stripGlyphs r))
+      = labelVExtent fs size (segs.push r) := by
+  unfold labelVExtent
+  rw [Array.foldl_push, labelVStep_glyph_id, Array.foldl_push, labelVStep_idem]
+
 /-- One label line of a picture, set and measured: the segments its
 inlines make, the size they set at, and the ink the line occupies — its
 set width and its reach above and below the baseline.
@@ -5595,13 +5690,7 @@ private def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight 
   let breaks := kp items geom.textWidth
   let some brk := breaks[0]? | return none
   let (segs, w, _, _) := setLine items (lineStart items 0) brk geom.textWidth false
-  let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
-    | .run idx _ _ _ _ sz _ raise _ _ =>
-      let font := fs.get idx
-      let sz := if sz == 0 then size else sz
-      (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-       max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
-    | _ => acc) (0, 0)
+  let (hgt, dep) := labelVExtent fs size segs
   return some (segs, size, { w := w, height := hgt, depth := dep })
 
 /-- The measurement a picture's box is computed with: `labelInk` read as an
