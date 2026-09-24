@@ -1733,6 +1733,25 @@ def floorPolicyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- be condemned by the judge that governs the other one.
   t "the parsed floor ships the brace glyph its author spelled"
     (let s := pageText "$\\{x\\}$"; has s "{" && has s "}" && !has s "\\")
+  -- An option run immediately after a control word is that command's, as
+  -- LaTeX reads it, and it is markup whether or not the engine knows the
+  -- command. Only `Ir.floorNamedArgs` commands swept one, so `\sqrt[3]{8}`
+  -- shipped `[3]` and an unknown command shipped its whole option list —
+  -- the drop the engine already makes in text (W0341) and in a node body,
+  -- missing at the first of the three floors to be written.
+  t "a known command's index option never reaches the page"
+    (pageText "$\\overset{a}{b}\\sqrt[3]{8}$" == "ab8")
+  t "an unknown command's option run never reaches the page"
+    (pageText "$\\overset{a}{b}\\zzz[opt]{x}$" == "abx")
+  t "an option run after a command with no group goes too"
+    (pageText "$\\overset{\\alpha[1]z}{y}$" == "zy")
+  -- And a bracket that follows no command is content: an interval is not an
+  -- option list, which is why this sweep is keyed on the control word and
+  -- not on the character.
+  t "a bracket run following no command stays on the page"
+    (pageText "$\\overset{[0,1]}{y}$" == "[0,1]y")
+  t "a bracket run opening a formula stays on the page"
+    (pageText "$\\overset{a}{b}[2,3]$" == "ab[2,3]")
 
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top

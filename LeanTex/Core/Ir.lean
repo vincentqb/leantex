@@ -5379,6 +5379,20 @@ def floorMask (src : String) : Array Bool := Id.run do
           for m in [j:star + 1] do
             keep := keep.setIfInBounds m false
           j := star + 1
+        -- An option run immediately after the name is this command's, as
+        -- LaTeX reads it, whether or not the engine knows the command:
+        -- `\sqrt[3]{8}` shipped `[3]` and `\zzz[opt]{x}` shipped `[opt]`
+        -- because only a `floorNamedArgs` command ever swept one. The same
+        -- drop is already made in text (W0341) and in a node body, so this
+        -- is one rule at its third site rather than a new judgement. It is
+        -- keyed on the control word and not on the bracket: `[0,1]` standing
+        -- after no command is an interval, and content.
+        let optStart := skipFloorWs cs j
+        let optStop := skipOption cs optStart
+        if optStop != optStart then
+          for m in [j:optStop] do
+            keep := keep.setIfInBounds m false
+          j := optStop
         if let some arity := floorNamedArgs.lookup name then
           for _ in [0:arity] do
             let opened := skipFloorWs cs (skipOption cs (skipFloorWs cs j))

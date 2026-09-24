@@ -447,6 +447,47 @@ is a `let`-chain, so `unfold` produces a `have`-chain that `split` cannot
 see through. That is a factorization finding, not a tactic problem, and it
 is recorded rather than worked around.
 
+2026-09-24 — an option run after any control word is that command's, at the
+first of the three floors to be written. `\sqrt[3]{8}` inked `[3]8` and
+`\zzz[opt]{x}` inked `[opt]x`: the math source floor swept a trailing option
+run only for commands *in* `Ir.floorNamedArgs`, so every other control word
+handed its option list to the page as visible ink beside the content it was
+supposed to qualify.
+
+This is the rule the engine already makes twice. In text an unknown
+command's `[...]` goes with it and is named (W0341, and the four rows of
+`recoveryChecks` that pin it, including the bracket on the next line that
+stays content). In a node body `Sal.optMaybe`/`optDrop` sweep it, and the
+node floor's own review round had to widen that sweep to every trailing run.
+The math floor is the *oldest* of the three and never got it — which is the
+argument of the entry above arriving as a defect in the file that entry was
+written in.
+
+Keyed on the control word, not on the bracket: `$[0,1]$` is an interval and
+content, and the two negative rows (a bracket following no command, a
+bracket opening a formula) passed before the fix and still do. The sweep
+happens after the name and its star and before the arity loop, so a naming
+command's own option run — `\textcolor[rgb]{1,0,0}{x}`, the shape that
+shipped `rgb` two rounds ago — reaches it first and the arity loop's own
+`skipOption` becomes the between-arguments case it was always for.
+
+The accepted cost, written down rather than discovered later: a control word
+that takes no option loses a bracket run that followed it. `\alpha[1]z`
+floors to `z`, where LaTeX sets `α[1]`. That is the same trade text mode
+already makes, the loss is named by the W0012 the whole formula carries, and
+the alternative is markup on the page — which is the one recovery the floor
+exists to refuse. `inkMarkupWatch` could not have caught the leak either:
+`[` and `]` are not on it, and they are not on `Ir.markupChars` either
+because in a math source a bracket is as often content as not. The
+discriminator is the *selection*, not the character, which is why this is an
+executable row rather than a strengthening of `floorChars_mem`.
+
+Evidence: three rows of `floorPolicyChecks` fail before and pass after, read
+off `Layout.Out`; the two negative rows hold throughout; no golden moves,
+because the corpus's one `\sqrt[` (`math.tex`'s `$\sqrt[3]{x + 1}$`) parses
+and so never reaches this floor — it reaches `formulaFloor`, where it reads
+`3x + 1`, which is `formulaFloor_separates` and still owed.
+
 2026-09-24 — the recovery floor is a function of the declared loss now, not
 a decision three agents each made from scratch. `DiagCode` already carried a
 declared `Loss` and derived both halves of its rendered prefix from it —
