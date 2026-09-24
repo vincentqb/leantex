@@ -3960,12 +3960,68 @@ theorem: `themeAsking` is one list, read by the candidate scan and by the
 splice, so a slot cannot be asked for and then not spliced, or spliced under
 a prefix the scan never offered. The *behavioural* half — every slot asks
 for exactly its prefixed file, and no refusable-by-name declaration exists
-outside the registry — is stated and owed
-(`Obligations.themeAsking_candidates`, `Obligations.nameRefusals_asked`);
-`themeAskingChecks` is the executable oracle standing in for the first,
-running the quantification over the registry itself. -/
+outside the registry — is two statements: the first is proved below
+(`themeAsking_candidates`, read through the argument layer rather than by
+kernel reduction, which does not reach through these readers), the second
+still owed (`Obligations.nameRefusals_asked`, which wants a declared
+name-refusal channel on the diagnostic). `themeAskingChecks` keeps the
+quantification running over the registry itself as a floor. -/
 def localStyCandidates (raws : Array Raw) : Array String :=
   styCandList raws #[] raws.toList 0 0
+
+/-- One slot of the theme-loading family, read through the argument layer:
+the scan's answer for a preamble holding only that command. The two
+inequalities are the arms `styCandList` tries first (`\\usepackage` and
+`\\RequirePackage` share an arm and read a comma list, not a prefixed
+name), and they are what makes the registry arm the one that fires. -/
+private theorem localSty_theme (cn pre nm : String) (pos : Pos)
+    (hlk : themeAsking.lookup cn = some pre)
+    (hne : nm.trimAscii.toString = nm) (hnz : nm ≠ "")
+    (hup : cn ≠ "usepackage") (hrp : cn ≠ "RequirePackage") :
+    localStyCandidates #[.ctrl cn pos, .group #[.word nm pos] pos] = #[pre ++ nm] := by
+  have hne2 : nm.trimAscii.copy = nm := by simpa using hne
+  have hnm : nm.isEmpty = false := by simpa using hnz
+  have harg : (#[#[Raw.word nm pos]] : Array (Array Raw))[0]?.getD #[] = #[Raw.word nm pos] := by
+    simp
+  have hs : skipSpaces #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = 1 := by
+    rw [skipSpaces]; simp
+  have hopt : takeOpt #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = (none, 1) := by
+    simp [takeOpt, hs, Id.run]
+  have hgrp : takeGroups #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 1
+      = (#[#[Raw.word nm pos]], 2) := by
+    simp [takeGroups, hs]
+  have hsrc : rawSrc #[Raw.word nm pos] = nm := by
+    simp [rawSrc, rawSrcList, rawSrcOne, hne2]
+  simp only [localStyCandidates]
+  rw [styCandList]
+  case x_3 => exact fun h => absurd h hup
+  case x_4 => exact fun h => absurd h hrp
+  simp only [hlk, Nat.zero_add, hopt, hgrp, Array.getD_eq_getD_getElem?, harg, hsrc, hne, hnm,
+    Bool.false_eq_true, ite_false, Array.contains_empty, Array.push_empty]
+  rw [styCandList]
+  rfl
+
+/-- **Every slot of beamer's theme-loading family asks the input path for
+exactly its prefixed file.** A preamble holding only that command yields
+exactly that one candidate, so a theme file beside the document is opened
+before the name can be refused — the invariant whose absence let
+`\\usetheme{X}` be declared unknown with `beamerthemeX.sty` sitting
+unopened next to the document, costing it its whole palette.
+
+Quantified over the registry the candidate scan and the splice both read
+(`themeAsking`), so adding a slot is entering the contract rather than
+adding a case. `themeAskingChecks` keeps the rows as an executable floor
+over the fixtures. -/
+theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toString = nm)
+    (hnz : nm ≠ "") :
+    ∀ p ∈ themeAsking,
+      localStyCandidates #[.ctrl p.1 pos, .group #[.word nm pos] pos]
+        = #[p.2 ++ nm] := by
+  intro p hp
+  simp only [themeAsking, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl | rfl | rfl | rfl
+  all_goals exact localSty_theme _ _ nm pos rfl hne hnz (by decide) (by decide)
+
 
 /-- LaTeX's package option machinery, the minimum (ltclass.dtx):
 `\\DeclareOption{name}{body}` binds a body to an option name,

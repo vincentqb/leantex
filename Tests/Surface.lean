@@ -4013,10 +4013,10 @@ because an unthemed document has no `fg`/`bg` for a `fg!50!bg` mix to reach
 and no `frametitlebg` for either backend to paint.
 
 The invariant, stated over the candidate registry (`Compat.themeAsking`) and
-proved there (`themeAsking_candidates`): a declaration the engine can refuse
-as unknown-by-name asks the input path first. What the fixtures add is the
-end of that sentence — that the read file's colours arrive in the palette,
-which is the user-visible payoff and the thing W0304 measures.
+proved there (`Compat.themeAsking_candidates`): a declaration the engine can
+refuse as unknown-by-name asks the input path first. What the fixtures add is
+the end of that sentence — that the read file's colours arrive in the
+palette, which is the user-visible payoff and the thing W0304 measures.
 
 **Precedence is composition, not a contest** (PLAN 2026-09-24): the shipped
 bundle installs first and the local file overrides it per role, so a role
@@ -4076,9 +4076,10 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The fallback stands: no file, no theme, W0319 and the unthemed path.
   t "an unknown theme with no file beside the document still warns"
     ((Elab.run "d.tex" (deck169 "\\usetheme{nosuchvenue}" "x")).2.any (·.code == "W0319"))
-  -- The registry quantification, executed: the oracle standing in for
-  -- `Obligations.themeAsking_candidates` (the argument readers the scan runs
-  -- through do not reduce in the kernel, so `decide` cannot discharge it).
+  -- The registry quantification, executed: the floor beside the proof
+  -- `Compat.themeAsking_candidates`, which reads the same quantification
+  -- through the argument layer (the kernel does not reduce through these
+  -- readers, so `decide` cannot).
   -- Every slot of the family, the whole family and nothing else.
   for (cn, pre) in Compat.themeAsking do
     let pos : Pos := ⟨1, 1⟩
