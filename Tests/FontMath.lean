@@ -1201,15 +1201,19 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '₿')
         | _ => false))
-  -- No math face: one W0003 for the document, formulas set as their source.
+  -- No math face: one W0003 for the document, formulas set as their floor —
+  -- the glyph text the parse produced, never the source, so the missing
+  -- face costs the typesetting and not the mathematics.
   let bare : Font.FontSet := { fonts := #[serif], index := allSlots }
   let (nd, _) := Elab.run "t" "$x^2$ and $y$"
   let nOut := layoutOf bare nd geom
   t "no math face warns W0003 once" ((nOut.diags.filter (·.code == "W0003")).size == 1)
-  t "no math face sets the source text"
-    ((nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-      | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '^')
-      | _ => false)
+  t "no math face sets the formula's glyph text, not its source"
+    (let chars := (nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.flatMap fun s =>
+       match s with
+       | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2)
+       | _ => #[]
+     !chars.contains '^' && !chars.contains '\\' && chars.contains '2')
   -- Elaboration shapes: display math is its own centred block; \(..\) is
   -- inline; equation* renders; align and \frac stay warned source.
   let (dd, dds) := Elab.run "t" "a \\[x\\] b"

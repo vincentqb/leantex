@@ -1174,10 +1174,14 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
   | .strut h => { st with toks := st.toks.push (.strut h) }
-  -- Math carried as source (the constructs M6 still owes): the elaborator
-  -- warned by name; here the source sets as plain text, so nothing drops.
-  | .math _ src => pushText st sty src
-  | .formula display src body =>
+  -- Math the engine cannot model (the constructs M6 still owes): the
+  -- elaborator warned by name, and here the floor sets as plain text — the
+  -- formula's content, never its markup. Setting the source instead put
+  -- control sequences on the page where an equation belonged; `mathFloor`
+  -- is the one policy both backends read, and `Ir.mathFloor_mem` states
+  -- what it guarantees.
+  | .math _ src => pushText st sty (Ir.mathFloor src)
+  | .formula display _ body =>
     if mathOk then
       let (attr, ctr) := st.ctr.take
       { st with toks := st.toks.push (.formula display sty body attr), ctr := ctr }
@@ -1186,7 +1190,9 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
         else { warn st .W0003 "no math font is available; math is set as plain text"
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") with warnedMath := true }
-      pushText st sty src
+      -- The parse succeeded, so the floor here is the formula's own glyph
+      -- text, not its spelling: the mathematics survives a missing face.
+      pushText st sty (Ir.formulaFloor body)
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
   -- A role is a name, pure grouping: zero metric impact, no style change
@@ -1429,8 +1435,8 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
     rcases hm with hm | hm
     · exact Or.inl hm
     · subst hm; exact Or.inr rfl
-  | .math _ src => exact pushText_toks st sty src h
-  | .formula display src body =>
+  | .math _ src => exact pushText_toks st sty (Ir.mathFloor src) h
+  | .formula display _ body =>
     simp only [flattenOne]
     split
     · obtain ⟨hn, ha⟩ := LeafCtr.take_attributes st.ctr h
@@ -1440,10 +1446,10 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
       · exact Or.inl hm
       · subst hm
         exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using hn)
-    · -- the W0003 warning changes diagnostics only; the source then sets as text
+    · -- the W0003 warning changes diagnostics only; the floor then sets as text
       split
-      · exact pushText_toks st sty src h
-      · exact pushText_toks _ sty src h
+      · exact pushText_toks st sty (Ir.formulaFloor body) h
+      · exact pushText_toks _ sty (Ir.formulaFloor body) h
   | .styled s body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .colored c _ body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .role n body =>

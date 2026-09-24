@@ -3335,10 +3335,13 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
        | none => #[])
     acc.push (Html.elem "img" #[] attrs)
   | .math display src =>
-    -- Until native MathML lands the source rides in a data attribute, so an
-    -- optional client-side renderer can find it and nothing is faked.
+    -- Until native MathML lands for what the parser cannot model, the
+    -- element's own text is the floor — the formula's content, never its
+    -- markup (`Ir.mathFloor_mem`). The source rides in a data attribute,
+    -- where an optional client-side renderer can find it and no reader is
+    -- shown a control sequence.
     let tag := if display then "div" else "span"
-    acc.push (Html.elem tag #[Html.text src]
+    acc.push (Html.elem tag #[Html.text (Ir.mathFloor src)]
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)])
   | .formula display src body =>
@@ -4339,15 +4342,17 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           ("fill", cssColor color)]
       | .label lx ly content color scale align =>
         -- The label's inline content inside SVG's <text>: plain text as
-        -- character data, math as an italic <tspan> of its source — the
-        -- same source-text math this backend ships in prose (native
-        -- MathML is what M6 still owes there too), every string through
-        -- the escaper by construction.
+        -- character data, math as an italic <tspan> of its floor — the
+        -- formula's content, never its markup, the same recovery policy
+        -- this backend applies in prose (native MathML inside SVG is what
+        -- M6 still owes there), every string through the escaper by
+        -- construction.
         let nodes := content.map fun inl =>
           match inl with
-          | .math _ src => Html.elem "tspan" #[Html.text src] #[("font-style", "italic")]
-          | .formula _ src _ =>
-            Html.elem "tspan" #[Html.text src] #[("font-style", "italic")]
+          | .math _ src =>
+            Html.elem "tspan" #[Html.text (Ir.mathFloor src)] #[("font-style", "italic")]
+          | .formula _ _ body =>
+            Html.elem "tspan" #[Html.text (Ir.formulaFloor body)] #[("font-style", "italic")]
           | inl => Html.text (Ir.plainTextOne inl)
         let anchor := match align with
           | .center | .south | .north => "middle"

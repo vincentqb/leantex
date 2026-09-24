@@ -4782,6 +4782,152 @@ def dumpGlue (g : SymGlue) : String :=
   let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
   base ++ plus ++ minus
 
+/-- LaTeX's own punctuation: the characters that are markup in a math
+source and never its content. A page that ships one of these is showing a
+reader its source, which is the one recovery no diagnostic may choose — the
+honest floor for a construct the engine cannot model is the formula's text
+content, never its spelling. `&`, `^` and `_` are on the list because this
+is a *math* source: there the tab and the script marks are always markup,
+where in ordinary text an ampersand is content. -/
+def markupChars : List Char := ['\\', '{', '}', '$', '&', '^', '_', '~']
+
+/-- Control words whose first `{...}` argument names something rather than
+carrying content: `\textcolor{indigo}{q}` sets `q` in a colour, and
+`indigo` is as much markup as the command itself. Without this the colour
+name would ride onto the page inside its brace group — markup-free by the
+character test and still nonsense to a reader. -/
+def floorNamesFirstArg : List String :=
+  ["textcolor", "colorbox", "fcolorbox", "color", "pagecolor", "label",
+   "ref", "eqref", "tag", "hspace", "vspace", "raisebox", "makebox",
+   "framebox", "parbox", "begin", "end", "cite", "footnote", "phantom",
+   "hphantom", "vphantom", "rule", "setlength", "addtolength"]
+
+/-- Which characters of a math source are content: one flag per character.
+A control sequence's name is markup, and so is the whole first argument of
+a `floorNamesFirstArg` command. Everything else is content — the character
+test (`markupChars`) then removes LaTeX's punctuation, so the two filters
+are independent and the floor is markup-free whatever this walk decides.
+An index loop over the characters, so no recursion needs a measure. -/
+def floorMask (src : String) : Array Bool := Id.run do
+  let cs := src.toList.toArray
+  let at? (k : Nat) : Char := (cs[k]?).getD ' '
+  let mut keep : Array Bool := Array.replicate cs.size true
+  let mut i := 0
+  let mut dropGroups := 0
+  let mut depth := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := at? i
+    if dropGroups > 0 && depth > 0 then
+      -- inside a named argument: every character of it is markup
+      keep := keep.setIfInBounds i false
+      if c == '{' then depth := depth + 1
+      else if c == '}' then
+        depth := depth - 1
+        if depth == 0 then dropGroups := dropGroups - 1
+      i := i + 1
+    else if c == '\\' then
+      keep := keep.setIfInBounds i false
+      let mut j := i + 1
+      if j < cs.size && !(at? j).isAlpha then
+        -- a control symbol is one character: `\\`, `\,`, `\{`
+        keep := keep.setIfInBounds j false
+        j := j + 1
+      else
+        let mut name := ""
+        for _ in [0:cs.size + 1] do
+          if j ≥ cs.size then break
+          if !(at? j).isAlpha then break
+          name := name.push (at? j)
+          keep := keep.setIfInBounds j false
+          j := j + 1
+        if floorNamesFirstArg.contains name then dropGroups := dropGroups + 1
+      i := j
+    else if c == '{' && dropGroups > 0 then
+      keep := keep.setIfInBounds i false
+      depth := 1
+      i := i + 1
+    else
+      i := i + 1
+  -- A second pass over the same mask squeezes the whitespace a dropped
+  -- command leaves behind: `\overset {x}` writes a space after its name,
+  -- and keeping it would indent the floor. Dropping a character never
+  -- breaks the subsequence property `mathFloor_mem` reads off the filter.
+  let survives (k : Nat) : Bool :=
+    (keep[k]?.getD false) && !markupChars.contains (at? k)
+  let mut lastSpace := true
+  for k in [0:cs.size] do
+    if survives k then
+      if (at? k).isWhitespace then
+        if lastSpace then keep := keep.setIfInBounds k false
+        else lastSpace := true
+      else lastSpace := false
+  let mut last := cs.size
+  for _ in [0:cs.size + 1] do
+    if last == 0 then break
+    let k := last - 1
+    if survives k then
+      if (at? k).isWhitespace then keep := keep.setIfInBounds k false else break
+    last := k
+  return keep
+
+/-- The floor's characters: the math source's own content characters, with
+LaTeX's punctuation removed. Stated as a filter over the source so the
+floor is a subsequence of it by construction — nothing is invented, and
+`mathFloor_mem` reads straight off the filter. -/
+def floorChars (src : String) : List Char :=
+  let mask := floorMask src
+  (src.toList.zipIdx.filterMap fun (c, i) =>
+    if (mask[i]?.getD true) && !markupChars.contains c then some c else none)
+
+/-- The honest floor for math the elaborator cannot model: the formula's
+text content. The alternative — setting the source as body text — puts
+control sequences on the page where an equation belongs, which is the worst
+recovery available: the reader is shown markup and cannot tell it from
+content. Both backends read this one function, so the floor is one
+decision; the construct is still named by its diagnostic, so the loss is
+announced rather than displayed.
+
+The floor drops a symbol command outright rather than translating it: the
+symbol table sits above the IR (it belongs to the math surface, which no
+backend may reach into), so a translating floor would either duplicate the
+table or invert the layering. A dropped symbol is named by the diagnostic;
+a shipped backslash is not. -/
+def mathFloor (src : String) : String := String.ofList (floorChars src)
+
+/-- The floor for a formula the elaborator *did* model but the page cannot
+set: no math face is available, so the atoms have no metrics. Their glyphs
+are known all the same, so the floor is the formula's own glyph text — the
+scalars the coverage census counts — and never its source. Same policy as
+`mathFloor`, better material: here the parse succeeded, so the floor is the
+mathematics rather than what survives its spelling. -/
+def formulaFloor (body : Math.MList) : String :=
+  String.ofList (Math.MList.scalarsList #[] body).toList
+
+/-- The invariant the W0012 and W0003 recoveries broke: a degraded
+formula's floor carries no markup, and every character of it comes from the
+source — the floor neither shows a reader LaTeX punctuation nor invents
+content to hide it. The page-facing half is the ink watch over every golden
+fixture (`inkMarkupChecks`): this states it on the IR, where both backends
+read it. -/
+theorem mathFloor_mem (src : String) :
+    ∀ c ∈ floorChars src, c ∈ src.toList ∧ c ∉ markupChars := by
+  intro c hc
+  simp only [floorChars, List.mem_filterMap] at hc
+  obtain ⟨p, hp, hq⟩ := hc
+  by_cases h : (floorMask src)[p.2]?.getD true && !markupChars.contains p.1
+  · simp only [h, ite_true] at hq
+    cases hq
+    refine ⟨?_, ?_⟩
+    · have hm : p.1 ∈ (src.toList.zipIdx 0).map Prod.fst := List.mem_map_of_mem hp
+      rw [List.zipIdx_map_fst] at hm
+      exact hm
+    · simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+      simpa using h.2
+  · simp only [Bool.not_eq_true] at h
+    simp only [h] at hq
+    simp at hq
+
 -- Display-only printers. Structural recursion through `List`, so no `partial`.
 
 mutual
@@ -4799,8 +4945,8 @@ def plainTextList (xs : List Inline) : String :=
 def plainTextOne (x : Inline) : String :=
   match x with
   | .text s => s
-  | .math _ src => src
-  | .formula _ src _ => src
+  | .math _ src => mathFloor src
+  | .formula _ _ body => formulaFloor body
   | .styled _ body => plainTextList body.toList
   | .colored _ _ body => plainTextList body.toList
   | .role _ body => plainTextList body.toList

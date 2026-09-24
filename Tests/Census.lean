@@ -781,7 +781,8 @@ def censusTable :
       ((c[0]?.map (·.rules)).getD 0) == 10),
     ("the accent marks ship as glyphs",
       hasStr (censusText c) "\u0302" && hasStr (censusText c) "\u20D7"),
-    ("the out-of-scope construct keeps its source", hasStr (censusText c) "\\overset"),
+    ("the out-of-scope construct degrades to its text content, never its markup",
+      hasStr (censusText c) "?=" && !hasStr (censusText c) "overset"),
     ("\\mathbb takes its Letterlike scalars", hasStr (censusText c) "ℝ"
       && hasStr (censusText c) "ℂ"),
     ("the bold alphabets ship, variables kept italic",
@@ -1010,6 +1011,39 @@ elaborates without complaint — promote it"
     check ref s!"golden {n}: in the golden set but no tests/corpus/{n}.tex"
       (← (dir / s!"{n}.tex").pathExists)
 
+/-- The characters the ink watch bans, narrower than `Ir.markupChars` on
+purpose. The floor filters `$`, `&`, `^`, `_` and `~` too, because in a
+*math* source those are always markup; in ordinary prose they are content —
+a price, an ampersand in a name — and the corpus ships one. A backslash or
+a brace is the unambiguous signature of a page showing its source, and no
+fixture ships one as content. -/
+def inkMarkupWatch : List Char := ['\\', '{', '}']
+
+/-- Fixtures whose shipped ink may carry a markup character, each named
+with the reason it is content there — a listing that quotes TeX source
+would belong here. Empty: nothing in the corpus legitimately shows LaTeX
+punctuation as ink, so the watch below runs with no exemption. Adding a
+name is a deliberate decision, visible in review; a recovery path that
+starts leaking markup cannot quietly join the list. -/
+def inkMarkupExempt : List String := []
+
+/-- The channel that watches the recovery floor on the artifact: no page of
+any golden fixture ships a LaTeX markup character as ink. This is the
+page-facing half of `Ir.mathFloor_mem` — the IR states that a degraded
+formula's floor is a markup-free subsequence of its source, and this reads
+the shipped glyph runs of every fixture to say the page honours it. It is
+deliberately wider than math: any future diagnostic whose recovery sets
+its own source as body text fails here, not only where it was introduced.
+The corpus had exactly one offender when this went in, the W0012 math
+recovery. -/
+def inkMarkupChecks (ref : IO.Ref (List String)) (n : String)
+    (c : Array CensusPage) : IO Unit := do
+  if inkMarkupExempt.contains n then return ()
+  let text := censusText c
+  for ch in inkMarkupWatch do
+    check ref s!"census {n}: ships the markup character '{ch}' as ink"
+      (!text.any (· == ch))
+
 /-- The census tier: every golden fixture also appears in `censusTable`,
 and each row's facts hold on the pages the engine actually ships. A
 fixture that declares a math face renders its census with the shipped
@@ -1033,6 +1067,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc geom (some pats)
     let c := censusOf (coveredColorsOf doc) out
+    inkMarkupChecks ref n c
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
     -- The outline tier: emission owes its appearance, so a fixture whose

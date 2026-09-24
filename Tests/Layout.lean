@@ -1563,6 +1563,31 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- The starred form's `*` still belongs to the command, options after it.
   t "a starred unknown command drops its options too"
     (let s := pageText "\\foo*[1]{x}"; s == "x")
+  -- The math recovery floor: a formula the engine cannot model degrades to
+  -- its text content, never to its markup. Setting a formula's source as
+  -- body ink is the worst recovery there is — a reader sees control
+  -- sequences where an equation belongs — so the floor drops the markup and
+  -- keeps what was content (`Ir.mathFloor_mem`). The construct is still
+  -- named by W0012; the loss is announced, not shown.
+  let deg := pageText "$\\overset{?}{=}$"
+  t "a degraded formula ships no control sequence"
+    (!has deg "\\" && !has deg "{" && !has deg "}" && !has deg "overset")
+  t "a degraded formula keeps its text content"
+    (has deg "?" && has deg "=")
+  -- A colour name is the markup of `\textcolor`, not content: it may not
+  -- appear on the page even though it stands inside a brace group.
+  let col := pageText "$\\overset{\\textcolor{indigo}{q}}{=}$"
+  t "a degraded formula ships no colour name"
+    (!has col "indigo" && !has col "textcolor" && has col "q")
+  -- The alignment tab and the script marks are markup too.
+  let tab := pageText "\\begin{align*} \\overset{a}{b} &= c_d \\end{align*}"
+  t "a degraded alignment ships no tab or script mark"
+    (!has tab "&" && !has tab "_" && !has tab "\\" && has tab "c")
+  -- Without a math face a formula the engine *can* model still sets as
+  -- text (W0003) — the same floor applies, so that path cannot leak markup
+  -- either.
+  t "the no-math-face floor ships no control sequence"
+    (let s := pageText "$\\alpha^2$"; !has s "\\" && !has s "alpha")
 
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top

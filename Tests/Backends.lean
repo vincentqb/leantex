@@ -93,6 +93,16 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unparsed construct stays source text with its data-tex hook"
     (let p := page "$\\overset{?}{=}$"
      ((p.splitOn "<span class=\"math\" data-tex=").length ≥ 2))
+  -- The HTML half of the recovery floor: the element's visible text is the
+  -- floor (`Ir.mathFloor_mem`), the source rides only in data-tex where the
+  -- opt-in client renderer finds it. The two backends read the one IR
+  -- function, so a reader of either artifact is shown content, not markup.
+  t "an unparsed construct's element text is its floor, not its source"
+    (let p := page "$\\overset{\\textcolor{indigo}{q}}{=}$"
+     let inSpan := (((p.splitOn "<span class=\"math\" data-tex=").getD 1 "").splitOn
+       "</span>").headD ""
+     let shown := ((inSpan.splitOn ">").getD 1 "")
+     shown == "q=" && ((inSpan.splitOn "indigo").length ≥ 2))
   -- The census half, over the same construct list plus the alphabets:
   -- MathML leaf text against the PDF's coverage census, per formula.
   let census := ["$x^2$", "$a_i^2$", "$\\frac{1}{2}$", "$\\sqrt[3]{x}$",

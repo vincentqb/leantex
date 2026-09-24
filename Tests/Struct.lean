@@ -62,7 +62,11 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds titled == #[.section] && structKinds (structKids titled) == #[.title, .paragraph])
   t "an untitled block invents no title node"
     (structKinds (structKids (Struct.ofBlocks #[.titled .block #[] #[para]])) == #[.paragraph])
-  let eq := Struct.ofBlocks #[.equation "(1)" #[.formula true "x" (Math.MList.ofList [])]]
+  -- The formula's body carries the atom its source spells, so the leaf text
+  -- witnesses the floor (`Ir.formulaFloor`) rather than the spelling: the
+  -- tagged tree is accessibility text and may not carry markup either.
+  let eq := Struct.ofBlocks #[.equation "(1)"
+    #[.formula true "x" (Math.MList.ofList [.atom .ord (.sym 'x') .nil .nil false])]]
   t "equation is a formula whose number is a label leaf after the content"
     (structKinds eq == #[.formula] && structKinds (structKids eq) == #[.formula, .label]
       && structTexts eq == #["x", "(1)"])
@@ -129,8 +133,9 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "ref is a reference over its resolved text"
     (structKinds (inl (.ref "k" .plain "3" (some "a"))) == #[.reference (some "a")]
       && structTexts (inl (.ref "k" .plain "3" (some "a"))) == #["3"])
-  t "math is a formula over its source"
-    (structKinds (inl (.math false "x^2")) == #[.formula] && structTexts (inl (.math false "x^2")) == #["x^2"])
+  t "math is a formula over its floor, never its markup"
+    (structKinds (inl (.math false "x^2")) == #[.formula]
+      && structTexts (inl (.math false "x^2")) == #["x2"])
   t "image is a leaf carrying source and alternative"
     ((Struct.leaves (inl (.image "a.png" {} "alt"))).map (·.2) == #[.image "a.png" "alt"])
   t "icon is a text leaf worth its alternative"

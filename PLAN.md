@@ -8189,3 +8189,68 @@ is evidence, not a theorem.
   normalised — is byte-identical. `scripts/bench.lean` (median of 7)
   before and after: 96/98, 326/324, 484/490, 92/91, 163/163 ms — the
   closure indirection a shared fold introduces is not measurable here.
+
+
+- 2026-09-24: **a diagnostic's recovery may not ship markup as ink.** The
+  rule, stated so it binds every future gap and not only the one that
+  exposed it: where the engine cannot render a construct, the honest floor
+  is that construct's *content* — never its spelling. Setting the source as
+  body text is the worst recovery available, because a reader is shown
+  control sequences where an equation belongs and has no way to tell them
+  from text the author wrote; the loss is *displayed* instead of announced,
+  while the diagnostic that announces it is the thing the reader never
+  sees. This is the same judgement the no-shim rule already makes for
+  unevenly supported declarative features ("the honest floor is the
+  degraded state"), carried from CSS to recovery paths.
+
+  Two paths were breaking it, both by design rather than accident. W0012
+  (math the parser cannot model) kept `Parse.rawSrc` and set it as text,
+  and W0003 (no math face available) did the same with a formula it had
+  *already parsed*. On the private reference corpus the first put five
+  pages of raw alignment markup on slides — brace groups, colour names,
+  `\\` row separators, all as visible ink. The in-repo corpus carried one
+  instance of the same defect, `math.tex`'s `\overset` line, and a
+  `censusTable` row that *asserted* it: the fixture pinned the bug as
+  intended behaviour, which is why a fully green suite never saw it.
+
+  The floor is one IR function per case, read by every backend. `mathFloor`
+  is for the source-only case: the source's own characters with LaTeX's
+  punctuation dropped, a control sequence's name dropped, and the whole
+  first argument of a naming command dropped (`\textcolor{indigo}{q}`
+  ships `q`, because a colour name is markup that happens to sit inside a
+  brace group). `formulaFloor` is for the parsed-but-unsettable case: the
+  formula's own glyph text, the scalars the coverage census counts — a
+  missing math face costs the typesetting, not the mathematics.
+
+  Stated as a filter, deliberately. `floorChars` is a `filterMap` over the
+  source's characters against a mask, so the floor is a *subsequence* of
+  the source by construction and `mathFloor_mem` reads straight off the
+  filter: every character of the floor is a character of the source, and
+  none of them is markup. The mask walk may be as clever or as wrong as it
+  likes without threatening the invariant — the character test is
+  independent of it, which is the property that makes this safe to extend.
+  Nothing is invented either: the whitespace squeeze that removes the
+  indent a dropped command leaves behind only *drops* characters, so it
+  cannot break the subsequence property it runs after.
+
+  Four readers, one decision: layout's text push, the HTML element's own
+  text (the source still rides in `data-tex`, where the opt-in
+  `--math-boundary` renderer finds it and no reader sees it), the SVG
+  picture-label `tspan`, and `plainTextOne` — which matters more than it
+  looks, because it feeds alt text, running heads, the PDF outline and the
+  tagged structure tree, so a degraded formula inside a heading was leaking
+  markup into the accessibility text as well as onto the page.
+
+  The watch is a census channel, not a test of this bug. `inkMarkupChecks`
+  runs inside the existing `censusChecks` loop — so it costs nothing — and
+  asserts over every golden fixture's shipped glyph runs that no page ships
+  a backslash or a brace. Any future recovery that sets its own source as
+  text now fails there, wherever it was introduced. The watched set is
+  narrower than `Ir.markupChars` on purpose: the floor also drops `$`, `&`,
+  `^`, `_` and `~`, because in a *math* source those are always markup,
+  but in prose they are content and the corpus ships a `$`. `\` and `{}`
+  are the unambiguous signature, and `inkMarkupExempt` is the deliberate
+  escape hatch — empty today, and a name added to it is visible in review.
+
+  What this entry does not do is narrow the gap: after it, the same three
+  W0012 constructs still degrade, only honestly. That is the next entry.
