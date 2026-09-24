@@ -626,6 +626,85 @@ as before.
 § Owed obligations grows by two rows, `formulaFloor_covers` and
 `formulaFloor_separates`.
 
+2026-09-24 — a floor may lose a claim; it may not ship both sides of one. A
+paper's style guard reads `\@ifpackageloaded{fullpage}{...}` and the word
+**fullpage** arrived on the page. Probed on three of the family at once:
+
+```
+\@ifpackageloaded{fullpage}{YES}{NO}   \@ifundefined{somemacro}{THEN}{ELSE}
+\IfFileExists{missing.tex}{FOUND}{ABSENT}
+```
+
+ships `One. fullpage YES NO Two. somemacro THEN ELSE Three. missing.tex FOUND
+ABSENT Four.` — every conditional inking its *name* argument and **both**
+mutually exclusive branches, behind one W0301 whose message ("its {...}
+arguments were kept as text") is accurate about the mechanism and silent about
+the contradiction. The page asserts the package is loaded and that it is not.
+
+This is the 2026-09-24 `\cancelto` entry's rule at the next level up. There,
+`0x` was wrong because the kept fragments composed a *different* well-formed
+claim. Here they compose a *contradictory* one, which is strictly worse and
+recognisable by a rule no character-level check reaches: the arrangement, not
+any token, is the defect.
+
+**Where it lives: the table's cell type.** `Ir.floorNamedArgs` is
+`List (String × Nat)`, the `Nat` counting how many *leading* arguments are
+names. That shape cannot express a conditional at all — the branches sit at
+positions 2 and 3 and the requirement over them is "at most one", which is not
+a count of leading names. So the fix is not another row; it is the cell:
+
+```lean
+inductive ArgKind where | prose | name | branch
+def floorArgs : List (String × Array ArgKind)
+```
+
+with `\cancelto` as `#[name, prose]` (the existing fix, restated),
+`\@ifpackageloaded`/`\@ifundefined`/`\IfFileExists` as `#[name, branch, branch]`,
+and a command that inks nothing as all-`name`. That last case *is*
+`Compat.meaningFree`, which is the same table under another name — arity plus
+"contributes nothing" — so the two unify, and the six rows the package/class
+diagnostic slice added become six rows of one table instead of a second
+mechanism. The names still missing from that family are then rows too, not
+another visit: `\typeout` (871 TeX Live files, 171 of them classes),
+`\MessageBreak` (976), `\PackageError`/`\ClassError` — and `\PackageError` is
+the one to get right, because it is a style *refusing to build the document*,
+so its floor owes a named refusal rather than silence. Probed: today
+`\PackageError{mypkg}{something is wrong}{try the other thing}` inks all three
+groups as prose, and `\typeout{...}` and `\MessageBreak` leak identically.
+
+**Two theorems, both on the registry's own shapes.**
+
+- `floor_text` — a `Conserves` instance: the floor's text census is exactly the
+  census of its `prose` arguments. Names contribute nothing, by construction
+  rather than by a filter that might miss one.
+- `floorBranch_mem` — the text a floor ships for a conditional's branches is
+  **one of** those branches, never a concatenation. `_mem` is the registry
+  shape for "the result is drawn from the input set", and it is precisely the
+  line between a lossy floor and a false one.
+
+Which branch is not arbitrary in any of the three cases above: the engine knows
+`nativePackages`, it knows its own macro table, and the driver knows which files
+exist — so each condition is *evaluable*, and a floor that evaluates it is a
+correct rewrite rather than a degradation. Where a condition cannot be decided,
+the honest branch is the negative one (assume the thing absent) with the loss
+named — never both.
+
+**The instrument, and its limit.** A sweep of the shipped text for words that
+are only names is worth having and is cheap: `pdftotext` over every rendered
+fixture, candidate names read out of the engine's own compat tables so the
+oracle cannot drift from what the engine claims to know. Run over all 77 corpus
+PDFs it reports 7 hits, and all 7 are genuine prose — `booktabs` in a sentence
+about booktabs, `algorithmicx` in one about algorithmicx — so the corpus
+baseline is clean and the check is usable as a gate with a short, explicit
+prose allowance rather than a tuning knob. Its limit is the reason the theorems
+come first: it **misses `fullpage`**, because `fullpage` is a package the
+engine does not know, and an unknown name is exactly the case a floor leaks.
+The version that catches it is differential rather than lexical — the shipped
+text must equal the text the source contributes *outside* the name and branch
+positions of every command that fired W0301 — and that comparison needs the
+argument kinds above to exist first. Recorded as the design; the script and the
+table both belong to other owners and are handed over.
+
 2026-09-24 — a page model nests no page, and the HTML front page was the
 report. A deck's HTML front page rendered nearly blank, its title matter
 pushed off the bottom of the viewport, while the same deck's PDF page 1 was
