@@ -6259,6 +6259,35 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     blocks := blocks ++ content
   return blocks
 
+/-- **A page model nests no page: one frame never contains another.**
+
+`\titlepage` inside an author's own `\begin{frame}` is beamer's documented
+idiom and what every real deck writes, and the title arm opens a frame of its
+own to carry the golden split — so the body walk produced `frame > frame`.
+The PDF backend flattened that and placed the page correctly; the HTML
+backend gives each frame a `section.slide` with vertical fills of its own, so
+two nested slide-height containers pushed the title matter a full viewport
+down and out of sight. The divergence was in neither backend: the IR should
+not have carried the nesting. The inner frame's vertical distribution is the
+one to keep — its `.golden` is a deliberate declaration, where the outer
+frame's is whatever the page model defaults to — which is also beamer's own
+arrangement, the title-page template's glue sitting inside the frame the
+author opened. Breakability is either frame's to ask for.
+
+Guarded on both titles being empty: a titled outer frame around a titled
+inner one is not this shape and keeps its nesting, so the flatten cannot
+silently drop a frame title. Outside the block knot, as a function of its
+arguments only, so the measure machinery never sees a match on a recursive
+call's result. -/
+private def flattenFrame (title : Array Inline) (standout : Bool)
+    (valign : Ir.VAlign) (breakable : Bool) (inner : Array Block) : Block :=
+  match inner with
+  | #[.frame it _ ival ibrk ibody] =>
+    if title.isEmpty && it.isEmpty then
+      .frame title standout ival (breakable || ibrk) ibody
+    else .frame title standout valign breakable inner
+  | _ => .frame title standout valign breakable inner
+
 /-- The `{nav}` optional argument's own facts — label, pin, offset,
 reveal — parsed outside the knot. -/
 private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
@@ -7523,7 +7552,18 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     else
       have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
       inner ← drainNotesGo ctx stash.toList inner
-    blocks := blocks.push (.frame title standout valign breakable inner)
+    -- **A page model nests no page.** `\titlepage` inside an author's own
+    -- `\begin{frame}` is beamer's documented idiom and what every real deck
+    -- writes, and the title arm opens a frame of its own for the golden
+    -- split — so the body walk produced `frame > frame`. The PDF flattened
+    -- that (one page, correctly placed); the HTML backend gives each frame a
+    -- `section.slide` with its own vertical fills, so the title matter was
+    -- pushed a full slide-height down and off the viewport. The divergence
+    -- was in neither backend: an `Ir.Block.frame` must not contain one, and
+    -- the only producer of a titleless inner frame is the title arm, whose
+    -- `.golden` distribution is the one to keep — as in beamer, where the
+    -- title-page template's glue sits inside the frame the author opened.
+    blocks := blocks.push (flattenFrame title standout valign breakable inner)
   else if n == "itemize" || n == "enumerate" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the

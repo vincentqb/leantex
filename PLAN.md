@@ -626,6 +626,59 @@ as before.
 § Owed obligations grows by two rows, `formulaFloor_covers` and
 `formulaFloor_separates`.
 
+2026-09-24 — a page model nests no page, and the HTML front page was the
+report. A deck's HTML front page rendered nearly blank, its title matter
+pushed off the bottom of the viewport, while the same deck's PDF page 1 was
+correct — verified on a raster of each, not read off a dump. The frame title
+bar was reported in the same breath and is a different answer; both below.
+
+**The front page.** `\titlepage` inside an author's own `\begin{frame}` is
+beamer's documented idiom and the spelling every real deck uses. The title arm
+opens a frame of its own to carry the golden split (moloch's `title page`
+template glue), so the body walk produced `frame > frame`. The PDF backend
+flattens that — one page, placed correctly — while the HTML backend gives each
+frame a `section.slide` with vertical fills of its own, so two nested
+slide-height flex containers stacked and the title landed a full viewport
+down. Isolated on a synthetic pair: the same deck with a bare `\titlepage`
+emits one `section.slide` and renders correctly; wrapped in a frame it emits
+`section.slide > section.slide` with `flex-grow: 1` fills outside
+`flex-grow: 3618/2000` fills inside.
+
+The invariant, written before the fix: **an `Ir.Block.frame` never contains
+another.** The divergence was in neither backend — it was an IR value no page
+model can mean, and each backend read it as honestly as it could. So the frame
+arm flattens (`Elab.flattenFrame`), keeping the *inner* frame's vertical
+distribution, because `.golden` is a deliberate declaration where the outer
+frame's is whatever the page model defaults to — which is also beamer's own
+arrangement, the template's glue sitting inside the frame the author opened.
+Guarded on both titles being empty, so a titled frame around a titled frame
+keeps its nesting and the flatten can never silently drop a frame title. It
+lives outside the block knot as a function of its arguments: written inline,
+the match on a recursive call's result broke equation generation for the whole
+mutual group, which is the `let`-versus-subtype hazard AGENTS already records
+one level down.
+
+**Why the suite did not catch it, which is the more useful finding.** No
+corpus fixture puts `\titlepage` inside a frame — checked mechanically over
+all 77, none produces a frame inside a frame — so the idiom every beamer deck
+in the world writes had no fixture at all. The fix accordingly moves no
+golden and leaves all 154 corpus artifacts byte-identical, which is the tell:
+a behaviour this central changing nothing means nothing was watching. Owed to
+the harness, and handed over rather than landed here: a synthetic deck whose
+title page is wrapped in `\begin{frame}[plain]`, asserted over the typed HTML
+tree (no `section.slide` descends from a `section.slide`) rather than over an
+IR dump, per the census convention.
+
+**The title bar is not a bug.** The same deck declares `\usetheme{talk}`, a
+local `beamerthemetalk.sty`. There is no package loader (the entry above on
+`\cancelto` says why), so W0319 fires — "unknown theme 'talk'; the document is
+unthemed" — and an unthemed document resolves no `frametitlebg`/`frametitlefg`
+pair, so the frame title sets as plain text with no band. Both backends agree:
+the rasterised PDF page 3 shows no band either, so this is not a projection
+gap and nothing is silently lost — the diagnostic already names it and lists
+the four bundles that do paint one. The deck's own source carries the remedy
+in a comment beside the declaration.
+
 2026-09-24 — the font environment is an input, and one elaboration is the
 fixed point. The stopgap landed hours earlier (`Measure a node against the
 face its labels set in`) elaborated the document **twice**: once with nothing
