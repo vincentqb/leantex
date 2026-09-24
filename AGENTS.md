@@ -88,6 +88,8 @@ in this repo; refer to the private reference corpus abstractly.
   | a document class | sourced defaults, and its contract as implied assertions |
   | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
 
+- TeX package/class warning and info controls are log-only compatibility rows: consume their exact groups in `Compat.meaningFree`, require N0100 accounting through a deferred-hook test, and never let those groups enter body recovery. Arbitrary unknown commands must still preserve their arguments.
+
 - Theorems are stated on the IR first. A fact both artifacts must honour
   (structure, numbering, census, palette, language, alternatives) is one
   theorem over `Ir`/`Theme`/`Design`, and each backend's version is a
