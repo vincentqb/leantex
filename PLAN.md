@@ -204,17 +204,6 @@ list.
   an `Ev` split into the resolved table and the report. The in-suite
   witness is the two-orders row of `pictureNodePlaceChecks`, read off two
   shipped pages.
-- `floorChars_id` — the recovery floor's lower bound: a math source already
-  free of control sequences and markup salvages to itself, so the mask
-  keeps content rather than merely being free to drop it.
-  `floorChars_mem` is the upper bound and holds for a mask that dropped
-  everything, which is why this side is owed rather than implied. Blocked
-  on `floorMask` being an imperative index loop with no equational theory:
-  the statement needs "every index of a markup-free source is marked kept",
-  a loop invariant over three passes and a mutable `Array Bool`. The
-  witness meanwhile is the whole-string floor rows in `recoveryChecks`,
-  which pin the salvage of seven shapes exactly and fail under both an
-  all-dropping and an all-keeping mask.
 - `nodeLabel_mem` — the node-label floor's lower bound: every character a
   degraded label inks is a character its body carried, or one of the
   declared placeholder's, and none of them is LaTeX punctuation.
@@ -227,8 +216,10 @@ list.
   one `Sal`, so no equation names "the label after token k" and the
   statement needs an invariant carried through five modes and two arms. The
   factorization is a `Sal` split into the content built so far and the
-  machine's pending state — the same accumulator-statability work
-  `floorChars_id` waits on. The witness meanwhile is the whole-label rows
+  machine's pending state, or the progress-indexed loop invariant a census
+  needs (`floorChars_id`, discharged 2026-09-24, needed neither: an
+  identity under a hypothesis is carried by a plain state invariant, a
+  provenance census is not). The witness meanwhile is the whole-label rows
   in `pictureNodeFloorChecks`, read off the shipped page.
 - `reflow_named` — a declared break is honoured or named, weak public form:
   for a one-paragraph document that declared at least one break, a flow
@@ -352,9 +343,11 @@ list.
   between a `.formula`'s `src` and its `body` at the IR — the two are
   independent fields, so the statement is false for an arbitrary pair and
   has to be conditioned on `MathParse.parseMath`, a fold inversion over
-  `parseToks`' mutual recursion. The same accumulator-statability work
-  `floorChars_id` and `nodeLabel_mem` wait on at the other two floors, which
-  is why all three are queued rather than one asserted from the others. The
+  `parseToks`' mutual recursion. The same census-over-a-walk work
+  `nodeLabel_mem` waits on at the other floor, which is why both are queued
+  rather than one asserted from the other; `floorChars_id` was the third and
+  is discharged (2026-09-24), a plain state invariant sufficing there
+  because it is an identity under a hypothesis and not a census. The
   witness meanwhile is the no-math-face rows of `recoveryChecks` and the
   `floorPolicyChecks` rows beside them, read off `Layout.Out`.
 - `formulaFloor_separates` — a floor may be lossy; it may not be false, at
@@ -381,12 +374,6 @@ list.
   own walk over `Math.MList` instead of reusing
   `Math.MList.scalarsList`, whose job is the coverage census and whose
   omissions (no radical sign is ever pushed) are right there and wrong here.
-- `themeAsking_candidates` — every slot of beamer's theme-loading family
-  asks the input path for exactly its prefixed file, quantified over the
-  registry the candidate scan and the splice both read. Closed and finite
-  but kernel-irreducible: the argument readers it runs through are
-  well-founded recursions with no equation lemmas. `themeAskingChecks` is
-  the executable oracle meanwhile.
 - `nameRefusals_asked` — the general form: a declaration the engine refuses
   as unknown-by-name asked the input path first, so no refusal outlives a
   file beside the document that would have defined it. Waits on a declared
@@ -11805,3 +11792,185 @@ clean; `compose-fuzz` green. `bench.lean` medians of 5: paragraphs 96 ms,
 lorem 326 ms, underline 494 ms, themed 87 ms, paper 162 ms. No golden moves —
 the field is set at two refusal sites no corpus fixture reaches, and the
 diagnostics golden renders message text, not fields.
+
+### 2026-09-24 — a loop that breaks has no fold, so it gets a reader instead
+
+Seventeen of twenty-eight owed obligations named one wall in eight
+spellings: "an imperative loop with no equational theory", "no equation
+names the state after step k", "`Id.run`/`forIn` with no equational
+theory", "accumulator-generalised statement needed". Seven modules, one
+sentence. The reading behind every one of them was that a hot path written
+as a `for` loop is unreachable by proof until it is rewritten as a fold —
+so each row waited on a refactor of the loop it ranges over, and the two
+rules in tension (hot paths are `mut` loops; a proof that resists is a
+factorization finding) were read as demanding that the performance rule
+lose.
+
+**The premise was false, and the stdlib says where.** Lean 4.34 already
+ships the `forIn`-to-`foldl` bridge: `List.idRun_forIn_yield_eq_foldl` and
+its `Array`/`forIn'` siblings are `@[simp]`, so a loop *is* a fold and has
+that fold's whole equational theory. The bridges take a body of the shape
+`fun a b => ForInStep.yield <$> f a b` — **a loop that never breaks**.
+Every engine loop bounded `[0:n + 1]` with `if … then break` emits a
+`ForInStep.done`, which is exactly and only the excluded case. The wall was
+never "a loop has no theory"; it was "a `break` has no fold".
+
+**What landed: a reader, not a refactor.** `LeanTex/Core/Loop.lean`, five
+theorems, no mention of the engine, no loop changed shape:
+
+- `forIn_inv` — a state invariant survives `break`. `ForInStep.value` reads
+  the state out of `done` and `yield` alike, so the two exits are one
+  channel for a safety property. Induction on the list, one `ForInStep`
+  case split, eleven lines.
+- `forIn_array_inv`, `forIn_range_inv` — the two shapes written here, over
+  `Array` and over `[lo:hi]`. The range form hands the step `lo ≤ i` and
+  `i < hi`, which is how a body that reads `xs[i]` is discharged.
+- `bind_eq_of_inv`, `bind_of_inv` — the composition, and the part that
+  makes it usable. An engine function is not one loop but a chain of them
+  inside one `Id.run do`, and these peel one loop off the front: the
+  invariant discharges it, and the goal becomes the rest of the block over
+  an arbitrary state the invariant holds of.
+
+The shape of `bind_eq_of_inv` is load-bearing and was arrived at by
+measurement, not taste. The natural form — `Q (do let s ← forIn …; k s).run`
+for a predicate `Q` — cannot be applied: `?Q` occurs only applied to the
+whole block, which is not a Miller pattern, and both `apply` and `refine`
+fail to split it (measured: "could not unify the conclusion"). Stating the
+conclusion as an **equation**, `(L >>= k).run = r`, makes the unification
+first-order — `?L >>= ?k` against the block — so `refine` finds the loop
+and its continuation without either being spelled out. That is the whole
+trick, and it is why a chain of three loops costs three lines.
+
+Two prerequisites for using it, both found the hard way. The block must be
+zeta-reduced first (`simp only [f]` on the function's own name does it;
+`unfold` leaves a `have`-chain that `split` cannot see through — the same
+trap the elabBlocks knot records). And the invariant's predicate must be
+type-annotated at the tuple (`fun (st : Array Bool × Nat) => …`), or the
+projection cannot be resolved.
+
+**Discharged, two walls, to show it is a method and not a refactor.**
+
+`floorChars_id` (the `Ir.floorChars`/`floorMask` wall). `floorMask` is
+three index loops over a mutable `Array Bool`: the naming-argument scan,
+the whitespace squeeze, the trailing trim. Under the statement's
+hypothesis — no backslash, no markup character, no whitespace — the
+invariant is one line, `keep = Array.replicate n true`, and each loop
+preserves it because the branch that would drop an index is unreachable.
+The pleasing part is the trim: its cursor descends from `n` and nothing in
+the invariant bounds it, but the loop's own `survives` test reads
+`keep[last-1]?`, and for an all-true mask that answers `true` only inside
+the array — so the loop supplies the bound that makes its character
+readable. Nothing about `floorMask` changed. Staged in `Obligations.lean`
+with a real proof rather than moved, because `Ir.lean` is held by another
+agent this wave; it goes beside `floorChars_mem`, whose converse it is.
+
+`themeAsking_candidates` (the Compat argument-reading wall) — proved in
+`LeanTex/Core/Compat.lean`, its owner. This row's blocker said the
+statement is closed and finite but "does not reduce in the kernel, so
+`decide +kernel` cannot discharge it", and asked for an argument-reading
+layer over `Array Raw`. Both halves were right about the diagnosis and
+wrong about the remedy: what the statement needs is not a new layer but the
+existing readers unfolded by `simp`/`rw` rather than by the kernel.
+`skipSpaces` is well-founded and `rw [skipSpaces]` steps it; `takeOpt` and
+`takeGroups` are `Id.run do` loops that `simp` reduces once the index is
+concrete; `rawSrc` is a mutual recursion whose three arms `simp` takes;
+`styCandList` needs `rw`, not `simp` (the name alone does not fire), and
+yields its two overlapping-pattern side goals, which are `cn ≠ "usepackage"`
+and `cn ≠ "RequirePackage"`. The registry's five rows then follow from one
+parameterised lemma. No new layer was written, and the five-row
+quantification is now a theorem instead of an oracle; `themeAskingChecks`
+stays as the floor.
+
+**Two statements in the queue are false. Both have witnesses.**
+
+`parentTree_covers` — machine-checked. `es` is arbitrary and `fillKid`
+passes a pre-existing `.mcid` kid through unchanged, so:
+
+```lean
+es = #[{ s := "Document", kids := #[.mcid 0 0] }], n = 0, marks = #[]
+-- leafKids es = [], so hnodup/hlt hold vacuously and hpos is vacuous;
+-- .mcid 0 0 ∈ (fill es _)[0].kids; parentTreeOf #[] _ = #[], whose [0]? is none
+```
+
+The engine never builds such an `es` — `skeleton` emits only `.elem` and
+`.leaf` kids — which is precisely the hypothesis the statement omits. The
+corroboration is that the same gap was already seen once and named: the
+proved `structKids_mem`, three declarations above it in the same file,
+carries the `.mcid` case as an explicit disjunct. The repair is the
+owner's: add the freshness hypothesis, or range the statement over
+`skeleton t`.
+
+`place_order_agree` — executable evidence, not a theorem, because the
+kernel does not reduce `evalFixed` (`decide +kernel` reports stuck, so this
+is an oracle and is labelled one). `a` and `b` range over *arbitrary*
+statements while `Ev.nodes` is a list kept latest-first that `lookup` reads
+front-first, so two `\node` statements naming the same node are
+order-sensitive by construction: with `a = \node (n) at (0,0) {}` and
+`b = \node (n) at (2,3) {}`, `lookup "n"` answers `(3715426, 5573139)` for
+`[a, b]` and `(0, 0)` for `[b, a]`. The docstring says "two independent
+node statements"; the statement does not. Independence is the missing
+hypothesis — neither statement defines a name the other defines or reads,
+which a `.set` macro pair breaks the same way one channel over.
+
+**What the method does not reach, stated so it is not mistaken for more.**
+A pure invariant is blind to how much of the input the loop has consumed.
+It proves a `_covers`-shaped safety claim, a membership, a monotonicity, an
+identity-under-a-hypothesis — and it cannot express a census, because a
+census is a statement about the prefix. So the seventeen rows are not one
+cluster but four, and only the first is now open:
+
+1. **Safety over a broken loop** — readable in place today. The six Layout
+   rows' remaining half, `frame_pages_footed`, `contrast_judged_complete`,
+   and the diagnostic-monotonicity halves of `reflow_named`,
+   `pictureKeys_named` and `nameRefusals_asked` are all this shape
+   ("every page closed so far carries a foot", "the diagnostics so far
+   contain d"). They are blocked now only on being *spelled* where the
+   private state is nameable — inside Layout, inside Elab — and exported as
+   the corollary the queue reads. That is a statement to write, not a
+   factorization to find.
+2. **Census over a loop** — needs a progress-indexed invariant,
+   `P (prefix consumed) state`, whose conclusion at a `break` is a prefix
+   rather than the whole input. `emission_conservation_paras`,
+   `lines_attributed_text`, `nodeLabel_mem` and `warnOnce_sites_exact` are
+   here. The indexed form is a natural sibling of `forIn_inv` and is not
+   yet written; it was not needed by either discharge, so it is not
+   speculatively added.
+3. **Round trip / codec** — `inflate_deflate_id`,
+   `decodeBin_encodeBin_id`, `write_readXref_exact`. The loops were never
+   the wall: these are value claims about two inverse encodings, and no
+   invariant over a loop state supplies a symbol-level or field-level
+   commutation. `decodeBin`'s loops are also in `Option`, not `Id`, so the
+   layer would need a monadic postcondition form before it even applied.
+   The blockers now say so.
+4. **Recursion with retroactive mutation** — `skeleton_leafKids_nodup`'s
+   `skelList`/`skelStep` through `Array.modify`. Not a loop at all, and
+   `skelList_headings` in the same file is already the template. Reading
+   that template against this row corrected the row's own plan in three
+   ways, recorded in its blocker: the stated equality *cannot* hold
+   (`addKid` is `Array.modify`, so a leaf lands mid-array and the census
+   order is not `leafKids es ++ new` — the induction wants `List.Perm`,
+   which is all `Nodup` needs); the induction needs `holder < es.size` as a
+   hypothesis, since `Array.modify` out of bounds is the identity and a
+   leaf would silently vanish; and the id census it compares against is a
+   new aside-skipping walk whose `Nodup` comes from `structTree_leaves_id`
+   through a sublist argument, a second induction the row had not named.
+
+`macroDecls_fixed_point` is a fifth shape and its own thing — a pigeonhole,
+no loop — and its blocker is sharpened too: the argument cannot be "every
+round grows the selection", because a round adds every control name a
+selected body spells and most of those name no macro, so `ns` grows while
+the selection stands still. What is true is that a round which does not
+grow the selection makes the *next* round the fixed point outright, so
+there is at most one wasted round and it is the last. That is what makes
+`macros.size` rounds enough, and it is the statement the induction should
+be written against.
+
+**The discipline, one row in AGENTS.md's obligation table.** A loop whose
+statement will be read through an invariant names it where it stands, so
+the next loop is statable by construction rather than by archaeology.
+
+Evidence: `lake build` and `lake build Obligations` clean, zero warnings;
+`lake test` green; `precommit`, `cites --check` and the owed ratchet green;
+the queue is 26 rows, down two. `scripts/bench.lean` was not run and is not
+owed: no executable code changed — `Loop.lean` is five theorems, `Compat`
+gained two, and `Obligations` is outside the build. No goldens move.
