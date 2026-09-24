@@ -235,6 +235,35 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — a `(` where an operation would begin is the next path, not the
+end of the picture's. `\path (a) edge (b) (c) edge (d);` is how a pgf author
+writes several edges of one diagram in one statement (manual §14: a path
+ends at its last coordinate, and a coordinate standing where an operation
+would begin opens a new subpath). The evaluator read one chain, met the
+second `(` where it wanted `--` or `to`, and refused — and the refusal was
+the whole statement's, so a four-edge diagram in the private reference
+corpus shipped its four labels and none of its edges (node-label-floor,
+second unit).
+
+The split is at the *statement machine*, not in the evaluator: `subpaths`
+cuts the accumulated tokens at each boundary and the machine emits one
+statement per slice, so each subpath reaches `evalDraw` as the single chain
+it already reads and the evaluator needs no change at all. Two things ride
+with it — the statement's option bracket, which belongs to every slice (a
+`\path[draw=blue]` of four edges draws four blue ones), and the pending
+`\foreach` headers, which now wrap the *list* of slices rather than one
+statement, since they are one statement's worth of work either way
+(`PSt.finishMany`).
+
+The boundary test is depth, not the character: a `(` inside a coordinate
+(`(max(1,2),0)`) is not a subpath boundary, and only a `(` whose previous
+non-space token closed a group at the outer level is. One slice always comes
+back, so a statement with no boundary is byte-identical work, and a
+malformed one still reaches the evaluator and is still named — the split may
+not turn a refusal into silence, which is the row `pictureSubpathChecks`
+ends with. Measured: W0334 on the reference corpus falls from five firings
+to four, and the four edges are on the page.
+
 2026-09-24 — a node label degrades to its words, never to nothing. The
 native-node slice drew nodes but read their bodies strictly: `contentOf`
 returned an error for the first token outside the subset, and the caller

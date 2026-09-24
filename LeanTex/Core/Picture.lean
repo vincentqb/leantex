@@ -464,18 +464,77 @@ private structure PSt where
   pending : Array (Array String × Array Tok) := #[]
   mode : Mode := .top
 
+/-- A `\draw`/`\path` statement's subpaths. A path ends at its last
+coordinate, so a `(` standing where an *operation* would begin starts a new
+subpath: `\path (a) edge (b) (c) edge (d);` is two paths, and that is how a
+pgf author writes several edges of one diagram in a single statement (pgf
+manual §14, the path operations). Split here, at the statement machine, so
+each subpath reaches the evaluator as the single chain it already reads; the
+option bracket belongs to the statement, so it rides on every slice.
+
+One slice always comes back, so a statement with no boundary in it is
+unchanged — and a malformed one still reaches the evaluator, which names
+it. -/
+def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
+  -- The leading option bracket, which every subpath inherits.
+  let mut head := 0
+  for _ in [0:acc.size + 1] do
+    if acc[head]? == some .space then head := head + 1 else break
+  let mut pre : Array Tok := #[]
+  if acc[head]? == some (.sym '[') then
+    let mut j := head
+    for _ in [head:acc.size + 1] do
+      if h : j < acc.size then
+        pre := pre.push acc[j]
+        j := j + 1
+        if acc[j - 1]? == some (.sym ']') then break
+      else break
+    head := j
+  let mut slices : Array (Array Tok) := #[]
+  let mut cur : Array Tok := #[]
+  -- Whether the last token that was not a space closed a group at the
+  -- outer level: only there does a following `(` begin a coordinate rather
+  -- than continue one.
+  let mut depth := 0
+  let mut closed := false
+  for k in [head:acc.size] do
+    if h : k < acc.size then
+      let t := acc[k]
+      if t == .sym '(' && closed && depth == 0 then
+        slices := slices.push cur
+        cur := #[t]
+        depth := 1
+        closed := false
+      else
+        cur := cur.push t
+        match t with
+        | .sym '(' =>
+          depth := depth + 1
+          closed := false
+        | .sym ')' =>
+          depth := depth - 1
+          closed := depth == 0
+        | .space => pure ()
+        | _ => closed := false
+  slices := slices.push cur
+  let out := slices.filterMap fun s =>
+    if s.isEmpty then none else some (s.foldl Array.push pre)
+  return if out.isEmpty then #[acc] else out
+
 /-- Close one finished statement: wrap it in every pending `\foreach`
 header (an unbraced body is one statement), emit, reset. -/
-private def PSt.finish (st : PSt) (s : Stmt) : PSt := Id.run do
-  let mut s := s
+private def PSt.finishMany (st : PSt) (ss : List Stmt) : PSt := Id.run do
+  let mut ss := ss
   let mut pending := st.pending
   for _ in [0:st.pending.size] do
     match pending.back? with
     | some (vars, list) =>
-      s := .foreach vars list [s]
+      ss := [.foreach vars list ss]
       pending := pending.pop
     | none => break
-  return { st with out := st.out.push s, pending := #[], mode := .top }
+  return { st with out := ss.foldl Array.push st.out, pending := #[], mode := .top }
+
+private def PSt.finish (st : PSt) (s : Stmt) : PSt := st.finishMany [s]
 
 private def PSt.diag (st : PSt) (code : DiagCode) (msg : String) : PSt :=
   if st.bad.any (·.2 == msg) then st
@@ -508,11 +567,11 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .group _ => { (st.outside "'{...}'") with mode := .skip }
   | .stmt kind acc =>
     match t with
-    | .sym ';' => st.finish (match kind with
-        | .fill => .fill acc
-        | .node => .node acc
-        | .draw => .draw acc
-        | .path => .path acc)
+    | .sym ';' => match kind with
+        | .fill => st.finish (.fill acc)
+        | .node => st.finish (.node acc)
+        | .draw => st.finishMany ((subpaths acc).toList.map Stmt.draw)
+        | .path => st.finishMany ((subpaths acc).toList.map Stmt.path)
     | _ => { st with mode := .stmt kind (acc.push t) }
   | .sname trunc =>
     match t with

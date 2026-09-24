@@ -4754,6 +4754,62 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the diagram's edge ships beside its labels"
     ((c11[0]?.map (·.paths == 1)).getD false)
 
+/-- **A `(` where an operation would begin starts a new subpath**
+(`Picture.subpaths`). A pgf author writes several edges of one diagram in a
+single statement — `\path (a) edge (b) (c) edge (d);` — and the evaluator
+read one chain, so the `(` that opened the second edge was a construct
+outside the subset and the whole statement went with it: four edges of a
+real diagram, lost to one token. Read off the shipped strokes, since the
+claim is that the page carries them. -/
+def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let pic (body : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let run (body : String) : Array CensusPage × Array Diag :=
+    let (doc, ds) := elabStr (pic body)
+    (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
+  let nodes :=
+    "\\node (a) {P};\\node (b) [right =of a] {Q};\n" ++
+    "\\node (c) [below =of a] {R};\\node (d) [below =of b] {S};\n"
+  let (c1, ds1) := run (nodes ++ "\\path (a) edge (b) (c) edge (d);\n")
+  t "a two-subpath path elaborates with nothing refused"
+    (ds1.all (·.severity == .note))
+  t "both subpaths of one path statement ship a stroke"
+    ((c1[0]?.map (·.paths == 2)).getD false)
+  -- Four in one statement, the shape the deck writes.
+  let (c2, ds2) := run (nodes ++
+    "\\path (a) edge (b) (c) edge (d) (a) edge (c) (b) edge (d);\n")
+  t "four subpaths in one statement ship four strokes"
+    (ds2.all (·.severity == .note) && (c2[0]?.map (·.paths == 4)).getD false)
+  -- The option bracket belongs to the statement, so it reaches every slice.
+  let (c3, _) := run (nodes ++
+    "\\path[draw=blue] (a) edge (b) (c) edge (d);\n")
+  t "the statement's option bracket rides on every subpath"
+    ((c3[0]?.map fun p =>
+      p.pathStrokes.size == 2 &&
+        p.pathStrokes.all fun (col, _) => col == { r := 0, g := 0, b := 255 }).getD false)
+  -- A `--` chain is one path, not two: only a `(` standing where an
+  -- operation would begin is a boundary.
+  let (c4, ds4) := run "\\draw (0,0) -- (1,0) -- (2,0);\n"
+  t "a chained line stays one path"
+    (ds4.all (·.severity == .note) && (c4[0]?.map (·.paths == 1)).getD false)
+  let (c5, ds5) := run "\\draw (0,0) -- (1,0) (2,0) -- (3,0);\n"
+  t "two coordinate chains in one draw ship two paths"
+    (ds5.all (·.severity == .note) && (c5[0]?.map (·.paths == 2)).getD false)
+  -- A nested paren inside a coordinate is not a boundary either.
+  let (c6, ds6) := run "\\draw (max(1,2),0) -- (3,0);\n"
+  t "a nested paren inside a coordinate is not a subpath boundary"
+    (ds6.all (·.severity == .note) && (c6[0]?.map (·.paths == 1)).getD false)
+  -- A statement the split leaves malformed still reaches the evaluator,
+  -- which names it: the split may not turn a refusal into silence. Under
+  -- the declared refusal, so the subset's own diagnostics stand rather than
+  -- the boundary's note.
+  let (_, ds7) := elabStr ("\\pictures{ tool = none }" ++ pic "\\draw (0,0);\n")
+  t "a path with one endpoint is still named, not silently dropped"
+    (ds7.any fun d => d.code == "E0333")
+
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is
 not a slot the engine chose wrongly — it is a picture that drew nothing
