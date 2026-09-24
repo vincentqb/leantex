@@ -265,8 +265,16 @@ there the body is one upright word, so the command contributes its letters
 and the styling is named as lost. At the formula's own level these resolve
 through `alphaCtrl` instead, with no loss. -/
 def textStyleCtrl : List String :=
-  ["textbf", "textit", "textsf", "texttt", "textrm", "textnormal", "textup",
-   "textsc", "emph", "text", "mbox", "bf", "it", "rm", "sf", "tt"]
+  ["textbf", "textit", "textsf", "texttt", "textsc", "emph",
+   "bf", "it", "sf", "tt"]
+
+/-- Wrappers that ask for upright roman, which is already what `\text`'s
+body sets: inside it they lose nothing, so they contribute their letters
+and say nothing. Keeping them out of `textStyleCtrl` is what stops a
+`degraded` code from firing over a no-op and failing a `--werror` run for
+it — one code, one meaning, and the meaning is a loss. -/
+def textNeutralCtrl : List String :=
+  ["text", "mbox", "textrm", "textup", "textnormal", "rm"]
 
 /-- The math accent commands: the combining mark set over the base
 (unicode-math's accent table — `\hat` is U+0302), and whether it
@@ -804,6 +812,8 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
             j := j'
           else if textStyleCtrl.contains n then
             notes := notes.push (.styleDropped s!"'\\{n}'")
+            j := afterCmd (j + 1)
+          else if textNeutralCtrl.contains n then
             j := afterCmd (j + 1)
           else
             match ctrlAtom.lookup n with

@@ -3337,7 +3337,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .math display src =>
     -- Until native MathML lands for what the parser cannot model, the
     -- element's own text is the floor — the formula's content, never its
-    -- markup (`Ir.mathFloor_mem`). The source rides in a data attribute,
+    -- markup (`Ir.floorInk_mem`). The source rides in a data attribute,
     -- where an optional client-side renderer can find it and no reader is
     -- shown a control sequence.
     let tag := if display then "div" else "span"

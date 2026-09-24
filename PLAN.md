@@ -8320,3 +8320,74 @@ is evidence, not a theorem.
   other stacking constructs, an accent inside `\text`, nested math, and any
   control word outside `ctrlAtom`/`ctrlWord`/`alphaCtrl`/`accentCtrl`. All
   of them now reach the floor rather than the page.
+
+
+- 2026-09-24: **the floor's review round — six corrections, and the one the
+  reviewer got wrong is the interesting one.** An independent adversarial
+  read of the two entries above found real defects in both. Recorded because
+  four of them are the same mistake in different clothes: a *one-sided*
+  invariant, where dropping is always safe and so nothing forces the floor
+  to keep anything.
+
+  `floorMask` consumed a naming command's arguments through a pending
+  counter, satisfied by the next `{` anywhere. Three inputs broke it, all
+  silently, none violating the stated theorem: `\rule{1pt}{2pt}` shipped
+  `2pt` (only the first of two names was dropped, so `floorNamedArgs`
+  carries an arity now), `\textcolor[rgb]{1,0,0}{x}` shipped `rgb` (an
+  option run is not a brace group, so the counter was spent on the colour
+  triple — the run is skipped *and marked*, since skipping without marking
+  was the first version of this fix and left `[rgb]` on the page), and
+  `\color\textcolor{red}{x}` deleted `x` itself, the formula's only content,
+  with two pending drops each taking one group. Arguments are consumed
+  positionally at the command now, and `depth` as an assignment rather than
+  an increment is gone with the counter.
+
+  The empty floor was the largest of these. `$\overset{\alpha}{\beta}$` is
+  markup and symbol commands end to end, so its content characters are none:
+  the page shipped a blank while W0012 reported that the content had been
+  set. A blank is not an honest floor either — it tells a reader nothing was
+  there — so `mathFloorPlaceholder` (`[…]`) ships instead, and
+  `floorInk_accounts` is the statement that the case is never silent. This
+  is the registered `_accounts` shape doing exactly what it is for: an empty
+  result paid for by a write.
+
+  The theorem was renamed and its docstring corrected, because it claimed
+  more than it holds. `floorInk_mem` (was `mathFloor_mem`) is proved from
+  `List.mem_filterMap` alone: `floorMask` appears nowhere in it, so it holds
+  for a mask that dropped every character. It is an upper bound — nothing
+  invented, no markup — and it could not have caught the defect the earlier
+  entry credited it with catching. The lower bound is now executable
+  evidence in `recoveryChecks`, pinned as whole strings (`"$\overset{abc +
+  12}{d}$"` floors to exactly `abc + 12d`) rather than as absences, and one
+  of those two tests failed on the first run, which is the point of writing
+  them that way. AGENTS asks that a claim say which of the two it has; the
+  docstring now does, in the theorem itself.
+
+  W0385 fired where nothing was lost. Five of the sixteen names in
+  `textStyleCtrl` — `text`, `mbox`, `textrm`, `textup`, `textnormal` — ask
+  for upright roman, which is already what `\text`'s body sets, and a
+  `degraded` code reporting a non-loss dilutes its one meaning and fails a
+  `--werror` run for free. They are `textNeutralCtrl` now: letters kept,
+  nothing said.
+
+  The corpus ink watch is per character, not per fixture. `inkMarkupExempt`
+  was `List String`, so a fixture that legitimately rendered one character
+  would have excused itself from all three.
+
+  **Where the review was wrong, and why it matters.** It read two further
+  leaks: `\backslash` and `\{` inside `\text`, and the same scalars reaching
+  `formulaFloor`, both shipping a character on `markupChars`. Neither is a
+  leak. `\backslash` *is* LaTeX's spelling for the backslash glyph and `\{`
+  for the brace, and a parsed atom's scalar is content by the parser's own
+  decision — filtering them would delete what the author asked for, and the
+  pre-change behaviour (throw, warn, strip) was the worse of the two. The
+  invariant is about markup *leaking*, and the discriminator is provenance,
+  not the character: `markupChars` governs salvage from a source string,
+  where no parse decided anything, and `formulaFloor` runs no filter at all.
+  The tests pin this now (`$\backslash + \{x\}$` ships both glyphs, warning
+  nothing), and it is exactly why the ink watch needed the per-character
+  exemption: the watch is a character heuristic over a provenance rule, and
+  a fixture that renders `\{` will one day need its row. That the review
+  reached for the character is a fair warning that the rule is easy to
+  misread, which is what the docstrings on `markupChars` and `formulaFloor`
+  now say out loud.

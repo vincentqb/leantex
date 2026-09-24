@@ -1567,13 +1567,34 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- its text content, never to its markup. Setting a formula's source as
   -- body ink is the worst recovery there is — a reader sees control
   -- sequences where an equation belongs — so the floor drops the markup and
-  -- keeps what was content (`Ir.mathFloor_mem`). The construct is still
+  -- keeps what was content (`Ir.floorInk_mem`). The construct is still
   -- named by W0012; the loss is announced, not shown.
   let deg := pageText "$\\overset{?}{=}$"
   t "a degraded formula ships no control sequence"
     (!has deg "\\" && !has deg "{" && !has deg "}" && !has deg "overset")
   t "a degraded formula keeps its text content"
     (has deg "?" && has deg "=")
+  -- The lower bound the theorem does not reach: content survives the mask,
+  -- and exactly the markup goes. `floorInk_mem` is an upper bound — it
+  -- holds for a mask that dropped everything — so these are the executable
+  -- half, pinned as whole strings rather than as absences.
+  t "a plain content run passes through the floor unchanged"
+    (pageText "$\\overset{abc + 12}{d}$" == "abc + 12d")
+  t "exactly the command and its braces go"
+    (pageText "$\\overset{a}{b}$" == "ab")
+  t "a naming command's argument goes, the next one stays"
+    (pageText "$\\overset{\\textcolor{indigo}{q}}{r}$" == "qr")
+  t "both lengths of a two-name command go"
+    (pageText "$\\overset{\\rule{1pt}{2pt}x}{y}$" == "xy")
+  t "a naming command's option run goes with its name"
+    (pageText "$\\overset{\\textcolor[rgb]{1,0,0}{s}}{t}$" == "st")
+  t "a second naming command does not eat the content group"
+    (pageText "$\\overset{\\color{red}\\textcolor{blue}{u}}{v}$" == "uv")
+  -- A formula that is markup and symbol commands end to end salvages
+  -- nothing, and a blank page is not an honest floor either: the declared
+  -- placeholder ships instead (`Ir.floorInk_accounts`).
+  t "a formula with no content characters ships the declared placeholder"
+    (pageText "$\\overset{\\alpha}{\\beta}$" == "[…]")
   -- A colour name is the markup of `\textcolor`, not content: it may not
   -- appear on the page even though it stands inside a brace group.
   let col := pageText "$\\overset{\\textcolor{indigo}{q}}{=}$"
@@ -1584,10 +1605,11 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "a degraded alignment ships no tab or script mark"
     (!has tab "&" && !has tab "_" && !has tab "\\" && has tab "c")
   -- Without a math face a formula the engine *can* model still sets as
-  -- text (W0003) — the same floor applies, so that path cannot leak markup
-  -- either.
+  -- text (W0003) — the same policy applies, so that path cannot leak
+  -- markup either; there the floor is the parsed glyph text.
   t "the no-math-face floor ships no control sequence"
-    (let s := pageText "$\\alpha^2$"; !has s "\\" && !has s "alpha")
+    (let s := pageText "$\\alpha^2$"
+     !has s "\\" && !has s "alpha" && has s "2")
 
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top

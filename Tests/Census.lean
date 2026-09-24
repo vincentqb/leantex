@@ -812,7 +812,8 @@ def censusTable :
     ("no page of this fixture ships a control sequence",
       !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"
         && !hasStr (censusText c) "textbf")]),
-  ("math-companion", fun _ c => [    ("one page", c.size == 1),
+  ("math-companion", fun _ c => [
+    ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
     ("the display sum ships as a glyph", hasStr (censusText c) "∑"),
     ("the fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1),
@@ -1040,30 +1041,34 @@ a brace is the unambiguous signature of a page showing its source, and no
 fixture ships one as content. -/
 def inkMarkupWatch : List Char := ['\\', '{', '}']
 
-/-- Fixtures whose shipped ink may carry a markup character, each named
-with the reason it is content there — a listing that quotes TeX source
-would belong here. Empty: nothing in the corpus legitimately shows LaTeX
-punctuation as ink, so the watch below runs with no exemption. Adding a
-name is a deliberate decision, visible in review; a recovery path that
-starts leaking markup cannot quietly join the list. -/
-def inkMarkupExempt : List String := []
+/-- Fixtures allowed to ship a named markup character as ink, per
+character, each with the reason it is content there. Per character and not
+per fixture: `\{` is the author asking for a brace glyph and a formula that
+uses it ships one legitimately, but that says nothing about a backslash on
+the same page, and a whole-fixture exemption would have excused both.
+
+Empty: nothing in the corpus renders one today. Adding a row is a
+deliberate decision, visible in review; a recovery path that starts leaking
+markup cannot quietly join it. -/
+def inkMarkupExempt : List (String × List Char) := []
 
 /-- The channel that watches the recovery floor on the artifact: no page of
 any golden fixture ships a LaTeX markup character as ink. This is the
-page-facing half of `Ir.mathFloor_mem` — the IR states that a degraded
-formula's floor is a markup-free subsequence of its source, and this reads
-the shipped glyph runs of every fixture to say the page honours it. It is
-deliberately wider than math: any future diagnostic whose recovery sets
-its own source as body text fails here, not only where it was introduced.
-The corpus had exactly one offender when this went in, the W0012 math
-recovery. -/
+page-facing half of `Ir.floorInk_mem` — the IR states that a degraded
+formula's ink is markup-free and drawn from its source or the declared
+placeholder, and this reads the shipped glyph runs of every fixture to say
+the page honours it. It is deliberately wider than math: any future
+diagnostic whose recovery sets its own source as body text fails here, not
+only where it was introduced. The corpus had exactly one offender when this
+went in, the W0012 math recovery. -/
 def inkMarkupChecks (ref : IO.Ref (List String)) (n : String)
     (c : Array CensusPage) : IO Unit := do
-  if inkMarkupExempt.contains n then return ()
+  let allowed := ((inkMarkupExempt.find? (·.1 == n)).map (·.2)).getD []
   let text := censusText c
   for ch in inkMarkupWatch do
-    check ref s!"census {n}: ships the markup character '{ch}' as ink"
-      (!text.any (· == ch))
+    unless allowed.contains ch do
+      check ref s!"census {n}: ships the markup character '{ch}' as ink"
+        (!text.any (· == ch))
 
 /-- The census tier: every golden fixture also appears in `censusTable`,
 and each row's facts hold on the pages the engine actually ships. A

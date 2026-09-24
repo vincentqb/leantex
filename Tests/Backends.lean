@@ -94,7 +94,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let p := page "$\\overset{?}{=}$"
      ((p.splitOn "<span class=\"math\" data-tex=").length ≥ 2))
   -- The HTML half of the recovery floor: the element's visible text is the
-  -- floor (`Ir.mathFloor_mem`), the source rides only in data-tex where the
+  -- floor (`Ir.floorInk_mem`), the source rides only in data-tex where the
   -- opt-in client renderer finds it. The two backends read the one IR
   -- function, so a reader of either artifact is shown content, not markup.
   t "an unparsed construct's element text is its floor, not its source"
@@ -1171,6 +1171,25 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((((html.splitOn "<svg").drop 1).all fun s =>
         (((s.splitOn ">").headD "").splitOn "pt").length == 1) &&
      has "vw; height:" && has "dvh\"")
+  -- An SVG picture label carries inline content, and math it cannot model
+  -- reaches the same floor the prose path does: the label's <tspan> shows
+  -- content, never a control sequence (`Ir.floorInk_mem`). This is the
+  -- assertion the backend emission owes — the shipped-page census reads
+  -- `Layout.Out`, so the SVG label is outside it and would otherwise be
+  -- watched by nothing.
+  let labelDeck := dvDeck "" ("\\begin{frame}{Labelled}\n" ++
+    "\\begin{tikzpicture}\n" ++
+    "\\node at (0,0) {$\\overset{\\textcolor{indigo}{q}}{=}$};\n" ++
+    "\\end{tikzpicture}\n\\end{frame}")
+  let labelHtml := (HtmlDoc.emit {} (elabStr labelDeck).1).1
+  t "an SVG label's math shows its floor, never its markup"
+    (let spans := (labelHtml.splitOn "<tspan").drop 1
+     !spans.isEmpty &&
+       spans.all (fun s =>
+         let inner := ((s.splitOn ">").drop 1).headD ""
+         let shown := (inner.splitOn "<").headD ""
+         !(shown.any (fun c => Ir.markupChars.contains c))) &&
+       ((labelHtml.splitOn "indigo").length == 1))
   -- The flow reading, untouched: pt for the absolute length and the
   -- scale, % for the fraction, the intrinsic size for the textheight
   -- fraction (no CSS analog on paper).

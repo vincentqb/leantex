@@ -708,7 +708,8 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
       leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
   | .formula d src body =>
     simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
-      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]  | .styled style body =>
+      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
+  | .styled style body =>
     match style with
     | .lang tag =>
       simp only [inlineRaw, leafTextList_push, leafTextOne_node_exact, plainTextOne]

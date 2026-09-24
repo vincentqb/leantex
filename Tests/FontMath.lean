@@ -1031,7 +1031,7 @@ suppression, the italic/upright convention, and that nothing is silently
 dropped: a glyph the math face lacks earns E0405 naming it, a document with
 no math face earns one W0003 and its formulas set as their glyph text, and
 every out-of-scope construct earns a code naming it while its text content
-survives — never its markup (`Ir.mathFloor_mem`). -/
+survives — never its markup (`Ir.floorInk_mem`). -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -1229,6 +1229,24 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "equation* is display math"
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
+  -- A parsed formula's scalars are content by the parser's own decision, so
+  -- `\backslash` and `\{` ship their glyphs: that is the author asking for
+  -- the character, not markup leaking. The distinction is provenance, not
+  -- the character — which is why `markupChars` governs salvage from a
+  -- source string and `formulaFloor` runs no filter, and why the corpus ink
+  -- watch is per character (`inkMarkupExempt`) rather than per fixture.
+  t "a formula asking for a backslash or a brace ships the glyph"
+    (warnCodes "$\\backslash + \\{x\\}$" == [] &&
+      (glyphChars "$\\backslash$").contains '\\' &&
+      (glyphChars "$\\{x\\}$").contains '{')
+  -- The style-neutral wrappers lose nothing inside \text, so they say
+  -- nothing: a degraded code firing over a no-op would fail --werror for
+  -- free and dilute the one meaning W0385 carries.
+  t "an upright wrapper inside \\text names no loss"
+    (warnCodes "$\\text{\\textrm{plain} word}$" == [] &&
+      warnCodes "$\\text{\\mbox{boxed} word}$" == [] &&
+      glyphChars "$\\text{\\textrm{plain} word}$" ==
+        glyphChars "$\\text{plain word}$")
   -- What still is not modelled keeps its text content and its name.
   t "an out-of-scope construct degrades to its content and warns by name"
     (warnCodes "$\\overset{?}{=}$" == ["W0012"] &&

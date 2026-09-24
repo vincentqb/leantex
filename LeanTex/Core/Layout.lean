@@ -1178,7 +1178,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- elaborator warned by name, and here the floor sets as plain text — the
   -- formula's content, never its markup. Setting the source instead put
   -- control sequences on the page where an equation belonged; `mathFloor`
-  -- is the one policy both backends read, and `Ir.mathFloor_mem` states
+  -- is the one policy both backends read, and `Ir.floorInk_mem` states
   -- what it guarantees.
   | .math _ src => pushText st sty (Ir.mathFloor src)
   | .formula display _ body =>
