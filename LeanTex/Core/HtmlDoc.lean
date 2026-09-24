@@ -753,6 +753,13 @@ about 1/8 to 1/10 of the slide; the default takes the upper bound, 1/8,
 as `--titleband`'s engine value. -/
 private def titlebandVar : String := "var(--titleband, 12.5dvh)"
 
+/-- A named step as a CSS factor, through the one resolving site: a
+per-mille base makes `Ir.scaleStep` report the step itself, so the bar's
+type reads the scale the PDF sets from rather than a second reading of the
+table. -/
+private def stepFactor (name : String) : String :=
+  milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -785,18 +792,31 @@ def themeCss (doc : Doc) : String :=
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
+    -- The bar sets at the title's own step, so `frametitlepadding` — an em
+    -- of the title size, `\ht\strutbox` measured after
+    -- `\usebeamerfont{frametitle}` — resolves here against the size it is
+    -- defined in, exactly as `collectFrameTitle` resolves it at
+    -- `titleSize`. Without the declared size the em would resolve against
+    -- the body base and the bar would come out at the body's 0.84em where
+    -- the PDF pays the title's; the inner h2 drops to `1em` in the deck's
+    -- own override so the step is paid once, not squared.
+    s!"  font-size: {stepFactor "Large"}rem;\n" ++
     -- The bar owns no space below: the frame body's first block pays its
     -- own gap (`blockGapCss`), one emitter per boundary.
-    s!"  margin: -{slidePadV} -{slidePadH} 0; padding: {quantaRem 1} {slidePadH};\n" ++
+    s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
+    s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
-    "section.slide > header h2 { color: inherit; }\n" ++
+    "section.slide > header h2 { color: inherit; font-size: 1em; }\n" ++
     -- On the paged deck the slide is the viewport, cornerless: the bar
     -- squares off with it and bleeds through the safe-area padding,
     -- negating exactly the token the slide pads by.
     (if doc.docClass == .slides then
       "@media screen { section.slide > header { border-radius: 0;\n" ++
+      -- The deck sets type on `main` in `vh`, so the bar retakes the title
+      -- step in `em` to ride the stage rather than pinning to the root.
+      s!"  font-size: {stepFactor "Large"}em;\n" ++
       s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
-      s!"  padding: {quantaRem 1} {safeareaVar}; } }\n"
+      s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n"
      else "") else "") ++
   -- The headline band: the poster page's <header>, a flex row of the two
   -- corner-logo slots around the title matter. Colours are the same

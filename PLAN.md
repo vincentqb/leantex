@@ -11133,3 +11133,105 @@ by name. The gate over the whole tree reports every unregistered site and
 goes silent once each is pinned or recorded, and the registry is checked in
 both directions, so an edited condition invalidates its row rather than
 passing quietly on a premise nobody re-read.
+
+
+### 2026-09-24 — a declared token nobody reads is a styling API wired to nothing
+
+The report was that a themed deck's HTML gets the front page and the title
+header bar wrong. The measurement behind it was a scan of the emitted
+stylesheet for tokens declared as custom properties and referenced by no
+rule, and it named nine. Re-measured, three of the nine were already read
+and the scan could not see two of them: it matched `var(--name)` only, so
+`var(--frametitlefg, var(--bg, #fff))` and `var(--separator, #23373b)` —
+both read with fallbacks, which is the backend's normal spelling — were
+reported unread. The bar's foreground was called a defect while the rule
+for it was three lines above the one being blamed. A scan whose pattern
+cannot express the codebase's own idiom will manufacture defects, and the
+cheapest guard is to make the pattern's two forms explicit.
+
+**The honest list is twelve, and it splits.** Over the whole corpus,
+twelve custom properties are declared and read by no rule anywhere. Six
+are document-declared names — `rhythm`, `slab`, `sepunit`, `bind`,
+`grid`, `band`, a fixture's own `\tokens{ … }` — and the engine owes no
+rule for a name it does not define; they are emitted so a host page can
+read them, which is the contract working. The other six are the engine's
+own, declared by the moloch lineage table, and those are the real finding.
+`separator` is the control that proves the split is about carriers rather
+than luck: it is read, because `Ir.Block.rule` names its colour, while
+`separatorheight` sits on the same constructor as a bare glue and is not.
+
+**Five of the six need a carrier neither backend has.** The title page's
+gaps and the separator's thickness are resolved in the elaborator, which
+pushes `Ir.Block.spaced` with a resolved `SymGlue`. The constructor
+carries no token name, so the backend is handed a length and writes a
+length; there is nothing to reference. Wiring them is an IR change — a
+name beside the glue, exactly the field `Ir.Block.rule` already has for
+its colour — and it is recorded rather than done, because inventing a
+carrier from a backend is how a backend starts re-deriving the front end.
+
+**The sixth was the reported defect, and it was the plainest form of the
+violation:** `frametitlepadding` declared, and the bar's padding written
+as the constant `0.725rem` beside it. Fixing it is not a substitution,
+because the token is defined as an em *of the title size* —
+`\ht\strutbox` measured after `\usebeamerfont{frametitle}`, which is where
+`collectFrameTitle` resolves it. Dropped into the old rule the em would
+have resolved against the bar's inherited body size and produced a third
+wrong number, right by the letter of the rule and wrong on the page. So
+the bar now sets at the title's step and the inner `h2` drops to `1em`,
+paying the step once: the token resolves against the size it is defined
+in, and a reader's override is taken literally instead of scaled. The
+deck's screen override retakes the step in `em` rather than `rem`, because
+deck type is set on `main` in `vh` — the old constant was pinned to the
+root and did not scale with the stage at all, a second defect the same
+line was hiding.
+
+**Measured on rendered pages, not on the rule.** A synthetic one-slide
+themed deck at a 1280×720 viewport, its band measured by scanning rows for
+the bar's own colour: 10.0% of the viewport before, 12.4% after, against
+the same document's PDF at 12.3%. The disagreement between the two
+artifacts went from 2.3 points to 0.1. On the print handout the band grew
+58 → 75 raster rows, which is the predicted +0.97rem to within a pixel.
+
+**The invariant is a check, not a theorem, and the reason is worth
+stating.** `htmlTokenClosureChecks` holds every engine token against the
+HTML the whole corpus emits: declared by some fixture, referenced by some
+rule. The union over the corpus is load-bearing in both directions — a
+palette key read only where a title page draws a rule must not be
+accused, and a token read nowhere must not be excused by a fixture that
+happens not to declare it. It is a check because the property is a fact
+about the emitted stylesheet, decidable by reading it.
+
+The `_agree` theorem it wants to be is not statable today, and the
+blocker is structural. `backend_gaps_agree` works because
+`Ir.rhythmGapQuanta` is a declared table and each backend's gap is a
+function of a row, so the theorem quantifies over rows and compares two
+projections. A token's reads are not a value either backend projects: the
+PDF's are `tokens.find?` call sites through `Layout`, the HTML's are
+string literals inside rules. There is nothing to quantify over. The
+carrier that would make it a theorem is a declared per-token read set —
+`rhythmGapQuanta`'s shape, for tokens — and that is named here rather
+than half-built.
+
+**Two sibling reports, resolved against measurement.** The claim that
+`themed.html`'s first slide renders 1280×2400 portrait does not
+reproduce: at a 1280×720 viewport the themed deck's first slide is
+1280×633 and the unthemed deck's is 1280×633, identical, and the document
+box is 8960 wide by 633 tall — wide, so no capture of it is portrait. The
+claim that the frame-title band is "emitted nowhere" is false as stated:
+the element is `section.slide > header` and the rule painting it is
+`background: var(--frametitlebg)`, present, read, and visible on the
+raster. `artBandParityChecks` reports twenty offences because it searches
+for eight class names — `slide-title`, `frame-title`, `titlebar` and
+five more — none of which this backend has ever emitted; its docstring
+says the claim is parity rather than a spelling, and the code tests
+exactly a spelling. Its ratchet is left alone deliberately: deleting rows
+would assert the check now sees a band, and it still does not. The repair
+belongs in its own file, and the parity fact it was reaching for is now
+held by the token closure, which proves `frametitlebg` and
+`frametitlefg` are both read.
+
+Evidence: the check fails on the unfixed tree with exactly six failures
+naming exactly the six engine tokens an independent shell sweep of the
+same 76 pages found, and passes after, with `frametitlepadding` off the
+ratchet. No golden moves — the goldens record IR dumps and no CSS — and
+the reader matrix names neither the header nor the token.

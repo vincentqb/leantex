@@ -74,7 +74,7 @@ reason it is still owed. A ratchet in both directions: a row whose token
 starts being read fails until the row goes, and a token that falls out of
 every rule fails until it is wired or recorded here.
 
-Five of the six are one finding. The title page's gaps and its separator's
+Five of the five are one finding. The title page's gaps and its separator's
 thickness are resolved in the elaborator, which pushes `Ir.Block.spaced`
 with the resolved `SymGlue` and the rule with a bare thickness. Neither
 constructor carries the name of the token the value came from, so the
@@ -84,9 +84,6 @@ already carries one for its colour, which is exactly why `separator` is
 read and `separatorheight` is not — and that is a carrier neither backend
 has today, not a rule this backend is missing. -/
 def htmlUnreadTokenOffences : List (String × String) := [
-  ("frametitlepadding",
-    "the frame-title bar's padding is written as a constant; the token the \
-PDF resolves at the title size is declared and unread"),
   ("separatorheight",
     "the title separator's thickness reaches the backend as a bare glue on \
 Ir.Block.rule, which names its colour but not its thickness"),
