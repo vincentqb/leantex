@@ -2371,6 +2371,124 @@ the box below the anchor the shape declares. -/
 def labelInkBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
   labelInkSpan x y align (max m.w 0) (max (m.height + m.depth) 0)
 
+/-- **Where a label's baseline sits.** The top of its ink box less its
+height — the line placement's own arithmetic, read off one site so the box a
+picture reserves and the baseline a line is set on cannot disagree.
+
+This is the number the wobble is about. Under TeX's node centring the
+baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
+slope ½ and a word with a descender floats up: 1.155 pt between `value`
+and `inventory` in Computer Modern at 10 pt (pgf manual §17.5.1 calls it
+"wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
+are the face's declared cap height and descent at the run's size, never the
+glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
+is content-blind and the wobble is zero. The reference that remains is a
+declared choice, not an accident: the band is cap-to-descent rather than
+cap-to-baseline, which seats every label `depth/2` above where trimming to
+the alphabetic baseline would (css-inline-3 §6's `text-box-trim`);
+`labelBaseline_between` is where that offset is quantified. -/
+def labelBaseline (y : Sp) (align : LabelAlign) (m : LabelInk) : Sp :=
+  (labelInkBox 0 y align m).2.2 - m.height
+
+/-- The baseline is the box's, at whatever x the box was measured at: the
+placement reads `box top − height` and this says that expression is
+`labelBaseline`, so neither can drift from the other without failing here.
+Spelled over bare `Int` binders per arm because `omega` does not read an
+`Sp`-typed goal — the workaround `labelInkSpan_covers_anchor` records. -/
+theorem labelBaseline_box_exact (x y : Sp) (align : LabelAlign) (m : LabelInk) :
+    labelBaseline y align m = (labelInkBox x y align m).2.2 - m.height := by
+  cases align <;> rfl
+
+/-- **A label's baseline does not read its set width.** So the advances of
+the glyphs it sets — which face, which kerning, which characters — cannot
+move it vertically: the horizontal measurement and the vertical placement
+are separate channels, and only the first is a function of the text. The
+companion half, that `height` and `depth` are declared metrics rather than
+ink, is `Layout.label_centre_glyph_free`. -/
+theorem labelBaseline_width_id (y w : Sp) (align : LabelAlign) (m : LabelInk) :
+    labelBaseline y align { m with w := w } = labelBaseline y align m := by
+  cases align <;> rfl
+
+/-- **The uniform seat, quantified.** A centred label's baseline stands
+`(depth − height)/2` from its anchor, to within the single scaled point the
+box's odd unit is assigned by (1 sp = 1/65536 pt). No glyph term appears, so
+this is the *whole* vertical story for a centred label: one number per
+(face, size).
+
+Read the other way it is the cost of the cap-to-descent band: against a
+band trimmed to the alphabetic baseline the label sits `depth/2` higher —
+1.67 pt at 10 pt in Source Serif Pro, 1.46 in Open Sans, 1.32 in Fira Sans.
+Uniform, therefore not a wobble; a reference choice, and the one deliberate
+difference from css-inline-3 §6's `text-box-edge: cap alphabetic`. -/
+theorem labelBaseline_between (y : Sp) (m : LabelInk)
+    (h : 0 ≤ m.height + m.depth) :
+    y + (m.depth - m.height) / 2 ≤ labelBaseline y .center m ∧
+      labelBaseline y .center m ≤ y + (m.depth - m.height) / 2 + 1 := by
+  show y + (m.depth - m.height) / 2
+        ≤ y - (max (m.height + m.depth) 0) / 2 + max (m.height + m.depth) 0 - m.height ∧
+      y - (max (m.height + m.depth) 0) / 2 + max (m.height + m.depth) 0 - m.height
+        ≤ y + (m.depth - m.height) / 2 + 1
+  have step : ∀ a b c : Int, 0 ≤ b + c →
+      a + (c - b) / 2 ≤ a - (max (b + c) 0) / 2 + max (b + c) 0 - b ∧
+      a - (max (b + c) 0) / 2 + max (b + c) 0 - b ≤ a + (c - b) / 2 + 1 := by
+    intro a b c hbc; omega
+  exact step y m.height m.depth h
+
+/-- The componentwise join of two measurements: what a line carrying both
+would set to. A metric-only run — a phantom, whose box is its argument's
+and whose ink is nothing — enters exactly here, and `max` is why it can be
+inert. -/
+def LabelInk.join (a b : LabelInk) : LabelInk :=
+  { w := max a.w b.w, height := max a.height b.height, depth := max a.depth b.depth }
+
+/-- **The one surviving channel, bounded — and shut where it matters.** A
+label carrying an extra metric box sets between what it set alone and the
+join of the two: the phantom can grow the band, never shrink it. And where
+the phantom's metrics are already covered by the label's own — which is what
+a `\vphantom{y}` written beside a descender-less word *is*, the argument set
+in the running face at the running size — the join is the original box and
+nothing moves at all.
+
+This is the compatibility guarantee, and note it names no command: it is
+idempotence of `max`, so every hand fix whose metrics the label already
+declares is inert by construction rather than by a special case. The engine
+is stricter still — a picture label's `\vphantom` group is dropped before it
+reaches the IR (`Picture.phantomCtrl`), so not even a dominated box arrives —
+but that is a surface decision, and this is the fact that holds whatever the
+surface does. -/
+theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : LabelInk) :
+    Box.le (labelInkBox x y align m) (labelInkBox x y align (m.join p)) ∧
+      (p.w ≤ m.w → p.height ≤ m.height → p.depth ≤ m.depth →
+        labelInkBox x y align (m.join p) = labelInkBox x y align m) := by
+  refine ⟨?_, ?_⟩
+  · have mid : ∀ v s t : Int, s ≤ t →
+        v - t / 2 ≤ v - s / 2 ∧ v - s / 2 + s ≤ v - t / 2 + t := by
+      intro v s t h; omega
+    have near : ∀ v s t : Int, s ≤ t → v ≤ v ∧ v + s ≤ v + t := by
+      intro v s t h; omega
+    have far : ∀ v s t : Int, s ≤ t → v - t ≤ v - s ∧ v ≤ v := by
+      intro v s t h; omega
+    have gw : max m.w 0 ≤ max (m.join p).w 0 := by
+      have jw : ∀ a b : Int, max a 0 ≤ max (max a b) 0 := by intro a b; omega
+      exact jw m.w p.w
+    have gt : max (m.height + m.depth) 0 ≤ max ((m.join p).height + (m.join p).depth) 0 := by
+      have jt : ∀ a b c d : Int, max (a + c) 0 ≤ max (max a b + max c d) 0 := by
+        intro a b c d; omega
+      exact jt m.height p.height m.depth p.depth
+    cases align
+    · exact ⟨(mid x _ _ gw).1, (mid y _ _ gt).1, (mid x _ _ gw).2, (mid y _ _ gt).2⟩
+    · exact ⟨(near x _ _ gw).1, (mid y _ _ gt).1, (near x _ _ gw).2, (mid y _ _ gt).2⟩
+    · exact ⟨(far x _ _ gw).1, (mid y _ _ gt).1, (far x _ _ gw).2, (mid y _ _ gt).2⟩
+    · exact ⟨(mid x _ _ gw).1, (near y _ _ gt).1, (mid x _ _ gw).2, (near y _ _ gt).2⟩
+    · exact ⟨(mid x _ _ gw).1, (far y _ _ gt).1, (mid x _ _ gw).2, (far y _ _ gt).2⟩
+  · intro hw hh hd
+    have dom : ∀ a b : Int, b ≤ a → max a b = a := by intro a b h; omega
+    have ew : (m.join p).w = m.w := dom m.w p.w hw
+    have eh : (m.join p).height = m.height := dom m.height p.height hh
+    have ed : (m.join p).depth = m.depth := dom m.depth p.depth hd
+    unfold labelInkBox
+    rw [ew, eh, ed]
+
 /-- The declared box of a shape, corners sorted. A label's box is its
 anchor point — its text extent is a font question layout answers, so
 `Shape.inkBox` is the measured form and this is what the IR knows on its
@@ -2525,6 +2643,33 @@ theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (scale : Na
   have grow : ∀ p q : Int, p ≤ max q p := by intro p q; omega
   exact Box.le_trans (labelHalfExtent_covers align x y _ _)
     (nodeExtentBox_monotone x y _ _ _ _ (grow _ declA) (grow _ declB))
+
+/-- **Growth moves the border, never the letters.** Enlarging what a node
+declares — `minimum width`, `minimum height` — grows the box every relative
+placement measures from, and leaves every baseline on the page exactly where
+it was. The two halves are stated together because the guarantee is the
+pair: the extent is monotone in what was declared
+(`nodeExtentBox_monotone` through `nodeExtent`), and the label's placement
+does not read the declaration at all.
+
+That second half is a non-occurrence, proved by `rfl` and load-bearing as
+`doc_geometry_uniform` is: `labelInkBox` and `labelBaseline` take the
+measurement and the anchor and nothing else, so a change that let a declared
+minimum reach the letters would fail to compile here. It is the frame/letter
+separation TeX cannot offer — under node centring the box *is* the reference,
+so growing one moves the other. -/
+theorem centre_independent_of_growth (m : LabelMetric) (content : Array Inline)
+    (scale : Nat) (align : LabelAlign) (declA declB declA' declB' x y : Sp)
+    (hA : declA ≤ declA') (hB : declB ≤ declB') :
+    Box.le (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
+             (nodeExtent m content scale align declA declB).2)
+        (nodeExtentBox x y (nodeExtent m content scale align declA' declB').1
+          (nodeExtent m content scale align declA' declB').2) ∧
+      labelBaseline y align (m content scale) = labelBaseline y align (m content scale) ∧
+      labelInkBox x y align (m content scale) = labelInkBox x y align (m content scale) := by
+  refine ⟨?_, rfl, rfl⟩
+  have step : ∀ p q r : Int, p ≤ q → max p r ≤ max q r := by intro p q r h; omega
+  exact nodeExtentBox_monotone x y _ _ _ _ (step _ _ _ hA) (step _ _ _ hB)
 
 /-- **What the extent is for: a relative placement parts text.** Two nodes
 whose centres stand `sep` apart *plus* both half-extents — which is what
