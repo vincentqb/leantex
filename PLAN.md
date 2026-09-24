@@ -8959,3 +8959,109 @@ the deck reports `W0012` (math set as source text, which wraps where the
 rendered formula would not), `W0301`/`W0341` (unknown commands kept as
 text) and `E0382` (a picture the boundary tool drew nothing for). Each is
 owned elsewhere; the vertical-distribution question is closed.
+
+
+### 2026-09-24 — a declared break that re-flows now says so, and the face substitution needs no code
+
+The routed diagnostic from the re-flow entry above is registered. W0386,
+`degraded` and therefore a warning: the title is on the page, it is not the
+title that was declared. The count is 165.
+
+**(a) The loss, and why re-flow-and-name is the floor.** A `\\` in a title
+is a decision about where a line ends. When the declared segment does not
+fit the measure the breaker finds a legal break inside it, the remainder
+returns to the flush-left margin, and the page reads flush-left, indented,
+flush-left — which is what "not aligned properly" meant. `W0005` correctly
+stayed silent throughout: there is no overfull line, the break is perfectly
+legal, it is just not the author's. The three available answers were
+re-flow silently, refuse the break and set the line overfull, or re-flow and
+name it. The second is TeX's and it runs ink off the measure, because
+display type is ragged and unhyphenated — the breaker has nowhere else to
+put the excess. So the third, which is the same judgement the math recovery
+floor and the node-label floor both reached: the degraded state, named once
+at full strength.
+
+The message names the two counts and the frame when there is one
+(`a declared line break did not hold in frame 7: 2 lines were declared, 3
+ship`), and the help names the three things that change the answer —
+shorten the declared line, widen the measure, declare a narrower face. The
+frame number rides as the structured `subject` too, so "this loss is named"
+stays a lookup.
+
+**The invariant is the account, not the page.** `Layout.warnReflow_accounts`
+is `warnSpill_accounts`' shape exactly: the re-flow is paid for by the
+warning, decided in the same step from the two counts the builder already
+holds — the forced penalties in the items it is about to place, and the
+breaks the breaker returned — never by reading the shipped pages back
+afterwards. `declaredLines` is the segment count exactly rather than
+approximately, and that is worth stating: every paragraph leaves
+`itemsOfInlines` ending in a forced break, appended where the content did
+not already end in the author's own, so one forced penalty means one
+declared line in all three cases — no `\\` at all, `k` interior breaks, and
+a trailing `\\` that ends its own segment instead of opening a new one.
+The two floors are part of the statement: a paragraph that declared nothing
+declares one line and may set as many as it needs, and a paragraph whose
+declared breaks all held adds nothing.
+
+**Owed, and why it is stageable now.** The step is not the artifact.
+`reflow_named` (§ Owed obligations, the queue's seventeenth row) says the
+warning reaches the `Out` a caller reads, over the public `Layout.run`. The
+re-flow entry above declined to stage it because a statement quantifying
+over a code that does not exist cannot be typed; that is no longer true.
+Three factorizations block the proof and none is a tactic: there is no
+diagnostic-monotonicity notion across placement — every step from
+`placeParaTrailer` down to `warnSpill` only appends and no lemma says so, so
+what it wants is a `DiagsExtend` beside `PagesExtend`; `breaks.size` is not
+yet connected to the ink lines a paragraph ships; and `declaredLines`'
+penalty count is not yet connected to the `.linebreak` count of the
+inlines, which is `itemsOfInlines`' own census and the `Acc` split again.
+The finding worth recording is that the same three hold `warnSpill_accounts`
+(W0384) one level below its artifact, so this is not a new debt so much as a
+second creditor for one already owed — discharging them closes both.
+
+**(b) The substituted face needs no new code, and the premise it rested on
+is false on this host.** The ask was whether a substituted face deserves
+more than a `-v` line, on the theory that substitution silently changes
+every measurement and is what turned a fitting title into a wrapping one.
+Measured rather than assumed, there are three cases and none of them is an
+unnamed substitution.
+
+A family the document names and the host carries resolves, and there is
+nothing to report — including from the TeX tree, which is the case that
+breaks the premise: the face the reference deck asks for is not in
+fontconfig's index, so `fc-list` finds nothing, but `texFontDirs` is part of
+the scan and the engine resolves it. The verbose log naming a fallback was
+not a substitution at all. A family the document names and the host does not
+carry is `E0403`, a `dropped` loss, an error, and the run stops with no
+artifact — already the strongest severity the table has, two steps above the
+warning the ask contemplated. And a variant or weight missing *within* a
+resolved family is `W0006` or `W0366`, both `degraded`, both warnings, both
+unconditional at the resolution site.
+
+What the `-v` line actually reports is the third case: a document that
+declared no family at all, where `FontDb.defaultFamily` picks one. That is a
+default, not a substitution, and it cannot be "not the document the author
+wrote" — the author wrote no face. Promoting it would warn every classless
+document on every run for a choice it never made, which is the noise that
+makes a real warning unreadable.
+
+So the ask's own alternative is the right one, and for a stronger reason
+than it supposed: the consequence is what deserves the warning, and (a)
+supplies it regardless of *why* the measure was exceeded — a substituted
+face, a size read from the wrong page model, or a line that is simply too
+long. The demonstration is that the defect survives the correct face: a
+synthetic deck built with the declared family resolved still re-flows its
+declared second line, and W0386 fires on it. One code for the loss the
+reader can see, none for a cause that is already named or is not a loss.
+
+**Evidence.** Four `titleBreakChecks` rows, two red before and green after;
+the count read off `Layout.Out` and the naming off the run's own
+diagnostics, with the W0005-stays-silent row and both floors beside them.
+The diagnostics golden moves by exactly the new block. On the private
+reference corpus the code fires four times on a 41-page deck — three naming
+their frame, one with none, which is the title page the report was about —
+and the artifact's own text layer puts its three title lines at x = 28.35,
+60.03 and 28.35, the declared indent with its remainder back at the margin.
+`scripts/bench.lean` (median of 5) after the new per-paragraph fold: 101,
+329, 498, 96, 166 ms against the boundary-macro entry's 99/327/489/93/167 —
+inside the noise, as a fold over items already in cache should be.
