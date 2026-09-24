@@ -463,7 +463,7 @@ warning[W0381]: no unit symbol for '\banana'; set as its ASCII spelling
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
 warning[W0383]: '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
-warning[W0384]: frame 1 is 19.021pt taller than its page; it continues on the next page
+warning[W0384]: frame 1 is 5.821pt taller than its page; it continues on the next page
   help: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 warning[W0385]: the colour 'indigo' inside math sets in the surrounding style

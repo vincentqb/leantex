@@ -1798,6 +1798,31 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       -- One em at the title's size leads the second line, and the first
       -- line opens on type instead.
       return wb == deckTitleSize && wa != deckTitleSize : Option Bool).getD false)
+  -- A deck's paragraphs advance by the body leading alone: beamer sets
+  -- `\parskip` to zero (beamerbasemisc.sty), so a frame spends nothing
+  -- between paragraphs, where a flow page spends the engine's rhythm
+  -- quantum. Read under each document's *own* page geometry, since the
+  -- value is the class's default. The gap accumulates: on a frame of
+  -- several paragraphs a quantum apiece is what pushes content that fits
+  -- beamer's stage past this engine's, and a spilt frame costs a
+  -- continuation page (W0384).
+  let ownGeomYs (src : String) : Array Dim.Sp :=
+    let (doc, _) := elabStr src
+    (bodyLines (layoutOf oneFace doc (Layout.Geom.ofPage doc.page))).filterMap fun l =>
+      if l.segs.any (fun s => match s with | .run .. => true | _ => false)
+      then some l.y else none
+  let deckYs := ownGeomYs (deck169Body
+    "\\begin{frame}[t]\nAlpha beta gamma.\n\nDelta epsilon zeta.\n\\end{frame}")
+  let flowYs := ownGeomYs
+    "\\documentclass{article}\\begin{document}\nAlpha beta gamma.\n\nDelta epsilon zeta.\n\\end{document}"
+  let deckFontSize := (elabStr (deck169Body "\\begin{frame}\nx\n\\end{frame}")).1.page.fontSize
+  t "a deck's paragraphs advance by the body leading, spending no parskip"
+    (deckYs.size == 2 &&
+      deckYs[1]! - deckYs[0]! == Ir.leadingFor deckFontSize)
+  t "a flow page still spends its rhythm quantum between paragraphs"
+    (flowYs.size == 2 &&
+      flowYs[1]! - flowYs[0]! ==
+        Ir.leadingFor Ir.baseFontSize + Ir.rhythmQuantum Ir.baseFontSize)
 
 /-- The running head's reserved band (`furnitureBand`/`Geom.bodyTop`): with a
 top margin too small to hold the head line, body ink still starts at least

@@ -4488,7 +4488,14 @@ structure ClassRecord where
   standard classes' zero `\parskip`) spaces entries by declared rhythm,
   not by paragraph skips — the same value compat injects when a foreign
   résumé class is rewritten, so the native spelling and the rewritten one
-  agree. -/
+  agree. `slides` declares zero too, and for the same reason the source
+  does: beamer sets `\parskip` to `0pt` (beamerbasemisc.sty, with its
+  `plus 1pt` stretch commented out), so a frame spends nothing between
+  paragraphs. A frame is a fixed stage rather than a run of pages, so the
+  quantum an article spends per paragraph accumulates against a height
+  that cannot grow: it is what pushed content that fits beamer's stage
+  past this engine's, and a spilt frame costs a continuation page
+  (W0384). -/
   parskip : Option Dim.SymGlue := none
   /-- Headings number by default; `\section*` opts out either way.
   `article` numbers (classes.dtx `\@startsection` with counters); a résumé
@@ -4619,6 +4626,7 @@ def DocClass.record : DocClass → ClassRecord
   | .slides =>
     { model := .frame
       fontSize := some slidesFontSize
+      parskip := some {}
       chrome := true }
   | .card =>
     { model := .face

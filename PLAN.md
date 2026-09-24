@@ -8685,3 +8685,42 @@ instead, with the registry cost stated: one `DiagCode` constructor with its
 declared `Loss`, one `spec` arm, `count + 1`, a `diagWitness` firing
 witness whose rendered form lands in the diagnostics golden, and a message
 that passes the voice lint.
+
+
+### 2026-09-24 — a frame is a stage, so the slides class spends no parskip
+
+Three frames of a deck overflowed their page by 17.2, 6.5 and 19.2 pt,
+each costing a continuation page (W0384), where the source toolchain fits
+all three. The amounts pointed at an accumulated gap rather than too much
+content, and they were: leantex advanced consecutive paragraphs by
+19.8 pt where beamer advances 13.549 pt — the engine's rhythm quantum
+(6.6 pt at the deck's 11 pt body) spent per paragraph boundary against a
+height that cannot grow.
+
+Beamer spends none: `\setlength\parskip{0\p@}` (beamerbasemisc.sty, its
+`plus 1pt` stretch commented out). The `slides` class record now declares
+that, the way `resume` already declares its lineage's zero — the class
+record is where a sourced default belongs, and the document's own
+`\page{ parskip = … }` and compat's injected declaration still win. Frame
+5's overflow is gone, frame 10's fell to 1.1 pt, frame 19's to 7.9 pt, and
+the deck lost a page.
+
+Goldens: 21 deck fixtures gain `parskip 0` on their page line (the class
+default, now recorded) and the W0384 witness in `diagnostics.txt` falls
+from 19.021 pt to 5.821 pt — exactly two paragraph boundaries reclaimed.
+No non-deck fixture moves.
+
+The two residual overflows are not a generic gap. Measured against
+beamer/moloch on synthetic top-flush frames, this engine spends less
+vertical space than beamer nearly everywhere: 13.2 pt per body line
+against 13.549, 13.2 pt per list item against 16.538, 15.8 pt from frame
+title to first body line against 32.435, and a body area within 1.4 pt of
+beamer's. Per display equation the two are within ~1.4 pt, and that
+residual is inside the noise the substituted body face introduces (its ink
+boxes run ~3 pt taller, which moves every ink-to-ink gap). So the engine
+is not short of room, and what remains is content-specific: those frames
+carry constructs that degrade to something taller than what they replace —
+the deck reports `W0012` (math set as source text, which wraps where the
+rendered formula would not), `W0301`/`W0341` (unknown commands kept as
+text) and `E0382` (a picture the boundary tool drew nothing for). Each is
+owned elsewhere; the vertical-distribution question is closed.

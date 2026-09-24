@@ -1,5 +1,5 @@
 class slides [aspectratio=169]
-page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
