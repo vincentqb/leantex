@@ -737,6 +737,18 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\documentclass{article}\n\\begin{document}\n\\nointerlineskip x\n\\end{document}"
   t "compat nointerlineskip is meaning-free: no warning, no content"
     (onlyX nisDoc && nisDs.all (fun d => d.code != "W0301" && d.code != "W0104"))
+  -- Package/class diagnostics address TeX's log, never the page. A deferred
+  -- style hook once recovered both groups as body text, so the package name's
+  -- underscore became E0311 even though the command itself was only W0301.
+  for name in ["PackageWarning", "PackageWarningNoLine", "PackageInfo",
+      "ClassWarning", "ClassWarningNoLine", "ClassInfo"] do
+    let (diagDoc, diagDs) := elabStr ("\\documentclass{article}\n" ++
+      "\\AtBeginDocument{\\" ++ name ++ "{example_pkg}{ignored_message}}\n" ++
+      "\\begin{document}\nx\n\\end{document}")
+    t s!"compat {name} consumes its log-only groups"
+      (onlyX diagDoc && diagDs.any (·.code == "N0100") &&
+        diagDs.all fun d => d.code != "W0301" && d.code != "W0387" &&
+          d.severity != .error)
   -- The font-selection packages: each names families for the generic
   -- slots (psnfss §2; carlito README), landing on \fonts — the same door
   -- \setmainfont uses. carlito's sfdefault promotes sans to body; a

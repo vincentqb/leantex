@@ -80,7 +80,10 @@ full meaning here, emitted as the translation note (N0100, "→ nothing:
 why") — the accounting the silence guard reads, so an earned no-op is
 never wordless (`rewriteCtrl_accounts`). Defended entry by entry: catcode
 machinery has no counterpart here (`makeatletter`, `makeatother`,
-`relax`); `frenchspacing`/`nonfrenchspacing` toggle inter-sentence space
+`relax`); `PackageWarning`/`PackageInfo` and their class variants write
+TeX's package/class log, not the document, and their messages describe a
+TeX execution this engine does not perform; `frenchspacing`/`nonfrenchspacing`
+toggle inter-sentence space
 the engine sets uniformly either way; `nointerlineskip` suppresses
 interline glue that is never accumulated here; lineno's `linenomath`
 pair wraps displays that are numbered like every galley line already
@@ -101,6 +104,18 @@ def meaningFree : List (String × Nat × Option String) :=
   [("makeatletter", 0, some "@-names are always readable here"),
    ("makeatother", 0, some "@-names are always readable here"),
    ("relax", 0, some "it means do nothing"),
+   ("PackageWarning", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("PackageWarningNoLine", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("PackageInfo", 2,
+    some "package diagnostics address TeX's log, not the document"),
+   ("ClassWarning", 2,
+    some "class diagnostics address TeX's log, not the document"),
+   ("ClassWarningNoLine", 2,
+    some "class diagnostics address TeX's log, not the document"),
+   ("ClassInfo", 2,
+    some "class diagnostics address TeX's log, not the document"),
    ("noindent", 0, some "no paragraph carries a first-line indent here"),
    ("nointerlineskip", 0,
     some "vertical space is declared per block, never accumulated interline glue"),

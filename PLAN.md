@@ -324,6 +324,22 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — package and class diagnostics are control-plane, never body
+recovery. A venue style deferred `\PackageWarning{package}{message}` through
+`\AtBeginDocument`; at replay the ordinary unknown-command rule preserved
+both groups as document text, and an underscore in the log message became
+E0311. The missing invariant was not underscore escaping: LaTeX's package and
+class warning/info controls write the TeX log and contribute no document ink,
+so both groups must be consumed before inline elaboration. The six standard
+warning/info spellings now occupy rows in `Compat.meaningFree`, using its
+existing accounted N0100 no-op path; arbitrary unknown commands still preserve
+their groups. The regression test runs every row through a deferred hook with
+reserved characters in both groups and requires the elaborated body to remain
+exactly the surrounding synthetic text with N0100 accounting and no W0301 or
+error. It failed six
+rows before the table change, then `lake test`, `lake build`, and the triggering
+private reference-corpus build passed.
+
 2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
 outside it, `inventory` and `value` set side by side look misaligned, the
 descender giving the impression the word is bumped up; correct it, keep
