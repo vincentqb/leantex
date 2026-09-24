@@ -9377,3 +9377,32 @@ four picture keys from the entry above), and seven of those lines now carry
 counts summing to 65 — so the default log accounts for 80 losses where it
 used to account for 18, with 160 diagnostics readable under `-v` against 98.
 The artifact is byte-identical across both changes.
+
+
+### 2026-09-24 — a globally declared arrow tip is the key the gate was hiding
+
+Follow-up to the unread-picture-key entry, with the mechanism measured
+rather than inferred, because it decides whether the fix a reader wants is
+in the diagnostic or in the picture reader.
+
+An edge whose own bracket carries `->` gets its head: the path's option
+bracket is inside the subset, and a rendered page shows the triangle. An
+edge that carries nothing, in a document whose preamble declared the tip
+once for every picture (`\tikzset{->}`, pgf's ordinary idiom), gets no head
+at all — because `Picture.readStyleList` reads `name/.style={...}`
+definitions and a *bare* global entry is not one, so the whole switch is
+unread. Two synthetic pages differing only in where the tip is declared
+settle it: heads on the first, none on the second.
+
+So the loss is real, it is a *global-default* loss rather than a per-edge
+one, and the gate fixed above is what made it silent. What honours it is
+one change in the picture reader, not in the diagnostic: a `\tikzset`
+entry that is not a style definition and *is* inside the subset's option
+vocabulary belongs in every picture's inherited bracket, folded where the
+picture-level options already are (`Picture.expandOpts`'s neighbours), so
+the same entry means the same thing whether it was written on the path, on
+the picture, or once in the preamble. The keys that remain outside the
+vocabulary stay W0334, which is then a smaller and truer set. Routed to
+`Picture.lean`, with the inheritance rule beside it: a global entry is the
+outermost bracket, so the picture's own and the path's own both win over it
+(`inherit_inner_exact` is the shape that already says how).
