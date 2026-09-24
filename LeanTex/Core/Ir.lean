@@ -5150,6 +5150,34 @@ structure Headline where
   institute : Array Inline := #[]
   deriving Repr, BEq, Inhabited
 
+/-- One piece of recovered ink: the loss that named it, the command it stood
+for, and the source text the recovery kept. `Salvage` is taken, and means
+something else — where a floor's *characters* come from — so this carries the
+other half of the same vocabulary: which construct the characters came from.
+
+`subject` is the tie to the diagnostic that paid for it. Every refusal that
+recovers goes through `Elab.warnOnce` with the key `"ctrl:<name>"`, which
+lands on `Diag.subject` — the structured dedup key, never the message text
+(`pending_named` is the shape this follows). So an entry is accounted for
+when some diagnostic carries the same subject, which `salvageChecks` runs
+over the corpus and the probes. An executable oracle rather than a theorem:
+the quantification runs over the whole elaboration's diagnostic surface, an
+imperative fold with no equational theory an induction can enter, which is
+the one wall `ctrl_groups_never_ink` still names. -/
+structure Recovered where
+  code : DiagCode
+  /-- The refused command's name, without its backslash. -/
+  command : String
+  /-- The source the groups carried, as the author wrote it: what the census
+  asks about when it wants to know whether a word on the page is salvage. -/
+  text : String
+  deriving Repr, BEq
+
+/-- The diagnostic subject a recovery is paid for under: `warnOnce`'s own
+key, so the accounting compares structured fields rather than parsing a
+message. -/
+def Recovered.subject (s : Recovered) : String := "ctrl:" ++ s.command
+
 structure Doc where
   docClass : DocClass := .article
   classOptions : String := ""
@@ -5228,6 +5256,27 @@ structure Doc where
   (`macroDecls`, `macroDecls_covers`), so a picture that spells a
   document macro is drawn with it. -/
   pictureMacros : Array (String × String) := #[]
+  /-- The ink this document carries that its author did not write: one entry
+  per construct the engine refused and recovered, in flow order.
+
+  The engine's floor for a construct it cannot render is that construct's
+  *content*, never its spelling, and for prose that floor is right — a
+  refused `\emph{text}` still ships "text". For a control-plane command the
+  argument is a keyword, and the same floor puts a stray word on the page:
+  `\setlayout{fullpage}` ships "fullpage" in both backends. Nothing could
+  say so, because recovered ink was byte-identical to authored prose, and two
+  claims failed on that: a statement that a control command's groups
+  contribute no ink could not be made general, and an artifact check that
+  content ink may not spell a preamble argument accused two innocent
+  fixtures.
+
+  A census rather than a mark in the tree, because both claims quantify over
+  the *whole* document's ink — "the keyword is nowhere in it", "this ink is
+  salvage, do not accuse it" — and neither asks where the salvage stands.
+  What this therefore cannot answer is a claim about one region's ink; that
+  wants a wrapper node, which costs an arm in every walk and both backends,
+  and is worth paying when a claim needs it and not before. -/
+  salvage : Array Recovered := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 

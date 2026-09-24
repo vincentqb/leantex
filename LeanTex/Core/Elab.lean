@@ -258,6 +258,11 @@ structure ESt where
   wrapped standalone source, with the source — deduplicated, so one
   picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
   pictures : Array (String × String) := #[]
+  /-- The salvage this elaboration recovered, in flow order: assembled onto
+  `Doc.salvage`. Written at the recovery sites and read nowhere inside the
+  elaborator — it is the attribution the census needs, not a decision the
+  front end makes. -/
+  salvage : Array Ir.Recovered := #[]
   /-- `\bibliographystyle`, wherever it appears — LaTeX reads it anywhere
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
@@ -499,7 +504,7 @@ def reservedCtrl : List (String × DiagCode) :=
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures"]
+   "theme", "chrome", "pictures", "allow"]
 
 /-- The boundary tools the engine will run. A document declares *which* of
 these draws its pictures, never an arbitrary binary: the driver executes
@@ -2593,6 +2598,18 @@ at the page foot")
       (help := unknownCmdHelp name)
       (demote := Compat.styInternal ctx.file name)
 
+/-- Record what a refusal recovered: the code that named the loss, the
+command it stood for, and the source the kept groups carried. Outside the
+inline knot for the same reason `warnUnknownCmd` is — the arm calls one
+sealed action. Empty salvage records nothing: a refused command with no
+group put no ink on the page, and an entry for it would make the census
+claim ink that is not there. -/
+private def noteSalvage (code : DiagCode) (name text : String) : EM Unit := do
+  let t := text.trimAscii.toString
+  unless t.isEmpty do
+    modify fun st =>
+      { st with salvage := st.salvage.push { code := code, command := name, text := t } }
+
 /-- The misplaced-declaration diagnostics (E0347 for running content,
 W0346 for configuration), outside the knot: the arm calls one sealed
 action, as `warnUnknownCmd` does. -/
@@ -2673,7 +2690,7 @@ def refFormNeedsKind : Ir.RefForm → Bool
   | .plain | .paren | .labelOnly => false
 
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
+seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
 seal warnMisplacedDecl warnReservedCtrl warnOptionRun
 seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
@@ -3858,6 +3875,10 @@ a side channel, never slide content" pos
     have hcall : sliceWeight raws j2 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     let (acc2, sb2, ⟨j3, hj3⟩, kept, sp) ← elabUnknownArgs ctx raws j2 0 acc sb false
+    -- What the floor kept, recorded as salvage: this ink is the engine's
+    -- recovery, not the author's prose, and nothing downstream could tell
+    -- the two apart from the bytes alone.
+    noteSalvage .W0301 name (Parse.rawSrc (raws.extract j2 j3))
     -- The control word swallowed a space after it; give back only one
     -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
     -- gains no ink the author never wrote.
@@ -3874,7 +3895,7 @@ end
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
+unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
 unseal warnMisplacedDecl warnReservedCtrl warnOptionRun
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
@@ -11257,6 +11278,7 @@ declare \\assert\{ pages <= N } to take control" }
     -- a `\newcommand` is otherwise a change to every document's `Doc`, and
     -- the definer family's whole point is that it moves no ink by itself.
     pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.picMacros
+    salvage := (← get).salvage
     body := blocks
   }
   -- Cross-references resolve here, once, against the whole document's

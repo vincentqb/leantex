@@ -708,8 +708,8 @@ def carries (hay needle : String) : Bool := (hay.splitOn needle).length ≥ 2
 
 -- owed: ctrl_groups_never_ink
 -- owner: LeanTex.Core.Compat
--- source: a probe paper gained the word "fullpage" as body ink. The engine's floor for a construct it cannot render is that construct's *content*, never its spelling (PLAN 2026-09-24, the diagnostic-recovery entry) — and for `\emph{text}` the content is prose, so the floor is right. For a control-plane command the argument is a keyword, and the same floor puts a stray word on the page: measured synthetically, `\setlayout{fullpage}` ships "fullpage" in both backends (pdftotext over the PDF and the HTML body agree), named only by a W0301 a reader may not look at. The recognised half of that surface is this statement; the unrecognised half is a policy question named in the blocker.
--- blocker: two things, neither a tactic. (1) The quantifier is over a table, so the proof is a walk over `Compat.meaningFree` and `Compat.configSkip` — decidable per row, but each row's witness runs the whole surface pipeline (lex → parse → compat → elab), and `Elab.run`'s inline spine has no equational theory a per-row `rw` can use: it is the wall `elab_inlines_option_run_dropped` records, one level up. A table-quantified executable oracle is available today and is the honest interim — it is what found the leak. (2) The statement deliberately covers only the *recognised* surface. An unknown command's group cannot be judged keyword or prose by any function the engine has, so the `fullpage` case is not a missing proof but a missing distinction: recovered ink is not marked as recovered, so no statement can separate it from declared prose. The factorization that would let the general form be stated is a mark on the recovery's output (an attribution the census can read), after which the binding statement is the `_accounts` shape — ink the document did not declare is paid for by a diagnostic whose `subject` names the command that produced it.
+-- source: a probe paper gained the word "fullpage" as body ink. The engine's floor for a construct it cannot render is that construct's *content*, never its spelling (PLAN 2026-09-24, the diagnostic-recovery entry) — and for `\emph{text}` the content is prose, so the floor is right. For a control-plane command the argument is a keyword, and the same floor puts a stray word on the page: measured synthetically, `\setlayout{fullpage}` ships "fullpage" in both backends (pdftotext over the PDF and the HTML body agree), named only by a W0301 a reader may not look at. The recognised half of that surface is the first two conjuncts; the unrecognised half is the third and fourth, statable since `Ir.Doc.salvage` marked recovered ink (PLAN 2026-09-24, the salvage-census entry).
+-- blocker: one wall, and it is the same one two levels up. The quantifier is over a table, so the proof is a walk over `Compat.meaningFree` and `Compat.configSkip` — decidable per row, but each row's witness runs the whole surface pipeline (lex → parse → compat → elab), and `Elab.run`'s inline spine has no equational theory a per-row `rw` can use: it is the wall `elab_inlines_option_run_dropped` records. A table-quantified executable oracle is available today and is the honest interim — it is what found the leak. The *second* wall this row carried is gone: an unknown command's group could not be judged keyword or prose by any function the engine had, because recovered ink was not marked as recovered, so no statement could separate it from declared prose. `Ir.Doc.salvage` is that mark — the attribution the census reads — and the accounting conjunct below is the `_named` shape it makes statable: ink the document did not declare is paid for by a diagnostic whose `subject` names the command that produced it. `salvageChecks` runs the accounting executably over the corpus and the probes meanwhile.
 -- goldens: no
 /-- A recognised control-plane command's argument groups contribute no
 character to the document's ink: the engine knows the command, so its
@@ -722,13 +722,24 @@ package name and message as body text, and it binds every row of both
 consuming tables rather than the six spellings that exposed it. The
 complementary half — that an *unrecognised* command still keeps its groups,
 so this is a named exception and not a licence to swallow content — is the
-second conjunct. -/
+third conjunct.
+
+The fourth is what the salvage census made statable, and it is the clause
+that makes the third safe to want: the kept groups are *attributed*. Ink the
+document did not declare is recorded as recovery under the command that
+produced it, so the stray keyword on the page is separable from the author's
+prose by a reader of the IR rather than only by a reader of the log. Without
+it "the groups are kept" and "a control keyword leaked" are the same
+observation. -/
 theorem ctrl_groups_never_ink :
     (∀ row ∈ Compat.meaningFree,
       carries (elabInk (ctrlProbe row.1 row.2.1)) "zzkeyword" = false) ∧
     (∀ row ∈ Compat.configSkip,
       carries (elabInk (ctrlProbe row.1 row.2.1)) "zzkeyword" = false) ∧
-    carries (elabInk (ctrlProbe "zzNotAControl" 1)) "zzkeyword" = true := by
+    carries (elabInk (ctrlProbe "zzNotAControl" 1)) "zzkeyword" = true ∧
+    (∀ s ∈ (Elab.run "probe.tex" (ctrlProbe "zzNotAControl" 1)).1.salvage,
+      ((Elab.run "probe.tex" (ctrlProbe "zzNotAControl" 1)).2).any
+        (·.subject == some s.subject) = true) := by
   sorry
 
 -- owed: formulaFloor_covers

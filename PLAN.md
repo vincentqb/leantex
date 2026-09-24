@@ -11671,3 +11671,79 @@ recorded 91 ms band, so threading a field through every walk costs nothing
 measurable. Goldens: eight files, and the diff is exactly `from <token>`
 on fourteen `block before` lines and seven `rule separator` lines, plus
 `themed.txt`'s new title-page parts.
+
+
+### 2026-09-24 — recovered ink was byte-identical to prose, so it is a census
+
+Second instance of the same finding as the entry above, one layer out. There
+the *name* a value came from did not travel; here what travelled was ink with
+no record of whether the author wrote it.
+
+**The invariant, written before the fix.** *Ink the document did not declare
+is recorded as recovery, under the command that produced it.* Two claims
+failed for want of it, diagnosed separately: `ctrl_groups_never_ink` could
+not be made general, because an unknown command's group cannot be judged
+keyword or prose by any function the engine had; and an artifact check that
+content ink may not spell a preamble argument accused two innocent fixtures
+and was deleted, because the bytes cannot tell a machinery name from a
+printed preamble value. Both concluded the distinction has to be carried.
+
+**A census, not a wrapper, and what that costs.** The candidate shape was
+`Ir.Inline.recovered (code) (body)` — a wrapper, joining an established
+family (`colored`, `role`, `step`, `underline` are all "a transparent group
+carrying an attribute"). It is the more capable carrier and it is the wrong
+one to buy today. A new `Inline` constructor owes an explicit arm in every
+walk and both backends: eighty-one sites across nine modules, six of them
+outside this change's ownership, and it would restructure the HTML for every
+refused command. Against that, both claims that need the distinction
+quantify over the *whole* document's ink — "the keyword is nowhere in it",
+"this ink is salvage, do not accuse it" — and neither asks where the salvage
+stands.
+
+So `Doc.salvage : Array Recovered`, the `pictureSrcs`/`bibRefs` shape: a
+document-level array the elaborator writes and reads nowhere, carrying the
+code, the command, and the source the groups held. A structure field with a
+default, so it forces no arm anywhere. What it cannot answer is stated in its
+docstring rather than discovered later: a claim about *one region's* ink wants
+the wrapper, and the wrapper is worth paying for when a claim needs it and
+not before.
+
+Widening `Inline.role`'s name to an origin sum was the third candidate and is
+rejected on meaning, not cost. `role` is "a document-defined command keeps its
+authored name", rendered `<div class="u-name">`; salvage is the engine's
+refusal, which must be invisible. One constructor answering both would make
+`role`'s own contract false, and `abstract`-not-`quote` is the precedent for
+keeping two meanings apart when the backends express them differently.
+
+**The census found a defect on its first run, in the shipped corpus, with a
+green suite.** `bibliography.tex` writes `\allow{W0351}` in the body.
+`\allow` was absent from `Elab.declCtrl`, so the body form fell through to
+unknown-command recovery and the page shipped the literal text "W0351" — a
+diagnostic code printed as prose, which is the purest form of ink nobody
+wrote. The repair is the one the declaration table already makes for every
+sibling of `\allow`: a native declaration met in the body is ours and
+misplaced (W0340), skipped with its block. `Compat.hookPreambleSide` restates
+that table and may not drift, so it gains the same row; the check that holds
+the two together is what caught it.
+
+**Evidence, and its honest label.** `salvageChecks` holds the census to both
+properties that make it worth carrying: it fires exactly where the engine
+recovered — never on prose the author wrote, never on a command the engine
+reads, never on a refusal that kept no group — and every entry is paid for by
+a diagnostic whose `subject` names its command. The probe puts the two words
+side by side and asserts they are indistinguishable in the ink, which is the
+row that would have gone quiet if the distinction were inferrable after all.
+Executable, not a theorem: the accounting quantifies over the whole
+elaboration's diagnostic surface, an imperative fold with no equational
+theory an induction can enter — the one wall `ctrl_groups_never_ink` still
+names, its second having been removed by this change. That row's statement
+grew the accounting conjunct rather than being left as it was: the mark is
+what makes "the groups are kept" and "a control keyword leaked" different
+observations.
+
+Evidence: `lake build` and `lake test` green; `precommit`, `cites`, `owed`
+clean; `compose-fuzz` green. `bench.lean` medians of 5: paragraphs 93 ms,
+lorem 324 ms, underline 505 ms, themed 91 ms, paper 162 ms — unchanged, the
+census being a push per refusal and read by nothing in the hot path. One
+golden moves, `bibliography.txt`, and the diff is the removed `para / text
+"W0351"` and W0301 becoming W0340.

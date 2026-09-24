@@ -268,7 +268,7 @@ not allowed to drift — `hookSeamChecks` fails the moment the two disagree,
 in either direction. -/
 def hookPreambleSide : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures", "runninghead", "runningfoot"]
+   "theme", "chrome", "pictures", "allow", "runninghead", "runningfoot"]
 
 private structure St where
   file : String

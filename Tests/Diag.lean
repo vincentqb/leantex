@@ -1044,3 +1044,82 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "two heading levels each name their own unused short title"
     (((of "N0103" shorts).map (·.message)).toList.eraseDups.length == 2 &&
       (of "N0103" shorts).all (·.sites == 1))
+
+
+
+/-- **Recovered ink is not authored prose, and the IR says which.** The
+engine's floor for a construct it cannot render is that construct's
+*content*, never its spelling, and for prose that floor is right: a refused
+`\emph{word}` still ships "word". For a control-plane command the argument is
+a keyword, and the same floor puts a stray word on the page. Nothing could
+say so, because the salvage was byte-identical to prose the author wrote —
+so a statement that a control command's groups contribute no ink could not be
+made general, and an artifact check that content ink may not spell a preamble
+argument accused two innocent fixtures.
+
+`Doc.salvage` is the distinction as a value. These rows hold it to the two
+properties that make it worth carrying: it fires exactly where the engine
+recovered (never on prose the author wrote, never on a command the engine
+reads), and every entry is paid for by a diagnostic whose `subject` names the
+command — the `_named` shape, matched on the structured key and never on the
+message text.
+
+Executable rather than a theorem, and the reason is recorded rather than
+assumed: the quantification runs over `Elab.runRaws`'s whole diagnostic
+surface, an imperative preamble fold with no equational theory an induction
+can enter. That is the wall `ctrl_groups_never_ink` still names, now as its
+only one. Invented content throughout. -/
+def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let named (ds : Array Diag) (ss : Array Ir.Recovered) : Bool :=
+    ss.all fun s => ds.any fun d => d.subject == some s.subject
+  -- One probe, two words. `zzunknown` is refused, so its group is salvage;
+  -- `emph` is read, so its group is the author's prose. The two words are
+  -- indistinguishable in the ink and must be distinguishable here.
+  let (doc, ds) := elabStr (dvDoc ""
+    "Before \\zzunknown{zzsalvaged} and \\emph{zzauthored} after.")
+  t "salvage: the refused command's group is recorded"
+    (doc.salvage.any fun s => s.command == "zzunknown" && s.text == "{zzsalvaged}")
+  t "salvage: a command the engine reads records nothing"
+    (doc.salvage.all fun s => s.command != "emph")
+  t "salvage: both words are in the ink, so the bytes cannot tell them apart"
+    (let ink := Ir.blocksText doc.body
+     hasStr ink "zzsalvaged" && hasStr ink "zzauthored")
+  t "salvage_named: every recovery has a diagnostic naming its command"
+    (named ds doc.salvage)
+  t "salvage_named: the subject is the refusal's own key, not its words"
+    (ds.any fun d => d.code == "W0301" && d.subject == some "ctrl:zzunknown")
+  -- The control-plane shape the obligation was written from: the argument is
+  -- a keyword, so the floor ships a word nobody wrote — now attributable.
+  let (cDoc, cDs) := elabStr (dvDoc "" "Alpha \\zzsetlayout{fullpage} omega.")
+  t "salvage: a control-plane keyword on the page is attributed to its command"
+    (cDoc.salvage.any fun s =>
+      s.command == "zzsetlayout" && hasStr s.text "fullpage" && s.code == DiagCode.W0301)
+  t "salvage_named: the control-plane recovery is named too" (named cDs cDoc.salvage)
+  -- A refusal with no group put no ink on the page, so an entry for it would
+  -- have the census claim ink that is not there.
+  let (eDoc, _) := elabStr (dvDoc "" "Alpha \\zznogroup omega.")
+  t "salvage: a refusal that recovered nothing records nothing" eDoc.salvage.isEmpty
+  -- A document the engine reads whole carries no salvage at all: the census
+  -- is empty, which is what makes a non-empty one mean something.
+  let (kDoc, kDs) := elabStr (dvDoc "" "\\section{A}\\label{a} Plain \\emph{prose} only.")
+  t "salvage: a document with nothing refused carries an empty census"
+    (kDoc.salvage.isEmpty && kDs.all fun d => d.code != "W0301")
+  -- Over the whole corpus, not only the probes: every recovery any fixture
+  -- makes is accounted for.
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (fDoc, fDs) ← elabFixture n src
+    t s!"salvage_named {n}: every recovery is paid for by a diagnostic naming it"
+      (named fDs fDoc.salvage)
+    -- The claim the census exists to make, and could not be made before it:
+    -- no fixture's page shows a *machinery* word. A diagnostic code is the
+    -- unambiguous case — a reader has no use for "W0351" in a sentence — and
+    -- `bibliography.tex` shipped exactly that, from a `\allow{W0351}` written
+    -- in the body and recovered as prose, with the whole suite green. The
+    -- recognised repair is the one the declaration table already makes for
+    -- its siblings: a native declaration met in the body is ours and
+    -- misplaced, skipped with its block, never salvaged as ink.
+    t s!"salvage {n}: no recovered ink spells a diagnostic code"
+      (fDoc.salvage.all fun s =>
+        DiagCode.all.all fun c => !hasStr s.text c.code)
