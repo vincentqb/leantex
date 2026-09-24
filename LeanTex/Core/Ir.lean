@@ -4810,7 +4810,7 @@ def floorNamedArgs : List (String × Nat) :=
    ("pagecolor", 1), ("label", 1), ("ref", 1), ("eqref", 1), ("tag", 1),
    ("hspace", 1), ("vspace", 1), ("raisebox", 1), ("begin", 1), ("end", 1),
    ("cite", 1), ("phantom", 1), ("hphantom", 1), ("vphantom", 1),
-   ("rule", 2), ("setlength", 2), ("addtolength", 2)]
+   ("parbox", 1), ("rule", 2), ("setlength", 2), ("addtolength", 2)]
 
 /-- Past a balanced `{...}` beginning at `i`, or past the end when it never
 closes. An index loop, so the bound is the array and no measure is owed. -/
@@ -4882,8 +4882,19 @@ def floorMask (src : String) : Array Bool := Id.run do
       let mut j := i + 1
       if j < cs.size && !(at? j).isAlpha then
         -- a control symbol is one character: `\\`, `\,`, `\{`
+        let sym := at? j
         keep := keep.setIfInBounds j false
         j := j + 1
+        -- `\\[2ex]` is how an author spaces an array's rows, so the row
+        -- separator's own option run is markup with it. Only this one: after
+        -- `\{` or `\,` a bracket is content.
+        if sym == '\\' then
+          let optStart := skipFloorWs cs j
+          let stop := skipOption cs optStart
+          if stop != optStart then
+            for m in [j:stop] do
+              keep := keep.setIfInBounds m false
+            j := stop
       else
         let mut name := ""
         for _ in [0:cs.size + 1] do
@@ -4892,18 +4903,36 @@ def floorMask (src : String) : Array Bool := Id.run do
           name := name.push (at? j)
           keep := keep.setIfInBounds j false
           j := j + 1
+        -- a starred command's star is part of its name: without this the
+        -- positional scan below looked for `{` and found `*`, so
+        -- `\hspace*{1pt}` shipped its length.
+        let star := skipFloorWs cs j
+        if at? star == '*' then
+          for m in [j:star + 1] do
+            keep := keep.setIfInBounds m false
+          j := star + 1
         if let some arity := floorNamedArgs.lookup name then
           for _ in [0:arity] do
-            let k := skipFloorWs cs j
-            let opened := skipFloorWs cs (skipOption cs k)
+            let opened := skipFloorWs cs (skipOption cs (skipFloorWs cs j))
+            -- The run up to the group — the space after the name and any
+            -- option run — is the command's too. Masked before the `{`
+            -- test, not inside it: masking only on the success path left
+            -- `[rgb]` on the page whenever the scan gave up.
+            for m in [j:opened] do
+              keep := keep.setIfInBounds m false
             if at? opened != '{' then
               j := opened
               break
             let stop := skipBalanced cs opened
-            -- from `k`, so the option run and the space before the group go
-            -- with the name: skipping them without marking them shipped
-            -- `[rgb]` as ink.
-            for m in [k:stop] do
+            for m in [opened:stop] do
+              keep := keep.setIfInBounds m false
+            j := stop
+          -- `\raisebox{lift}[height][depth]{body}`: the options trail the
+          -- named argument, so they are swept after the arity loop.
+          for _ in [0:2] do
+            let stop := skipOption cs j
+            if stop == j then break
+            for m in [j:stop] do
               keep := keep.setIfInBounds m false
             j := stop
       i := j
@@ -4944,14 +4973,20 @@ end, so its content characters are none at all, and the alternative to a
 placeholder is a blank where an equation stood. A blank is not an honest
 floor either — it tells a reader nothing was there. Bracketed, so it reads
 as a placeholder rather than as content, and markup-free, so it cannot
-break the property it is inserted under. -/
+break the property it is inserted under.
+
+It reaches the tagged tree and the alternative text as well as the page, and
+that is deliberate: a screen reader hearing nothing where an equation stood
+learns less than one hearing a placeholder, which is the same argument that
+put it on the page. -/
 def mathFloorPlaceholder : List Char := ['[', '\u2026', ']']
 
 /-- The characters a degraded formula actually inks: its salvage, or the
 declared placeholder when the salvage is empty. `floorInk_accounts` is the
 statement that the second case is never silent. -/
 def floorInk (src : String) : List Char :=
-  if (floorChars src).isEmpty then mathFloorPlaceholder else floorChars src
+  let cs := floorChars src
+  if cs.isEmpty then mathFloorPlaceholder else cs
 
 /-- The honest floor for math the elaborator cannot model: the formula's
 text content, or a visible placeholder when it has none. The alternative —
@@ -4989,10 +5024,11 @@ recoveries this replaced shipped the source itself, markup and all.
 
 What this does *not* say, since the distinction matters: it is an upper
 bound. It rules out invention and markup, and it holds for any `floorMask`
-whatever — including one that dropped everything. The lower bound (that
-content survives the mask, and that a naming command's argument is the only
-group dropped) is executable evidence in `recoveryChecks`, not a theorem:
-those statements have to read the index loop, and this one does not. -/
+whatever — including one that dropped everything. The lower bound is owed,
+not implied: `floorChars_id` states it and is staged, because it has to read
+the index loop and this one does not. The executable half meanwhile is the
+whole-string rows in `recoveryChecks`, which fail under both an
+all-dropping and an all-keeping mask. -/
 theorem floorChars_mem (src : String) :
     ∀ c ∈ floorChars src, c ∈ src.toList ∧ c ∉ markupChars := by
   intro c hc
@@ -5018,7 +5054,7 @@ theorem floorInk_mem (src : String) :
     ∀ c ∈ floorInk src,
       (c ∈ src.toList ∨ c ∈ mathFloorPlaceholder) ∧ c ∉ markupChars := by
   intro c hc
-  unfold floorInk at hc
+  simp only [floorInk] at hc
   split at hc
   · refine ⟨Or.inr hc, ?_⟩
     simp only [mathFloorPlaceholder, List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -5028,9 +5064,11 @@ theorem floorInk_mem (src : String) :
 
 /-- An empty salvage is paid for, never shipped as a blank: a formula whose
 content characters are all markup inks the declared placeholder instead, so
-the page says something stood here and the diagnostic says what. -/
+the page says something stood here. What it does not say is *what* — that is
+the diagnostic's, and `elabMathInline` words the empty case separately so the
+warning and the page agree. -/
 theorem floorInk_accounts (src : String) : floorInk src ≠ [] := by
-  unfold floorInk
+  simp only [floorInk]
   split
   · simp [mathFloorPlaceholder]
   · rename_i h

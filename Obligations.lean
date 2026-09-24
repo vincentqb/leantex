@@ -412,4 +412,18 @@ theorem place_order_agree (cx : Picture.Cx) (pre post : List Picture.Stmt)
         = (Picture.evalFixed cx (pre ++ b :: a :: post)).nodes.lookup nm := by
   sorry
 
+-- owed: floorChars_id
+-- owner: LeanTex.Core.Ir
+-- source: the math recovery floor (PLAN 2026-09-24, the floor entries): the lower bound on the salvage a degraded formula inks. `floorChars_mem` is the upper bound — nothing invented, no markup — and it holds for a mask that dropped every character, so on its own it permits a blank page where an equation stood; this is the other side, that a source already free of control sequences and markup salvages to itself. The executable witness is the whole-string rows in `recoveryChecks` ("a plain content run passes through the floor unchanged" and its six siblings), which pin seven shapes exactly and fail under both an all-dropping and an all-keeping mask.
+-- blocker: `floorMask` is three imperative index loops over a mutable `Array Bool` with no equational theory, so the statement needs the loop invariant "every index of a markup-free source is still marked kept" carried through the naming-argument scan, the whitespace squeeze and the trailing trim. The shape is fixed here so the invariant is proved against it rather than around it; the same `Acc`-split work the emission-conservation rows wait on is what makes an imperative accumulator statable.
+-- goldens: no
+/-- A math source with no control sequence, no LaTeX punctuation and no
+whitespace salvages to exactly itself: the floor keeps content, it is not
+merely free to drop it. -/
+theorem floorChars_id (src : String)
+    (h : ∀ c ∈ src.toList,
+      c ≠ '\\' ∧ c ∉ Ir.markupChars ∧ c.isWhitespace = false) :
+    Ir.floorChars src = src.toList := by
+  sorry
+
 end Obligations

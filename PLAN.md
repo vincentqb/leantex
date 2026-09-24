@@ -204,6 +204,17 @@ list.
   an `Ev` split into the resolved table and the report. The in-suite
   witness is the two-orders row of `pictureNodePlaceChecks`, read off two
   shipped pages.
+- `floorChars_id` — the recovery floor's lower bound: a math source already
+  free of control sequences and markup salvages to itself, so the mask
+  keeps content rather than merely being free to drop it.
+  `floorChars_mem` is the upper bound and holds for a mask that dropped
+  everything, which is why this side is owed rather than implied. Blocked
+  on `floorMask` being an imperative index loop with no equational theory:
+  the statement needs "every index of a markup-free source is marked kept",
+  a loop invariant over three passes and a mutable `Array Bool`. The
+  witness meanwhile is the whole-string floor rows in `recoveryChecks`,
+  which pin the salvage of seven shapes exactly and fail under both an
+  all-dropping and an all-keeping mask.
 
 ### Log
 
@@ -8391,3 +8402,65 @@ is evidence, not a theorem.
   reached for the character is a fair warning that the rule is easy to
   misread, which is what the docstrings on `markupChars` and `formulaFloor`
   now say out loud.
+
+
+- 2026-09-24: **the second review round — the positional scan lost what the
+  loose counter happened to cover.** A second independent read, this one
+  *executed* against a binary built from the tree, rendered ~50 adversarial
+  formulas and found three shapes still inking markup. All three were
+  introduced or left by the previous entry's fix, and none was visible to
+  the census that exists to catch exactly this. Recorded because the lesson
+  is the reverse of the previous one: a scan strict enough to stop eating
+  content is strict enough to stop recognising its own commands.
+
+  `\parbox` was simply dropped from the naming list while `floorNamedArgs`
+  was given arities — three of the four removals were right (`makebox`,
+  `framebox` and `footnote` take content, and dropping them was the old
+  list's bug), but a `\parbox`'s first argument is a width, so
+  `\parbox{5cm}{text}` shipped `5cm`. A starred command's star is part of
+  its name, and the name scan stops at the first non-letter, so the
+  positional loop looked for `{` and found `*`: `\hspace*{1pt}` shipped its
+  length where the old counter form, satisfied by the next brace anywhere,
+  had not. And the option-run mask sat *inside* the group-found branch, so
+  every shape where the scan gave up had already stepped over `[rgb]`
+  without marking it — four inputs leaked brackets, `x\\[2ex]y` among them,
+  which is how a LaTeX author spaces an array's rows. The previous entry
+  claimed that case closed; it was closed only on the success path, and this
+  is what AGENTS means by a guarantee stated in prose not being one.
+
+  The fixes: the run from the cursor to the group is masked *before* the
+  brace test, a `*` after a name goes with the name, options trailing the
+  named arguments are swept after the arity loop (`\raisebox{lift}[h][d]{}`),
+  the row separator's own option run goes with it, and each of the six has a
+  whole-string row in `recoveryChecks`. Two of those rows failed on their
+  first run because the intervening space had to be skipped before looking
+  for the star or the bracket — `rawSrc` writes one after every control
+  word — which is the value of pinning the string rather than an absence.
+
+  Three smaller things the same pass found. W0012 read "sets as its text
+  content" over a page showing `[…]`: a diagnostic describing a recovery
+  that did not happen, so `floorWording` now words the empty case
+  separately and both forms stand in the diagnostics golden. The SVG label
+  assertion was absence-only — it would have passed on an empty `<tspan>` —
+  and now names the label's own content. And the space a dropped command's
+  name leaves behind survives the mask, so `k\phantom{hidden}` floored to
+  `k ` with an indent.
+
+  The mask's lower bound is now owed rather than merely tested.
+  `floorChars_id` is staged in `Obligations/` and registered above: a source
+  already free of control sequences and markup salvages to itself. It is
+  blocked on `floorMask` being three imperative index loops over a mutable
+  `Array Bool` with no equational theory — the statement needs a loop
+  invariant carried through all three passes — and the honest position is
+  that `floorChars_mem` is the upper bound, `floorChars_id` is the lower one
+  and it is not yet earned. Stating it costs the queue one row and makes the
+  debt something `scripts/owed.lean` reports instead of something a
+  docstring asserts.
+
+  The reviewer accepted the previous entry's refusal to filter a parsed
+  atom's scalars, and sharpened the reason: the filter would render `$\{x\}$`
+  — a set literal — as `x`, silently, which is a worse loss than showing the
+  brace the author spelled. It also flagged that the corpus exercises none
+  of the exemption machinery, so the first fixture to legitimately render a
+  brace will look like a regression to whoever meets it. That is the
+  residual, and it is written here rather than guessed at later.

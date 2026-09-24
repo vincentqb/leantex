@@ -278,7 +278,11 @@ def diagWitness (one mapped withMath : Font.FontSet)
       ((List.range 5).map fun _ => "\\begin{itemize}\\item x\n") ++
       String.join ((List.range 5).map fun _ => "\\end{itemize}\n")))
   | .W0011 => probed .W0011
-  | .W0012 => dvE "$\\overset{?}{=}$"
+  | .W0012 =>
+    dvE "$\\overset{?}{=}$" ++
+    -- the empty-salvage wording: markup and symbol commands end to end, so
+    -- the floor is the declared placeholder and the warning says so
+    dvE "$\\overset{\\alpha}{\\beta}$"
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
   | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"

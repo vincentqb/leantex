@@ -1590,6 +1590,25 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (pageText "$\\overset{\\textcolor[rgb]{1,0,0}{s}}{t}$" == "st")
   t "a second naming command does not eat the content group"
     (pageText "$\\overset{\\color{red}\\textcolor{blue}{u}}{v}$" == "uv")
+  -- The three shapes a positional scan loses if it is too strict, each of
+  -- which shipped a length or a bracket as ink: a width-taking wrapper, a
+  -- starred command whose star is part of its name, and an option run the
+  -- scan stepped over without marking.
+  t "a width-taking wrapper drops its width, keeps its body"
+    (pageText "$\\overset{\\parbox{5cm}{text}}{y}$" == "texty")
+  t "a starred command's star goes with its name"
+    (pageText "$\\overset{\\hspace*{1pt}k}{y}$" == "ky")
+  t "an option run goes even where no group follows it"
+    (pageText "$\\overset{\\textcolor[rgb]x}{y}$" == "xy")
+  t "an option run trailing a named argument goes too"
+    (pageText "$\\overset{\\raisebox{-1pt}[2pt]{keep}}{y}$" == "keepy")
+  t "the row separator's own option run goes with it"
+    (pageText "$\\overset{x\\\\[2ex]y}{z}$" == "xyz")
+  -- The space a dropped command's name leaves behind goes with the name:
+  -- `\phantom {hidden}` is written with one, and keeping it indented the
+  -- floor.
+  t "no space survives a dropped command"
+    (pageText "$\\overset{k\\phantom{hidden}}{y}$" == "ky")
   -- A formula that is markup and symbol commands end to end salvages
   -- nothing, and a blank page is not an honest floor either: the declared
   -- placeholder ships instead (`Ir.floorInk_accounts`).

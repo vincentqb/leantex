@@ -197,6 +197,7 @@ warning[W0011]: 'Open Sans' (tests/corpus/fonts/OpenSans-Regular.ttf) has no Ope
   help: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as its text content
 warning[W0012]: math with \overset is not rendered yet; the formula sets as its text content
+warning[W0012]: math with \overset is not rendered yet; the formula sets as a placeholder: it has no text content
 ── W0013 (config) an \allow'd code never fired
 warning[W0013]: '\allow' lists E0333, which never fired
   help: the document no longer needs it; drop the entry from \allow

@@ -1184,11 +1184,14 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let labelHtml := (HtmlDoc.emit {} (elabStr labelDeck).1).1
   t "an SVG label's math shows its floor, never its markup"
     (let spans := (labelHtml.splitOn "<tspan").drop 1
+     let shownOf := fun (s : String) =>
+       let inner := ((s.splitOn ">").drop 1).headD ""
+       (inner.splitOn "<").headD ""
      !spans.isEmpty &&
-       spans.all (fun s =>
-         let inner := ((s.splitOn ">").drop 1).headD ""
-         let shown := (inner.splitOn "<").headD ""
-         !(shown.any (fun c => Ir.markupChars.contains c))) &&
+       spans.all (fun s => !((shownOf s).any (fun c => Ir.markupChars.contains c))) &&
+       -- positive too: the label's own content is there, so an empty tspan
+       -- or the placeholder cannot pass this
+       spans.any (fun s => shownOf s == "q=") &&
        ((labelHtml.splitOn "indigo").length == 1))
   -- The flow reading, untouched: pt for the absolute length and the
   -- scale, % for the fraction, the intrinsic size for the textheight

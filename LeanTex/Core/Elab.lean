@@ -967,6 +967,17 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- How a degraded formula's recovery reads, so the warning and the page
+agree: the floor is the formula's text content, unless that content is
+nothing at all, where a declared placeholder ships instead
+(`Ir.floorInk_accounts`). Saying "sets as its text content" over a page
+showing `[…]` would be a diagnostic describing a recovery that did not
+happen. -/
+private def floorWording (src : String) : String :=
+  if (Ir.floorChars src).isEmpty then
+    "sets as a placeholder: it has no text content"
+  else "sets as its text content"
+
 /-- One parser note to its own diagnostic: the two losses a formula can
 carry while still rendering are different kinds, so each takes its own
 code. `where` prefixes the environment's name when the note came from an
@@ -998,10 +1009,10 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
       mathNote ctx note "" pos
     return .formula display (Parse.rawSrc body) l
   | .error what =>
+    let src := Parse.rawSrc body
     warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; the formula sets as its \
-text content" pos
-    return .math display (Parse.rawSrc body)
+      s!"math with {what} is not rendered yet; the formula {floorWording src}" pos
+    return .math display src
 
 /-- One alignment environment (`align`/`gather` and their starred forms):
 its rows parsed into one display grid formula. A construct the parser
@@ -1022,10 +1033,10 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
         (help := s!"'\{{name}*}' spells the unnumbered form, which renders the same")
     return .formula true (Parse.rawSrc body) l
   | .error what =>
+    let src := Parse.rawSrc body
     warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; '\{{name}}' sets as its text \
-content" pos
-    return .math true (Parse.rawSrc body)
+      s!"math with {what} is not rendered yet; '\{{name}}' {floorWording src}" pos
+    return .math true src
 
 /-- The run an unclosed `[` still owns: tokens on its command's own line —
 the stop-at-the-anchor's-line rule, stated once. A raw on a later line, or
@@ -5964,7 +5975,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \
-formula sets as its text content")])
+formula {floorWording (Parse.rawSrc raws)}")])
   let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf ctx.picSets
   -- **Native first; the boundary is the fallback.** What the engine's own
   -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
