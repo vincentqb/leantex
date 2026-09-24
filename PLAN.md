@@ -968,6 +968,58 @@ title band: `ArtRect.holds` takes horizontal and vertical slack
 separately, because character protrusion hangs a boundary glyph into the
 margin by design and nothing hangs a baseline out of the measure.
 
+2026-09-24 — what the audit of the package-diagnostic slice found, and the
+two gates it owed. The six `Compat.meaningFree` rows that keep
+`\PackageWarning` and its siblings out of body text are correct — all six
+arities match `lterror.dtx`'s `\def…#1#2`, and the fix is real: before it,
+each of the six inked its log prose and raised E0311 twice on the
+underscores. Four parallel audits of the slice converged on three gaps,
+two of them now gated in `Tests/CompatGate.lean`.
+
+**The table had no mechanical coverage.** A row could enter with any
+arity, covering any command, and nothing would check it — the one loop
+that covered the six was written by the same commit that added them.
+`nativePackages` carries exactly this obligation and enforces it twice.
+So `logOnlySurfaceChecks` is table-driven: every log-only control the
+table lists is probed in the body *and* deferred through
+`\AtBeginDocument` (the position the defect was reported in), and must
+leave no ink, no W0301/W0302, no error from the reserved characters, and
+an N0100 that names it. The arity each row declares is held against the
+public LaTeX definition — the check that stops `\PackageError` entering at
+two groups and inking its help text.
+
+**The family is larger than the table.** `logOnlyControls` enumerates
+nineteen members with their documented arities; `\PackageError` and
+`\ClassError` take three groups, `\typeout` and `\wlog` one,
+`\GenericError` four, `\MessageBreak` none. None is consumed, and
+`\PackageError` — 1262 files in this TeX Live tree, more uses than
+`\PackageWarning` — reproduces the identical E0311 cascade through the
+identical deferred hook. `logOnlyOwedBaseline` counts what is still owed
+and may only fall, so the next reproducer is a row to flip rather than a
+defect to rediscover.
+
+**The claim was a page claim asserted at the elaboration tier.** "Out of
+body text" is an assertion about ink, and `onlyX` reads `d.body` through
+`Ir.plainText`, which is a census of characters: a leak into a running
+head, a title, a page number, a fill or an image passes it. Five such
+leaks were constructed. `logOnlyQuiet` reads the furniture and metadata
+surface too, and `logOnlyArtifactChecks` reads the painted glyph runs of a
+produced PDF, with a positive control proving the reading finds those very
+strings when they are ordinary body text — so a silent pass is evidence
+rather than an absence of evidence.
+
+Two findings are routed rather than fixed, both outside this slice's
+ownership. `takeGroups`' `.ctrl` arm takes a following control word as a
+missing argument, so `\PackageInfo\textbf{FIRST}` deletes `FIRST` under a
+note claiming nothing was consumed; a `\par` between the two groups leaks
+the second as body text with the same false note. Correct LaTeX never
+reaches either, but the engine's own convention for a short read on a
+group-taking command is a hard error (`\textbf` raises E0304), so these
+rows are the outlier, and `rewriteCtrl_accounts` proves the drop was
+spoken for, not that what it said was true. And `Compat.became` emits
+through the plain `say` door, so a meaning-free N0100 carries no
+`Diag.subject` and can only be matched by its rendered text.
+
 2026-09-24 — the frame-title band ships in one artifact and not the other.
 Reported as a themed deck rendering wrongly in HTML; reproduced on the
 synthetic corpus, where it is two defects. `themed.html`'s first slide
