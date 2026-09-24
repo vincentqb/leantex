@@ -2304,10 +2304,79 @@ abbrev Box := (Sp × Sp) × (Sp × Sp)
 def Box.join (a b : Box) : Box :=
   ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
 
+/-- `a` is inside `b`, componentwise. -/
+def Box.le (a b : Box) : Prop :=
+  b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
+
+/-- A label line's measured ink: the width it sets to, and how far its
+glyphs reach above and below its baseline. A font question, so it is a
+value the measuring side supplies rather than something a shape can
+answer — see `LabelMetric`. -/
+structure LabelInk where
+  w : Sp := 0
+  height : Sp := 0
+  depth : Sp := 0
+  deriving Repr, BEq, Inhabited
+
+/-- What a label's content sets to at a per-mille size: the measurement
+the box of a label needs and the IR cannot make.
+
+**The picture walk has no face, and cannot be given one.** The driver
+builds the font set *from* the elaborated document (`\fonts` is a preamble
+declaration), so at the moment a node is placed there is nothing to
+measure against; only layout, which receives the resolved set, can answer.
+So the extent enters as a function here and every statement about it is
+universally quantified over the measurement — the box facts hold whatever
+the face turns out to be, and each artifact's version is that one fact
+projected through the metric it can supply. -/
+abbrev LabelMetric := Array Inline → Nat → LabelInk
+
+/-- Where a label's ink stands around its anchor, given its extents: the
+anchor decides which point of the box sits on `(x, y)` (pgf manual §17.5.2
+— the `anchor=` key), and this is the one site that says so. Layout sets
+each label line by reading it and the bounding box bounds the ink by
+reading it, so the box a picture reserves and the box its ink lands in
+cannot drift apart. Written arm by arm rather than as offsets, so each
+anchor's box reads off the page. -/
+def labelInkSpan (x y : Sp) (align : LabelAlign) (w tall : Sp) : Box :=
+  match align with
+  | .center => ((x - w / 2, y - tall / 2), (x - w / 2 + w, y - tall / 2 + tall))
+  | .west => ((x, y - tall / 2), (x + w, y - tall / 2 + tall))
+  | .east => ((x - w, y - tall / 2), (x, y - tall / 2 + tall))
+  | .south => ((x - w / 2, y), (x - w / 2 + w, y + tall))
+  | .north => ((x - w / 2, y - tall), (x - w / 2 + w, y))
+
+/-- The anchor is inside the ink: a measured box always holds the point it
+hangs from, so widening a label from its anchor to its ink can only grow a
+hull. The arithmetic is spelled over bare `Int` binders because `omega`
+does not read a `Sp`-typed term — the same workaround the `Box` proofs
+below record. -/
+theorem labelInkSpan_covers_anchor (x y : Sp) (align : LabelAlign) (w tall : Sp)
+    (hw : 0 ≤ w) (ht : 0 ≤ tall) :
+    Box.le ((x, y), (x, y)) (labelInkSpan x y align w tall) := by
+  have half : ∀ a b : Int, 0 ≤ b → a - b / 2 ≤ a ∧ a ≤ a - b / 2 + b := by
+    intro a b h; omega
+  have full : ∀ a b : Int, 0 ≤ b → a - b ≤ a := by intro a b h; omega
+  have grow : ∀ a b : Int, 0 ≤ b → a ≤ a + b := by intro a b h; omega
+  cases align
+  · exact ⟨(half x w hw).1, (half y tall ht).1, (half x w hw).2, (half y tall ht).2⟩
+  · exact ⟨Int.le_refl x, (half y tall ht).1, grow x w hw, (half y tall ht).2⟩
+  · exact ⟨full x w hw, (half y tall ht).1, Int.le_refl x, (half y tall ht).2⟩
+  · exact ⟨(half x w hw).1, Int.le_refl y, (half x w hw).2, grow y tall ht⟩
+  · exact ⟨(half x w hw).1, full y tall ht, (half x w hw).2, Int.le_refl y⟩
+
+/-- Where a label's measured ink stands around its anchor. Negative
+extents are clamped away: a metric that answers nonsense may not shrink
+the box below the anchor the shape declares. -/
+def labelInkBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+  labelInkSpan x y align (max m.w 0) (max (m.height + m.depth) 0)
+
 /-- The declared box of a shape, corners sorted. A label's box is its
-anchor point — its text extent is a font question layout answers — so a
-picture's box bounds every fill entirely and every label at its anchor
-(`box_in_bbox`); the ink of a label can stand a little proud of it. -/
+anchor point — its text extent is a font question layout answers, so
+`Shape.inkBox` is the measured form and this is what the IR knows on its
+own. A picture's declared box bounds every fill entirely and every label
+at its anchor (`box_in_bbox`); the ink of a label stands proud of it,
+which is what the measured box exists to close. -/
 def Shape.box : Shape → Box
   | .rect x y w h _ => ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
   | .label x y _ _ _ _ => ((x, y), (x, y))
@@ -2342,9 +2411,15 @@ def Picture.labelContents (p : Picture) : Array (Array Inline) :=
     | .frame _ _ _ _ _ _ => none
     | .edge _ _ _ => none
 
-/-- `a` is inside `b`, componentwise. -/
-def Box.le (a b : Box) : Prop :=
-  b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
+/-- The box a shape's **ink** occupies, given a measurement. Every arm but
+the label's is the declared box: a fill, an outline and a stroked edge are
+their own geometry, and only text has an extent the IR cannot compute. -/
+def Shape.inkBox (m : LabelMetric) : Shape → Box
+  | .label x y content _ scale align => labelInkBox x y align (m content scale)
+  | s@(.rect _ _ _ _ _) => s.box
+  | s@(.circle _ _ _ _ _) => s.box
+  | s@(.frame _ _ _ _ _ _) => s.box
+  | s@(.edge _ _ _) => s.box
 
 -- The Box and Place proofs state their arithmetic over bare `Int` binders
 -- because `omega` does not see through the `Sp` abbreviation (the same
@@ -2369,49 +2444,107 @@ theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le 
   exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
          h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
 
-/-- The bounding-box fold, `List` companion first as every walk here. -/
-def bboxList (acc : Box) : List Shape → Box
+/-- The bounding-box fold over a per-shape box function, `List` companion
+first as every walk here. One walk, two instantiations — the declared hull
+(`Picture.bbox`) and the measured one (`Picture.inkBbox`) — so the
+containment lemmas below are proved once and hold for both. -/
+def boxFoldList (f : Shape → Box) (acc : Box) : List Shape → Box
   | [] => acc
-  | s :: rest => bboxList (Box.join acc s.box) rest
+  | s :: rest => boxFoldList f (Box.join acc (f s)) rest
 
-/-- The picture's bounding box: the join of its shapes' boxes. An empty
-picture is the empty box at the origin. -/
-def Picture.bbox (p : Picture) : Box :=
+/-- The declared hull's fold. -/
+def bboxList (acc : Box) : List Shape → Box := boxFoldList Shape.box acc
+
+/-- The hull of a per-shape box over a picture. An empty picture is the
+empty box at the origin. -/
+def Picture.boxFold (p : Picture) (f : Shape → Box) : Box :=
   match p.shapes.toList with
   | [] => ((0, 0), (0, 0))
-  | s :: rest => bboxList s.box rest
+  | s :: rest => boxFoldList f (f s) rest
 
-theorem bboxList_le (acc : Box) (xs : List Shape) : Box.le acc (bboxList acc xs) := by
+/-- The picture's bounding box: the join of its shapes' declared boxes. -/
+def Picture.bbox (p : Picture) : Box := p.boxFold Shape.box
+
+/-- The picture's **ink** box under a measurement: the join of its shapes'
+ink boxes, so a node label's set text is inside it and not merely its
+anchor. This is the box a caller must reserve; `bbox` is what the IR knows
+with no face. -/
+def Picture.inkBbox (p : Picture) (m : LabelMetric) : Box :=
+  p.boxFold (Shape.inkBox m)
+
+theorem boxFoldList_le (f : Shape → Box) (acc : Box) (xs : List Shape) :
+    Box.le acc (boxFoldList f acc xs) := by
   induction xs generalizing acc with
   | nil => exact Box.le_refl acc
   | cons s rest ih =>
-    exact Box.le_trans (Box.le_join_left acc s.box) (ih (Box.join acc s.box))
+    exact Box.le_trans (Box.le_join_left acc (f s)) (ih (Box.join acc (f s)))
 
-theorem bboxList_mem (acc : Box) (xs : List Shape) (s : Shape) (h : s ∈ xs) :
-    Box.le s.box (bboxList acc xs) := by
+theorem boxFoldList_mem (f : Shape → Box) (acc : Box) (xs : List Shape) (s : Shape)
+    (h : s ∈ xs) : Box.le (f s) (boxFoldList f acc xs) := by
   induction xs generalizing acc with
   | nil => cases h
   | cons t rest ih =>
     cases h with
     | head =>
-      exact Box.le_trans (Box.le_join_right acc s.box) (bboxList_le _ rest)
-    | tail _ hmem => exact ih (Box.join acc t.box) hmem
+      exact Box.le_trans (Box.le_join_right acc (f s)) (boxFoldList_le _ _ rest)
+    | tail _ hmem => exact ih (Box.join acc (f t)) hmem
 
-/-- The picture stays in its box: the bounding box contains the declared
-box of every shape it emits, so nothing the picture draws stands outside
-what layout measures for it (labels bound at their anchors, see
-`Shape.box`). -/
-theorem Picture.box_in_bbox (p : Picture) (s : Shape) (h : s ∈ p.shapes) :
-    Box.le s.box p.bbox := by
+theorem bboxList_le (acc : Box) (xs : List Shape) : Box.le acc (bboxList acc xs) :=
+  boxFoldList_le _ acc xs
+
+theorem bboxList_mem (acc : Box) (xs : List Shape) (s : Shape) (h : s ∈ xs) :
+    Box.le s.box (bboxList acc xs) := boxFoldList_mem _ acc xs s h
+
+/-- **The hull covers what it folds**: every shape's box lies inside the
+picture's hull, for any per-shape box function. The registered `_covers`
+shape, and the one fact both hulls below are instances of. -/
+theorem Picture.boxFold_covers (p : Picture) (f : Shape → Box) (s : Shape)
+    (h : s ∈ p.shapes) : Box.le (f s) (p.boxFold f) := by
   have h' : s ∈ p.shapes.toList := by simpa using h
-  unfold Picture.bbox
+  unfold Picture.boxFold
   split
   · next heq => rw [heq] at h'; cases h'
   · next t rest heq =>
     rw [heq] at h'
     cases h' with
-    | head => exact bboxList_le _ rest
-    | tail _ hmem => exact bboxList_mem _ rest s hmem
+    | head => exact boxFoldList_le _ _ rest
+    | tail _ hmem => exact boxFoldList_mem _ _ rest s hmem
+
+/-- The picture stays in its declared box: the bounding box contains the
+declared box of every shape it emits (labels bound at their anchors, see
+`Shape.box`). -/
+theorem Picture.box_in_bbox (p : Picture) (s : Shape) (h : s ∈ p.shapes) :
+    Box.le s.box p.bbox := p.boxFold_covers Shape.box s h
+
+/-- **A picture's box contains its ink.** The invariant the engine lacked:
+`box_in_bbox` bounds every *shape*, and a label's shape is a point, so the
+declared hull of a diagram of node labels is the hull of their anchors —
+narrower than the text by half a label at each edge. A caller that
+reserves that box paints outside it, and the overrun check that reads it
+measures a box which fits while glyphs leave the page.
+
+Stated over an arbitrary measurement, because the measurement is the one
+thing the IR cannot supply (`LabelMetric`): whatever face resolves, the
+ink of every shape is inside the box computed with that face. Each
+artifact's version is this fact projected through the metric it can
+answer. -/
+theorem Picture.inkBbox_covers (p : Picture) (m : LabelMetric) (s : Shape)
+    (h : s ∈ p.shapes) : Box.le (s.inkBox m) (p.inkBbox m) :=
+  p.boxFold_covers (Shape.inkBox m) s h
+
+/-- The measured box loses nothing the declared box held: a shape's own
+geometry is its ink box unchanged, and a label's anchor is inside the
+measured box its ink occupies, so widening to the ink can only grow the
+hull. Every containment `box_in_bbox` gave still holds of `inkBbox`. -/
+theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Box.le s.box (s.inkBox m) := by
+  cases s with
+  | label x y content color scale align =>
+    exact labelInkSpan_covers_anchor x y align _ _ (Int.le_max_right _ _)
+      (Int.le_max_right _ _)
+  | rect _ _ _ _ _ => exact Box.le_refl _
+  | circle _ _ _ _ _ => exact Box.le_refl _
+  | frame _ _ _ _ _ _ => exact Box.le_refl _
+  | edge _ _ _ => exact Box.le_refl _
 
 /-- Where a picture lands on a page: the map from picture coordinates
 (y up) to layout coordinates (y down). The elaborator has already applied

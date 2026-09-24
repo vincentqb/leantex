@@ -5473,17 +5473,64 @@ private def collectTable (r : Rd) (a0 : Acc)
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
 
+/-- One label line of a picture, set and measured: the segments its
+inlines make, the size they set at, and the ink the line occupies — its
+set width and its reach above and below the baseline.
+
+**This is the measurement the IR cannot make.** A node's extent is a font
+question and the picture walk has no face (`Ir.Pic.LabelMetric`), so the
+two sides that need it — the box a picture reserves on the page and the
+line the placement actually sets — read it here, from one function of the
+resolved face, and cannot drift apart. -/
+private def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+    (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
+    Option (Array Seg × Sp × Ir.Pic.LabelInk) := Id.run do
+  let size := geom.fontSize * (scale : Int) / 1000
+  -- A label is generated ink of the picture (its one leaf has no census
+  -- text): `.block` of the picture leaf, `.unattributed` when the picture
+  -- owns none.
+  let (items, _, _, _) := itemsOfInlines none size xHeight fs {}
+    #[.colored color none content] {} (.fixed ((leaf.map .block).getD .unattributed)) imgs
+    geom.textWidth geom.textHeight (ladder := geom.scale)
+  let breaks := kp items geom.textWidth
+  let some brk := breaks[0]? | return none
+  let (segs, w, _, _) := setLine items (lineStart items 0) brk geom.textWidth false
+  let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
+    | .run idx _ _ _ _ sz _ raise _ _ =>
+      let font := fs.get idx
+      let sz := if sz == 0 then size else sz
+      (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+       max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+    | _ => acc) (0, 0)
+  return some (segs, size, { w := w, height := hgt, depth := dep })
+
+/-- The measurement a picture's box is computed with: `labelInk` read as an
+`Ir.Pic.LabelMetric`, the seam the IR states its containment over. A label
+whose line breaks to nothing measures as nothing, which is what it inks. -/
+private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp) :
+    Ir.Pic.LabelMetric := fun content scale =>
+  match labelInk fs imgs geom xHeight none content Ir.Color.black scale with
+  | some (_, _, ink) => ink
+  | none => {}
+
 /-- Stage one picture. The theorem side of the stays-in-its-box contract
-bounds every shape by the picture's box (`Ir.Pic.Picture.box_in_bbox`);
-this is the diagnostic side, bounding the box by the text area — a picture
-that cannot fit is still placed (best effort, never a blank), and W0335
-says the page may be overrun. `center` sets the box's left edge the way a
-centred paragraph sets its lines. -/
+bounds every shape's *ink* by the picture's measured box
+(`Ir.Pic.Picture.inkBbox_covers`); this is the diagnostic side, bounding
+the box by the text area — a picture that cannot fit is still placed (best
+effort, never a blank), and W0335 says the page may be overrun. `center`
+sets the box's left edge the way a centred paragraph sets its lines.
+
+The box is `inkBbox`, not `bbox`: a label's declared box is its anchor
+point, so a diagram of node labels reserved the hull of their *centres* —
+narrower than the text by half a label at each edge — and both halves of
+that were silent. The reserved box fitted while glyphs left the page, and
+the centring it drives put the leftmost label's ink at negative page x. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     (indent : Sp) (center : Bool) : Acc :=
-  let ((px0, _), (px1, py1)) := pic.bbox
+  let bb := pic.inkBbox (picMetric r.fs r.imgs r.geom r.xHeight)
+  let ((px0, py0), (px1, py1)) := bb
   let w := px1 - px0
-  let h := py1 - pic.bbox.1.2
+  let h := py1 - py0
   let avail := (a.measure.getD r.geom.textWidth) - indent
   let a := if w > avail || h > r.geom.textHeight then
       { a with diags := a.diags.push (Diag.of .W0335
@@ -7017,7 +7064,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- `h` and no depth: at the top of a fresh page, else below the last
   -- line's depth, breaking to a new page when even the shrink above
   -- cannot absorb the overflow.
-  let ((px0, py0), (_px1, py1)) := pic.bbox
+  let ((px0, py0), (_px1, py1)) := pic.inkBbox (picMetric fs imgs b.geom b.xHeight)
   let h := py1 - py0
   let bottom := b.geom.bodyBottom
   let mut yTop := b.geom.vmargin
@@ -7079,44 +7126,19 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
                               fill := some st.color, leaf := leaf }
     | .label lx ly content color scale align =>
-      let size := b.geom.fontSize * (scale : Int) / 1000
-      -- A label is generated ink of the picture (its one leaf has no
-      -- census text): `.block` of the picture leaf, `.unattributed` when
-      -- the picture owns none.
-      let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
-        #[.colored color none content] {} (.fixed ((leaf.map .block).getD .unattributed)) imgs
-        b.geom.textWidth b.geom.textHeight (ladder := b.geom.scale)
-      let breaks := kp items b.geom.textWidth
-      if let some brk := breaks[0]? then
-        let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
-        -- The node's box centres on its anchor, as TikZ anchors a node:
-        -- the baseline sits below the centre by half the ink height
-        -- less half the depth.
-        let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
-          | .run idx _ _ _ _ sz _ raise _ _ =>
-            let font := fs.get idx
-            let sz := if sz == 0 then size else sz
-            (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-             max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
-          | _ => acc) (0, 0)
-        let (cx, cy) := place.toPage (lx, ly)
-        -- The anchor decides which point of the label's box sits on
-        -- (cx, cy): the centre by default, an edge under a placement
-        -- option (pgf §17.5.2).
-        let x := match align with
-          | .center => cx - w / 2
-          | .west => cx
-          | .east => cx - w
-          | .south | .north => cx - w / 2
-        let y := match align with
-          | .center | .west | .east => cy + (hgt - dep) / 2
-          | .south => cy - dep
-          | .north => cy + hgt
+      if let some (segs, size, ink) := labelInk fs imgs b.geom b.xHeight leaf content color scale then
+        -- Where the label's ink stands around its anchor is one fact, and
+        -- `Ir.Pic.labelInkBox` is where it is stated: the box the picture
+        -- reserved (`inkBbox`, above) and the line set here are the same
+        -- box through the same transform, so a label cannot land outside
+        -- the space measured for it.
+        let ((ix0, _), (_, iy1)) := Ir.Pic.labelInkBox lx ly align ink
+        let (x, top) := place.toPage (ix0, iy1)
         -- Label lines ride with the picture: they share the shrink
         -- above it, so a page set short moves the diagram as one
         -- (pushed below through `pushLabels`, the rider door).
-        lines := lines.push { x := x, y := y,
-                              size := size, segs := segs, setWidth := w, leaf := leaf }
+        lines := lines.push { x := x, y := top + ink.height,
+                              size := size, segs := segs, setWidth := ink.w, leaf := leaf }
   b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
   b := { b with
     pageShrink := above

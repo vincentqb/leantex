@@ -245,10 +245,94 @@ list.
   hold `warnSpill_accounts` one level below its artifact, so discharging
   them closes both. The witness meanwhile is the four declared-break rows
   of `titleBreakChecks`, read off `Layout.run`'s own diagnostics.
+- `nodeExtent_covers` — a node's registered extent covers its label's ink,
+  so a relative placement separates *text* and not merely anchors. The
+  border arithmetic is proved and exact (`Picture.placeRight_border_exact`
+  and its three siblings); the input is wrong, because `ownA`/`ownB` are the
+  declared minimum alone and a body with no `minimum width` registers zero.
+  Blocked on the picture walk having no face and the driver being unable to
+  give it one: the font set is built *from* the elaborated document
+  (`buildFontSet` reads `doc.fonts`), so at the moment `evalNode` resolves a
+  placement there is nothing to measure against, and breaking that circle
+  means a two-pass driver — the elaborator's door, not Picture's.
+  `Ir.Pic.LabelMetric` is the seam the measurement arrives through and every
+  box statement already quantifies over it; what this needs is `Picture.Cx`
+  carrying one. The witness meanwhile is the overrun row of
+  `pictureInkBoxChecks`: a diagram whose measured ink leaves the text area
+  is named rather than shipped in silence.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — a picture's box now contains its ink, and the measurement that
+makes that possible lives where the face does. A node's extent was never
+measured against its label text: `Ir.Pic.Shape.box`'s label arm was the
+anchor *point*, and `evalNode`'s `ownA`/`ownB` were the declared minimum
+alone. Two silent losses came out of the first of those, and one visible
+one out of the second.
+
+**The silent pair.** A diagram of node labels reserved the hull of its
+anchors — narrower than the text by half a label at each edge. So the
+leftmost label's glyphs were painted at *negative page x*: outside the
+media box, the run's first characters simply absent from the artifact, no
+clip path involved and the surviving glyph drawn whole. And the overrun
+check reads that same box, so it measured a box that fits while ink left
+the page and said nothing. `Picture.box_in_bbox` was true throughout — it
+bounds every *shape*, and a label's shape is a point, so the theorem held
+exactly as much as it claimed and the claim was not the one a caller
+needed. On the private reference corpus thirteen pages carried this, and a
+synthetic three-node row reproduces it at −72.9 pt.
+
+**The invariant, stated where both artifacts can read it.**
+`Ir.Pic.Picture.inkBbox_covers`: the ink box of every shape a picture emits
+is inside the picture's box, computed with a measurement. The measurement
+is a *parameter* (`Ir.Pic.LabelMetric`), because it is the one thing the IR
+cannot supply, and so the statement holds whatever face resolves and each
+artifact's version is that one fact projected through the metric it can
+answer. `Ir.Pic.labelInkSpan` is the single site saying which point of a
+label's box sits on its anchor, and both sides that need it — the box a
+picture reserves and the line the placement sets — read it; `Shape.box_le_inkBox`
+says widening from the anchor to the ink can only grow a hull, so every
+containment `box_in_bbox` gave still holds. One walk (`Picture.boxFold`)
+under both hulls, rather than the tenth copy of a fold.
+
+**Measurement or check: both, and which is which matters.** The judgement
+the work asked for. The measurement is available in layout and nowhere
+earlier: `Rd` already carries the resolved `FontSet`, so `collectPicture`
+can measure a label exactly as the placement does, and a new `labelInk`
+is now the one function both call — they cannot disagree, because there is
+nothing to disagree with. That is a *fix*, not a check: the box grows to
+the ink, the centring it drives puts the leftmost label's ink at the
+picture's own left edge, and the vertical extent now includes a label's
+reach above its anchor, so the top of a diagram no longer stands above
+the space reserved for it.
+
+What is *not* fixed is the separation, and the reason is architectural
+rather than incidental. `right =of` separates node centres by one node
+distance because `ownA` is the declared minimum; measuring it needs a face
+at *elaboration*, and the driver builds the font set **from** the
+elaborated document (`buildFontSet` reads `doc.fonts`, a preamble
+declaration). The ordering is circular, and breaking it means a two-pass
+driver — parse, resolve the font environment from the preamble, elaborate —
+which is the elaborator's and the driver's door. So the seam is named
+(`Ir.Pic.LabelMetric`, and `Picture.Cx` is where it will arrive, beside
+`Cx.math` and `Cx.bodySize`), the statement is staged
+(`nodeExtent_covers`, § Owed obligations grows by one row) and the honest
+floor stands in the meantime: a diagram whose *measured* ink leaves the
+text area is named (W0335), where the hull of eight anchors sat
+comfortably inside the measure while the labels ran past the trim edge.
+Stated plainly, because the two claims are not the same: the diagrams are
+no longer *off the page*, and they are still *too tight* — and the second
+is now loud instead of silent.
+
+**Measured.** The synthetic three-node row's leftmost label moves from
+x = −4,776,607 sp (−72.9 pt) to 1,857,713 sp, which is the text margin
+exactly — tight in both directions, so the box neither cuts the ink nor
+reserves space no glyph uses. An eight-node row of the same shape gains
+W0335 where it had no diagnostic at all. Both are rows of
+`pictureInkBoxChecks`, read off the shipped lines rather than an IR dump,
+and all four new rows fail on the parent commit.
 
 2026-09-24 — the node floor's review round: a loose counter, a silent
 give-up, and a legal path turned fatal. An independent adversarial read of

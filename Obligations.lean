@@ -527,4 +527,33 @@ theorem reflow_named
     (Layout.run geom fs none doc).diags.any (·.kind == .W0386) = true := by
   sorry
 
+-- owed: nodeExtent_covers
+-- owner: LeanTex.Core.Picture
+-- source: the picture-extent slice (PLAN 2026-09-24, the box-contains-its-ink entry): a node's extent is never measured against its label text, so `right =of` separates node *centres* by one node distance and long labels overlap whatever they say. The border arithmetic is proved and exact (`Picture.placeRight_border_exact` and its three siblings); what is wrong is the input, because the half-extent a node registers is the declared minimum only and a body with no `minimum width` registers zero. On the private reference corpus this collapsed an eight-node graph into roughly a centimetre of ink. The measured box (`Ir.Pic.Picture.inkBbox`, `inkBbox_covers`) closes the half that sent glyphs off the page; this is the half that would space the diagram correctly, and the in-suite witness meanwhile is the overrun row of `pictureInkBoxChecks`, which names a diagram whose measured ink leaves the text area instead of shipping it silently.
+-- blocker: the picture walk has no face, and the driver cannot give it one. A node's extent is a font question, and the font set is built *from* the elaborated document (`buildFontSet` reads `doc.fonts`, a preamble declaration), so at the moment `evalNode` resolves a placement there is nothing to measure against — the ordering is circular, and breaking it means a two-pass driver (parse, resolve the font environment from the preamble, then elaborate) which is the elaborator's and the driver's door, not this module's. `Ir.Pic.LabelMetric` is the seam the measurement will arrive through and every box statement is already quantified over it; what this obligation needs is for `Picture.Cx` to carry one, so `evalNode`'s `ownA`/`ownB` are `max` of the declared minimum and the measured half-extent rather than the minimum alone. Until then the statement quantifies over a metric the walk never sees, which is why it is owed rather than proved.
+-- goldens: yes
+/-- **A node's registered extent covers its label's ink.** The half-extents
+a named node registers (`NodeGeom.a`, `NodeGeom.b`) are what every relative
+placement measures border to border from, so a label standing at a node's
+anchor must fit inside them — otherwise the separation the placement
+theorems prove exactly is exact about the wrong box, and two nodes one node
+distance apart by their borders overlap by their text.
+
+Stated over the engine's own walk and over an arbitrary measurement, the
+same `Ir.Pic.LabelMetric` the box statements range over: whatever face
+resolves, the ink of a label at a node's anchor is inside the extent that
+node placed against. The anchor hypothesis is how a shape is tied to its
+node — the walk emits a label centred on the node's own point, and no
+channel records which node emitted which shape. -/
+theorem nodeExtent_covers (cx : Picture.Cx) (m : Ir.Pic.LabelMetric)
+    (sts : List Picture.Stmt) (nm : String) (g : Picture.NodeGeom)
+    (x y : Dim.Sp) (content : Array Ir.Inline) (c : Ir.Color) (sc : Nat)
+    (al : Ir.Pic.LabelAlign)
+    (hg : (Picture.evalFixed cx sts).nodes.lookup nm = some g)
+    (hs : Ir.Pic.Shape.label x y content c sc al ∈ (Picture.evalFixed cx sts).shapes)
+    (hanchor : x = g.x ∧ y = g.y) :
+    Ir.Pic.Box.le (Ir.Pic.labelInkBox x y al (m content sc))
+      ((g.x - g.a, g.y - g.b), (g.x + g.a, g.y + g.b)) := by
+  sorry
+
 end Obligations

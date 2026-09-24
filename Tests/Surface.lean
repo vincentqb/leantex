@@ -4904,6 +4904,98 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
              b.lines.map fun l => (l.text, l.x, l.y, l.size)
        | _, _ => false))
 
+/-- **A picture's box contains its ink** (`Ir.Pic.Picture.inkBbox_covers`).
+
+The defect: a label's declared box is its anchor point, so a diagram of
+node labels reserved the hull of their *centres*. Two silent losses
+followed. The reserved box was narrower than the text by half a label at
+each edge, so the leftmost label's glyphs were painted at negative page
+x — outside the media box, the run's first characters simply gone from the
+artifact, with no clip path and no diagnostic. And the overrun check reads
+that same box, so it measured a box that fits while ink left the page.
+
+Read off the shipped lines, never a box the test computes itself: the
+claim is about where glyphs landed. `hmargin` is the picture's own left
+edge in a frame, so "the leftmost label's ink begins there" states the
+containment tightly in both directions — the box neither cuts the ink nor
+reserves space the ink does not use.
+
+What this does *not* fix is the separation: `right =of` puts one node
+distance between node *centres* because no body's extent is measured at
+elaboration, so labels in a row still overlap. That half needs the face at
+elaboration, which the driver cannot supply (it builds the font set from
+the elaborated document); it is `nodeExtent_covers`, owed and staged. The
+overrun row below is the honest floor meanwhile: a diagram whose ink
+leaves the text area is named. -/
+def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let frame (body : String) : String :=
+    "\\documentclass{slides}\\begin{document}\n\\begin{frame}{A Frame}\n" ++
+    "\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n\\end{frame}\n\\end{document}"
+  -- A row of `right =of` nodes, each label wide enough that half of it
+  -- overhangs the anchor it is centred on.
+  let row (n : Nat) : String := Id.run do
+    let mut s := "\\node (n0) {A Very Wide Label Indeed That Runs On};\n"
+    for k in [1:n] do
+      s := s ++ "\\node (n" ++ toString k ++ ") [right =of n" ++ toString (k - 1) ++
+        "] {Another Very Wide Label Here};\n"
+    return s
+  -- The picture's label lines and the page geometry they are judged
+  -- against: what the shipped artifact carries, and nothing else.
+  let shipped (src : String) : Array CensusLine × Dim.Sp × Dim.Sp × Array Diag :=
+    let (doc, _) := elabStr src
+    let out := layoutOf oneFace doc
+    let geom := Layout.Geom.ofPage doc.page
+    let c := censusOf (coveredColorsOf doc) out
+    let labels := (c[0]?.map fun p => p.lines.filter fun l =>
+      !l.furniture && !l.text.isEmpty && l.text != "A Frame").getD #[]
+    (labels, geom.hmargin, geom.textWidth, out.diags)
+  let (three, hmargin, textW, threeDs) := shipped (frame (row 3))
+  t "a three-node row ships one label line per node"
+    (three.size == 3)
+  -- The headline measurement: `pdftotext -bbox` reported a negative xMin
+  -- for the first run of such a row, and the characters left of zero were
+  -- simply absent from the page.
+  t "no node label is painted left of the page"
+    (three.all fun l => 0 ≤ l.x)
+  -- Tight in both directions: the reserved box's left edge *is* the ink's
+  -- left edge, so the box neither cuts the leftmost label nor reserves
+  -- space no glyph uses.
+  t "the picture's box begins exactly where its leftmost label's ink begins"
+    (three.foldl (fun a l => min a l.x) textW == hmargin)
+  t "a row whose ink fits the text area is not named"
+    (!threeDs.any fun d => d.code == "W0335")
+  -- The honest floor for the half the engine cannot fix: a diagram whose
+  -- measured ink leaves the text area says so. Before the box was
+  -- measured this was silent — the hull of eight centres is one node
+  -- distance apart seven times over, comfortably inside the measure,
+  -- while the labels ran past the trim edge.
+  let (eight, _, _, eightDs) := shipped (frame (row 8))
+  t "an eight-node row still ships every label"
+    (eight.size == 8)
+  t "no label of the overrunning row is painted left of the page"
+    (eight.all fun l => 0 ≤ l.x)
+  t "a row whose measured ink leaves the text area is named"
+    (eightDs.any fun d => d.code == "W0335")
+  -- The placement regression guard: widening the box may not move a node
+  -- relative to the node it was placed against. Declared minimums are the
+  -- case the separation is exact in, so the border-to-border distance is
+  -- the fact to pin.
+  let declared :=
+    "\\tikzset{node distance = 1cm and 1cm}\n\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node (aa) [draw, minimum size=6mm] {Pear};\n" ++
+    "\\node (bb) [draw, minimum size=6mm, right =of aa] {Plum};\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let (dDoc, _) := elabStr declared
+  let dc := censusOf (coveredColorsOf dDoc) (layoutOf oneFace dDoc)
+  let dbox (k : Nat) : Option (Dim.Sp × Dim.Sp) :=
+    (dc[0]?.bind (·.pathBoxes[k]?)).map fun (x, _, w, _) => (x + w / 2, w / 2)
+  t "measuring the box leaves a declared border-to-border separation exact"
+    (match dbox 0, dbox 1 with
+     | some (ax, aw), some (bx, bw) => bx - ax == Dim.mm 10 + aw + bw
+     | _, _ => false)
+
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is
 not a slot the engine chose wrongly — it is a picture that drew nothing
