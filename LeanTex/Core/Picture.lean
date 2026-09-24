@@ -1339,45 +1339,319 @@ rendered picture subset; the shape is not drawn")
   return .ok (.rect (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
     (max y1 y2 - min y1 y2) color)
 
-/-- A node body's content: words, numbers, and bound macros become text,
-a math span elaborates through `Cx.math`; anything else is outside the
-subset and names itself. Leading and trailing space trims, as the braces'
-inner space does in TeX. -/
-private def contentOf (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
-    Except String (Array Ir.Inline × Array PDiag) := Id.run do
-  let mut out : Array Ir.Inline := #[]
-  let mut diags : Array PDiag := #[]
-  let mut s := ""
-  for t in toks do
-    match t with
-    | .ident w => s := s ++ w
-    | .num m => s := s ++ milliString m
-    | .space => s := s.push ' '
-    | .sym c => s := s.push c
-    | .ctrl n =>
-      match env.lookup n with
-      | some v => s := s ++ v.text
-      | none => return .error s!"unknown macro '\\{n}'"
-    | .math d body =>
-      unless s.isEmpty do
-        out := out.push (.text s)
-        s := ""
-      let (inl, ds) := cx.math d body.toArray
-      out := out.push inl
-      diags := diags ++ ds
-    | t => return .error (tokText t)
-  unless s.isEmpty do
-    out := out.push (.text s)
-  let trimL (s : String) : String := String.ofList (s.toList.dropWhile (· == ' '))
-  let trimR (s : String) : String :=
-    String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
-  let n := out.size
-  out := out.mapIdx fun i inl =>
+/-- One line of a node label: its inline content and the size it sets at,
+per mille of the node's own. A label is one line per `\\`, because
+`Ir.Pic.Shape.label` carries one size and one anchor — so a second line is
+a second shape, stacked by `nodeLineLead`, not a break inside one. -/
+abbrev LabelLine := Array Ir.Inline × Nat
+
+/-- The baseline-to-baseline distance between a node label's lines, at the
+label's own size. TeX's `\baselineskip` is 1.2 times the font size
+(`plain.tex`: `\normalbaselineskip=12pt` against a 10 pt body), and this
+walk has no face to ask — a node's font is layout's question, which is why
+`readDim` refuses `em` — so the 10 pt nominal stands here and the label's
+scale carries the rest. Uniform across a label's lines: a line that opens
+with a size switch sets smaller, and pgf's own `\\` spacing is the node
+font's, not the line's. -/
+def nodeLineLead (scale : Nat) : Sp := Dim.pt 12 * (scale : Int) / 1000
+
+/-- The stand-in a label sets when its salvage comes to nothing and a loss
+was named: the same bracketed ellipsis a degraded formula inks, for the
+same reason — a blank tells a reader nothing stood there.
+`nodeLabel_accounts` is the statement that the case is never silent. -/
+def nodeFloorPlaceholder : String := String.ofList Ir.mathFloorPlaceholder
+
+/-- Commands whose content is invisible by definition: a phantom sets a box
+of its argument's size and no ink. Read rather than refused, so a
+`\vphantom{p}Member` label is `Member` and a body of nothing but a phantom
+is honestly empty — the placeholder would claim ink where TeX shows none.
+The height a phantom props is not lost either: this subset measures no
+node body's extent at all (see the emission note in `evalNode`), so there
+is no height here to keep. -/
+def phantomCtrl : List String := ["vphantom", "hphantom", "phantom"]
+
+/-- What a node body's salvage is in the middle of. The modes let the walk
+read one token at a time, so a construct spanning several of them needs no
+lookahead and the recursion stays structural — the shape `step` already
+uses for the statement machine. -/
+inductive SalMode where
+  | text
+  /-- An optional `[...]` run may stand here: it belongs to the construct
+  just read (`\\[2ex]` is how an author spaces a label's lines, and
+  `\textcolor[rgb]{...}` names a colour model), so it is dropped where it
+  appears. `then_` is how many naming groups follow it. -/
+  | optMaybe (then_ : Nat)
+  /-- Inside that run, dropping to its `]`. -/
+  | optDrop (then_ : Nat)
+  /-- The next `n` groups name rather than carry (`Ir.floorNamedArgs`), so
+  they are dropped instead of salvaged: `\ref{key}`'s key is not a word the
+  label meant to say. -/
+  | dropArgs (n : Nat)
+  /-- `\textcolor`'s first group: the palette role. -/
+  | colorRole
+  /-- `\textcolor`'s second group, to set in the role it named. -/
+  | colorBody (c : Ir.Color) (role : Option String)
+  deriving Repr, BEq, Inhabited
+
+/-- How many naming groups an option run is holding open. -/
+def SalMode.pending : SalMode → Nat
+  | .optMaybe k => k
+  | .optDrop k => k
+  | .dropArgs k => k
+  | .text | .colorRole | .colorBody _ _ => 0
+
+/-- A node label under construction: the lines already closed, the current
+line's inlines and its pending text run, the size that line sets at, and
+the losses named so far. `fresh` is whether the current line has had
+anything contributed yet — a size switch may only open a line, since a
+label shape carries one size. -/
+structure Sal where
+  lines : Array LabelLine := #[]
+  out : Array Ir.Inline := #[]
+  text : String := ""
+  scale : Nat := 1000
+  fresh : Bool := true
+  diags : Array PDiag := #[]
+  mode : SalMode := .text
+  deriving Inhabited
+
+namespace Sal
+
+/-- Add readable characters to the current line. -/
+def str (s : Sal) (t : String) : Sal :=
+  if t.isEmpty then s else { s with text := s.text ++ t, fresh := false }
+
+/-- Close the pending text run, so an inline can follow it in order. -/
+def flush (s : Sal) : Sal :=
+  if s.text.isEmpty then s
+  else { s with out := s.out.push (.text s.text), text := "" }
+
+/-- Add one elaborated inline (a math span, a coloured group). -/
+def inline (s : Sal) (i : Ir.Inline) : Sal :=
+  { s.flush with out := (s.flush).out.push i, fresh := false }
+
+def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
+  { s with diags := ds.foldl Array.push s.diags }
+
+/-- Back to reading content: a mode the token at hand does not continue. -/
+def mode0 (s : Sal) : Sal := { s with mode := .text }
+
+/-- Name one construct the subset could not read. The label keeps what it
+can read; the diagnostic says what was not drawn. -/
+def refuse (s : Sal) (what : String) : Sal :=
+  { s with diags := s.diags.push (.W0334, s!"{what} in a node body is outside \
+the rendered picture subset; the label sets the text it can read") }
+
+/-- Space trimmed off both ends of a line's text, as the braces' inner
+space is in TeX. Only drops characters, so it cannot invent ink. -/
+private def trimLine (xs : Array Ir.Inline) : Array Ir.Inline :=
+  let trimL (t : String) : String := String.ofList (t.toList.dropWhile (· == ' '))
+  let trimR (t : String) : String :=
+    String.ofList ((t.toList.reverse.dropWhile (· == ' ')).reverse)
+  let n := xs.size
+  let xs := xs.mapIdx fun i inl =>
     if let .text f := inl then
       .text (if i + 1 == n then trimR (if i == 0 then trimL f else f)
              else if i == 0 then trimL f else f)
     else inl
-  return .ok (out.filter (· != .text ""), diags)
+  xs.filter (· != .text "")
+
+/-- Close the current line and start the next: what `\\` does. -/
+def newline (s : Sal) : Sal :=
+  let s := s.flush
+  { s with lines := s.lines.push (trimLine s.out, s.scale)
+           out := #[], text := "", scale := 1000, fresh := true, mode := .text }
+
+/-- A nested group's own salvage, sharing the losses named so far and the
+line's size but not its content. -/
+def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags }
+
+/-- Does this label ship ink? The inlines it ships, counted across its
+lines: an empty line contributes none, so a label of nothing but blank
+lines is inkless — which is what `labelFloor` pays for. -/
+def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
+
+def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
+
+end Sal
+
+/-- The mode a control sequence the subset cannot draw puts the salvage
+into, and the loss it names. Four are read rather than refused, because
+nothing a reader can see is lost: `\\` opens a line, a phantom is
+invisible by definition, a size switch opening a line sets that line's
+size, and `\textcolor` sets its body in the role it names. Everything else
+drops its own name — and the arguments `Ir.floorNamedArgs` says name
+rather than carry, so a key or a length never rides onto the page as
+ink — and keeps what its content groups say.
+
+`Ir.floorNamedArgs` is the math floor's own table, read here rather than
+restated: which arguments of a command are names is one fact about LaTeX,
+and a second list would drift from the first. -/
+private def salCtrl (env : List (String × Val)) (n : String) (s : Sal) : Sal :=
+  match env.lookup n with
+  | some v => s.str v.text
+  | none =>
+    if n == "\\" then { s.newline with mode := .optMaybe 0 }
+    else if phantomCtrl.contains n then { s with mode := .optMaybe 1 }
+    else if n == "textcolor" then { s with mode := .colorRole }
+    else match Ir.sizeScale.lookup n with
+      | some k =>
+        if s.fresh then { s with scale := k }
+        else
+          (s.refuse s!"the size '\\{n}' inside a label line").mode0
+      | none =>
+        let s := s.refuse s!"unknown macro '\\{n}'"
+        match Ir.floorNamedArgs.lookup n with
+        | some arity => { s with mode := .optMaybe arity }
+        | none => { s with mode := .optMaybe 0 }
+
+mutual
+
+/-- Salvage a node body's tokens into label lines: one fold, the only
+recursion into a pre-matched group subtree, so totality is structural. -/
+def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
+  | [], s => s
+  | t :: rest, s => salList cx env rest (salOne cx env t s)
+
+/-- One token. The mode is normalised first — a mode this token does not
+continue falls back to reading it as content — so the content arm runs at
+most once per token and the walk needs no lookahead. -/
+def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
+  let s : Sal := match s.mode, t with
+    | .optMaybe _, .sym '[' => s
+    | .optMaybe k, _ => { s with mode := if k == 0 then .text else .dropArgs k }
+    | .optDrop _, _ => s
+    | .dropArgs _, .space => s
+    | .dropArgs _, .group _ => s
+    | .dropArgs _, _ => s.mode0
+    | .colorRole, .space => s
+    | .colorRole, .group _ => s
+    | .colorRole, .sym '[' =>
+      { (s.refuse "a colour model") with mode := .optDrop 1 }
+    | .colorRole, _ => s.mode0
+    | .colorBody _ _, .space => s
+    | .colorBody _ _, .group _ => s
+    | .colorBody _ _, _ => s.mode0
+    | .text, _ => s
+  match s.mode with
+  | .optMaybe _ => { s with mode := .optDrop (s.mode.pending) }
+  | .optDrop k =>
+    if t == .sym ']' then { s with mode := if k == 0 then .text else .dropArgs k }
+    else s
+  | .dropArgs n =>
+    match t with
+    | .space => s
+    | _ => { s with mode := .optMaybe (if n ≤ 1 then 0 else n - 1) }
+  | .colorRole =>
+    match t with
+    | .group g =>
+      match evalColor cx env g.toArray with
+      | .ok c =>
+        let role : Option String := match g.filter (· != .space) with
+          | [.ident w] => if cx.pal.entries.any (·.1 == w) then some w else none
+          | _ => none
+        { s with mode := .colorBody c role }
+      | .error e => { (s.refuse s!"the colour ({e})") with mode := .text }
+    | _ => s
+  | .colorBody c role =>
+    match t with
+    | .group g =>
+      let sub := (salList cx env g s.sub).newline
+      let body := sub.lines.foldl (fun a (xs, _) => xs.foldl Array.push a) #[]
+      let s := (s.addDiags (sub.diags.extract s.diags.size sub.diags.size))
+      if body.isEmpty then { s with mode := .text }
+      else { (s.inline (.colored c role body)) with mode := .text }
+    | _ => s
+  | .text =>
+    match t with
+    | .ident w => s.str w
+    | .num m => s.str (milliString m)
+    | .space => s.str " "
+    | .sym c => s.str (String.singleton c)
+    | .group g => { (salList cx env g s) with mode := .text }
+    | .math d body =>
+      let (inl, ds) := cx.math d body.toArray
+      (s.inline inl).addDiags ds
+    | .other what => s.refuse what
+    | .ctrl n => salCtrl env n s
+
+end
+
+/-- The lines a label actually ships: its salvage, or the declared
+placeholder when the salvage kept nothing and a loss was named. The same
+shape `Ir.floorInk` gives a degraded formula, and for the same reason — a
+blank page region is not an honest floor, because it tells a reader nothing
+stood there. -/
+def labelFloor (lines : Array LabelLine) (named : Bool) : Array LabelLine :=
+  if Sal.inked lines || !named then lines
+  else #[(#[.text nodeFloorPlaceholder], 1000)]
+
+/-- **A label that named a loss ships ink.** The registered `_accounts`
+shape: an empty result is paid for by a write. Before it the engine did the
+reverse — one unreadable macro in one body dropped the whole label, so a
+diagram of such nodes shipped an outline with nothing inside it while every
+warning said so where no reader looks.
+
+What it does not say, since the distinction matters: it is one-sided. It
+holds for a salvage that kept nothing at all, because the placeholder then
+pays for it. The other side — that the salvage keeps a body's readable
+characters and none of its markup — is `nodeLabel_mem`, owed and staged:
+the walk is a mode machine over a token tree with no equational theory, so
+the statement needs an invariant carried through it. The executable half
+meanwhile is the whole-label rows in `pictureNodeFloorChecks`, which fail
+under both an all-dropping and an all-keeping salvage. -/
+theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named) :
+    Sal.inked (labelFloor lines named) := by
+  unfold labelFloor
+  split
+  · rename_i hc
+    simpa only [h, Bool.not_true, Bool.or_false] using hc
+  · decide
+
+/-- A node body's label lines. Words, numbers and bound macros become text,
+a math span elaborates through `Cx.math`, `\\` opens a line, and a
+construct the subset cannot draw drops its own spelling and keeps what it
+says (`salCtrl`).
+
+**A body the subset cannot fully read still ships the text it can read.**
+Dropping a label whole is the worse recovery: the reader sees an empty
+diagram and has no way to know a word stood there, while the diagnostic
+that would have told them is the thing they never see. This is the same
+judgement `Ir.mathFloor` makes for a formula the engine cannot set, one
+module over — and the same placeholder closes it, so a named loss never
+ships a blank (`labelFloor_accounts`). -/
+def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    Array LabelLine × Array PDiag :=
+  let s := (salList cx env toks {}).newline
+  (labelFloor s.lines (!s.diags.isEmpty), s.diags)
+
+/-- The page side of `labelFloor_accounts`: a node body whose salvage named
+a loss ships ink, whatever the body was. -/
+theorem nodeLabel_accounts (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    ¬ (nodeLabel cx env toks).2.isEmpty → Sal.inked (nodeLabel cx env toks).1 := by
+  intro hd
+  simp only [nodeLabel] at hd ⊢
+  exact labelFloor_accounts _ _ (by simpa using hd)
+
+/-- A label's lines as shapes, stacked so the block centres on the anchor:
+one `Ir.Pic.Shape.label` per line, baselines `nodeLineLead` apart, each at
+the size its line opened with. A label shape carries one size and one
+anchor, so a multi-line label is several of them — `\\` is a real break,
+not a degradation, and layout sets one line per label shape. An empty line
+ships no shape: a blank contributes its height, which this subset does not
+measure, and no ink. -/
+def stackLabels (x y : Sp) (scale : Nat) (color : Ir.Color)
+    (align : Ir.Pic.LabelAlign) (lines : Array LabelLine)
+    (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape := Id.run do
+  let n : Int := lines.size
+  let lead := nodeLineLead scale
+  let mut out := acc
+  for k in [0:lines.size] do
+    if let some (content, rel) := lines[k]? then
+      unless content.isEmpty do
+        let dy := (n - 1 - 2 * (k : Int)) * lead / 2
+        out := out.push (.label x (y + dy) content color (scale * rel / 1000) align)
+  return out
 
 /-- A dimension literal in a node option (`8mm`, `2pt`), in sp. Only the
 physical units: a font-relative unit (`em`, `ex`) needs the node's face,
@@ -1614,7 +1888,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   ev := { ev with readOpts := true }
   let dsc : Sp × Sp := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
   let mut place : Option (Dir × String × (Sp × Sp)) := none
-  let mut contents : Option (Array Ir.Inline) := none
+  let mut contents : Option (Array LabelLine) := none
   for opt in mergeOpts cx.opts cx.everyNode own do
     match readPlace dsc opt.toList with
     | some p => place := some p
@@ -1667,24 +1941,12 @@ is dropped")
     -- write `\node[bundle] (n);` with nothing of its own (pgf manual
     -- §17.2.1). A body written at the use site wins.
     | .ident "node" :: .ident "contents" :: .sym '=' :: rest =>
-      match rest with
-      | [.group g] =>
-        match contentOf cx env g with
-        | .ok (c, ds) =>
-          contents := some c
-          ev := ds.foldl Ev.diag ev
-        | .error e =>
-          ev := ev.diag (.W0334, s!"{e} in 'node contents' is outside the \
-rendered picture subset; the body is dropped")
-      | [] => contents := some #[]
-      | rest =>
-        match contentOf cx env rest with
-        | .ok (c, ds) =>
-          contents := some c
-          ev := ds.foldl Ev.diag ev
-        | .error e =>
-          ev := ev.diag (.W0334, s!"{e} in 'node contents' is outside the \
-rendered picture subset; the body is dropped")
+      -- `node contents={x}` and `node contents=x` alike: pgf takes the
+      -- braces off a single group, and a bare run is the body itself.
+      let g : List Tok := if let [.group inner] := rest then inner else rest
+      let (ls, ds) := nodeLabel cx env g
+      contents := some ls
+      ev := ds.foldl Ev.diag ev
     | [] => pure ()
     | o :: _ =>
       ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
@@ -1744,24 +2006,23 @@ this one against; the node is not drawn")
   -- supplied — a style that carries the body is how pgf lets a bundle
   -- draw a node with nothing written at the use site.
   --
-  -- **A body the subset cannot read costs the label, never the node.** A
-  -- node's position and outline are functions of its options alone, and a
-  -- name is what every relative placement and every edge resolves
-  -- against — so refusing the whole node for one unreadable inline used to
-  -- take every node placed against it, and every edge touching it, with
-  -- it. One unknown macro in one body cost a whole diagram that way.
-  let bodyOf : Except PDiag (Array Ir.Inline × Array PDiag) :=
+  -- **A body the subset cannot read costs the construct, never the label
+  -- and never the node.** A node's position and outline are functions of
+  -- its options alone, and a name is what every relative placement and
+  -- every edge resolves against — so refusing the whole node for one
+  -- unreadable inline used to take every node placed against it, and every
+  -- edge touching it, with it. The label is the same judgement one level
+  -- in: `nodeLabel` keeps the text the body says and names what it could
+  -- not draw, because an empty diagram tells a reader nothing where a
+  -- degraded word tells them almost everything.
+  let bodyOf : Except PDiag (Array LabelLine × Array PDiag) :=
     match ts[i]? with
     | some (.group body) =>
       if h : i + 1 < ts.size then
         .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
 outside the rendered picture subset; the label is not drawn")
       else
-        match contentOf cx env body with
-        | .ok r => .ok r
-        | .error e =>
-          .error (.W0334, s!"{e} in a node body is outside the rendered \
-picture subset; the label is not drawn")
+        .ok (nodeLabel cx env body)
     | _ =>
       match contents with
       | some c => .ok (c, #[])
@@ -1814,10 +2075,10 @@ here); its outline is not drawn")
 (the body's own extent is not measured here); its outline is not drawn")
         match bodyOf with
         | .error d => return ev.diag d
-        | .ok (content, mdiags) =>
+        | .ok (lines, mdiags) =>
           ev := mdiags.foldl Ev.diag ev
-          let shape := Ir.Pic.Shape.label sx sy content color scale .center
-          return { ev with shapes := ev.shapes.push shape }
+          ev := { ev with shapes := stackLabels sx sy scale color .center lines ev.shapes }
+          return ev
   | .error d =>
     return (if unresolved then { ev with deferred := ev.deferred + 1 } else ev).diag d
 
@@ -2047,7 +2308,7 @@ is not drawn")
         return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
 is not drawn")
   let mut pts : Array Anchor := #[]
-  let mut ops : Array (DrawOp × Option (Array Ir.Inline × Ir.Color × Nat × Ir.Pic.LabelAlign)) := #[]
+  let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat × Ir.Pic.LabelAlign)) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
@@ -2143,7 +2404,7 @@ outside the rendered picture subset; it is drawn as a straight line")
 outside the rendered picture subset; the edge is not drawn")
       -- an in-path `node[...] {...}`: an edge label at the segment's
       -- midpoint; a placement option (`right`, …) loses only itself
-      let mut mid : Option (Array Ir.Inline × Ir.Color × Nat × Ir.Pic.LabelAlign) := none
+      let mut mid : Option (Array LabelLine × Ir.Color × Nat × Ir.Pic.LabelAlign) := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
         -- An edge label reads its own bracket alone: neither the picture's
@@ -2194,14 +2455,10 @@ dropped")
 the rendered picture subset; the option is dropped")
         match ts[i]? with
         | some (.group body) =>
-          match contentOf cx env body with
-          | .ok (content, mdiags) =>
-            ev := mdiags.foldl Ev.diag ev
-            mid := some (content, mcolor, mscale, malign)
-            i := i + 1
-          | .error e =>
-            return ev.diag (.W0334, s!"{e} in an edge label is outside the \
-rendered picture subset; the edge is not drawn")
+          let (lines, mdiags) := nodeLabel cx env body
+          ev := mdiags.foldl Ev.diag ev
+          mid := some (lines, mcolor, mscale, malign)
+          i := i + 1
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
 edge is not drawn")
@@ -2237,9 +2494,9 @@ edge is not drawn")
           | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         else
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-        if let some (content, mc, msc, mal) := mid then
-          labels := labels.push (.label ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
-            content mc msc mal)
+        if let some (lines, mc, msc, mal) := mid then
+          labels := stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
+            msc mc mal lines labels
       | .curve oA iA =>
         let p1 := a.towardDir oA
         let p2 := c.towardDir iA
@@ -2254,11 +2511,11 @@ edge is not drawn")
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
-        if let some (content, mc, msc, mal) := mid then
+        if let some (lines, mc, msc, mal) := mid then
           -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint
-          labels := labels.push (.label
+          labels := stackLabels
             ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) content mc msc mal)
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) msc mc mal lines labels
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them.

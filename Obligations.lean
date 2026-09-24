@@ -426,4 +426,51 @@ theorem floorChars_id (src : String)
     Ir.floorChars src = src.toList := by
   sorry
 
+mutual
+
+/-- The characters a node body's tokens carry, in order: the source side of
+the label floor's lower bound. A group is grouping, so its body's
+characters are the group's own; a control sequence's *name* is not a
+character it carries, and neither is a math span's spelling — the span
+elaborates through the math layer, which decides its own content and
+carries its own floor. An accumulator rather than an append, so the measure
+has the shape the engine's walks do. -/
+def bodyChars (env : List (String × Picture.Val)) (acc : Array Char) :
+    List Picture.Tok → Array Char
+  | [] => acc
+  | t :: rest => bodyChars env (tokChars env acc t) rest
+
+/-- One token's own characters (`bodyChars`'s element case). -/
+def tokChars (env : List (String × Picture.Val)) (acc : Array Char) :
+    Picture.Tok → Array Char
+  | .ident w => w.toList.foldl Array.push acc
+  | .num m => (Picture.milliString m).toList.foldl Array.push acc
+  | .space => acc.push ' '
+  | .sym c => acc.push c
+  | .ctrl n =>
+    match env.lookup n with
+    | some v => v.text.toList.foldl Array.push acc
+    | none => acc
+  | .group g => bodyChars env acc g
+  | .math _ _ => acc
+  | .other _ => acc
+
+end
+
+-- owed: nodeLabel_mem
+-- owner: LeanTex.Core.Picture
+-- source: the node-label recovery floor (PLAN 2026-09-24, the node-label floor entry): the lower bound on what a degraded node label inks. `labelFloor_accounts` is the paid-for side — a label that named a loss ships ink — and it holds for a salvage that kept nothing at all, since the placeholder then pays for it; on its own it permits a diagram of bracketed ellipses where words stood, and it permits markup on the page. This is the other side: every character a salvaged label inks is a character its body carried or one of the declared placeholder's, and none of them is LaTeX punctuation. The executable witness is the whole-label rows in `pictureNodeFloorChecks` ("an unreadable macro in a node body keeps the body's word", "the salvaged label ships no markup", "the named key never reaches the page" and their siblings), which pin the salvage of ten shapes against the shipped page and fail under both an all-dropping and an all-keeping salvage.
+-- blocker: `salList` is a mode machine (`Picture.SalMode`) threaded through a mutual walk over a token tree, and no equation names "the label after token k" — the pending text run, the closed lines and the mode advance together inside one `Sal`, so the statement needs an invariant carried through five modes and two mutual arms. The named factorization is a `Sal` split into the content built so far and the machine's pending state, which is the same accumulator-statability work `floorChars_id` waits on one module over; until it lands the statement is owed rather than asserted in a docstring.
+-- goldens: no
+/-- Every character a salvaged node label inks is a character its body
+carried, or one of the declared placeholder's, and none of them is LaTeX
+punctuation: the label keeps what the body says and invents nothing. -/
+theorem nodeLabel_mem (cx : Picture.Cx) (env : List (String × Picture.Val))
+    (toks : List Picture.Tok) :
+    ∀ l ∈ (Picture.nodeLabel cx env toks).1, ∀ x ∈ l.1, ∀ s : String,
+      x = Ir.Inline.text s → ∀ c ∈ s.toList,
+        (c ∈ (bodyChars env #[] toks).toList ∨ c ∈ Ir.mathFloorPlaceholder) ∧
+          c ∉ Ir.markupChars := by
+  sorry
+
 end Obligations

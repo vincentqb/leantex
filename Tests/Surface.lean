@@ -4155,9 +4155,12 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the declared font roles travel — the math face through unicode-math.
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
   let pal := "\\palette{ ember = #C0431F, quietbg = #F2EEE8 }\n"
-  -- The keys ride on the `\shade`, the construct still outside the subset:
-  -- a `\node` with no `at` draws natively now (M8b slice 3), so a fixture
-  -- about the boundary request has to name something the engine cannot draw.
+  -- The keys and the macro references ride on the `\shade`, the construct
+  -- still outside the subset: a `\node` with no `at` draws natively now
+  -- (M8b slice 3), and its body's unreadable macro no longer costs the
+  -- label either (`Picture.nodeLabel`), so a node always ships a shape and
+  -- a fixture about the boundary request has to name something the engine
+  -- cannot draw at all.
   let picC := "\\begin{tikzpicture}\\shade[fill=ember!20, text=ember] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let (cdoc, _) := elabStr (dvDoc pal picC)
@@ -4191,8 +4194,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- \alert's rewrite, and a formula in a node — red before this slice
   -- (undefined colour `alert`, Computer Modern letters), green after.
   let (tdoc, tds) := elabStr (dvDoc "\\theme{moloch}\n\\fonts{ math = \"Fira Math\" }\n"
-    ("\\begin{tikzpicture}\\node {\\alert{x} $y$};" ++
-     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+    ("\\begin{tikzpicture}\\shade[\\alert{x} $y$]" ++
+     " (0,0) rectangle (1,1);\\end{tikzpicture}"))
   t "a theme role reached through alert's rewrite is declared with the bundle's value"
     (hasStr (reqOf tdoc) "\\textcolor {alert}" &&
      hasStr (reqOf tdoc) "\\definecolor{alert}{RGB}{165,90,19}")
@@ -4223,8 +4226,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mac := "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
     "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
     "\\newcommand{\\elsewhere}{only ever in prose}\n"
-  let picM := "\\begin{tikzpicture}\\node {\\badge{ok}};" ++
-    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let picM := "\\begin{tikzpicture}\\shade[\\badge{ok}] (0,0) rectangle (1,1);" ++
+    "\\end{tikzpicture}"
   let (mdoc, mds) := elabStr (dvDoc (pal ++ mac) picM)
   t "a macro the picture spells is defined in the standalone"
     (hasStr (reqOf mdoc) "\\renewcommand{\\badge}[1]")
@@ -4259,8 +4262,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fdoc2, _) := elabStr (dvDoc
     ("\\newcommand{\\plain}{p}\n\\renewcommand{\\plain}{q}\n" ++
      "\\providecommand{\\opt}[2][d]{#1#2}\n\\def\\raw#1{<#1>}\n")
-    ("\\begin{tikzpicture}\\node {\\plain\\opt{a}\\raw{b}};" ++
-     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+    ("\\begin{tikzpicture}\\shade[\\plain\\opt{a}\\raw{b}]" ++
+     " (0,0) rectangle (1,1);\\end{tikzpicture}"))
   t "an optional argument's default travels with its definition"
     (hasStr (reqOf fdoc2) "\\renewcommand{\\opt}[2][d]")
   t "a redefinition rides as the document's last word"
@@ -4272,8 +4275,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- LaTeX spelling and the native one carry the same definition, so a
   -- document that writes `\define` itself is not one whose pictures lose
   -- their macros. An oracle, not a theorem.
-  let picD := "\\begin{tikzpicture}\\node {\\hue{x}};" ++
-    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let picD := "\\begin{tikzpicture}\\shade[\\hue{x}] (0,0) rectangle (1,1);" ++
+    "\\end{tikzpicture}"
   t "the native define spelling carries the same definition as newcommand"
     (reqOf (elabStr (dvDoc "\\newcommand{\\hue}[1]{\\textbf{#1}}\n" picD)).1 ==
       reqOf (elabStr (dvDoc "\\define \\hue(a1: content) {\\textbf{#1}}\n" picD)).1)
@@ -4620,6 +4623,136 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let quiet := censusSrc (pic ("\\path (0,0) -- (2,0);\n"))
   t "a path that asks for no drawing ships no stroke"
     ((quiet[0]?.map (·.paths == 0)).getD false)
+
+/-- **A node body the subset cannot fully read still ships the text it can
+read** (`Picture.labelFloor_accounts`). The defect: one unreadable macro in
+one body dropped the whole label, so a diagram whose every node wrote a
+two-line label shipped an outline with no text in it at all — three
+consecutive pages of a real deck — while every warning said so where no
+reader looks.
+
+Read off the shipped lines, never an IR dump: the claim is about what a
+page carries. The salvage rows pin whole labels rather than absences,
+because an absence test passes under a salvage that kept nothing — the
+lesson the math floor's own review round recorded.
+
+Four narrowed constructs beside the floor, in the order they cost a reader
+most: `\\` opens a real second line (one label shape per line, stacked by
+`Picture.nodeLineLead`), a size switch opening a line sets that line's
+size, `\textcolor{role}{body}` sets its body in the role, and a phantom is
+invisible — no ink, and no loss to name, so the placeholder may not stand
+in for it. -/
+def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let pic (body : String) : String :=
+    "\\palette{ rose = #B03060 }\\begin{document}\n\\begin{tikzpicture}\n" ++
+    body ++ "\\end{tikzpicture}\n\\end{document}"
+  let run (body : String) : Array CensusPage × Array Diag :=
+    let (doc, ds) := elabStr (pic body)
+    (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
+  -- The label lines a picture shipped, in paint order: text, baseline and
+  -- set size, which is everything the stacking and sizing facts read.
+  let labels (c : Array CensusPage) : Array (String × Dim.Sp × Dim.Sp) :=
+    (c[0]?.map fun p => p.lines.filterMap fun l =>
+      if l.text.isEmpty then none else some (l.text, l.y, l.size)).getD #[]
+  -- The floor. A body of one unreadable macro around a word keeps the
+  -- word: the macro's own name goes, its content stays.
+  let (c1, ds1) := run "\\node (a) {\\wobble{Quince}};\n"
+  t "an unreadable macro in a node body keeps the body's word"
+    ((labels c1).any fun (s, _, _) => s == "Quince")
+  t "the unreadable macro is still named at the node"
+    (ds1.any fun d => d.code == "W0334" && hasStr d.message "wobble")
+  t "the salvaged label ships no markup"
+    (!(labels c1).any fun (s, _, _) =>
+      hasStr s "\\" || hasStr s "{" || hasStr s "}")
+  -- An argument `Ir.floorNamedArgs` says *names* rather than carries never
+  -- rides onto the page: a key is not a word the label meant to say. The
+  -- one command's own content still does.
+  let (c2, _) := run "\\node (a) {\\wobble{Plum}\\ref{some:key}};\n"
+  t "a naming argument is dropped where the same command's content is kept"
+    ((labels c2).any fun (s, _, _) => s == "Plum")
+  t "the named key never reaches the page"
+    (!(labels c2).any fun (s, _, _) => hasStr s "some:key")
+  -- The empty floor: a body whose every token is unreadable salvages to
+  -- nothing, and a blank is not an honest floor either — so the declared
+  -- placeholder stands and the case is never silent
+  -- (`Picture.labelFloor_accounts`).
+  let (c3, ds3) := run "\\node (a) {\\wobble};\n"
+  t "a body that salvages to nothing ships the declared placeholder"
+    ((labels c3).any fun (s, _, _) => s == Picture.nodeFloorPlaceholder)
+  t "the placeholder case is named, not silent"
+    (ds3.any fun d => d.code == "W0334")
+  -- `\\` is a real second line: two label shapes, the first above the
+  -- second by one lead, both centred on the node's own x.
+  let (c4, ds4) := run "\\node (a) {Pear\\\\Fig};\n"
+  t "a two-line node body elaborates with nothing refused"
+    (ds4.all (·.severity == .note))
+  t "both of a two-line label's lines ship as ink"
+    ((labels c4).any (fun (s, _, _) => s == "Pear") &&
+     (labels c4).any fun (s, _, _) => s == "Fig")
+  t "the first line stands one lead above the second"
+    (match (labels c4).find? (·.1 == "Pear"), (labels c4).find? (·.1 == "Fig") with
+     | some (_, y1, _), some (_, y2, _) =>
+       y2 - y1 == Picture.nodeLineLead 1000
+     | _, _ => false)
+  t "a line break in a node body ships no markup"
+    (!(labels c4).any fun (s, _, _) => hasStr s "\\")
+  -- A size switch opening a line sets that line's size: a label shape
+  -- carries one size, so the switch may open a line and not stand inside
+  -- one — where it does, the loss is named rather than half-applied.
+  let (c5, ds5) := run "\\node (a) {Pear\\\\\\footnotesize Fig};\n"
+  t "a size switch opening a label line is honoured, not refused"
+    (ds5.all (·.severity == .note))
+  t "the switched line sets smaller than the line above it"
+    (match (labels c5).find? (·.1 == "Pear"), (labels c5).find? (·.1 == "Fig") with
+     | some (_, _, s1), some (_, _, s2) => s2 < s1
+     | _, _ => false)
+  let (_, ds6) := run "\\node (a) {Pear \\footnotesize Fig};\n"
+  t "a size switch inside a label line is named instead"
+    (ds6.any fun d => d.code == "W0334" && hasStr d.message "footnotesize")
+  -- `\textcolor{role}{body}`: the palette role is already carried to
+  -- pictures, so a coloured label draws in its role. Read off the covered
+  -- census channel, the only place a shipped colour is visible.
+  let (c7, ds7) := run "\\node (a) {\\textcolor{rose}{Sloe}};\n"
+  t "a coloured node label elaborates with nothing refused"
+    (ds7.all (·.severity == .note))
+  t "the coloured label's word still ships"
+    ((labels c7).any fun (s, _, _) => s == "Sloe")
+  t "a colour role the palette does not carry is named, and the word stays"
+    (let (c8, ds8) := run "\\node (a) {\\textcolor{nosuch}{Sloe}};\n"
+     ds8.any (fun d => d.code == "W0334" && hasStr d.message "nosuch") &&
+       (labels c8).any fun (s, _, _) => s == "Sloe")
+  -- A phantom is invisible by definition: its argument is sizing, not
+  -- content, so it contributes no ink *and* names no loss — the
+  -- placeholder must not stand in for it.
+  let (c9, ds9) := run "\\node (a) {\\vphantom{p}Damson};\n"
+  t "a phantom costs the label nothing and names nothing"
+    (ds9.all (·.severity == .note) &&
+      (labels c9).any fun (s, _, _) => s == "Damson")
+  t "a phantom's own argument is not ink"
+    (!(labels c9).any fun (s, _, _) => hasStr s "p" && s != "Damson")
+  let (c10, ds10) := run "\\node (a) {\\vphantom{p}};\n"
+  t "a body of nothing but a phantom is honestly empty, not a placeholder"
+    (ds10.all (·.severity == .note) &&
+      !(labels c10).any fun (s, _, _) => s == Picture.nodeFloorPlaceholder)
+  -- The whole point, on the shape the deck carries: every node writes a
+  -- two-line label whose second line is a size switch and a coloured
+  -- group. Before the floor this picture shipped its edge and no text.
+  let deck :=
+    "\\node (a) {A\\\\\\footnotesize\\textcolor{rose}{First Words}};\n" ++
+    "\\node (b) [right =of a] {B\\\\\\footnotesize\\textcolor{rose}{Other Words}};\n" ++
+    "\\path (a) edge (b);\n"
+  let (c11, ds11) := run deck
+  t "the deck-shaped diagram elaborates with nothing refused"
+    (ds11.all (·.severity == .note))
+  t "every line of every node's label ships as ink"
+    (["A", "First Words", "B", "Other Words"].all fun w =>
+      (labels c11).any fun (s, _, _) => s == w)
+  t "no boundary box stands where the deck-shaped picture is"
+    ((c11[0]?.map (·.images == 0)).getD false)
+  t "the diagram's edge ships beside its labels"
+    ((c11[0]?.map (·.paths == 1)).getD false)
 
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is

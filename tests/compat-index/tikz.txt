@@ -34,6 +34,15 @@ body impl \begin{tikzpicture}\node (u) {x};\node (v) [above left =of u] {y};\nod
 body impl \begin{tikzpicture}\node (u) {x};\node (v) [right =2cm of u] {y};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[draw, minimum size=4mm, node contents={x}] (u) at (0,0);\end{tikzpicture}
 body impl \begin{tikzpicture}\path[draw] (0,0) -- (1,1);\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x\\y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x\\[2ex]y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {x\\\footnotesize y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {\textcolor{fg}{x}};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {\vphantom{p}x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {\phantom{p}x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) {\hphantom{p}x};\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
 pre impl \tikzset{node distance = 1cm and 1cm}
 pre impl \tikzset{zz/.style={}}
@@ -43,6 +52,14 @@ pre inert:default \pictures{ tool = lualatex }
 pre impl \pictures{ tool = none }
 pre impl \pictures{ tool = lualatex }\tikzset{zz/.style={}}
 pre impl \pictures{ tool = lualatex }\usetikzlibrary{arrows}
+# A node body is read for what it says: \\ opens a real second line (one
+# label shape per line), a size switch opening a line sets that line's size,
+# \textcolor sets its body in the named role, and a phantom inks nothing and
+# names nothing. A construct the subset cannot draw drops its own spelling,
+# keeps what its content groups say, and is named (W0334) -- the label
+# degrades to its text, never to nothing (Picture.labelFloor_accounts). A
+# size switch standing inside a line is the refusal row: one label shape
+# carries one size.
 # \tikzexternalize and \pictures{ tool = lualatex } both pin the tool the
 # boundary is already open with, so they move no ink (inert:default); the
 # declared refusal tool = none is the row that changes the document.

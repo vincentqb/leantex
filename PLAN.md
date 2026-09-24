@@ -215,10 +215,116 @@ list.
   witness meanwhile is the whole-string floor rows in `recoveryChecks`,
   which pin the salvage of seven shapes exactly and fail under both an
   all-dropping and an all-keeping mask.
+- `nodeLabel_mem` — the node-label floor's lower bound: every character a
+  degraded label inks is a character its body carried, or one of the
+  declared placeholder's, and none of them is LaTeX punctuation.
+  `labelFloor_accounts` is the paid-for side and holds for a salvage that
+  kept nothing at all — the placeholder then pays for it — so on its own it
+  permits a diagram of bracketed ellipses where words stood, and it permits
+  markup on the page. Blocked on the salvage being a mode machine
+  (`Picture.SalMode`) threaded through a mutual walk over a token tree: the
+  pending text run, the closed lines and the mode advance together inside
+  one `Sal`, so no equation names "the label after token k" and the
+  statement needs an invariant carried through five modes and two arms. The
+  factorization is a `Sal` split into the content built so far and the
+  machine's pending state — the same accumulator-statability work
+  `floorChars_id` waits on. The witness meanwhile is the whole-label rows
+  in `pictureNodeFloorChecks`, read off the shipped page.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — a node label degrades to its words, never to nothing. The
+native-node slice drew nodes but read their bodies strictly: `contentOf`
+returned an error for the first token outside the subset, and the caller
+turned that into "the label is not drawn". On the private reference corpus
+three consecutive pages shipped a diagram *frame with no text in it at
+all* — every node of that diagram writes a two-line label, so every label
+was dropped — and on a fourth page a highlighted node vanished because its
+body was a colour command. A fully green suite never saw it: the door to
+the boundary is `pic.shapes.isEmpty`, and those pictures' edges drew, so
+the fallback never opened and no fixture asserted node ink over a body the
+subset could not read (node-label-floor).
+
+**The invariant, and it is the same one the math floor states.** A body the
+subset cannot fully read still ships the text it can read; a label degrades
+to its content and never to nothing. Dropping a label whole is the worst
+recovery available for exactly the reason the floor entries give for
+markup-as-ink: the loss is *displayed* — as absence, here — while the
+diagnostic that announces it is the thing the reader never sees. A reader
+shown `Predisposition` where TeX would have shown it in grey has lost
+almost nothing; a reader shown an empty box has lost the diagram.
+
+Stated as `labelFloor_accounts`, the registered `_accounts` shape and a
+sibling of `floorInk_accounts` down to the placeholder it ships: a label
+whose salvage named a loss inks something. The declared placeholder is
+`Ir.mathFloorPlaceholder` itself, read rather than restated, because a
+blank is not an honest floor in a diagram either. What the statement does
+*not* say is the lower bound — that the salvage keeps the body's characters
+and none of its markup — and that is `nodeLabel_mem`, owed and registered
+(§ Owed obligations grows by one row, to seventeen). The queue's honesty
+rule applies: `labelFloor_accounts` holds for a salvage that kept nothing
+at all, since the placeholder then pays for it.
+
+**Policy reused, walk rewritten.** `Ir.floorNamedArgs` is the math floor's
+own table of which arguments name rather than carry, and the node salvage
+reads it rather than restating it — one fact about LaTeX, one list, no
+drift. `Ir.floorChars` itself does *not* fit and is deliberately not
+called: it salvages an unparsed *source string*, where no parse decided
+anything, and a node body arrives already tokenised — groups matched,
+numbers parsed, math spans carried whole for `Cx.math`. Running it here
+would mean re-serialising tokens into a source that was never written and
+re-deriving the structure the tokeniser already has, and it would flatten a
+math span the math layer renders. So the policy is shared and the walk is
+structural over `Picture.Tok`: a mode machine (`SalMode`), the shape `step`
+already uses for the statement machine, so a construct spanning several
+tokens needs no lookahead and the recursion stays structural.
+
+**Four constructs narrowed, in the order they cost a reader.** `\\` opens a
+real line — a label shape carries one size and one anchor, so a multi-line
+label is several shapes stacked by `nodeLineLead`, not a break inside one,
+and layout sets only a label's first line. That is what the three empty
+pages needed. A size switch *opening* a line sets that line's size, and one
+standing inside a line is named instead, because a label shape cannot carry
+two sizes. `\textcolor{role}{body}` sets its body in the role, through
+`Ir.Inline.colored` and the palette the request site already carries — the
+highlighted node is back. And a phantom is read rather than refused: its
+content is empty by definition, so it inks nothing *and names nothing*,
+which is the one case where the placeholder must not stand in — it would
+claim ink where TeX shows none. The height a phantom props is not a loss
+here either, since this subset measures no node body's extent at all.
+
+**The lead is a stated nominal, not a measurement.** `\baselineskip` is 1.2
+times the font size (`plain.tex`), and this walk has no face to ask — a
+node's font is layout's question, which is why `readDim` already refuses
+`em` — so the 10 pt nominal stands in `nodeLineLead` with its source
+written beside it and the label's scale carries the rest.
+
+**What the fix moved that was not the label.** A node now always ships a
+shape, so the `shapes.isEmpty` door closes on pictures that used to open
+it: four boundary fixtures asserted a request over a picture whose only
+statement was a node with an unreadable body, and they now have to name
+something the engine cannot draw at all (a `\shade`, as the palette
+fixtures already did). That is the recorded ordering working as intended —
+"native first; imperfectly-but-visibly beats not at all" — not a
+regression, and the fixtures' comment says so at the fixture.
+
+**Measured on the private reference corpus.** W0334 fell from six firings
+to five; of the six, three were the label drop and all three are gone. The
+three previously empty pages carry every node's label, both lines, verified
+on rasters at 110 dpi rather than on an IR dump, with no form or image
+XObject on any of them. What remains is written in the review below: two
+constructs named rather than narrowed (`\draw` continuing with `(`, and the
+`baseline` picture option), a statement-level colour command wrapping a
+whole `\path`, and one gap that is not this file's — a document's own
+`\newcommand` is not expanded in a picture body, so `\light{x}` reaches the
+salvage as an unknown macro and keeps its word while losing its colour,
+where the same macro carried to the boundary expands. The loudest remaining
+defect in these diagrams is also not the label: `right =of` separates node
+*centres* by one node distance because no body's extent is measured, so
+long labels overlap. Both belong to a measurement pass, and both are named
+in `Cx.dist`'s own docstring already.
 
 2026-09-24 — a document's own macros reach its pictures. The boundary
 standalone carried the preamble the *engine* recognises and nothing the
