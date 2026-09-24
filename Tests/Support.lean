@@ -825,6 +825,25 @@ flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- The glyphs a source's body lines ship, in page order — the instrument for
+a claim about what a page shows, read off `Layout.Out` rather than an IR
+dump. `geom` defaults to the document's own page; pass one to judge a source
+against a fixed measure. -/
+def pageTextOf (fonts : Font.FontSet) (src : String)
+    (geom : Option Layout.Geom := none) : String :=
+  let (d, _) := elabStr src
+  String.join ((bodyLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
+    (lineText ·))
+
+/-- The same over *every* line, furniture included: what a title bar or a
+running foot ships is on the page too, so an absence claim belongs here
+rather than in `pageTextOf`. -/
+def allTextOf (fonts : Font.FontSet) (src : String)
+    (geom : Option Layout.Geom := none) : String :=
+  let (d, _) := elabStr src
+  String.join ((allLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
+    (lineText ·))
+
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
 

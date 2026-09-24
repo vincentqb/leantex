@@ -1524,10 +1524,7 @@ until that proof lands, this stays its shipped-page witness. -/
 def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
-  let pageText (src : String) : String :=
-    let (d, _) := elabStr src
-    let lines := bodyLines (layoutOf oneFace d geom)
-    String.join (lines.toList.map (lineText ·))
+  let pageText (src : String) : String := pageTextOf oneFace src (some geom)
   let has := hasStr
   -- The user's own case: a bracketed number in front of a URL, and one in
   -- front of an email address.

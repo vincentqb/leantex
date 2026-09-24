@@ -8549,3 +8549,44 @@ is evidence, not a theorem.
   that queue is a statement the engine *earns* and cannot yet *prove*, and
   this one is behaviour not yet written — staging it would put a false
   statement under a `sorry` and let the ratchet report a bug as a proof debt.
+
+
+- 2026-09-24: **a predicate that deletes a page is read from the decoder, not
+  from the manual.** The mode-specification reader landed with two false
+  positives, and a false positive here silently removes a page of someone's
+  talk. Both came from guessing at a grammar the manual describes in prose:
+  splitting the inner text on `,` as well as `|`, so the interval `0` inside
+  `<beamer:0,2>` stood for the whole specification; and answering `any` over
+  the `|` entries, so `<all:0|beamer:1->` silenced on its first entry.
+  Beamer's own decoder (`beamerbasedecode.sty`) settles both: `|` separates
+  entries and `,` separates intervals *within* one entry's overlay
+  specification, and each entry naming the current mode *overwrites* the
+  answer, so the **last** entry decides. `<beamer:1-|all:0>` is silenced and
+  `<all:0|beamer:1->` is not — the same two entries, and the order is the
+  whole difference. The decision is then a number rather than a string, which
+  also settles `<0>` and `<presentation:00>` (both silence: a colon-less
+  entry is beamer's inserted `beamer:` prefix, and `00` is a number where a
+  string comparison saw a stranger).
+
+  Pinned as a table — one row per mode × overlay shape, seventeen rows,
+  beamer's answer in each — because the end-to-end case that motivated the
+  work passes under every one of the wrong readings above. The general
+  lesson is the one the walk rules already carry in a different register: a
+  predicate is an interface, and its rows belong beside it.
+
+  Two more findings from the same review, both real. A silenced frame's body
+  was rewritten *before* the decision, so a once-per-document loss inside
+  content that never ships was spent there: put a `\parbox` in a suppressed
+  frame and another in a frame that ships, and the single W0104 named the
+  invisible one. The decision now stands before the descent — the
+  specification is a lexer word at the body head, so it needs no rewrite to
+  read — and the loss is named at the frame that ships it. And the reader was
+  class-blind: `<presentation:0>` is the documented "article only" idiom, so
+  beamer's article mode keeps exactly the frames the presentation omits, and
+  suppressing regardless of class deleted content outside a deck. Gated on
+  the declared class (`presentationClasses`, recorded at `\documentclass`),
+  with a row asserting an article keeps it.
+
+  The engine's output for the reference deck is byte-identical across this
+  round: 44 pages, no leak, the same text layer. Every one of these was a
+  case the deck does not contain — which is the argument for the table.

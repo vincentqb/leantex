@@ -4999,12 +4999,8 @@ the same deck with the frame deleted ships — because "ships no page" is
 only meaningful against the deck that never held it. -/
 def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let pageText (src : String) : String :=
-    let (d, _) := elabStr src
-    String.join ((bodyLines (layoutOf oneFace d)).toList.map (lineText ·))
-  let allText (src : String) : String :=
-    let (d, _) := elabStr src
-    String.join ((allLines (layoutOf oneFace d)).toList.map (lineText ·))
+  let pageText (src : String) : String := pageTextOf oneFace src
+  let allText (src : String) : String := allTextOf oneFace src
   let pages (src : String) : Nat :=
     let (d, _) := elabStr src
     (layoutOf oneFace d).pages.size
@@ -5042,6 +5038,42 @@ def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (!has (allText plus) "Gamma Heading" && !has (allText plus) "Absent sentence.")
   t "while the frame beside it is untouched"
     (has (allText plus) "Beta Heading" && has (allText plus) "Kept sentence.")
+  -- A silenced frame spends nothing. Its body is never descended into, so a
+  -- once-per-document loss is named at the frame that actually ships it —
+  -- reported inside the dropped frame, the one visible loss went unnamed.
+  let shared := "\\parbox{2cm}{A label}\n"
+  let twin := deck169Body
+    ("\\begin{frame}<presentation:0>{Hidden Heading}\n" ++ shared ++ "\\end{frame}\n" ++
+     "\\begin{frame}{Shown Heading}\n" ++ shared ++ "\\end{frame}")
+  let hiddenLine : Nat := 4
+  let boxLosses := (dvE twin).filter (·.code == "W0104")
+  t "a silenced frame spends no diagnostic of its own"
+    (boxLosses.size == 1 && boxLosses.all fun d =>
+      match d.span with
+      | some s => s.pos.line > hiddenLine
+      | none => false)
+  -- The predicate itself, row by row. A false positive here deletes a page of
+  -- someone's talk, so the rows are beamer's own answers, read from its
+  -- decoder: the last entry naming this artifact decides, a comma separates
+  -- intervals inside one entry, and only a bare zero silences.
+  for (spec, silent) in
+      [("<presentation:0>", true), ("<beamer:0>", true), ("<all:0>", true),
+       ("<0>", true), ("<presentation:00>", true),
+       ("<presentation:0|article:1>", true), ("<beamer:1-|all:0>", true),
+       ("<handout:0>", false), ("<article:0>", false), ("<trans:0>", false),
+       ("<second:0>", false),
+       ("<beamer:0,2>", false), ("<presentation:0-3>", false),
+       ("<beamer:1,3>", false), ("<2->", false), ("<+->", false),
+       ("<all:0|beamer:1->", false)] do
+    t s!"mode spec {spec} {if silent then "silences" else "shows"}"
+      (Compat.modeSilencesPresentation spec == silent)
+  -- And the class it is read against: beamer's article mode keeps exactly the
+  -- frames the presentation omits, so the same spec must not delete content
+  -- outside a deck.
+  let art := dvDoc "" ("\\begin{frame}<presentation:0>{Delta Heading}\n" ++
+    "Article sentence.\n\\end{frame}")
+  t "a mode spec deletes no page outside a presentation class"
+    (has (allText art) "Article sentence.")
 
 /-- A declared width is not prose. `\parbox[pos]{width}{text}` is a LaTeX
 kernel primitive (latex.ltx, `\@iiiparbox`) whose *first* brace group is a
@@ -5055,13 +5087,12 @@ motivated the rule: a reader saw `.25` standing in front of a label, and
 every test in the suite passed. -/
 def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let pageText (src : String) : String :=
-    let (d, _) := elabStr src
-    String.join ((bodyLines (layoutOf oneFace d)).toList.map (lineText ·))
+  let pageText (src : String) : String := pageTextOf oneFace src
+  let allText (src : String) : String := allTextOf oneFace src
   let has := hasStr
   let pb := deck169Frame "\\parbox[t]{.25\\textwidth}{Label one}"
   t "a parbox's width argument is not ink"
-    (!has (pageText pb) ".25" && !has (pageText pb) "textwidth")
+    (!has (allText pb) ".25" && !has (allText pb) "textwidth")
   t "a parbox's content is"
     (has (pageText pb) "Label one")
   t "and parbox is not an unknown command"
@@ -5070,9 +5101,28 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   -- box geometry it selects is a named drop, never a silent one.
   t "the box it declares is a named loss, not a silent one"
     ((warnCodes pb).contains "W0104")
+  -- The full kernel signature: [pos][height][inner-pos]{width}{text}.
+  let pb3 := deck169Frame "\\parbox[t][2cm][c]{.25\\textwidth}{Label two}"
+  t "a parbox's three option runs all go with it"
+    (has (pageText pb3) "Label two" &&
+     !has (allText pb3) "2cm" && !has (allText pb3) ".25")
+  -- The other two boxes in the arm, which had no test of their own.
+  let mb := deck169Frame "\\mbox{Label three}"
+  t "an mbox keeps its content and declares no box"
+    (has (pageText mb) "Label three" && !(warnCodes mb).contains "W0104" &&
+     !(warnCodes mb).contains "W0301")
+  let mk := deck169Frame "\\makebox[2cm]{Label four}"
+  t "a makebox's width is not ink, and its drop is named"
+    (has (pageText mk) "Label four" && !has (allText mk) "2cm" &&
+     (warnCodes mk).contains "W0104")
+  -- Table and arm must not drift: a name in `boxShape` the arm forgot would
+  -- keep its width as prose, the defect this table closed.
+  for (name, _, _) in Compat.boxShape do
+    t s!"boxShape row '{name}' is a known command"
+      (!(warnCodes (deck169Frame s!"\\{name}\{Label five}")).contains "W0301")
   let ms := deck169Frame "\\metroset{block=fill}Body sentence."
   t "a theme option setter's key list is not ink"
-    (!has (pageText ms) "block=fill" && !has (pageText ms) "block")
+    (!has (allText ms) "block=fill" && !has (allText ms) "block")
   t "the setter is named as configuration, not as unknown"
     ((warnCodes ms).contains "W0104" && !(warnCodes ms).contains "W0301")
   t "and the content beside it survives"

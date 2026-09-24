@@ -167,6 +167,11 @@ its entries directly"),
 styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "\\style{element}{...} styles elements; \\framefoot sets a frame footer")]
 
+/-- Classes that produce a presentation: `beamer` (which rewrites to
+`slides`) and `slides` itself. What a beamer mode specification is read
+against — beamer's article mode keeps a frame the presentation omits. -/
+def presentationClasses : List String := ["beamer", "slides"]
+
 /-- The kernel's box commands, as the two numbers that tell them apart: how
 many `[...]` runs stand before the content, and how many mandatory `{...}`
 groups stand before the content group. `\\mbox{text}` declares no box;
@@ -229,6 +234,11 @@ private structure St where
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
+  /-- The declared class produces a presentation. What a beamer *mode*
+  specification is read against: `<presentation:0>` suppresses a frame only
+  where the artifact is the presentation it addresses — beamer's article mode
+  keeps exactly those frames, so a class-blind reading deletes content. -/
+  deck : Bool := false
   /-- The main language's BCP 47 tag, from babel's package options (last
   language option = main, babel's rule): what `\enquote` reads its quote
   delimiters through. -/
@@ -2294,12 +2304,10 @@ the definition is skipped" pos
         return some (← synthAt native pos, k)
     else return none
   | "mbox" | "makebox" | "parbox" =>
-    -- LaTeX's boxes: the content is content and stays in the stream; the box
-    -- itself — a declared width and alignment — is not modelled, and dropping
-    -- that silently would move ink, so the drop is named once. `\mbox`
-    -- declares no width and loses nothing. `\parbox`'s width is a *mandatory
-    -- brace group*, so it is consumed here: left in the stream it would set
-    -- as prose, which is the defect this arm's `boxShape` row closed.
+    -- The box geometry is not modelled and dropping it silently would move
+    -- ink, so the drop is named once; the content stays in the stream.
+    -- `\parbox`'s width is a mandatory brace group, so it is consumed here —
+    -- left in the stream it sets as prose.
     let (opts, widths) := match boxShape.lookup name with
       | some (o, w) => (o, w)
       | none => (0, 0)
@@ -2697,6 +2705,8 @@ rendered subset is drawn whole at the boundary" pos
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
+    if presentationClasses.contains cls then
+      write fun st => { st with deck := true }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""
@@ -3283,17 +3293,29 @@ handout or article mode only (beamer manual §21.2, "Mode Specifications").
 The engine ships one presentation, so such a frame is the author saying
 *not in this artifact*, and honouring it is not a loss.
 
-Only the zero is read, and only for a mode that covers the presentation.
-`0` is beamer's own spelling for "no overlays"; any other range is a
-restriction the step model does not carry, and that loss is named where the
-specification is stripped rather than guessed at here. -/
+Read the way beamer's own decoder reads it (`beamerbasedecode.sty`): the
+`|`-separated entries are scanned left to right and each entry naming the
+current mode *overwrites* the answer, so the **last** entry naming this
+artifact decides — `<all:0|beamer:1->` shows, because `beamer:1-` is read
+after `all:0`. An entry with no colon is an overlay specification for the
+presentation itself, which is beamer's inserted `beamer:` prefix.
+
+The decision is then a number: the entry silences exactly when its overlay
+specification *is* zero, so `<beamer:0,2>` and `<presentation:0-3>` show —
+they name a step as well as the zero. A comma separates intervals inside one
+entry's specification and never separates entries, which is why it is not
+split on: reading `0` out of `0,2` silenced a frame beamer shows. Any range
+other than zero is a restriction the step model does not carry, and that
+loss is named where the specification is stripped rather than guessed at. -/
 def modeSilencesPresentation (w : String) : Bool :=
   if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
     let inner := ((w.drop 1).dropEnd 1).toString
-    ((inner.splitOn "|").flatMap (·.splitOn ",")).any fun e =>
+    let decided := (inner.splitOn "|").foldl (init := none) fun acc e =>
       match e.splitOn ":" with
-      | [m, ov] => presentationModes.contains m.trimAscii.toString && ov.trimAscii.toString == "0"
-      | _ => false
+      | [ov] => some ov
+      | [m, ov] => if presentationModes.contains m.trimAscii.toString then some ov else acc
+      | _ => acc
+    (decided.bind (·.trimAscii.toString.toNat?)) == some 0
   else false
 
 /-- Split an `{overprint}` body into the content before its first item and
@@ -3605,32 +3627,31 @@ and patterns stand in" p
         write fun st => { st with inDoc := false }
         return .env n body' p
       else if n == "frame" then
-        -- beamer writes a frame's specification *before* its option run
-        -- (beamer manual §8.1), and `Raw.env` carries no argument field, so
-        -- `<...>`, `[opts]` and `{title}` all arrive at the head of the body.
-        -- A reader that knows only `[opts]{title}` stops dead at the spec:
-        -- the whole run, title included, then sets as a paragraph and the
-        -- frame ships with no title bar at all. The spec is a parameter, so
-        -- it is resolved here and the elaborator's reader sees what it
-        -- expects.
-        let body' ← rewriteList inBody body #[] body.toList 0 0
-        let i := skipSpaces body' 0
-        match specWordAt body' i with
+        -- `Raw.env` carries no argument field, so a frame's `<spec>`, `[opts]`
+        -- and `{title}` all arrive at the head of its body, and beamer writes
+        -- the spec first (beamer manual §8.1). A reader knowing only
+        -- `[opts]{title}` stops at the spec and the whole run, title
+        -- included, sets as a paragraph. The spec is a parameter, so it is
+        -- resolved here and the elaborator's reader sees what it expects.
+        -- Decided before descending: a silenced frame's body must not spend
+        -- the once-per-document diagnostics of content that never ships.
+        match specWordAt body (skipSpaces body 0) with
         | some w =>
-          if modeSilencesPresentation w then
-            -- The author addressed this frame away from the presentation and
-            -- beamer's own output omits it, so the note says what was
-            -- honoured; there is nothing for the author to act on.
+          if (← get).deck && modeSilencesPresentation w then
             say .N0104
               s!"'{w}' declares no presentation slides; this frame ships no page" p
             return .group #[] p
           else
             sayOnce "spec:frame" .W0110
-              s!"'\\begin\{frame}{w}' overlay specification is not honoured; a \
-frame's steps come from its body" p
+              s!"'\\begin\{frame}{w}' specification is not honoured; a frame's \
+steps come from its body" p
               (help := "\\pause and \\uncover step a frame's own content")
-            return .env n (body'.extract (i + 1) body'.size) p
-        | none => return .env n body' p
+            let body' ← rewriteList inBody body #[] body.toList 0 0
+            let i := skipSpaces body' 0
+            match specWordAt body' i with
+            | some _ => return .env n (body'.extract (i + 1) body'.size) p
+            | none => return .env n body' p
+        | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
       else
         return .env n (← rewriteList inBody body #[] body.toList 0 0) p
   | r => pure r
