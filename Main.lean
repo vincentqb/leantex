@@ -153,6 +153,42 @@ def fontZdata (fs : Font.FontSet) (keep : Array Nat) : IO (Array (Option ByteArr
       zdata := zdata.set! k (some (← deflateCached f.data))
   return zdata
 
+/-- The scan is the host's answer and the parses are the filesystem's, so
+both are taken once and handed to every assembly that needs them. Two
+assemblies do need them: the provisional font environment a picture's
+labels are measured against, resolved from the preamble, and the final one
+the document settles. -/
+structure FaceScan where
+  faces : Array FontDb.Face
+  docDirs : List String
+  dirs : Array String
+  diags : Array Diag
+
+/-- Which directories to look in, and what is there. The document's own
+`\fonts{ dir = ... }` outranks the host; both are preamble facts, so this
+answer serves the provisional assembly and the final one alike — and the
+driver re-scans only where the two disagree about the directories. -/
+def scanFaces (ui : Ui) (file : String) (spec : Ir.FontSpec)
+    (announce : Bool := true) : IO FaceScan := do
+  let (docDirs, dirDiags) ← FontEnv.resolveDocDirs file spec.dirs
+  let t ← IO.monoMsNow
+  let faces ← FontDb.scanRoots
+    (docDirs ++ (← FontDb.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))
+  if announce then ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
+  return { faces := faces, docDirs := docDirs, dirs := spec.dirs, diags := dirDiags }
+
+/-- Which assembly a font set is: the one the document settles on, or the
+provisional one a picture's labels are measured against before the body has
+been read. A value rather than a flag — it says what the caller is doing,
+and the assembly reads its own consequences off it. -/
+inductive Purpose where
+  /-- The environment the artifact is a function of. -/
+  | settled
+  /-- The face resolved from the preamble alone, with a math slot where the
+  source's pictures set a formula. -/
+  | provisional (math : Bool)
+  deriving Repr, BEq, Inhabited
+
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `usedGlyphs` decides
@@ -168,8 +204,22 @@ Per-glyph fallback is precomputed here, against the document's own scalars
 covering face in declaration order, and one no declared face covers goes to
 `FontDb.fallbackPicks`, whose face is loaded at the end of the set. Layout
 consults the map only on a missing glyph. The `LEANTEX_FONT` override is a
-single face with no scan behind it, so it gets no fallback. -/
-def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
+single face with no scan behind it, so it gets no fallback.
+
+Whether a math face loads is the document's own answer — whether a formula
+stands anywhere — except for the provisional assembly, which has no body to
+ask and takes the answer from what its pictures set (`Elab.picWants`): a
+node label setting `$x$` is the commonest reason a preamble-resolved face
+would measure differently from the final one, and a math face is also the
+most expensive parse a document makes, so it is resolved early exactly when
+a picture would use it.
+
+Neither `ui` nor `file` is an argument any more: the host's answer and the
+document's own directories were the only reasons to hold them, and both are
+now the scan's (`scanFaces`). Assembly is a function of the document, the
+faces in hand, the parses already made, and which assembly this is. -/
+def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
+    (cache : FontEnv.Cache) (purpose : Purpose) :
     IO (Except Diag (Font.FontSet × Array Diag × String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
@@ -180,13 +230,9 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       | .error d => return .error d
       | .ok (f, path) =>
         return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
-  let mut diags : Array Diag := #[]
-  let (docDirs, dirDiags) ← FontEnv.resolveDocDirs file spec.dirs
-  diags := diags ++ dirDiags
-  let t ← IO.monoMsNow
-  let faces ← FontDb.scanRoots
-    (docDirs ++ (← FontDb.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))
-  ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
+  let mut diags : Array Diag := scan.diags
+  let docDirs := scan.docDirs
+  let faces := scan.faces
   let spec ← if bare then
       match FontDb.defaultFamily faces with
       | some fam => pure { spec with body := some fam }
@@ -196,8 +242,17 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let mut missing : Array String := #[]
+  -- A provisional assembly resolves the *text* slot and nothing else: a
+  -- node label sets in the document's text face, and the sans and mono
+  -- slots cost a search of the whole scan per key for a face no label is
+  -- going to ask for. A label that does ask — `\texttt` inside a node —
+  -- measures against font 0 here, the settled face disagrees, and the
+  -- driver elaborates again; the cost of being wrong is bounded and the
+  -- cost of being thorough was not.
   let slots : List (Nat × Option String) :=
-    [(0, spec.body), (1, spec.sans), (2, spec.mono)]
+    match purpose with
+    | .provisional _ => [(0, spec.body)]
+    | .settled => [(0, spec.body), (1, spec.sans), (2, spec.mono)]
   -- A slot the document did not name falls back to the body family, and the
   -- body's declared per-variant faces come with it.
   -- beamer sets a presentation in its sans family: the class's default
@@ -244,7 +299,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
   for (slot, _) in slots do
     let some family := resolveName slot | continue
     for (weight, italic) in standard ++ (extraKeysFor slot).eraseDups do
-      match FontDb.resolveWeight faces family (declaredFace slot weight italic)
+      match ← cache.resolveWeight faces family (declaredFace slot weight italic)
           weight italic with
       | none =>
         unless missing.contains family do
@@ -264,8 +319,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
         match paths.findIdx? (· == face.path) with
         | some i => index := index.push ((slot, weight, italic), i)
         | none =>
-          let data ← IO.FS.readBinFile face.path
-          match Font.parse data with
+          match ← cache.parse face.path with
           | .error e =>
             diags := diags.push (DriverDiag.fontFileUnusable face.path e)
           | .ok f =>
@@ -275,8 +329,11 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
   -- The math face: resolved like any named family, and installed only when
   -- it carries an OpenType MATH table (`FontEnv.resolveMath`, which is
   -- handed this scan rather than performing one).
+  let wantsMath : Bool := match purpose with
+    | .provisional math => math
+    | .settled => !(Layout.docMathScalars doc).isEmpty
   let math ← FontEnv.resolveMath faces spec.math spec.body
-    (!(Layout.docMathScalars doc).isEmpty) fonts paths missing
+    wantsMath fonts paths missing (some cache)
   fonts := math.fonts
   paths := math.paths
   missing := math.missing
@@ -288,8 +345,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     match FontDb.defaultFamily faces |>.bind (FontDb.resolve faces · {}) with
     | none => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
     | some (face, _) =>
-      let data ← IO.FS.readBinFile face.path
-      match Font.parse data with
+      match ← cache.parse face.path with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
         return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
@@ -310,8 +366,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       match paths.findIdx? (· == path) with
       | some i => fallback := fallback.push (c, i)
       | none =>
-        let data ← IO.FS.readBinFile path
-        match Font.parse data with
+        match ← cache.parse path with
         | .error _ => pure ()  -- undecodable candidate; the scalar stays dropped
         | .ok f =>
           fallback := fallback.push (c, fonts.size)
@@ -744,20 +799,19 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
     written := written.push path
   return written
 
-/-- **Elaborate, with whatever face the caller has.** Everything from the
-elaborator on is a function of the parsed source and one measurement
-(`Ir.Pic.LabelMetric`) — so the driver can run it twice: once with nothing
-to measure against, which is what discovers the face the document declared,
-and once with that face, which is what lets a node's extent cover its label.
-The measurement is a parameter, never a flag and never read from a config:
-the artifact stays a function of the document and the font environment
-(`artifact_flag_free`). -/
-def elaborate (ui : Ui) (file : String) (raws : Array Parse.Raw)
+/-- **Elaborate, against whatever face the caller has.** Everything from the
+elaborator on is a function of the prepared source and one measurement
+(`Ir.Pic.LabelMetric`), which is why the driver can resolve a face *before*
+elaborating and still re-run this if that face turns out not to be the
+document's own. The measurement is a parameter, never a flag and never read
+from a config: the artifact stays a function of the document and the font
+environment (`artifact_flag_free`). -/
+def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     (earlier : Array Diag) (spliced : Array (String × Option String × Pos))
     (metric : Ir.Pic.LabelMetric) (phases : Bool := true) :
     IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
   let t ← IO.monoMsNow
-  let (doc, elabDiags, reqSpans) := Elab.runRawsSpanned file raws earlier metric
+  let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric
   -- N0020 says a `.sty` was read and how much of it took; its counts
   -- are read off the elaborated diagnostics, so it is built after them.
   -- A record from inside an `\input` wrapper names that file, not the
@@ -776,12 +830,46 @@ def elaborate (ui : Ui) (file : String) (raws : Array Parse.Raw)
   let refDiags := Ir.refDiags reqSpans.labels (Elab.ReqSpans.spanOf reqSpans.refs) doc
   return (doc, elabDiags ++ bibDiags ++ refDiags, reqSpans)
 
+/-- What the front end hands the driver: the document, and everything a
+second elaboration would need if the face this one was measured against
+turns out not to be the one the document settles on. -/
+structure Front where
+  doc : Ir.Doc
+  diags : Array Diag
+  spans : Elab.ReqSpans
+  prepared : Elab.Prepared
+  earlier : Array Diag
+  spliced : Array (String × Option String × Pos)
+  /-- Parsed faces, shared by the provisional assembly and the final one. -/
+  cache : FontEnv.Cache
+  /-- The host's answer, taken once — absent where no face was needed yet. -/
+  scan : Option FaceScan
+  /-- The measurement this document was elaborated against, where one was
+  resolved from the preamble. `none` means the source could draw no picture
+  the engine measures, so nothing was asked of a face. -/
+  provisional : Option Ir.Pic.LabelMetric
+
 /-- Read and decode the file, then run the front end, reporting phases.
-Returns the document, all diagnostics, the parsed source the elaborator read
-(so a second pass can measure), and whether reading itself failed. -/
-def frontend (ui : Ui) (file : String) :
-    IO (Option (Ir.Doc × Array Diag × Elab.ReqSpans × Array Parse.Raw ×
-      Array Diag × Array (String × Option String × Pos))) := do
+
+**The font environment is resolved before elaboration where it can be.** A
+node's extent is a font question that the picture walk must answer while it
+places, so the measurement has to exist before the body is elaborated — and
+the environment that answers it is a function of the elaborated body, which
+is the circle. It is cut, not straightened: the *preamble* settles which
+families, sizes and page a face resolves from (`Elab.preambleDoc`), so a
+provisional environment exists before any body runs, and the driver checks
+afterwards whether the document's own environment would have measured any
+label differently (`Cli.FontFix.agree`). Where it would not — the common
+case, and the only case for a document whose picture labels set in the text
+face — one elaboration is the whole answer, and what licenses stopping there
+is `Cli.FontFix.extent_agree`: metrics that agree on a label's ink give that
+node the same extent, so the placement the walk computed is the placement
+this face determines. Where they differ, `build` elaborates again against the
+settled face, so the artifact is never the provisional one's. That the
+environment itself cannot depend on the metric — the whole-document fixed
+point — is owed, not proved; the gate that keeps it sound meanwhile is the
+check, not the claim. -/
+def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   let t0 ← IO.monoMsNow
   let bytes ← match ← Input.readSource file with
     | .error d =>
@@ -807,8 +895,36 @@ def frontend (ui : Ui) (file : String) :
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file raws
     let earlier := lexDiags ++ parseDiags ++ inputDiags ++ dataDiags
-    let (doc, diags, reqSpans) ← elaborate ui file raws earlier spliced (fun _ _ => {})
-    return some (doc, diags, reqSpans, raws, earlier, spliced)
+    -- One rewrite, one boundary scan, one macro scan: two elaborations of
+    -- one document must read one source, or their agreement would be about
+    -- two (`Elab.prepare`).
+    let prepared := Elab.prepare file raws
+    let cache ← FontEnv.Cache.mk'
+    -- Nothing is asked of a face until something might measure against it,
+    -- and a math slot only where a picture body sets a formula
+    -- (`Elab.picWants`): resolving one eagerly costs a MATH-table parse,
+    -- which is the most expensive face a document can load.
+    let wants := Elab.picWants prepared.raws
+    let (scan, provisional) ← if !wants.draws then
+        pure (none, none)
+      else do
+        let pre := Elab.preambleDoc file prepared
+        let scan ← scanFaces ui file pre.fonts
+        let t ← IO.monoMsNow
+        match ← buildFontSet pre scan cache (.provisional wants.math) with
+        | .error _ =>
+          -- A provisional face that will not resolve is not an error here:
+          -- the final assembly reports it, at the document's own spec.
+          pure (some scan, none)
+        | .ok (fsPre, _, _) =>
+          let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
+          ui.phase "provisional" s!"{fsPre.fonts.size} faces" (← since t)
+          pure (some scan, some m)
+    let (doc, diags, reqSpans) ←
+      elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
+    return some { doc := doc, diags := diags, spans := reqSpans
+                  prepared := prepared, earlier := earlier, spliced := spliced
+                  cache := cache, scan := scan, provisional := provisional }
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -816,7 +932,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
   | none =>
     ui.summary file 1 (← since t0)
     return 1
-  | some (doc, diags, reqSpans, raws, earlier, spliced) =>
+  | some front =>
+    let doc := front.doc
+    let diags := front.diags
+    let reqSpans := front.spans
     let allowAll := ui.cfg.bestEffort
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
@@ -830,7 +949,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file r0.errors (← since t0)
       return 1
     let t ← IO.monoMsNow
-    match ← buildFontSet ui file doc with
+    -- The host's answer is taken once. The directories to look in are the
+    -- document's `\fonts{ dir = ... }`, a preamble fact — so a scan taken
+    -- for the provisional face serves the settled one, and only a document
+    -- that names a directory in its *body* pays for a second scan.
+    let reuse : Option FaceScan := front.scan.filter (·.dirs == doc.fonts.dirs)
+    let scan ← match reuse with
+      | some s => pure s
+      | none => scanFaces ui file doc.fonts
+    match ← buildFontSet doc scan front.cache .settled with
     | .error d =>
       -- No usable font set exists at all: nothing downstream can run, so
       -- this stays fatal whatever the document accepts.
@@ -848,21 +975,33 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
-      -- **The measurement, and the second pass that can use it.** A node's
-      -- extent is a font question, and until here there was no face to ask:
-      -- the font set is built *from* the elaborated document, because
-      -- `\fonts` is a preamble declaration. So the elaborator runs again
-      -- with the measurement the face answers, and a relative placement
-      -- parts label *text* rather than node centres. Only a document that
-      -- drew a picture of its own pays for it (`Elab.enginePictures`), and
-      -- only the document is taken from the second pass: a metric moves
-      -- picture geometry and nothing else, so its diagnostics and its
-      -- request spans are the first pass's (`Tests/Surface` pins that).
-      let doc ← if Elab.enginePictures doc.body == 0 then pure doc else do
+      -- **Is the document already the fixed point?** It was elaborated
+      -- against a face resolved from its preamble; the face it settles on
+      -- is `fs`. Where the two measure every label the pictures carry
+      -- alike (`Cli.FontFix.agree`, over `probes`), the extents the
+      -- placement used are the extents this face gives — `extent_agree` is
+      -- the step — so the document in hand *is* the one this environment
+      -- determines and no second elaboration can change it. Where they
+      -- differ, or where no provisional face was resolved at all and the
+      -- body drew a picture anyway, elaborate again against the settled
+      -- face: the artifact is a function of the document and the font
+      -- environment, never of whichever face happened to be resolved first.
+      let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
+      let t ← IO.monoMsNow
+      let ps := FontFix.probes doc.body
+      let settled : Bool := match front.provisional with
+        | some pre => FontFix.agree pre metric ps
+        | none => Elab.enginePictures doc.body == 0
+      if let some pre := front.provisional then
+        ui.phase "settle" (if settled then s!"provisional face holds ({ps.size} labels)"
+          else s!"provisional face superseded \
+({FontFix.disagreements pre metric ps} of {ps.size} labels)") (← since t)
+      let doc ← if settled then pure doc else do
         let t ← IO.monoMsNow
-        let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
-        let (doc2, _, _) ← elaborate ui file raws earlier spliced metric (phases := false)
-        ui.phase "measure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
+        let (doc2, _, _) ←
+          elaborate ui file front.prepared front.earlier front.spliced metric
+            (phases := false)
+        ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         pure doc2
       let t ← IO.monoMsNow
       let (pics, refused) ← resolvePictures ui doc reqSpans.images
@@ -1101,9 +1240,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
 def dump (ui : Ui) (file : String) : IO UInt32 := do
   match ← frontend ui file with
   | none => return 1
-  | some (doc, diags, _) =>
-    IO.print (Ir.dump doc diags)
-    return (if countErrors diags > 0 then 1 else 0)
+  | some front =>
+    IO.print (Ir.dump front.doc front.diags)
+    return (if countErrors front.diags > 0 then 1 else 0)
 
 /-- Insert `-` at each hyphenation point: the `hyphenate` command's output
 format, and what the lualatex differential harness compares. -/

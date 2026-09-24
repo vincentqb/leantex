@@ -11247,27 +11247,115 @@ structure ReqSpans where
   labels : Ir.RefTable := #[]
   deriving Repr, BEq, Inhabited
 
-/-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
-written for another engine compiles as written. Returns the request spans
-too, for the driver's missing-file and per-picture diagnostics. The
-unresolved-reference judge (`Ir.refDiags`) is not run here: the driver
-runs it after `Bib.apply`, over the very document the backends read, so
-the resolution gate (`pending_named`) is one statement over that tail;
-`runRaws`, the face that fulfils nothing, runs it itself. -/
-def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
-    Doc × Array Diag × ReqSpans :=
+/-- The source both of a document's elaborations read: the compat rewrite
+applied, the boundary and macro scans taken, the warn-once key set the
+rewrite already spent. Held as a value because a metric-carrying pass and
+the pass that discovers the metric must read the *same* rewritten tree —
+rewriting twice would make the two passes' documents functions of two
+sources, and nothing would state they agree. -/
+structure Prepared where
+  raws : Array Raw
+  picPre : String
+  picSets : Array (Pos × Array Raw)
+  picMacros : Array (String × String)
+  warned : Array String
+  compatDiags : Array Diag
+
+/-- Rewrite and scan, once. LaTeX idioms become native declarations here,
+which is why a `\fonts` a document never wrote — `\setmainfont`, a class
+option, a beamer font theme — is nonetheless a declaration the preamble
+carries by the time anything reads it. -/
+def prepare (file : String) (raws : Array Raw) : Prepared :=
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
-  let compatDiags := compatDiags ++ textDiags
+  { raws := raws, picPre := picScan.pre, picSets := picScan.sets
+    picMacros := picMacros, warned := warned
+    compatDiags := compatDiags ++ textDiags }
+
+/-- What a source's own pictures could ask a face for. `draws` is whether an
+environment the native subset draws stands anywhere in the rewritten tree;
+`math` is whether any of those bodies sets a formula, which decides whether
+a face resolved before elaboration needs a math slot. -/
+structure PicWants where
+  draws : Bool := false
+  math : Bool := false
+
+mutual
+
+/-- One level of the picture-possibility walk; the list drives the recursion. -/
+-- conserves: none — the walk answers two Bools about the tree, not a tree,
+-- so no census equality can hold. What it must satisfy is stated where it
+-- pays: a false `draws` means no node is ever measured, so no face is
+-- needed to elaborate (`Cli.FontFix`'s fallback covers a false positive in
+-- either field, which is why only the negative answer must be exact).
+private def picWantsLevel (inPic : Bool) (acc : PicWants) : List Raw → PicWants
+  | [] => acc
+  | r :: rest => picWantsLevel inPic (picWantsRaw inPic acc r) rest
+
+/-- Descend into a group or an environment, structurally on `Raw`. -/
+private def picWantsRaw (inPic : Bool) (acc : PicWants) : Raw → PicWants
+  | .env n body _ =>
+    let drawn := Compat.pictureEnvs.contains n
+    picWantsLevel (inPic || drawn)
+      (if drawn then { acc with draws := true } else acc) body.toList
+  | .group body _ => picWantsLevel inPic acc body.toList
+  | .math _ body _ =>
+    picWantsLevel inPic (if inPic then { acc with math := true } else acc) body.toList
+  | .word _ _ => acc
+  | .space => acc
+  | .par _ => acc
+  | .ctrl _ _ => acc
+  | .sym _ _ => acc
+  | .verb _ _ _ => acc
+
+end
+
+/-- Whether an engine picture is *possible*, and what it would measure. The
+negative answer is the one that has to be trustworthy, and it is: `.picture`
+blocks have exactly one producer, the `{tikzpicture}` arm of the body walk,
+so no such environment means no node is ever measured and no face is needed
+to elaborate. A positive answer promises nothing — a picture may still
+refuse whole to the boundary, and a label may take its formula from a macro
+this walk cannot see — which is why it only buys a *provisional* face, and
+why the driver checks that face against the settled one. -/
+def picWants (raws : Array Raw) : PicWants :=
+  picWantsLevel false {} raws.toList
+
+/-- **The preamble as its own document.** What the font environment is a
+function of, run through the very fold the full elaboration runs
+(`elabDoc` over the preamble and an empty body), so the `\fonts`, `\page`
+and `\documentclass` a provisional face resolves from are the declarations
+the document itself settles on — class defaults, theme bundle and compat
+rewrites included — rather than a second reading of the same lines.
+
+Diagnostics are the full pass's; this one's are discarded, so nothing a
+reader sees is said twice. -/
+def preambleDoc (file : String) (p : Prepared) : Doc :=
+  let docIdx := p.raws.findIdx? fun r =>
+    match r with
+    | .env "document" _ _ => true
+    | _ => false
+  let raws := match docIdx with
+    | some idx => (p.raws.extract 0 idx).push (.env "document" #[] ⟨0, 0⟩)
+    | none => #[.env "document" #[] ⟨0, 0⟩]
+  ((elabDoc file raws p.picPre p.picSets p.picMacros).run
+    { warnedUnknown := p.warned }).1.1
+
+/-- Elaborate prepared input against a measurement. -/
+def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+    Doc × Array Diag × ReqSpans :=
+  let raws := p.raws
+  let compatDiags := p.compatDiags
+  let warned := p.warned
   -- One warn-once key set for the document, not one per pass: the rewrite
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   let ((doc, table), st) :=
-    (elabDoc file raws picScan.pre picScan.sets picMacros picMetric).run
+    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric).run
       { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
@@ -11289,6 +11377,21 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
           if seen.contains key then (out, seen)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
+
+/-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
+written for another engine compiles as written. Returns the request spans
+too, for the driver's missing-file and per-picture diagnostics. The
+unresolved-reference judge (`Ir.refDiags`) is not run here: the driver
+runs it after `Bib.apply`, over the very document the backends read, so
+the resolution gate (`pending_named`) is one statement over that tail;
+`runRaws`, the face that fulfils nothing, runs it itself.
+
+The prepare-and-run face, for every caller that reads a document once: the
+driver splits the two so a provisional face can be resolved between them. -/
+def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+    Doc × Array Diag × ReqSpans :=
+  runPrepared file (prepare file raws) earlier picMetric
 
 /-- The span a reporting record holds for a key, for the judges. -/
 def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :=
