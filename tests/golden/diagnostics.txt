@@ -167,6 +167,8 @@ note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 note[N0102]: frame option 'fragile' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
 note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
+── N0104 (info) a frame declared for another mode ships no page in this one
+note[N0104]: '<presentation:0>' declares no presentation slides; this frame ships no page
 ── N0114 (info) TeX '\ifdefined' resolved from the document's own definitions
 note[N0114]: '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
 note[N0114]: '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept

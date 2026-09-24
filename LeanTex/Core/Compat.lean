@@ -3226,6 +3226,44 @@ private def specRaw? : Raw → Option Raw
     if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then some r else none
   | _ => none
 
+/-- The specification word standing at `i`, if one does: `specRaw?`'s shape
+test asked of a position rather than a raw, so the lexical question "is this
+a spec" has one answer in this module. -/
+private def specWordAt (raws : Array Raw) (i : Nat) : Option String :=
+  (raws[i]?.bind specRaw?).bind fun r =>
+    match r with
+    | .word w _ => some w
+    | _ => none
+
+/-- The beamer modes whose overlay count decides what a *presentation*
+artifact shows. `presentation` is beamer's collective name for the
+non-article modes, `beamer` the slide presentation itself, and `all` every
+mode (beamer manual §21.1, "Overview of Modes"); `handout`, `trans`,
+`second` and `article` each address an artifact this engine is not
+producing, so a count declared for one of those decides nothing here. -/
+def presentationModes : List String := ["presentation", "beamer", "all"]
+
+/-- Does this specification declare that the presentation has *no* slides
+here? Beamer's mode specification pairs a mode with an overlay
+specification — `<presentation:0>` says the presentation modes get zero
+overlays, so beamer's own output omits the construct and keeps it for
+handout or article mode only (beamer manual §21.2, "Mode Specifications").
+The engine ships one presentation, so such a frame is the author saying
+*not in this artifact*, and honouring it is not a loss.
+
+Only the zero is read, and only for a mode that covers the presentation.
+`0` is beamer's own spelling for "no overlays"; any other range is a
+restriction the step model does not carry, and that loss is named where the
+specification is stripped rather than guessed at here. -/
+def modeSilencesPresentation (w : String) : Bool :=
+  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
+    let inner := ((w.drop 1).dropEnd 1).toString
+    ((inner.splitOn "|").flatMap (·.splitOn ",")).any fun e =>
+      match e.splitOn ":" with
+      | [m, ov] => presentationModes.contains m.trimAscii.toString && ov.trimAscii.toString == "0"
+      | _ => false
+  else false
+
 /-- Split an `{overprint}` body into the content before its first item and
 the items themselves, each an `\onslide` spec with the content that runs to
 the next `\onslide` (beamer manual §9.5, "Dynamically Changing Text or
@@ -3534,6 +3572,33 @@ and patterns stand in" p
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with inDoc := false }
         return .env n body' p
+      else if n == "frame" then
+        -- beamer writes a frame's specification *before* its option run
+        -- (beamer manual §8.1), and `Raw.env` carries no argument field, so
+        -- `<...>`, `[opts]` and `{title}` all arrive at the head of the body.
+        -- A reader that knows only `[opts]{title}` stops dead at the spec:
+        -- the whole run, title included, then sets as a paragraph and the
+        -- frame ships with no title bar at all. The spec is a parameter, so
+        -- it is resolved here and the elaborator's reader sees what it
+        -- expects.
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        let i := skipSpaces body' 0
+        match specWordAt body' i with
+        | some w =>
+          if modeSilencesPresentation w then
+            -- The author addressed this frame away from the presentation and
+            -- beamer's own output omits it, so the note says what was
+            -- honoured; there is nothing for the author to act on.
+            say .N0104
+              s!"'{w}' declares no presentation slides; this frame ships no page" p
+            return .group #[] p
+          else
+            sayOnce "spec:frame" .W0110
+              s!"'\\begin\{frame}{w}' overlay specification is not honoured; a \
+frame's steps come from its body" p
+              (help := "\\pause and \\uncover step a frame's own content")
+            return .env n (body'.extract (i + 1) body'.size) p
+        | none => return .env n body' p
       else
         return .env n (← rewriteList inBody body #[] body.toList 0 0) p
   | r => pure r

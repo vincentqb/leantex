@@ -214,6 +214,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
+  | .N0104 => dvE (dvDeck ""
+      "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")
   | .N0114 =>
     dvE (dvDoc "\\ifdefined\\shiny\\sloppy\\else\\relax\\fi\n" "x") ++
     dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")

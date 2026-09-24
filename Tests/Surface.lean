@@ -4981,3 +4981,65 @@ def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((manyLabels.filter (·.code == "W0350")).isEmpty)
 
 
+
+
+/-- A beamer `<...>` specification standing on `\begin{frame}` is a
+parameter, never content — the same claim `recoveryChecks` makes for an
+unknown command's `[...]` run, one construct further in: beamer writes the
+spec *before* the option run (beamer manual §8.1), so a reader that only
+knows `[opts]{title}` loses the title too, and the whole run — spec,
+options, title — lands as a paragraph. Judged over `Layout.Out`'s glyphs,
+never the IR dump: the defect that prompted this shipped a frame with no
+title bar at all while the suite was green.
+
+The mode half is a page count, not a glyph: `<presentation:0>` declares
+zero slides in presentation mode, so the frame is the author saying *not
+in this artifact*. Stated as a commutation — the deck ships exactly what
+the same deck with the frame deleted ships — because "ships no page" is
+only meaningful against the deck that never held it. -/
+def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pageText (src : String) : String :=
+    let (d, _) := elabStr src
+    String.join ((bodyLines (layoutOf oneFace d)).toList.map (lineText ·))
+  let allText (src : String) : String :=
+    let (d, _) := elabStr src
+    String.join ((allLines (layoutOf oneFace d)).toList.map (lineText ·))
+  let pages (src : String) : Nat :=
+    let (d, _) := elabStr src
+    (layoutOf oneFace d).pages.size
+  let has := hasStr
+  -- The line shape, not just the glyphs: a title that leaked into the body
+  -- carries the same characters as a title that was read, and only its size
+  -- and position say which happened.
+  let shape (src : String) : String :=
+    let (d, _) := elabStr src
+    String.join ((allLines (layoutOf oneFace d)).toList.map
+      (fun l => s!"{l.size}:{l.y}:{lineText l}|"))
+  -- An overlay spec the deck does keep a page for: the spec and the option
+  -- run are parameters, the title group is the title.
+  let ov := deck169Body
+    "\\begin{frame}<2->[noframenumbering]{Alpha Heading}\nBody sentence.\n\\end{frame}"
+  let bare := deck169Body
+    "\\begin{frame}[noframenumbering]{Alpha Heading}\nBody sentence.\n\\end{frame}"
+  t "a frame's overlay specification ships no character"
+    (!has (allText ov) "<" && !has (allText ov) ">" &&
+     !has (allText ov) "[" && !has (allText ov) "]" &&
+     !has (allText ov) "noframenumbering")
+  t "the title survives a specification standing before the option run"
+    (shape ov == shape bare && has (allText bare) "Alpha Heading")
+  t "the frame body still ships"
+    (has (pageText ov) "Body sentence.")
+  -- The mode half: zero slides in presentation mode is no page at all.
+  let kept := deck169Body "\\begin{frame}{Beta Heading}\nKept sentence.\n\\end{frame}"
+  let plus := deck169Body
+    ("\\begin{frame}{Beta Heading}\nKept sentence.\n\\end{frame}\n" ++
+     "\\begin{frame}<presentation:0>[noframenumbering]{Gamma Heading}\n" ++
+     "Absent sentence.\n\\end{frame}")
+  t "a frame with no presentation slides ships no page"
+    (pages plus == pages kept)
+  t "and none of its content reaches the artifact"
+    (!has (allText plus) "Gamma Heading" && !has (allText plus) "Absent sentence.")
+  t "while the frame beside it is untouched"
+    (has (allText plus) "Beta Heading" && has (allText plus) "Kept sentence.")
+

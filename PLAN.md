@@ -8464,3 +8464,46 @@ is evidence, not a theorem.
   of the exemption machinery, so the first fixture to legitimately render a
   brace will look like a regression to whoever meets it. That is the
   residual, and it is written here rather than guessed at later.
+
+
+- 2026-09-24: **an argument the parser never separated is still an
+  argument.** `Raw.env` carries a name and a body and no argument field, so
+  every argument of `\begin{frame}` — beamer's `<spec>`, the `[opts]` run,
+  the `{title}` group — arrives as the *head of the body*, and whoever reads
+  them must agree on their order. The elaborator's reader knew two of the
+  three: `frameOpts` looks for `[`, then the title group must stand
+  *directly* after. Beamer writes the specification first (beamer manual
+  §8.1), so on `\begin{frame}<presentation:0>[noframenumbering]{A Title}`
+  the reader stopped at the spec, found no bracket, found no group, and the
+  whole run — specification, options, and the title — set as an ordinary
+  paragraph. The frame shipped with no title bar at all: three frames of the
+  private reference deck, and a fully green suite, because a golden witnesses
+  elaboration and this was a claim about a page.
+
+  Resolved in the compat pass rather than the reader, which is where the
+  beamer surface is supposed to stop: a specification is a parameter, so the
+  elaborator should never see one, and the `[opts]{title}` reader then needs
+  no change. The shape test is `specRaw?`'s, asked of a position
+  (`specWordAt`) instead of copied — the lexer makes `<presentation:0>` and
+  `<2->` each a single word, so one predicate answers "is this a spec" for
+  the overprint rewrite and for a frame head alike.
+
+  The second half is a page count, not glyphs. `<presentation:0>` is a *mode*
+  specification: zero overlays in the presentation modes, so beamer's own
+  output omits the frame and keeps it for handout or article mode
+  (§21.2). Honouring that is not a loss — the output matches the intent — so
+  it is a note (N0104) and the frame ships nothing. `modeSilencesPresentation`
+  reads only the zero, and only for a mode that covers this artifact
+  (`presentationModes`); any other range is a restriction the step model does
+  not carry, and that loss is named where the spec is stripped (W0110)
+  instead of being guessed at. The deck went 47 pages to 44 against the
+  reference toolchain's 41 — the three frames that should never have existed,
+  gone; the remaining three are a separate frame-overflow gap (W0384).
+
+  The invariant is a commutation, the shape `elab_inlines_option_run_dropped`
+  already uses one construct in: a frame with a specification ships the same
+  *line shape* — size, position and glyphs — as the same frame without it.
+  Stated over `Layout.Out` in `frameSpecChecks`, because the characters of a
+  title that leaked into the body are the characters of a title that was
+  read, and only size and position say which happened. Text equality would
+  have passed on the defect.
