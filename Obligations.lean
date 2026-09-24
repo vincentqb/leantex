@@ -98,7 +98,7 @@ def blockLeafInk (t : Struct.Tree) (k : Nat) : List Char :=
 -- owed: lines_attributed_covers
 -- owner: LeanTex.Core.Layout
 -- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8 (the attribution channel indexes the structure tree's leaf array); PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
--- blocker: the collect-walk induction — the claim sites are `Acc.leafRange` calls inside `collectBlock`'s one giant match, whose equation-lemma generation exhausts whnf whatever the budget (the `emission_conservation_paras` blocker); the per-constructor arm split is the named factorization, and this channel is what it pays for. The placement half is definitional: `placeLine`'s `mk` closure copies `ParaJob.leaf` onto every line it commits (`placeLine_leaf_exact`), and the count comes from `Struct`'s own walk (`leafCount`), so what remains is that the walk's claims run over the body in `Struct.blocksRaw`'s order.
+-- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither has an equational theory an induction can use — the `Id.run`/`forIn` shape the nine loop-shaped rows name one level down — so the next factorization is those two loops restated as folds over a step function with a named invariant, the `stepStaged`/`PagesExtend` shape already proved for the placement side's page facts. The placement half stays definitional: `placeLine`'s `mk` closure copies `ParaJob.leaf` onto every line it commits (`placeLine_leaf_exact`), and the count comes from `Struct`'s own walk (`leafCount`), so what remains is that the walk's claims run over the body in `Struct.blocksRaw`'s order — which is the driver loop's order, hence the first of the two loops above
 -- goldens: no
 /-- Attribution covers the ink, weak public form: in a document of plain
 text paragraphs, every line that is not furniture and ships ink names a
@@ -119,7 +119,7 @@ theorem lines_attributed_covers
 -- owed: lines_attributed_text
 -- owner: LeanTex.Core.Layout
 -- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8; PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
--- blocker: as `lines_attributed_covers` (the collect-walk induction behind `collectBlock`'s arm split), plus the per-paragraph half of `emission_conservation_paras`: a paragraph's lines ship exactly its declared ink, which is exactly its node's leaf census (`structTree_text` per block).
+-- blocker: as `lines_attributed_covers` (the two loops between the walk and the pages, the collect-walk equation lemmas having landed 2026-09-24), plus the per-paragraph half of `emission_conservation_paras`: a paragraph's lines ship exactly its declared ink, which is exactly its node's leaf census (`structTree_text` per block)
 -- goldens: no
 /-- Attribution is a census, weak public form: in a document of plain text
 paragraphs, set without hyphenation and dropping no glyph, the ink of the
@@ -137,7 +137,7 @@ theorem lines_attributed_text
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I4 (the theorem whose absence let six user-visible defects ship); arch-faithful refactor 3
--- blocker: the named refactors landed (2026-09-20: Rd/Acc reader split, B's writers the commit/pushSibling/finishPage trio, itemsOfInlines a fold of itemsOfTok with a first-class dropped ledger, the driver on placeFrom/runPost with page facts crossing at runPost_pages — page_background_survives discharged over them). What remains is the collect-walk induction, and its wall is not the state any more: equation-lemma generation for collectBlock's one giant match exhausts whnf whatever the budget (the `role_transparent_layout` blocker, confirmed again this session), so no `rw`/`induction` can open the walk. The next factorization: split collectBlock's match into per-constructor arm functions (the placePicture extraction is the shape — stepStaged's case analysis only fit the budget once the picture arm was its own def), so each arm's equation is one cheap unfold.
+-- blocker: the named refactors landed (2026-09-20: Rd/Acc reader split, B's writers the commit/pushSibling/finishPage trio, itemsOfInlines a fold of itemsOfTok with a first-class dropped ledger, the driver on placeFrom/runPost with page facts crossing at runPost_pages. 2026-09-24: the collect-walk arm split, so `collectBlock` unfolds one arm at a time — `role_transparent_collect` is the witness, and the equation-lemma wall this row named is down). What remains is not the walk: it is the two imperative loops on either side of it. `run`'s top-level `for h : i in [0:doc.body.size]` threads `acc` over `doc.body` with the frame numbering and the per-step collects inside it, and the placement pass folds the staged op stream into pages; neither is a fold with a named invariant, so no induction reaches from `docInk` to `outInk`. The next factorization is those two, restated as folds over a step function, the shape `stepStaged` and `PagesExtend` already give the placement side's page facts. Note the arm split is not uniform and cannot be: Lean picks one recursive argument group for the mutual block and `collectAlt` recurses into two block arrays, so the recursive arms stay inline; well-founded recursion would trade this cheap wall for the WF-equation wall `elab_inlines_option_run_dropped` records
 -- goldens: no
 /-- Emission conservation, weak public form: a document of plain text
 paragraphs (no head, no foot, no hyphenation) ships exactly the ink it
@@ -161,7 +161,7 @@ def framedDeck (doc : Ir.Doc) : Prop :=
 -- owed: pages_partition_frames
 -- owner: LeanTex.Core.Layout
 -- source: audit-numbering's model, restated as a partition over `PageOut.frame` when refactor 1 (the frame id on `PageOut`, written at `finishPage`) landed — supersedes pages_count_frame_steps, whose count is this statement summed over the frames; arch-provable I4's page side
--- blocker: the page side needs the collect walk's induction; the Acc split landed (2026-09-20) and the remaining wall is collectBlock's equation lemmas (see emission_conservation_paras) plus the placement half — a frame-attribution analogue of the BgStep pack over the `.foot`-op stream. The counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`), and the attribution travels with the footer through the one `.foot` op.
+-- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither has an equational theory an induction can use — the `Id.run`/`forIn` shape the nine loop-shaped rows name one level down — so the next factorization is those two loops restated as folds over a step function with a named invariant, the `stepStaged`/`PagesExtend` shape already proved for the placement side's page facts. Both halves of this row live in those loops: the frame attribution is decided in the driver loop (it sets `acc.frameNum` per top-level block and re-enters `collectBlock` once per overlay step), and the page side needs a frame-attribution analogue of the BgStep pack over the `.foot`-op stream in the placement loop. The counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`)
 -- goldens: no
 /-- Numbered pages partition by frame: in a deck of titled countable
 frames, every shipped page is attributed to a frame (the `_covers` half),
@@ -182,7 +182,7 @@ theorem pages_partition_frames
 -- owed: frame_pages_footed
 -- owner: LeanTex.Core.Layout
 -- source: audit-numbering T2's page face; the chrome-footer slice (PLAN 2026-09-17); restated as a per-page fold over `PageOut.frame` when refactor 1 landed
--- blocker: `PageOut.frame` and `PageOut.foot` are written together at `finishPage` from the one `.foot` op a frame's opening pushes (content is some exactly when the frame bears a number, given the chrome), so the implication is definitional at the write site; what remains is the collect-walk induction connecting `doc.chrome` to the op stream — the Acc split landed (2026-09-20), the wall now collectBlock's equation lemmas (see emission_conservation_paras).
+-- blocker: `PageOut.frame` and `PageOut.foot` are written together at `finishPage` from the one `.foot` op a frame's opening pushes (`collectFrameOpen`, where content is some exactly when the frame bears a number given the chrome), so the implication is definitional at the write site. The collect-walk equation lemmas landed 2026-09-24 and the walk half was attempted: `chromeFoot_isSome` goes through (the chrome fields are set once by `run` and no arm writes them, so `Acc.chromeFoot` answers the same for the whole document), and the op-stream invariant is stateable. It met the zeta-expansion trap instead — `collectFrameOpen` is a `let`-chain, so `unfold` produces a `have`-chain `split` cannot see through, and `simp only` then leaves the membership goal in a shape the case analysis does not match. That is the factorization to do first: `collectFrameOpen` restated so the pushed op is a named value the statement can read, rather than a `let`-bound intermediate. Past it stand the two loops `emission_conservation_paras` names — the driver loop connecting `doc.chrome` to the op stream, and the placement fold carrying `curFoot`/`curFrame` onto each closing page
 -- goldens: no
 /-- One numbering, per page: in a deck with a chrome footer and no
 `\runningfoot` override, every page attributed to a countable frame
@@ -245,7 +245,7 @@ def runPairs (defaultBg : Ir.Color) (p : PageOut) :
 -- owed: contrast_judged_complete
 -- owner: LeanTex.Core.Contrast
 -- source: the a11y-contract slice (the user's ask: weak accessibility in any document is proven, never suspected) — the completeness half of the W0315/W0345 judge, whose per-bundle contracts are already theorems; restated over the declared ground when refactor 2 (`ground` on `Seg.run`, written at the resolving sites) landed
--- blocker: the geometric-recovery half is gone — the shipped pair is the declared pair, so this is `judged_pair_is_shipped`'s converse, statable at last: every pair the pages ship is a pair the judge weighed. What remains is the collect-walk induction relating the walk's ground writes to `judgedPairs`' enumeration — the Acc split landed (2026-09-20), the wall now collectBlock's equation lemmas (see emission_conservation_paras). The judge's titled-bar default is no longer among the remainder: it read an unbarred title's page as white where the walk read `surfaceOf`, and both now resolve through `Contrast.titledGround`, held there by `titled_ground_agree` and by the shipped-ground rows in Tests/Themes (titledGroundChecks).
+-- blocker: the geometric-recovery half is gone — the shipped pair is the declared pair, so this is `judged_pair_is_shipped`'s converse. The collect-walk equation lemmas landed 2026-09-24 (the arm split; `role_transparent_collect` is the witness), so the walk's ground writes can now be opened one arm at a time. What remains is relating those writes to `judgedPairs`' enumeration across the two imperative loops `emission_conservation_paras` names: the driver loop, which re-enters the walk per overlay step and so may write a ground more than once per frame, and the placement fold, which is where a run's `ground` reaches a page. The judge's titled-bar default is no longer among the remainder: both sides resolve through `Contrast.titledGround`, held by `titled_ground_agree` and by the shipped-ground rows in Tests/Themes (titledGroundChecks)
 -- goldens: no
 /-- The contrast judge is complete over the shipped pages —
 `judged_pair_is_shipped`'s converse: every glyph run `Layout.run` ships,
@@ -686,6 +686,48 @@ theorem ink_covered_or_named
             (Layout.labelMetric geom fs {} content scale)).2.2
       ∨ (Layout.run geom fs none doc).diags.any
           (fun d => d.subject == some (Ir.plainText content)) := by
+  sorry
+
+/-- A synthetic document that uses one control-plane command with its
+declared number of keyword groups, standing between two words of invented
+prose. The keyword is a word no prose would carry, so its presence in the
+elaborated body is exactly the leak. -/
+def ctrlProbe (name : String) (groups : Nat) : String :=
+  "\\documentclass{article}\n\\begin{document}\nalpha\n\\" ++ name ++
+    String.join (List.replicate groups "{zzkeyword}") ++
+    "\nomega\n\\end{document}\n"
+
+/-- The ink the elaborated body declares, as the engine's own walk reads it
+(`Ir.blocksText`) — the measure a page's text is a rearrangement of. -/
+def elabInk (src : String) : String :=
+  Ir.blocksText (Elab.run "probe.tex" src).1.body
+
+/-- `hay` carries `needle`, the repo's own substring reading. -/
+def carries (hay needle : String) : Bool := (hay.splitOn needle).length ≥ 2
+
+-- owed: ctrl_groups_never_ink
+-- owner: LeanTex.Core.Compat
+-- source: a probe paper gained the word "fullpage" as body ink. The engine's floor for a construct it cannot render is that construct's *content*, never its spelling (PLAN 2026-09-24, the diagnostic-recovery entry) — and for `\emph{text}` the content is prose, so the floor is right. For a control-plane command the argument is a keyword, and the same floor puts a stray word on the page: measured synthetically, `\setlayout{fullpage}` ships "fullpage" in both backends (pdftotext over the PDF and the HTML body agree), named only by a W0301 a reader may not look at. The recognised half of that surface is this statement; the unrecognised half is a policy question named in the blocker.
+-- blocker: two things, neither a tactic. (1) The quantifier is over a table, so the proof is a walk over `Compat.meaningFree` and `Compat.configSkip` — decidable per row, but each row's witness runs the whole surface pipeline (lex → parse → compat → elab), and `Elab.run`'s inline spine has no equational theory a per-row `rw` can use: it is the wall `elab_inlines_option_run_dropped` records, one level up. A table-quantified executable oracle is available today and is the honest interim — it is what found the leak. (2) The statement deliberately covers only the *recognised* surface. An unknown command's group cannot be judged keyword or prose by any function the engine has, so the `fullpage` case is not a missing proof but a missing distinction: recovered ink is not marked as recovered, so no statement can separate it from declared prose. The factorization that would let the general form be stated is a mark on the recovery's output (an attribution the census can read), after which the binding statement is the `_accounts` shape — ink the document did not declare is paid for by a diagnostic whose `subject` names the command that produced it.
+-- goldens: no
+/-- A recognised control-plane command's argument groups contribute no
+character to the document's ink: the engine knows the command, so its
+keywords are consumed, never recovered as prose. The probe stands the
+command between two invented words, so the elaborated body is exactly those
+two words — the keyword nowhere in it.
+
+This is the invariant whose absence let `\PackageWarning{pkg}{msg}` ship its
+package name and message as body text, and it binds every row of both
+consuming tables rather than the six spellings that exposed it. The
+complementary half — that an *unrecognised* command still keeps its groups,
+so this is a named exception and not a licence to swallow content — is the
+second conjunct. -/
+theorem ctrl_groups_never_ink :
+    (∀ row ∈ Compat.meaningFree,
+      carries (elabInk (ctrlProbe row.1 row.2.1)) "zzkeyword" = false) ∧
+    (∀ row ∈ Compat.configSkip,
+      carries (elabInk (ctrlProbe row.1 row.2.1)) "zzkeyword" = false) ∧
+    carries (elabInk (ctrlProbe "zzNotAControl" 1)) "zzkeyword" = true := by
   sorry
 
 end Obligations

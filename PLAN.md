@@ -319,6 +319,23 @@ list.
   outline decoding inside a theorem, plus the same `Acc` split. Stated as a
   disjunction and not a `_covers` because no OpenType metric is guaranteed
   to bound every outline.
+- `ctrl_groups_never_ink` — a recognised control-plane command's argument
+  groups contribute no character to the document's ink, and an unrecognised
+  command's groups still do. A probe paper gained the word "fullpage" as
+  body text: the engine's floor for a construct it cannot render is that
+  construct's *content*, never its spelling, and for `\emph{text}` the
+  content is prose so the floor is right — but a control-plane command's
+  argument is a keyword, and the same floor puts a stray word on the page.
+  Measured synthetically: `\setlayout{fullpage}` ships "fullpage" in both
+  backends, pdftotext over the PDF and the HTML body agreeing, named only by
+  a W0301. The statement covers the *recognised* surface, quantified over
+  both consuming tables rather than the spellings that exposed it, because
+  the unrecognised case is not a missing proof but a missing distinction:
+  recovered ink is not marked as recovered, so nothing can separate it from
+  declared prose. Blocked on `Elab.run`'s inline spine having no equational
+  theory a per-row rewrite can use (the `elab_inlines_option_run_dropped`
+  wall, one level up), with a table-quantified executable oracle the honest
+  interim — it is what found the leak.
 
 ### Log
 
@@ -339,6 +356,51 @@ exactly the surrounding synthetic text with N0100 accounting and no W0301 or
 error. It failed six
 rows before the table change, then `lake test`, `lake build`, and the triggering
 private reference-corpus build passed.
+
+2026-09-24 — the block collector's match, split into per-arm functions.
+`collectBlock` was one 707-line match over thirty constructors, and six owed
+obligations named the same blocker: its equation-lemma generation exhausted
+`whnf` whatever the heartbeat budget, so no `rw` or `induction` could open
+the walk. `placePicture` was the shape. Eleven non-recursive arms became
+their own defs outside the mutual block, and six large non-recursive
+interiors of the recursive arms joined them — a titled block's title, the
+abstract's heading, a float's caption, the headline band, a frame's title, a
+frame's opening. The dispatcher is 246 lines.
+
+A uniform per-constructor split is not available under structural recursion,
+and this is the finding rather than a detail: Lean picks one recursive
+argument group for the whole mutual block, and `collectAlt` recurses into two
+block arrays at once, so no single argument decreases. Well-founded
+recursion would buy the split at the price of WF equation lemmas, which is
+the worse wall — `elab_inlines_option_run_dropped` records it rewriting into
+its own results — so the recursive arms stay inline and only their
+non-recursive interiors leave.
+
+The wall fell where it was measured. `role_transparent_collect` is the block
+half of `role_transparent_layout`, an oracle over the shipped pages until
+now, proved by `simp only [collectBlock]` at the default budget; the probe
+that had failed with "whnf exhausted whatever the budget" first became an
+`isDefEq` timeout after the eleven arms left, then compiled after the six
+interiors did. Behaviour is identical: every corpus fixture rendered to PDF
+and to HTML before and after, 156 artifacts, every sha256 and every
+diagnostic line equal, no golden moved. Elaboration is cost-neutral — median
+47.66 s both sides over three runs each, measured with the new theorem
+stripped so the refactor is timed alone; the +1.1 s the file now costs is
+that theorem's equation-lemma generation, a cost that buys a proof which was
+impossible before. Bench deltas are inside run-to-run noise (lorem +4 ms,
+underline −6 ms, paper-html +2 ms).
+
+None of the six obligations closed. The refactor was necessary and is not
+sufficient: `Layout.run` reaches its pages through two further imperative
+`forIn` loops with no equational theory — the top-level driver over
+`doc.body` and the placement pass over the staged op stream — and every one
+of the six must cross both. Their blockers are corrected to name that, since
+a record pointing at a wall that has fallen sends the next reader nowhere.
+An attempt at `frame_pages_footed`'s walk half got as far as
+`chromeFoot_isSome` and then met the zeta-expansion trap: `collectFrameOpen`
+is a `let`-chain, so `unfold` produces a `have`-chain that `split` cannot
+see through. That is a factorization finding, not a tactic problem, and it
+is recorded rather than worked around.
 
 2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
 outside it, `inventory` and `value` set side by side look misaligned, the
