@@ -3203,6 +3203,121 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
+/-- **The wobble, and the three constraints on correcting it.** TeX centres
+a node on `(ht − dp)/2` of its *measured* box, so depth enters at slope one
+half and a word with a descender floats up — 1.155 pt between `value` and
+`inventory` in Computer Modern at 10 pt, the effect this pins the absence of.
+
+Asserted over `Layout.Out` (the baselines two sibling labels are actually
+set on) and over the exported measurement, never over an IR dump. Three
+things are checked, one per constraint: the wobble is gone, a hand-written
+correction stays inert, and the reason the extent-based design exists is
+still visible as a named debt rather than a silent crop. -/
+def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let run (body : Array Ir.Block) : Layout.Out :=
+    layoutOf oneFace { body := body } geom
+  -- Constraint one: correct the wobble. Two labels at one anchor height,
+  -- one word with a descender and one without.
+  let pair (a b : String) : Ir.Pic.Picture := { shapes := #[
+    .label (Dim.pt 10) (Dim.pt 20) #[.text a] Ir.Color.black 1000 .center,
+    .label (Dim.pt 60) (Dim.pt 20) #[.text b] Ir.Color.black 1000 .center] }
+  let baselines (p : Ir.Pic.Picture) : List Dim.Sp :=
+    ((run #[.picture p]).pages[0]?.map fun pg =>
+      (pg.lines.filter (!·.furniture)).toList.map (·.y)).getD []
+  t "two sibling labels ship two lines"
+    ((baselines (pair "value" "inventory")).length == 2)
+  t "a descender does not lift a label off its neighbour's baseline"
+    (match baselines (pair "value" "inventory") with
+     | [p, q] => p == q
+     | _ => false)
+  t "nor does a word of nothing but descenders"
+    (match baselines (pair "WAX" "gjpqy") with
+     | [p, q] => p == q
+     | _ => false)
+  -- Absolute, not only relative: the baseline a line actually ships on is
+  -- the one `Ir.Pic.labelBaseline` predicts, mapped through the picture's
+  -- own hull. The placement recomputes `box top + height` rather than
+  -- calling the IR function — it must, because under `[scale=]` the height
+  -- rides untransformed while a mapped point would not — so nothing at
+  -- build time ties the two, and this is what does. A uniform shift of every
+  -- label passes the two equalities above and fails here.
+  let m := Layout.labelMetric geom oneFace
+  let solo : Ir.Pic.Picture := { shapes := #[
+    .label (Dim.pt 10) (Dim.pt 5) #[.text "value"] Ir.Color.black 1000 .center] }
+  let hull := solo.inkBbox m
+  let inkS := m #[.text "value"] 1000
+  t "the shipped baseline is the one the IR predicts"
+    (((run #[.picture solo]).pages[0]?.bind fun pg =>
+      (pg.lines.filter (!·.furniture))[0]?.map fun l =>
+        l.y == geom.vmargin
+          + (hull.2.2 - Ir.Pic.labelBaseline (Dim.pt 5) .center inkS)).getD false)
+  -- The same fact at the measurement, where the reason is visible: the band
+  -- is the face's declared cap height and descent, so it cannot vary with
+  -- the text, while the set width must and does.
+  let inkV := m #[.text "value"] 1000
+  let inkI := m #[.text "inventory"] 1000
+  t "the declared band is one number per face, whatever the word"
+    (inkV.height == inkI.height && inkV.depth == inkI.depth)
+  t "the set width still follows the glyphs"
+    (inkV.w != inkI.w && inkV.w > 0)
+  t "so does the baseline the placement reads"
+    (Ir.Pic.labelBaseline (Dim.pt 20) .center inkV
+      == Ir.Pic.labelBaseline (Dim.pt 20) .center inkI)
+  -- The seat that remains, as the number it is: a centred label stands
+  -- (depth − height)/2 from its anchor, which is depth/2 above where a band
+  -- trimmed to the alphabetic baseline would put it (css-inline-3 §6).
+  -- Uniform, therefore not a wobble — a declared reference.
+  let seat := Ir.Pic.labelBaseline (Dim.pt 20) .center inkV - Dim.pt 20
+  t "the seat is (depth − height)/2, to within one scaled point"
+    ((inkV.depth - inkV.height) / 2 <= seat
+      && seat <= (inkV.depth - inkV.height) / 2 + 1)
+  t "and it sits depth/2 above a cap-to-baseline band"
+    (seat > -inkV.height / 2 && seat - (-inkV.height / 2) == inkV.depth / 2)
+  -- Constraint two: a hand-written correction must not break. A phantom
+  -- whose metrics the label already declares changes no component.
+  let dominated : Ir.Pic.LabelInk :=
+    { w := 0, height := inkV.height - Dim.pt 1, depth := inkV.depth - Dim.pt 1 }
+  t "a phantom box the label already covers moves neither letters nor box"
+    (Ir.Pic.labelInkBox 0 (Dim.pt 20) .center (inkV.join dominated)
+        == Ir.Pic.labelInkBox 0 (Dim.pt 20) .center inkV
+      && Ir.Pic.labelBaseline (Dim.pt 20) .center (inkV.join dominated)
+        == Ir.Pic.labelBaseline (Dim.pt 20) .center inkV)
+  -- And one that is not covered: it grows the band, and no further than the
+  -- join — the one surviving channel, bounded rather than denied.
+  let deeper : Ir.Pic.LabelInk := { w := 0, height := 0, depth := inkV.depth + Dim.pt 2 }
+  let boxV := Ir.Pic.labelInkBox 0 (Dim.pt 20) .center inkV
+  let boxJ := Ir.Pic.labelInkBox 0 (Dim.pt 20) .center (inkV.join deeper)
+  t "a phantom deeper than the band grows it, and only to the join"
+    (boxJ.1.2 <= boxV.1.2 && boxV.2.2 <= boxJ.2.2
+      && (inkV.join deeper).depth == inkV.depth + Dim.pt 2
+      && (inkV.join deeper).height == inkV.height)
+  -- Constraint three: keep the reason the extent-based design exists. The
+  -- band is the face's *declared* ink band, and a diacritic inks above it —
+  -- so the box does not cover every glyph, and nothing yet says so. This is
+  -- `ink_covered_or_named`'s witness: the debt is real, not hypothetical.
+  let font := oneFace.body
+  let capTop : Option (Int × Int) := do
+    let g ← font.gid 'É'
+    let (_, hi) ← font.yExtent g
+    return (hi, font.capHeight)
+  t "a diacritic inks above the declared cap height"
+    (match capTop with
+     | some (hi, cap) => cap < hi
+     | none => false)
+  t "and the face reserves room for it, so the bound is declared too"
+    (match capTop with
+     | some (hi, _) => hi <= font.ascent
+     | none => false)
+  t "while the descent band does cover the descenders"
+    (match (do
+      let g ← font.gid 'y'
+      let (lo, _) ← font.yExtent g
+      return lo) with
+     | some lo => font.descent <= lo
+     | none => false)
+
 /-- The block half of `role_transparent_layout`, pinned executably: an
 *unstyled* role ships exactly the pages its content ships unwrapped — zero
 PDF bytes move. (A `\style{<role>}` gives the role declared rhythm; that
