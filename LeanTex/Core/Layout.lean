@@ -6324,12 +6324,11 @@ below the title's depth. -/
 private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     (titleLeaf : Option Nat) (titleSpan : Nat) : Acc :=
   if title.isEmpty then a else
-  match a.pal.find? "frametitlebg" with
-  | some barBg =>
-    let ftFg := (a.pal.find? "frametitlefg").getD
-      ((a.pal.find? "bg").getD Ir.Color.white)
+  match (Ir.Design.ofPalette a.pal).frametitle with
+  | some bar =>
+    let barBg := bar.bg
     let saved := (a.fg, a.ground)
-    let a := { a with fg := ftFg, ground := some barBg }
+    let a := { a with fg := bar.fg, ground := some barBg }
     let st := r.style "frametitle"
     let titleSize := match st.font with
       | some tpl => Ir.templateSize r.geom.fontSize tpl
@@ -8952,7 +8951,7 @@ private theorem runCore_bg
   refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom ..)) ?_ rfl q hq)
     ?_ ?_
   all_goals first
-    | (simp [Ir.Design.ofDoc, pdfView, hbg]
+    | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, pdfView, hbg]
        done)
     | (try dsimp only
        repeat' split

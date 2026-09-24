@@ -11410,3 +11410,49 @@ Evidence: `lake test` green, run-only 46.4–46.7 s against a 46.7–47.4 s
 baseline — neutral, the corpus PDF build being paid either way and
 `emitTree` costing less than `emit`. No golden moves; the goldens record IR
 dumps and this claim reads the artifact.
+
+
+### 2026-09-24 — one palette, one chain: the frame title's pair resolves once
+
+**The invariant.** A palette role has one resolving site. That is the
+obligation table's palette row, and `Ir.Design.ofDoc`'s docstring claimed
+to be it.
+
+It was not. `Ir.Design.ofDoc` resolved the frame-title pair from
+`doc.palette` with the chain `frametitlefg` → `bg` → white;
+`Layout.collectFrameTitle` resolved it from `a.pal` — the epoch palette in
+force where the frame stands — with **that same chain written out again**.
+Two sites, one declared role. The epoch-versus-document difference is the
+design and is correct: a `\setPalette` mid-deck retitles the frames after
+it, which a document-level read cannot express. The duplicated defaults
+chain is not the design, and nothing held the two copies equal.
+
+**The factorization.** The chain moves into `Design.ofPalette`, whose
+argument is a palette precisely because two consumers read two different
+palettes. `Design.ofDoc` becomes `ofPalette` over the document's palette
+with the two fields a palette cannot answer overlaid — the progress bar's
+thickness and the style table, both `\tokens`/`\style` declarations rather
+than colours. `collectFrameTitle` reads `(Ir.Design.ofPalette a.pal).frametitle`
+and carries no chain of its own.
+
+**The theorem the factorization buys.** `frametitle_agree` (Ir.lean): the
+pair the document-level design carries is the pair `ofPalette` resolves
+from the document's own palette. Two projections of one resolved value, the
+`_agree` shape, and the statement is not idle — `ofDoc`'s overlay is a
+structure update that *could* touch `frametitle`, and this forbids it. With
+the layout now reading the same function at its own argument, the value the
+PDF paints at a frame is that projection rather than a second derivation of
+it. The band-parity claim in the artifact tier (`frametitle` parity over
+`Ir.Design`) reads one value from both ends.
+
+**One proof moved.** `runCore_bg`'s closing `simp` unfolded `Design.ofDoc`
+to reach `bgDeclared`; with the chain one level down it needs
+`Design.ofPalette` in the same set. A structure-update definition is not
+transparent to `simp` the way a literal is — worth knowing before the next
+field moves.
+
+Evidence: `lake build` and `lake test` green, no golden moves (the goldens
+record IR dumps and the palette resolves to the same colours). AGENTS.md's
+palette row now names `ofPalette` as the resolving site, since naming
+`ofDoc` is what made the second copy look legal.
+

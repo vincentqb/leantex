@@ -6975,11 +6975,21 @@ structure Design where
   styles : Styles
   deriving Repr, BEq
 
-/-- The one construction site: every default the backends used to apply at
-their own use sites (`find?` + `getD`, each with its own chain) is applied
-here, once. -/
-def Design.ofDoc (doc : Doc) : Design :=
-  let pal := doc.palette
+/-- **The one resolving site for every palette role.** Each default the
+backends used to apply at their own use sites (`find?` + `getD`, each with
+its own chain) is applied here, once — and the argument is a palette rather
+than a document precisely because two consumers read two different
+palettes: `Design.ofDoc` reads the document's, and the layout reads the
+*epoch* palette in force where a frame stands, so a `\setPalette` mid-deck
+retitles the frames after it. That difference is the design; the defaults
+chain behind it is not, and it was written out a second time in
+`Layout.collectFrameTitle` until this function existed
+(`frametitle_agree`).
+
+The two fields a palette cannot answer — the progress bar's thickness and
+the style table — take their undeclared values here, and `ofDoc` overlays
+the document's declarations. -/
+def Design.ofPalette (pal : Palette) : Design :=
   let fg := (pal.find? "fg").getD Color.black
   let bg := (pal.find? "bg").getD Color.white
   { fg := fg
@@ -7001,12 +7011,29 @@ def Design.ofDoc (doc : Doc) : Design :=
     standout := { fg := (pal.find? "standoutfg").getD bg
                   bg := (pal.find? "standoutbg").getD fg }
     separator := (pal.find? "separator").getD fg
+    progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
+    styles := {} }
+
+/-- The document's resolved design: `ofPalette` over its palette, with the
+two declarations a palette does not carry. -/
+def Design.ofDoc (doc : Doc) : Design :=
+  { Design.ofPalette doc.palette with
     -- The fallback is moloch's own default, `progressbar linewidth=1pt`
     -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults); the layout
     -- fallback and the bundles' token entries are the same value.
     progressheight := (doc.tokens.find? "progressheight").getD
       { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := doc.styles }
+
+/-- **Two projections of one resolved value agree.** The frame-title pair is
+a function of the palette alone: the document-level design's pair is the one
+`ofPalette` resolves from the document's palette, so the value the PDF reads
+at a frame — `(Design.ofPalette epochPalette).frametitle`, the epoch palette
+being the only difference — is the same construction and not a second copy
+of the chain `frametitlefg` → `bg` → white. `ofDoc`'s overlay could have
+touched the pair; this says it does not. -/
+theorem frametitle_agree (doc : Doc) :
+    (Design.ofDoc doc).frametitle = (Design.ofPalette doc.palette).frametitle := rfl
 
 /-- Per-element style, total: the empty style is the default, applied here
 rather than at each consumer. -/
