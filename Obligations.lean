@@ -730,4 +730,34 @@ theorem ctrl_groups_never_ink :
     carries (elabInk (ctrlProbe "zzNotAControl" 1)) "zzkeyword" = true := by
   sorry
 
+-- owed: formulaFloor_covers
+-- owner: LeanTex.Core.Ir
+-- source: the recovery-floor policy (PLAN 2026-09-24, the floor-as-a-function-of-the-loss entry): `Ir.FloorHonest` is the one judge every floor is checked against, and `floorInk_covers` discharges it for the filtered salvage — the math source floor — for every registered code. This is the same statement at the engine's other translated salvage: a formula the parser *did* model but the page cannot set (W0003, `degraded`, so `Floor.content`) inks its glyph text, and the paid-for clause says it inks *something* whenever the construct carried content. `carried` is read through `Ir.floorChars` over the formula's own source rather than off the parsed list, deliberately: the scalars are both the floor's output and, read as `carried`, its reference set, so a statement over them is vacuous and would certify a floor that shipped nothing at all. The executable witness is the no-math-face rows of `recoveryChecks` and the `floorPolicyChecks` rows beside them, read off `Layout.Out`; the space-only shapes (`$\,$`, `${}$`, `$\quad$`) are the boundary the statement has to permit, since their source carries no content character either and a placeholder there would invent ink where an author wrote a thin space.
+-- blocker: there is no relation between a `.formula`'s `src` and its `body` at the IR, and there cannot be one: `Ir.Inline.formula` carries both as independent fields, so the statement is false for an arbitrary pair and has to be conditioned on the parse — `MathParse.parseMath (rawsOf src) = .ok (body, _)`. That condition is a fold inversion over `parseToks`, which threads a token cursor, a pending grid and a note array through one mutual recursion, so no equation names "the list after token k" and nothing yet says that a content character of the source reaches the atom list. It is the same `Acc`-split, accumulator-statability work `floorChars_id` and `nodeLabel_mem` wait on at the other two floors, which is why all three are queued rather than one being asserted from the others.
+-- goldens: no
+/-- A formula the page cannot set inks something whenever its source carried
+content: the paid-for clause of `Ir.FloorHonest` at the translated salvage,
+the side `floorInk_accounts` holds unconditionally at the filtered one. -/
+theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships)
+    (raws : Array Parse.Raw) (body : Math.MList) (notes : Array MathParse.Note)
+    (hp : MathParse.parseMath raws = .ok (body, notes)) :
+    Ir.FloorHonest c.floor .translated
+      (Ir.floorChars (Parse.rawSrc raws)) (Ir.formulaFloor body).toList := by
+  sorry
+
+-- owed: formulaFloor_separates
+-- owner: LeanTex.Core.Ir
+-- source: the `\cancelto` corollary (PLAN 2026-09-24, "a floor may be lossy; it may not be false"), carried from the one construct that was fixed by a table row to the family that cannot be. `\cancelto{0}{x}` inked `0x` — a product where the source says `x` cancels to `0` — and `Ir.floorNamedArgs` closed it by dropping the naming argument. A fraction has no naming argument: both operands are content, and the translated floor concatenates them, so `$\frac{1}{2}$` inks `12` and `$\binom{n}{k}$` inks `nk`. That is the identical defect with no table row available, and it is not confined to a faceless host: `Ir.plainTextOne` reads this floor for alt text, running heads, the PDF outline and the tagged structure tree, so a heading carrying `$\frac{1}{2}$` is announced as `12` even where the page sets the fraction correctly. The corpus already ships one: `math.tex`'s `$\sqrt[3]{x + 1}$` reads `3x + 1`. Measured before this record: `Half $\frac{1}{2}$ done` gives the plain-text reading `Half 12 done`. The statement is the general repair — two content operands of one nucleus are separated, so a kept pair can never read as an application of the operator standing between them — and it is false today, which is the point of stating it before the code.
+-- blocker: not a proof wall but an unmade design decision, and it is not this file's to make alone. The separator vocabulary is user-visible in four channels at once (page ink, SVG label text, PDF outline, tagged tree) and has no locale-free answer for every nucleus: `/` reads correctly for a fraction but needs parentheses around a compound operand to stay true (`\frac{a+b}{c}` is not `a+b/c`), `√` is a glyph the body face may not carry so the repair would trade a false reading for a missing-glyph diagnostic, and `\binom` has no plain-text spelling that is not invented notation. The engine's own line is also not yet drawn: `^` and `_` are on `Ir.markupChars`, so the filtered floor already ships `x2` for `$x^2$` and the project accepted that as lossy rather than false — a rule that separates fraction operands and not scripts is answering half the question. What the statement fixes is the *shape* of the repair, so the vocabulary decision lands against it rather than around it, and `formulaFloor` grows its own walk over `Math.MList` instead of reusing `Math.MList.scalarsList`, whose job is the coverage census and whose omissions (no radical sign is ever pushed) are correct there and wrong here.
+-- goldens: yes
+/-- **A floor may be lossy; it may not be false.** The two content operands
+of one nucleus never reach the page as their bare juxtaposition, so a reader
+cannot read a fraction as a product. Stated as the inequality rather than as
+a spelling, because what is owed is the separation and not the separator. -/
+theorem formulaFloor_separates (num den : Math.MList)
+    (hn : Ir.formulaFloor num ≠ "") (hd : Ir.formulaFloor den ≠ "") :
+    Ir.formulaFloor (.cons (.atom .inner (.frac num den) .nil .nil false) .nil)
+      ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
+  sorry
+
 end Obligations

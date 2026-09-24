@@ -5542,6 +5542,98 @@ theorem floorInk_accounts (src : String) : floorInk src ≠ [] := by
   · rename_i h
     simpa [List.isEmpty_iff] using h
 
+/-- Where a salvage's characters come from, which is what decides how much
+of the floor is checkable. The provenance rule the floor entries argue for,
+as a value the judge reads rather than a distinction three docstrings make
+in prose.
+
+`filtered` is salvage from an unparsed source: no parse decided anything, so
+the result is a subsequence of what the author wrote and LaTeX's punctuation
+is markup by the character test. `floorChars` is the one filtered salvage.
+
+`translated` is what a *parse* decided was content: the characters are the
+parse's own and not the source's. `\{` arrives as `{` because the author
+asked for a brace glyph and `x` arrives as `𝑥` because that is the letter a
+math list sets, so the character test would delete exactly what was meant —
+a reviewer once read both as leaks, which is the warning that this rule is
+easy to misread. `formulaFloor` and a node body's salvage are translated. -/
+inductive Salvage where
+  | filtered
+  | translated
+  deriving Repr, BEq, DecidableEq
+
+/-- **The recovery floor as one judge, and the only thing every floor
+shares.** `Loss.floor` declares what a construct's place owes a reader; this
+says whether a salvage delivered it. Three clauses, each the generalisation
+of a statement that already stood at one floor and was re-derived at the
+next:
+
+* *shipped only where something is owed* — a `.refuse` or `.inert` floor
+  inks nothing. A run that writes no artifact has no page for a recovery to
+  stand on, and a construct with no content operand has nothing to salvage,
+  so ink in either place is invention rather than recovery. This is the
+  clause that keeps a `config` code from acquiring a placeholder.
+* *paid for* — a floor that owes ink delivers it whenever the construct
+  carried content. `floorInk_accounts` is this clause at the math floor and
+  `Picture.labelFloor_accounts` at a node label's, and the second was
+  written from scratch after the first was on the record.
+* *drawn, and markup-free* — every character shipped is one the construct
+  carried or one of the declared placeholder's, and none of them is LaTeX's
+  punctuation. `floorChars_mem` is this clause, and it binds a `filtered`
+  salvage only: a parse's decision about what is content is not this judge's
+  to overrule.
+
+What the judge deliberately does not express is the corollary the
+`\cancelto` entry adds — that the kept fragments may not compose into a
+*different* well-formed claim. `0x` where `x` cancels to `0` passes all
+three clauses and is still false, because the defect is in the arrangement
+rather than in any character. `floorNamedArgs` is the mechanism for the
+cases where dropping an operand fixes it; where both fragments are content
+the repair is a separator, which is `formulaFloor_separates` (owed). -/
+def FloorHonest (f : Floor) (s : Salvage) (carried ink : List Char) : Prop :=
+  (f.ships = false → ink = []) ∧
+  (f.inks = true → carried ≠ [] → ink ≠ []) ∧
+  (s = .filtered → ∀ c ∈ ink,
+    (c ∈ carried ∨ c ∈ mathFloorPlaceholder) ∧ c ∉ markupChars)
+
+/-- Did this construct carry content at all? The source's own content
+characters, read through the same mask the floor reads, so "carried content"
+is one question with one answer and not a judgement each raise site makes.
+
+A diagnostic that names a loss where the answer is no is naming a non-loss,
+which dilutes its one meaning and fails a `--werror` run for free — the
+defect W0385's own five neutral names were found to have. A raise site whose
+construct may carry nothing reads this before it warns. -/
+def floorCarries (src : String) : Bool := !(floorChars src).isEmpty
+
+/-- **Every registered code's floor is discharged by the salvage, for every
+code.** A diagnostic inherits its recovery from the loss it declares and
+chooses nothing: whatever a code in the registry demands of the construct's
+place, the math floor delivers. This is `floorInk_mem` and
+`floorInk_accounts` as one statement keyed on the loss — the two halves that
+stood in two places and were then derived a third time from scratch at a
+third site.
+
+The hypothesis is the one real constraint, and it is a routing rule rather
+than a formality: `floorInk` inks unconditionally, so a code whose floor
+does not ship may not be routed here. Sending a `config` or `info` code to
+this floor would put the declared placeholder where nothing was lost. -/
+theorem floorInk_covers (c : DiagCode) (h : c.floor.ships) (src : String) :
+    FloorHonest c.floor .filtered src.toList (floorInk src) := by
+  refine ⟨fun hn => absurd (h.symm.trans hn) (by decide), fun _ _ => ?_, fun _ => ?_⟩
+  · exact floorInk_accounts src
+  · exact floorInk_mem src
+
+/-- The same statement at the one loss class that owes ink, spelled out so
+the registry's `degraded` codes have a named fact rather than an instance of
+a quantified one: the math floor is an honest `degraded` recovery for every
+source, including one whose content characters are none. -/
+theorem floorInk_degraded_covers (src : String) :
+    FloorHonest Loss.degraded.floor .filtered src.toList (floorInk src) :=
+  ⟨fun hn => absurd hn (by decide), fun _ _ => floorInk_accounts src,
+   fun _ => floorInk_mem src⟩
+
+
 -- Display-only printers. Structural recursion through `List`, so no `partial`.
 
 mutual

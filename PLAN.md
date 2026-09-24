@@ -336,6 +336,51 @@ list.
   theory a per-row rewrite can use (the `elab_inlines_option_run_dropped`
   wall, one level up), with a table-quantified executable oracle the honest
   interim — it is what found the leak.
+- `formulaFloor_covers` — the recovery floor's paid-for clause at the
+  engine's translated salvage: a formula the parser modelled but the page
+  cannot set (W0003, `degraded`, so `Floor.content`) inks something whenever
+  its source carried a content character. `floorInk_covers` discharges the
+  same judge (`Ir.FloorHonest`) for the filtered salvage and for every
+  registered code; this is the half that cannot be read off a filter,
+  because the floor's output *is* the parse's scalars and reading `carried`
+  off them too would make the statement vacuous — it would certify a floor
+  that shipped nothing at all. So `carried` is the source's own content
+  characters, through `Ir.floorChars`, which is also what keeps the
+  space-only shapes (`$\,$`, `${}$`) outside the claim: their sources carry
+  no content character either, and a placeholder there would invent ink
+  where an author wrote a thin space. Blocked on there being no relation
+  between a `.formula`'s `src` and its `body` at the IR — the two are
+  independent fields, so the statement is false for an arbitrary pair and
+  has to be conditioned on `MathParse.parseMath`, a fold inversion over
+  `parseToks`' mutual recursion. The same accumulator-statability work
+  `floorChars_id` and `nodeLabel_mem` wait on at the other two floors, which
+  is why all three are queued rather than one asserted from the others. The
+  witness meanwhile is the no-math-face rows of `recoveryChecks` and the
+  `floorPolicyChecks` rows beside them, read off `Layout.Out`.
+- `formulaFloor_separates` — a floor may be lossy; it may not be false, at
+  the family `Ir.floorNamedArgs` cannot reach. `\cancelto{0}{x}` inked `0x`
+  and one table row closed it because its value argument *names*; a
+  fraction's two operands are both content, so the translated floor
+  concatenates them and `$\frac{1}{2}$` inks `12`, `$\binom{n}{k}$` inks
+  `nk`. Not confined to a faceless host: `Ir.plainTextOne` reads this floor
+  for alt text, running heads, the PDF outline and the tagged tree, so a
+  heading carrying `$\frac{1}{2}$` is announced as `12` where the page sets
+  the fraction correctly — measured, `Half $\frac{1}{2}$ done` reads `Half
+  12 done` — and the corpus already ships one (`math.tex`'s
+  `$\sqrt[3]{x + 1}$` reads `3x + 1`). False today, which is why it is
+  stated before the code. Blocked not on a proof wall but on an unmade
+  design decision that is not one file's to make: the separator vocabulary
+  is user-visible in four channels at once and has no locale-free answer for
+  every nucleus (`/` needs parentheses around a compound operand to stay
+  true, `√` is a glyph the body face may not carry, `\binom` has no
+  uninvented plain-text spelling), and the engine's own line is not yet
+  drawn either — `^` and `_` are on `Ir.markupChars`, so the filtered floor
+  already ships `x2` for `$x^2$` and the project accepted that as lossy
+  rather than false. What the statement fixes is the shape of the repair, so
+  the vocabulary lands against it; discharging it gives `formulaFloor` its
+  own walk over `Math.MList` instead of reusing
+  `Math.MList.scalarsList`, whose job is the coverage census and whose
+  omissions (no radical sign is ever pushed) are right there and wrong here.
 
 ### Log
 
@@ -401,6 +446,144 @@ An attempt at `frame_pages_footed`'s walk half got as far as
 is a `let`-chain, so `unfold` produces a `have`-chain that `split` cannot
 see through. That is a factorization finding, not a tactic problem, and it
 is recorded rather than worked around.
+
+2026-09-24 — the recovery floor is a function of the declared loss now, not
+a decision three agents each made from scratch. `DiagCode` already carried a
+declared `Loss` and derived both halves of its rendered prefix from it —
+severity and the class letter, one fact in one place. The floor did not, and
+in one session three salvage paths arrived at the same law independently:
+math the parser could not model was set as its *source*, so five slides
+typeset alignment markup as body ink; W0301 kept an unknown command's braced
+arguments, so a `\parbox` width shipped beside a label; and a node label with
+one unreadable token was dropped whole, so three consecutive pages shipped a
+diagram frame with no text in it. Three symptoms, three modules, one law —
+degrade to content, never to markup, never to nothing — and two of the three
+reached it only after shipping the wrong thing first.
+
+**The shape, and why it is not one function.** The obvious move is a single
+salvage both callers call, and it is wrong for a reason the module graph
+makes plain. `Picture.lean` imports `Ir.lean`, so no statement about a node
+label's salvage can even be written where the math floor lives; and the two
+walks are not the same walk — `Ir.floorChars` filters an unparsed *source
+string*, where no parse decided anything, while a node body arrives
+tokenised with groups matched and math spans carried whole, and a third
+salvage (`Ir.formulaFloor`) reports what a parse already decided was
+content. Forcing one implementation on them would mean re-serialising tokens
+into a source that was never written. What is genuinely shared is the
+*policy*, which is what `Ir.floorNamedArgs` already demonstrated: one list
+about LaTeX, read by both floors, no drift.
+
+So the floor is declared as `Loss.floor : Loss → Floor`, beside
+`Loss.severity` and for the same reason, and each salvage is *checked
+against* it rather than made from it. Four classes, each owing something
+different, and saying what each owes was half the work:
+
+- `dropped` → `.refuse`. No floor exists, because no artifact does: the run
+  fails and there is no page for a recovery to stand on. This is the class
+  the task's framing asked about, and the answer is that it is the one class
+  with nothing to say.
+- `pending` → `.absent`. The construct's place may legitimately be empty —
+  that is what `pending` *means*, the content arrives with the milestone that
+  owns it — so a blank there is the declared state and not a silent loss.
+  W0334 draws nothing for a picture construct outside the subset and is
+  right to; W0370 and W0383 keep text and are also right. The floor permits
+  both and constrains what does appear.
+- `degraded` → `.content`. The construct's text content stands in its place,
+  never its markup, and never nothing where the construct carried content.
+  `degraded`'s own definition is the argument: the reader is promised that
+  *something stands here*.
+- `config`, `info` → `.inert`. No content operand, so nothing is owed *and
+  nothing may appear*: ink in a `config` code's place would be invention
+  rather than recovery. This clause is new and it has teeth — it is what
+  stops a future site routing a skipped `\usepackage` through a floor that
+  ships a placeholder, and it is the symmetric form of the W0385 finding
+  (a `degraded` code reporting a non-loss dilutes its one meaning).
+
+`Floor.ships` and `Floor.inks` are the two derived questions, ordered by
+`Floor.inks_ships`, and `DiagCode.inks_iff_degraded` closes the registry
+side: *exactly* the `degraded` codes owe ink, for every one of the 166, so a
+loss class cannot acquire the obligation by looking similar to `degraded` and
+a `degraded` code cannot escape it by being routed somewhere quiet.
+
+**One judge, three clauses, and one statement over the whole registry.**
+`Ir.FloorHonest f s carried ink` is what each floor is checked against. Its
+three clauses are the generalisations of statements that already existed,
+each of which had been re-derived at the next site: *shipped only where
+something is owed* (new, the `.inert`/`.refuse` clause), *paid for*
+(`floorInk_accounts` at the math floor, `Picture.labelFloor_accounts`
+written from scratch at the node floor after the first was on the record),
+and *drawn and markup-free* (`floorChars_mem`). The conjunction is now one
+theorem quantified over every code — `Ir.floorInk_covers (c : DiagCode)
+(h : c.floor.ships)` — so a new diagnostic inherits a correct floor instead
+of choosing one, and the hypothesis is a routing rule rather than a
+formality: `floorInk` inks unconditionally, so sending a `config` or `info`
+code to it would put the declared placeholder where nothing was lost.
+
+The third clause binds a `filtered` salvage only, and `Ir.Salvage` carries
+that distinction as a value rather than as prose in three docstrings. This
+is the provenance rule the floor's first review round established and the
+second round's reviewer misread: `\{` reaching the page from a *parsed* atom
+is the author asking for a brace glyph, and `x` arriving as `𝑥` is the letter
+a math list sets, so the character test would delete exactly what was meant.
+A judge that applied it uniformly would condemn the floor that is right.
+
+**What the judge deliberately cannot say.** The `\cancelto` corollary — the
+kept fragments may not compose into a different well-formed claim — is not
+expressible as a predicate over the result, because `0x` passes every
+character-level clause and is still false. `Ir.floorNamedArgs` is the
+mechanism where dropping an operand fixes it; where both fragments are
+content the repair is a separator, and that is `formulaFloor_separates`,
+owed. The docstring says so rather than leaving a reader to infer that three
+green clauses mean the floor is true.
+
+**Two findings, both live, both measured.** First: the corollary is
+unfixed at the family the table cannot reach. `$\frac{1}{2}$` inks `12` and
+`$\binom{n}{k}$` inks `nk`, in the *translated* floor, and not only on a
+faceless host — `Ir.plainTextOne` reads that floor for alt text, running
+heads, the PDF outline and the tagged structure tree, so `Half
+$\frac{1}{2}$ done` in a heading is announced as `Half 12 done` where the
+page sets the fraction correctly. The corpus already carries one:
+`math.tex`'s `$\sqrt[3]{x + 1}$` reads `3x + 1`. Staged rather than fixed
+because the separator vocabulary is user-visible in four channels at once
+and the engine's own line is not drawn — `^` and `_` are on
+`Ir.markupChars`, so `$x^2$` already ships `x2` and the project accepted
+that as lossy rather than false. Answering half that question quietly is
+worse than stating the whole of it.
+
+Second: an option run after *any* control word leaks as ink from the
+filtered floor, because only a `floorNamedArgs` command ever swept one.
+`\sqrt[3]{8}` inks `[3]8`, `\zzz[opt]{x}` inks `[opt]x`. The engine drops an
+unknown command's option run in text (W0341) and in a node body
+(`Sal.optMaybe`/`optDrop`), and the math floor — the *first* of the three
+sites — never got the rule. That is the premise of this entry arriving as a
+defect in its own file, and it is the next entry.
+
+W0003 is not a third finding, though it looked like one. A space-only
+formula (`$\,$`, `${}$`, `$\quad$`) parses, so its floor is its scalars,
+which are none, and the page ships nothing under a `degraded` warning. The
+floor is honest: the source carries no content character either, and
+`[…]` there would invent ink where an author wrote a thin space. What is
+wrong is the *diagnostic*, which claims math was set as plain text when
+nothing was lost — the same shape as W0385's five neutral names.
+`Ir.floorCarries` is the mechanism, in this file; the raise site is
+`Layout.flatten`'s `.formula` arm, in another owner's, and is routed rather
+than edited.
+
+**`DiagCode.count` is derived.** It was a hand-maintained literal and a
+guaranteed collision point — four agents adding a code in one session merged
+it to a number one short of the truth, and it was corrected by hand. It is
+read off the type now through the two helpers `deriving DecidableEq`
+synthesises for an enum: `ofNat` saturates at the last constructor, so
+`ofNat ctorCeiling` *is* that constructor and `ctorIdx` reads its index. The
+ceiling is not a count and never needs touching as codes are added.
+Registering a code is one constructor and one `spec` arm, nothing else. It
+trades the literal for a dependency on two derived helpers, and that
+dependency is checked rather than trusted: `all_complete` makes an
+undercount a build failure and `all_nodup` an overcount, in both directions,
+as before.
+
+§ Owed obligations grows by two rows, `formulaFloor_covers` and
+`formulaFloor_separates`.
 
 2026-09-24 — what cannot move a label's baseline. A report: in TikZ and
 outside it, `inventory` and `value` set side by side look misaligned, the

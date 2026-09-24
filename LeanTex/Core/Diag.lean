@@ -77,6 +77,71 @@ rendered `error[E0333]` prefix come from the one declared `Loss`, so a
 prefix like `error[W…]` is unrepresentable. -/
 def Loss.letter (l : Loss) : Char := l.severity.letter
 
+/-- **What the construct's place on the page owes a reader.** The recovery
+floor, declared once per loss class and derived at a salvage site exactly as
+severity and the code letter already are.
+
+It is declared here because it was being *rediscovered*. In one session
+three salvage paths — math the parser could not model, an unknown command's
+braced arguments, a diagram node whose body held one unreadable token — each
+independently arrived at the same law, and two of them arrived at it by
+first shipping the wrong thing: LaTeX source as body ink on five slides, a
+length beside a label, and a whole label dropped so three pages shipped an
+empty diagram frame. The law is not a property of math, or of pictures, or
+of unknown commands. It is a property of the loss class, so it belongs to
+the loss class. -/
+inductive Floor where
+  /-- No floor exists, because no artifact does: a `dropped` loss fails the
+  run, so there is no page for a recovery to stand on. -/
+  | refuse
+  /-- The construct's place may legitimately be empty. That is what
+  `pending` *means* — the content is gone today and arrives with the
+  milestone that owns it — so a blank there is the declared state and not a
+  silent loss. Whatever does stand there is still the construct's own
+  content. -/
+  | absent
+  /-- The construct's text content stands in its place: never its markup,
+  and never nothing where the construct carried content — an empty salvage
+  is paid for by a declared placeholder. This is the floor the three sites
+  derived, and `degraded`'s own definition is why it is this one: the reader
+  is promised that *something stands here*. -/
+  | content
+  /-- Nothing is owed and nothing appears: a `config` or `info` loss has no
+  content operand, so ink in its place would be invention rather than
+  recovery. -/
+  | inert
+  deriving Repr, BEq, DecidableEq
+
+/-- The floor is a function of the declared loss and of nothing else — one
+decision, one place, the same shape `Loss.severity` has. A new diagnostic
+code inherits its floor from the class it declares; there is no site at
+which a floor is chosen. -/
+def Loss.floor : Loss → Floor
+  | .dropped => .refuse
+  | .pending => .absent
+  | .degraded => .content
+  | .config => .inert
+  | .info => .inert
+
+/-- Does anything at all stand in the construct's place? A floor that ships
+nothing is not a recovery, and routing a salvage to a code whose floor does
+not ship puts ink where no content was lost. -/
+def Floor.ships : Floor → Bool
+  | .content | .absent => true
+  | .refuse | .inert => false
+
+/-- Must the construct's place carry ink whenever the construct carried
+content? Only `.content` owes that, and `inks_iff_degraded` says the
+converse: no other loss class quietly acquires the obligation. -/
+def Floor.inks : Floor → Bool
+  | .content => true
+  | .refuse | .absent | .inert => false
+
+/-- A floor that owes ink ships: the two questions are ordered, so no code
+can be asked for ink in a place nothing stands in. -/
+theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
+  cases f <;> simp_all [Floor.inks, Floor.ships]
+
 /-- Every diagnostic code the engine can emit: one constructor per code, so
 an unregistered code is unrepresentable and every walk over the codes is
 compiler-exhaustive. The constructor names spell the rendered codes; the
@@ -320,6 +385,23 @@ def DiagCode.digits (c : DiagCode) : String := c.spec.1
 def DiagCode.loss (c : DiagCode) : Loss := c.spec.2.1
 
 def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
+
+/-- The floor a code's declared loss demands, the projection every salvage
+site reads. Beside `DiagCode.code` and `Diag.severity`: a code has no floor
+field to disagree with its class, so a new code inherits a correct recovery
+rather than choosing one. -/
+def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
+
+/-- **Exactly the degraded codes owe ink.** The obligation table's rule — a
+`degraded` loss ships the construct's text content — is not one reading of
+the registry among several: it is the whole of the ink obligation, for every
+registered code. A future loss class cannot inherit the obligation by
+looking similar to `degraded`, and a `degraded` code cannot escape it by
+being routed somewhere quiet. -/
+theorem DiagCode.inks_iff_degraded (c : DiagCode) :
+    c.floor.inks = (c.loss == .degraded) := by
+  cases h : c.loss <;> simp only [DiagCode.floor, h, Loss.floor, Floor.inks] <;> decide
+
 
 /-- The one place a code's printed name is spelled: the class letter comes
 from the declared loss, the digits from the registry. A code whose letter

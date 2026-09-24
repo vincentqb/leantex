@@ -1674,6 +1674,66 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (let s := pageText "$\\alpha^2$"
      !has s "\\" && !has s "alpha" && has s "2")
 
+/-- The recovery floor read as what it is: a function of the declared `Loss`.
+`Ir.FloorHonest` is the judge every floor is checked against and
+`Ir.floorInk_covers` discharges it for the filtered salvage over every
+registered code; these are the page-level rows behind it, plus the two
+boundaries a reader of the theorem would otherwise have to guess at.
+
+Read off `Layout.Out`, never an IR dump: the claim is about what a page
+shows, and the fixture that pinned the original defect as intended behaviour
+is why. -/
+def floorPolicyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pageText (src : String) : String := pageTextOf oneFace src (some ({} : Layout.Geom))
+  let has := hasStr
+  -- The registry side, as the page sees it: the codes that owe ink are
+  -- exactly the degraded ones, and the floor a code demands is its loss's.
+  t "exactly the degraded codes owe the reader ink"
+    (DiagCode.all.all fun c => c.floor.inks == (c.loss == .degraded))
+  t "a floor that owes ink is a floor that ships"
+    (DiagCode.all.all fun c => !c.floor.inks || c.floor.ships)
+  t "the codes with no content operand owe no ink and ship none"
+    (DiagCode.all.all fun c =>
+      (c.loss != .config && c.loss != .info) || (!c.floor.ships && !c.floor.inks))
+  -- The paid-for clause where it bites, over four shapes whose content
+  -- characters are none: the page says something stood here.
+  t "every all-markup formula ships the declared placeholder"
+    ([ "$\\overset{\\alpha}{\\beta}$", "$\\overset{\\gamma}{\\delta}$",
+       "$\\overset{\\phantom{x}}{\\alpha}$", "$\\overset{\\label{k}}{\\beta}$" ].all
+      fun src => pageText src == "[…]")
+  -- The drawn-and-markup-free clause over the same shapes plus content
+  -- ones: no page ships LaTeX's punctuation where a formula stood.
+  t "no degraded formula ships LaTeX punctuation"
+    ([ "$\\overset{a+b}{c}$", "$\\overset{\\textcolor{teal}{p}}{q}$",
+       "$\\overset{\\alpha}{\\beta}$", "$\\overset{x_1}{y^2}$" ].all
+      fun src =>
+        let s := pageText src
+        !has s "\\" && !has s "{" && !has s "}" && !has s "$" &&
+        !has s "&" && !has s "^" && !has s "_" && !has s "~")
+  -- The first boundary: "carried content" is one question with one answer,
+  -- and the floor's own mask answers it. A source that is markup end to end
+  -- carried nothing; one with a letter in it carried something.
+  t "a markup-only source carried no content"
+    (!Ir.floorCarries "\\overset{\\alpha}{\\beta}" &&
+     !Ir.floorCarries "\\," && !Ir.floorCarries "{}")
+  t "a source with a content character carried content"
+    (Ir.floorCarries "\\overset{abc}{d}" && Ir.floorCarries "x")
+  -- The second boundary, and the one a reader of `floorInk_covers` would
+  -- otherwise mistake for a defect: a space-only formula parses, so its
+  -- floor is the parse's scalars — none — and the page ships nothing. That
+  -- is honest, because the source carried no content character either; a
+  -- placeholder here would invent ink where an author wrote a thin space.
+  t "a space-only formula inks nothing, and carried nothing to ink"
+    (pageText "$\\,$" == "" && !Ir.floorCarries "\\,")
+  t "a formula with one digit inks it without a math face"
+    (pageText "$\\,2$" == "2")
+  -- A parsed atom's scalars are content by the parser's decision, so the
+  -- character test does not run over them: the floor that is right must not
+  -- be condemned by the judge that governs the other one.
+  t "the parsed floor ships the brace glyph its author spelled"
+    (let s := pageText "$\\{x\\}$"; has s "{" && has s "}" && !has s "\\")
+
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top
 chrome never moves with the body. -/
