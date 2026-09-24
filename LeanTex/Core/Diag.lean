@@ -479,6 +479,22 @@ structure Diag where
   help : Option String := none
   demoted : Bool := false
   subject : Option String := none
+  /-- The name this diagnostic refuses, when refusing a name is what it does:
+  an unsupported package, an unknown theme, an unknown font theme slot.
+
+  Separate from `subject`, which is the dedup key and is namespaced — an
+  unknown command's key is `"ctrl:\<name>"`, not the bare name, so a consumer
+  reading the name off `subject` reads it correctly for some codes and not
+  others. The distinction was not academic: `\usetheme` was refusable without
+  being enumerable, and the invariant that a name-refusal must first ask the
+  input path for a file that would define it could only be *stated* against
+  `subject`, where two of its codes set nothing at all and the statement was
+  vacuously true.
+
+  A structured field rather than a reading of the message, for the reason
+  every `_named` claim in this tree gives: prose rots, and a claim that
+  parses a sentence holds only until the sentence is reworded. -/
+  refused : Option String := none
   sites : Nat := 1
   deriving Repr, BEq
 
@@ -494,12 +510,22 @@ def Diag.severity (d : Diag) : Severity :=
 
 /-- The one door a diagnostic is made through. -/
 def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
-    (help : Option String := none) (subject : Option String := none) : Diag :=
+    (help : Option String := none) (subject : Option String := none)
+    (refused : Option String := none) : Diag :=
   { kind := c
     message := message
     span := span
     help := help
-    subject := subject }
+    subject := subject
+    refused := refused }
+
+/-- A refusal carries the name it refuses structurally, never as a reading of
+its own words: what the door was handed is what comes back out. The fact the
+name-refusal registry rests on — a consumer enumerating refusals reads a
+field, so rewording a message cannot silently empty the registry. -/
+theorem Diag.of_refused (c : DiagCode) (message : String) (span : Option Span)
+    (help subject refused : Option String) :
+    (Diag.of c message span help subject refused).refused = refused := rfl
 
 /-- Severity derives from the declared loss — structurally now: `severity`
 is a projection of the stored `kind`, so this is `rfl` and a call site

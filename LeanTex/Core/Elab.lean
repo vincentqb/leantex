@@ -409,12 +409,14 @@ abbrev EM := StateM ESt
 both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
 so a message exists in exactly one spelling. -/
 private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
-    (help : Option String := none) (subject : Option String := none) : Diag :=
-  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject
+    (help : Option String := none) (subject : Option String := none)
+    (refused : Option String := none) : Diag :=
+  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject refused
 
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
-    (help : Option String := none) : EM Unit :=
-  modify fun st => { st with diags := st.diags.push (diagOf ctx code msg pos help) }
+    (help : Option String := none) (refused : Option String := none) : EM Unit :=
+  modify fun st => { st with
+    diags := st.diags.push (diagOf ctx code msg pos help (refused := refused)) }
 
 /-- One reporting effect a preamble apply step asks for — effects as data,
 so the value half of a step is a pure function a theorem can range over.
@@ -10222,6 +10224,7 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
         diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
           (some pos)
           (help := s!"themes: {String.intercalate ", " Theme.names}")
+          (refused := some tname)
         return s
     | none =>
       diag s.ctx .E0304 "'\\theme' needs a {...} block" pos

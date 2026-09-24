@@ -596,6 +596,52 @@ def diagBlocksOf (s : String) : Array (String × String) := Id.run do
   if !key.isEmpty then out := out.push (key, cur)
   return out
 
+/-- **A refusal about a name says so, and the set of them is closed against
+the code list.** `\usetheme{X}` was refusable — W0319, "unknown theme", the
+document left with no palette at all — and never opened `beamerthemeX.sty`
+sitting beside it. The generalised invariant is that a declaration the engine
+refuses by name asks the input path first, and stating it needs a
+machine-readable answer to "is this refusal about a name, and which name".
+
+There was none. `Diag.subject` is the dedup key, namespaced for some codes
+(`ctrl:<name>`) and unset for others, and both of the codes the invariant
+ranges over set nothing there at all — so the statement read the empty option
+and was vacuously true, which is the worst state a staged statement can be
+in. `Diag.refused` is the channel; `Compat.nameRefusalAsk` is the registry.
+
+These rows close the registry in both directions over the witness registry
+every code already owes, which is the point: a third name-refusal cannot
+arrive invisibly, because the moment its witness carries a name and its row is
+missing this fails. Invented content throughout. -/
+def nameRefusalRegistryChecks (ref : IO.Ref (List String))
+    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag) : IO Unit := do
+  let t := check ref
+  -- The codes whose own firing witness carries a refused name: the registry
+  -- as the code list itself spells it, never a hand-kept copy.
+  let carriers := DiagCode.all.filter fun c =>
+    (diagWitness one mapped withMath probed c).any fun d =>
+      d.code == c.code && d.refused.isSome
+  for c in carriers do
+    t s!"name refusal {c.code}: a code whose witness refuses a name has a registry row"
+      (Compat.nameRefusalAsk.any fun p => p.1.code == c.code)
+  for (c, _) in Compat.nameRefusalAsk do
+    t s!"name refusal {c.code}: a registry row's code really does refuse a name"
+      (carriers.any fun k => k.code == c.code)
+  -- The name is the *name*, not the message it sits in and not the namespaced
+  -- dedup key: a consumer asking the input path for a file reads this field
+  -- and concatenates a prefix, so a stray word here is a stray filename.
+  let (_, pDs) := elabStr (dvDoc "\\usepackage{zznosuchpackage}\n" "Placeholder body.")
+  t "name refusal W0103: the refused package name is carried structurally"
+    (pDs.any fun d => d.code == "W0103" && d.refused == some "zznosuchpackage")
+  let (_, tDs) := elabStr (deck169 "\\theme{zznosuchtheme}\n" "\\maketitle\n")
+  t "name refusal W0319: the refused theme name is carried structurally"
+    (tDs.any fun d => d.code == "W0319" && d.refused == some "zznosuchtheme")
+  -- The control: a loss that is not about a name carries none, so the
+  -- registry closure above is a real partition rather than "every code".
+  let (_, uDs) := elabStr (dvDoc "" "Alpha \\zzunknown{beta} omega.")
+  t "name refusal: a loss that is not a name-refusal carries no refused name"
+    (uDs.all fun d => d.code != "W0301" || d.refused.isNone)
+
 /-- The voice golden and its coverage: every registered code fires from its
 witness, and every fired form renders into tests/golden/diagnostics.txt —
 the one place the whole voice is reviewable in a diff. The driver probes run
@@ -639,6 +685,9 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     fonts := #[sans, fira]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray
     math := some 1 }
+  -- The witness registry is built here and read by two claims: this block's
+  -- voice lint, and the name-refusal registry's closure against the code list.
+  nameRefusalRegistryChecks ref one mapped withMath probeOf
   let lossLabel : Loss → String
     | .dropped => "dropped"
     | .pending => "pending"
@@ -1123,3 +1172,5 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"salvage {n}: no recovered ink spells a diagnostic code"
       (fDoc.salvage.all fun s =>
         DiagCode.all.all fun c => !hasStr s.text c.code)
+
+

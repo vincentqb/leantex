@@ -450,10 +450,11 @@ the silence guard reads `diags.size` growth on its own. `subject` is the
 census key of the loss, so "this loss is named" stays a lookup and
 `Diag.tallySites` can count its sites. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
-    (demote : Bool := false) (subject : Option String := none) : M Unit :=
+    (demote : Bool := false) (subject : Option String := none)
+    (refused : Option String := none) : M Unit :=
   modify fun st => { st with
     diags := st.diags.push (
-      let d := Diag.of code msg (some ⟨st.file, pos⟩) help subject
+      let d := Diag.of code msg (some ⟨st.file, pos⟩) help subject refused
       if demote then d.demote else d) }
 
 /-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
@@ -2765,6 +2766,7 @@ dropped: {String.intercalate ", " dropped}" pos
 rendered subset is drawn whole at the boundary" pos
       else
         say .W0103 s!"package '{p}' is not supported; skipped" pos
+          (refused := some p)
     return some (out, k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
@@ -3878,6 +3880,25 @@ def themeAsking : List (String × String) :=
    ("usefonttheme", "beamerfonttheme"),
    ("useinnertheme", "beamerinnertheme"),
    ("useoutertheme", "beameroutertheme")]
+
+/-- **The name-refusal registry: every code that refuses a declaration by
+name, with the file prefix that would have defined it.** The invariant behind
+it is that a refusal asks the input path first, and the registry is what lets
+that be *quantified* rather than restated per code — a refusal outside the
+list is a refusal nobody checked.
+
+Closed against the code list rather than kept by hand: a refusal carries the
+name it refuses on `Diag.refused`, and every code owes a firing witness, so
+the codes that refuse names are discoverable from the registry of codes
+itself. `nameRefusalRegistryChecks` runs that closure in both directions — a
+row whose code never carries a name is a stale row, and a code that carries
+one without a row is the hole `\usetheme` fell through, refusable without
+being enumerable.
+
+The prefix is this module's because the candidate scan is: a package `foo`
+would be defined by `foo.sty` and a theme `X` by `beamerthemeX.sty`. -/
+def nameRefusalAsk : List (DiagCode × String) :=
+  [(.W0103, ""), (.W0319, "beamertheme")]
 
 mutual
 

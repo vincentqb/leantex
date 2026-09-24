@@ -772,20 +772,13 @@ theorem formulaFloor_separates (num den : Math.MList)
       ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
   sorry
 
-/-- The prefix LaTeX puts before a refused name on its way to a filename,
-per refusing code: an unknown package is its own file (ltfiles.dtx
-`\@onefilewithoptions`), an unknown theme is `beamertheme<name>`
-(beamerbasethemes.sty). The measure the statement below needs, and the
-reason it is a table: the two codes refuse the same *kind* of thing — a name
-the engine does not know — and differ only in what file would have defined
-it. -/
-def nameRefusalAsk : List (String × String) :=
-  [("W0103", ""), ("W0319", "beamertheme")]
-
-/-- The name a refusal is about, as the diagnostic carries it today: the
-structured dedup key, which for these codes is the refused name. Nothing
-guarantees that — it is the gap the blocker names. -/
-def refusedName (d : Diag) : Option String := d.subject
+-- The prefix LaTeX puts before a refused name on its way to a filename now
+-- lives with the scan that reads it (`Compat.nameRefusalAsk`), where it is
+-- closed against the code list rather than kept here by hand: a refusal
+-- carries its name on `Diag.refused`, every code owes a firing witness, so
+-- the codes that refuse names are enumerable from the registry of codes
+-- itself (`nameRefusalRegistryChecks`). This file states the claim over that
+-- registry and keeps no copy of it.
 
 -- owed: themeAsking_candidates
 -- owner: LeanTex.Core.Compat
@@ -807,7 +800,7 @@ theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toS
 -- owed: nameRefusals_asked
 -- owner: LeanTex.Core.Compat
 -- source: theme-loading audit 2026-09-24, the generalised invariant: the defect was not about themes but about a refusal that never asked, and `\usefonttheme`/`\useinnertheme`/`\useoutertheme` sat one keystroke from the same bug
--- blocker: the statement needs a machine-readable "this refusal is about a name" channel, and there is none. `Diag.subject` is the dedup key: W0103 and W0319 happen to put the refused name there, nothing holds them to it, and a third name-refusal could arrive carrying a message instead — which is exactly how `\usetheme` escaped, by being refusable without being enumerable. The refactor is a declared field on the refusal (a `refusedName` beside `subject`, or a `Loss`-adjacent classification marking name-refusals) so the registry can be closed against the code list instead of against a hand-kept table, and that field is `LeanTex.Core.Diag`'s and `LeanTex.Core.Elab`'s, not this module's. Second wall behind the first: the quantification runs over `Elab.runRaws`'s whole diagnostic surface, an imperative preamble fold with no equational theory an induction can enter — the same wall the nine loop-shaped rows name
+-- blocker: the channel is no longer missing and the statement is no longer vacuous, which turns this row from unstatable into *false for one of its two registry entries* — stated anyway, as `formulaFloor_separates` is, so the repair lands against it. What the channel fixed: `Diag.subject` is the dedup key, namespaced for some codes and unset for others, and W0103 and W0319 set nothing there at all, so the old spelling read the empty option and the whole quantification was trivially true. `Diag.refused` carries the name structurally (`Diag.of_refused`), `Compat.nameRefusalAsk` is the registry, and `nameRefusalRegistryChecks` closes it against the code list in both directions over the witness registry every code owes — a third name-refusal can no longer arrive invisibly, which is how `\usetheme` escaped. What remains is not a proof wall: W0319 is raised by *two* doors with different answers — the compat spellings, which do ask for `beamerthemeX.sty`, and the native `\theme{X}`, where no file beside the document would define a built-in bundle — so a per-code claim cannot be right for both. The registry needs the door rather than the code, or the native refusal needs a code of its own; that is a user-visible decision and Compat's to make. Behind it stands the wall this row always had: the quantification runs over `Elab.runRaws`'s whole diagnostic surface, an imperative preamble fold with no equational theory an induction can enter — the same wall the nine loop-shaped rows name
 -- goldens: no
 /-- **A declaration the engine refuses as unknown has no file beside the
 document that would define it.** The pure half, which is the half the engine
@@ -816,12 +809,16 @@ have defined it was among the candidates the scan offered, so the driver
 looked before the refusal was spoken. The effect half is
 `Cli.Input.expandLocalSty`'s — a candidate whose file exists is read and
 spliced, and the declaration is then consumed, so no refusal survives a file
-that answers it. -/
+that answers it.
+
+Read off `Diag.refused` and quantified over `Compat.nameRefusalAsk`, so the
+registry the claim ranges over is the engine's own and the name is a field
+rather than a reading of a sentence. -/
 theorem nameRefusals_asked (file : String) (raws : Array Parse.Raw) :
     ∀ d ∈ (Elab.runRaws file raws).2,
-      ∀ p ∈ nameRefusalAsk,
-        d.code = p.1 →
-          ∀ nm, refusedName d = some nm →
+      ∀ p ∈ Compat.nameRefusalAsk,
+        d.kind = p.1 →
+          ∀ nm, d.refused = some nm →
             (Compat.localStyCandidates raws).contains (p.2 ++ nm) = true := by
   sorry
 

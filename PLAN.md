@@ -11747,3 +11747,61 @@ lorem 324 ms, underline 505 ms, themed 91 ms, paper 162 ms — unchanged, the
 census being a push per refusal and read by nothing in the hot path. One
 golden moves, `bibliography.txt`, and the diff is the removed `para / text
 "W0351"` and W0301 becoming W0340.
+
+
+### 2026-09-24 — a refusal about a name read the dedup key, which was empty
+
+Third instance of the session's finding, and the one where measuring first
+changed the answer. The recorded problem was that `Diag.subject` is the dedup
+key and W0103/W0319 "merely happen" to put the refused name there, with
+nothing holding them to it. Measured: they do not put it there at all. Both
+raise sites pass no subject, so `refusedName d = d.subject` was reading
+`none`, and `nameRefusals_asked` — "a declaration the engine refuses by name
+asked the input path first" — was not weakly held but *vacuously true*. A
+staged statement that cannot fail is worse than an unstated one, because the
+`owed` ratchet counts it as debt being carried when nothing is being carried.
+
+**The invariant.** *A refusal about a name carries that name structurally, and
+the set of codes that refuse names is closed against the code list.* Two
+halves, and both are needed: the field alone would let a third name-refusal
+arrive without setting it, which is how `\usetheme` escaped — refusable
+without being enumerable.
+
+**The channel is a field, not a `Loss` class.** `Diag.refused : Option String`,
+beside `subject` rather than folded into it. Folding was the tempting move and
+is wrong: `subject` is namespaced by design (`ctrl:<name>` for an unknown
+command), so a consumer reading a name off it reads correctly for some codes
+and not others, and the namespacing is load-bearing for dedup. A `Loss`-
+adjacent classification was the other candidate in the record; it puts the
+distinction on the severity axis, where it does not belong — a name-refusal
+can be `config` (an unsupported package) or `degraded` (an unknown theme), and
+those are different losses of the same kind of thing.
+
+**The registry closes against the code list, with no hand-kept table.** That
+was the part the record asked for and did not have a mechanism for. The
+mechanism was already in the tree: every diagnostic code owes a firing witness
+in `diagWitness`. So the codes that refuse names are *derivable* — fire every
+code's witness, keep the ones whose diagnostic carries a `refused` name — and
+`nameRefusalRegistryChecks` holds that derived set equal to
+`Compat.nameRefusalAsk` in both directions. A stale row fails; a code that
+starts refusing a name without a row fails. The obligation now quantifies over
+the engine's registry and keeps no copy of its own.
+
+**What the measurement turned up, and why the row is still owed.** With the
+channel populated the statement became falsifiable, and one of its two rows is
+false: W0319 is raised by two doors with different answers. The compat
+spellings do ask for `beamerthemeX.sty`; the native `\theme{X}` refuses a
+built-in bundle name, and no file beside the document would define one. A
+per-code claim cannot be right for both. So the blocker is rewritten to that —
+the registry needs the door rather than the code, or the native refusal needs a
+code of its own — and the statement stands as written rather than being
+narrowed to the row that holds, on `formulaFloor_separates`'s precedent: a
+statement believed false is stated so the repair lands against it. Behind that
+sits the wall this row always had, the diagnostic surface's missing equational
+theory.
+
+Evidence: `lake build` and `lake test` green; `precommit`, `cites`, `owed`
+clean; `compose-fuzz` green. `bench.lean` medians of 5: paragraphs 96 ms,
+lorem 326 ms, underline 494 ms, themed 87 ms, paper 162 ms. No golden moves —
+the field is set at two refusal sites no corpus fixture reaches, and the
+diagnostics golden renders message text, not fields.
