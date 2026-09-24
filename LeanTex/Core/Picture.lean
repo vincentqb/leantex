@@ -517,7 +517,30 @@ def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
         | .space => pure ()
         | _ => closed := false
   slices := slices.push cur
-  let out := slices.filterMap fun s =>
+  -- A path may legally *end* at a coordinate: it moves the current point
+  -- and draws nothing (pgf manual §14, the move-to). The split turns such a
+  -- tail into its own slice, and a slice of one coordinate is what the
+  -- evaluator refuses for want of a second endpoint — so dropping the tail
+  -- here is the difference between a no-op and a fatal error on a legal
+  -- statement. Only a *tail among several*: a statement that is nothing but
+  -- a coordinate is still the evaluator's to name, and if every slice is a
+  -- move the whole statement goes through unchanged.
+  let moveOnly (s : Array Tok) : Bool := Id.run do
+    let ts := s.filter (· != .space)
+    unless ts[0]? == some (.sym '(') do return false
+    let mut depth := 0
+    for k in [0:ts.size] do
+      if h : k < ts.size then
+        match ts[k] with
+        | .sym '(' => depth := depth + 1
+        | .sym ')' =>
+          depth := depth - 1
+          if depth == 0 then return k + 1 == ts.size
+        | _ => pure ()
+    return false
+  let kept := if slices.size ≤ 1 then slices else slices.filter (!moveOnly ·)
+  let drawn := if kept.isEmpty then slices else kept
+  let out := drawn.filterMap fun s =>
     if s.isEmpty then none else some (s.foldl Array.push pre)
   return if out.isEmpty then #[acc] else out
 
@@ -690,6 +713,13 @@ structure Cx where
   paragraph's does — the picture walk owns no math parser. The result is
   the inline plus any losses the elaboration names. -/
   math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag
+  /-- The body size a node label's lines are spaced against
+  (`nodeLineLead`). The nominal until the elaborator passes the document's
+  own: the picture walk has no face and no page spec, which is the same
+  missing measurement that stops a node body's extent being known — a
+  label's *set* size is resolved in layout, against the geometry, and only
+  the vertical gap between two of them has to be decided here. -/
+  bodySize : Sp := Ir.baseFontSize
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
@@ -1404,15 +1434,21 @@ per mille of the node's own. A label is one line per `\\`, because
 a second shape, stacked by `nodeLineLead`, not a break inside one. -/
 abbrev LabelLine := Array Ir.Inline × Nat
 
-/-- The baseline-to-baseline distance between a node label's lines, at the
-label's own size. TeX's `\baselineskip` is 1.2 times the font size
-(`plain.tex`: `\normalbaselineskip=12pt` against a 10 pt body), and this
-walk has no face to ask — a node's font is layout's question, which is why
-`readDim` refuses `em` — so the 10 pt nominal stands here and the label's
-scale carries the rest. Uniform across a label's lines: a line that opens
-with a size switch sets smaller, and pgf's own `\\` spacing is the node
-font's, not the line's. -/
-def nodeLineLead (scale : Nat) : Sp := Dim.pt 12 * (scale : Int) / 1000
+/-- The baseline-to-baseline distance between a node label's lines: the
+engine's own leading over the size the *following* line sets at, as TeX's
+`\baselineskip` is the value current where the line ends. Reusing
+`Ir.leadingFor` rather than restating `plain.tex`'s 1.2 keeps one source for
+the engine's vertical rhythm — a second constant here would drift from the
+one every paragraph uses.
+
+The size is the picture's declared body size times the label's scale.
+`Cx.bodySize` is where a document's own body size would arrive; until the
+elaborator passes it the nominal stands, so a document set larger than the
+nominal gets a lead that does not track it. That is the one named remainder
+of this function, and it is the same missing measurement that stops a node
+body's extent being known at all. -/
+def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
+  Ir.leadingFor (bodySize * (scale : Int) / 1000)
 
 /-- The stand-in a label sets when its salvage comes to nothing and a loss
 was named: the same bracketed ellipsis a degraded formula inks, for the
@@ -1470,6 +1506,11 @@ structure Sal where
   text : String := ""
   scale : Nat := 1000
   fresh : Bool := true
+  /-- How many groups deep the walk stands. A size switch inside a group is
+  the group's own, and a label shape carries one size, so only a switch at
+  the top of a line can be honoured — one inside a group is named rather
+  than applied to the line or dropped in silence. -/
+  depth : Nat := 0
   diags : Array PDiag := #[]
   mode : SalMode := .text
   deriving Inhabited
@@ -1487,7 +1528,8 @@ def flush (s : Sal) : Sal :=
 
 /-- Add one elaborated inline (a math span, a coloured group). -/
 def inline (s : Sal) (i : Ir.Inline) : Sal :=
-  { s.flush with out := (s.flush).out.push i, fresh := false }
+  let f := s.flush
+  { f with out := f.out.push i, fresh := false }
 
 def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
   { s with diags := ds.foldl Array.push s.diags }
@@ -1523,14 +1565,55 @@ def newline (s : Sal) : Sal :=
 
 /-- A nested group's own salvage, sharing the losses named so far and the
 line's size but not its content. -/
-def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags }
+def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
 
 /-- Does this label ship ink? The inlines it ships, counted across its
 lines: an empty line contributes none, so a label of nothing but blank
-lines is inkless — which is what `labelFloor` pays for. -/
+lines is inkless — which is what `labelFloor` pays for. `inked` counts
+inlines rather than glyphs, and that is exact for what it guards: every
+inline the salvage pushes is a non-empty text run, a math span (which
+carries its own floor) or a non-empty coloured group. -/
 def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
 
 def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
+
+/-- Has the machine come to rest? `.text` has, and so has `.optMaybe 0` —
+a trailing option run *may* follow a construct and need not. Every other
+mode means a construct the body opened and never closed, which is why
+`nodeLabel` names it: a mode pending at the end of a body has eaten the
+rest of that body, and eating it silently is the very loss the floor
+exists to prevent. -/
+def settled : SalMode → Bool
+  | .text => true
+  | .optMaybe k => k == 0
+  | .optDrop _ | .dropArgs _ | .colorRole | .colorBody _ _ => false
+
+/-- Settle a mode this token does not continue, so the content arm reads it
+instead. Idempotent on `.text`, which is why `salOne` may apply it twice and
+so hand a token from a construct's option position to its argument position
+to the line. A colour whose body never came is named here rather than
+dropped in silence: the mathematics of it is that the *role* was read and
+the group it was to paint was not. -/
+def settle (t : Tok) (s : Sal) : Sal :=
+  match s.mode, t with
+  -- A starred command's star is part of its name (`\hspace*{1pt}`), and a
+  -- space before an argument is the command's, as TeX reads it.
+  | .optMaybe _, .sym '[' => s
+  | .optMaybe _, .sym '*' => s
+  | .optMaybe _, .space => s
+  | .optMaybe k, _ => if k == 0 then s.mode0 else { s with mode := .dropArgs k }
+  | .optDrop _, _ => s
+  | .dropArgs _, .space => s
+  | .dropArgs _, .group _ => s
+  | .dropArgs _, _ => s.mode0
+  | .colorRole, .space => s
+  | .colorRole, .group _ => s
+  | .colorRole, .sym '[' => { (s.refuse "a colour model") with mode := .optDrop 1 }
+  | .colorRole, _ => (s.refuse "a colour with no role").mode0
+  | .colorBody _ _, .space => s
+  | .colorBody _ _, .group _ => s
+  | .colorBody _ _, _ => (s.refuse "a colour with no body").mode0
+  | .text, _ => s
 
 end Sal
 
@@ -1555,7 +1638,7 @@ private def salCtrl (env : List (String × Val)) (n : String) (s : Sal) : Sal :=
     else if n == "textcolor" then { s with mode := .colorRole }
     else match Ir.sizeScale.lookup n with
       | some k =>
-        if s.fresh then { s with scale := k }
+        if s.fresh && s.depth == 0 then { s with scale := k }
         else
           (s.refuse s!"the size '\\{n}' inside a label line").mode0
       | none =>
@@ -1572,35 +1655,26 @@ def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
   | [], s => s
   | t :: rest, s => salList cx env rest (salOne cx env t s)
 
-/-- One token. The mode is normalised first — a mode this token does not
-continue falls back to reading it as content — so the content arm runs at
-most once per token and the walk needs no lookahead. -/
+/-- One token. The mode settles first — twice, because a construct's own
+run can hand the same token from one mode to the next (`\hspace` opens
+`optMaybe 1`, and a `*` then has to stay with the *name* rather than count
+as the argument) — and `.text` is a fixed point, so two passes reach it.
+After settling, the content arm runs at most once per token and the walk
+needs no lookahead. -/
 def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
-  let s : Sal := match s.mode, t with
-    | .optMaybe _, .sym '[' => s
-    | .optMaybe k, _ => { s with mode := if k == 0 then .text else .dropArgs k }
-    | .optDrop _, _ => s
-    | .dropArgs _, .space => s
-    | .dropArgs _, .group _ => s
-    | .dropArgs _, _ => s.mode0
-    | .colorRole, .space => s
-    | .colorRole, .group _ => s
-    | .colorRole, .sym '[' =>
-      { (s.refuse "a colour model") with mode := .optDrop 1 }
-    | .colorRole, _ => s.mode0
-    | .colorBody _ _, .space => s
-    | .colorBody _ _, .group _ => s
-    | .colorBody _ _, _ => s.mode0
-    | .text, _ => s
+  let s : Sal := Sal.settle t (Sal.settle t s)
   match s.mode with
-  | .optMaybe _ => { s with mode := .optDrop (s.mode.pending) }
-  | .optDrop k =>
-    if t == .sym ']' then { s with mode := if k == 0 then .text else .dropArgs k }
-    else s
-  | .dropArgs n =>
-    match t with
-    | .space => s
-    | _ => { s with mode := .optMaybe (if n ≤ 1 then 0 else n - 1) }
+  -- Only a `[`, a `*` or a space reaches here: settling sent every other
+  -- token on. A star belongs to the name it follows, as in LaTeX.
+  | .optMaybe k => if t == .sym '[' then { s with mode := .optDrop k } else s
+  -- `]` closes the run and leaves another one possible: the options trail
+  -- the named arguments in `\raisebox{lift}[h][d]{body}`, so sweeping only
+  -- one left the second on the page.
+  | .optDrop k => if t == .sym ']' then { s with mode := .optMaybe k } else s
+  -- Only a group reaches here, so only a group counts as an argument: a
+  -- counter any token satisfies spent `\color`'s drop on the `\textcolor`
+  -- that followed it and set the colour name as ink.
+  | .dropArgs n => { s with mode := .optMaybe (if n ≤ 1 then 0 else n - 1) }
   | .colorRole =>
     match t with
     | .group g =>
@@ -1617,7 +1691,7 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
     | .group g =>
       let sub := (salList cx env g s.sub).newline
       let body := sub.lines.foldl (fun a (xs, _) => xs.foldl Array.push a) #[]
-      let s := (s.addDiags (sub.diags.extract s.diags.size sub.diags.size))
+      let s := s.addDiags (sub.diags.extract s.diags.size sub.diags.size)
       if body.isEmpty then { s with mode := .text }
       else { (s.inline (.colored c role body)) with mode := .text }
     | _ => s
@@ -1627,7 +1701,11 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
     | .num m => s.str (milliString m)
     | .space => s.str " "
     | .sym c => s.str (String.singleton c)
-    | .group g => { (salList cx env g s) with mode := .text }
+    -- A group is grouping: its content is the line's, and a size it set is
+    -- the group's own, as TeX scopes a size switch.
+    | .group g =>
+      { (salList cx env g { s with depth := s.depth + 1 }) with
+        mode := .text, scale := s.scale, depth := s.depth }
     | .math d body =>
       let (inl, ds) := cx.math d body.toArray
       (s.inline inl).addDiags ds
@@ -1681,7 +1759,15 @@ module over — and the same placeholder closes it, so a named loss never
 ships a blank (`labelFloor_accounts`). -/
 def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     Array LabelLine × Array PDiag :=
-  let s := (salList cx env toks {}).newline
+  let walked := salList cx env toks {}
+  -- A construct the body opened and never closed has eaten the rest of the
+  -- body: an unterminated `[...]`, a `\textcolor` whose body never came, a
+  -- naming argument that is not there. Named here, at the one place that
+  -- can see the machine come to rest, because the alternative is the loss
+  -- this floor exists to prevent — content gone with nothing said.
+  let s := if Sal.settled walked.mode then walked
+           else walked.refuse "a node body that ends mid-construct"
+  let s := s.newline
   (labelFloor s.lines (!s.diags.isEmpty), s.diags)
 
 /-- The page side of `labelFloor_accounts`: a node body whose salvage named
@@ -1699,16 +1785,24 @@ anchor, so a multi-line label is several of them — `\\` is a real break,
 not a degradation, and layout sets one line per label shape. An empty line
 ships no shape: a blank contributes its height, which this subset does not
 measure, and no ink. -/
-def stackLabels (x y : Sp) (scale : Nat) (color : Ir.Color)
+def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Color)
     (align : Ir.Pic.LabelAlign) (lines : Array LabelLine)
     (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape := Id.run do
-  let n : Int := lines.size
-  let lead := nodeLineLead scale
+  -- Each gap is the leading of the line *below* it, so a smaller second
+  -- line sits closer; the block then shifts up by half its own height, so
+  -- its middle is the node's anchor whatever the sizes are.
+  let mut tops : Array Sp := #[]
+  let mut acc0 : Sp := 0
+  for k in [0:lines.size] do
+    if let some (_, rel) := lines[k]? then
+      if k > 0 then acc0 := acc0 - nodeLineLead bodySize (scale * rel / 1000)
+      tops := tops.push acc0
+  let shift := (tops[tops.size - 1]?.getD 0) / 2
   let mut out := acc
   for k in [0:lines.size] do
     if let some (content, rel) := lines[k]? then
       unless content.isEmpty do
-        let dy := (n - 1 - 2 * (k : Int)) * lead / 2
+        let dy := (tops[k]?.getD 0) - shift
         out := out.push (.label x (y + dy) content color (scale * rel / 1000) align)
   return out
 
@@ -2136,7 +2230,7 @@ here); its outline is not drawn")
         | .error d => return ev.diag d
         | .ok (lines, mdiags) =>
           ev := mdiags.foldl Ev.diag ev
-          ev := { ev with shapes := stackLabels sx sy scale color .center lines ev.shapes }
+          ev := { ev with shapes := stackLabels sx sy cx.bodySize scale color .center lines ev.shapes }
           return ev
   | .error d =>
     return (if unresolved then { ev with deferred := ev.deferred + 1 } else ev).diag d
@@ -2555,7 +2649,7 @@ edge is not drawn")
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         if let some (lines, mc, msc, mal) := mid then
           labels := stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
-            msc mc mal lines labels
+            cx.bodySize msc mc mal lines labels
       | .curve oA iA =>
         let p1 := a.towardDir oA
         let p2 := c.towardDir iA
@@ -2574,7 +2668,7 @@ edge is not drawn")
           -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint
           labels := stackLabels
             ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) msc mc mal lines labels
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc mal lines labels
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them.

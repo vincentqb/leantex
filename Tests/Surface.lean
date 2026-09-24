@@ -4652,10 +4652,12 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, ds) := elabStr (pic body)
     (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
   -- The label lines a picture shipped, in paint order: text, baseline and
-  -- set size, which is everything the stacking and sizing facts read.
+  -- set size, which is everything the stacking and sizing facts read. The
+  -- page's own furniture (its number) is not the picture's.
   let labels (c : Array CensusPage) : Array (String × Dim.Sp × Dim.Sp) :=
     (c[0]?.map fun p => p.lines.filterMap fun l =>
-      if l.text.isEmpty then none else some (l.text, l.y, l.size)).getD #[]
+      if l.text.isEmpty || l.furniture then none
+      else some (l.text, l.y, l.size)).getD #[]
   -- The floor. A body of one unreadable macro around a word keeps the
   -- word: the macro's own name goes, its content stays.
   let (c1, ds1) := run "\\node (a) {\\wobble{Quince}};\n"
@@ -4693,8 +4695,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      (labels c4).any fun (s, _, _) => s == "Fig")
   t "the first line stands one lead above the second"
     (match (labels c4).find? (·.1 == "Pear"), (labels c4).find? (·.1 == "Fig") with
-     | some (_, y1, _), some (_, y2, _) =>
-       y2 - y1 == Picture.nodeLineLead 1000
+     | some (_, y1, _), some (_, y2, s2) => y2 - y1 == Ir.leadingFor s2
      | _, _ => false)
   t "a line break in a node body ships no markup"
     (!(labels c4).any fun (s, _, _) => hasStr s "\\")
@@ -4708,9 +4709,25 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (match (labels c5).find? (·.1 == "Pear"), (labels c5).find? (·.1 == "Fig") with
      | some (_, _, s1), some (_, _, s2) => s2 < s1
      | _, _ => false)
+  -- The gap tracks the size, not a constant: a smaller second line sits
+  -- closer than an equal-sized one. Stated as the comparison rather than as
+  -- an equality against the leading, because each line is centred on its own
+  -- anchor — so the *anchors* are one leading apart and the shipped
+  -- baselines differ by the two lines' ink-height correction as well. Equal
+  -- sizes are the case where that correction cancels, and the row above pins
+  -- it exactly there.
+  t "the gap before a smaller line is smaller than before an equal one"
+    (match (labels c4).find? (·.1 == "Pear"), (labels c4).find? (·.1 == "Fig"),
+           (labels c5).find? (·.1 == "Pear"), (labels c5).find? (·.1 == "Fig") with
+     | some (_, a1, _), some (_, a2, _), some (_, b1, _), some (_, b2, _) =>
+       b2 - b1 < a2 - a1
+     | _, _, _, _ => false)
   let (_, ds6) := run "\\node (a) {Pear \\footnotesize Fig};\n"
   t "a size switch inside a label line is named instead"
     (ds6.any fun d => d.code == "W0334" && hasStr d.message "footnotesize")
+  let (_, ds6b) := run "\\node (a) {{\\footnotesize Fig}};\n"
+  t "a size switch inside a group is named, never silently lost"
+    (ds6b.any fun d => d.code == "W0334" && hasStr d.message "footnotesize")
   -- `\textcolor{role}{body}`: the palette role is already carried to
   -- pictures, so a coloured label draws in its role. Read off the covered
   -- census channel, the only place a shipped colour is visible.
@@ -4753,6 +4770,43 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((c11[0]?.map (·.images == 0)).getD false)
   t "the diagram's edge ships beside its labels"
     ((c11[0]?.map (·.paths == 1)).getD false)
+  -- **A naming argument is a group, never the next token.** An adversarial
+  -- review of the first cut found the loose-counter form the math floor's
+  -- own second review round had already abandoned: a pending argument any
+  -- token satisfied let a starred name's star stand in for it, so
+  -- `\hspace*{1pt}` set its length as ink, and let `\color`'s drop land on
+  -- the `\textcolor` that followed, so a colour name did. Whole labels, not
+  -- absences, because an absence row passes on a salvage that kept nothing.
+  let inkOf (body : String) : String :=
+    String.intercalate "|" ((labels (run body).1).toList.map (·.1))
+  t "a starred name's star does not stand in for its argument"
+    (inkOf "\\node (a) {\\hspace*{1pt}delta};\n" == "delta")
+  t "every trailing option run goes with the command, not one of them"
+    (inkOf "\\node (a) {\\raisebox{2pt}[3pt][4pt]{zeta}};\n" == "zeta")
+  t "a length argument never rides onto the page"
+    (inkOf "\\node (a) {\\rule{1pt}{2pt}q};\n" == "q")
+  t "a colour model run goes with its command"
+    (inkOf "\\node (a) {\\textcolor[rgb]{1,0,0}{x}};\n" == "x")
+  t "a line break's own option run is markup with the break"
+    (inkOf "\\node (a) {x\\\\[2ex]y};\n" == "x|y")
+  -- **A construct left pending at the end of a body is named.** The same
+  -- review found the commit's own headline loss still reachable, and
+  -- quieter than before it: a colour with no body, an unterminated option
+  -- run and a phantom with no argument each ate the rest of the label in
+  -- silence. A mode that has not come to rest is the discriminator.
+  let (cp1, dp1) := run "\\node (a) {\\textcolor{rose}};\n"
+  t "a colour whose body never came is named and floors to the placeholder"
+    (dp1.any (fun d => d.code == "W0334") &&
+      (labels cp1).any fun (s, _, _) => s == Picture.nodeFloorPlaceholder)
+  let (_, dp2) := run "\\node (a) {\\textcolor{rose}x};\n"
+  t "a colour whose body never came keeps the word that followed it"
+    (dp2.any (fun d => d.code == "W0334") &&
+      inkOf "\\node (a) {\\textcolor{rose}x};\n" == "x")
+  let (_, dp3) := run "\\node (a) {\\vphantom};\n"
+  t "a phantom with no argument is named, not silently empty"
+    (dp3.any fun d => d.code == "W0334")
+  t "a phantom with an argument still costs nothing and names nothing"
+    (inkOf "\\node (a) {\\vphantom{p}Damson};\n" == "Damson")
 
 /-- **A construct outside the subset costs only itself.** Two halves of one
 rule, both read off the shipped page.
@@ -4805,6 +4859,20 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (c5, ds5) := run "\\draw (0,0) -- (1,0) (2,0) -- (3,0);\n"
   t "two coordinate chains in one draw ship two paths"
     (ds5.all (·.severity == .note) && (c5[0]?.map (·.paths == 2)).getD false)
+  -- **A path that ends at a coordinate is a move, not an error.** The split
+  -- turns such a tail into its own slice, and a one-anchor slice is what the
+  -- evaluator refuses for want of a second endpoint — so before this row a
+  -- legal statement became a fatal E0333 and the document wrote nothing. An
+  -- adversarial review found it; the rule is that the split may turn a
+  -- refusal into neither silence nor an error.
+  let (c8, ds8) := run "\\draw (0,0) -- (1,0) (2,0);\n"
+  t "a path that ends at a coordinate draws its chain and does not fail"
+    (ds8.all (·.severity == .note) && (c8[0]?.map (·.paths == 1)).getD false)
+  let (c9, ds9) := run
+    "\\node (a) {P};\\node (b) [right =of a] {Q};\\path (a) edge (b) (a);\n"
+  t "a trailing move on a node path costs neither the edge nor the labels"
+    (ds9.all (·.severity == .note) && (c9[0]?.map (·.paths == 1)).getD false &&
+      pageHas c9 0 "P" && pageHas c9 0 "Q")
   -- A nested paren inside a coordinate is not a boundary either.
   let (c6, ds6) := run "\\draw (max(1,2),0) -- (3,0);\n"
   t "a nested paren inside a coordinate is not a subpath boundary"

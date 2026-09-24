@@ -235,6 +235,91 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — the node floor's review round: a loose counter, a silent
+give-up, and a legal path turned fatal. An independent adversarial read of
+the two entries below, *executed* against a binary built from the tree and
+against one built from the parent commit, found three defects. Recorded
+because two of them are the same mistakes the math floor's own two review
+rounds found, in a walk written after those entries were on the record —
+which is the argument for sharing the *discipline* and not only the table.
+
+**A naming argument is a group, never the next token.** `dropArgs` let any
+non-space token satisfy a pending argument, so `\hspace*{1pt}` spent its
+drop on the star and set `1pt` as ink, and `\color\textcolor{red}{x}` spent
+it on the `\textcolor` and set `red`. And `optDrop` returned to `.text` on
+its `]`, sweeping one trailing option run where `\raisebox{2pt}[3pt][4pt]{}`
+has two. These are precisely the three shapes the math floor's second review
+round names as fixed; `Ir.floorNamedArgs` was genuinely shared and the
+consumption discipline around it was a fresh, weaker reimplementation. Now
+only a `.group` counts as an argument, a star goes with the name it follows,
+`optDrop` returns to `optMaybe` so every trailing run sweeps, and the mode
+settles *twice* per token — a construct's own run can hand one token from
+its option position to its argument position, and `.text` is a fixed point,
+so two passes reach it. None of the in-repo watches could see any of this:
+`inkMarkupWatch` is `\`, `{`, `}`, and `1pt`, `[4pt]` and `red` contain
+none of them. The new rows pin whole labels.
+
+**A construct left pending at the end of a body is a silent loss.** The
+headline loss this work exists to remove was still reachable, and *quieter*
+than before it: `\textcolor{rose}` with no body, `\vphantom` with no
+argument, an unterminated `[`, each ate the rest of the label and named
+nothing, where the parent commit at least said the label was not drawn.
+`named` read `diags`, and a silent consumption path writes none. The
+discriminator is whether the machine came to rest: `Sal.settled` is `.text`
+or `.optMaybe 0` — a trailing option run may legitimately not come — and
+anything else at the end of a body is a construct that opened and never
+closed, named there. A colour that gives up its role or its body is named
+where it gives up. `\vphantom{p}` still inks nothing and says nothing,
+which is the case the placeholder must not claim.
+
+**A path that ends at a coordinate is a move, not an error.** The worst of
+the three, and mine: the subpath split turned a legal trailing coordinate
+(`\path (a) edge (b) (a);` — pgf's move-to) into its own slice, a one-anchor
+slice is what the evaluator refuses for want of a second endpoint, E-codes
+are fatal, and a sibling slice having drawn meant the boundary door never
+opened. Exit 0 became exit 1 and the document wrote nothing at all, on input
+the parent commit merely warned about. The entry below says the split may
+not turn a refusal into silence; it may not turn one into an error either,
+and only the second half was guarded. A move-only slice among several is
+dropped; a statement that is *only* a coordinate is still the evaluator's to
+name, and if every slice is a move the statement goes through unchanged.
+
+**Two smaller things, and one claim withdrawn.** A size switch inside a
+group leaked its size to the whole line (the group arm threaded the outer
+`Sal`), and after scoping it would have been dropped in silence instead —
+so `Sal.depth` now honours a switch only at the top of a line and names one
+anywhere else; a label shape carries one size and that is the whole reason.
+And `nodeLineLead` was a `plain.tex` constant, 12 pt against a nominal 10 pt
+body, where the label's *set* size is resolved in layout against the page
+geometry: on a 20 pt body the lines overlapped. It reads `Ir.leadingFor` now
+— the engine's own rhythm, one source — over the following line's size, as
+TeX's `\baselineskip` is the value current where a line ends, and the gap is
+per-gap rather than uniform. `Cx.bodySize` is the seam the document's own
+size arrives through; until the elaborator passes it the nominal stands, and
+that is this function's one named remainder.
+
+The claim withdrawn is the entry below calling `labelFloor_accounts` "a
+sibling of `floorInk_accounts` down to the placeholder it ships".
+`floorInk_accounts` is unconditional; `labelFloor_accounts` carries a
+hypothesis (`named`), and the hypothesis is where the hole was — the review
+found the loss through exactly that gap. The statement is right and the
+comparison flattered it.
+
+**What the review found that is not this file's.** Three rewrites reach a
+picture body in engine-internal spellings, and the salvage can only report
+what it is handed: a document's own `\newcommand` is not expanded, so a
+macro wrapping `\textcolor` keeps its word and loses its colour;
+`\setlength` arrives as the native `\tokens` spelling and its option list
+inks; and `\color` arrives under an `@ink:` sigil that `floorNamedArgs`
+cannot match, so its colour name inks. All three want expansion before
+`elabPicture`, which is the elaborator's door. The HTML side of the colour
+fix is also owed: the SVG label emitter flattens an inline through
+`plainTextOne`, so a coloured label draws in its role in the PDF and in
+black in the HTML — a `backend_gaps_agree`-shaped hole. And the loudest
+remaining defect in these diagrams is still the one named in `Cx.dist`:
+`right =of` separates node *centres* by one node distance because no body's
+extent is measured, so long labels overlap whatever their content.
+
 2026-09-24 — a `(` where an operation would begin is the next path, not the
 end of the picture's. `\path (a) edge (b) (c) edge (d);` is how a pgf author
 writes several edges of one diagram in one statement (manual §14: a path
