@@ -4711,6 +4711,14 @@ structure Doc where
   design: non-native package loads and the tikz-family set lines, as
   written (`Compat.boundaryDecls`). Set once by the elaborator. -/
   picturePreamble : String := ""
+  /-- The document's own macro definitions, in document order: the name,
+  and the declaration as the boundary standalone reads it. Captured as the
+  document wrote it rather than spelled back from a native `UserCmd`,
+  because an optional argument's default is the one part the native form
+  drops. The request site carries the subset a picture body reaches
+  (`macroDecls`, `macroDecls_covers`), so a picture that spells a
+  document macro is drawn with it. -/
+  pictureMacros : Array (String × String) := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -9497,28 +9505,92 @@ def fontLines (fonts : FontSpec) : String :=
     | none => ""
   if faces.isEmpty && math.isEmpty then "" else "\\usepackage{fontspec}\n" ++ faces ++ math
 
+/-- TeX's control-word grammar (TeXbook ch. 7): a backslash and the
+maximal run of letters after it. Every such name a stretch of source
+spells, deduplicated in first-seen order. The over-approximation — a name
+inside a comment or a verbatim run — costs one harmless definition, and is
+what keeps this a total tokenizer rather than a TeX mouth, the same trade
+`colorNames` makes for xcolor's name grammar. -/
+def ctrlNamesFlush (cur : Option String) (acc : Array String) : Array String :=
+  match cur with
+  | none => acc
+  | some n => if n.isEmpty || acc.contains n then acc else acc.push n
+
+def ctrlNamesGo : List Char → Option String → Array String → Array String
+  | [], cur, acc => ctrlNamesFlush cur acc
+  | c :: rest, some n, acc =>
+    if c.isAlpha then ctrlNamesGo rest (some (n.push c)) acc
+    else ctrlNamesGo rest (if c == '\\' then some "" else none) (ctrlNamesFlush (some n) acc)
+  | c :: rest, none, acc =>
+    ctrlNamesGo rest (if c == '\\' then some "" else none) acc
+
+def ctrlNames (src : String) : Array String := ctrlNamesGo src.toList none #[]
+
+/-- One round of the reachability saturation: every name a selected
+definition spells joins the set. Push-only, so the round is monotone by
+construction (`mem_macroReachRound`) and a round that grows the set by
+nothing is the fixed point. -/
+def macroReachRound (macros : Array (String × String)) (ns : Array String) : Array String :=
+  let fresh := (macros.filter fun p => ns.contains p.1).flatMap fun p =>
+    (ctrlNames p.2).filter fun m => !ns.contains m
+  ns ++ fresh
+
+/-- The names reachable in at most `k` rounds, stopping at the fixed
+point. Structural on `k`, so total with no fuel argument in the surface:
+the caller passes `macros.size`, and reachability over a set of that many
+definitions cannot need more rounds than it has elements
+(`macroDecls_fixed_point`, owed). -/
+def macroReachNames (macros : Array (String × String)) : Nat → Array String → Array String
+  | 0, ns => ns
+  | k + 1, ns =>
+    let ns' := macroReachRound macros ns
+    if ns'.size == ns.size then ns' else macroReachNames macros k ns'
+
+/-- The document's own macro definitions a picture body reaches: every
+definition whose name the body spells, and transitively every definition
+those bodies spell, in document order. The reachable set rather than all of
+them, for the reason the palette arm filters too (`paletteDecls_mem`): a
+document's definition of a name TeX or TikZ already owns is the picture's
+to see only where the picture asks for it, and the cache key then moves
+only when a definition the picture reads moves. -/
+def macroDecls (macros : Array (String × String)) (body : String) : Array (String × String) :=
+  let ns := macroReachNames macros macros.size (ctrlNames body)
+  macros.filter fun p => ns.contains p.1
+
+/-- The carried definitions as the standalone's preamble reads them, one
+per line. -/
+def macroDeclLines (macros : Array (String × String)) : String :=
+  macros.foldl (fun s p => s ++ p.2 ++ "\n") ""
+
 /-- Wrap one picture body for the boundary: `\documentclass{standalone}`,
-the preamble declarations a standalone needs (collected from the document
-by the elaborator's closed list), the document's font roles
-(`fontLines`), the palette roles the body mentions (`paletteDecls`, as
-`colorDeclLine`s), and the picture as written. The request is a pure
-function of the document: two runs over one document state byte-identical
-requests, so the cache key means something. Determinism here is
-definitional — no theorem states a pure function's purity, and
-`boundaryChecks` checks the bytes agree. -/
+the preamble declarations a standalone needs (package loads and set lines,
+collected from the document), the document's font roles (`fontLines`), the
+palette roles the request mentions (`paletteDecls`, as `colorDeclLine`s),
+the document's own macro definitions the body reaches (`macroDecls`), and
+the picture as written. The macros come last in the preamble: a document
+that defined a name defined it for its own pictures too, whatever the
+packages above spell. The request is a pure function of the document: two
+runs over one document state byte-identical requests, so the cache key
+means something. Determinism here is definitional — no theorem states a
+pure function's purity, and `boundaryChecks` checks the bytes agree. -/
 def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
-    (body : String) : String :=
+    (macros : Array (String × String)) (body : String) : String :=
   "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
-    colors.foldl (fun s c => s ++ colorDeclLine c) "" ++
+    colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ macroDeclLines macros ++
     "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
     "\\end{tikzpicture}\n\\end{document}\n"
 
 /-- The request one picture body states, formed from the finished
 document: the driver calls `pictureRefs` after contrast realization, so a
 role the realizer moved is moved in the picture too — the picture's
-`alert` is the page's `alert`. -/
+`alert` is the page's `alert`. The colour scan reads the carried
+definitions beside the body, because a role a macro spells is a role the
+picture paints with: the same closure that makes the macro travel makes
+its colours travel. -/
 def pictureRequest (doc : Doc) (body : String) : String :=
-  wrapStandalone doc.picturePreamble (fontLines doc.fonts) (paletteDecls doc.palette body) body
+  let macros := macroDecls doc.pictureMacros body
+  wrapStandalone doc.picturePreamble (fontLines doc.fonts)
+    (paletteDecls doc.palette (macroDeclLines macros ++ body)) macros body
 
 /-- The boundary requests the shipped tree actually states: `pictureSrcs`
 filtered to the ids an `.image` node still references — a picture pruned
@@ -9591,11 +9663,54 @@ theorem paletteDecls_local_exact (pal pal' : Palette) (body : String)
   intro n hn
   rw [h n (Array.mem_def.mpr hn)]
 
+/-- A round only adds. -/
+theorem mem_macroReachRound (macros : Array (String × String)) (ns : Array String)
+    (x : String) (h : x ∈ ns) : x ∈ macroReachRound macros ns := by
+  simp only [macroReachRound]
+  exact Array.mem_append.mpr (Or.inl h)
+
+/-- Saturation only adds, at any round count. -/
+theorem mem_macroReachNames (macros : Array (String × String)) (k : Nat) :
+    ∀ (ns : Array String) (x : String), x ∈ ns → x ∈ macroReachNames macros k ns := by
+  induction k with
+  | zero => intro ns x h; exact h
+  | succ k ih =>
+    intro ns x h
+    simp only [macroReachNames]
+    split
+    · exact mem_macroReachRound macros ns x h
+    · exact ih _ x (mem_macroReachRound macros ns x h)
+
+/-- **A definition the picture spells is carried.** A control sequence the
+body spells that the document itself defined is declared in the request the
+wrapper produces — the closure property the preamble's closed list could
+not have: a list closed over the commands the engine knows cannot hold a
+name the document invented, so the boundary tool met an undefined control
+sequence and drew nothing. The transitive half, that a definition reached
+only through another carried definition is carried too, is what the
+saturation computes and `macroDecls_fixed_point` owes. -/
+theorem macroDecls_covers (macros : Array (String × String)) (body n d : String)
+    (hn : n ∈ ctrlNames body) (hm : (n, d) ∈ macros) :
+    (n, d) ∈ macroDecls macros body := by
+  simp only [macroDecls]
+  refine Array.mem_filter.mpr ⟨hm, ?_⟩
+  exact Array.contains_iff_mem.mpr
+    (mem_macroReachNames macros macros.size (ctrlNames body) n hn)
+
+/-- **Only the document's own definitions ride.** Nothing reaches the
+boundary that the document did not declare: the request's macro block is
+drawn from `pictureMacros`, so the standalone can shadow a package's
+command only where the document shadowed it first. -/
+theorem macroDecls_mem (macros : Array (String × String)) (body : String)
+    (p : String × String) (h : p ∈ macroDecls macros body) : p ∈ macros :=
+  (Array.mem_filter.mp h).1
+
 /-- **The boundary request projects the document's design.** Every
 request `pictureRefs` states is one picture body of `pictureSrcs`
 wrapped with the document's preamble, its declared font roles
-(`fontLines doc.fonts`), and the palette roles that body mentions
-(`paletteDecls doc.palette`) — the same `fonts` and `palette` both
+(`fontLines doc.fonts`), the palette roles the request mentions
+(`paletteDecls doc.palette`) and the macro definitions the body reaches
+(`macroDecls doc.pictureMacros`) — the same `fonts` and `palette` both
 backends read through `Design.ofDoc`. No backend theorem stands behind
 this one: the PDF embeds the tool's drawing and the HTML embeds a
 rasterization of the same drawing — one fulfilment, two projections. -/
@@ -9603,7 +9718,9 @@ theorem pictureRefs_design_projects (doc : Doc) (id w : String)
     (h : (id, w) ∈ pictureRefs doc) :
     ∃ body, (id, body) ∈ doc.pictureSrcs ∧
       w = wrapStandalone doc.picturePreamble (fontLines doc.fonts)
-        (paletteDecls doc.palette body) body := by
+        (paletteDecls doc.palette
+          (macroDeclLines (macroDecls doc.pictureMacros body) ++ body))
+        (macroDecls doc.pictureMacros body) body := by
   unfold pictureRefs at h
   rw [Array.mem_map] at h
   obtain ⟨⟨id', body⟩, hmem, heq⟩ := h

@@ -182,10 +182,117 @@ list.
   Blocked on two fold inversions (`leafPagesOf`, `leafOwners`); the witness
   is the per-fixture parent-tree row in `structTreeChecks`, read back
   through the engine's reader.
+- `macroDecls_fixed_point` — the definitions a picture's boundary request
+  carries are closed under reference: a document macro reached only through
+  another carried macro's body is carried too. The saturation computes it
+  (`macroReachNames`, `macros.size` rounds, stopping at the first that adds
+  nothing); what is owed is that the round budget always suffices. Blocked
+  on the pigeonhole the statement does not mention — the measure is the
+  *selected* set (`macros.filter (ns.contains ·.1)`), which grows on every
+  non-fixed round and is bounded by `macros.size`, whereas `ns.size` is not
+  a cardinality because `macroReachRound` filters new names against `ns`
+  only. The factorization: carry the selection as the saturation's state (a
+  duplicate-free index array in a subtype) instead of a name set. The direct
+  half is proved (`macroDecls_covers`); the witness is the transitive row of
+  `boundaryChecks`.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-24 — a document's own macros reach its pictures. The boundary
+standalone carried the preamble the *engine* recognises and nothing the
+*document* invented, so a picture whose node spelled a `\newcommand` met an
+undefined control sequence in lualatex, E0382 named the dropped picture, and
+because a dropped loss is an error the run wrote no artifact at all. One
+missing line in a generated preamble cost the whole document
+(boundary-macro-closure).
+
+**The closed list was the wrong shape.** `wrapStandalone`'s docstring said it
+carried "the preamble declarations a standalone needs (collected from the
+document by the elaborator's closed list)", and a closed list is exactly the
+defect: `Compat.boundaryCtrls` and `boundaryPkgs` are closed over the
+commands the engine knows, and a name the author invented is by construction
+not on them. A list cannot be extended toward a document's own vocabulary —
+what the boundary needs is not a longer enumeration but a *closure*
+property.
+
+**The invariant.** Every control sequence the wrapped body references that
+the document itself defined is defined in the request the wrapper produces.
+Stated as `Ir.macroDecls_covers` (the registry's `_covers`: the request's
+definitions cover the body's user-macro references), with
+`Ir.macroDecls_mem` bounding the other side — nothing reaches the boundary
+that the document did not declare, so the standalone can shadow a package's
+command only where the document shadowed it first. The transitive half — a
+definition reached only through another carried definition — is what the
+saturation computes and `macroDecls_fixed_point` owes (§ Owed obligations
+grows by one row, to fourteen): the proof needs a pigeonhole over the
+*selected* set that the statement does not mention, and the named
+factorization is to carry that selection as the saturation's state instead of
+a name set. The direct half is proved; the transitive half runs as an oracle
+in `boundaryChecks`.
+
+**The reachable set, not all of them.** A picture carries the definitions its
+body reaches, transitively, in document order — not the document's whole
+macro table. The deciding argument is not size and not the cache: it is that
+a document redefining a name TeX or TikZ already owns (`\c`, `\vec`, `\l`)
+would, under carry-all, silently change *every other* picture in the
+document, and the pictures that never spelled the name have no way to ask for
+that. Reachability confines an override to the pictures that want it. Two
+things fall out: the cache key is local in the way `paletteDecls_local_exact`
+states for colours (a definition edit moves only the requests that read it —
+checked both ways in `boundaryChecks`), and the standalone stays small. The
+cost is the reference scanner, which the theorem wanted anyway. `ctrlNames`
+is TeX's control-word grammar as a total tokenizer, over-approximating a
+name in a comment exactly as `colorNames` over-approximates a prose word
+spelled like a palette role.
+
+**A colour a macro spells is a colour the picture paints with.** The same
+closure applies to the palette: `paletteDecls` had scanned the picture body
+alone, so a role named only inside a carried macro's body would have been
+undeclared and the fixed picture would have failed one error later, on an
+undefined colour. The request site scans the carried definitions beside the
+body. This is why the fix is verified on a raster and not on the request
+text: the rendered page shows the node's text in the role's own value,
+reached through two macro levels.
+
+**Captured as written, not spelled back.** The declarations are read off the
+*unrewritten* tree, as the boundary preamble's collector is. A `UserCmd` is
+the wrong source: Compat's definer arm drops an optional argument's default
+value (it reads `takeOpt` for presence only), and the native signature
+renames parameters, so a round-trip through the native form cannot
+reconstruct `\newcommand{\x}[2][d]{…}`. The definer family
+(`\newcommand`/`\renewcommand`/`\providecommand`/`\DeclareRobustCommand`,
+starred or not), xparse's four, TeX's `\def` siblings and the native
+`\define` are each re-emitted in a form that cannot fail at definition time:
+`\providecommand{\x}{}` then `\renewcommand`, since a bare `\newcommand` of a
+name the standalone's packages own would be an error rather than the
+document's meaning. `\def` is already total and rides verbatim.
+`\providecommand` of a name the document already bound declares nothing, as
+LaTeX documents, and one entry per name survives — the document's last word.
+Recognising the native `\define` is what keeps the rewrite conservative with
+a picture in play: without it the LaTeX spelling and the native one would
+state different requests, and the N0100 per-arm oracle only compares
+documents with no picture.
+
+**Request material, so a document stating no request carries none.**
+`pictureMacros` is populated only where the document states a boundary
+request. Carrying it unconditionally made every `\newcommand` a change to
+every document's `Doc`, which is precisely what the compat index's
+`inert:binds` rows deny — five of them failed, correctly, and the gate is the
+fix rather than the rows.
+
+Evidence: eight `boundaryChecks` rows red before and green after; a synthetic
+fixture rendered and rasterised at 110 dpi, showing a two-level macro chain
+and a macro-only palette role on the page; the pre-fix and post-fix requests
+hash to different keys, so the ten refusal slots already on disk cannot serve
+the new request — confirmed by the private reference corpus, where the
+`Undefined control sequence` E0382 is gone with those slots still present.
+`scripts/bench.lean` (median of 5) after the new whole-document scan:
+99, 327, 489, 93, 167 ms against the 2026-09-23 entry's 96/98, 326/324,
+484/490, 92/91, 163/163 — the scan is a single pass over the unrewritten
+tree that stops at each definer's own body, and it is not measurable here.
+`scripts/compose-fuzz.lean` green (the preamble apply sites moved).
 
 2026-09-23 — three defects in the two entries below, found by review rather
 than by the suite, and one caveat they should have carried (m8b-keys, M8b

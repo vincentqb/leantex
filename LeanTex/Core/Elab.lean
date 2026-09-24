@@ -128,6 +128,10 @@ structure Ctx where
   palette are not carried here: the request site (`Ir.pictureRefs`) reads
   them off the finished `Doc`, after contrast realization. -/
   picPreamble : String := ""
+  /-- The document's own macro definitions for the boundary standalone, as
+  written (`macroScan`). One entry per name; the request site carries the
+  subset a picture body reaches. -/
+  picMacros : Array (String × String) := #[]
   /-- The key lists the document's `\tikzset` lines wrote, in source order
   and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
   definitions are what every picture's own option block starts from, so a
@@ -10406,10 +10410,197 @@ order, so it is not read" }
     else
       return s
 
+/-- The LaTeX2e definer family the boundary standalone reads back as one
+`\renewcommand`: each declares one command with an arity and an optional
+default, so one re-emission serves them all (usrguide, "Defining
+commands"). -/
+def latexDefiners : List String :=
+  ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand"]
+
+/-- xparse's family. `\DeclareDocumentCommand` defines irrespective of
+whether the name already exists (usrguide3, "Creating document commands"),
+so the re-emission needs no guard of its own. -/
+def xparseDefiners : List String :=
+  ["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand",
+   "ProvideDocumentCommand"]
+
+/-- TeX's own definers, already total: each binds whatever the name held
+(TeXbook ch. 20), so they ride in their own spelling. -/
+def texDefiners : List String := ["def", "gdef", "edef", "xdef"]
+
+/-- A definer's name argument: `\newcommand{\x}` and `\newcommand\x` both
+spell it — the braced form is what LaTeX documents, the bare one what TeX
+accepts and many classes write. -/
+private def definerName? (raws : Array Raw) (i : Nat) : Option String :=
+  match raws[i]? with
+  | some (.ctrl n _) => some n
+  | some (.group b _) =>
+    b.findSome? fun (r : Raw) =>
+      match r with
+      | .ctrl n _ => some n
+      | _ => none
+  | _ => none
+
+/-- One LaTeX2e definer, from the element after its head: the name, the
+arity and the optional default as written, and the body. The re-emission
+guards with `\providecommand` first, so the declaration cannot fail on a
+name the standalone's own packages already own, and then states the
+document's definition — a document that defined a name defined it for its
+pictures too. -/
+private def latexDefiner? (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := do
+  let i := skipStar raws i
+  let name ← definerName? raws i
+  let (arity, j) := takeOptRun raws (skipSpaces raws (i + 1))
+  let (dflt, j) := takeOptRun raws (skipSpaces raws j)
+  let j := skipSpaces raws j
+  match raws[j]? with
+  | some (.group body _) =>
+    let spec := (match arity with | some a => s!"[{rawSrc a}]" | none => "") ++
+      (match dflt with | some d => s!"[{rawSrc d}]" | none => "")
+    let line := s!"\\providecommand\{\\{name}}\{}\
+\\renewcommand\{\\{name}}{spec}\{{rawSrc body}}"
+    some ((name, line), j + 1)
+  | _ => none
+
+/-- One xparse definer: its argument specification rides as written. -/
+private def xparseDefiner? (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := do
+  let i := skipStar raws i
+  let name ← definerName? raws i
+  let j := skipSpaces raws (i + 1)
+  let k := skipSpaces raws (j + 1)
+  match raws[j]?, raws[k]? with
+  | some (.group sig _), some (.group body _) =>
+    some ((name,
+      s!"\\DeclareDocumentCommand\{\\{name}}\{{rawSrc sig}}\{{rawSrc body}}"), k + 1)
+  | _, _ => none
+
+/-- One TeX definer: the parameter text between the name and the body rides
+verbatim. The scan for the body group is bounded — a parameter text is a
+short run of `#k` tokens and delimiters, so a head with no body group of its
+own never reaches forward into the document for one. -/
+private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := Id.run do
+  match raws[i]? with
+  | some (.ctrl name _) =>
+    let lim := min raws.size (i + 17)
+    let mut k := i + 1
+    let mut found := false
+    for _ in [i + 1:lim] do
+      if raws[k]? matches some (.group _ _) then
+        found := true
+        break
+      k := k + 1
+    if !found then return none
+    match raws[k]? with
+    | some (.group body _) =>
+      let params := rawSrc (raws.extract (i + 1) k)
+      return some ((name, s!"\\{head}\\{name}{params}\{{rawSrc body}}"), k + 1)
+    | _ => return none
+  | _ => return none
+
+/-- The native `\define \name(sig) {body}`, so the LaTeX spelling and the
+native one carry the same definition to the boundary — a document that
+writes `\define` itself is not a document whose pictures lose their macros.
+The signature's parameter count becomes LaTeX's arity and a leading
+optional parameter its empty default: the native form carries no default
+value to spell back, which is why the definer family is read as written
+rather than through a `UserCmd`. -/
+private def nativeDefiner? (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := Id.run do
+  match raws[i]? with
+  | some (.ctrl name _) =>
+    let lim := min raws.size (i + 33)
+    let mut k := i + 1
+    let mut found := false
+    for _ in [i + 1:lim] do
+      if raws[k]? matches some (.group _ _) then
+        found := true
+        break
+      k := k + 1
+    if !found then return none
+    match raws[k]? with
+    | some (.group body _) =>
+      let sig := rawSrc (raws.extract (i + 1) k)
+      let entries := (sig.splitOn ",").filter fun e => e.toList.any Char.isAlpha
+      let spec :=
+        if entries.isEmpty then ""
+        else if ((entries.headD "").splitOn "?").length > 1 then s!"[{entries.length}][]"
+        else s!"[{entries.length}]"
+      let line := s!"\\providecommand\{\\{name}}\{}\
+\\renewcommand\{\\{name}}{spec}\{{rawSrc body}}"
+      return some ((name, line), k + 1)
+    | _ => return none
+  | _ => return none
+
+mutual
+
+-- conserves: none — the walk collects the document's macro definitions for
+-- the boundary standalone and drops everything else by design, so no
+-- census equality can hold. What the collection must satisfy is stated
+-- where it pays: `Ir.macroDecls_covers` over the request it feeds.
+private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
+    List Raw → Nat → Nat → Array (String × String)
+  | [], _, _ => out
+  | _ :: rest, i, skip + 1 => macroScanLevel raws out rest (i + 1) skip
+  | .ctrl name _ :: rest, i, 0 =>
+    let read? : Option ((String × String) × Nat) :=
+      if latexDefiners.contains name then latexDefiner? raws (i + 1)
+      else if xparseDefiners.contains name then xparseDefiner? raws (i + 1)
+      else if texDefiners.contains name then texDefiner? name raws (i + 1)
+      else if name == "define" then nativeDefiner? raws (i + 1)
+      else none
+    match read? with
+    | some (entry, k) =>
+      -- LaTeX's provide keeps an existing definition, so a provide of a
+      -- name this document already bound declares nothing.
+      let provide := name == "providecommand" || name == "ProvideDocumentCommand"
+      let kept := if provide && out.any (fun q => q.1 == entry.1) then out
+        else out.push entry
+      macroScanLevel raws kept rest (i + 1) (k - (i + 1))
+    | none => macroScanLevel raws out rest (i + 1) 0
+  | r :: rest, i, 0 => macroScanLevel raws (macroScanRaw out r) rest (i + 1) 0
+
+/-- Descend into a group or an environment, structurally on `Raw` —
+`boundaryRaw`'s shape. A picture's own body is that standalone's already,
+so a definition written inside one is not hoisted out of it. -/
+private def macroScanRaw (out : Array (String × String)) : Raw → Array (String × String)
+  | .group body _ => macroScanLevel body out body.toList 0 0
+  | .env n body _ =>
+    if Compat.pictureEnvs.contains n then out
+    else macroScanLevel body out body.toList 0 0
+  | .math _ body _ => macroScanLevel body out body.toList 0 0
+  | .word _ _ => out
+  | .space => out
+  | .par _ => out
+  | .ctrl _ _ => out
+  | .sym _ _ => out
+  | .verb _ _ _ => out
+
+end
+
+/-- The document's own macro definitions for the boundary, one entry per
+name, in the document order of each name's last word — LaTeX's last
+definition is what a use at the end of the document means, and the
+standalone reads one definition per name rather than a replay.
+
+Read over the *unrewritten* tree, as the boundary preamble's collector is
+(`Compat.boundaryScan`): the native `\define` a rewrite produces cannot
+spell an optional argument's default back, so the declaration the
+standalone reads is captured as the document wrote it rather than
+reconstructed from a `UserCmd`. -/
+def macroScan (raws : Array Raw) : Array (String × String) :=
+  let all := macroScanLevel raws #[] raws.toList 0 0
+  (Array.range all.size).filterMap fun i =>
+    (all[i]?).bind fun p =>
+      if (all.extract (i + 1) all.size).any (fun q => q.1 == p.1) then none else some p
+
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[]) :
+    (picSets : Array (Pos × Array Raw) := #[])
+    (picMacros : Array (String × String) := #[]) :
     EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -10448,6 +10639,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
       | _ => none).getD (some "lualatex")
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, picTool := picTool0, picPreamble := picPre
+               picMacros := picMacros
                picSets := picSets.map (·.2) } }
   -- What a `\tikzset` left unread is named at the line that wrote it —
   -- but only under the refusal. With the boundary open the entries the
@@ -10776,6 +10968,10 @@ declare \\assert\{ pages <= N } to take control" }
     pictureTool := ctx.picTool
     pictureSrcs := (← get).pictures
     picturePreamble := ctx.picPreamble
+    -- Request material, so a document that states no request carries none:
+    -- a `\newcommand` is otherwise a change to every document's `Doc`, and
+    -- the definer family's whole point is that it moves no ink by itself.
+    pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.picMacros
     body := blocks
   }
   -- Cross-references resolve here, once, against the whole document's
@@ -10818,6 +11014,7 @@ the resolution gate (`pending_named`) is one statement over that tail;
 def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag × ReqSpans :=
   let picScan := Compat.boundaryScan raws
+  let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
@@ -10826,7 +11023,7 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   let ((doc, table), st) :=
-    (elabDoc file raws picScan.pre picScan.sets).run { warnedUnknown := warned }
+    (elabDoc file raws picScan.pre picScan.sets picMacros).run { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry

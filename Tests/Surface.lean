@@ -4211,6 +4211,69 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       picC)).1) "\\setmainfont")
   t "the set lines are the boundary's: no W0301 for them"
     (ds.all (·.code != "W0301"))
+  -- The document's own macros ride: the closed list was closed over the
+  -- commands the engine knows, so a `\newcommand` the picture spells was
+  -- undefined at the boundary and the tool drew nothing. The invariant is
+  -- `Ir.macroDecls_covers` — a control sequence the body spells that the
+  -- document defined is declared in the request — with `Ir.macroDecls_mem`
+  -- bounding what rides. Invented macros, invented palette.
+  let mac := "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
+    "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+    "\\newcommand{\\elsewhere}{only ever in prose}\n"
+  let picM := "\\begin{tikzpicture}\\node {\\badge{ok}};" ++
+    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let (mdoc, mds) := elabStr (dvDoc (pal ++ mac) picM)
+  t "a macro the picture spells is defined in the standalone"
+    (hasStr (reqOf mdoc) "\\renewcommand{\\badge}[1]")
+  t "a definition the standalone reads can never fail on an existing name"
+    (hasStr (reqOf mdoc) "\\providecommand{\\badge}{}")
+  t "a macro reached only through another macro's body rides too"
+    (hasStr (reqOf mdoc) "\\renewcommand{\\tint}[1]")
+  t "a macro the picture never reaches stays home"
+    (!hasStr (reqOf mdoc) "elsewhere")
+  t "a palette role only a carried macro spells is declared"
+    (hasStr (reqOf mdoc) "\\definecolor{ember}{RGB}{192,67,31}")
+  t "carrying the document's macros costs the picture no diagnostic"
+    (mds.all (·.code != "E0382") && (Ir.pictureRefs mdoc).size == 1)
+  -- Locality of the cache key, as an oracle (no theorem stands behind it):
+  -- editing a macro no picture reaches leaves the request byte-identical,
+  -- editing one it reaches moves it — so a warm slot is never served the
+  -- wrong drawing, and never discarded for an unrelated edit.
+  t "an unreached macro edit leaves the request untouched"
+    (reqOf mdoc == reqOf (elabStr (dvDoc (pal ++
+      "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
+      "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+      "\\newcommand{\\elsewhere}{quite another wording}\n") picM)).1)
+  t "a reached macro edit moves the request"
+    (reqOf mdoc != reqOf (elabStr (dvDoc (pal ++
+      "\\newcommand{\\tint}[1]{\\textcolor{ember}{\\itshape #1}}\n" ++
+      "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+      "\\newcommand{\\elsewhere}{only ever in prose}\n") picM)).1)
+  -- The definer family and TeX's own `\def`, each with the arity and the
+  -- optional default the document wrote — the default is the one part a
+  -- native `UserCmd` cannot spell back, so the declaration is captured as
+  -- written rather than reconstructed.
+  let (fdoc2, _) := elabStr (dvDoc
+    ("\\newcommand{\\plain}{p}\n\\renewcommand{\\plain}{q}\n" ++
+     "\\providecommand{\\opt}[2][d]{#1#2}\n\\def\\raw#1{<#1>}\n")
+    ("\\begin{tikzpicture}\\node {\\plain\\opt{a}\\raw{b}};" ++
+     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  t "an optional argument's default travels with its definition"
+    (hasStr (reqOf fdoc2) "\\renewcommand{\\opt}[2][d]")
+  t "a redefinition rides as the document's last word"
+    (hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{q}" &&
+      !hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{p}")
+  t "TeX's own def rides in its own spelling"
+    (hasStr (reqOf fdoc2) "\\def\\raw#1{<#1>}")
+  -- Conservation across the definer rewrite, with a picture in play: the
+  -- LaTeX spelling and the native one carry the same definition, so a
+  -- document that writes `\define` itself is not one whose pictures lose
+  -- their macros. An oracle, not a theorem.
+  let picD := "\\begin{tikzpicture}\\node {\\hue{x}};" ++
+    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  t "the native define spelling carries the same definition as newcommand"
+    (reqOf (elabStr (dvDoc "\\newcommand{\\hue}[1]{\\textbf{#1}}\n" picD)).1 ==
+      reqOf (elabStr (dvDoc "\\define \\hue(a1: content) {\\textbf{#1}}\n" picD)).1)
   t "a picture package's load rides too: no W0103 for it"
     (ds.all (·.code != "W0103"))
   -- Determinism by purity: two elaborations of one document state

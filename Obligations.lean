@@ -371,4 +371,21 @@ theorem parentTree_covers (es : Array Pdf.StructElem) (n : Nat) (marks : Array (
         ((Pdf.parentTreeOf marks (Pdf.leafOwners es n))[p]?).bind (·[m]?) = some (some i) := by
   sorry
 
+-- owed: macroDecls_fixed_point
+-- owner: LeanTex.Core.Ir
+-- source: the boundary-request closure defect (a document's own `\newcommand` that a picture spelled was undefined in the wrapped standalone, so the boundary tool drew nothing, E0382 fired as a dropped loss and no artifact was written at all); PLAN 2026-09-24 boundary-macro-closure entry
+-- blocker: the pigeonhole the code rests on, which the statement does not mention. `macroReachNames` runs `macros.size` rounds and stops at the first round that adds nothing; correctness is that the *selected* set — `macros.filter (ns.contains ·.1)` — grows by at least one on every round that is not already the fixed point, and is bounded by `macros.size`, so a reference chain cannot outlast the round budget. The measure is over that selected set, not over `ns`: `macroReachRound` filters new names against `ns` only, so `ns` may hold a name twice and `ns.size` is not a cardinality. The named factorization is to carry the selection itself as the saturation's state (a duplicate-free `Array Nat` of indices, `Nodup` in a subtype) instead of a name set, which makes `size` the cardinality the pigeonhole needs and turns the round bound into `Nat.le_induction` over it. The direct half is proved (`macroDecls_covers`); the transitive half runs as an oracle in `boundaryChecks` ("a macro reached only through another macro's body rides too").
+-- goldens: no
+/-- The carried definitions are closed under reference: a definition whose
+name another carried definition spells is carried too — the transitive half
+of `macroDecls_covers`, and the reason a macro written in terms of an
+earlier macro reaches the boundary whole. What the saturation computes; what
+this statement owes is that `macros.size` rounds always suffice to reach it,
+so no picture is ever handed a definition whose own body is undefined. -/
+theorem macroDecls_fixed_point (macros : Array (String × String)) (body n d : String)
+    (hm : (n, d) ∈ macros)
+    (hr : ∃ p ∈ Ir.macroDecls macros body, n ∈ Ir.ctrlNames p.2) :
+    (n, d) ∈ Ir.macroDecls macros body := by
+  sorry
+
 end Obligations
