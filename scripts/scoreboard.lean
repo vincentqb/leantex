@@ -38,6 +38,14 @@ deriving Inhabited
 def natField (line key : String) : Nat :=
   (((field line key).bind (·.toNat?))).getD 0
 
+/-- A tier's check in flight: its process, and the scratch directory holding
+its two output files, removed once the result is read. -/
+structure Spawn where
+  child : IO.Process.Child { }
+  dir : System.FilePath
+  out : String
+  err : String
+
 /-- Run one tier's own `--check` and read its porcelain line back. The tier
 is the authority on its own numbers; this reads the line it printed, never a
 summary of it.
@@ -46,8 +54,10 @@ Each check runs in its own process writing to its own files rather than to a
 pipe, so the aggregate can have every tier in flight at once without a
 reader deadlocking on a full pipe — the tiers are independent, and a landing
 gate that took one interpreter startup per tier in series took 17 s where
-this takes one. -/
-def spawnTier (tier : String) : IO (Option (IO.Process.Child { } × String × String)) := do
+this takes one. Paths reach `sh` as positional parameters, never
+interpolated into the command: a tier's name is a file basename, which is
+not this tool's to trust. -/
+def spawnTier (tier : String) : IO (Option Spawn) := do
   let hasTsv ← System.FilePath.pathExists (tsvPath tier)
   let hasScript ← System.FilePath.pathExists (scriptPath tier)
   if !hasTsv || !hasScript then return none
@@ -56,12 +66,11 @@ def spawnTier (tier : String) : IO (Option (IO.Process.Child { } × String × St
   let errPath := (dir / "err").toString
   let child ← IO.Process.spawn
     { cmd := "sh"
-      args := #["-c", s!"lake env lean --run {scriptPath tier} --check \
-> {outPath} 2> {errPath}"] }
-  return some (child, outPath, errPath)
+      args := #["-c", "exec lake env lean --run \"$1\" --check > \"$2\" 2> \"$3\"",
+                "sh", scriptPath tier, outPath, errPath] }
+  return some { child, dir, out := outPath, err := errPath }
 
-def collectTier (tier : String) (spawned : Option (IO.Process.Child { } × String × String)) :
-    IO TierResult := do
+def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
   match spawned with
   | none =>
     let hasTsv ← System.FilePath.pathExists (tsvPath tier)
@@ -77,10 +86,11 @@ def collectTier (tier : String) (spawned : Option (IO.Process.Child { } × Strin
       return { tier, items := 0, regressed := 0, improved := 0
                result := "missing", detail := s!"{why} (declared pending)" }
     return { tier, items := 0, regressed := 0, improved := 0, result := "fault", detail := why }
-  | some (child, outPath, errPath) =>
-    let code ← child.wait
-    let stdout ← readFileOr outPath
-    let stderr ← readFileOr errPath
+  | some s =>
+    let code ← s.child.wait
+    let stdout ← readFileOr s.out
+    let stderr ← readFileOr s.err
+    IO.FS.removeDirAll s.dir
     let line := ((stdout.splitOn "\n").find? (·.startsWith "scoreboard: tier=")).getD ""
     -- The spec's contract is the exit status of `--check`; a porcelain line,
     -- when the tier prints one, adds counts and can never turn a non-zero
@@ -99,9 +109,31 @@ def collectTier (tier : String) (spawned : Option (IO.Process.Child { } × Strin
              result
              detail }
 
+/-- Build what the tiers import, once, before any of them runs. `lake env
+lean --run` builds nothing, so without this every tier measures whatever the
+last build left. A failed build is a `fault` for every tier: the answer to
+"is the debt going down" is unknown when the tree does not compile. -/
+def buildImports : IO (Option String) := do
+  let targets ← buildTargets
+  if targets.isEmpty then return none
+  let out ← IO.Process.output { cmd := "lake", args := #["build"] ++ targets }
+  if out.exitCode == 0 then return none
+  let log := (out.stdout ++ out.stderr).trimAscii.toString
+  let firstErr := ((log.splitOn "\n").find? (containsSub · "error")).getD
+    s!"lake build {String.intercalate " " targets.toList} exited {out.exitCode}"
+  return some firstErr.trimAscii.toString
+
 def aggregate (quiet : Bool) : IO UInt32 := do
   let tiers ← discover
-  let mut spawned : Array (String × Option (IO.Process.Child { } × String × String)) := #[]
+  match ← buildImports with
+  | some err =>
+    IO.eprintln s!"scoreboard: the tiers' imports do not build, so no tier can be \
+measured: {err}"
+    for t in tiers do
+      IO.println (tierLine t 0 0 0 "fault")
+    return 1
+  | none => pure ()
+  let mut spawned : Array (String × Option Spawn) := #[]
   for t in tiers do
     spawned := spawned.push (t, ← spawnTier t)
   let mut bad := 0
@@ -260,7 +292,9 @@ def selftest : IO UInt32 := do
     let verdicts : List (String × Bool × Bool) :=
       [("dropped", true, false),
        ("disappeared", true, false),
-       ("added", false, true),
+       -- `added` under a headroom cap: an unseen item below the cap is debt
+       -- arriving under a new name, so it is a fall.
+       ("added", true, false),
        ("raised", false, true)]
     for (name, wantLoss, wantGain) in verdicts do
       match ← readFixture name with
@@ -296,7 +330,26 @@ def selftest : IO UInt32 := do
       no "ratchet retired: without the retirement line the same absence is a loss"
         (!d2.losses.isEmpty)
 
-    -- A fall is written only against a line that authorises exactly it.
+    -- A headroom item the baseline never held enters at the cap, so new
+    -- debt under a new name is a fall rather than an improvement. The
+    -- `added` fixture is below the cap; a new item AT the cap is neither.
+    match ← readFixture "added" with
+    | .error e => no s!"ratchet fixture added: {e}" false
+    | .ok now =>
+      let d := ratchet base now
+      no s!"headroom: an unseen item below the cap is a fall, not an entry \
+({String.intercalate "; " (d.changes.map (·.describe)).toList})"
+        (d.losses.size == 1 && d.gains.isEmpty)
+      let atCap : Tsv := { now with
+        rows := now.rows.map fun r =>
+          if (base.find? r.item).isNone then { r with value := 1000 } else r }
+      let d2 := ratchet base atCap
+      no "headroom: an unseen item at the cap is neither a fall nor a rise"
+        (d2.losses.isEmpty && d2.gains.size == 1)
+      -- A tier whose encoding declares no cap keeps the plain rule.
+      let raw : Tsv := { base with encoding := some .raw }
+      no "raw: an unseen item still enters at its measured value"
+        ((ratchet raw now).losses.isEmpty)
     match ← readFixture "lowered" with
     | .error e => no s!"ratchet fixture lowered: {e}" false
     | .ok low =>
@@ -375,7 +428,8 @@ authorising exactly its own fall)"
   -- landing runs, so the fan-out lives here rather than in a procedure
   -- someone has to remember.
   let tiers ← discover
-  let mut spawned : Array (String × Option (IO.Process.Child { } × String × String)) := #[]
+  let mut spawned : Array (String × Option (IO.Process.Child { } ×
+    System.FilePath × String × String)) := #[]
   for t in tiers do
     if ← System.FilePath.pathExists (scriptPath t) then
       let dir ← IO.FS.createTempDir
@@ -383,13 +437,14 @@ authorising exactly its own fall)"
       let e := (dir / "err").toString
       let child ← IO.Process.spawn
         { cmd := "sh"
-          args := #["-c", s!"lake env lean --run {scriptPath t} --selftest > {o} 2> {e}"] }
-      spawned := spawned.push (t, some (child, o, e))
+          args := #["-c", "exec lake env lean --run \"$1\" --selftest > \"$2\" 2> \"$3\"",
+                    "sh", scriptPath t, o, e] }
+      spawned := spawned.push (t, some (child, dir, o, e))
   let mut bad := 0
   for (t, s) in spawned do
     match s with
     | none => pure ()
-    | some (child, o, e) =>
+    | some (child, dir, o, e) =>
       let code ← child.wait
       if code == 0 then
         IO.println s!"scoreboard selftest: {t} passed"
@@ -398,6 +453,7 @@ authorising exactly its own fall)"
         IO.eprintln s!"FAIL tier {t} selftest: exit {code}"
         IO.eprint (← readFileOr o)
         IO.eprint (← readFileOr e)
+      IO.FS.removeDirAll dir
   return (if bad == 0 then 0 else 1)
 
 def main (args : List String) : IO UInt32 := do

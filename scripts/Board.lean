@@ -306,9 +306,21 @@ def Lowered.authorises (w : Lowered) : Change → Bool
 
 /-- Compare a fresh measurement against the committed baseline. Retirement
 is read off the *baseline*: the committed file is where a human writes why
-a measurement stopped being made. -/
+a measurement stopped being made.
+
+In a `headroom` tier an item the baseline has never seen is compared
+against the **cap**, not treated as new: the cap is what "no debt" means
+there, so debt arriving under a name the file never held is a fall. Without
+that, staging an obligation under a new owner module read as an
+improvement — "is the debt going down" answered by the owner field's
+spelling, a typo included — while the same obligation under an existing
+owner was a regression. The rule is the encoding's, so it holds for every
+headroom tier at once. -/
 def ratchet (base now : Tsv) : Delta := Id.run do
   let mut changes : Array Change := #[]
+  let implicit : Option Int := match base.encoding with
+    | some (.headroom cap) => some cap
+    | _ => none
   for r in base.rows do
     match now.find? r.item with
     | some v =>
@@ -319,7 +331,12 @@ def ratchet (base now : Tsv) : Delta := Id.run do
         changes := changes.push (.vanished r.item r.value)
   for r in now.rows do
     if (base.find? r.item).isNone then
-      changes := changes.push (.entered r.item r.value)
+      match implicit with
+      | some cap =>
+        if r.value < cap then changes := changes.push (.fell r.item cap r.value)
+        else if r.value > cap then changes := changes.push (.rose r.item cap r.value)
+        else changes := changes.push (.entered r.item r.value)
+      | none => changes := changes.push (.entered r.item r.value)
   return { changes }
 
 /-- Render a baseline: provenance first (retirement lines among it, carried
@@ -369,6 +386,38 @@ is what makes the permission narrow rather than a hole the size of
 `declaredTiers`. -/
 def pendingTiers : List String :=
   ["commonmark", "coverage", "parity"]
+
+/-- The lake targets a tier's `--check` imports. `lake env lean --run` uses
+whatever `.olean` the last build left and builds nothing itself, so without
+this the whole scoreboard measures a stale tree: a module edited and not
+rebuilt still reports its old value, and this branch's own `lake build`
+passed over a syntactically broken `Board.lean` because
+`defaultTargets = ["leantex"]` covers neither `BoardLib` nor `scoreboard`.
+
+The aggregate builds these once before fanning out, and a failed build is a
+`fault` — the honest answer when the thing to measure did not compile.
+`ParityLib` is a sibling's, named ahead of its arrival so it is built the
+moment that tier lands; a name no `lakefile.toml` declares is skipped
+rather than failed, so the list can run ahead of the tree. -/
+def tierImports : List String :=
+  ["BoardLib", "GateLib", "TestsModules", "ParityLib"]
+
+/-- The `tierImports` this tree actually declares. Read off `lakefile.toml`,
+so a name that has not arrived yet is skipped instead of failing the build
+it was meant to guard. -/
+def buildTargets : IO (Array String) := do
+  let lakefile ← if ← System.FilePath.pathExists "lakefile.toml"
+    then IO.FS.readFile "lakefile.toml" else pure ""
+  let pre := "name = \""
+  let mut declared : Array String := #[]
+  for l in lakefile.splitOn "\n" do
+    let t := l.trimAscii.toString
+    if t.startsWith pre then
+      let rest := (t.drop pre.length).toString
+      match rest.splitOn "\"" with
+      | n :: _ => declared := declared.push n
+      | [] => pure ()
+  return tierImports.toArray.filter declared.contains
 
 /-- Every tier: the declared names, plus any baseline committed under
 `tests/scoreboard/` that no one declared (a sibling's tier, landed before
