@@ -380,6 +380,48 @@ def hookPreambleSide : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
    "theme", "chrome", "pictures", "allow", "runninghead", "runningfoot"]
 
+/-- The native declarations a compatibility help text may name, as the
+vocabulary the translation sweep reads. `hookPreambleSide` is the preamble
+half — it already restates the elaborator's declaration set — and
+`framefoot` is the one body-level declaration a compat help names, the
+per-frame footer `\setbeamertemplate{frame footer}` translates into. The
+sweep requires every help text to name something in here
+(`translationOwedChecks`), so a help naming a declaration this list does not
+carry fails rather than being skipped. -/
+def nativeDeclarations : List String := hookPreambleSide ++ ["framefoot"]
+
+/-- **Constructs whose help text names an engine declaration and which the
+engine nevertheless does not translate, each with the reason it cannot.**
+
+The invariant behind the list: *a construct whose diagnostic names its own
+translation is translated, not dropped.* A help text naming a mechanical
+translation is a translation the engine should perform — every fact needed is
+in the source, and telling the author to do it by hand is the engine
+declining work it could do. Seventeen sites in one theme of the private
+reference corpus accumulated behind two such help texts before anyone counted
+them, and both are now translated (`beamerColorRoles`, `beamerFontElements`).
+
+A row here is a *declared* exception, never a silence: it says why the named
+declaration cannot receive this construct. `translationOwedChecks` closes the
+list against `beamerNative` in both directions — a help text that names a
+declaration either translates, with a witness, or lands here with its
+reason — so the next seventeen cannot accumulate unnoticed. -/
+def translationRefused : List (String × String) :=
+  [("usecolortheme", "a token bundle is whole here: the engine installs a \
+palette, tokens and styles together, so it has nothing that receives a \
+colour-only sub-theme. The bundle of that name, where one is shipped, \
+already carries the colours"),
+   ("usefonttheme", "a font theme is a substitution policy, not a family \
+list: it renames what beamer's own elements select. The engine has one \
+policy — keep the document's declared fonts — which is what \
+'professionalfonts' asks for, and that spelling its arm agrees with"),
+   ("metroset", "the keys are the theme's own option vocabulary, not engine \
+tokens; each would need its own mapping, and the shipped bundle of that \
+lineage already carries the design the options adjust"),
+   ("addtobeamertemplate", "the body is arbitrary TeX spliced at a named \
+point inside a template the engine does not model; where such a body carries \
+content the loss is E0111's, which is a dropped body and not a style key")]
+
 private structure St where
   file : String
   diags : Array Diag := #[]

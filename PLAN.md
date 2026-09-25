@@ -627,6 +627,45 @@ verbose log. Ten synthetic rows (`pictureAnchorChecks`, read off
 commit and pass here, and seven compat-index rows cover the resolved
 spellings against one `refuse:W0334` row for the `mid` family.
 
+2026-09-24 — the general form, made executable: **a construct whose
+diagnostic names its own translation is translated, not dropped.** The three
+entries below it fix instances; this is the check that stops the next
+seventeen. It is worth more than any of them.
+
+Two W0104 help texts read "declare the colour with `\palette{ name =
+#RRGGBB }`" and "declare it with `\style{element}{ font = {...} }`" above
+warnings that dropped the colour and the font. Seventeen sites in one theme
+of the private reference corpus, each one the engine naming the exact
+mechanical translation and asking the author to perform it by hand, with
+every fact needed already in the source. Nobody counted them because nothing
+could: the property "this help text names work the engine declined to do" was
+not stated anywhere.
+
+`translationOwedChecks` states it. It sweeps `Compat.beamerNative` — the help
+texts a skipped beamer construct carries — and asks of each whether the help
+names a native engine declaration, through the shared vocabulary
+`Compat.nativeDeclarations`. Where it does, the construct owes one of two
+things: a *witness*, an input whose N0100 translation note names that same
+declaration, or a row in `Compat.translationRefused` stating why the named
+declaration cannot receive it. Both directions close — a witness-less help
+that names a declaration fails, a refusal row whose help names nothing is
+stale, and a help naming a declaration outside the vocabulary fails rather
+than being skipped, so the vocabulary cannot rot silently either.
+
+Four constructs now carry declared reasons rather than translations, and
+writing them was the useful part: `\usecolortheme` (a token bundle is whole
+here, so nothing receives a colour-only sub-theme), `\usefonttheme` (a font
+theme is a substitution policy, not a family list), `\metroset` (the keys are
+a theme's own option vocabulary), `\addtobeamertemplate` (arbitrary TeX at a
+point inside a template the engine does not model). Each is a claim that can
+be argued with, which is the point — the previous state was not a weaker
+claim but no claim.
+
+The check was verified to bite: with the `\setbeamerfont` witness removed —
+exactly the shape that construct had this morning, a help naming `\style`
+above a warning that dropped the declaration — the suite fails with
+`'\setbeamerfont' names a translation, so it translates or says why`.
+
 2026-09-24 — `\setbeamerfont` is the `\style` declaration its help names.
 The same shape as the colour entry below it: the W0104 help read "declare it
 with `\style{element}{ font = {...} }`" and then dropped the declaration —

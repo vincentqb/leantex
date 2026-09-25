@@ -4331,6 +4331,66 @@ def beamerFontChecks (ref : IO.Ref (List String)) : IO Unit := do
      ((docF.styles.find? "titlepage").bind (·.authorFont)).isSome &&
      ((docF.styles.find? "sectionpage").bind (·.font)).isSome)
 
+/-- **A construct whose diagnostic names its own translation is translated,
+not dropped.** The general invariant behind the two beamer translations, made
+executable — and worth more than either, because it is what stops the next
+seventeen accumulating.
+
+The sweep reads `Compat.beamerNative`, the help texts a skipped beamer
+construct carries, and asks of each: does this help name a native engine
+declaration? If it does, the construct owes either a *witness* — an input
+whose rewrite records the translation naming that declaration — or a row in
+`Compat.translationRefused` saying why the named declaration cannot receive
+it. Both directions close: a witness-less help that names a declaration
+fails, and a refusal row for a construct whose help names nothing is stale.
+The hole this shuts is the one the colour and font arms sat in — a help text
+reading "declare the colour with `\palette{...}`" above a warning that
+dropped the colour, seventeen times in one file, each site telling the author
+to perform by hand a translation every fact for which was in the source. -/
+def translationOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The declarations a help text names, read through the shared vocabulary.
+  let named (help : String) : List String :=
+    Compat.nativeDeclarations.filter fun d => (help.splitOn ("\\" ++ d)).length > 1
+  -- One input per construct that does translate. A construct whose help
+  -- names a declaration and which has no witness here fails below, so this
+  -- table cannot quietly fall behind the help texts.
+  let witness : List (String × String) :=
+    [("setbeamercolor", "\\setbeamercolor{frametitle}{fg=#FFFFFF,bg=#204060}"),
+     ("setbeamerfont", "\\setbeamerfont{frametitle}{size=\\Large}"),
+     ("setbeamertemplate", "\\setbeamertemplate{frame footer}{Footer note}")]
+  -- The vocabulary has to be able to see every help text, or a help naming
+  -- a declaration outside it would be skipped instead of judged.
+  t "every beamer help text names a declaration the sweep can see"
+    (Compat.beamerNative.all fun (_, help) => !(named help).isEmpty)
+  for (construct, help) in Compat.beamerNative do
+    let decls := named help
+    unless decls.isEmpty do
+      match Compat.translationRefused.lookup construct with
+      | some reason =>
+        -- A declared exception states why; an empty or token reason is the
+        -- silence the registry exists to prevent.
+        t s!"'\\{construct}' declines translation with a stated reason"
+          (reason.length ≥ 40 && !(witness.any (·.1 == construct)))
+      | none =>
+        match witness.lookup construct with
+        | none =>
+          t s!"'\\{construct}' names a translation, so it translates or says why"
+            false
+        | some src =>
+          -- The translation note (N0100) records what the construct became;
+          -- it must name one of the declarations its own help offered.
+          let ds := (elabStr (deck169 src "x")).2
+          t s!"'\\{construct}' translates to a declaration its help names"
+            (ds.any fun d => d.code == "N0100" &&
+              decls.any fun nd => (d.message.splitOn ("\\" ++ nd)).length > 1)
+  -- The other direction: a refusal row whose construct carries no help
+  -- naming a declaration is stale, and would hide a construct that has
+  -- since started translating.
+  for (construct, _) in Compat.translationRefused do
+    t s!"the refusal row for '\\{construct}' is a live row"
+      ((Compat.beamerNative.lookup construct).any fun help => !(named help).isEmpty)
+
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a
