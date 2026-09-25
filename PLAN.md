@@ -16450,3 +16450,105 @@ here, numbered as that review numbers them, and one found):
 - Still open from round 3c: the French locale's guillemets carry no inner
   space, and the premise-marker resolver (scripts/precommit.lean:1920) is
   routed to the hook owner.
+
+### 2026-09-25 — landing is a state machine, and narration is not an observation
+
+A coordinating agent reported three merges, a push and three worktrees that
+did not exist. It had read tool narration rather than repository state, and
+it resolved rebase conflicts by hand with a keep-both script, which doubled
+a structured record's field. So the landing procedure is now a program with
+a pure core (`scripts/Land.lean`) and a boundary (`scripts/land.lean`):
+`land new`, `land check <name>`, `land <name> [--push]`, `land retire`,
+`land status`. One line per step, `land: step=<s> result=<ok|fail|skip>
+[k=v…]`; one final `land: result=<…>`; exit 0 ok, 1 gate failed, 2
+precondition or conflict, 3 internal. Every command's output is written
+under `$(git rev-parse --git-common-dir)/land/<run-id>/<step>.log` and every
+fact the core acts on is read back *from that file* — the tool parses
+`git rev-parse` and `git status --porcelain`, never a summary.
+
+**The core is a state machine over observations.** `Obs` constructors are
+parsed facts; anything the boundary could not parse arrives as
+`Obs.garbled`, which halts with exit 3. A sha counts as a sha only under
+`isSha` — forty hex digits — so a truncated read is a refusal rather than a
+comparison between two wrong strings. `Act.mutates` names the two actions
+that change a ref another party reads: the fast-forward of `main` and the
+push.
+
+The theorem, `step_mutates_gated`: whenever `step` proposes a mutating
+action, the resulting state is `proven` — `!gates.isEmpty && gates.all
+(·.ok)`. Two corollaries close the ways it could hold while proving
+nothing: `step_mutates_needs_a_gate` (a run that skipped the gates cannot
+merge, so the `all` is not vacuous) and `step_ff_gates_complete` (the
+fast-forward is proposed only with the gate list exhausted, not merely
+unfalsified). Both guards are written as conditionals in `afterGates` and
+the push transition rather than argued from the surrounding cases: deleting
+one leaves `step_mutates_gated` with unsolved goals, which is a broken
+build.
+
+`land --selftest` drives the core over 19 scripted observation sequences
+with no repository present: a rebase conflict in a non-union file, a gate
+that fails first and a gate that fails last, a tip that does not read back,
+a truncated sha, garbled output at three different stages, a dirty main, a
+dirty branch worktree, a missing branch, a branch not ahead, every gate
+absent, an observation out of order, an origin that does not read back, and
+a ledger that could not be written. Each asserts verdict, exit code, and —
+where the run must not touch a ref — that no mutating action was proposed.
+A twentieth case asserts that some case *does* reach a merge, so the guard
+is exercised rather than merely unreached.
+
+Both gates were broken once. Replacing the `proven` guard with `true`
+fails the build on `step_mutates_gated`. Making `check` mode fall into the
+fast-forward — which the theorem permits, since its gates are ok — compiles
+and fails the selftest on `check stops before the merge`. The theorem and
+the selftest catch different things, which is why there are both.
+
+**The ledger is a JSONL file in the git common directory**, not a note on
+the landed tip. Both survive across worktrees and add no commit to `main`,
+and the note would additionally travel with a push of `refs/notes/land`.
+The file wins on three counts. The query is "what happened to
+agent/<name> last", keyed by agent name, where a note is keyed by commit.
+Each record points at `<run-id>/<step>.log`, which is local, so a record
+that travelled would carry a dangling reference to evidence the remote does
+not hold. And `git notes add` is a second ref two worktrees can race on,
+where an `O_APPEND` line to one file cannot. The landed tip is a field, so
+a one-way projection onto `refs/notes/land` remains available if the record
+must ever travel — keeping the single writer, which is the property that
+matters. One row per distinct fact: a `--push` run writes `landed` then
+`pushed`, never two rows claiming the same landing. The first draft wrote
+two `landed` rows for one run, which is the doubling this tool exists to
+refuse, found by reading the scratch repository's ledger.
+
+**Measured on a scratch clone with a bare remote** (never against a real
+worktree; the brief forbids it). `land new` takes 4.2 s wall, of which
+4.0 s is the seeded build — the seed is a copy of the main worktree's
+`.lake`, never a hardlink, because lake rewrites files in place and a
+hardlink would corrupt the cache it was seeded from. A landing with the
+real gate list, a push, and the scoreboard absent takes 75.7 s: the two
+`lake` gates are ~49 s of it. A refusal costs 27–232 ms. Two branches both
+appending to `PLAN.md` rebased and landed with both entries present and no
+conflict marker, confirming the union driver end to end. A branch touching
+a non-union file that `main` had changed refused with exit 2, aborted the
+rebase, and left both the branch worktree and `main` untouched.
+
+Two corrections to the gate list, found by running it rather than reading
+it. Scanning output for `warning:` is the wrong check: on a warm cache
+nothing recompiles and nothing prints, so the gate is `lake build --wfail`,
+which is what the pre-commit hook already uses. And `lake build precommit
+owed cites Obligations` must *not* take that flag — `Obligations` is the
+staging area for open proofs and warns once per staged statement by design,
+so a `--wfail` on it fails a healthy tree. It failed exactly that way on
+the first live run.
+
+One defect found in the boundary, of the class the brief named. When an
+exec fails, the child flushes its inherited copy of the parent's unflushed
+stdout buffer into the captured pipe, and those bytes come back as the
+child's stdout: the porcelain lines appeared inside a gate log, and a probe
+parsed that way would have read narration for state. The refusal path held
+— the text is not a sha, so `isSha` rejects it — but the cause is removed
+rather than relied upon: the driver flushes stdout before every spawn.
+
+`LAND_GATES` replaces the gate list (`name=cmd args;…`) so the whole
+procedure is exercisable on a scratch repository, which cannot afford the
+real gates on every scenario. It never weakens a landing silently: the run
+line says `gates=override`, the ledger record carries `gateset`, and the
+core still observes each gate, so the merge guard is untouched.

@@ -318,6 +318,15 @@ in this repo; refer to the private reference corpus abstractly.
 
 - Commit each verified unit (build + tests green); imperative subject line.
 - Never push without being asked.
+- Landing a branch onto `main` goes through `land` (`scripts/land.lean`) — never
+  a hand rebase, merge, or conflict resolution. It reads preconditions from
+  `git status --porcelain` and `git rev-parse` *through files*, rebases in the
+  branch's own worktree, runs every gate, reads the new tip back, and writes one
+  ledger row per fact; its pure core cannot propose a fast-forward or a push
+  unless every gate observation was ok (`step_mutates_gated`). Prose reports of
+  repository state obey the rule claims about a page obey: from the artifact.
+  A conflict outside the union-merged files is a refusal with exit 2, not a
+  resolution — keep-both once doubled an owed record's `blocker:` line.
 - Never `git stash`: the stack is per-repository, not per-worktree, and agents
   here work in parallel worktree checkouts — a `pop` can apply, and drop,
   another worktree's entry. Set work aside with file copies instead (the file
