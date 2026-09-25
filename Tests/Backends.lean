@@ -2339,6 +2339,44 @@ def corpusStore (doc : Ir.Doc) : IO Image.Store := do
     fetched := fetched.push (src, f)
   return (Image.fulfil fetched).1
 
+/-- One golden fixture, elaborated, laid out, written and read back once.
+Three judges over the corpus — the contract slice, the conformance walk and
+the structure tree — used to run this pipeline each for itself, so every
+fixture was elaborated and laid out three times, written twice with
+identical arguments, and parsed four. The bytes are the same bytes in every
+case (`Pdf.write` is a function of what is here), so sharing them weakens
+nothing: each assertion still reads a real written file.
+
+`pdf` carries no structure tree, which is what the contract and conformance
+judges write; the structure judge writes its own from `out` and `store`,
+because its file differs by the tree and a shared one would not be the file
+it judges. -/
+structure GoldenArt where
+  name : String
+  doc : Ir.Doc
+  geom : Layout.Geom
+  store : Image.Store
+  out : Layout.Out
+  pdf : ByteArray
+  /-- `pdfText pdf`, extracted once. -/
+  text : ByteArray
+  /-- `PdfRead.objects pdf`, parsed once, its error preserved. -/
+  objs : Except String (Array PdfRead.Entry)
+
+def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
+  let mut arts : Array GoldenArt := Array.emptyWithCapacity goldenNames.length
+  for name in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let (doc, _) ← elabFixture name src
+    let geom := Layout.Geom.ofPage doc.page
+    let store ← corpusStore doc
+    let out := layoutOf oneFace doc geom none store
+    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
+    arts := arts.push
+      { name := name, doc := doc, geom := geom, store := store, out := out, pdf := pdf,
+        text := pdfText pdf, objs := (PdfRead.objects pdf).map (·.val) }
+  return arts
+
 /-- What each golden fixture's PDF carries, read back from its bytes by the
 census: `(pages, type0Fonts, images, forms, smasks, linkAnnots,
 outlineItems, lang, filters)`. A fixture without a row fails the coverage
@@ -3291,7 +3329,8 @@ of the built bytes; the meet of two contracts fails no file the two would
 each pass; and no claim is written — every corpus PDF is byte-identical
 to the writer's output before the grammar existed (the writer takes no
 contract; asserted here by the absence of any identification). -/
-def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
   let out (decl : String) : Ir.Doc × Array Diag := elabStr (dvDoc s!"\\output\{ {decl} }\n" "x")
   let profileAsserts (d : Ir.Doc) : Array String := d.asserts.filterMap fun a =>
@@ -3422,16 +3461,13 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- holds, and no file carries an identification — the writer is
   -- untouched by this slice.
   let mut n := 0
-  for name in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
-    let (doc, _) ← elabFixture name src
-    let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
-    let lo := layoutOf oneFace doc geom none store
-    let pdf := Pdf.write geom oneFace lo.pages doc.info store lo.outline
+  for a in arts do
+    let name := a.name
+    let doc := a.doc
+    let pdf := a.pdf
     t s!"contract {name}: no fixture declares a profile" doc.output.profiles.isEmpty
-    t s!"contract {name}: no identification is written" (!bytesContain (pdfText pdf) "pdfaid" &&
-      !bytesContain (pdfText pdf) "pdfuaid" && !bytesContain (pdfText pdf) "pdfxid")
+    t s!"contract {name}: no identification is written" (!bytesContain a.text "pdfaid" &&
+      !bytesContain a.text "pdfuaid" && !bytesContain a.text "pdfxid")
     match pdfCensusOf pdf with
     | .error e => t s!"contract {name}: census: {e}" false
     | .ok c =>
@@ -3560,7 +3596,8 @@ every marked-content identifier the page streams open, once, with the parent
 tree mapping each back to its element; the heading elements are exactly
 `Ir.headingLevels`; the typed model agrees with itself (tags, parent tree,
 leaf placeholders each held once). Every corpus fixture. -/
-def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
   -- The typed model on a synthetic tree: kinds to types, holders, inline
   -- elements empty, an image its own Figure with /Alt, headings the census.
@@ -3611,12 +3648,12 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   -- Every corpus fixture, written and read back.
   let mut elems := 0
   let mut mcids := 0
-  for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
-    let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
-    let out := layoutOf oneFace doc geom none store
+  for a in arts do
+    let n := a.name
+    let doc := a.doc
+    let geom := a.geom
+    let store := a.store
+    let out := a.out
     let tree := Struct.ofDoc (Layout.pdfView doc)
     let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline (tree := tree)
     let text := pdfText pdf

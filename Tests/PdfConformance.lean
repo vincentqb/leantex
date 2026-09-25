@@ -330,11 +330,15 @@ def featureSpellings : List (Pdf.Feature × String) := [
   (.markedContent, "\nEMC"),
   (.structTree, "/Type /StructTreeRoot")]
 
-/-- The features a produced PDF reaches, by spelling. -/
-def emittedFeatures (pdf : ByteArray) : List Pdf.Feature :=
-  let text := pdfText pdf
+/-- The features a produced PDF reaches, by spelling, from its text read
+once. -/
+def emittedFeaturesOf (text : ByteArray) : List Pdf.Feature :=
   featureSpellings.filterMap fun (f, spelling) =>
     if bytesContain text spelling then some f else none
+
+/-- The features a produced PDF reaches, by spelling. -/
+def emittedFeatures (pdf : ByteArray) : List Pdf.Feature :=
+  emittedFeaturesOf (pdfText pdf)
 
 mutual
 
@@ -477,7 +481,8 @@ as a function of the document (twice-written equality, no dates, no
 absolute path); the reader matrix read as data, the gate broken once on a
 mutated copy, and the per-fixture feature table complete over the golden
 set and consistent with the file's spellings. -/
-def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
   let cwd ← IO.currentDir
   -- The matrix, read once; its gate over every writer feature.
@@ -523,14 +528,14 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- Every fixture: the walk, the typed census against the bytes, the
   -- gate over what it reaches, determinism.
   let mut reached : Array String := #[]
-  for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
-    let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
-    let out := layoutOf oneFace doc geom none store
-    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
-    match walkPdf pdf with
+  for a in arts do
+    let n := a.name
+    let doc := a.doc
+    let geom := a.geom
+    let store := a.store
+    let out := a.out
+    let pdf := a.pdf
+    match a.objs.bind fun es => (PdfRead.trailer pdf).bind fun tr => refWalk tr es with
     | .error e => t s!"pdf walk {n}: {e}" false
     | .ok w =>
       t s!"pdf walk {n}: every listed object is reached: {w.unreached}" w.unreached.isEmpty
@@ -540,10 +545,10 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     -- written objects) name the same features; the spelled reading agrees
     -- on every feature it can spell.
     let typed := (Pdf.features geom oneFace out.pages store out.outline).map Pdf.Feature.name
-    let parsed := (parsedFeatureNames pdf).toOption.getD []
+    let parsed := (a.objs.map fun es => (featuresOfEntries es).map Pdf.Feature.name).toOption.getD []
     t s!"pdf features {n}: typed census {typed} = parsed bytes {parsed}"
       (typed.all parsed.contains && parsed.all typed.contains)
-    let spelled := (emittedFeatures pdf).map Pdf.Feature.name
+    let spelled := (emittedFeaturesOf a.text).map Pdf.Feature.name
     t s!"pdf features {n}: the spelled reading {spelled} agrees on every spelling"
       (featureSpellings.all fun (f, _) => spelled.contains f.name == typed.contains f.name)
     for f in typed do
@@ -553,7 +558,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         (featureGate m typed.toList).isEmpty
     let pdf2 := Pdf.write geom oneFace out.pages doc.info store out.outline
     t s!"pdf deterministic {n}: written twice, equal" (pdf == pdf2)
-    let text := pdfText pdf
+    let text := a.text
     for v in volatileSpellings do
       t s!"pdf deterministic {n}: no {v}" (!bytesContain text v)
     t s!"pdf deterministic {n}: no absolute source path"

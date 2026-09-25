@@ -66,6 +66,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
   let geom : Layout.Geom := {}
+  let arts ← goldenArts oneFace
   pdfFaceChecks ref geom oneFace font
   webMetaChecks ref geom oneFace
   sizeLadderChecks ref oneFace
@@ -107,7 +108,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   bandChecks ref oneFace
   agreeChecks ref oneFace pats
   artifactMarkChecks ref oneFace pats
-  structTreeChecks ref oneFace
+  structTreeChecks ref oneFace arts
   pictureLayoutChecks ref oneFace
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace
@@ -166,10 +167,10 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   planChecks ref
   pdfFormChecks ref oneFace
   pdfCensusChecks ref oneFace
-  pdfContractChecks ref oneFace
+  pdfContractChecks ref oneFace arts
   objTableChecks ref oneFace
   featureCensusChecks ref oneFace
-  pdfConformanceChecks ref oneFace
+  pdfConformanceChecks ref oneFace arts
   artifactChecks ref oneFace pats
   artBandParityChecks ref oneFace pats
   artGroundParityChecks ref oneFace pats
