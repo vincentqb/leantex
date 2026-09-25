@@ -18574,12 +18574,19 @@ text goes through `Raw.word` and so carries `$`, `%` and `#` with no
 escape — they never become control tokens. Three rows in
 `mdSurfaceChecks` pin that. It is the concrete form of "md ⊂
 tex-expressible": where the surface AST has no field for a construct, the
-construct is *routed* by a `W0307` carrying its own subject
-(`md:thematic-break`, `md:heading-depth`, `md:list-start`,
-`md:loose-list`, `md:code-info`, `md:image-alt`), never silently dropped.
-Four of those six are the kernel's, not markdown's: `Ir` has no rule
-block, three sectioning levels, and `Ir.Block.list` carries neither a
-start number nor tightness.
+construct is *routed* by a keyed diagnostic carrying its own subject,
+never silently dropped — and the code it takes is decided by what reaches
+the page. `W0307` is `pending`, floor `absent`, so it names only a
+construct that ships nothing: `md:thematic-break`, since `Ir` has no rule
+block. `W0391` is `degraded`, floor `content`, for a construct that ships
+diminished: `md:heading-depth` (three sectioning levels), `md:list-start`
+and `md:loose-list` (`Ir.Block.list` carries neither a start number nor
+tightness), `md:link-title` and `md:image-title` (`Ir.Inline.link` has no
+title field). Two constructs that *were* routed are not gaps at all and
+are now carried through their one existing resolving site: a fenced
+block's info string rides `{lstlisting}`'s `language=` key into
+`Ir.ListingSpec.language`, and an image's text alternative rides a braced
+`\includegraphics[alt={...}]`.
 
 **Four defects, all invisible to the IR.** Each produced a plausible md
 AST and a plausible `Ir.Doc`, and each was found by reading the emitted
@@ -18608,14 +18615,16 @@ both the provenance file and the script, CC-BY-SA 4.0) and every case
 carries a committed verdict in `tests/commonmark/verdicts.tsv`:
 `match | rejected | divergence | owed`. `scripts/commonmark.lean` has
 `html-oracle`'s three modes plus `--explain <case>`, which prints the two
-canonical forms side by side. Today: **match 310, rejected 154,
-divergence 0, owed 188**, in 0.9 s for all 652.
+canonical forms side by side. Today: **match 321, rejected 128,
+divergence 0, owed 203**, in 0.9 s for all 652 — of the owed, 22 carry the
+note `pending-decision:smart-punctuation` and 11 the note
+`tree-agrees-but-a-loss-is-named`.
 
 Comparison is over *trees*. The engine's HTML is a typed tree already;
 the spec's expected HTML is read by a tolerant reader in the script into
-the same `Html.Node` shape, and both go through one `canon`. Six
+the same `Html.Node` shape, and both go through one `canon`. Seven
 normalizations are declared in the script, each with the thing it would
-hide named beside it. Two were bugs the declaration exposed: `canon`
+hide named beside it, and each mutated in `--selftest`. Two were bugs the declaration exposed: `canon`
 emitted a closing tag for void elements, and the heading-level offset was
 subtracted from *both* sides, which collapsed `h1` and `h2` to one
 ordinal and reported every two-level heading document as owed. Fixing
@@ -18626,7 +18635,7 @@ script's `--selftest` now records its findings instead of printing them;
 written to print, it reported a real mismatch and the run still said
 `ok`.
 
-**The three strict classes, measured.** Raw HTML passthrough touches 98
+**The three strict classes, measured.** Raw HTML passthrough touches 73
 spec cases, indented code blocks 52, lazy continuation 12 — read off the
 subject each refusal carried, not counted by hand. They are one code
 (`E0390`) with three subjects, so `Diag.tallySites` folds repeats and
@@ -18635,7 +18644,109 @@ decision is the user's; the reader is built so that decision is data.
 
 `tests/scoreboard/commonmark.tsv` is the tier: one row per spec section,
 value = cases matching, a value may not drop and a row may not vanish.
-The deficits are the ranking the autonomy loop asked for — Links 33/90,
+The deficits are the ranking the autonomy loop asked for — Links 34/90,
 Link reference definitions 3/27 (no definition map yet), Images 4/22,
-Lists 8/27, Setext 11/27 — and they are read from the table rather than
+Lists 6/27, Setext 11/27 — and they are read from the table rather than
 guessed.
+
+**Correction, same day: a reviewer blocked this, and five of the findings
+were about the ledger rather than the reader.** The architecture held and
+the hand-checked matches were genuine. What did not hold:
+
+- **An oracle certified itself.** `classify` filed *any* `E0390` as
+  `rejected`, and `rejected` then meant "whatever the reader under test
+  refused". Twenty-nine of the 154 were reader defects on valid
+  CommonMark: `htmlBlockAt` fired on any `<` followed by a letter, so
+  `<https://example.org>` at the start of a line and literal text such as
+  `x <y for comparison` failed the build. The fix is both halves. The
+  reader implements the §6.6 tag grammar (`htmlTagAt`) — a name, its
+  attributes, quoted or unquoted values, comments, processing
+  instructions, declarations, CDATA — and the block test implements §4.6's
+  conditions 1–6 by name with condition 7 as a complete tag alone on its
+  line, split from `htmlBlockInterruptAt` because condition 7 may not
+  interrupt a paragraph. And the verdict is keyed on the three declared
+  refusal *subjects*, never on the code: an `E0390` from anywhere else is
+  a defect, not a decision. Twenty-five cases left `rejected`, 14 of them
+  to `match`. **No bucket may be defined by the code under test** is now
+  the surface-reader row in AGENTS.md.
+- **A fence outlived its container.** A fenced leaf skipped container
+  matching entirely, so a fence inside a blockquote or a nested item never
+  closed: the closing fence, the paragraph and the heading after it all
+  shipped inside one `<pre><code>`, with the container's `> ` prefixes
+  intact and no diagnostic. Containers are matched first now; the closer
+  is tested on the line after the prefixes; content lines are stripped of
+  the opener's own indent and no more; and the fence closes with its
+  container (§4.5). Six rows in `mdSurfaceChecks`, one per container kind
+  plus the sibling and the following block.
+- **Six matches existed only because a normalization dropped `class`.**
+  The rule is now general and mutation-tested: a case whose run *names a
+  loss* can never be a `match`, however the trees compare. That demoted 11
+  cases, 9 of them on `md:loose-list`, which over-reports because the HTML
+  backend already wraps a multi-block item in `<p>`. The six info-string
+  cases are genuine matches now that the language is carried. The tier
+  baseline is *lower* in six sections as a result; the drop is declared in
+  the tier file's own header with the case numbers, and `--check` compares
+  notes as well as verdicts, so none of the eleven can quietly become a
+  `match` again.
+- **Titles were dropped in silence** and the wrong fix-its shipped. Link
+  and image titles are named by `W0391`; the raw-HTML help no longer says
+  "write it as a command", which markdown cannot do, and the lazy help
+  says to indent to the container's content column rather than to repeat a
+  bullet, which would start a new item.
+- **Smart punctuation on markdown text is the user's decision, not the
+  reader's.** The elaborator's `smartPunct` rewrites `--`, `...` and
+  straight quotes in md body text; CommonMark keeps them literal. Twenty-two
+  cases differ from the spec by nothing else. They stay `owed`, out of
+  `match`, each carrying the note `pending-decision:smart-punctuation`, and
+  the run prints the count. Deciding it either declares 22 divergences with
+  a reason or gives the surface a literal-word form the desugaring can emit.
+
+**The inline phase was quadratic, and nothing could have noticed.** One
+64 KB paragraph of `*a*` took 31.8 s and 112 KB of links 165 s, against
+0.9 s and 0.6 s for the same content written as tex. Two independent
+causes, both the same shape: `buildInlines` filtered the two pair tables
+once per token, and five bounded `for` loops were used as while-loops that
+ran to the paragraph length after their own run had ended. The pair tables
+are indexed by token before the pass; the loops break; `matchEmphasis`
+walks only run tokens and stops at the spec's openers-bottom floor.
+Measured through the binary: emphasis 64 KB 31,831 → 905 ms, links 56 KB
+55,297 → 519 ms, links 112 KB 164,666 → 982 ms. All 652 verdicts are
+unchanged across the rewrite, which is the correctness evidence.
+
+The gate is new and is a *mechanism*, not a number: `--scaling` runs every
+inline shape at 1×/2×/4× plus the pathological ones (nested brackets, open
+brackets, mixed delimiter runs) and fails above 2.6× per doubling. It
+measures wall-clock, so it is a deep oracle run when the reader is touched,
+not part of `lake test`. Measured after: every shape 1.86–2.02×. Broken
+once through its own path — the per-token pair filters reinstated, the tool
+run, exit 1 at 3.87× and 3.93× — then restored from a file copy.
+
+Three container defects the reviewer found are also fixed, each with its
+own rows: `* * *` and `- - -` opened three nested empty lists because the
+container loop ran before the thematic-break test; the spaces after a
+marker were counted from the second one, so `-     foo` set its content as
+item text where the strict dialect owes an indented-code refusal; and a
+line that was only markers opened an empty paragraph, which made the next
+line a lazy continuation of it. `splitLines` folds over the string instead
+of materializing `input.toList`, and the classifier's input gate is
+`Flate.contentKey` in Lean rather than a `sha256sum` subprocess — the
+sha256 stays as provenance, which is what a human verifies upstream, but a
+hermetic run cannot spawn a process.
+
+**Routed, as IR gaps, not the reader's to fix.** `Ir.Block.list`
+(`Ir.lean:3599`, `list (ordered : Bool) (items : Array (Array Block))`) has
+no `start` and no `tight` field, so `md:list-start` and `md:loose-list` stay
+routed, and `md:loose-list` over-reports on the HTML side until tightness is
+a field the backend reads. `Ir.Inline.link` (`Ir.lean:2029`,
+`link (url : String) (body : Array Inline)`) has no `title` field, and
+`Ir.Inline.image` (`Ir.lean:2099`) none either, so `md:link-title` and
+`md:image-title` stay routed. Heading depth beyond three levels is a kernel
+decision about sectioning, not a markdown one.
+**Left undone**, named rather than hidden: `charsOf` (`MdParse`) and
+`textRaws` (`MdDesugar`) still build a `List Char` per paragraph;
+`squeeze` and `keptAttrs` in the classifier are still wider than their
+declarations (measured to inflate nothing today, but unchecked); the
+classifier is still not in CI, which is the coordinator's commit; link
+reference definitions still render as paragraph text rather than being
+named; and `matchEmphasis` still neither removes delimiters between a
+matched pair nor applies the rule of three to the original run lengths.

@@ -191,3 +191,31 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (degraded "3. three\n4. four\n" "md:list-start")
   t "no md route still claims a shipping construct is absent"
     ((dvMd "#### h\n\n[a](u \"t\")\n").all (·.kind != .W0307))
+  -- Defect: the container loop opened a list item before the thematic-break
+  -- test ran, so `* * *` and `- - -` became three nested empty lists.
+  t "a starred thematic break is a break, not three nested lists"
+    (!has "a\n\n* * *\n\nb\n" "<ul>")
+  t "a dashed thematic break is a break, not three nested lists"
+    (!has "a\n\n- - -\n\nb\n" "<ul>")
+  t "a starred thematic break routes its own construct"
+    (routed "a\n\n* * *\n\nb\n" "md:thematic-break")
+  t "the blocks either side of a thematic break still ship"
+    (has "a\n\n* * *\n\nb\n" "<p>a</p><p>b</p>")
+  -- Defect: the spaces after a marker were counted from the second one, so
+  -- five of them read as one and `-     foo` set its content as item text
+  -- where the strict dialect owes an indented-code refusal.
+  t "five spaces after a marker is indented code inside the item"
+    (refusedWith "-     foo\n" "md:indented-code")
+  t "one space after a marker is ordinary item content"
+    (has "- foo\n" "<li>foo</li>")
+  t "three spaces after a marker is still item content"
+    (has "-   foo\n" "<li>foo</li>")
+  -- Defect: an empty remainder after the markers opened an empty paragraph,
+  -- and the next unmarked line was then refused as a lazy continuation of
+  -- it. The marker line opens nothing.
+  t "an empty item's content is not a lazy continuation"
+    ((dvMd "-   \n  foo\n").all (·.kind != .E0390))
+  t "an empty item's content ships as its item"
+    (has "-   \n  foo\n" "<ul><li>foo</li></ul>")
+  t "a quote marker alone does not open an empty paragraph"
+    ((dvMd "> \n> quoted\n").all (·.kind != .E0390))
