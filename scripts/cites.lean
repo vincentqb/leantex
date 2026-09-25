@@ -43,13 +43,39 @@ different shape, and none of them matches: a camelCase def or field
 (`foldInlines`), a dotted or spaced type (`Ir.dump`, `Array Block`), a flag
 (`--wfail`), a path (`tests/compat-index`), a SCREAMING_SNAKE environment or
 format key (`LEANTEX_FONT`, `ICC_PROFILE`), prose. -/
-def citeCandidate (tk : String) : Bool :=
+def citeBare (tk : String) : Bool :=
   let cs := tk.toList
   !cs.isEmpty
     && cs.all isWordChar
     && ((cs.head?.map Char.isLower).getD false)
     && ((cs.getLast?.map (· != '_')).getD false)
     && containsSub tk "_"
+
+/-- The namespace-qualified spelling of the same thing: `Elab.x`,
+`Obligations.y`, `Diag.tallySites_exact`. A citation reaching out of its own
+file writes the qualifier, and this tree's house style does so routinely, so
+the bare form alone left a hole -- three dangling citations to a theorem that
+never existed passed the gate under the dotted spelling, in the very change
+that recorded the hole. The qualifier must look like one (capitalised
+segments, word characters only) and the last component must be the bare
+shape, which is what keeps `Ir.dump` and `Font.FontSet` out. -/
+def citeQualified (tk : String) : Bool :=
+  match tk.splitOn "." with
+  | [] | [_] => false
+  | segs =>
+    let last := segs.getLast!
+    let quals := segs.dropLast
+    citeBare last
+      && quals.all fun q =>
+        let cs := q.toList
+        !cs.isEmpty && cs.all isWordChar && ((cs.head?.map Char.isUpper).getD false)
+
+/-- Either spelling. -/
+def citeCandidate (tk : String) : Bool := citeBare tk || citeQualified tk
+
+/-- The name a citation is indexed under: its last component, which is what
+`shortIndex` keys on. -/
+def citeShort (tk : String) : String := (tk.splitOn ".").getLast!
 
 /-- The closed backticked spans of a line, in order. An unclosed span -- a
 citation wrapped across two lines -- is dropped rather than guessed at. -/
@@ -145,7 +171,40 @@ empty list with no row to imitate invites it. A row added here carries the
 same three things every row above did: the anchor declaration, what actually
 holds the fact, and the one-line fix. -/
 def citePhantomKnown : List String :=
-  ["frames_sections", "sty_is_defaults"]
+  ["frames_sections", "sty_is_defaults",
+   -- Five the qualified-spelling hole hid: the resolver read only the bare
+   -- snake_case form, so a citation written `Namespace.theorem_name` was not
+   -- a candidate at all, and the gate never asked. They are pre-existing,
+   -- each in a file this branch does not own, and each is routed with its
+   -- owner rather than silenced by deleting the sentence.
+   "Layout.spill_accounts",       -- LeanTex/Core/Ir.lean:3723, anchor
+                                  -- `Ir.Block.frame`: the claim is that a
+                                  -- frame's overflow is named rather than
+                                  -- dropped. `Layout` states nothing of the
+                                  -- kind. Fix: state it over `Layout.Out`
+                                  -- beside the spill emission, or drop the
+                                  -- name and let `censusChecks` carry it.
+   "Math.accentAttach_covers",    -- LeanTex/Core/Font.lean:1046, anchor
+                                  -- `Font.Font.topAccentX`: the attachment
+                                  -- point is claimed covered for every base.
+                                  -- Fix: state it over `Font.topAccentX`
+                                  -- itself, where the fallback arm lives.
+   "Picture.labelFace_agree",     -- Tests/Support.lean:350 and
+                                  -- Tests/Surface.lean:5918: a picture
+                                  -- label's face is claimed to agree across
+                                  -- backends. `pictureLabelFaceChecks` is
+                                  -- the artifact witness; the IR theorem it
+                                  -- projects from is unwritten. Fix: state
+                                  -- the `_agree` over the one IR value both
+                                  -- backends read.
+   "Picture.placeRel_exact",      -- Tests/Support.lean:387: relative node
+                                  -- placement claimed exact. Fix: state it
+                                  -- where the placement is computed.
+   "Picture.place_order_agree"]   -- Tests/Support.lean:387 and
+                                  -- Tests/Surface.lean:5106: node order
+                                  -- claimed to agree across backends. Fix:
+                                  -- as `labelFace_agree`, one IR statement
+                                  -- with two projections.
 
 /-- The modules this tree compiles, each with the lake target that builds
 it. The gate imports all of them: a citation may be written anywhere, and a
@@ -294,7 +353,7 @@ inductive Verdict where
 def verdict (envs : Array Environment) (idx : Std.HashMap String (Array Name))
     (s : Site) (tok : String) : Verdict :=
   if resolvesIn envs s.ns (.simple stagingNamespace [] :: s.opens) tok then .scope
-  else if ((idx[tok]?).getD #[]).any (fun ns => resolvesIn envs ns [] tok) then .tree
+  else if ((idx[citeShort tok]?).getD #[]).any (fun ns => resolvesIn envs ns [] tok) then .tree
   else .phantom
 
 def loadTree : IO (Array Environment) := do
@@ -405,9 +464,19 @@ def selftest : IO UInt32 := do
     ("leafOwners_mem", true),
     ("labMix_L", true),
     ("x_y", true),
+    -- the qualified spelling, which is how a citation reaches another file
+    ("Elab.warnUnknownCmd_pushes_one", true),
+    ("Obligations.floorMask_id", true),
+    ("Diag.tallySites_exact", true),
+    ("LeanTex.Core.Elab.runShape_fold_exact", true),
     -- everything else the tree backticks
     ("foldInlines", false),
     ("Ir.dump", false),
+    ("Font.FontSet", false),
+    ("Layout.Out", false),
+    ("elab.x_y", false),
+    (".x_y", false),
+    ("x_y.", false),
     ("Array Block", false),
     ("Conserves", false),
     ("--wfail", false),
