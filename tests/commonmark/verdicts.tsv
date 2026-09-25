@@ -64,7 +64,7 @@
 57	Thematic breaks	owed	blocked-by:md:thematic-break
 58	Thematic breaks	owed	blocked-by:md:thematic-break
 59	Thematic breaks	match
-60	Thematic breaks	owed
+60	Thematic breaks	owed	blocked-by:md:thematic-break
 61	Thematic breaks	owed	blocked-by:md:thematic-break
 62	ATX headings	owed	blocked-by:md:heading-depth
 63	ATX headings	match
@@ -92,7 +92,7 @@
 85	Setext headings	rejected	refused:md:indented-code
 86	Setext headings	match
 87	Setext headings	owed	pending-decision:smart-punctuation
-88	Setext headings	owed
+88	Setext headings	owed	blocked-by:md:thematic-break
 89	Setext headings	owed
 90	Setext headings	match
 91	Setext headings	owed

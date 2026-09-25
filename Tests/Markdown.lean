@@ -43,6 +43,68 @@ def mdTreeOf (src : String) : String :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   mdFlatten "" body.toList
 
+/-- A generated family of documents that each end a list with a thematic
+break and then carry on: container context × list marker × break spelling ×
+nesting × a blank line or not × the block that follows. -/
+def mdBreakFamily : Array (String × Nat × List String) := Id.run do
+  let afters : List (List String × List String) :=
+    [(["zulu after"], ["zulu"]), (["## yankee heading"], ["yankee"]),
+     (["> xray quoted"], ["xray"]), (["- whiskey item"], ["whiskey"]),
+     (["1. victor item"], ["victor"]), (["```", "uniform code", "```"], ["uniform"])]
+  let mut out : Array (String × Nat × List String) := #[]
+  for pre in ["", "> "] do
+    for mk in ["- ", "* ", "+ ", "1. ", "1) "] do
+      for brk in ["***", "* * *", "- - -", "---", "___", "_ _ _", " * * *", "-  -  -"] do
+        for nested in [false, true] do
+          for gap in [false, true] do
+            for (after, words) in afters do
+              let mut lines : Array String := #[pre ++ mk ++ "alpha"]
+              let mut want : List String := ["alpha"] ++ words
+              if nested then
+                lines := lines.push (pre ++ String.ofList (List.replicate mk.length ' ')
+                  ++ mk ++ "bravo")
+                want := "bravo" :: want
+              if gap then lines := lines.push pre.trimAsciiEnd.toString
+              lines := lines.push (pre ++ brk)
+              let brkLine := lines.size
+              for a in after do lines := lines.push (pre ++ a)
+              out := out.push (String.intercalate "\n" lines.toList ++ "\n", brkLine, want)
+  return out
+
+/-- **Every block of the source reaches the page or a diagnostic.** A list
+followed by a spaced thematic break kept its frame open with no item in it,
+and everything after the break landed in the list's own accumulator, which
+its close discarded: the rest of the document shipped nowhere, with no
+diagnostic at all. So the statement is over a generated family, not one
+case: in every document the family builds, every sentinel word ships, and
+the break — the one block with no ink in this engine — is named by its
+route at its own line. -/
+def mdAccountsChecks (t : String → Bool → IO Unit) : IO Unit := do
+  let fam := mdBreakFamily
+  let mut bad : Array String := #[]
+  for (src, brkLine, words) in fam do
+    let tree := mdTreeOf src
+    let lost := words.filter (!hasStr tree ·)
+    let named := (dvMd src).any fun d =>
+      d.kind == .W0307 && d.subject == some "md:thematic-break"
+        && (d.span.map (·.pos.line)) == some brkLine
+    unless lost.isEmpty && named do
+      bad := bad.push s!"{src.replace "\n" "⏎"} lost {lost} named {named}"
+  t s!"every block after a list and a thematic break ships or is named \
+({bad.size} of {fam.size} documents fail; first: {bad.toList.take 3})" bad.isEmpty
+  -- A setext underline is one run of `=` or `-`: with spaces inside it, the
+  -- line under a paragraph is a thematic break (or text), never a heading.
+  t "a spaced dash line under a paragraph is a break, not a heading"
+    (has1 "Foo\n- - -\n" "<p>Foo</p>" && !has1 "Foo\n- - -\n" "<h")
+  t "a spaced equals line under a paragraph is text, not a heading"
+    (has1 "Foo\n= =\n" "= =" && !has1 "Foo\n= =\n" "<h")
+  t "an unspaced dash line under a paragraph is still a heading"
+    (has1 "Foo\n---\n" "<h3>Foo</h3>")
+  t "a list, a thematic break and another list are three blocks"
+    (has1 "* Foo\n* * *\n* Bar\n" "<ul><li>Foo</li></ul><ul><li>Bar</li></ul>")
+where
+  has1 (src needle : String) : Bool := hasStr (mdTreeOf src) needle
+
 def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tree := mdTreeOf
@@ -225,3 +287,4 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has "-   \n  foo\n" "<ul><li>foo</li></ul>")
   t "a quote marker alone does not open an empty paragraph"
     ((dvMd "> \n> quoted\n").all (·.kind != .E0390))
+  mdAccountsChecks t

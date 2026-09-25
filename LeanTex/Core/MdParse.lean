@@ -237,14 +237,17 @@ def orderedAt (cs : Array Char) (i : Nat) : Option (Nat × Char × Nat) := Id.ru
   | none => return some (n, d, j + 1)
   | some e => if isSpaceOrTab e then return some (n, d, j + 2) else return none
 
-/-- A setext underline: `=`+ or `-`+ and nothing else. Returns the level. -/
+/-- A setext underline: one run of `=` or of `-`, then only trailing spaces
+or tabs (§4.3). Returns the level. Spaces *inside* the run are not an
+underline: `Foo` over `- - -` is a paragraph and a thematic break, and
+accepting them set it as a heading. -/
 def setextAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
   let some c0 := cs[i]? | return none
   unless c0 == '=' || c0 == '-' do return none
-  for j in [i:cs.size] do
-    if h : j < cs.size then
-      let c := cs[j]
-      unless c == c0 || isSpaceOrTab c do return none
+  let mut j := i
+  for _ in [0:cs.size + 1] do
+    if cs[j]? == some c0 then j := j + 1 else break
+  unless isBlankFrom cs j do return none
   return some (if c0 == '=' then 1 else 2)
 
 -- ## Raw HTML, recognized rather than guessed
@@ -1164,6 +1167,42 @@ private structure Frame where
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
+/-- Close the innermost frame, wrapping what it accumulated into the node its
+container denotes. The one closing definition every site uses, and it drops
+nothing: a list's own accumulator — blocks that reached the list frame
+outside any item — is carried after the list. Four sites once closed a list
+by hand as `outer.push list`, and each discarded that accumulator; when a
+frame outlived its items, everything after it shipped nowhere. -/
+private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × Array Blk :=
+  match frames.back? with
+  | none => (frames, acc)
+  | some f =>
+    let rest := frames.pop
+    match f.kind with
+    | .quote => (rest, f.outer.push (.quote acc f.pos))
+    | .item _ =>
+      match rest.back?.map Frame.kind with
+      | some (FKind.list _ _ _) =>
+        (rest.modify (rest.size - 1) (fun lf => { lf with items := lf.items.push acc }), f.outer)
+      | _ => (rest, f.outer ++ acc)
+    | .list ord st _ => (rest, f.outer.push (.list ord st f.tight f.items f.pos) ++ acc)
+
+/-- Close every list frame that is innermost. A list frame lives only as long
+as its items: a line that opens no item inside it — a thematic break, a
+quote, a paragraph — is past the list. -/
+private def closeLists (frames : Array Frame) (acc : Array Blk) : Array Frame × Array Blk :=
+  Id.run do
+  let mut fs := frames
+  let mut a := acc
+  for _ in [0:frames.size] do
+    match fs.back?.map Frame.kind with
+    | some (FKind.list _ _ _) =>
+      let (fs', a') := closeTop fs a
+      fs := fs'
+      a := a'
+    | _ => break
+  return (fs, a)
+
 /-- The leaf open at the innermost container. A fence carries the indent its
 opener stood at: §4.5 strips up to that many columns from each content line,
 so a fence inside a list item does not ship the item's indent as code. -/
@@ -1302,39 +1341,9 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       leaf := .none
       for _ in [0:frames.size] do
         if frames.size > matched then
-          if let some f := frames.back? then
-            frames := frames.pop
-            match f.kind with
-            | .quote => acc := f.outer.push (.quote acc f.pos)
-            | .item _ =>
-              if frames.size > 0 then
-                let inner := acc
-                frames := frames.modify (frames.size - 1)
-                  (fun lf => { lf with items := lf.items.push inner })
-                acc := f.outer
-              else
-                acc := f.outer ++ acc
-            | .list ord st _ => acc := f.outer.push (.list ord st f.tight f.items f.pos)
-      -- A list frame lives only as long as its items: when no item matched
-      -- and the line starts no new one, the list closes with them. Left
-      -- open, it swallowed every following block — a quote, a fence, a
-      -- heading and a paragraph all landed inside its last item, and the
-      -- backend shipped none of them.
-      let (jj, indj) := indentAt cs i col
-      let startsItem := indj ≤ 3
-        && ((bulletAt cs jj).isSome || (orderedAt cs jj).isSome)
-      unless startsItem do
-        let mut more := true
-        for _ in [0:frames.size] do
-          if more then
-            match frames.back? with
-            | some f =>
-              match f.kind with
-              | .list o st _ =>
-                frames := frames.pop
-                acc := f.outer.push (.list o st f.tight f.items f.pos)
-              | _ => more := false
-            | none => more := false
+          let (fs, a) := closeTop frames acc
+          frames := fs
+          acc := a
     if blank then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1355,6 +1364,10 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
           acc := a
           diags := diags ++ ds
           leaf := .none
+          -- A quote is past any list whose item did not match this line.
+          let (fs, a2) := closeLists frames acc
+          frames := fs
+          acc := a2
           frames := frames.push { kind := .quote, pos := lpos, outer := acc }
           acc := #[]
           i := j2
@@ -1401,15 +1414,9 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
               -- landed inside its last item, where the backend shipped none
               -- of them.
               unless sameList do
-                match frames.back? with
-                | some f =>
-                  match f.kind with
-                  | .list o st _ =>
-                    frames := frames.pop
-                    acc := f.outer.push (.list o st f.tight f.items f.pos)
-                  | _ => pure ()
-                | none => pure ()
-              unless sameList do
+                let (fs, a2) := closeLists frames acc
+                frames := fs
+                acc := a2
                 frames := frames.push
                   { kind := .list ordered start marker, pos := lpos, outer := acc }
                 acc := #[]
@@ -1433,6 +1440,16 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
               i := contentIdx
               col := 0
               opened := true
+    -- A list frame is never innermost past this point. The line opened no
+    -- item inside it, so the line is past the list. Decided after the
+    -- containers were read, not predicted before: the prediction was a
+    -- second copy of the container loop's marker test, and the copy that
+    -- lacked the thematic-break precedence kept a list open under `* * *`
+    -- with no item in it, so the rest of the document landed in the list's
+    -- own accumulator and shipped nowhere.
+    let (fs, a) := closeLists frames acc
+    frames := fs
+    acc := a
     -- A blank line between two blocks of one item makes its list loose.
     if sawBlank && !acc.isEmpty then
       for fi in [0:frames.size] do
@@ -1527,19 +1544,9 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
   | .none => pure ()
   for _ in [0:frames.size] do
-    if let some f := frames.back? then
-      frames := frames.pop
-      match f.kind with
-      | .quote => acc := f.outer.push (.quote acc f.pos)
-      | .item _ =>
-        if frames.size > 0 then
-          let inner := acc
-          frames := frames.modify (frames.size - 1)
-            (fun lf => { lf with items := lf.items.push inner })
-          acc := f.outer
-        else
-          acc := f.outer ++ acc
-      | .list ord st _ => acc := f.outer.push (.list ord st f.tight f.items f.pos)
+    let (fs, a) := closeTop frames acc
+    frames := fs
+    acc := a
   return (acc, diags)
 
 end LeanTex.Core.Md
