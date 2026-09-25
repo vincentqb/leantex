@@ -10,7 +10,7 @@
 4	Tabs	owed	tree-agrees-but-a-loss-is-named
 5	Tabs	rejected
 6	Tabs	rejected
-7	Tabs	owed
+7	Tabs	rejected
 8	Tabs	rejected
 9	Tabs	owed
 10	Tabs	match
@@ -56,7 +56,7 @@
 50	Thematic breaks	owed
 51	Thematic breaks	owed
 52	Thematic breaks	owed
-53	Thematic breaks	rejected
+53	Thematic breaks	owed
 54	Thematic breaks	owed
 55	Thematic breaks	owed	pending-decision:smart-punctuation
 56	Thematic breaks	match
@@ -108,7 +108,7 @@
 102	Setext headings	match
 103	Setext headings	match
 104	Setext headings	owed
-105	Setext headings	rejected
+105	Setext headings	owed
 106	Setext headings	owed	pending-decision:smart-punctuation
 107	Indented code blocks	rejected
 108	Indented code blocks	owed	tree-agrees-but-a-loss-is-named
@@ -281,8 +281,8 @@
 275	List items	match
 276	List items	match
 277	List items	owed	tree-agrees-but-a-loss-is-named
-278	List items	owed
-279	List items	rejected
+278	List items	rejected
+279	List items	match
 280	List items	owed
 281	List items	match
 282	List items	match

@@ -93,22 +93,26 @@ structure Line where
   no : Nat
   deriving Inhabited
 
-def splitLines (input : String) : Array Line := Id.run do
-  let mut out : Array Line := #[]
-  let mut cur : Array Char := #[]
-  let mut no := 1
-  for c in input.toList do
-    if c == '\n' then
-      out := out.push ⟨cur, no⟩
-      cur := #[]
-      no := no + 1
-    else if c == '\r' then
-      pure ()
-    else
-      cur := cur.push c
+/-- The reader's line-splitting accumulator: the lines closed so far, the
+line being built, and its number. -/
+private structure LineAcc where
+  out : Array Line
+  cur : Array Char
+  no : Nat
+
+def splitLines (input : String) : Array Line :=
+  -- Folded over the string rather than over `input.toList`: the whole
+  -- document is the input here, and materializing it as a cons list is one
+  -- allocation per character before the reader has looked at anything. The
+  -- accumulator is uniquely owned through the fold, so each `push` appends
+  -- in place.
+  let step (a : LineAcc) (c : Char) : LineAcc :=
+    if c == '\n' then { out := a.out.push ⟨a.cur, a.no⟩, cur := #[], no := a.no + 1 }
+    else if c == '\r' then a
+    else { a with cur := a.cur.push c }
+  let a := input.foldl step { out := #[], cur := #[], no := 1 }
   -- A trailing newline ends the last line; text after it is one more line.
-  if !cur.isEmpty then out := out.push ⟨cur, no⟩
-  return out
+  if a.cur.isEmpty then a.out else a.out.push ⟨a.cur, a.no⟩
 
 /-- Where the line's content starts and how many columns of indent precede
 it, counting a tab as advancing to the next multiple of four. -/
@@ -523,6 +527,7 @@ def codeSpanAt (c : Chars) (i n : Nat) : Option (String × Nat) := Id.run do
         if c.at? k == some '`' then
           m := m + 1
           k := k + 1
+        else break
       if m == n then
         -- Strip one space from each end when both are present and the
         -- content is not all spaces (spec §6.1).
@@ -548,7 +553,18 @@ def tickRun (c : Chars) (i : Nat) : Nat := Id.run do
     if c.at? j == some '`' then
       n := n + 1
       j := j + 1
+    else break
   return n
+
+/-- A run of whitespace in an inline stretch: the index past it. Spelled as a
+loop that stops, because a bounded `for` used as a while-loop without a break
+is the shape that made this phase quadratic: five of these ran to `c.size`
+once per token. -/
+def Chars.ws (c : Chars) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:c.size + 1] do
+    if (c.at? j).map isMdSpace == some true then j := j + 1 else break
+  return j
 
 /-- An autolink `<scheme:...>` or `<local@domain>` at `i`: the destination,
 the link text, and the index past `>`. -/
@@ -586,68 +602,62 @@ the title, and the index past `)`. Angle-bracket destinations and one level
 of balanced parentheses, which is what the inline form needs. -/
 def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.run do
   unless c.at? i == some '(' do return none
-  let mut j := i + 1
-  -- Optional whitespace.
-  for _ in [0:c.size + 1] do
-    if (c.at? j).map isMdSpace == some true then j := j + 1
+  let mut j := c.ws (i + 1)
   let mut dest := ""
   if c.at? j == some '<' then
     let mut k := j + 1
     let mut closed := false
     for _ in [0:c.size + 1] do
-      unless closed do
-        match c.at? k with
-        | none => return none
-        | some '>' =>
-          closed := true
-        | some '\n' => return none
-        | some ch =>
-          if ch == '\\' then
-            match escaped? c k with
-            | some d =>
-              dest := dest.push d
-              k := k + 1
-            | none => dest := dest.push ch
-          else
-            dest := dest.push ch
-          k := k + 1
+      match c.at? k with
+      | none => return none
+      | some '>' =>
+        closed := true
+        break
+      | some '\n' => return none
+      | some ch =>
+        if ch == '\\' then
+          match escaped? c k with
+          | some d =>
+            dest := dest.push d
+            k := k + 1
+          | none => dest := dest.push ch
+        else
+          dest := dest.push ch
+        k := k + 1
     unless closed do return none
     j := k + 1
   else
     let mut depth := 0
     let mut k := j
-    let mut stop := false
     for _ in [0:c.size + 1] do
-      unless stop do
-        match c.at? k with
-        | none => stop := true
-        | some ch =>
-          if isMdSpace ch then stop := true
-          else if ch == '(' then
-            depth := depth + 1
-            dest := dest.push ch
-            k := k + 1
-          else if ch == ')' then
-            if depth == 0 then stop := true
-            else
-              depth := depth - 1
-              dest := dest.push ch
-              k := k + 1
-          else if ch == '\\' then
-            match escaped? c k with
-            | some d =>
-              dest := dest.push d
-              k := k + 2
-            | none =>
-              dest := dest.push ch
-              k := k + 1
+      match c.at? k with
+      | none => break
+      | some ch =>
+        if isMdSpace ch then break
+        else if ch == '(' then
+          depth := depth + 1
+          dest := dest.push ch
+          k := k + 1
+        else if ch == ')' then
+          if depth == 0 then break
           else
+            depth := depth - 1
             dest := dest.push ch
             k := k + 1
+        else if ch == '\\' then
+          match escaped? c k with
+          | some d =>
+            dest := dest.push d
+            k := k + 2
+          | none =>
+            dest := dest.push ch
+            k := k + 1
+        else
+          dest := dest.push ch
+          k := k + 1
     j := k
   -- Optional whitespace, then an optional title in `"`, `'` or `(`.
-  for _ in [0:c.size + 1] do
-    if (c.at? j).map isMdSpace == some true then j := j + 1
+  j := c.ws j
   let mut title := ""
   match c.at? j with
   | some q =>
@@ -656,29 +666,28 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
       let mut k := j + 1
       let mut closed := false
       for _ in [0:c.size + 1] do
-        unless closed do
-          match c.at? k with
-          | none => closed := false
-          | some ch =>
-            if ch == close then
-              closed := true
-              k := k + 1
-            else if ch == '\\' then
-              match escaped? c k with
-              | some d =>
-                title := title.push d
-                k := k + 2
-              | none =>
-                title := title.push ch
-                k := k + 1
-            else
+        match c.at? k with
+        | none => break
+        | some ch =>
+          if ch == close then
+            closed := true
+            k := k + 1
+            break
+          else if ch == '\\' then
+            match escaped? c k with
+            | some d =>
+              title := title.push d
+              k := k + 2
+            | none =>
               title := title.push ch
               k := k + 1
+          else
+            title := title.push ch
+            k := k + 1
       unless closed do return none
       j := k
   | none => pure ()
-  for _ in [0:c.size + 1] do
-    if (c.at? j).map isMdSpace == some true then j := j + 1
+  j := c.ws j
   unless c.at? j == some ')' do return none
   return some (dest, title, j + 1)
 
@@ -887,6 +896,7 @@ def scanInlines (file : String) (c : Chars) :
           if c.at? k == some ch then
             n := n + 1
             k := k + 1
+          else break
         let before := if i == 0 then none else c.at? (i - 1)
         let (left, right) := flanking before (c.at? k)
         let canOpen := if ch == '*' then left else
@@ -916,13 +926,24 @@ def regions (toks : Array ITok) (pairs : Array BPair) : Array Nat := Id.run do
 /-- CommonMark's delimiter-run match (§6.2, "process emphasis"), as an
 index loop over closers with the per-closer repeat bounded by the closer's
 own length — each match consumes at least one of its characters, so the
-bound is the algorithm's, not fuel. -/
+bound is the algorithm's, not fuel.
+
+Two things keep it out of quadratic time, and the spec names both. The
+backward search walks only the *run* tokens (`runIdx`), not every token; and
+it stops at the spec's openers-bottom floor, the index below which a closer of this
+(character, length mod 3, can-also-open) shape has already been proved to
+have no partner. Without the second, one 64 KB paragraph of `*a*` took
+31.8 s, against 0.9 s for the same content as tex. -/
 def matchEmphasis (toks : Array ITok) (reg : Array Nat) : Array EPair × Array Nat :=
   Id.run do
   let mut len : Array Nat := Array.replicate toks.size 0
   let mut ch : Array Char := Array.replicate toks.size ' '
   let mut op : Array Bool := Array.replicate toks.size false
   let mut cl : Array Bool := Array.replicate toks.size false
+  let mut runIdx : Array Nat := #[]
+  -- Where each run token sits in `runIdx`, so a closer starts its backward
+  -- walk at its own neighbour rather than by searching for itself.
+  let mut runPos : Array Nat := Array.replicate toks.size 0
   for (t, k) in toks.zipIdx do
     match t with
     | .run c n o e _ =>
@@ -930,23 +951,34 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) : Array EPair × Array N
       ch := ch.set! k c
       op := op.set! k o
       cl := cl.set! k e
+      runPos := runPos.set! k runIdx.size
+      runIdx := runIdx.push k
     | _ => pure ()
   let mut out : Array EPair := #[]
   let mut born := 0
+  -- One floor per (character, closer length mod 3, closer can also open):
+  -- 2 × 3 × 2 buckets, each holding a position in `runIdx`.
+  let mut bottom : Array Nat := Array.replicate 12 0
   let rd : Array Nat → Nat → Nat := fun a i => (a[i]?).getD 0
   let rb : Array Bool → Nat → Bool := fun a i => (a[i]?).getD false
   let rc : Array Char → Nat → Char := fun a i => (a[i]?).getD ' '
-  for ci in [0:toks.size] do
+  for cp in [0:runIdx.size] do
+    let some ci := runIdx[cp]? | continue
     if rb cl ci && rd len ci > 0 then
       let cnt := rd len ci
       for _ in [0:cnt] do
         if rd len ci == 0 then break
-        -- The nearest opener of the same character in the same region.
+        let bkt := (if rc ch ci == '*' then 0 else 6)
+          + 2 * (rd len ci % 3) + (if rb op ci then 1 else 0)
+        let floor := rd bottom bkt
+        -- The nearest opener of the same character in the same region, no
+        -- lower than this shape's floor.
         let mut found : Option Nat := none
-        let mut oi := ci
-        for _ in [0:ci + 1] do
-          if oi == 0 then break
-          oi := oi - 1
+        let mut oq := cp
+        for _ in [0:cp + 1] do
+          if oq ≤ floor then break
+          oq := oq - 1
+          let some oi := runIdx[oq]? | break
           if rb op oi && rd len oi > 0 && rc ch oi == rc ch ci
               && rd reg oi == rd reg ci then
             -- Rule of three: when either delimiter can both open and
@@ -960,7 +992,11 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) : Array EPair × Array N
               found := some oi
               break
         match found with
-        | none => break
+        | none =>
+          -- No partner for this shape at or above `floor`: nothing below
+          -- this closer can ever partner it either (§6.2).
+          bottom := bottom.set! bkt cp
+          break
         | some oj =>
           let strong := rd len oj ≥ 2 && rd len ci ≥ 2
           let use := if strong then 2 else 1
@@ -1005,16 +1041,32 @@ private def OFrame.close (f : OFrame) (body : Array Inl) : Array Inl :=
 pass with a frame stack. A run token that both closes and opens does its
 closes first, then its unconsumed delimiter characters as text, then its
 opens — outermost first, which is the reverse of the order the matcher
-created them in. -/
+created them in.
+
+The pair tables are indexed by token once, before the pass. Filtered per
+token, the four lookups made this walk quadratic: 112 KB of links took
+55.3 s, against 0.6 s for the same content as tex. -/
 def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPair)
     (leftover : Array Nat) : Array Inl := Id.run do
+  let mut closingAt : Array (Array EPair) := Array.replicate toks.size #[]
+  let mut openingAt : Array (Array EPair) := Array.replicate toks.size #[]
+  for e in epairs do
+    if e.closeTok < closingAt.size then
+      closingAt := closingAt.modify e.closeTok (·.push e)
+    if e.openTok < openingAt.size then
+      openingAt := openingAt.modify e.openTok (·.push e)
+  let mut bopenAt : Array (Option BPair) := Array.replicate toks.size none
+  let mut bcloseAt : Array Bool := Array.replicate toks.size false
+  for bp in bpairs do
+    if bp.openTok < bopenAt.size then bopenAt := bopenAt.set! bp.openTok (some bp)
+    if bp.closeTok < bcloseAt.size then bcloseAt := bcloseAt.set! bp.closeTok true
   let mut frames : Array OFrame := #[]
   let mut acc : Array Inl := #[]
   for i in [0:toks.size] do
     let some t := toks[i]? | continue
     let p := t.pos
     -- Closes: emphasis innermost first, then a bracket pair.
-    let closingE := (epairs.filter (·.closeTok == i)).qsort (·.born < ·.born)
+    let closingE := ((closingAt[i]?).getD #[]).qsort (·.born < ·.born)
     for _ in closingE do
       if let some f := frames.back? then
         frames := frames.pop
@@ -1026,14 +1078,14 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
     | .hard _ => acc := acc.push (.hard p)
     | .auto dest text _ => acc := acc.push (.link dest "" #[.text text p] p)
     | .bclose _ =>
-      if bpairs.any (·.closeTok == i) then
+      if (bcloseAt[i]?).getD false then
         if let some f := frames.back? then
           frames := frames.pop
           acc := f.close acc
       else
         acc := acc.push (.text "]" p)
     | .bopen image _ =>
-      match bpairs.find? (·.openTok == i) with
+      match (bopenAt[i]?).getD none with
       | some bp =>
         frames := frames.push
           { kind := if image then .image bp.dest bp.title else .link bp.dest bp.title,
@@ -1044,7 +1096,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
       let n := (leftover[i]?).getD 0
       if n > 0 then
         acc := acc.push (.text (String.ofList (List.replicate n ch)) p)
-      let openingE := (epairs.filter (·.openTok == i)).qsort (·.born > ·.born)
+      let openingE := ((openingAt[i]?).getD #[]).qsort (·.born > ·.born)
       for e in openingE do
         frames := frames.push
           { kind := if e.strong then .strong else .emph,
@@ -1308,13 +1360,26 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
           i := j2
           col := 0
           opened := true
-        else if ind ≤ 3 then
-          let startNew : Option (Bool × Nat × Char × Nat) :=
+        else if ind ≤ 3 && !thematicAt cs j then
+          -- A thematic break outranks a list marker (§4.1): tested after the
+          -- marker, `* * *` and `- - -` opened three nested empty lists.
+          let startNew : Option (Bool × Nat × Char × Nat × Nat) :=
             match bulletAt cs j, orderedAt cs j with
-            | some (m, k), _ => some (false, 1, m, k)
-            | none, some (n, d, k) => some (true, n, d, k)
+            | some (m, k), _ => some (false, 1, m, k, 1)
+            | none, some (n, d, k) =>
+              -- The marker's own width, digits and delimiter, without the
+              -- space after it: an empty item's content column is measured
+              -- from the marker, and counting the space put it one too far.
+              let dg := Id.run do
+                let mut q := j
+                for _ in [0:11] do
+                  match cs[q]? with
+                  | some c => if isAsciiDigit c then q := q + 1 else break
+                  | none => break
+                return q - j
+              some (true, n, d, k, dg + 1)
             | none, none => none
-          if let some (ordered, start, marker, k) := startNew then
+          if let some (ordered, start, marker, k, mw) := startNew then
             let emptyItem := isBlankFrom cs k
             let mayInterrupt := !emptyItem && (!ordered || start == 1)
             unless leaf.isPara && !mayInterrupt do
@@ -1353,9 +1418,15 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
               if sawBlank && sameList && frames.size > 0 then
                 frames := frames.modify (frames.size - 1) (fun f => { f with tight := false })
               -- The item's content indent, in columns from the line start.
+              -- `sp` counts the spaces *beyond* the one the marker consumed,
+              -- so five spaces after the marker is `sp ≥ 4`: written `≥ 5`,
+              -- `-     foo` set its content as item text where the strict
+              -- dialect owes an indented-code refusal.
               let (k2, sp) := indentAt cs k 0
-              let markerCols := (k - j) + (if emptyItem then 1 else if sp ≥ 5 then 1 else sp)
-              let contentIdx := if emptyItem then k else if sp ≥ 5 then k + 1 else k2
+              let wide := sp ≥ 4
+              let markerCols :=
+                if emptyItem then mw + 1 else if wide then k - j else (k - j) + sp
+              let contentIdx := if emptyItem || wide then k else k2
               frames := frames.push
                 { kind := .item (ind + markerCols), pos := lpos, outer := acc }
               acc := #[]
@@ -1372,6 +1443,13 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
             frames := frames.modify idx (fun lf => { lf with tight := false })
             break
           | _ => pure ()
+    -- A line that was only container markers opens nothing: `blank` was
+    -- measured before they opened, so `- ` or `>` with an empty remainder
+    -- opened an empty paragraph, and the next unmarked line was then refused
+    -- as a lazy continuation of it.
+    if isBlankFrom cs i then
+      sawBlank := false
+      continue
     -- The leaf.
     let (j, ind) := indentAt cs i col
     if ind ≥ 4 && !leaf.isPara then

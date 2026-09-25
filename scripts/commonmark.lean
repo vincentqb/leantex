@@ -902,9 +902,65 @@ def run (check : Bool) : IO UInt32 := do
   IO.println s!"commonmark: wrote {verdictPath} and {tierPath} ({ms} ms)"
   return 0
 
+/-- **Scaling as a gate.** Every whole-document pass runs at 1×, 2× and 4×,
+plus CommonMark's own pathological inputs. A doubling of the input may not
+more than `scalingBound` the time: the inline phase was quadratic — 3.8× per
+doubling, 31.8 s for one 64 KB paragraph of `*a*` against 0.9 s for the same
+content as tex — and nothing noticed, because the spec's one-construct
+examples are all a few bytes long.
+
+Not in `lake test`: it measures wall-clock on a shared host, so it is a deep
+oracle run when the reader is touched, like `kp-fuzz` for line breaking. -/
+def scalingBound : Float := 2.6
+
+/-- The pathological shapes, each as a unit repeated to the target size.
+Nested brackets and delimiter runs are where a backtracking reader blows
+up. -/
+def scalingUnits : List (String × String) :=
+  [("emphasis", "*a* "), ("code spans", "`a` "), ("links", "[a](b) "),
+   ("nested brackets", "[[a]] "), ("open brackets", "[a "),
+   ("delimiter runs", "*a_b* "), ("plain words", "word ")]
+
+def repeatUnit (unit : String) (n : Nat) : String := Id.run do
+  let mut s := ""
+  for _ in [0:n] do s := s ++ unit
+  return s ++ "\n"
+
+def scaling : IO UInt32 := do
+  let mut bad : Array String := #[]
+  for (name, unit) in scalingUnits do
+    let mut times : Array Nat := #[]
+    for mult in [1, 2, 4] do
+      let src := repeatUnit unit (1024 * mult)
+      let t0 ← IO.monoNanosNow
+      let (ns, _) := engineFragment src
+      let t1 ← IO.monoNanosNow
+      -- Force the tree so the measurement is of work done, not of a thunk.
+      unless ns.size ≥ 0 do bad := bad.push "impossible"
+      times := times.push (t1 - t0)
+    let r1 := (times[0]?).getD 1
+    let r2 := (times[1]?).getD 1
+    let r3 := (times[2]?).getD 1
+    let ratio12 := (Float.ofNat r2) / (Float.ofNat (max r1 1))
+    let ratio24 := (Float.ofNat r3) / (Float.ofNat (max r2 1))
+    IO.println s!"  {name}: 1x {r1 / 1000000} ms, 2x {r2 / 1000000} ms, \
+4x {r3 / 1000000} ms — ratios {ratio12} and {ratio24}"
+    -- A sub-millisecond 1× is noise, not a measurement: only judge a ratio
+    -- whose denominator is large enough to mean something.
+    if r2 ≥ 2000000 && ratio24 > scalingBound then
+      bad := bad.push s!"{name}: 2x→4x is {ratio24}×, over {scalingBound}×"
+    if r1 ≥ 2000000 && ratio12 > scalingBound then
+      bad := bad.push s!"{name}: 1x→2x is {ratio12}×, over {scalingBound}×"
+  if bad.isEmpty then
+    IO.println "commonmark --scaling: ok"
+    return 0
+  for b in bad do IO.eprintln s!"commonmark --scaling: {b}"
+  return 1
+
 def main (argv : List String) : IO UInt32 := do
   match argv with
   | ["--selftest"] => selftest
+  | ["--scaling"] => scaling
   | ["--check"] => run true
   | ["--explain", idS] =>
     -- Why one case earned its verdict: the two canonical forms side by
@@ -924,5 +980,5 @@ def main (argv : List String) : IO UInt32 := do
     return 0
   | [] => run false
   | _ =>
-    IO.eprintln "usage: commonmark [--check | --selftest | --explain <case>]"
+    IO.eprintln "usage: commonmark [--check | --selftest | --scaling | --explain <case>]"
     return 2
