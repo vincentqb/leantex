@@ -13,16 +13,30 @@ every target column, so it answers "is anything failing". This tier answers
 ratchet can carry, and which survives a matrix that legitimately holds a
 `fail:` cell with its reason beneath.
 
-This tier never launches a browser: it reads the committed matrix, so
-`--check` is hermetic. Only target readers are counted; a non-target column
-(Firefox, which the cached build cannot start on this host) is recorded data
-and gates nothing.
+This tier never launches a browser: it reads the committed matrix. What it
+does do is rebuild the corpus to HTML with the committed binary and compare
+a content key against the `src-key:` line the matrix carries — the
+freshness question the matrix cannot answer for itself. Without it the
+engine can change what a page does and this tier keeps reporting the
+browser's verdict on pages nobody emits any more. A differing key is a
+fault, not a regression: the counts are not wrong, they are about something
+else. Only target readers are counted; a non-target column (Firefox, which
+the cached build cannot start on this host) is recorded data and gates
+nothing.
+
+Note what this tier does *not* claim. `scripts/html-oracle.lean --check`
+demands `pass` in every target cell and fails on the committed matrix: 7
+cells are `fail:` today, each with its reason beneath it, and no gate runs
+that check. This tier's numbers are "how much passes", which is the
+question a ratchet can carry; "is anything failing" stays html-oracle's,
+and it is currently answered no.
 -/
 import scripts.Board
 
 open Scoreboard
 
 def matrixPath : String := "tests/oracles/html-reader-matrix.txt"
+def leantexBin : String := ".lake/build/bin/leantex"
 
 structure Cells where
   section_ : String
@@ -69,12 +83,18 @@ def readMatrix (text : String) : Array String × Array Cells := Id.run do
   out := out ++ counts
   return (target, out)
 
+/-- The `src-key:` line, or none where the matrix carries no key. -/
+def matrixKey (text : String) : Option String :=
+  ((text.splitOn "\n").find? (·.trimAscii.toString.startsWith "src-key:")).map fun l =>
+    ((l.trimAscii.toString.drop "src-key:".length).toString).trimAscii.toString
+
 def measureTier : IO (Array String × Array Row) := do
   if !(← System.FilePath.pathExists matrixPath) then
     IO.eprintln s!"scoreboard: {matrixPath} is missing; regenerate it with \
 lake env lean --run scripts/html-oracle.lean"
     return (#[], #[])
-  let (target, cells) := readMatrix (← IO.FS.readFile matrixPath)
+  let text ← IO.FS.readFile matrixPath
+  let (target, cells) := readMatrix text
   let mut rows : Array Row := #[]
   let mut untested := 0
   for c in cells do
@@ -83,8 +103,29 @@ lake env lean --run scripts/html-oracle.lean"
       rows := rows.push { item := s!"{c.section_}.{c.reader}.rows", value := Int.ofNat c.rows }
     else
       untested := untested + c.rows
+  -- Freshness. An empty row set is how this tier says "do not compare": the
+  -- porcelain fault comes from tierMain's own malformed-measurement path.
+  let fresh ← corpusHtmlKey leantexBin
+  match matrixKey text, fresh with
+  | none, _ =>
+    IO.eprintln s!"scoreboard: {matrixPath} carries no `src-key:` line, so nothing \
+ties its counts to the HTML this tree emits; regenerate it with \
+lake env lean --run scripts/html-oracle.lean"
+    return (#[], #[])
+  | some k, .ok now =>
+    if k != now then
+      IO.eprintln s!"scoreboard: {matrixPath} was measured on different HTML \
+(src-key {k}, this tree builds {now}), so its counts are about pages this tree \
+no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean"
+      return (#[], #[])
+  | some _, .error e =>
+    IO.eprintln s!"scoreboard: cannot rebuild the corpus to compare against \
+{matrixPath}'s src-key: {e}"
+    return (#[], #[])
   return (#[s!"# source: {matrixPath}; target readers: {String.intercalate " " target.toList}; \
-{untested} cells in non-target columns are data and gate nothing"], rows)
+{untested} cells in non-target columns are data and gate nothing",
+    s!"# src-key: {(matrixKey text).getD "absent"} — the HTML the browser saw, \
+rebuilt and compared on every --check"], rows)
 
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
@@ -117,6 +158,20 @@ alpha       pass       untested\n"
   let ff := cells.find? (fun c => c.reader == "firefox" && c.section_ == "feature")
   no "a non-target column is still read, so it can be reported as data"
     ((ff.map (·.rows)).getD 0 == 3)
+  -- The freshness key: read off the matrix, absent when there is none.
+  no "src-key: read off the line" (matrixKey "target: chromium\nsrc-key: abc123\n" == some "abc123")
+  no "src-key: absent when the matrix carries none" ((matrixKey text).isNone)
+  -- The key itself: order and name are part of it, so a renamed or
+  -- reordered page changes the answer.
+  let a : Array (String × ByteArray) := #[("x", "1".toUTF8), ("y", "2".toUTF8)]
+  no "key: stable over the same blobs" (contentKey a == contentKey a)
+  no "key: a changed byte changes it"
+    (contentKey a != contentKey #[("x", "1".toUTF8), ("y", "3".toUTF8)])
+  no "key: a renamed page changes it"
+    (contentKey a != contentKey #[("x", "1".toUTF8), ("z", "2".toUTF8)])
+  no "key: reordering changes it"
+    (contentKey a != contentKey #[("y", "2".toUTF8), ("x", "1".toUTF8)])
+  no "key: 16 hex digits" ((contentKey a).length == 16)
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "htmlreader selftest: all passed"

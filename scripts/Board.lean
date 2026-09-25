@@ -507,6 +507,34 @@ def ready (obs : Array Ob) : Array Ob :=
 def readFileOr (p : String) : IO String := do
   if ← System.FilePath.pathExists p then IO.FS.readFile p else return ""
 
+/-- A content key over named byte blobs: FNV-1a, 64-bit, hex. Order
+matters, and the name is hashed with the bytes, so a file renamed or
+reordered changes the key.
+
+What it is for: a tier whose numbers describe an *artifact* measured
+elsewhere — a browser's verdict on built pages, a reference engine's
+output — is only as fresh as the artifact it was measured on. Recording a
+key of that artifact, and faulting when a fresh one differs, is what stops
+the tier reporting last week's answer about this week's engine.
+
+`UInt64` throughout, never `Nat`: a `Nat` shift is an out-of-line bignum
+call, and this runs over every byte of every page. -/
+def contentKey (blobs : Array (String × ByteArray)) : String := Id.run do
+  let mut h : UInt64 := 0xcbf29ce484222325
+  let prime : UInt64 := 0x100000001b3
+  for (name, bytes) in blobs do
+    for c in name.toUTF8 do
+      h := (h ^^^ c.toUInt64) * prime
+    h := (h ^^^ 0xff) * prime
+    for b in bytes do
+      h := (h ^^^ b.toUInt64) * prime
+  let digits := "0123456789abcdef".toList.toArray
+  let mut out := ""
+  for i in [0:16] do
+    let nib := ((h >>> (60 - 4 * i.toUInt64)) &&& 0xf).toNat
+    out := out.push (digits[nib]!)
+  return out
+
 /-- The three modes every tier producer shares, so no tier can differ in
 what its `--check` means:
 
@@ -560,8 +588,15 @@ check against; regenerate: lake env lean --run scripts/{tier}.lean"
       lowered := (baseline.map (·.lowered)).getD #[], encoding := some enc }
   let freshFaults := validate fresh
   if !freshFaults.isEmpty then
-    IO.eprintln s!"scoreboard: the fresh {tier} measurement is malformed:"
-    for f in freshFaults do IO.eprintln s!"  {f}"
+    -- A tier that measured nothing has already said why on stderr — a
+    -- missing input, a freshness key that no longer matches. Reporting it
+    -- as a malformation would bury that reason under a format complaint.
+    if freshFaults == #["no rows"] then
+      IO.eprintln s!"scoreboard: {tier} measured nothing, so there is no \
+comparison to make; the reason is above"
+    else
+      IO.eprintln s!"scoreboard: the fresh {tier} measurement is malformed:"
+      for f in freshFaults do IO.eprintln s!"  {f}"
     IO.println (tierLine tier 0 0 0 "fault")
     return 2
   let d : Delta := match baseline with
@@ -613,5 +648,45 @@ record it: lake env lean --run scripts/{tier}.lean"
   -- Regenerating with every fall authorised is the intended act, so it is
   -- a clean exit: the reason is in the file the writer just committed.
   return 0
+
+/-- Build every corpus fixture to HTML with the committed binary and key the
+bytes. The freshness question a browser matrix cannot answer for itself: the
+pass counts describe pages built at some past commit, and nothing tied them
+to the pages this tree emits.
+
+Hermetic in the sense the scoreboard means: the in-repo binary over in-repo
+sources, no network, no TeX tree, no browser. Measured cost on this host:
+13.2 s, stable across runs — 7.3 s of it the build, the rest reading and
+hashing 126 MB of pages (images arrive inlined). It runs in parallel with
+the other tiers, so that is the aggregate's floor rather than a sum. A
+word-at-a-time hash is the obvious saving if it starts to hurt. -/
+def corpusHtmlKey (leantexBin : String) : IO (Except String String) := do
+  if !(← System.FilePath.pathExists leantexBin) then
+    return .error s!"{leantexBin} not found; run lake build"
+  let dir : System.FilePath := "tests/corpus"
+  if !(← dir.isDir) then return .error "tests/corpus is not a directory"
+  let work ← IO.FS.createTempDir
+  try
+    let mut blobs : Array (String × ByteArray) := #[]
+    let mut unbuilt : Array String := #[]
+    for e in (← dir.readDir).qsort (·.fileName < ·.fileName) do
+      if e.fileName.endsWith ".tex" then
+        let name := (e.fileName.dropEnd ".tex".length).toString
+        let outPath := work / (name ++ ".html")
+        let r ← IO.Process.output
+          { cmd := (← IO.currentDir) / leantexBin |> (·.toString)
+            args := #["-q", "build", e.fileName, "-o", outPath.toString]
+            cwd := some dir }
+        if r.exitCode == 0 && (← outPath.pathExists) then
+          blobs := blobs.push (name, ← IO.FS.readBinFile outPath)
+        else unbuilt := unbuilt.push name
+    if blobs.isEmpty then return .error "no corpus fixture built to HTML"
+    -- An unbuilt fixture is part of the answer: a page that stopped
+    -- building changes what the browser would have seen.
+    let key := contentKey (blobs.push ("unbuilt", (String.intercalate " "
+      unbuilt.toList).toUTF8))
+    return .ok key
+  finally
+    try IO.FS.removeDirAll work catch _ => pure ()
 
 end Scoreboard
