@@ -75,6 +75,17 @@ def spawnTier (tier : String) : IO (Option Spawn) := do
                 "sh", scriptPath tier, outPath, errPath] }
   return some { child, dir, out := outPath, err := errPath }
 
+/-- A tier's result from its exit status and the porcelain line it printed,
+if any. The exit status is the contract: the porcelain word can name a
+failure — `regressed`, `fault`, `stale` — and can never excuse one, so a
+non-zero exit under any other word reads `fail`, and `stale` reads as
+itself rather than as a generic failure the landing agent cannot act on. -/
+def resultOf (code : UInt32) (line said : String) : String :=
+  if code != 0 then
+    (if said == "regressed" || said == "fault" || said == "stale" then said else "fail")
+  else if line.isEmpty then "ok"
+  else if said.isEmpty then "fault" else said
+
 def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
   match spawned with
   | none =>
@@ -101,11 +112,7 @@ def collectTier (tier : String) (spawned : Option Spawn) : IO TierResult := do
     -- when the tier prints one, adds counts and can never turn a non-zero
     -- exit into a pass.
     let said := (field line "result").getD ""
-    let result :=
-      if code != 0 then
-        (if said == "regressed" || said == "fault" || said == "stale" then said else "fail")
-      else if line.isEmpty then "ok"
-      else if said.isEmpty then "fault" else said
+    let result := resultOf code line said
     let detail := if code != 0 && line.isEmpty
       then s!"exit {code}; {stderr.trimAscii.toString}" else stderr.trimAscii.toString
     return { tier
@@ -600,6 +607,61 @@ def selftest : IO UInt32 := do
       ((parseLowered { w with state := .applied }.render).bind (·.toOption) ==
         some { w with state := .applied })
 
+  -- The tool's own remedies, followed to the end through the path a tier
+  -- ships (`tierMainAt`), twice for each kind — the probe shape that found
+  -- the wedges: a second fall of one item, a retirement, and a carried
+  -- record asked to pay again.
+  let flowDir ← IO.FS.createTempDir
+  try
+    let p := (flowDir / "flow.tsv").toString
+    let rowsNow ← IO.mkRef (#[] : Array Row)
+    let set (alpha : Option Int) : IO Unit :=
+      let first : Array Row := match alpha with
+        | some v => #[{ item := "alpha", value := v }]
+        | none => #[]
+      rowsNow.set (first.push { item := "bravo", value := 1000 })
+    let run (args : List String) : IO UInt32 := do
+      let (_, code) ← IO.FS.withIsolatedStreams
+        (tierMainAt p "flow" (.headroom 1000) (do return (#[], ← rowsNow.get)) (pure 0) args)
+      return code
+    let add (line : String) : IO Unit := do
+      let ls := (← IO.FS.readFile p).splitOn "\n"
+      IO.FS.writeFile p (String.intercalate "\n" (ls.take 2 ++ [line] ++ ls.drop 2))
+    let says (frag : String) : IO Bool := return containsSub (← IO.FS.readFile p) frag
+    set (some 998)
+    no "flow: regeneration starts from nothing" ((← run []) == 0)
+    no "flow: the floor is the measurement" ((← run ["--check"]) == 0)
+    set (some 997)
+    no "flow: a fall fails --check" ((← run ["--check"]) == 1)
+    no "flow: regeneration refuses the fall" ((← run []) == 1)
+    add "# lowered: alpha 998→997 — the first fall, an invented reason"
+    no "flow: a file holding a request is stale under --check" ((← run ["--check"]) == 1)
+    no "flow: regeneration applies the request" ((← run []) == 0)
+    no "flow: the request went back as a record"
+      ((← says "# lowered (applied): alpha 998→997") && !(← says "# lowered: alpha"))
+    no "flow: --check passes on what regeneration wrote" ((← run ["--check"]) == 0)
+    set (some 996)
+    no "flow: a second fall is refused, the record pays nothing" ((← run []) == 1)
+    add "# lowered: alpha 997→996 — the second fall, an invented reason"
+    no "flow: the second request applies" ((← run []) == 0)
+    no "flow: and --check passes after it" ((← run ["--check"]) == 0)
+    set (some 998)
+    no "flow: the item recovers and the rise is recorded" ((← run []) == 0)
+    set (some 997)
+    no "flow: the same fall again is refused, between the same values" ((← run []) == 1)
+    set none
+    no "flow: a vanish is refused" ((← run []) == 1)
+    add "# retired: alpha — the measurement stopped, an invented reason"
+    no "flow: a retirement beside its row is stale under --check" ((← run ["--check"]) == 1)
+    no "flow: regeneration applies the retirement" ((← run []) == 0)
+    no "flow: the row is gone and the line stays"
+      ((← says "# retired: alpha") && !(← says "alpha\t"))
+    no "flow: --check passes after the retirement" ((← run ["--check"]) == 0)
+    set (some 998)
+    no "flow: a retired item measured again is a fault" ((← run ["--check"]) == 2)
+  finally
+    IO.FS.removeDirAll flowDir
+
   -- The base check: a floor moved since the base needs a line written since
   -- the base. Each laundering case passed `--check` before this existed.
   for (b, t, want) in baseCases do
@@ -630,6 +692,12 @@ def selftest : IO UInt32 := do
   no "aggregate: a baseline with rows goes to its producer" (precheck cleanText true).isNone
   no "aggregate: retired passes and stale does not"
     (passing "retired" && !passing "stale" && !passing "fail" && !passing "laundered")
+  no "aggregate: a stale tier reads stale, not fail" (resultOf 1 "x" "stale" == "stale")
+  no "aggregate: a non-zero exit under an ok line is a failure" (resultOf 3 "x" "ok" == "fail")
+  no "aggregate: a named failure keeps its name"
+    (resultOf 1 "x" "regressed" == "regressed" && resultOf 2 "x" "fault" == "fault")
+  no "aggregate: a silent zero exit is ok, a zero exit with a wordless line a fault"
+    (resultOf 0 "" "" == "ok" && resultOf 0 "x" "" == "fault")
   no "--base: read off the arguments"
     (baseArg ["--check", "--base", "abc"] == some (some "abc") && baseArg ["--check"] == none &&
       baseArg ["--base"] == some none)
@@ -711,7 +779,11 @@ Board's theorems by name where the prose relies on them" (!containsSub citesSrc 
   for t in tiers do
     let hasTsv ← System.FilePath.pathExists (tsvPath t)
     let hasScript ← System.FilePath.pathExists (scriptPath t)
-    if hasTsv != hasScript then
+    -- A tombstone is a retired tier's whole record: its producer is gone by
+    -- design, so one half is the state it must be in.
+    let tomb := hasTsv &&
+      ((parse (← readFileOr (tsvPath t))).toOption.bind (·.tierRetired)).isSome
+    if hasTsv != hasScript && !tomb then
       no s!"discovery: {t} has one half only ({if hasTsv then "a baseline and no \
 producer" else "a producer and no baseline"}), which --check faults" false
     if hasTsv && hasScript && pendingTiers.contains t then
@@ -734,7 +806,8 @@ faults" false
   IO.println s!"scoreboard selftest: format passed ({malformations.length} malformations, \
 {wellFormed.length} states the tool writes or asks for, 4 ratchet verdicts each failing \
 --check, retirement through the tool, a lowering authorising exactly one fall once, \
-{baseCases.length} base-check cases, the aggregate's own faults, and the key)"
+{baseCases.length} base-check cases, the aggregate's own faults, the tool's printed remedies \
+followed to the end, and the key)"
   -- Then every tier's own selftest, in parallel: one command is what a
   -- landing runs, so the fan-out lives here rather than in a procedure
   -- someone has to remember.

@@ -933,12 +933,13 @@ what its `--check` means:
 * `--selftest` — the tier's own predicates against hand-written inputs.
 
 `measure` returns the provenance lines specific to this tier (tool versions,
-counts, whatever sizes the claim) and the rows. -/
-def tierMain (tier : String) (enc : Encoding)
+counts, whatever sizes the claim) and the rows. The baseline is
+`tests/scoreboard/<tier>.tsv`; `tierMainAt` is the same with the file named,
+which is how the selftest follows the tool's own remedies end to end. -/
+def tierMainAt (path tier : String) (enc : Encoding)
     (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
     (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then return (← selftest)
-  let path := tsvPath tier
   let old := (← readFileOr path)
   let checking := args.contains "--check"
   let fault (why : Array String) : IO UInt32 := do
@@ -1055,6 +1056,12 @@ regenerate: lake env lean --run scripts/{tier}.lean"
 record it: lake env lean --run scripts/{tier}.lean"
   IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size result)
   return (if result == "ok" then 0 else 1)
+
+/-- A tier producer's `main`: `tierMainAt` over `tests/scoreboard/<tier>.tsv`. -/
+def tierMain (tier : String) (enc : Encoding)
+    (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
+    (args : List String) : IO UInt32 :=
+  tierMainAt (tsvPath tier) tier enc measure selftest args
 
 end Scoreboard
 
