@@ -62,3 +62,16 @@ root = "scripts.owed"
 [[lean_exe]]
 name = "cites"
 root = "scripts.cites"
+
+# The scoreboard: one committed baseline per goal, each under a ratchet.
+# BoardLib carries the format, the ratchet and the deficit ranking the
+# aggregate and every tier producer share; the producers themselves are run
+# interpreted (`lake env lean --run scripts/<tier>.lean`), which is the
+# convention tier discovery relies on.
+[[lean_lib]]
+name = "BoardLib"
+globs = ["scripts.Board"]
+
+[[lean_exe]]
+name = "scoreboard"
+root = "scripts.scoreboard"
