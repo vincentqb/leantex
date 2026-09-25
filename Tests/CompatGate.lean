@@ -122,14 +122,18 @@ spellings, where a signal is genuinely lost — is named by W0387 instead.
 A control that consumed its groups and said neither still fails, which is
 the loss this gate exists to catch.
 
-Both are recognised by the text they render rather than by
-`Diag.subject`: `became` emits through the plain `say` door, which leaves
-the subject unset. An assertion that merely asks whether *some* N0100
-fired is satisfied by `\AtBeginDocument`'s own note, and passes on a
+Both are recognised by `Diag.subject`, never by the text they render:
+AGENTS.md's `_named` rule is that matching is the structured subject, and
+message text is the golden's business. The two doors namespace their keys
+differently because they are different losses about the same control —
+`ctrl:nothing:<name>` for the translated silence, `ctrl:<name>` for the
+guard — so this asks for either, and asking for *some* N0100 would not do:
+that is satisfied by `\AtBeginDocument`'s own note and passes on a
 document that never names the control. -/
 def logOnlyAccounted (name : String) (ds : Array Diag) : Bool :=
   ds.any fun d =>
-    (d.code == "N0100" || d.code == "W0387") && hasStr d.message s!"\\{name}"
+    (d.code == "N0100" && d.subject == some ("ctrl:nothing:" ++ name))
+    || (d.code == "W0387" && d.subject == some ("ctrl:" ++ name))
 
 /-- The surface half: every log-only control the engine claims to consume
 is probed in the body and through a deferred hook, and must leave nothing

@@ -14243,3 +14243,45 @@ it, and reading the log is the habit.
 spelling escapes the scan. Both citations are corrected here; the scan itself
 is `scripts/cites.lean`, not this agent's file, and the change is to treat a
 namespace-qualified snake_case tail as a citation.
+
+
+### 2026-09-25 — the log-only accounting gate matches structure, not words
+
+`Tests/CompatGate.lean`'s `logOnlyAccounted` asked whether a control's
+consumption was accounted by searching the *rendered message* for the control's
+own name. AGENTS.md's `_named` rule is that matching is the structured
+`Diag.subject` and message text is the golden's business, so this gate was
+reading the wrong thing — the words could be reworded and the gate would go
+quiet while still passing.
+
+**A correction to the diagnosis it carried in its own docstring.** It said
+`became` "emits through the plain `say` door, which leaves the subject unset".
+Measured: false. The `meaningFree` arm already passes
+`subject := ctrl:nothing:<name>`, so the translated-silence door was structured
+all along. The one door that was genuinely subjectless is the *other* one — the
+silence guard's `W0387` in `Compat.account`, written as a raw `Diag.of` with
+`help` and nothing else. That is the field added here, `ctrl:<name>`, matching
+how `sayOnce` keys the same control for `W0104`.
+
+`W0387` is a `config` loss and `N0100` an `info` one, so neither is censused and
+this adds no counting: the guard fires once per name, so `tallySites` computes
+1 and no visible line changes. What it buys is that both accounting doors are
+now reachable structurally, which is what the gate reads.
+
+Both branches are load-bearing, proved by mutation rather than inspection:
+renaming the expected `N0100` subject fails 22 checks (the `PackageWarning`
+family), renaming the expected `W0387` subject fails 8 (the `Error` spellings,
+where a signal is genuinely lost and there is no justification to translate).
+
+**What is still owed of the total accounting.** `Diag.subject` is still
+`Option String`, so `Diag.tallySites_exact` still carries `subject.isSome` and
+remains vacuous on the class that can miscount; `subjectDebt` stands at 47 rows
+(48 minus the retired code). Replacing the field with a declared accounting type
+— a named key, a place, or an explicit declared reason for being uncounted — is
+a 123-call-site migration of `Diag.of` that also changes what is counted for the
+place-identified losses (W0005, W0201, W0320, W0388), and therefore the goldens
+and the deck census. It additionally reaches `Main.lean` and `scripts/`, which
+read `.subject` directly. The shape that keeps those readers source-compatible
+is to make `subject` a derived `def` over the new field rather than a rename,
+so `d.subject` keeps meaning "the named key, if it is named"; that is the
+increment to take next, and it is a unit of its own.

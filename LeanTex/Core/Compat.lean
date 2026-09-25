@@ -2864,7 +2864,8 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
       warned := st.warned.push ("silent:" ++ name)
       diags := s0.diags.push (Diag.of .W0387
         s!"'\\{name}' was read and had no effect" (some ⟨st.file, pos⟩)
-        (help := "\\allow{W0387} accepts the skip")) })
+        (help := "\\allow{W0387} accepts the skip")
+        (subject := some ("ctrl:" ++ name))) })
 
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
