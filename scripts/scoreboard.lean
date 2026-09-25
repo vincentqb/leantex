@@ -440,17 +440,41 @@ blocked-by-open=0 unblocks={unblocks o} blocker={short}"
     lines := lines.push "queue: group 2 of 3 — no tests/coverage/blockers.tsv, so no \
 construct ranking (the coverage tier writes it)"
   else
-    let rows := (blockers.splitOn "\n").filterMap fun l =>
-      if l.startsWith "#" || l.trimAscii.isEmpty then none
-      else match l.splitOn "\t" with
-        | [construct, owner, sole, share, docs] =>
-          if construct == "construct" then none
-          else some (construct, owner, sole, share, docs)
-        | _ => none
+    -- The format is `scripts/blockers.lean`'s: `#` provenance, one header
+    -- row, then `kind<TAB>construct<TAB>owner<TAB>sole<TAB>share<TAB>docs`,
+    -- the three counts integers and the kind one of three words. A line that
+    -- is none of those is a fault, and the queue stops rather than rank what
+    -- it misread: a reader that skipped what it could not parse once ranked
+    -- zero of forty rows and said nothing. Fields are not trimmed — `\ `, the
+    -- control space, is a construct whose name is one space.
+    let mut rows : Array (String × String × String × Nat × Nat × Nat) := #[]
+    let mut faults : Array String := #[]
+    let mut lineNo := 0
+    for l in blockers.splitOn "\n" do
+      lineNo := lineNo + 1
+      if l.startsWith "#" || l.isEmpty then continue
+      match l.splitOn "\t" with
+      | ["kind", "construct", "owner", "sole", "share", "docs"] => continue
+      | [kind, construct, owner, sole, share, docs] =>
+        match sole.toNat?, share.toNat?, docs.toNat? with
+        | some s, some h, some d =>
+          if !["ctrl", "env", "aggregate"].contains kind then
+            faults := faults.push s!"line {lineNo}: kind '{kind}' is not ctrl, env or aggregate"
+          else if construct.isEmpty || owner.isEmpty then
+            faults := faults.push s!"line {lineNo}: an empty construct or owner"
+          else rows := rows.push (kind, construct, owner, s, h, d)
+        | _, _, _ => faults := faults.push s!"line {lineNo}: sole, share and docs must be integers"
+      | fs => faults := faults.push s!"line {lineNo}: {fs.length} tab-separated field(s), want 6"
+    if !faults.isEmpty then
+      for f in faults do IO.eprintln s!"queue: tests/coverage/blockers.tsv {f}"
+      IO.eprintln "queue: the blocker table is malformed, so no queue is printed from it"
+      return 2
+    let named := rows.filter (·.1 != "aggregate")
     lines := lines.push s!"queue: group 2 of 3 — constructs nothing answers, by the \
-documents they alone block ({rows.length} ranked)"
-    for (construct, owner, sole, share, docs) in rows.take 5 do
-      lines := lines.push s!"queue: blocker {construct} owner={owner} sole={sole} \
+documents they alone block ({named.size} ranked; {rows.size - named.size} aggregate \
+row(s) of names the table does not publish)"
+    for (kind, construct, owner, sole, share, docs) in named.toList.take 5 do
+      lines := lines.push s!"queue: blocker {kind}:{construct} owner={owner} sole={sole} \
 share={share} docs={docs}"
   lines := lines.push "queue: group 3 of 3 — each tier's worst items, in its own \
 units; not comparable across tiers"
