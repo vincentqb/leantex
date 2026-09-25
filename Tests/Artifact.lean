@@ -211,6 +211,8 @@ of the em), and the vertical extent its `/FontDescriptor` declares. The
 only reading of a glyph's identity and size this tier performs. -/
 structure ArtFont where
   toUni : Std.HashMap Nat String
+  /-- Glyph advances, in thousandths of the em times `Dim.spPerPt` — the
+  units `artMille` reads. -/
   widths : Std.HashMap Nat Int
   defaultWidth : Int
   ascent : Int
@@ -246,6 +248,19 @@ def artToUniMap (toks : Array CTok) : Std.HashMap Nat String := Id.run do
     | _ => pure ()
   return m
 
+/-- A metric in a font dictionary, read exactly: thousandths of the em
+scaled by `Dim.spPerPt`, which is the unit every field of `ArtFont`
+carries.
+
+Not `Obj.int?`. A PDF number object may be real — lualatex writes
+`/W [0 [552.734 …]]` — and truncating each entry to an integer thousandth
+loses up to 0.001 em per glyph, 0.44 bp across a 60-glyph line at 10 bp,
+which is the scale a placement claim measures at. `Obj.sp?` is the
+repository's own exact reader for both spellings, and scaling the
+numerator and the denominator of an advance by the same `Dim.spPerPt`
+leaves an integer-valued file's reading unchanged to the sp. -/
+def artMille (o : Obj) : Option Int := o.sp?
+
 /-- A `/W` array (§9.7.4.3), both forms: `c [w …]` and `c1 c2 w`. The
 range form is capped so a malformed pair cannot make the reading
 unbounded. -/
@@ -258,11 +273,11 @@ def artWidthMap (o : Obj) : Std.HashMap Nat Int := Id.run do
     match xs[i]!, xs[i + 1]? with
     | .int c, some (.arr ws) =>
       for k in [0:ws.size] do
-        if let some w := (ws[k]!).int? then m := m.insert (c.toNat + k) w
+        if let some w := artMille ws[k]! then m := m.insert (c.toNat + k) w
       i := i + 2
     | .int c1, some (.int c2) =>
-      match xs[i + 2]? with
-      | some (.int w) =>
+      match (xs[i + 2]?).bind artMille with
+      | some w =>
         if c1 ≤ c2 && c2 - c1 ≤ 65535 then
           for g in [c1.toNat:c2.toNat + 1] do m := m.insert g w
         i := i + 3
@@ -272,7 +287,13 @@ def artWidthMap (o : Obj) : Std.HashMap Nat Int := Id.run do
 
 /-- A Type0 font dictionary read as an `ArtFont`: its `/ToUnicode` stream
 decoded and scanned, its descendant's `/W` and `/DW`, its descriptor's
-`/Ascent` and `/Descent`. -/
+`/Ascent` and `/Descent`.
+
+Every composite value is dereferenced. lualatex writes `/W` as an
+indirect reference to an object of its own; read without the deref it is
+a `.ref`, `artWidthMap` sees no array, and every glyph on the page takes
+`/DW` — a page of prose then reads one em per glyph and no placement
+claim about it means anything. -/
 def artFontOf (es : Array Entry) (o : Obj) : ArtFont :=
   let deref := PdfCensus.deref es
   let toUni := match o.get? "ToUnicode" with
@@ -288,14 +309,14 @@ def artFontOf (es : Array Entry) (o : Obj) : ArtFont :=
     | .arr xs => deref (xs[0]?.getD .null)
     | d => d
   let fd := deref ((cid.get? "FontDescriptor").getD .null)
-  let intOf (d : Obj) (k : String) (dflt : Int) : Int :=
-    ((d.get? k).bind Obj.int?).getD dflt
+  let milleOf (d : Obj) (k : String) (dflt : Int) : Int :=
+    (((d.get? k).map deref).bind artMille).getD dflt
   { toUni
-    widths := artWidthMap ((cid.get? "W").getD .null)
-    defaultWidth := intOf cid "DW" 1000
-    ascent := intOf fd "Ascent" 1000
-    descent := intOf fd "Descent" (-300)
-    capHeight := intOf fd "CapHeight" (intOf fd "Ascent" 1000) }
+    widths := artWidthMap (deref ((cid.get? "W").getD .null))
+    defaultWidth := milleOf cid "DW" (1000 * Dim.spPerPt)
+    ascent := milleOf fd "Ascent" (1000 * Dim.spPerPt)
+    descent := milleOf fd "Descent" (-300 * Dim.spPerPt)
+    capHeight := milleOf fd "CapHeight" (milleOf fd "Ascent" (1000 * Dim.spPerPt)) }
 
 /-- The marked-content sequence a painting operator stands inside
 (§14.6). Real content carries the structure type the writer gave it and
@@ -339,6 +360,16 @@ structure ArtRun where
   file's `/W`, not from a constant. -/
   widest : Dim.Sp
   text : String
+  /-- Where each of this run's glyphs starts, and what it spells: the pen
+  before that glyph's own advance, in PDF user space, paired with the text
+  its `/ToUnicode` gives it.
+
+  A run is not a comparable unit across writers — the engine emits a run
+  per hyphenation opportunity and lualatex one per kern pair, 23 against
+  17 on one measured line of identical text — so a placement claim has to
+  reach the glyph. Defaulted, because every claim that reads whole runs
+  predates it. -/
+  glyphs : Array (Dim.Sp × String) := #[]
   deriving Repr, Inhabited
 
 /-- One non-text mark the file paints, as its bounding box in PDF user
@@ -424,8 +455,8 @@ private def artPaintOps : List String :=
 a malformed stream's ink is still recorded rather than silently dropped —
 its glyphs read as unmapped and its box as zero-height. -/
 def artNoFont : ArtFont :=
-  { toUni := {}, widths := {}, defaultWidth := 1000, ascent := 0, descent := 0,
-    capHeight := 0 }
+  { toUni := {}, widths := {}, defaultWidth := 1000 * Dim.spPerPt, ascent := 0
+    descent := 0, capHeight := 0 }
 
 /-- What a CID with no `/ToUnicode` entry reads as: U+FFFD, so an
 unmapped glyph is visible to a text claim rather than silently absent. -/
@@ -465,17 +496,21 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
             let mut adv : Dim.Sp := 0
             let mut widest : Dim.Sp := 0
             let mut txt := ""
+            let mut gs : Array (Dim.Sp × String) := #[]
             for g in cids do
-              let one := (f.widths[g]?.getD f.defaultWidth) * s.size * s.th / 1000000
+              let one := (f.widths[g]?.getD f.defaultWidth) * s.size * s.th
+                / (1000000 * Dim.spPerPt)
+              gs := gs.push (s.x + adv, f.toUni[g]?.getD artUnmapped)
               adv := adv + one
               widest := max widest one
               txt := txt ++ (f.toUni[g]?.getD artUnmapped)
             s := { s with
               runs := s.runs.push
                 { marks := s.marks, x := s.x, y := s.y, w := adv, size := s.size,
-                  ascent := f.ascent * s.size / 1000,
-                  inkAscent := f.capHeight * s.size / 1000,
-                  descent := f.descent * s.size / 1000, widest := widest, text := txt }
+                  ascent := f.ascent * s.size / (1000 * Dim.spPerPt),
+                  inkAscent := f.capHeight * s.size / (1000 * Dim.spPerPt),
+                  descent := f.descent * s.size / (1000 * Dim.spPerPt)
+                  widest := widest, text := txt, glyphs := gs }
               x := s.x + adv }
           | .num _ raw =>
             let d := raw.toInt?.getD 0
