@@ -153,6 +153,12 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (refusedWith "<span>x</span> in a line\n" "md:raw-html")
   t "a comment is still refused"
     (refusedWith "<!-- c -->\n" "md:raw-html")
+  -- Defect: a block-level refusal named column one of its line, so inside a
+  -- quote it pointed at the `>` and a checker reading the refused text back
+  -- from the source read the container prefix instead of the tag.
+  t "a block refusal inside a quote names the tag's column"
+    ((dvMd "> <div>x</div>\n").any fun d =>
+      d.kind == .E0390 && (d.span.map (·.pos.col)) == some 3)
   -- Defect: a fenced block's info string was routed as unexpressible, but
   -- `Ir.ListingSpec.language` carries it and both artifacts project it. Six
   -- ledger rows read as `match` only because the comparison drops `class`.

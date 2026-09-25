@@ -1502,7 +1502,11 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       diags := diags ++ ds
       leaf := .fenced fch flen finfo lpos (j - i) #[]
     else if htmlBlockAt cs j then
-      diags := diags.push (refuse file .rawHtml lpos)
+      -- The refusal names the construct's own column, not the line's: a
+      -- block inside a quote or an item starts after the container prefix,
+      -- and a checker reading the refused text back from the source must
+      -- land on the tag.
+      diags := diags.push (refuse file .rawHtml ⟨ln.no, j + 1⟩)
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds

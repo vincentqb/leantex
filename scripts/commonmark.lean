@@ -11,9 +11,15 @@ every one of the 652 spec examples. Run from the repository root after
 unclassified deviation fails. Four verdicts:
 
 * `match` — the tree the engine emits equals the tree the spec expects,
-  modulo the normalizations declared in `normalizations` below.
-* `rejected` — the strict dialect refuses the construct by design (an
-  `E0390`), which is this dialect's answer to that case and not a defect.
+  modulo the normalizations declared in `normalizations` below, and the run
+  names no loss.
+* `rejected` — the strict dialect refuses the construct by design, *and*
+  something other than the reader says the refused construct is there: a
+  raw-HTML refusal's text passes through the spec's own expected HTML
+  verbatim, and an indented-code or lazy refusal is on the reviewed list
+  (`tests/commonmark/strict-reviewed.tsv`), which fails in both directions.
+  The reader under test raised the refusal, so it cannot also be the
+  evidence for it.
 * `divergence` — a deliberate difference, listed in `divergences` with its
   reason. Adding a row here is a dialect decision, never a code change's
   side effect.
@@ -67,15 +73,17 @@ def normalizations : List (String × String) :=
   [("document chrome",
     "a spec example is a fragment; the engine emits a document. The \
 comparison reads the content of <main> and unwraps the <section> elements \
-the sectioning walk builds. Hides: nothing about a construct — but it would \
-hide a construct that failed to reach <main> at all, which is why an empty \
-engine tree never counts as a match."),
+the sectioning walk builds. Hides: nothing about a construct. A construct \
+that failed to reach <main> at all still fails, because the expected tree \
+is not empty wherever the spec expects output."),
    ("class and id attributes",
     "the engine generates ids from heading text and classes from its token \
-system; the spec's expected HTML carries class=\"language-x\" on a fenced \
-block. Both are anchoring and styling. Hides: the fenced block's info \
-string, which has its own routed diagnostic (md:code-info) so the loss is \
-named rather than forgotten."),
+system. The comparison drops every id and every class token except \
+`language-*`, the one class a spec example states as content (a fenced \
+block's info string), which is compared on both sides. Hides: the engine's \
+styling classes (`numbered`, `line`) and generated heading ids. It once \
+dropped `class` whole, and three cases read as `match` while the run named \
+the lost language with W0110."),
    ("style attributes",
     "the engine sets style=\"color: inherit\" on a link from its palette. \
 Styling, not content. Hides: nothing a spec example states."),
@@ -379,6 +387,22 @@ def hParse (src : String) : Array Html.Node := Id.run do
 
 def keptAttrs : List String := ["href", "src", "alt", "title", "start", "type"]
 
+/-- The one class token a spec example states as content: a fenced block's
+`language-x`. Every other class token is the engine's styling. -/
+def languageClass? (attrs : Array (String × String)) : Option String :=
+  match attrs.find? (·.1 == "class") with
+  | none => none
+  | some (_, v) =>
+    let toks := (v.splitOn " ").filter (·.startsWith "language-")
+    if toks.isEmpty then none else some (String.intercalate " " toks)
+
+/-- The IR gaps a markdown route names, each with the one thing on the page
+it costs. Read only to *attribute* an `owed` case to the gap that blocks it;
+a case these hide is never a `match` (`classify`). -/
+def gapSubjects : List String :=
+  ["md:thematic-break", "md:list-start", "md:loose-list", "md:link-title",
+   "md:image-title", "md:image-alt", "md:heading-depth", "md:code-info"]
+
 def hLevelTag? (tag : String) : Option Nat :=
   match tag with
   | "h1" => some 1 | "h2" => some 2 | "h3" => some 3
@@ -408,29 +432,54 @@ mutual
 
 /-- One node canonicalized. `base` is the heading level the emitter starts
 sectioning at, subtracted so the two sides' ordinals line up; `pre` says
-whether whitespace is significant here. -/
-def canon (base : Nat) (pre : Bool) (n : Html.Node) : String :=
+whether whitespace is significant here. `gaps` are the IR gaps whose cost
+is hidden — empty for the comparison that decides `match`, and the run's
+own routes only when *attributing* an `owed` case; `inLi` says the parent
+is a list item, where a loose list's `<p>` sits. -/
+def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) : String :=
   match n with
   | .text s => if pre then dropOneTrailingNewline s else squeeze s
   | .style _ => ""
   | .script _ _ => ""
   | .elem tag attrs kids =>
-    let tag' :=
-      match hLevelTag? tag with
-      | some l => "h#" ++ toString (if l ≥ base then l - base + 1 else 1)
-      | none => tag
-    let keep := (attrs.filter (fun a => keptAttrs.contains a.1)).qsort (·.1 < ·.1)
-    let as := keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) ""
-    let pre' := pre || Html.preserveTags.contains tag
-    if Html.voidTags.contains tag then "<" ++ tag' ++ as ++ ">"
-    else "<" ++ tag' ++ as ++ ">" ++ canonList base pre' "" kids.toList
-      ++ "</" ++ tag' ++ ">"
+    if tag == "hr" && gaps.contains "md:thematic-break" then ""
+    else if tag == "p" && inLi && gaps.contains "md:loose-list" then
+      canonGList gaps base pre false "" kids.toList
+    else
+      let tag' :=
+        match hLevelTag? tag with
+        | some l =>
+          let ord := if l ≥ base then l - base + 1 else 1
+          "h#" ++ toString (if gaps.contains "md:heading-depth" then min ord 3 else ord)
+        | none => tag
+      let costs (a : String) : Bool :=
+        (a == "start" && gaps.contains "md:list-start")
+          || (a == "title" && tag == "a" && gaps.contains "md:link-title")
+          || (a == "title" && tag == "img" && gaps.contains "md:image-title")
+          || (a == "alt" && gaps.contains "md:image-alt")
+      let keep := attrs.filter (fun a => keptAttrs.contains a.1 && !costs a.1)
+      let keep := match languageClass? attrs with
+        | some v => if gaps.contains "md:code-info" then keep else keep.push ("class", v)
+        | none => keep
+      let keep := keep.qsort (·.1 < ·.1)
+      let as := keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) ""
+      let pre' := pre || Html.preserveTags.contains tag
+      if Html.voidTags.contains tag then "<" ++ tag' ++ as ++ ">"
+      else "<" ++ tag' ++ as ++ ">" ++ canonGList gaps base pre' (tag == "li") "" kids.toList
+        ++ "</" ++ tag' ++ ">"
 
-def canonList (base : Nat) (pre : Bool) (acc : String) : List Html.Node → String
+def canonGList (gaps : List String) (base : Nat) (pre inLi : Bool) (acc : String) :
+    List Html.Node → String
   | [] => acc
-  | k :: rest => canonList base pre (acc ++ canon base pre k) rest
+  | k :: rest => canonGList gaps base pre inLi (acc ++ canonG gaps base pre inLi k) rest
 
 end
+
+/-- The comparison that decides `match`: no gap is hidden. -/
+def canon (base : Nat) (pre : Bool) (n : Html.Node) : String := canonG [] base pre false n
+
+def canonList (base : Nat) (pre : Bool) (acc : String) (ns : List Html.Node) : String :=
+  canonGList [] base pre false acc ns
 
 -- The engine's page reduced to the fragment a spec example is about: the
 -- content of `<main>`, with the sectioning walk's `<section>` wrappers
@@ -527,13 +576,84 @@ def Verdict.ofName? (s : String) : Option Verdict :=
   | "owed" => some .owed
   | _ => none
 
-/-- The three subjects the strict dialect refuses by design. `rejected`
-means *one of these*, keyed on the subject — not "the reader raised an
-`E0390`". Read off the code alone, a reader defect certified itself: 29 valid
-CommonMark cases were filed as design decisions because an over-wide
-raw-HTML test refused them. -/
+/-- The three subjects the strict dialect refuses by design. A refusal under
+one of these is only a *claim* that the case is a design decision: the
+reader under test raised it, so it cannot also be the evidence. `rejected`
+needs corroboration from outside the reader (`corroborated`). -/
 def strictSubjects : List String :=
   ["md:raw-html", "md:indented-code", "md:lazy-continuation"]
+
+/-- One strict refusal a run raised: its subject and the source position the
+reader gave for the refused construct. -/
+structure Refusal where
+  subject : String
+  line : Nat
+  col : Nat
+  deriving BEq, Repr, Inhabited
+
+def refusalsOf (diags : Array Diag) : Array Refusal :=
+  diags.filterMap fun d =>
+    if d.kind != .E0390 then none
+    else match d.subject, d.span with
+      | some s, some sp =>
+        if strictSubjects.contains s then some ⟨s, sp.pos.line, sp.pos.col⟩ else none
+      | _, _ => none
+
+/-- The source text a raw-HTML refusal names: from the refusal's position to
+the first `>` at or after it (across line ends), or to the end of its line
+when no `>` follows. A prefix of the refused construct, computed from the
+source alone and never from the reader's own tag grammar. -/
+def refusedPrefix (md : String) (line col : Nat) : String := Id.run do
+  let ls := (md.splitOn "\n").toArray
+  let some l := ls[line - 1]? | return ""
+  let start := (l.toList.drop (col - 1))
+  let mut out := ""
+  for c in start do
+    out := out.push c
+    if c == '>' then return out
+  -- No `>` on the line: look across the following lines for one.
+  let mut more := out
+  for k in [line:ls.size] do
+    let some l2 := ls[k]? | break
+    more := more.push '\n'
+    for c in l2.toList do
+      more := more.push c
+      if c == '>' then return more
+  return out
+
+/-- The reviewed list: the cases whose indented-code or lazy-continuation
+refusal a human checked against the spec text (`tests/commonmark/
+strict-reviewed.tsv`). A raw-HTML refusal needs no list — the spec's own
+expected HTML corroborates it — but these two classes leave nothing in the
+expected output a check could read. -/
+def reviewedPath : String := "tests/commonmark/strict-reviewed.tsv"
+
+def parseReviewed (text : String) : Except String (Array (Nat × String)) := do
+  let mut out : Array (Nat × String) := #[]
+  for raw in text.splitOn "\n" do
+    let line := raw.trimAsciiEnd.toString
+    if line.isEmpty || line.startsWith "#" then continue
+    let fs := (line.splitOn "\t").toArray
+    let some idS := fs[0]? | throw s!"reviewed row with no case: {line}"
+    let some sub := fs[1]? | throw s!"reviewed row with no subject: {line}"
+    let some why := fs[2]? | throw s!"reviewed row with no reason: {line}"
+    let some id := idS.toNat? | throw s!"reviewed case is not a number: {line}"
+    unless sub == "md:indented-code" || sub == "md:lazy-continuation" do
+      throw s!"reviewed row names '{sub}': only indented code and lazy continuation are reviewed"
+    if why.trimAscii.isEmpty then throw s!"reviewed row {id} gives no reason"
+    if out.contains (id, sub) then throw s!"reviewed row {id} {sub} appears twice"
+    out := out.push (id, sub)
+  return out
+
+/-- Is one refusal corroborated by something other than the reader? Raw
+HTML: the refused construct passes through the spec's expected HTML
+verbatim — escaped text there is `&lt;`, so a literal prefix is markup the
+spec itself passed through. The other two classes: a reviewed row. -/
+def corroborated (reviewed : Array (Nat × String)) (ex : Example) (r : Refusal) : Bool :=
+  if r.subject == "md:raw-html" then
+    let p := refusedPrefix ex.md r.line r.col
+    p.length ≥ 2 && containsSub ex.html p
+  else reviewed.contains (ex.id, r.subject)
 
 /-- The typographic characters the elaborator's `smartPunct` produces, mapped
 back to the ASCII the spec writes. A case whose only difference is this is
@@ -553,38 +673,82 @@ def unsmarten (s : String) : String := Id.run do
 /-- The note a pending dialect decision carries. -/
 def smartNote : String := "pending-decision:smart-punctuation"
 
-/-- Did the run name a loss? A routed construct is a loss the engine admits
-to, so its case cannot be a `match` however the trees compare — the
-normalizations are blind to exactly the attributes the routes are about, and
-six cases read as `match` while the same run raised `md:code-info`. -/
-def namesALoss (diags : Array Diag) : Bool :=
-  diags.any fun d =>
-    (d.kind == .W0307 || d.kind == .W0392)
-      && ((d.subject.map (fun s => s.startsWith "md:")).getD false)
+/-- The losses a run names that bar it from `match`, sorted: every markdown
+route (`W0307`/`W0392` under an `md:` subject), and any `W0110`, which on a
+markdown run means the desugaring handed the elaborator an option it could
+not read — the shape the injected info strings took. Other degraded codes
+(`W0601` a missing image file, `W0376` a missing alternative) are about the
+document, not the reader, and the canonical trees already carry what they
+are about. -/
+def routesOf (diags : Array Diag) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for d in diags do
+    let s :=
+      if d.kind == .W0110 then some "W0110"
+      else if d.kind == .W0307 || d.kind == .W0392 then
+        match d.subject with
+        | some s => if s.startsWith "md:" then some s else none
+        | none => none
+      else none
+    if let some s := s then
+      unless out.contains s do out := out.push s
+  return out.qsort (· < ·)
 
-/-- The note a case carries when its trees agree but the run names a loss. -/
-def lossNote : String := "tree-agrees-but-a-loss-is-named"
+/-- A case's verdict, as a pure function of what the run produced: the two
+canonical trees, the same two with the run's own routes hidden, the refusals
+with their corroboration, and the routes. `classify` computes the inputs;
+the selftest breaks each rule here.
 
-/-- The verdict one case earns, the two canonical forms behind it, and the
-note it carries. A strict refusal outranks a comparison: where the dialect
-says no, that *is* the answer. Any other error is a defect, not a
-decision. -/
-def classify (base : Nat) (ex : Example) : Verdict × String × String × String :=
+* A refusal outranks a comparison, but only when *every* refusal is
+  corroborated — then the case is `rejected`. An uncorroborated one is a
+  reader defect, and the case is `owed` with the note naming it.
+* A case whose run names a loss is never a `match`. When the trees agree
+  once exactly the named gaps are hidden, the note says which gaps block it
+  (`blocked-by:`): that is the verdict row an IR gap owes, never a false
+  match. -/
+def judge (want got wantG gotG : String) (refusals : Array (Refusal × Bool))
+    (routes : Array String) (divergence : Option String) : Verdict × String :=
+  let subjects (rs : Array (Refusal × Bool)) : String :=
+    String.intercalate "," ((rs.map (·.1.subject)).toList.eraseDups.mergeSort (· ≤ ·))
+  if !refusals.isEmpty then
+    let bad := refusals.filter (!·.2)
+    if bad.isEmpty then (.rejected, "refused:" ++ subjects refusals)
+    else (.owed, "uncorroborated:" ++ subjects bad)
+  else match divergence with
+    | some why => (.divergence, why)
+    | none =>
+      if want == got && routes.isEmpty then (.match_, "")
+      else if !routes.isEmpty && wantG == gotG then
+        (.owed, "blocked-by:" ++ String.intercalate "," routes.toList)
+      else if routes.isEmpty && unsmarten got == want then (.owed, smartNote)
+      else (.owed, "")
+
+/-- One case through the engine and the judge. -/
+structure Judged where
+  verdict : Verdict
+  note : String
+  want : String
+  got : String
+  refusals : Array (Refusal × Bool)
+  routes : Array String
+  deriving Inhabited
+
+def classify (base : Nat) (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
   -- The spec's own base is 1 (`#` is `<h1>`); the engine's is measured.
   -- Subtracting one number from both sides collapsed h1 and h2 to the same
   -- ordinal and reported every two-level heading document as owed.
-  let want := canonList 1 false "" (hParse ex.html).toList
+  let wantNs := (hParse ex.html).toList
+  let want := canonList 1 false "" wantNs
   let (ns, diags) := engineFragment ex.md
   let got := canonList base false "" ns.toList
-  let strict := diags.any fun d =>
-    d.kind == .E0390 && ((d.subject.map (strictSubjects.contains ·)).getD false)
-  if strict then (.rejected, want, got, "")
-  else if (divergences.find? (·.1 == ex.id)).isSome then
-    (.divergence, want, got, ((divergences.find? (·.1 == ex.id)).map (·.2)).getD "")
-  else if want == got then
-    if namesALoss diags then (.owed, want, got, lossNote) else (.match_, want, got, "")
-  else if unsmarten got == want then (.owed, want, got, smartNote)
-  else (.owed, want, got, "")
+  let routes := routesOf diags
+  let gaps := routes.toList.filter gapSubjects.contains
+  let wantG := canonGList gaps 1 false false "" wantNs
+  let gotG := canonGList gaps base false false "" ns.toList
+  let refusals := (refusalsOf diags).map fun r => (r, corroborated reviewed ex r)
+  let (v, note) := judge want got wantG gotG refusals routes
+    ((divergences.find? (·.1 == ex.id)).map (·.2))
+  { verdict := v, note, want, got, refusals, routes }
 
 
 -- ## The committed tables
@@ -637,7 +801,8 @@ def tierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row := 
 def verdictText (rows : Array Row) : String := Id.run do
   let mut s := "# One row per CommonMark 0.31.2 spec example: id, section, verdict, note.\n"
   s := s ++ "# verdicts: match | rejected | divergence | owed.\n"
-  s := s ++ "# `rejected` is the strict dialect refusing the construct by design (E0390);\n"
+  s := s ++ "# `rejected` is a strict refusal (E0390) corroborated from outside the reader:\n"
+  s := s ++ "# the expected HTML for raw HTML, tests/commonmark/strict-reviewed.tsv otherwise;\n"
   s := s ++ "# `divergence` needs a row in `divergences` in scripts/commonmark.lean;\n"
   s := s ++ "# `owed` is not implemented yet and the ratchet lets it only fall.\n"
   s := s ++ "# This file is written only by scripts/commonmark.lean.\n"
@@ -658,16 +823,38 @@ def counts (rows : Array Row) : Nat × Nat × Nat × Nat :=
    (rows.filter (·.verdict == .divergence)).size,
    (rows.filter (·.verdict == .owed)).size)
 
-def classifyAll (exs : Array Example) : Array Row × Array (Nat × String × String) :=
-  Id.run do
+/-- Every case through `classify`, once. The rows are the committed verdicts;
+the judged values carry what the reports and the reviewed-list check read,
+so nothing reruns the engine. -/
+def classifyAll (exs : Array Example) (reviewed : Array (Nat × String)) :
+    Array Row × Array Judged := Id.run do
   let base := measuredBase
   let mut rows : Array Row := #[]
-  let mut diffs : Array (Nat × String × String) := #[]
+  let mut js : Array Judged := #[]
   for e in exs do
-    let (v, want, got, note) := classify base e
-    rows := rows.push { id := e.id, section_ := e.section_, verdict := v, note }
-    unless v == .match_ do diffs := diffs.push (e.id, want, got)
-  return (rows, diffs)
+    let j := classify base reviewed e
+    rows := rows.push { id := e.id, section_ := e.section_, verdict := j.verdict, note := j.note }
+    js := js.push j
+  return (rows, js)
+
+/-- The reviewed list read in its other direction: a row naming a case whose
+run no longer raises that refusal is stale, and fails — a reviewed list that
+may lag the reader is a list that can certify anything. -/
+def staleReviewed (exs : Array Example) (js : Array Judged)
+    (reviewed : Array (Nat × String)) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for (id, sub) in reviewed do
+    match (exs.zip js).find? (·.1.id == id) with
+    | none => out := out.push s!"reviewed case {id} is not in the spec"
+    | some (_, j) =>
+      unless j.refusals.any (·.1.subject == sub) do
+        out := out.push s!"reviewed case {id} no longer raises {sub}; remove its row from {reviewedPath}"
+  return out
+
+def readReviewed : IO (Except String (Array (Nat × String))) := do
+  unless ← System.FilePath.pathExists reviewedPath do
+    return .error s!"{reviewedPath} is missing"
+  return parseReviewed (← IO.FS.readFile reviewedPath)
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -680,17 +867,22 @@ def tierProvenance (exs : Array Example) (rows : Array Row) : Array String :=
     s!"# verdicts ({verdictPath}): match {m}, rejected {r}, divergence {d}, owed {o}"]
 
 /-- The three strict classes, and how many spec cases each one touches:
-measured by running every case and reading the subject its refusal carried,
-not asserted. -/
-def strictTouch (exs : Array Example) : Array (String × Nat) := Id.run do
-  let subjects := ["md:raw-html", "md:indented-code", "md:lazy-continuation"]
-  let mut counts : Array Nat := Array.replicate subjects.length 0
-  for e in exs do
-    let (_, diags) := engineFragment e.md
-    for (s, k) in subjects.zipIdx do
-      if diags.any (fun d => d.kind == .E0390 && d.subject == some s) then
-        counts := counts.set! k ((counts[k]?).getD 0 + 1)
-  return (subjects.zipIdx.map (fun (s, k) => (s, (counts[k]?).getD 0))).toArray
+read off the subject each refusal carried, not asserted — with how many of
+those refusals were corroborated. -/
+def strictTouch (js : Array Judged) : Array (String × Nat × Nat) :=
+  (strictSubjects.map fun s =>
+    let touched := js.filter (·.refusals.any (·.1.subject == s))
+    let corr := touched.filter (·.refusals.all (fun (r, ok) => r.subject != s || ok))
+    (s, touched.size, corr.size)).toArray
+
+/-- Which spec cases each IR gap blocks: the `owed` cases whose trees agree
+once exactly the gaps their run named are hidden. The verdict rows an IR gap
+owes, read back from the table. -/
+def gapReport (rows : Array Row) : Array (String × Array Nat) :=
+  (gapSubjects ++ ["W0110"]).toArray.filterMap fun g =>
+    let ids := (rows.filter fun r =>
+      r.note.startsWith "blocked-by:" && ((r.note.drop 11).toString.splitOn ",").contains g).map (·.id)
+    if ids.isEmpty then none else some (g, ids)
 
 def selftest : IO UInt32 := do
   let mut bad : Array String := #[]
@@ -716,29 +908,73 @@ def selftest : IO UInt32 := do
   if let some e := (readExamples sample2)[0]? then
     unless e.section_ == "Real" do
       bad := bad.push s!"reader: a heading inside an example became a section '{e.section_}'"
-  -- The HTML reader and the canonical form.
+  -- The HTML reader and the canonical form. Every declared normalization is
+  -- broken once here in both directions: it hides the difference it
+  -- declares, and it does not hide the one next to it.
+  let cn (base : Nat) (s : String) : String := canonList base false "" (hParse s).toList
+  let same (name a b : String) : Option String :=
+    if cn 1 a == cn 1 b then none else some s!"{name}: '{cn 1 a}' and '{cn 1 b}' differ"
+  let differ (name a b : String) : Option String :=
+    if cn 1 a != cn 1 b then none else some s!"{name}: '{a}' and '{b}' compare equal"
   let cs : List (Option String) :=
-    [check "canon p" (canonList 1 false "" (hParse "<p>a <em>b</em></p>").toList)
-       "<p>a <em>b</em></p>",
-     check "canon void" (canonList 1 false "" (hParse "<p>a<br />b</p>").toList)
-       "<p>a<br>b</p>",
-     check "canon entity" (canonList 1 false "" (hParse "<p>&amp;&#65;</p>").toList)
-       "<p>&A</p>",
-     check "canon attrs"
-       (canonList 1 false "" (hParse "<a class=\"x\" href=\"u\">t</a>").toList)
-       "<a href=u>t</a>",
-     check "canon pre"
-       (canonList 1 false "" (hParse "<pre><code>a\n b\n</code></pre>").toList)
+    [check "canon p" (cn 1 "<p>a <em>b</em></p>") "<p>a <em>b</em></p>",
+     check "canon void" (cn 1 "<p>a<br />b</p>") "<p>a<br>b</p>",
+     check "canon entity" (cn 1 "<p>&amp;&#65;</p>") "<p>&A</p>",
+     check "canon void container" (cn 1 "<p>a<br>b</p>") "<p>a<br>b</p>",
+     -- document chrome
+     check "chrome: sections unwrap"
+       (canonList 1 false "" (unwrapList #[] (hParse "<section><p>a</p></section>").toList).toList)
+       "<p>a</p>",
+     check "chrome: the fragment is <main>'s content"
+       (canonList 1 false ""
+         ((mainList? (hParse "<header>h</header><main><p>a</p></main>").toList).getD #[]).toList)
+       "<p>a</p>",
+     -- class and id: a language class is content, every other class and id is not
+     same "class: a styling class is dropped" "<a class=\"x\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
+     same "id: a generated id is dropped" "<h2 id=\"x\">t</h2>" "<h2>t</h2>",
+     check "class: a language token is kept, a styling one dropped"
+       (cn 1 "<code class=\"language-x numbered\">c</code>") "<code class=language-x>c</code>",
+     differ "class: a missing language is a difference"
+       "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>",
+     -- style
+     same "style: dropped" "<a style=\"color: inherit\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
+     -- inter-element whitespace: collapsed outside <pre>, compared inside it
+     same "whitespace: collapsed outside pre" "<p>a\n  <em>b</em></p>" "<p>a <em>b</em></p>",
+     differ "whitespace: kept inside pre" "<pre><code>a  b</code></pre>" "<pre><code>a b</code></pre>",
+     -- heading level offset: the absolute tag is normalized, the relative level is not
+     check "heading: offset by the base" (cn 2 "<h2>t</h2>") "<h#1>t</h#1>",
+     differ "heading: a relative level still differs" "<h1>a</h1><h2>b</h2>" "<h1>a</h1><h3>b</h3>",
+     -- one trailing newline in a code block: exactly one
+     check "pre: one trailing newline dropped" (cn 1 "<pre><code>a\n b\n</code></pre>")
        "<pre><code>a\n b</code></pre>",
-     check "canon pre keeps an inner blank line"
-       (canonList 1 false "" (hParse "<pre><code>a\n\n</code></pre>").toList)
+     check "pre: an inner blank line is kept" (cn 1 "<pre><code>a\n\n</code></pre>")
        "<pre><code>a\n</code></pre>",
-     check "canon heading" (canonList 2 false "" (hParse "<h2>t</h2>").toList)
-       "<h#1>t</h#1>",
-     check "canon void container"
-       (canonList 1 false "" (hParse "<p>a<br>b</p>").toList) "<p>a<br>b</p>"]
+     differ "pre: a second trailing newline still differs"
+       "<pre><code>a\n\n</code></pre>" "<pre><code>a\n</code></pre>",
+     -- attribute order
+     same "attributes: order" "<img src=\"u\" alt=\"a\">" "<img alt=\"a\" src=\"u\">",
+     differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>"]
   for c in cs do
     if let some m := c then bad := bad.push m
+  -- The gap normalizations, used only to attribute an owed case: each hides
+  -- its own gap's cost and nothing else.
+  let cg (gaps : List String) (s : String) : String := canonGList gaps 1 false false "" (hParse s).toList
+  let gs : List (Option String) :=
+    [check "gap hr" (cg ["md:thematic-break"] "<p>a</p><hr /><p>b</p>") (cg [] "<p>a</p><p>b</p>"),
+     check "gap start" (cg ["md:list-start"] "<ol start=\"3\"><li>a</li></ol>")
+       (cg [] "<ol><li>a</li></ol>"),
+     check "gap loose" (cg ["md:loose-list"] "<ul><li><p>a</p></li></ul>") (cg [] "<ul><li>a</li></ul>"),
+     check "gap link title" (cg ["md:link-title"] "<a href=\"u\" title=\"t\">x</a>")
+       (cg [] "<a href=\"u\">x</a>"),
+     check "gap depth" (cg ["md:heading-depth"] "<h4>x</h4>") (cg [] "<h3>x</h3>"),
+     check "gap code info" (cg ["md:code-info"] "<pre><code class=\"language-x\">c</code></pre>")
+       (cg [] "<pre><code>c</code></pre>")]
+  for c in gs do
+    if let some m := c then bad := bad.push m
+  if cg ["md:link-title"] "<a href=\"u\">x</a>" == cg ["md:link-title"] "<a href=\"v\">x</a>" then
+    bad := bad.push "gap link title: it hid the destination too"
+  if cg ["md:thematic-break"] "<p>a</p>" == cg ["md:thematic-break"] "<p>b</p>" then
+    bad := bad.push "gap hr: it hid a paragraph's text too"
   -- The tier rows, in the scoreboard's own format: sorted, unique, two per
   -- section, and every value an integer the shared ratchet reads. The old
   -- rows were written in spec order, which the format faults.
@@ -768,25 +1004,76 @@ def selftest : IO UInt32 := do
       bad := bad.push s!"verdict '{v.name}' does not round-trip"
   unless (Verdict.ofName? "nearly").isNone do
     bad := bad.push "an unknown verdict name was accepted"
-  -- Each verdict rule, broken once. A normalization that hides a real loss
-  -- is exactly how six cases read as `match` while the same run named
-  -- `md:code-info`, so the rules are mutated here rather than trusted.
-  let lossy : Array Diag :=
-    #[{ kind := .W0392, message := "m", subject := some "md:list-start" }]
-  let lossyPending : Array Diag :=
-    #[{ kind := .W0307, message := "m", subject := some "md:thematic-break" }]
-  let unrelated : Array Diag :=
-    #[{ kind := .W0392, message := "m", subject := some "tex:something" },
-      { kind := .W0601, message := "m", subject := some "md:image" }]
-  unless namesALoss lossy do
+  -- Each verdict rule, broken once, against the pure judge. A normalization
+  -- that hides a real loss is how three cases read as `match` while the run
+  -- named the lost language, so the rules are mutated rather than trusted.
+  let lossy := Diag.of .W0392 "m" (subject := some "md:list-start")
+  let pending := Diag.of .W0307 "m" (subject := some "md:thematic-break")
+  let optionLeak := Diag.of .W0110 "m"
+  let unrelated := #[Diag.of .W0392 "m" (subject := some "tex:something"),
+    Diag.of .W0601 "m" (subject := some "md:image")]
+  unless routesOf #[lossy] == #["md:list-start"] do
     bad := bad.push "a degraded md route was not read as a loss"
-  unless namesALoss lossyPending do
+  unless routesOf #[pending] == #["md:thematic-break"] do
     bad := bad.push "a pending md route was not read as a loss"
-  if namesALoss unrelated then
+  unless routesOf #[optionLeak] == #["W0110"] do
+    bad := bad.push "an option the elaborator refused was not read as a loss"
+  unless (routesOf unrelated).isEmpty do
     bad := bad.push "a diagnostic outside the md routes was read as a loss"
-  if namesALoss #[] then bad := bad.push "an empty diagnostic list was read as a loss"
-  -- `rejected` is keyed on the strict subject, never on the code alone: a
-  -- reader defect raising E0390 under any other subject is a defect.
+  let r0 : Refusal := ⟨"md:raw-html", 1, 1⟩
+  let jv (want got wantG gotG : String) (rs : Array (Refusal × Bool)) (routes : Array String) :=
+    judge want got wantG gotG rs routes none
+  unless jv "a" "a" "a" "a" #[] #[] == (.match_, "") do
+    bad := bad.push "judge: agreeing trees with no loss are not a match"
+  unless jv "a" "a" "a" "a" #[] #["md:list-start"] == (.owed, "blocked-by:md:list-start") do
+    bad := bad.push "judge: agreeing trees under a named loss are not owed with the gap"
+  unless jv "a" "b" "a" "a" #[] #["md:link-title"] == (.owed, "blocked-by:md:link-title") do
+    bad := bad.push "judge: a case the gap alone blocks is not attributed to it"
+  unless jv "a" "b" "a" "c" #[] #["md:link-title"] == (.owed, "") do
+    bad := bad.push "judge: a case the gap does not explain was attributed to it"
+  unless jv "a" "b" "a" "b" #[] #[] == (.owed, "") do
+    bad := bad.push "judge: a gap normalization applied with no route named"
+  unless jv "x" "y" "x" "y" #[(r0, true)] #[] == (.rejected, "refused:md:raw-html") do
+    bad := bad.push "judge: a corroborated refusal is not rejected"
+  unless jv "x" "y" "x" "y" #[(r0, true), (⟨"md:indented-code", 2, 1⟩, false)] #[]
+      == (.owed, "uncorroborated:md:indented-code") do
+    bad := bad.push "judge: one uncorroborated refusal still read as rejected"
+  unless jv "x" "x" "x" "x" #[(r0, false)] #[] == (.owed, "uncorroborated:md:raw-html") do
+    bad := bad.push "judge: an uncorroborated refusal on agreeing trees was not owed"
+  unless jv "\"q\"" "\u201cq\u201d" "" "" #[] #[] == (.owed, smartNote) do
+    bad := bad.push "judge: a smart-punctuation-only difference lost its note"
+  -- Corroboration comes from the spec's expected HTML, never from the reader:
+  -- the refused text passes through verbatim, or it was not raw HTML.
+  let ex (md html : String) : Example := { id := 9, section_ := "S", md, html }
+  unless refusedPrefix "a <b>x</b> c\n" 1 3 == "<b>" do
+    bad := bad.push s!"prefix: '{refusedPrefix "a <b>x</b> c\n" 1 3}'"
+  unless refusedPrefix "<div id=\"x\"\n*hi*\n" 1 1 == "<div id=\"x\"" do
+    bad := bad.push "prefix: a tag with no > on its line does not stop at the line end"
+  unless refusedPrefix "<a\nhref=\"u\">x\n" 1 1 == "<a\nhref=\"u\">" do
+    bad := bad.push "prefix: a tag continued onto the next line is not read to its >"
+  unless corroborated #[] (ex "a <b>x</b>\n" "<p>a <b>x</b></p>\n") ⟨"md:raw-html", 1, 3⟩ do
+    bad := bad.push "corroboration: a tag the spec passes through was not corroborated"
+  if corroborated #[] (ex "[x]:\n<my url>\n" "<p><a href=\"my%20url\">x</a></p>\n")
+      ⟨"md:raw-html", 2, 1⟩ then
+    bad := bad.push "corroboration: a link destination the spec reads as a URL corroborated a refusal"
+  if corroborated #[] (ex "x <y z\n" "<p>x &lt;y z</p>\n") ⟨"md:raw-html", 1, 3⟩ then
+    bad := bad.push "corroboration: text the spec escapes corroborated a refusal"
+  unless corroborated #[(9, "md:indented-code")] (ex "    x\n" "") ⟨"md:indented-code", 1, 1⟩ do
+    bad := bad.push "corroboration: a reviewed indented-code row was not read"
+  if corroborated #[(8, "md:indented-code")] (ex "    x\n" "") ⟨"md:indented-code", 1, 1⟩ then
+    bad := bad.push "corroboration: another case's reviewed row corroborated this one"
+  if corroborated #[(9, "md:indented-code")] (ex "x\n" "") ⟨"md:lazy-continuation", 1, 1⟩ then
+    bad := bad.push "corroboration: a reviewed row for one class corroborated another"
+  -- The reviewed list: a malformed row is refused rather than skipped.
+  match parseReviewed "7\tmd:indented-code\tthe item's content is indented code\n" with
+  | .ok rs => unless rs == #[(7, "md:indented-code")] do bad := bad.push "reviewed: row misread"
+  | .error e => bad := bad.push s!"reviewed: {e}"
+  if (parseReviewed "7\tmd:raw-html\tx\n").toOption.isSome then
+    bad := bad.push "reviewed: a raw-HTML row was accepted, but the expected HTML corroborates those"
+  if (parseReviewed "7\tmd:indented-code\t\n").toOption.isSome then
+    bad := bad.push "reviewed: a row with no reason was accepted"
+  if (parseReviewed "7\tmd:indented-code\ta\n7\tmd:indented-code\tb\n").toOption.isSome then
+    bad := bad.push "reviewed: a duplicate row was accepted"
   unless strictSubjects.length == 3 do
     bad := bad.push s!"strict classes: {strictSubjects.length}, want 3"
   for s in strictSubjects do
@@ -818,31 +1105,54 @@ def report (exs : Array Example) (rows : Array Row) : IO Unit := do
   let (m, r, d, o) := counts rows
   IO.println s!"cases {exs.size}: match {m}, rejected {r}, divergence {d}, owed {o}"
   let pend := (rows.filter (·.note == smartNote)).size
-  let lossy := (rows.filter (·.note == lossNote)).size
+  let blocked := (rows.filter (·.note.startsWith "blocked-by:")).size
+  let uncorr := (rows.filter (·.note.startsWith "uncorroborated:")).size
   IO.println s!"  pending decision (smart punctuation): {pend} cases, all owed"
-  IO.println s!"  trees agree but a loss is named: {lossy} cases, all owed"
+  IO.println s!"  blocked by a named IR gap: {blocked} cases, all owed"
+  IO.println s!"  refused without corroboration (reader defects): {uncorr} cases, all owed"
+  for (g, ids) in gapReport rows do
+    IO.println s!"  gap {g} blocks {ids.size}: {ids.toList}"
   for sec in sectionsOf exs do
     let ss := rows.filter (·.section_ == sec)
     let (m, r, d, o) := counts ss
     IO.println s!"  {sec}: {ss.size} cases — match {m}, rejected {r}, divergence {d}, owed {o}"
+
+def printStrict (js : Array Judged) : IO Unit := do
+  for (s, n, c) in strictTouch js do
+    IO.println s!"  strict class {s}: {n} cases, {c} with every such refusal corroborated"
+
+/-- The committed inputs every mode reads: the vendored spec, gated on its
+content key, and the reviewed list. -/
+def loadInputs : IO (Except String (Array Example × Array (Nat × String))) := do
+  unless ← System.FilePath.pathExists specPath do
+    return .error s!"commonmark: {specPath} is missing"
+  let got ← keyOf specPath
+  unless got == specKey do
+    return .error s!"commonmark: {specPath} has content key {got}, expected {specKey}"
+  let exs := readExamples (← IO.FS.readFile specPath)
+  unless exs.size == 652 do
+    return .error s!"commonmark: read {exs.size} examples, expected 652"
+  match ← readReviewed with
+  | .ok rv => return .ok (exs, rv)
+  | .error e => return .error s!"commonmark: {e}"
 
 /-- The three tier modes, shared with every other tier through
 `Scoreboard.tierMain`, plus the verdict table this tier owns. Regeneration
 writes the verdict table only after the tier was written: when the tier
 refuses a fall no `# lowered:` line authorises, neither file changes. -/
 def run (args : List String) : IO UInt32 := do
-  unless ← System.FilePath.pathExists specPath do
-    return ← die 1 s!"commonmark: {specPath} is missing"
-  let got ← keyOf specPath
-  unless got == specKey do
-    return ← die 1 s!"commonmark: {specPath} has content key {got}, expected {specKey}"
-  let text ← IO.FS.readFile specPath
-  let exs := readExamples text
-  unless exs.size == 652 do
-    return ← die 1 s!"commonmark: read {exs.size} examples, expected 652"
+  let (exs, reviewed) ← match ← loadInputs with
+    | .ok v => pure v
+    | .error e => return ← die 1 e
   let t0 ← IO.monoMsNow
-  let (rows, _) := classifyAll exs
+  let (rows, js) := classifyAll exs reviewed
   let ms := (← IO.monoMsNow) - t0
+  -- The reviewed list in its other direction, in every mode: a stale row is
+  -- a fault, never a note.
+  let stale := staleReviewed exs js reviewed
+  unless stale.isEmpty do
+    for s in stale do IO.eprintln s!"commonmark: {s}"
+    return ← die 1 s!"commonmark: {stale.size} stale reviewed rows"
   let tier (a : List String) : IO UInt32 :=
     Scoreboard.tierMain "commonmark" (.pairs "match" "cases")
       (pure (tierProvenance exs rows, tierRows exs rows)) selftest a
@@ -872,8 +1182,7 @@ def run (args : List String) : IO UInt32 := do
         bad := bad.push s!"committed case {c.id} is not in the spec"
     for b in bad do IO.eprintln s!"commonmark: {b}"
     report exs rows
-    for (s, n) in strictTouch exs do
-      IO.println s!"  strict class {s}: {n} cases"
+    printStrict js
     let rc ← tier ["--check"]
     unless bad.isEmpty do
       return ← die 1 s!"commonmark: {bad.size} verdict findings"
@@ -885,11 +1194,24 @@ def run (args : List String) : IO UInt32 := do
     return ← die rc s!"commonmark: the tier was not written, so neither is {verdictPath}"
   IO.FS.writeFile verdictPath (verdictText rows)
   report exs rows
-  let touch := strictTouch exs
-  for (s, n) in touch do
-    IO.println s!"  strict class {s}: {n} cases"
+  printStrict js
   IO.println s!"commonmark: wrote {verdictPath} and {tierPath} ({ms} ms)"
   return 0
+
+/-- One case's judgement in full: the two canonical forms, the refusals with
+where the reader put them and whether anything outside the reader agrees,
+the routes, and the diagnostics. -/
+def explainOne (ex : Example) (j : Judged) : IO Unit := do
+  IO.println s!"case {ex.id} ({ex.section_}): {j.verdict.name}\
+{if j.note.isEmpty then "" else "  [" ++ j.note ++ "]"}"
+  IO.println s!"  md   {ex.md.replace "\n" "\\n"}"
+  IO.println s!"  want {j.want}"
+  IO.println s!"  got  {j.got}"
+  for (r, ok) in j.refusals do
+    let p := (refusedPrefix ex.md r.line r.col).replace "\n" "\\n"
+    IO.println s!"  refusal {r.subject} at {r.line}:{r.col} \
+{if ok then "corroborated" else "NOT corroborated"}{if r.subject == "md:raw-html" then " by '" ++ p ++ "'" else ""}"
+  unless j.routes.isEmpty do IO.println s!"  routes {j.routes.toList}"
 
 /-- **Scaling as a gate.** Every whole-document pass runs at 1×, 2× and 4×,
 plus CommonMark's own pathological inputs. A doubling of the input may not
@@ -952,22 +1274,30 @@ def main (argv : List String) : IO UInt32 := do
   | ["--scaling"] => scaling
   | ["--check"] => run ["--check"]
   | ["--explain", idS] =>
-    -- Why one case earned its verdict: the two canonical forms side by
-    -- side. A report mode, not a gate — it writes nothing.
+    -- Why one case earned its verdict. A report mode, not a gate — it
+    -- writes nothing.
     let some id := idS.toNat? | return ← die 2 "commonmark: --explain needs a case number"
-    let text ← IO.FS.readFile specPath
-    let exs := readExamples text
+    let (exs, reviewed) ← match ← loadInputs with
+      | .ok v => pure v
+      | .error e => return ← die 1 e
     let some ex := exs.find? (·.id == id) | return ← die 2 s!"commonmark: no case {id}"
-    let base := measuredBase
-    let (v, want, got, note) := classify base ex
-    IO.println s!"case {id} ({ex.section_}): {v.name}{if note.isEmpty then "" else "  [" ++ note ++ "]"}"
-    IO.println s!"  md   {ex.md.replace "\n" "\\n"}"
-    IO.println s!"  want {want}"
-    IO.println s!"  got  {got}"
+    explainOne ex (classify measuredBase reviewed ex)
     let (_, ds) := engineFragment ex.md
-    for d in ds do IO.println s!"  {d.code} {d.message}"
+    for d in ds do
+      IO.println s!"  {d.code} {d.message}{match d.span with
+        | some sp => s!" @{sp.pos.line}:{sp.pos.col}" | none => ""}"
+    return 0
+  | ["--audit"] =>
+    -- Every case a strict refusal or a route touches, explained: what a
+    -- human reviewing the strict list reads. A report mode; writes nothing.
+    let (exs, reviewed) ← match ← loadInputs with
+      | .ok v => pure v
+      | .error e => return ← die 1 e
+    let (_, js) := classifyAll exs reviewed
+    for (ex, j) in exs.zip js do
+      unless j.refusals.isEmpty && j.routes.isEmpty do explainOne ex j
     return 0
   | [] => run []
   | _ =>
-    IO.eprintln "usage: commonmark [--check | --selftest | --scaling | --explain <case>]"
+    IO.eprintln "usage: commonmark [--check | --selftest | --scaling | --explain <case> | --audit]"
     return 2

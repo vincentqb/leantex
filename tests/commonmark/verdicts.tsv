@@ -1,86 +1,87 @@
 # One row per CommonMark 0.31.2 spec example: id, section, verdict, note.
 # verdicts: match | rejected | divergence | owed.
-# `rejected` is the strict dialect refusing the construct by design (E0390);
+# `rejected` is a strict refusal (E0390) corroborated from outside the reader:
+# the expected HTML for raw HTML, tests/commonmark/strict-reviewed.tsv otherwise;
 # `divergence` needs a row in `divergences` in scripts/commonmark.lean;
 # `owed` is not implemented yet and the ratchet lets it only fall.
 # This file is written only by scripts/commonmark.lean.
-1	Tabs	rejected
-2	Tabs	rejected
-3	Tabs	rejected
-4	Tabs	owed	tree-agrees-but-a-loss-is-named
-5	Tabs	rejected
-6	Tabs	rejected
-7	Tabs	rejected
-8	Tabs	rejected
+1	Tabs	rejected	refused:md:indented-code
+2	Tabs	rejected	refused:md:indented-code
+3	Tabs	rejected	refused:md:indented-code
+4	Tabs	owed	blocked-by:md:loose-list
+5	Tabs	rejected	refused:md:indented-code
+6	Tabs	rejected	refused:md:indented-code
+7	Tabs	rejected	refused:md:indented-code
+8	Tabs	rejected	refused:md:indented-code
 9	Tabs	owed
 10	Tabs	match
-11	Tabs	owed
+11	Tabs	owed	blocked-by:md:thematic-break
 12	Backslash escapes	owed
 13	Backslash escapes	match
 14	Backslash escapes	owed
 15	Backslash escapes	match
 16	Backslash escapes	match
 17	Backslash escapes	match
-18	Backslash escapes	rejected
+18	Backslash escapes	rejected	refused:md:indented-code
 19	Backslash escapes	match
 20	Backslash escapes	owed
-21	Backslash escapes	rejected
-22	Backslash escapes	owed
+21	Backslash escapes	rejected	refused:md:raw-html
+22	Backslash escapes	owed	blocked-by:md:link-title
 23	Backslash escapes	owed
-24	Backslash escapes	match
+24	Backslash escapes	owed
 25	Entity and numeric character references	owed
 26	Entity and numeric character references	match
 27	Entity and numeric character references	owed	pending-decision:smart-punctuation
 28	Entity and numeric character references	match
 29	Entity and numeric character references	match
 30	Entity and numeric character references	match
-31	Entity and numeric character references	rejected
+31	Entity and numeric character references	rejected	refused:md:raw-html
 32	Entity and numeric character references	owed
 33	Entity and numeric character references	owed
-34	Entity and numeric character references	match
+34	Entity and numeric character references	owed
 35	Entity and numeric character references	match
-36	Entity and numeric character references	rejected
+36	Entity and numeric character references	rejected	refused:md:indented-code
 37	Entity and numeric character references	match
 38	Entity and numeric character references	match
 39	Entity and numeric character references	match
 40	Entity and numeric character references	match
 41	Entity and numeric character references	owed	pending-decision:smart-punctuation
 42	Precedence	owed
-43	Thematic breaks	owed
+43	Thematic breaks	owed	blocked-by:md:thematic-break
 44	Thematic breaks	match
 45	Thematic breaks	match
 46	Thematic breaks	owed	pending-decision:smart-punctuation
-47	Thematic breaks	owed
-48	Thematic breaks	rejected
+47	Thematic breaks	owed	blocked-by:md:thematic-break
+48	Thematic breaks	rejected	refused:md:indented-code
 49	Thematic breaks	match
-50	Thematic breaks	owed
-51	Thematic breaks	owed
-52	Thematic breaks	owed
-53	Thematic breaks	owed
-54	Thematic breaks	owed
+50	Thematic breaks	owed	blocked-by:md:thematic-break
+51	Thematic breaks	owed	blocked-by:md:thematic-break
+52	Thematic breaks	owed	blocked-by:md:thematic-break
+53	Thematic breaks	owed	blocked-by:md:thematic-break
+54	Thematic breaks	owed	blocked-by:md:thematic-break
 55	Thematic breaks	owed	pending-decision:smart-punctuation
 56	Thematic breaks	match
-57	Thematic breaks	owed
-58	Thematic breaks	owed
+57	Thematic breaks	owed	blocked-by:md:thematic-break
+58	Thematic breaks	owed	blocked-by:md:thematic-break
 59	Thematic breaks	match
 60	Thematic breaks	owed
-61	Thematic breaks	owed
-62	ATX headings	owed
+61	Thematic breaks	owed	blocked-by:md:thematic-break
+62	ATX headings	owed	blocked-by:md:heading-depth
 63	ATX headings	match
 64	ATX headings	match
 65	ATX headings	match
 66	ATX headings	match
 67	ATX headings	match
 68	ATX headings	match
-69	ATX headings	rejected
+69	ATX headings	rejected	refused:md:indented-code
 70	ATX headings	match
 71	ATX headings	match
-72	ATX headings	owed
+72	ATX headings	owed	blocked-by:md:heading-depth
 73	ATX headings	match
 74	ATX headings	match
 75	ATX headings	match
 76	ATX headings	match
-77	ATX headings	owed
+77	ATX headings	owed	blocked-by:md:thematic-break
 78	ATX headings	match
 79	ATX headings	match
 80	Setext headings	match
@@ -88,40 +89,40 @@
 82	Setext headings	match
 83	Setext headings	match
 84	Setext headings	match
-85	Setext headings	rejected
+85	Setext headings	rejected	refused:md:indented-code
 86	Setext headings	match
 87	Setext headings	owed	pending-decision:smart-punctuation
 88	Setext headings	owed
 89	Setext headings	owed
 90	Setext headings	match
 91	Setext headings	owed
-92	Setext headings	owed
-93	Setext headings	rejected
-94	Setext headings	owed
+92	Setext headings	owed	blocked-by:md:thematic-break
+93	Setext headings	rejected	refused:md:lazy-continuation
+94	Setext headings	owed	blocked-by:md:thematic-break
 95	Setext headings	match
-96	Setext headings	owed
+96	Setext headings	owed	blocked-by:md:thematic-break
 97	Setext headings	match
-98	Setext headings	owed
-99	Setext headings	owed
-100	Setext headings	rejected
-101	Setext headings	owed
+98	Setext headings	owed	blocked-by:md:thematic-break
+99	Setext headings	owed	blocked-by:md:thematic-break
+100	Setext headings	rejected	refused:md:indented-code
+101	Setext headings	owed	blocked-by:md:thematic-break
 102	Setext headings	match
 103	Setext headings	match
-104	Setext headings	owed
-105	Setext headings	owed
+104	Setext headings	owed	blocked-by:md:thematic-break
+105	Setext headings	owed	blocked-by:md:thematic-break
 106	Setext headings	owed	pending-decision:smart-punctuation
-107	Indented code blocks	rejected
-108	Indented code blocks	owed	tree-agrees-but-a-loss-is-named
+107	Indented code blocks	rejected	refused:md:indented-code
+108	Indented code blocks	owed	blocked-by:md:loose-list
 109	Indented code blocks	match
-110	Indented code blocks	rejected
-111	Indented code blocks	rejected
-112	Indented code blocks	rejected
+110	Indented code blocks	rejected	refused:md:indented-code
+111	Indented code blocks	rejected	refused:md:indented-code
+112	Indented code blocks	rejected	refused:md:indented-code
 113	Indented code blocks	match
-114	Indented code blocks	rejected
-115	Indented code blocks	rejected
-116	Indented code blocks	rejected
-117	Indented code blocks	rejected
-118	Indented code blocks	rejected
+114	Indented code blocks	rejected	refused:md:indented-code
+115	Indented code blocks	rejected	refused:md:indented-code
+116	Indented code blocks	rejected	refused:md:indented-code
+117	Indented code blocks	rejected	refused:md:indented-code
+118	Indented code blocks	rejected	refused:md:indented-code
 119	Fenced code blocks	match
 120	Fenced code blocks	match
 121	Fenced code blocks	owed
@@ -137,7 +138,7 @@
 131	Fenced code blocks	match
 132	Fenced code blocks	match
 133	Fenced code blocks	match
-134	Fenced code blocks	rejected
+134	Fenced code blocks	rejected	refused:md:indented-code
 135	Fenced code blocks	match
 136	Fenced code blocks	match
 137	Fenced code blocks	match
@@ -147,64 +148,64 @@
 141	Fenced code blocks	match
 142	Fenced code blocks	match
 143	Fenced code blocks	match
-144	Fenced code blocks	match
+144	Fenced code blocks	owed
 145	Fenced code blocks	match
 146	Fenced code blocks	match
 147	Fenced code blocks	match
-148	HTML blocks	rejected
-149	HTML blocks	rejected
-150	HTML blocks	rejected
-151	HTML blocks	rejected
-152	HTML blocks	rejected
-153	HTML blocks	rejected
-154	HTML blocks	rejected
-155	HTML blocks	rejected
-156	HTML blocks	rejected
-157	HTML blocks	rejected
-158	HTML blocks	rejected
-159	HTML blocks	rejected
-160	HTML blocks	rejected
-161	HTML blocks	rejected
-162	HTML blocks	rejected
-163	HTML blocks	rejected
-164	HTML blocks	rejected
-165	HTML blocks	rejected
-166	HTML blocks	rejected
-167	HTML blocks	rejected
-168	HTML blocks	rejected
-169	HTML blocks	rejected
-170	HTML blocks	rejected
-171	HTML blocks	rejected
-172	HTML blocks	rejected
-173	HTML blocks	rejected
-174	HTML blocks	rejected
-175	HTML blocks	rejected
-176	HTML blocks	rejected
-177	HTML blocks	rejected
-178	HTML blocks	rejected
-179	HTML blocks	rejected
-180	HTML blocks	rejected
-181	HTML blocks	rejected
-182	HTML blocks	rejected
-183	HTML blocks	rejected
-184	HTML blocks	rejected
-185	HTML blocks	rejected
-186	HTML blocks	rejected
-187	HTML blocks	rejected
-188	HTML blocks	rejected
-189	HTML blocks	rejected
-190	HTML blocks	rejected
-191	HTML blocks	rejected
+148	HTML blocks	rejected	refused:md:raw-html
+149	HTML blocks	owed	uncorroborated:md:indented-code
+150	HTML blocks	rejected	refused:md:raw-html
+151	HTML blocks	rejected	refused:md:raw-html
+152	HTML blocks	rejected	refused:md:raw-html
+153	HTML blocks	rejected	refused:md:raw-html
+154	HTML blocks	rejected	refused:md:raw-html
+155	HTML blocks	rejected	refused:md:raw-html
+156	HTML blocks	rejected	refused:md:raw-html
+157	HTML blocks	rejected	refused:md:raw-html
+158	HTML blocks	rejected	refused:md:raw-html
+159	HTML blocks	rejected	refused:md:raw-html
+160	HTML blocks	rejected	refused:md:raw-html
+161	HTML blocks	rejected	refused:md:raw-html
+162	HTML blocks	rejected	refused:md:raw-html
+163	HTML blocks	rejected	refused:md:raw-html
+164	HTML blocks	rejected	refused:md:raw-html
+165	HTML blocks	rejected	refused:md:raw-html
+166	HTML blocks	rejected	refused:md:raw-html
+167	HTML blocks	rejected	refused:md:raw-html
+168	HTML blocks	rejected	refused:md:raw-html
+169	HTML blocks	rejected	refused:md:raw-html
+170	HTML blocks	rejected	refused:md:raw-html
+171	HTML blocks	rejected	refused:md:raw-html
+172	HTML blocks	rejected	refused:md:raw-html
+173	HTML blocks	rejected	refused:md:raw-html
+174	HTML blocks	rejected	refused:md:raw-html
+175	HTML blocks	rejected	refused:md:raw-html
+176	HTML blocks	rejected	refused:md:raw-html
+177	HTML blocks	rejected	refused:md:raw-html
+178	HTML blocks	rejected	refused:md:raw-html
+179	HTML blocks	rejected	refused:md:raw-html
+180	HTML blocks	rejected	refused:md:raw-html
+181	HTML blocks	rejected	refused:md:raw-html
+182	HTML blocks	owed	uncorroborated:md:indented-code
+183	HTML blocks	rejected	refused:md:indented-code,md:raw-html
+184	HTML blocks	rejected	refused:md:indented-code,md:raw-html
+185	HTML blocks	rejected	refused:md:raw-html
+186	HTML blocks	rejected	refused:md:raw-html
+187	HTML blocks	rejected	refused:md:raw-html
+188	HTML blocks	rejected	refused:md:raw-html
+189	HTML blocks	rejected	refused:md:raw-html
+190	HTML blocks	rejected	refused:md:raw-html
+191	HTML blocks	rejected	refused:md:indented-code,md:raw-html
 192	Link reference definitions	owed
 193	Link reference definitions	owed
 194	Link reference definitions	owed
-195	Link reference definitions	rejected
+195	Link reference definitions	owed	uncorroborated:md:raw-html
 196	Link reference definitions	owed
 197	Link reference definitions	owed	pending-decision:smart-punctuation
 198	Link reference definitions	owed
 199	Link reference definitions	match
 200	Link reference definitions	owed
-201	Link reference definitions	rejected
+201	Link reference definitions	rejected	refused:md:raw-html
 202	Link reference definitions	owed
 203	Link reference definitions	owed
 204	Link reference definitions	owed
@@ -214,7 +215,7 @@
 208	Link reference definitions	owed
 209	Link reference definitions	owed	pending-decision:smart-punctuation
 210	Link reference definitions	owed
-211	Link reference definitions	rejected
+211	Link reference definitions	rejected	refused:md:indented-code
 212	Link reference definitions	match
 213	Link reference definitions	match
 214	Link reference definitions	owed
@@ -228,20 +229,20 @@
 222	Paragraphs	match
 223	Paragraphs	match
 224	Paragraphs	match
-225	Paragraphs	rejected
+225	Paragraphs	rejected	refused:md:indented-code
 226	Paragraphs	match
 227	Blank lines	match
 228	Block quotes	match
 229	Block quotes	match
 230	Block quotes	match
-231	Block quotes	rejected
-232	Block quotes	rejected
-233	Block quotes	rejected
-234	Block quotes	owed
+231	Block quotes	rejected	refused:md:indented-code
+232	Block quotes	rejected	refused:md:lazy-continuation
+233	Block quotes	rejected	refused:md:lazy-continuation
+234	Block quotes	owed	blocked-by:md:thematic-break
 235	Block quotes	match
-236	Block quotes	rejected
+236	Block quotes	rejected	refused:md:indented-code
 237	Block quotes	match
-238	Block quotes	rejected
+238	Block quotes	owed	uncorroborated:md:indented-code
 239	Block quotes	match
 240	Block quotes	match
 241	Block quotes	match
@@ -249,39 +250,39 @@
 243	Block quotes	match
 244	Block quotes	match
 245	Block quotes	match
-246	Block quotes	owed
-247	Block quotes	rejected
+246	Block quotes	owed	blocked-by:md:thematic-break
+247	Block quotes	rejected	refused:md:lazy-continuation
 248	Block quotes	match
 249	Block quotes	match
-250	Block quotes	rejected
-251	Block quotes	rejected
-252	Block quotes	rejected
-253	List items	rejected
-254	List items	rejected
+250	Block quotes	rejected	refused:md:lazy-continuation
+251	Block quotes	rejected	refused:md:lazy-continuation
+252	Block quotes	rejected	refused:md:indented-code
+253	List items	rejected	refused:md:indented-code
+254	List items	rejected	refused:md:indented-code
 255	List items	match
-256	List items	owed	tree-agrees-but-a-loss-is-named
-257	List items	rejected
-258	List items	owed	tree-agrees-but-a-loss-is-named
-259	List items	owed	tree-agrees-but-a-loss-is-named
+256	List items	owed	blocked-by:md:loose-list
+257	List items	rejected	refused:md:indented-code
+258	List items	owed	blocked-by:md:loose-list
+259	List items	owed	blocked-by:md:loose-list
 260	List items	match
 261	List items	match
-262	List items	owed	tree-agrees-but-a-loss-is-named
-263	List items	owed	tree-agrees-but-a-loss-is-named
-264	List items	rejected
-265	List items	owed
+262	List items	owed	blocked-by:md:loose-list
+263	List items	owed	blocked-by:md:loose-list
+264	List items	rejected	refused:md:indented-code
+265	List items	owed	blocked-by:md:list-start
 266	List items	match
-267	List items	owed
-268	List items	owed
+267	List items	owed	blocked-by:md:list-start
+268	List items	owed	blocked-by:md:list-start
 269	List items	match
-270	List items	rejected
-271	List items	rejected
-272	List items	rejected
-273	List items	rejected
-274	List items	rejected
+270	List items	rejected	refused:md:indented-code
+271	List items	rejected	refused:md:indented-code
+272	List items	rejected	refused:md:indented-code
+273	List items	rejected	refused:md:indented-code
+274	List items	rejected	refused:md:indented-code
 275	List items	match
 276	List items	match
-277	List items	owed	tree-agrees-but-a-loss-is-named
-278	List items	rejected
+277	List items	owed	blocked-by:md:loose-list
+278	List items	rejected	refused:md:indented-code
 279	List items	match
 280	List items	owed
 281	List items	match
@@ -289,37 +290,37 @@
 283	List items	match
 284	List items	match
 285	List items	match
-286	List items	rejected
-287	List items	rejected
-288	List items	rejected
-289	List items	rejected
-290	List items	rejected
-291	List items	rejected
-292	List items	rejected
-293	List items	rejected
+286	List items	rejected	refused:md:indented-code
+287	List items	rejected	refused:md:indented-code
+288	List items	rejected	refused:md:indented-code
+289	List items	rejected	refused:md:indented-code
+290	List items	rejected	refused:md:indented-code,md:lazy-continuation
+291	List items	owed	uncorroborated:md:indented-code
+292	List items	rejected	refused:md:lazy-continuation
+293	List items	rejected	refused:md:lazy-continuation
 294	List items	owed
 295	List items	match
 296	List items	owed
-297	List items	owed
+297	List items	owed	blocked-by:md:list-start
 298	List items	match
-299	List items	owed
+299	List items	owed	blocked-by:md:list-start
 300	List items	owed
 301	Lists	match
-302	Lists	owed
+302	Lists	owed	blocked-by:md:list-start
 303	Lists	match
 304	Lists	match
 305	Lists	match
-306	Lists	owed
+306	Lists	owed	blocked-by:md:loose-list
 307	Lists	owed
-308	Lists	rejected
-309	Lists	rejected
+308	Lists	rejected	refused:md:raw-html
+309	Lists	rejected	refused:md:indented-code,md:raw-html
 310	Lists	match
-311	Lists	owed
-312	Lists	rejected
-313	Lists	rejected
-314	Lists	owed
-315	Lists	owed
-316	Lists	owed
+311	Lists	owed	blocked-by:md:loose-list
+312	Lists	owed	uncorroborated:md:indented-code
+313	Lists	rejected	refused:md:indented-code
+314	Lists	owed	blocked-by:md:loose-list
+315	Lists	owed	blocked-by:md:loose-list
+316	Lists	owed	blocked-by:md:loose-list
 317	Lists	owed
 318	Lists	owed
 319	Lists	owed
@@ -327,9 +328,9 @@
 321	Lists	owed
 322	Lists	match
 323	Lists	owed
-324	Lists	owed	tree-agrees-but-a-loss-is-named
-325	Lists	owed	tree-agrees-but-a-loss-is-named
-326	Lists	owed	tree-agrees-but-a-loss-is-named
+324	Lists	owed	blocked-by:md:loose-list
+325	Lists	owed	blocked-by:md:loose-list
+326	Lists	owed	blocked-by:md:loose-list
 327	Lists	owed
 328	Code spans	match
 329	Code spans	match
@@ -347,7 +348,7 @@
 341	Code spans	match
 342	Code spans	match
 343	Code spans	owed
-344	Code spans	rejected
+344	Code spans	rejected	refused:md:raw-html
 345	Code spans	owed
 346	Code spans	owed
 347	Code spans	owed
@@ -478,14 +479,14 @@
 472	Emphasis and strong emphasis	match
 473	Emphasis and strong emphasis	match
 474	Emphasis and strong emphasis	match
-475	Emphasis and strong emphasis	rejected
-476	Emphasis and strong emphasis	rejected
-477	Emphasis and strong emphasis	rejected
+475	Emphasis and strong emphasis	rejected	refused:md:raw-html
+476	Emphasis and strong emphasis	rejected	refused:md:raw-html
+477	Emphasis and strong emphasis	rejected	refused:md:raw-html
 478	Emphasis and strong emphasis	match
 479	Emphasis and strong emphasis	match
 480	Emphasis and strong emphasis	match
 481	Emphasis and strong emphasis	match
-482	Links	owed
+482	Links	owed	blocked-by:md:link-title
 483	Links	match
 484	Links	match
 485	Links	match
@@ -494,10 +495,10 @@
 488	Links	match
 489	Links	owed
 490	Links	match
-491	Links	rejected
+491	Links	rejected	refused:md:raw-html
 492	Links	match
 493	Links	match
-494	Links	rejected
+494	Links	rejected	refused:md:raw-html
 495	Links	match
 496	Links	match
 497	Links	match
@@ -508,12 +509,12 @@
 502	Links	owed
 503	Links	owed
 504	Links	owed
-505	Links	owed
-506	Links	owed
+505	Links	owed	blocked-by:md:link-title
+506	Links	owed	blocked-by:md:link-title
 507	Links	owed
 508	Links	owed	pending-decision:smart-punctuation
-509	Links	owed
-510	Links	owed
+509	Links	owed	blocked-by:md:link-title
+510	Links	owed	blocked-by:md:link-title
 511	Links	match
 512	Links	match
 513	Links	match
@@ -527,7 +528,7 @@
 521	Links	match
 522	Links	match
 523	Links	match
-524	Links	rejected
+524	Links	rejected	refused:md:raw-html
 525	Links	match
 526	Links	owed
 527	Links	owed
@@ -539,7 +540,7 @@
 533	Links	owed
 534	Links	owed
 535	Links	owed
-536	Links	rejected
+536	Links	rejected	refused:md:raw-html
 537	Links	owed
 538	Links	owed
 539	Links	owed
@@ -575,14 +576,14 @@
 569	Links	owed
 570	Links	owed
 571	Links	owed
-572	Images	owed
+572	Images	owed	blocked-by:md:image-title
 573	Images	owed
 574	Images	match
 575	Images	owed
 576	Images	owed
 577	Images	owed
 578	Images	match
-579	Images	owed
+579	Images	owed	blocked-by:md:image-title
 580	Images	match
 581	Images	match
 582	Images	owed
@@ -616,25 +617,25 @@
 610	Autolinks	match
 611	Autolinks	match
 612	Autolinks	match
-613	Raw HTML	rejected
-614	Raw HTML	rejected
-615	Raw HTML	rejected
-616	Raw HTML	rejected
-617	Raw HTML	rejected
+613	Raw HTML	rejected	refused:md:raw-html
+614	Raw HTML	rejected	refused:md:raw-html
+615	Raw HTML	rejected	refused:md:raw-html
+616	Raw HTML	rejected	refused:md:raw-html
+617	Raw HTML	rejected	refused:md:raw-html
 618	Raw HTML	match
 619	Raw HTML	owed	pending-decision:smart-punctuation
 620	Raw HTML	owed	pending-decision:smart-punctuation
 621	Raw HTML	match
 622	Raw HTML	owed	pending-decision:smart-punctuation
-623	Raw HTML	rejected
+623	Raw HTML	rejected	refused:md:raw-html
 624	Raw HTML	owed	pending-decision:smart-punctuation
-625	Raw HTML	rejected
-626	Raw HTML	rejected
-627	Raw HTML	rejected
-628	Raw HTML	rejected
-629	Raw HTML	rejected
-630	Raw HTML	rejected
-631	Raw HTML	rejected
+625	Raw HTML	rejected	refused:md:raw-html
+626	Raw HTML	rejected	refused:md:raw-html
+627	Raw HTML	rejected	refused:md:raw-html
+628	Raw HTML	rejected	refused:md:raw-html
+629	Raw HTML	rejected	refused:md:raw-html
+630	Raw HTML	rejected	refused:md:raw-html
+631	Raw HTML	rejected	refused:md:raw-html
 632	Raw HTML	owed	pending-decision:smart-punctuation
 633	Hard line breaks	match
 634	Hard line breaks	match
@@ -645,8 +646,8 @@
 639	Hard line breaks	match
 640	Hard line breaks	owed
 641	Hard line breaks	match
-642	Hard line breaks	rejected
-643	Hard line breaks	rejected
+642	Hard line breaks	rejected	refused:md:raw-html
+643	Hard line breaks	rejected	refused:md:raw-html
 644	Hard line breaks	match
 645	Hard line breaks	match
 646	Hard line breaks	match

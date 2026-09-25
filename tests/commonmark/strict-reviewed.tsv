@@ -1,0 +1,67 @@
+# The strict refusals a human reviewed against the CommonMark 0.31.2 spec text:
+# case<TAB>subject<TAB>why the case genuinely exercises that construct.
+# Only md:indented-code and md:lazy-continuation rows: a raw-HTML refusal is
+# corroborated by the spec's own expected HTML instead. scripts/commonmark.lean
+# fails a row whose case no longer raises its subject, and files a refusal with
+# no row here as `owed` (uncorroborated), never as `rejected`.
+# Reviewed 2026-09-25 against the spec text, with pandoc 3.11
+# (-f commonmark+sourcepos) as a second opinion on where indented code sits;
+# the tab-indented cases were checked by hand.
+1	md:indented-code	a tab-indented line outside any container is indented code (§4.4)
+2	md:indented-code	two spaces then a tab reach four columns: indented code
+3	md:indented-code	four-space lines holding tabs are one indented code block
+5	md:indented-code	a tab-indented line after a blank inside an item is the item's indented code
+6	md:indented-code	a tab after the quote marker reaches four columns: indented code in the quote
+7	md:indented-code	tabs after the list marker leave the item's content indented four columns
+8	md:indented-code	a space-indented line and a tab-indented line form one indented code block
+18	md:indented-code	the escaped brackets sit in indented code, where escapes are literal
+36	md:indented-code	the reference sits in indented code, where references are literal
+48	md:indented-code	an indented *** is code, not a thematic break
+69	md:indented-code	an indented # is code, not a heading
+85	md:indented-code	the indented Foo and --- lines are code, not a setext heading
+100	md:indented-code	an indented line is code, and the --- under it is a break
+107	md:indented-code	the section's own simple indented code block
+110	md:indented-code	indented code keeps markdown syntax literal
+111	md:indented-code	blank lines inside indented code are kept
+112	md:indented-code	lines of spaces inside indented code are kept
+114	md:indented-code	indented code followed by a paragraph
+115	md:indented-code	indented code between headings
+116	md:indented-code	the first line's extra indentation is kept inside indented code
+117	md:indented-code	leading and trailing blank lines are not part of indented code
+118	md:indented-code	trailing spaces inside indented code are kept
+134	md:indented-code	a fence indented four spaces is indented code, not a fence
+183	md:indented-code	an indented comment after a blank line is indented code
+184	md:indented-code	an indented tag after a blank line is indented code
+191	md:indented-code	after the blank line the indented td line opens indented code
+211	md:indented-code	an indented link reference definition is code
+225	md:indented-code	an indented first line is code, not a paragraph
+231	md:indented-code	indented quote markers are code
+236	md:indented-code	five spaces after the quote marker leave indented code, and the next line is code outside it
+252	md:indented-code	five columns after a quote marker are indented code
+253	md:indented-code	indented code after a paragraph, outside any list
+254	md:indented-code	indented code inside the item, four columns past its content
+257	md:indented-code	five spaces after a blank line leave the item and are indented code
+264	md:indented-code	indented code in an item, with blank lines inside it
+270	md:indented-code	indented code in an item after a blank line
+271	md:indented-code	indented code in a two-digit ordered item
+272	md:indented-code	indented code, a paragraph, then indented code
+273	md:indented-code	an item that opens with indented code
+274	md:indented-code	an item that opens with indented code keeps one extra space
+278	md:indented-code	the third item's content is indented code
+286	md:indented-code	indented code in an item indented one space
+287	md:indented-code	indented code in an item indented two spaces
+288	md:indented-code	indented code in an item indented three spaces
+289	md:indented-code	a list marker indented four spaces is indented code
+290	md:indented-code	indented code in the item after its lazy line
+309	md:indented-code	after a comment, an indented line is code
+313	md:indented-code	an ordered marker indented four spaces after a blank line is indented code
+93	md:lazy-continuation	bar continues the quoted paragraph without its marker
+232	md:lazy-continuation	baz continues the quoted paragraph without its marker
+233	md:lazy-continuation	baz continues the quoted paragraph without its marker
+247	md:lazy-continuation	baz continues the quoted paragraph without its marker
+250	md:lazy-continuation	bar continues a paragraph three quotes deep without any marker
+251	md:lazy-continuation	a line with fewer quote markers continues the innermost paragraph
+290	md:lazy-continuation	the item's second paragraph line starts at column one
+291	md:lazy-continuation	the second line is indented less than the item's content column
+292	md:lazy-continuation	the inner quote's paragraph continues with no markers
+293	md:lazy-continuation	the inner quote's paragraph continues with only the outer marker
