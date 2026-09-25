@@ -1213,55 +1213,161 @@ def explainOne (ex : Example) (j : Judged) : IO Unit := do
 {if ok then "corroborated" else "NOT corroborated"}{if r.subject == "md:raw-html" then " by '" ++ p ++ "'" else ""}"
   unless j.routes.isEmpty do IO.println s!"  routes {j.routes.toList}"
 
-/-- **Scaling as a gate.** Every whole-document pass runs at 1×, 2× and 4×,
-plus CommonMark's own pathological inputs. A doubling of the input may not
-more than `scalingBound` the time: the inline phase was quadratic — 3.8× per
-doubling, 31.8 s for one 64 KB paragraph of `*a*` against 0.9 s for the same
-content as tex — and nothing noticed, because the spec's one-construct
-examples are all a few bytes long.
+/-- **Scaling as a gate.** Every shape runs at 1×, 2× and 4× of a base size,
+and a doubling of the input may not more than `scalingBound` the time. The
+inline phase was quadratic — 3.8× per doubling, 31.8 s for one 64 KB
+paragraph of `*a*` against 0.9 s for the same content as tex — and nothing
+noticed, because the spec's one-construct examples are all a few bytes
+long. The first version of this gate then measured only matched shapes at
+4–16 KB, and seven quadratic scans sat outside it: unclosed `<!--` took
+133 s at 78 KB.
+
+So the shapes start from cmark's own pathological suite
+(`test/pathological_tests.py`), plus block-phase shapes, at sizes where a
+quadratic term outweighs the constant. The reader phase is timed twice per
+size and the minimum kept; the whole path once. Two phases: the reader and
+its desugaring alone (`Md.read`), which this gate owns and fails on, and the
+whole path through the elaborator and the HTML backend, which it reports —
+a whole-path non-linearity with a linear reader belongs to another module.
 
 Not in `lake test`: it measures wall-clock on a shared host, so it is a deep
 oracle run when the reader is touched, like `kp-fuzz` for line breaking. -/
 def scalingBound : Float := 2.6
 
-/-- The pathological shapes, each as a unit repeated to the target size.
-Nested brackets and delimiter runs are where a backtracking reader blows
-up. -/
-def scalingUnits : List (String × String) :=
-  [("emphasis", "*a* "), ("code spans", "`a` "), ("links", "[a](b) "),
-   ("nested brackets", "[[a]] "), ("open brackets", "[a "),
-   ("delimiter runs", "*a_b* "), ("plain words", "word ")]
+/-- The base size, in bytes, of every shape's 1× document. -/
+def scalingBase : Nat := 8192
 
-def repeatUnit (unit : String) (n : Nat) : String := Id.run do
+/-- `unit` repeated until the document reaches `bytes`. -/
+def repeatTo (unit : String) (bytes : Nat) : String := Id.run do
+  let u := max unit.length 1
   let mut s := ""
-  for _ in [0:n] do s := s ++ unit
+  for _ in [0:bytes / u + 1] do s := s ++ unit
   return s ++ "\n"
 
-def scaling : IO UInt32 := do
+/-- `pre` repeated, `mid`, then `post` repeated, the whole reaching `bytes`. -/
+def nestTo (pre mid post : String) (bytes : Nat) : String := Id.run do
+  let n := bytes / (max (pre.length + post.length) 1)
+  let mut a := ""
+  let mut b := ""
+  for _ in [0:n] do
+    a := a ++ pre
+    b := b ++ post
+  return a ++ mid ++ b ++ "\n"
+
+/-- Backtick strings of rising length, `e` between them, until `bytes`. -/
+def ticksTo (bytes : Nat) : String := Id.run do
+  let mut s := ""
+  let mut len := 0
+  let mut k := 1
+  for _ in [0:bytes] do
+    if len ≥ bytes then break
+    s := s ++ "e" ++ String.ofList (List.replicate k '`')
+    len := len + k + 1
+    k := k + 1
+  return s ++ "\n"
+
+/-- List items indented one level deeper each line, until `bytes`. -/
+def deepListTo (bytes : Nat) : String := Id.run do
+  let mut s := ""
+  let mut len := 0
+  let mut k := 0
+  for _ in [0:bytes] do
+    if len ≥ bytes then break
+    s := s ++ String.ofList (List.replicate (2 * k) ' ') ++ "* a\n"
+    len := len + 2 * k + 4
+    k := k + 1
+  return s
+
+/-- The shapes, each a function of the target size in bytes. The inline
+shapes are one paragraph each; the pathological ones are cmark's. -/
+def scalingShapes : List (String × (Nat → String)) :=
+  [("emphasis", repeatTo "*a* "), ("code spans", repeatTo "`a` "),
+   ("links", repeatTo "[a](b) "), ("nested brackets", repeatTo "[[a]] "),
+   ("open brackets", repeatTo "[a "), ("delimiter runs", repeatTo "*a_b* "),
+   ("plain words", repeatTo "word "),
+   -- cmark's pathological suite
+   ("emph closers, no openers", repeatTo "a_ "),
+   ("emph openers, no closers", repeatTo "_a "),
+   ("link closers, no openers", repeatTo "a]"),
+   ("link openers, no closers", repeatTo "[a"),
+   ("mismatched openers and closers", repeatTo "*a_ "),
+   ("openers and closers multiple of 3", fun n => "a**b" ++ repeatTo "c* " n),
+   ("link openers and emph closers", repeatTo "[ a_"),
+   ("[ (]( repeated", repeatTo "[ (]("),
+   ("![[]() repeated", repeatTo "![[]()"),
+   ("nested brackets, one deep run", nestTo "[" "a" "]"),
+   ("nested strong emphasis", nestTo "*a **a " "b" " a** a*"),
+   ("backticks of rising length", ticksTo),
+   ("unclosed links A", repeatTo "[a](<b"),
+   ("unclosed links B", repeatTo "[a](b"),
+   ("unclosed paren titles", repeatTo "[a](b ("),
+   ("unclosed <!--", fun n => "</" ++ repeatTo "<!--" n),
+   ("unclosed <?", repeatTo "a <?"),
+   ("unclosed <!X", repeatTo "a <!A "),
+   ("unclosed <![CDATA[", repeatTo "a <![CDATA["),
+   ("unclosed autolinks", repeatTo "<a"),
+   -- block phase
+   ("nested block quotes", nestTo "> " "a" ""),
+   ("deeply nested lists", deepListTo),
+   ("many list items", repeatTo "- a\n"),
+   ("many quote lines", repeatTo "> a\n"),
+   ("many headings", fun n => Id.run do
+      -- Distinct titles: identical ones measure the HTML backend's anchor
+      -- claim, which probes `a`, `a-2`, … per heading.
+      let mut s := ""
+      for k in [0:n / 8 + 1] do s := s ++ s!"# a{k}\n"
+      return s),
+   ("many fences", repeatTo "```\na\n```\n"),
+   ("many paragraphs", repeatTo "a\n\n")]
+
+/-- The minimum of `runs` timings of `f` on the document an `IO.Ref` holds,
+in nanoseconds. Read through the ref after the clock starts, so the work
+cannot be hoisted out of the timed region. -/
+def timeMin (src : String) (f : String → Nat) (runs : Nat := 2) : IO Nat := do
+  let ref ← IO.mkRef src
+  let mut best : Nat := 0
+  for k in [0:runs] do
+    let t0 ← IO.monoNanosNow
+    let s ← ref.get
+    let r := f s
+    if r == 0xFFFFFFFFFFFF then IO.println ""
+    let t1 ← IO.monoNanosNow
+    if k == 0 || t1 - t0 < best then best := t1 - t0
+  return best
+
+def scaling (only : String) : IO UInt32 := do
   let mut bad : Array String := #[]
-  for (name, unit) in scalingUnits do
-    let mut times : Array Nat := #[]
+  let reader : String → Nat := fun s => (Md.read "case.md" s).1.size
+  let whole : String → Nat := fun s => (engineFragment s).1.size
+  for (name, doc) in scalingShapes do
+    unless only.isEmpty || containsSub name only do continue
+    let mut rt : Array Nat := #[]
+    let mut wt : Array Nat := #[]
     for mult in [1, 2, 4] do
-      let src := repeatUnit unit (1024 * mult)
-      let t0 ← IO.monoNanosNow
-      let (ns, _) := engineFragment src
-      let t1 ← IO.monoNanosNow
-      -- Force the tree so the measurement is of work done, not of a thunk.
-      unless ns.size ≥ 0 do bad := bad.push "impossible"
-      times := times.push (t1 - t0)
-    let r1 := (times[0]?).getD 1
-    let r2 := (times[1]?).getD 1
-    let r3 := (times[2]?).getD 1
-    let ratio12 := (Float.ofNat r2) / (Float.ofNat (max r1 1))
-    let ratio24 := (Float.ofNat r3) / (Float.ofNat (max r2 1))
-    IO.println s!"  {name}: 1x {r1 / 1000000} ms, 2x {r2 / 1000000} ms, \
-4x {r3 / 1000000} ms — ratios {ratio12} and {ratio24}"
-    -- A sub-millisecond 1× is noise, not a measurement: only judge a ratio
-    -- whose denominator is large enough to mean something.
-    if r2 ≥ 2000000 && ratio24 > scalingBound then
-      bad := bad.push s!"{name}: 2x→4x is {ratio24}×, over {scalingBound}×"
-    if r1 ≥ 2000000 && ratio12 > scalingBound then
-      bad := bad.push s!"{name}: 1x→2x is {ratio12}×, over {scalingBound}×"
+      let src := doc (scalingBase * mult)
+      rt := rt.push (← timeMin src reader)
+      wt := wt.push (← timeMin src whole 1)
+    let ratios (t : Array Nat) : Float × Float :=
+      ((Float.ofNat ((t[1]?).getD 1)) / (Float.ofNat (max ((t[0]?).getD 1) 1)),
+       (Float.ofNat ((t[2]?).getD 1)) / (Float.ofNat (max ((t[1]?).getD 1) 1)))
+    let (r12, r24) := ratios rt
+    let (w12, w24) := ratios wt
+    let ms (t : Array Nat) (k : Nat) : Nat := ((t[k]?).getD 0) / 1000000
+    IO.println s!"  {name}: reader {ms rt 0}/{ms rt 1}/{ms rt 2} ms ({r12}, {r24}); \
+whole {ms wt 0}/{ms wt 1}/{ms wt 2} ms ({w12}, {w24})"
+    (← IO.getStdout).flush
+    -- A sub-2 ms denominator is noise, not a measurement: only judge a
+    -- ratio whose denominator is large enough to mean something.
+    let judge (phase : String) (t : Array Nat) (a b : Float) : Array String := Id.run do
+      let mut out : Array String := #[]
+      if (t[0]?).getD 0 ≥ 2000000 && a > scalingBound then
+        out := out.push s!"{name} ({phase}): 1x→2x is {a}×, over {scalingBound}×"
+      if (t[1]?).getD 0 ≥ 2000000 && b > scalingBound then
+        out := out.push s!"{name} ({phase}): 2x→4x is {b}×, over {scalingBound}×"
+      return out
+    bad := bad ++ judge "reader" rt r12 r24
+    for w in judge "whole path" wt w12 w24 do
+      IO.println s!"  report, not gated: {w}"
   if bad.isEmpty then
     IO.println "commonmark --scaling: ok"
     return 0
@@ -1271,7 +1377,8 @@ def scaling : IO UInt32 := do
 def main (argv : List String) : IO UInt32 := do
   match argv with
   | ["--selftest"] => selftest
-  | ["--scaling"] => scaling
+  | ["--scaling"] => scaling ""
+  | ["--scaling", only] => scaling only
   | ["--check"] => run ["--check"]
   | ["--explain", idS] =>
     -- Why one case earned its verdict. A report mode, not a gate — it
@@ -1299,5 +1406,5 @@ def main (argv : List String) : IO UInt32 := do
     return 0
   | [] => run []
   | _ =>
-    IO.eprintln "usage: commonmark [--check | --selftest | --scaling | --explain <case> | --audit]"
+    IO.eprintln "usage: commonmark [--check | --selftest | --scaling [shape] | --explain <case> | --audit]"
     return 2

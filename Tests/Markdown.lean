@@ -395,4 +395,15 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((dvMd "<div>\n<div>\n</div>\n</div>\n").filter (·.kind == .E0390)).size == 1)
   t "a tag that may not interrupt a paragraph stays inside it"
     (!has "para\n<custom-tag>\nmore text\n" "</p><p>more")
+  -- `<!-->` and `<!--->` are complete comments (0.31.2); searched for from
+  -- the fourth character, `<!-->` read as the start of an unclosed one.
+  t "the shortest comment is a complete raw-HTML construct"
+    (refusedWith "a <!--> b\n" "md:raw-html")
+  -- A bare destination nests parentheses at most 32 deep (cmark's limit;
+  -- the spec asks for at least three), which is what bounds each scan.
+  let deep (k : Nat) : String :=
+    "[a](" ++ String.ofList (List.replicate k '(') ++ "x"
+      ++ String.ofList (List.replicate k ')') ++ ")\n"
+  t "a destination nested 32 deep is a link, 33 deep is text"
+    (has (deep 32) "<a " && !has (deep 33) "<a ")
   mdAccountsChecks t

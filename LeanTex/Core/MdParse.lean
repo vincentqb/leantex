@@ -1,4 +1,5 @@
 import LeanTex.Core.Diag
+import Std.Data.HashMap
 
 /-! # The markdown surface: source → md AST
 
@@ -278,6 +279,29 @@ def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
     j := j + 1
   return none
 
+/-- What a raw-HTML scan over one stretch remembers: for each of the four
+constructs that close on a literal (comment, CDATA, processing instruction,
+declaration), the earliest position from which a search for that literal
+has already failed. -/
+structure HtmlMemo where
+  noClose : Array (Option Nat) := #[none, none, none, none]
+  deriving Inhabited
+
+/-- `findLit`, remembering failure. A search for literal `k` that found
+nothing at or after `p` answers every later search from `q ≥ p` without
+scanning, and the inline scan asks at increasing positions — so an unclosed
+construct costs one scan in all, not one per opener. Unclosed `<!--`
+repeated took 133 s at 78 KB, one scan to the paragraph's end per `<`. -/
+def findLitM (cs : Array Char) (i : Nat) (k : Nat) (lit : String) (m : HtmlMemo) :
+    Option Nat × HtmlMemo :=
+  let known : Bool := match m.noClose[k]? with
+    | some (some p) => decide (p ≤ i)
+    | _ => false
+  if known then (none, m)
+  else match findLit cs i lit with
+    | some e => (some e, m)
+    | none => (none, { m with noClose := m.noClose.set! k (some i) })
+
 /-- A tag name: an ASCII letter then letters, digits and `-` (§6.6). -/
 def tagNameAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
   let some c0 := cs[i]? | return none
@@ -345,21 +369,23 @@ def attrAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
 
 /-- A complete raw-HTML construct at `i` (§6.6): an open tag, a closing tag,
 a comment, a processing instruction, a declaration, or CDATA. The index past
-it, or `none` — and `none` means the text is text. -/
-def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
-  unless cs[i]? == some '<' do return none
-  if litAt cs i "<!--" then return findLit cs (i + 4) "-->"
-  if litAt cs i "<![CDATA[" then return findLit cs (i + 9) "]]>"
-  if litAt cs i "<?" then return findLit cs (i + 2) "?>"
+it, or `none` — and `none` means the text is text. A comment is `<!-->`,
+`<!--->`, or `<!--` … `-->` (0.31.2), so its closer is searched from the
+second character. The memo is `findLitM`'s. -/
+def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMemo := Id.run do
+  unless cs[i]? == some '<' do return (none, m)
+  if litAt cs i "<!--" then return findLitM cs (i + 2) 0 "-->" m
+  if litAt cs i "<![CDATA[" then return findLitM cs (i + 9) 1 "]]>" m
+  if litAt cs i "<?" then return findLitM cs (i + 2) 2 "?>" m
   if cs[i + 1]? == some '!' then
     if ((cs[i + 2]?).map isAsciiAlpha).getD false then
-      return findLit cs (i + 2) ">"
-    return none
+      return findLitM cs (i + 2) 3 ">" m
+    return (none, m)
   if cs[i + 1]? == some '/' then
-    let some j := tagNameAt cs (i + 2) | return none
+    let some j := tagNameAt cs (i + 2) | return (none, m)
     let j := wsAt cs j
-    if cs[j]? == some '>' then return some (j + 1) else return none
-  let some j := tagNameAt cs (i + 1) | return none
+    if cs[j]? == some '>' then return (some (j + 1), m) else return (none, m)
+  let some j := tagNameAt cs (i + 1) | return (none, m)
   let mut k := j
   for _ in [0:cs.size + 1] do
     let w := wsAt cs k
@@ -369,7 +395,10 @@ def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
     | none => break
   let e0 := wsAt cs k
   let e := if cs[e0]? == some '/' then e0 + 1 else e0
-  if cs[e]? == some '>' then return some (e + 1) else return none
+  if cs[e]? == some '>' then return (some (e + 1), m) else return (none, m)
+
+/-- `htmlTagAtM` with nothing remembered: a block start reads one line. -/
+def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
 
 /-- The tag names §4.6 condition 1 names: their block runs to a closing tag,
 not to a blank line. -/
@@ -538,38 +567,6 @@ def escaped? (c : Chars) (i : Nat) : Option Char := do
   guard (isMdPunct d)
   some d
 
-/-- A code span opening at `i` with a backtick string of length `n`: the
-content and the index past the closing string, or `none` when no closing
-string of the same length follows. -/
-def codeSpanAt (c : Chars) (i n : Nat) : Option (String × Nat) := Id.run do
-  let mut j := i + n
-  for _ in [0:c.size + 1] do
-    if j ≥ c.size then return none
-    if c.at? j == some '`' then
-      let mut m := 0
-      let mut k := j
-      for _ in [0:c.size + 1] do
-        if c.at? k == some '`' then
-          m := m + 1
-          k := k + 1
-        else break
-      if m == n then
-        -- Strip one space from each end when both are present and the
-        -- content is not all spaces (spec §6.1).
-        let raw := (c.str (i + n) j).toList
-        let stripped :=
-          if raw.length ≥ 2 && raw.headD 'x' == ' ' && raw.getLastD 'x' == ' '
-              && !(raw.all (· == ' ')) then
-            (raw.drop 1).dropLast
-          else raw
-        -- Line endings inside a code span are spaces.
-        return some (String.ofList (stripped.map (fun ch => if ch == '\n' then ' ' else ch)), k)
-      else
-        j := k
-    else
-      j := j + 1
-  return none
-
 /-- A backtick string at `i`: its length, or 0. -/
 def tickRun (c : Chars) (i : Nat) : Nat := Id.run do
   let mut n := 0
@@ -580,6 +577,52 @@ def tickRun (c : Chars) (i : Nat) : Nat := Id.run do
       j := j + 1
     else break
   return n
+
+/-- Every maximal backtick string of a stretch — a code span's only possible
+closers (§6.1) — as start positions in order, grouped by length. Built once
+per stretch, so finding a closer is a lookup and not a scan: scanned for,
+backtick strings of rising lengths with no closers cost one scan to the end
+of the paragraph each. -/
+def tickIndex (c : Chars) : Std.HashMap Nat (Array Nat) := Id.run do
+  let mut m : Std.HashMap Nat (Array Nat) := {}
+  let mut i := 0
+  for _ in [0:c.size + 1] do
+    if i ≥ c.size then break
+    if c.at? i == some '`' then
+      let n := tickRun c i
+      let starts := m.getD n #[]
+      m := (m.erase n).insert n (starts.push i)
+      i := i + n
+    else i := i + 1
+  return m
+
+/-- The first element of a sorted array at or above `x`. -/
+def firstAtLeast (a : Array Nat) (x : Nat) : Option Nat := Id.run do
+  let mut lo := 0
+  let mut hi := a.size
+  for _ in [0:64] do
+    if lo ≥ hi then break
+    let mid := (lo + hi) / 2
+    if (a[mid]?).getD 0 < x then lo := mid + 1 else hi := mid
+  return a[lo]?
+
+/-- A code span opening at `i` with a backtick string of length `n`: the
+content and the index past the closing string, or `none` when no closing
+string of the same length follows. The closer is the first maximal backtick
+string of length `n` after the opener, read off `tickIndex`. -/
+def codeSpanAt (c : Chars) (idx : Std.HashMap Nat (Array Nat)) (i n : Nat) :
+    Option (String × Nat) := do
+  let j ← firstAtLeast (idx.getD n #[]) (i + n)
+  -- Strip one space from each end when both are present and the content is
+  -- not all spaces (spec §6.1).
+  let raw := (c.str (i + n) j).toList
+  let stripped :=
+    if raw.length ≥ 2 && raw.headD 'x' == ' ' && raw.getLastD 'x' == ' '
+        && !(raw.all (· == ' ')) then
+      (raw.drop 1).dropLast
+    else raw
+  -- Line endings inside a code span are spaces.
+  some (String.ofList (stripped.map (fun ch => if ch == '\n' then ' ' else ch)), j + n)
 
 /-- A run of whitespace in an inline stretch: the index past it. Spelled as a
 loop that stops, because a bounded `for` used as a while-loop without a break
@@ -618,13 +661,22 @@ def autolinkAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
         return some ("mailto:" ++ body, body, j + 1)
       return none
     | some ch =>
-      if isMdSpace ch then return none
+      -- No whitespace, control character or `<` inside an autolink (§6.5):
+      -- stopping at `<` is also what keeps `<a<a<a…` linear.
+      if isMdSpace ch || ch == '<' || ch.toNat < 0x20 then return none
       j := j + 1
   return none
 
 /-- A link destination and optional title starting at `(`: the destination,
-the title, and the index past `)`. Angle-bracket destinations and one level
-of balanced parentheses, which is what the inline form needs. -/
+the title, and the index past `)`. Angle-bracket destinations and balanced
+parentheses, which is what the inline form needs.
+
+Three stops the spec states keep each scan bounded by the next construct
+rather than by the paragraph (§6.3): an angle destination holds no unescaped
+`<`, a parenthesized title no unescaped `(`, and a bare destination nests
+parentheses at most 32 deep (the spec asks at least three; cmark's limit).
+Without them, `[a](<b`, `[a](b` and `[ (](` repeated each scanned to the
+end of the paragraph once per `](`. -/
 def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.run do
   unless c.at? i == some '(' do return none
   let mut j := c.ws (i + 1)
@@ -639,6 +691,7 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
         closed := true
         break
       | some '\n' => return none
+      | some '<' => return none
       | some ch =>
         if ch == '\\' then
           match escaped? c k with
@@ -658,9 +711,10 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
       match c.at? k with
       | none => break
       | some ch =>
-        if isMdSpace ch then break
+        if isMdSpace ch || ch.toNat < 0x20 then break
         else if ch == '(' then
           depth := depth + 1
+          if depth > 32 then return none
           dest := dest.push ch
           k := k + 1
         else if ch == ')' then
@@ -698,6 +752,9 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
             closed := true
             k := k + 1
             break
+          else if q == '(' && ch == '(' then
+            -- An unescaped `(` inside a parenthesized title is not a title.
+            return none
           else if ch == '\\' then
             match escaped? c k with
             | some d =>
@@ -818,8 +875,7 @@ def Strict.fixit : Strict → String
 line with a site count (`Diag.tallySites`), so a document with fifty raw
 tags reports one error naming fifty sites. -/
 def refuse (file : String) (s : Strict) (pos : Pos) : Diag :=
-  { kind := .E0390, message := s.message, span := some ⟨file, pos⟩,
-    help := some s.fixit, subject := some s.subject }
+  Diag.of .E0390 s.message (some ⟨file, pos⟩) (some s.fixit) (some s.subject)
 
 /-- The scan: characters to a flat token array, with brackets resolved
 against a stack as they close and the refusals raised where they are seen. -/
@@ -832,6 +888,8 @@ def scanInlines (file : String) (c : Chars) :
   -- Link openers below this stack depth are inactive: a link closed while
   -- they were open (§6.3). Lowered as the stack pops below it.
   let mut inactiveBelow : Nat := 0
+  let ticks := tickIndex c
+  let mut hmemo : HtmlMemo := {}
   let mut pending := ""
   let mut pendingPos : Pos := {}
   let mut i := 0
@@ -861,7 +919,7 @@ def scanInlines (file : String) (c : Chars) :
             i := i + 1
       else if ch == '`' then
         let n := tickRun c i
-        match codeSpanAt c i n with
+        match codeSpanAt c ticks i n with
         | some (body, next) =>
           toks := flush toks pending pendingPos
           pending := ""
@@ -889,7 +947,9 @@ def scanInlines (file : String) (c : Chars) :
           -- Raw HTML: refused by design, and the text is dropped. Only a
           -- complete tag (§6.6) is raw HTML; anything else is text, which
           -- is why `x <y for comparison` no longer fails the build.
-          match htmlTagAt c.cs i with
+          let (tag, m) := htmlTagAtM c.cs i hmemo
+          hmemo := m
+          match tag with
           | some next =>
             diags := diags.push (refuse file .rawHtml p)
             i := next
@@ -1310,6 +1370,25 @@ private def interrupts (cs : Array Char) (i : Nat) : Bool :=
         | some (n, _, j) => n == 1 && !isBlankFrom cs j
         | none => false)
 
+/-- Consume `need` columns of indent from `i` at column `col`, a tab
+advancing to the next multiple of four: the index and column past them, or
+`none` when the whitespace runs out first. Walks at most `need` columns. -/
+private def consumeIndent (cs : Array Char) (i col need : Nat) : Option (Nat × Nat) :=
+  Id.run do
+  let mut k := i
+  let mut c2 := col
+  for _ in [0:need + 1] do
+    if c2 - col ≥ need then return some (k, c2)
+    match cs[k]? with
+    | some ' ' =>
+      c2 := c2 + 1
+      k := k + 1
+    | some '\t' =>
+      c2 := c2 + (4 - c2 % 4)
+      k := k + 1
+    | _ => return Option.none
+  if c2 - col ≥ need then return some (k, c2) else return Option.none
+
 /-- Does the line at `i` start *any* block? Wider than `interrupts`: a
 marker that may not interrupt a paragraph still opens a sibling item when
 its own container did not match, which is not a lazy continuation. The two
@@ -1331,6 +1410,14 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     let some ln := lines[li]? | continue
     let cs := ln.cs
     let lpos : Pos := ⟨ln.no, 1⟩
+    -- One past the line's last character that is not a space or a tab: the
+    -- line is blank from `i` exactly when `i ≥ inkEnd`.
+    let inkEnd := Id.run do
+      let mut e := 0
+      for k in [0:cs.size] do
+        if h : k < cs.size then
+          unless isSpaceOrTab cs[k] do e := k + 1
+      return e
     -- Match the open containers. A fence does not exempt a line from this:
     -- skipping it left the fence open past its container, so a fence in a
     -- quote or a nested item swallowed every block that followed and the
@@ -1355,29 +1442,22 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
           else
             ok := false
         | some (FKind.item need) =>
-          if isBlankFrom cs i then
+          -- Both tests read at most what this frame consumes: the line's
+          -- last non-space character is found once per line, and the
+          -- indent is walked only as far as `need`. Measured over the whole
+          -- rest of the line at every frame, a list nested k deep cost k
+          -- scans of k columns per line, and the deep-list shape grew 2.7×
+          -- per doubling.
+          if i ≥ inkEnd then
             i := cs.size
             matched := matched + 1
           else
-            let (_, ind) := indentAt cs i col
-            if ind ≥ need then
-              let mut k := i
-              let mut c2 := col
-              for _ in [0:need + 1] do
-                if c2 - col < need then
-                  match cs[k]? with
-                  | some ' ' =>
-                    c2 := c2 + 1
-                    k := k + 1
-                  | some '\t' =>
-                    c2 := c2 + (4 - c2 % 4)
-                    k := k + 1
-                  | _ => pure ()
+            match consumeIndent cs i col need with
+            | some (k, c2) =>
               i := k
               col := c2
               matched := matched + 1
-            else
-              ok := false
+            | none => ok := false
         | some (FKind.list _ _ _) => matched := matched + 1
     -- An open fenced block, inside the containers that matched: its closer
     -- is tested on the line *after* the container prefixes, and its content
