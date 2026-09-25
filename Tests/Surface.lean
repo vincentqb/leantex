@@ -6304,6 +6304,37 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "'/.append style' on a hyphenated name composes onto it"
     ((out.pages[0]?.bind fun p => (p.paths[2]?).bind (·.stroke)).map
       (·.dash == .dashed) == some true)
+  -- **Every bracket, not most of them.** An `edge`/`to` operation carries
+  -- its own bracket and read it raw, so a bundle applied there reached no
+  -- reader at all — the last place the use side of `styleName_agree` was
+  -- not honoured, and on a real deck it was the one that cost a dashed
+  -- edge its dash.
+  let opSrc := sets ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node[node-box] (aa) at (0, 0) {One};\n" ++
+    "\\node[node-box] (bb) at (4, 0) {Two};\n" ++
+    "\\path (aa) edge[edge-muted] (bb);\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let (opDoc, opDs) := elabStr opSrc
+  let opOut := layoutOf oneFace opDoc
+  t "an edge operation's own bracket expands a hyphenated bundle"
+    ((opOut.pages[0]?.bind fun p => (p.paths[2]?).bind (·.stroke)).map
+      (fun s => s.dash == .dashed && s.color == { r := 0, g := 255, b := 0 })
+      == some true)
+  t "a bundle on an edge operation is not named as a dropped option"
+    (!opDs.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "edge-muted")
+  -- **A dropped key is named by its whole name.** The diagnostic reported
+  -- the entry's first token, so a two-word key the subset has no loop for
+  -- was named `every` — a key no document is called.
+  let namesOf (s : String) : List String :=
+    ((elabStr (s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
+      "\\draw (0, 0) -- (3, 0);\n\\end{tikzpicture}\n\\end{document}")).2.filter
+        fun d => d.code == DiagCode.W0334.code &&
+          hasStr d.message "picture key").toList.map fun d =>
+        (d.message.splitOn "'").getD 1 ""
+  t "a two-word key with no loop is named by both its words"
+    (namesOf "\\tikzset{every label/.style={draw}}\n" == ["every label"])
+  t "a hyphenated key outside the subset is named whole"
+    (namesOf "\\tikzset{over-lay}\n" == ["over-lay"])
 
 /-- **Whatever drew a picture, the keys that drawing did not read are
 named.** The gate on the key diagnostic is the engine's own drawing, never

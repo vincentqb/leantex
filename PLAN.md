@@ -406,6 +406,38 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-25 — the last two places a key name was not read whole, found by
+asking the same question of the rest of the reader (M8b slice 4, the key-name
+entry's follow-through). Both are the entry above's defect in a different
+seat, and the audit that found them was one line: *which other reader takes
+a name?*
+
+**An edge operation's own bracket read raw.** `\path (a) edge[bundle] (b)`
+split its bracket on commas and matched the entries directly, never going
+through `expandOpts` — so a declared bundle applied there reached no reader
+at all, whatever its name was spelled with. `expandOpts` now reads it, as it
+reads a node's bracket and a path's. On the private reference corpus this was
+three uses of one bundle and it cost a dashed edge its dash: the edge that
+carries the dash *is* the statement that edge makes, so the loss was a
+reading of the diagram and not a decoration.
+
+**A dropped key was named by its first token.** `unreadKeys` reported
+`e[0]?`, so a two-word key the subset has no loop for was named `every` and a
+hyphenated one `edge` — a message about a key nothing in the document is
+called, which is the same false diagnostic the entry above closed at the
+declaration site. It now reports `keyName` of the path before any `/`: the
+name whether the entry is a bare key or a definition. On the corpus one
+warning went from naming `every` to naming the four-word key actually
+written. The fallback to the first token stays for an entry that is not a
+name at all (a group, a control word), where there is nothing else to say.
+
+Evidence: four rows added to `pictureHyphenKeyChecks` — two reading the
+edge-operation bundle's dash and colour off `Layout.Out`, two reading the
+diagnostic's own text — red before and green after. Four existing rows in
+`pictureKeyGateChecks` and `pictureGlobalKeyChecks` caught the first attempt,
+which dropped the quoting the message's readers split on; that is the
+regression net working.
+
 2026-09-25 — an edge's label stands beside its path, and `auto` was dropped
 (M8b slice 4, automatic placement). The lowest-value of this slice's four
 and the one with the clearest symptom: a label sat on its own line and the

@@ -117,6 +117,7 @@ body impl \begin{tikzpicture}\draw[auto=right] (0,0) -- node {Q} (1,0);\end{tikz
 body impl \begin{tikzpicture}\draw[auto=false] (0,0) -- node {Q} (1,0);\end{tikzpicture}
 pre impl \tikzset{auto}
 pre impl \tikzset{swap}
+body impl \tikzset{zz2/.style={dashed}}\begin{tikzpicture}\node (u) at (0,0) {P};\node (v) at (1,0) {Q};\path (u) edge[zz2] (v);\end{tikzpicture}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize
 pre inert:default \pictures{ tool = lualatex }

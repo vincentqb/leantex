@@ -2628,7 +2628,14 @@ bracket by `documentOpts`): those are honoured, not dropped. -/
 def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
   let (after, unread) := readStyleList styles keys
   (unread.filter fun e => !setsEngineKey e && !readsOpt after e).filterMap fun e =>
-    (e[0]?).map tokText
+    -- The key's own name, whole: the path before any `/`, which is the name
+    -- whether the entry is a bare key or a definition the subset has no
+    -- loop for. Naming the entry's *first token* reported `every` for
+    -- `every label` and `edge` for `edge-muted` — a message about a key
+    -- nothing in the document is called.
+    (keyName ((e.toList.filter (· != .space)).takeWhile
+      (fun t => !isSym '/' t))).map (fun n => s!"'{n}'")
+      |>.orElse fun _ => (e[0]?).map tokText
 
 /-- One part of a `\node` statement's prologue: everything before the
 body. pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
@@ -3354,7 +3361,11 @@ not drawn")
           i := j + 1
           let mut outA : Option Int := none
           let mut inA : Option Int := none
-          for opt in splitTop inner ',' do
+          -- Through the same expansion a node's and a path's bracket goes
+          -- through, so a bundle applied on an edge operation is the bundle
+          -- it names. Reading this one bracket raw was the last place a
+          -- declared name reached no reader (`styleName_agree`'s use side).
+          for opt in expandOpts cx.styles inner do
             match opt.toList with
             | .ident "out" :: .sym '=' :: rest =>
               match evalNum env rest.toArray with
