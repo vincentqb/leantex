@@ -1,0 +1,19 @@
+% parity: two pages with the break declared rather than computed, which separates the page-count rung from either engine's page-breaking policy
+% Floor probe. The point of declaring the break is that the page-count rung
+% then tests the count and nothing else: a fixture whose pages are filled
+% until they overflow would fail T1 for a difference in breaking policy and
+% say nothing about whether the two engines agree on how many pages a
+% document has.
+\documentclass{article}
+\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free }
+\fonts{ body = "Open Sans" }
+\begin{document}
+The first sheet carries the summary. Two ledgers, one clerk, and a standing
+disagreement that resolves itself every afternoon without anyone
+intervening.
+
+\newpage
+
+The second sheet carries the detail, which nobody reads. It is kept because
+the summary is only believed by people who know the detail exists.
+\end{document}

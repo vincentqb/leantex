@@ -1,0 +1,19 @@
+% parity: a divergence probe — neither side declares a geometry, so each engine picks its own measure, and the rung this reaches is recorded rather than demanded
+% diverges: default-measure
+% Divergence probe. The engine sets an undeclared article's text block from
+% a copy-fitting table; LaTeX sets it from the class default. The two are
+% different widths, so the same prose breaks into different lines, and the
+% census and reading-order rungs are the highest ones that can hold. The
+% measured delta is in the reference half's header, beside the number.
+%
+% This fixture exists so that the ladder has somewhere to record a
+% divergence as a *level* instead of as a suppression. Nothing here is
+% expected to be fixed; what is expected is that the level does not fall.
+\documentclass{article}
+\fonts{ body = "Open Sans" }
+\begin{document}
+A clerk who reconciles two ledgers learns to distrust the word agreement,
+because the ledgers do agree, eventually, and the agreement is never the
+thing anybody wanted to know. What the harbour wants to know is which berth
+is free this afternoon, and no reconciliation answers that.
+\end{document}

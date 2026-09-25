@@ -1,0 +1,11 @@
+fixture: measure
+compiles: yes
+pdf-key: 3C7FD51DAC3DAB685CFEA5FD46C98DAA
+pdf-size: 7991
+src-key: F0BE79655B635D48E8325C4F86D7CBC2
+ref-src-key: DC1DB4EAED7F7A2A9934271A56B54D80
+engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
+argv: -halt-on-error -interaction=nonstopmode -file-line-error measure.ref.tex
+pages: 1
+overfull: 0
+provenance: a divergence probe — neither side declares a geometry, so each engine picks its own measure, and the rung this reaches is recorded rather than demanded

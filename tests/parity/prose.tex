@@ -1,0 +1,20 @@
+% parity: one page of justified prose at a fully declared geometry; every rung is expected to hold, so a failure here is the engine changing
+% Floor probe. Page size, margins, body size and the paragraph gap are all
+% declared, so neither engine's defaults take part and neither engine's
+% point unit does either — the reference declares the same quantities in
+% big points, which is what the engine measures in.
+\documentclass{article}
+\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free }
+\fonts{ body = "Open Sans" }
+\begin{document}
+The harbour office keeps two ledgers, and the clerk who reconciles them
+each morning has never once found them to agree before noon. One counts
+hulls; the other counts berths. A hull may wait outside the wall for a
+week, and a berth may stand empty while its tenant is repaired, so the two
+numbers drift apart by the ordinary working of the port rather than by
+anyone's error.
+
+Write to the harbourmaster at berths@example.org if a discrepancy matters
+to you. The reply will quote both ledgers and decline to prefer either,
+which is the correct answer and rarely the useful one.
+\end{document}

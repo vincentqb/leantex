@@ -1,0 +1,24 @@
+% The reference half of measure.tex. Deliberately declares no geometry: the
+% subject of this pairing is what each engine chooses when not told.
+%
+% Measured, 2026-09-25: the engine gives an undeclared article a 312 bp text
+% block (a copy-fitting table over the body size); LaTeX's 10pt article on
+% letter paper gives 345 pt, which is 343.7 bp. So the reference's measure is
+% 10.2 % wider and the prose rebreaks. The body size diverges here too, by
+% the point unit the other fixtures pin away: LaTeX's 10pt is 9.9626 bp.
+%
+% Both differences are on purpose and neither is a defect, which is why this
+% fixture's recorded level is lower than the floor probes' and must simply
+% not fall.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/]
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6bp}
+\pagestyle{plain}
+\begin{document}
+A clerk who reconciles two ledgers learns to distrust the word agreement,
+because the ledgers do agree, eventually, and the agreement is never the
+thing anybody wanted to know. What the harbour wants to know is which berth
+is free this afternoon, and no reconciliation answers that.
+\end{document}

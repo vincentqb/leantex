@@ -1,0 +1,11 @@
+fixture: prose
+compiles: yes
+pdf-key: E31E558609C94DAB17F9CA7872721691
+pdf-size: 9266
+src-key: DEB38597CB981E21B7A5FD71A1224BEF
+ref-src-key: 9D1AEEDD14BA116BA73B509B4BAD3F95
+engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
+argv: -halt-on-error -interaction=nonstopmode -file-line-error prose.ref.tex
+pages: 1
+overfull: 0
+provenance: one page of justified prose at a fully declared geometry; every rung is expected to hold, so a failure here is the engine changing

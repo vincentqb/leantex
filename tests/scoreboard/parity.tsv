@@ -1,0 +1,11 @@
+# the parity ladder against lualatex: one integer per fixture, the number of
+# rungs that hold, of 5 (T0, T1, T2, T3, T4). -1 means the
+# reference engine refuses the document, which puts it outside the denominator.
+# A level may rise and the rise must be recorded here; it may never fall.
+# Retire a fixture with a '# retired: <fixture> — <why>' line, never by
+# deleting its row.
+# Written only by: lake env lean --run scripts/parity.lean --record
+measure	2
+pagebreak	4
+prose	5
+refuses	-1

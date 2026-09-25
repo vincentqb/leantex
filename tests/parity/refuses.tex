@@ -1,0 +1,17 @@
+% parity: the denominator probe — the reference half does not compile, so this fixture is outside the denominator and records -1 rather than a rung
+% T0's other arm. A ladder whose bottom rung is "both engines produced a
+% document" needs a fixture where one did not, or the arm that puts a
+% document outside the denominator is only ever exercised by a unit test.
+%
+% The engine's half here is ordinary and builds. The reference half asks for
+% a package that does not exist, which `-halt-on-error` turns into a refusal
+% rather than a document, so the sidecar records `compiles: no` and the
+% scoreboard records -1. Nothing about the engine is claimed by this row,
+% which is the point: -1 means "not measured", never "measured and bad".
+\documentclass{article}
+\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free }
+\fonts{ body = "Open Sans" }
+\begin{document}
+A berth register that cannot be opened is not a register with no berths in
+it. The distinction matters to the clerk and to nobody else.
+\end{document}

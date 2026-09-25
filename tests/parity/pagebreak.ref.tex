@@ -1,0 +1,20 @@
+% The reference half of pagebreak.tex; units pinned in big points for the
+% reason prose.ref.tex gives.
+\documentclass{article}
+\usepackage[letterpaper,margin=72bp]{geometry}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/]
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6bp}
+\pagestyle{plain}
+\AtBeginDocument{\fontsize{10bp}{12bp}\selectfont}
+\begin{document}
+The first sheet carries the summary. Two ledgers, one clerk, and a standing
+disagreement that resolves itself every afternoon without anyone
+intervening.
+
+\newpage
+
+The second sheet carries the detail, which nobody reads. It is kept because
+the summary is only believed by people who know the detail exists.
+\end{document}

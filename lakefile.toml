@@ -75,3 +75,14 @@ globs = ["scripts.Board"]
 [[lean_exe]]
 name = "scoreboard"
 root = "scripts.scoreboard"
+
+# The cross-engine parity ladder. Its two scripts must agree on the rung
+# vocabulary, the divergence registry, the sidecar format and the ratchet's
+# arithmetic, so they read one module rather than a copy each — the reason
+# GateLib exists for the two gate scripts. Both are run the way the other
+# oracles are (lake env lean --run); only the module they share is built.
+# scripts/parity-regen.lean invokes the reference engine; scripts/parity.lean
+# never does.
+[[lean_lib]]
+name = "ParityLib"
+globs = ["scripts.ParityCore"]

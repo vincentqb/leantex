@@ -1,0 +1,14 @@
+% The reference half of refuses.tex, which deliberately does not compile:
+% it requires a package that does not exist, and under `-halt-on-error` the
+% reference engine stops rather than limping past it.
+%
+% This is the only fixture here whose reference is *meant* to fail. The
+% failure is recorded by the regenerator as `compiles: no` — which means the
+% engine ran and refused — and is never inferred from a missing file, so a
+% machine with no TeX install cannot fabricate this verdict.
+\documentclass{article}
+\usepackage{a-package-that-does-not-exist-anywhere}
+\begin{document}
+A berth register that cannot be opened is not a register with no berths in
+it. The distinction matters to the clerk and to nobody else.
+\end{document}
