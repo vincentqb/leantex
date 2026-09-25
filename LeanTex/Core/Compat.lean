@@ -2531,6 +2531,17 @@ its value is skipped" pos
     -- neither reduces to a box of declared measure — and dropping it
     -- silently would move ink, so the drop is named once; the content stays
     -- in the stream.
+    let (opts, widths) := match boxShape.lookup name with
+      | some (o, w) => (o, w)
+      | none => (0, 0)
+    let (declared, j) := takeOpts raws start opts
+    let (_, k) := takeGroups raws j widths
+    if declared || widths > 0 then
+      sayOnce ("ctrl:" ++ name) .W0104
+        s!"'\\{name}' width and alignment are dropped; its content is kept" pos
+        (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
+    became s!"\\{name}" "its content, kept in the line" pos
+    return some (#[], k)
   | "setbeamerfont" =>
     -- The other half of the same finding: the W0104 help named
     -- `\style{element}{ font = {...} }` and then dropped the declaration.
@@ -2587,22 +2598,6 @@ its value is skipped" pos
           became s!"\\setbeamerfont\{{element}}" native pos
           return some (← synthAt native pos, k)
     else return none
-  | "mbox" | "makebox" | "parbox" =>
-    -- The box geometry is not modelled and dropping it silently would move
-    -- ink, so the drop is named once; the content stays in the stream.
-    -- `\parbox`'s width is a mandatory brace group, so it is consumed here —
-    -- left in the stream it sets as prose.
-    let (opts, widths) := match boxShape.lookup name with
-      | some (o, w) => (o, w)
-      | none => (0, 0)
-    let (declared, j) := takeOpts raws start opts
-    let (_, k) := takeGroups raws j widths
-    if declared || widths > 0 then
-      sayOnce ("ctrl:" ++ name) .W0104
-        s!"'\\{name}' width and alignment are dropped; its content is kept" pos
-        (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
-    became s!"\\{name}" "its content, kept in the line" pos
-    return some (#[], k)
   | "parbox" =>
     -- `\parbox{w}{t}` and `{minipage}{w}` are the same box: latex.ltx builds
     -- both through `\@iiiparbox`, and the manual's own difference is what a
