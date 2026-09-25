@@ -94,6 +94,15 @@ def toks (s : String) : List Lex.Tok :=
 def elabStr (s : String) : Ir.Doc × Array Diag :=
   Elab.run "t" s
 
+/-- A *markdown* source through the one elaborator: the reader, the
+desugaring, then `Elab.runRaws` — the same path `leantex doc.md` takes. -/
+def elabMd (s : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Md.read "t.md" s
+  Elab.runRaws "t.md" raws ds
+
+/-- Diagnostics of a markdown source. -/
+def dvMd (s : String) : Array Diag := (elabMd s).2
+
 def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 

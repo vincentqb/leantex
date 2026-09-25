@@ -887,14 +887,25 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     ui.phase "utf8" "valid" (← since t)
     let input := String.fromUTF8! bytes
     let t ← IO.monoMsNow
-    let (toks, lexDiags) := Lex.lex file input
-    ui.phase "lex" s!"{toks.size} tokens" (← since t)
-    let t ← IO.monoMsNow
-    let (raws, parseDiags) := Parse.parse file toks
-    ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
+    -- Which reader a path's extension selects. The markdown reader hands
+    -- back the same surface AST the tex reader does — one elaborator, one
+    -- place where meaning lives — so everything past this point is blind
+    -- to which surface the document was written in.
+    let (raws, frontDiags) ← do
+      if file.endsWith ".md" then
+        let (raws, ds) := Md.read file input
+        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
+        pure (raws, ds)
+      else
+        let (toks, lexDiags) := Lex.lex file input
+        ui.phase "lex" s!"{toks.size} tokens" (← since t)
+        let t ← IO.monoMsNow
+        let (raws, parseDiags) := Parse.parse file toks
+        ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
+        pure (raws, lexDiags ++ parseDiags)
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file raws
-    let earlier := lexDiags ++ parseDiags ++ inputDiags ++ dataDiags
+    let earlier := frontDiags ++ inputDiags ++ dataDiags
     -- One rewrite, one boundary scan, one macro scan: two elaborations of
     -- one document must read one source, or their agreement would be about
     -- two (`Elab.prepare`).
@@ -1325,11 +1336,6 @@ def main (argv : List String) : IO UInt32 := do
       IO.println s!"leantex {LeanTex.version}"
       return 0
     | .build file =>
-      if file.endsWith ".md" then
-        let stderr ← IO.getStderr
-        stderr.putStrLn
-          "leantex: markdown input is not implemented yet; write the document as .tex"
-        return 3
       if let some o := cfg.output then
         unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||
             (emitOfPath o).isSome do

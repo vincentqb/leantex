@@ -418,6 +418,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
     let draws := (Parse.parse "t" (Lex.lex "t"
       "\\usepackage{venuecode}\n\\begin{document}\nx\n\\end{document}\n").1).1
     (Elab.runRaws "t" (Compat.applyLocalSty draws #[("venuecode", sraws)]).1).2
+  -- The strict markdown dialect's refusal, one code and three subjects.
+  -- The witness names the class whose fix-it is hardest to write blind: a
+  -- raw tag, whose text this reader drops rather than passing through.
+  | .E0390 => dvMd "a paragraph\n\n<div>raw</div>\n"
   -- A title whose author declared two lines and whose first does not fit
   -- the measure: the breaker finds a legal break inside the declared line,
   -- so a third line ships and its remainder returns to the flush-left

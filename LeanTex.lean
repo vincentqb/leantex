@@ -10,6 +10,8 @@ import LeanTex.Core.NfcData
 import LeanTex.Core.Nfc
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
+import LeanTex.Core.MdParse
+import LeanTex.Core.MdDesugar
 import LeanTex.Core.Math
 import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
