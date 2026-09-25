@@ -5256,6 +5256,107 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (!(layoutDiags (frame "\\node (a) {A Wide First Line\\\\A Wide Second Line};\n")).any
       fun d => d.code == "W0336")
 
+/-- **A named anchor on a node resolves, and lands on that node's own
+border** (`Picture.anchorPoint_between`, `Picture.anchorPoint_corners_exact`).
+The defect: `(n.west)` and its siblings — pgf's core positioning
+vocabulary, the `rectangle` shape's own `\anchor` declarations — were read
+as a node name nothing had declared, so *every* edge written against an
+anchor was refused by a name that was never a name. One diagram's three
+edge sets went with them.
+
+Read off the shipped path boxes, never an IR dump: an anchor is entirely a
+claim about where a segment starts, and only the page can say. The edges
+below run between two nodes whose extents the page also carries, so each
+row is the anchor's arithmetic against the borders that shipped rather than
+against a baked-in number.
+
+An anchor is a *point*, not a border to shorten toward: pgf uses the named
+anchor exactly, which is why an anchored edge reaches further than the same
+edge written `(a) -- (b)`. Invented content throughout. -/
+def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let pic (body : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++
+    "\\end{tikzpicture}\n\\end{document}"
+  -- Two drawn nodes and one edge between anchors of them. The nodes ship
+  -- first, so the edge is the third path.
+  let two (endA endB : String) : String :=
+    "\\node (aa) [draw, minimum size=8mm] at (0,0) {Pear};\n" ++
+    "\\node (bb) [draw, minimum size=8mm] at (4,0) {Plum};\n" ++
+    "\\draw (" ++ endA ++ ") -- (" ++ endB ++ ");\n"
+  let box (c : Array CensusPage) (k : Nat) :
+      Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    c[0]?.bind (·.pathBoxes[k]?)
+  let (_, ds) := elabStr (pic (two "aa.east" "bb.west"))
+  t "an edge between two named anchors elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  let side := censusSrc (pic (two "aa.east" "bb.west"))
+  t "two node outlines and the anchored edge ship as page paths"
+    ((side[0]?.map (·.paths == 3)).getD false)
+  t "no boundary box stands where the anchored picture is"
+    ((side[0]?.map (·.images == 0)).getD false)
+  -- `east` is exactly the right border, `west` exactly the left: the edge
+  -- starts where the first box ends and stops where the second begins.
+  t "'east' and 'west' put the edge exactly between the two borders"
+    (match box side 0, box side 1, box side 2 with
+     | some (ax, ay, aw, ah), some (bx, _, _, _), some (ex, ey, ew, eh) =>
+       ex == ax + aw && ex + ew == bx && eh == 0 && ey == ay + ah / 2
+     | _, _, _ => false)
+  -- A corner is exactly its two sides, on the page: `south east` stands at
+  -- the east border and the south one at once.
+  let corner := censusSrc (pic (two "aa.south east" "bb.north west"))
+  t "a corner anchor stands at both of its sides"
+    (match box corner 0, box corner 1, box corner 2 with
+     | some (ax, ay, aw, _), some (bx, byy, _, bh), some (ex, ey, ew, eh) =>
+       ex == ax + aw && ey == ay && ex + ew == bx && ey + eh == byy + bh
+     | _, _, _ => false)
+  -- pgf declares the corner spelled with a space; an endpoint's tokens are
+  -- space-filtered before the name is joined, so both spellings are one
+  -- string by the time they are looked up. The page must not know which
+  -- was written.
+  let tight := censusSrc (pic (two "aa.southeast" "bb.northwest"))
+  t "the space-free spelling of a corner is the same anchor"
+    ((corner[0]?.map (·.paths == 3)).getD false &&
+     (corner[0]?.map (·.pathBoxes)) == (tight[0]?.map (·.pathBoxes)))
+  -- An anchor is used exactly, with no shortening toward the far endpoint:
+  -- the same edge written by bare name anchors on the border *facing* the
+  -- other node, which for `west` on the left node is the near side.
+  let bare := censusSrc (pic (two "aa" "bb"))
+  t "an anchored endpoint is the declared point, not a border shortened toward the other"
+    (match box side 2, box bare 2 with
+     | some (_, _, ew, _), some (_, _, bw, _) => ew == bw
+     | _, _ => false)
+  -- `base` is the label's own baseline, which stands inside the node's own
+  -- border wherever the face puts it (`anchorPoint_between`, projected onto
+  -- the page). How far below the centre it falls is the *measurement*, and
+  -- this walk's metric is a parameter — under one that answers nothing the
+  -- baseline is the centre, which is why the row pins containment and not
+  -- an offset.
+  let base := censusSrc (pic (two "aa.base" "bb.base"))
+  t "a 'base'-anchored edge ships"
+    ((base[0]?.map (·.paths == 3)).getD false)
+  t "'base' stands inside the node's own border"
+    (match box base 0, box base 2 with
+     | some (_, ay, _, ah), some (_, ey, _, _) => ay ≤ ey && ey ≤ ay + ah
+     | _, _ => false)
+  -- An anchor this subset has no measurement for is named, and costs its
+  -- own edge: `mid` is half an ex above the baseline and an ex is the
+  -- face's, which the picture walk cannot ask for.
+  let (_, midDs) := elabStr (pic (two "aa.mid" "bb.mid"))
+  t "an anchor outside the subset is named by its own spelling"
+    (midDs.any fun d => d.code == "W0334" && hasStr d.message "mid")
+  -- A name no node carries is still refused, and by the *node's* name
+  -- rather than by the anchored spelling: the two refusals are different
+  -- facts and the message says which.
+  let (_, gone) := elabStr (pic (two "aa.east" "zz.west"))
+  t "an anchor on a name no node carries is refused by that name"
+    (gone.any fun d => d.code == "E0333" && hasStr d.message "zz" &&
+      !hasStr d.message "zz.west")
+
 /-- A node's label sets in the face the body sets in: a picture is not its
 own typographic island (`Picture.labelFace_agree`). The defect this pins is
 not a slot the engine chose wrongly — it is a picture that drew nothing

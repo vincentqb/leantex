@@ -1392,7 +1392,188 @@ structure NodeGeom where
   a : Sp := 0
   b : Sp := 0
   circle : Bool := false
+  /-- Where this node's own text baseline stands, in the picture's
+  coordinates: what the `base` family of anchors reads. Nodes centre their
+  label, so the baseline sits below the centre by half the measured ink
+  less its depth — `Ir.labelBaseline`, the one site that says so, read
+  rather than restated here. The default is the centre, which is what a
+  node whose body measured nothing has. -/
+  base : Sp := 0
   deriving Repr, BEq, Inhabited
+
+/-- A named anchor on a node's border: `(n.west)` and its siblings, pgf's
+core positioning vocabulary. The set *and* each one's position are the
+`rectangle` shape's own `\anchor` declarations (pgf,
+`pgfmoduleshapes.code.tex`, `\pgfdeclareshape{rectangle}`): `center`,
+`base`, `mid`, the four sides, the four corners, and `base`/`mid` paired
+with `east` and `west`.
+
+`mid` sits half an ex above the baseline and an ex is the face's, which
+this walk cannot ask for (the same missing measurement `Cx.metric` names) —
+so the `mid` family is not a constructor here and is named where it is
+written. -/
+inductive NodeAnchor where
+  | center
+  | north | south | east | west
+  | northEast | northWest | southEast | southWest
+  | base | baseEast | baseWest
+  deriving Repr, BEq, Inhabited
+
+/-- The anchor a spelling names, keyed on pgf's own name with its spaces
+removed. An endpoint's tokens are space-filtered before its name is joined,
+so `south west` — pgf's declared spelling — and `southwest` arrive here as
+the same string, and one table answers both. -/
+def nodeAnchorOf : String → Option NodeAnchor
+  | "center" => some .center
+  | "north" => some .north
+  | "south" => some .south
+  | "east" => some .east
+  | "west" => some .west
+  | "northeast" => some .northEast
+  | "northwest" => some .northWest
+  | "southeast" => some .southEast
+  | "southwest" => some .southWest
+  | "base" => some .base
+  | "baseeast" => some .baseEast
+  | "basewest" => some .baseWest
+  | _ => none
+
+/-- Milli cosine of 45°, ⌊1000·cos 45° + ½⌋ = 707: where a circle's corner
+anchors stand. pgf's `circle` shape puts `north east` on the *circle* at
+45° (`\pgfdeclareshape{circle}`), not on the bounding box's corner, so a
+corner is the radius times this on each axis. -/
+def diag45 : Int := 707
+
+/-- The horizontal reach of a corner anchor: a rectangle's corner is its
+own border, a circle's the point on the circle at 45°. -/
+def NodeGeom.cornerA (g : NodeGeom) : Sp :=
+  if g.circle then g.a * diag45 / 1000 else g.a
+
+/-- The vertical reach of a corner anchor. -/
+def NodeGeom.cornerB (g : NodeGeom) : Sp :=
+  if g.circle then g.b * diag45 / 1000 else g.b
+
+/-- The baseline the `base` family stands on, held inside the node's own
+extent. The clamp is inert wherever the extent covers the label's ink —
+which is what `Ir.Pic.nodeExtent_covers` says of the number `evalNode`
+registers — and a guard where a metric answers a descender deeper than the
+node's own border: an anchor may not name a point outside the box every
+relative placement measures from. -/
+def NodeGeom.baseY (g : NodeGeom) : Sp :=
+  max (g.y - g.b) (min (g.y + g.b) g.base)
+
+/-- Where a named anchor stands. Arithmetic on the centre and the
+half-extents the node registered, arm by arm so each position reads off the
+declaration it came from rather than off an offset table. -/
+def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
+  | .center => (g.x, g.y)
+  | .north => (g.x, g.y + g.b)
+  | .south => (g.x, g.y - g.b)
+  | .east => (g.x + g.a, g.y)
+  | .west => (g.x - g.a, g.y)
+  | .northEast => (g.x + g.cornerA, g.y + g.cornerB)
+  | .northWest => (g.x - g.cornerA, g.y + g.cornerB)
+  | .southEast => (g.x + g.cornerA, g.y - g.cornerB)
+  | .southWest => (g.x - g.cornerA, g.y - g.cornerB)
+  | .base => (g.x, g.baseY)
+  | .baseEast => (g.x + g.a, g.baseY)
+  | .baseWest => (g.x - g.a, g.baseY)
+
+/-- Each corner is exactly its two sides, on a node whose corners are its
+own border: the pairing rather than four coordinates restated, so a sign
+error in the table is one failing conjunct. `offset_corners_exact` is the
+same shape one level up, over the relative-placement vocabulary. -/
+theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.circle = false) :
+    g.anchorPoint .northEast = ((g.anchorPoint .east).1, (g.anchorPoint .north).2) ∧
+    g.anchorPoint .northWest = ((g.anchorPoint .west).1, (g.anchorPoint .north).2) ∧
+    g.anchorPoint .southEast = ((g.anchorPoint .east).1, (g.anchorPoint .south).2) ∧
+    g.anchorPoint .southWest = ((g.anchorPoint .west).1, (g.anchorPoint .south).2) := by
+  have ca : g.cornerA = g.a := by simp only [NodeGeom.cornerA, h]; rfl
+  have cb : g.cornerB = g.b := by simp only [NodeGeom.cornerB, h]; rfl
+  simp only [NodeGeom.anchorPoint, ca, cb, and_self]
+
+/-- The two sides of an axis are opposite displacements of the centre: a
+sign error puts `west` where `east` belongs and this is the conjunct that
+fails. The `_exact` sibling of `offset_opposite_exact`. Spelled through
+bare `Int` binders because `omega` does not read an `Sp`-typed structure
+field — the workaround `Ir.Pic.labelInkSpan_covers_anchor` records. -/
+theorem anchorPoint_opposite_exact (g : NodeGeom) :
+    (g.anchorPoint .east).1 - g.x = g.x - (g.anchorPoint .west).1 ∧
+    (g.anchorPoint .north).2 - g.y = g.y - (g.anchorPoint .south).2 ∧
+    (g.anchorPoint .center) = (g.x, g.y) := by
+  have flip : ∀ v d : Int, v + d - v = v - (v - d) := by intro v d; omega
+  exact ⟨flip g.x g.a, flip g.y g.b, rfl⟩
+
+/-- **An anchor lies on its own node's border, never outside it.** Every
+name this subset resolves is a point of the box the node registered, for
+every anchor in the vocabulary — so an edge anchored by name starts inside
+the region a relative placement parts, and the placement theorems
+(`placeRight_border_exact` and its three siblings) reason about the right
+box for an anchored endpoint too. `Ir.Pic.nodeExtent_covers` is the other
+half of the pair: that same box holds the label's ink.
+
+The registered `_between` shape, the two named bounds being the extent
+box's own corners. A containment rather than an equality because it has to
+hold for all twelve at once: a circle's corners stand at the radius times
+`diag45`, strictly inside the bounding box, and the `base` family stands
+wherever the face put the baseline — held in by `NodeGeom.baseY`, which is
+why this needs no hypothesis about the measurement. Every arithmetic step
+is a lemma over bare `Int` binders applied to the fields, because `omega`
+does not read an `Sp`-typed structure field. -/
+theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
+    (an : NodeAnchor) :
+    Ir.Pic.Box.le (g.anchorPoint an, g.anchorPoint an)
+      (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) := by
+  have key : ∀ p : Sp × Sp, g.x - g.a ≤ p.1 → p.1 ≤ g.x + g.a →
+      g.y - g.b ≤ p.2 → p.2 ≤ g.y + g.b →
+      Ir.Pic.Box.le ((p, p)) (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) :=
+    fun _ h1 h2 h3 h4 => ⟨h1, h3, h2, h4⟩
+  have mid : ∀ v d : Int, 0 ≤ d → v - d ≤ v ∧ v ≤ v + d := by intro v d h; omega
+  have hi : ∀ v d : Int, 0 ≤ d → v - d ≤ v + d ∧ v + d ≤ v + d := by intro v d h; omega
+  have lo : ∀ v d : Int, 0 ≤ d → v - d ≤ v - d ∧ v - d ≤ v + d := by intro v d h; omega
+  have cn : ∀ v d c : Int, 0 ≤ c → c ≤ d →
+      (v - d ≤ v + c ∧ v + c ≤ v + d) ∧ (v - d ≤ v - c ∧ v - c ≤ v + d) := by
+    intro v d c h1 h2; omega
+  have dg : ∀ d : Int, 0 ≤ d → 0 ≤ d * 707 / 1000 ∧ d * 707 / 1000 ≤ d := by
+    intro d h; omega
+  have clamp : ∀ v d p : Int, 0 ≤ d →
+      v - d ≤ max (v - d) (min (v + d) p) ∧ max (v - d) (min (v + d) p) ≤ v + d := by
+    intro v d p h; omega
+  have hca : 0 ≤ g.cornerA ∧ g.cornerA ≤ g.a := by
+    simp only [NodeGeom.cornerA, diag45]
+    split
+    · exact dg g.a ha
+    · exact ⟨ha, Int.le_refl _⟩
+  have hcb : 0 ≤ g.cornerB ∧ g.cornerB ≤ g.b := by
+    simp only [NodeGeom.cornerB, diag45]
+    split
+    · exact dg g.b hb
+    · exact ⟨hb, Int.le_refl _⟩
+  have hbase : g.y - g.b ≤ g.baseY ∧ g.baseY ≤ g.y + g.b := by
+    simp only [NodeGeom.baseY]; exact clamp g.y g.b g.base hb
+  have cx := cn g.x g.a g.cornerA hca.1 hca.2
+  have cy := cn g.y g.b g.cornerB hcb.1 hcb.2
+  cases an
+  · exact key _ (mid g.x g.a ha).1 (mid g.x g.a ha).2 (mid g.y g.b hb).1 (mid g.y g.b hb).2
+  · exact key _ (mid g.x g.a ha).1 (mid g.x g.a ha).2 (hi g.y g.b hb).1 (hi g.y g.b hb).2
+  · exact key _ (mid g.x g.a ha).1 (mid g.x g.a ha).2 (lo g.y g.b hb).1 (lo g.y g.b hb).2
+  · exact key _ (hi g.x g.a ha).1 (hi g.x g.a ha).2 (mid g.y g.b hb).1 (mid g.y g.b hb).2
+  · exact key _ (lo g.x g.a ha).1 (lo g.x g.a ha).2 (mid g.y g.b hb).1 (mid g.y g.b hb).2
+  · exact key _ cx.1.1 cx.1.2 cy.1.1 cy.1.2
+  · exact key _ cx.2.1 cx.2.2 cy.1.1 cy.1.2
+  · exact key _ cx.1.1 cx.1.2 cy.2.1 cy.2.2
+  · exact key _ cx.2.1 cx.2.2 cy.2.1 cy.2.2
+  · exact key _ (mid g.x g.a ha).1 (mid g.x g.a ha).2 hbase.1 hbase.2
+  · exact key _ (hi g.x g.a ha).1 (hi g.x g.a ha).2 hbase.1 hbase.2
+  · exact key _ (lo g.x g.a ha).1 (lo g.x g.a ha).2 hbase.1 hbase.2
+
+/-- A `(name.anchor)` endpoint split into its two halves. pgf reads
+everything after the first `.` as the anchor name (`\pgfpointanchor`), so a
+node's own name carries no dot. -/
+def splitAnchor (s : String) : Option (String × String) :=
+  match s.splitOn "." with
+  | [nm, an] => if nm.isEmpty || an.isEmpty then none else some (nm, an)
+  | _ => none
 
 /-- Shapes and named losses, accumulated across the unrolled walk. A
 diagnostic dedupes on its message: one construct looped over forty times
@@ -2284,6 +2465,19 @@ outside the rendered picture subset; the label is not drawn")
       let ((bx0, by0), (bx1, by1)) := Ir.Pic.Box.hull (ls.map (Ir.Pic.Shape.inkBox cx.metric))
       (max (-bx0) bx1, max (-by0) by1)
     | .error _ => (0, 0)
+  -- Where this node's own text baseline stands, relative to its centre:
+  -- what the `base` family of anchors reads. The label's *first* line is
+  -- the node's baseline, as it is for any TeX box, and the offset is read
+  -- off the same shapes the extent was measured from — so the anchor and
+  -- the ink cannot disagree about where the letters sit.
+  let baseOff : Sp :=
+    match bodyOf with
+    | .ok (lines, _) =>
+      match (stackLabels 0 0 cx.bodySize scale color .center lines #[])[0]? with
+      | some (Ir.Pic.Shape.label _ ly content _ sz al) =>
+        Ir.Pic.labelBaseline ly al (cx.metric content sz)
+      | _ => 0
+    | .error _ => 0
   -- The placed node's own half-extents, its side of the border-to-border
   -- gap a relative placement leaves: the declared minimum, or the label's
   -- own reach where the text stands proud of it (`Ir.Pic.nodeExtent`, whose
@@ -2336,9 +2530,10 @@ this one against; the node is not drawn")
         if let some nm := nodeName then
           let geom : NodeGeom :=
             if isCircle then
-              { x := sx, y := sy, a := ownA, b := ownB, circle := true }
+              { x := sx, y := sy, a := ownA, b := ownB, circle := true
+                base := sy + baseOff }
             else
-              { x := sx, y := sy, a := ownA, b := ownB }
+              { x := sx, y := sy, a := ownA, b := ownB, base := sy + baseOff }
           ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. Extent is the declared minimum: pgf manual §"Shapes"
@@ -2604,6 +2799,24 @@ is not drawn")
           | _ => "")
       match ev.nodes.lookup nm with
       | some g => return .ok (.node g, j + 1)
+      | none =>
+      -- `(n.west)`: an anchor on a named node, which is a point rather than
+      -- a border — pgf uses the named anchor exactly, with no shortening
+      -- toward the other endpoint.
+      match splitAnchor nm with
+      | some (base, an) =>
+        match ev.nodes.lookup base with
+        | none =>
+          return .error (.E0333, s!"in '\\draw', no node is named '{base}'; the \
+edge is not drawn")
+        | some g =>
+          match nodeAnchorOf an with
+          | some a =>
+            let (px, py) := g.anchorPoint a
+            return .ok (.point px py, j + 1)
+          | none =>
+            return .error (.W0334, s!"node anchor '{an}' is outside the rendered \
+picture subset; the edge is not drawn")
       | none =>
         return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
 is not drawn")

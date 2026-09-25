@@ -389,6 +389,90 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — a node anchor is a name, and the engine read it as a name
+nothing declared (M8b slice 3, node anchors). `(C.west)`, `(X.south)` and
+`(Y.south west)` are pgf's core positioning vocabulary — the `rectangle`
+shape's own `\anchor` declarations — and the picture walk resolved a bare
+node name only, so every edge written against an anchor was refused by
+`E0333` for a name that was never a name. On the private reference corpus
+that was three of six errors and cost one diagram all its edges: a
+diagram's author writes anchors precisely *because* the nodes are placed
+against each other, so the construct is not an ornament on the subset, it
+is how the subset's own nodes are joined.
+
+**The table is sourced, not invented.** pgf declares the anchors in
+`pgfmoduleshapes.code.tex`, `\pgfdeclareshape{rectangle}`, and the set is
+`center`, `base`, `mid`, the four sides, the four corners, and `base`/`mid`
+paired with `east` and `west`. Their positions are that declaration's
+arithmetic: a side is the centre displaced by one half-extent, a corner by
+both, `base` is the node's own text baseline (`\anchor{base}` sets
+`\pgf@y=0pt` in the node's frame), `mid` half an ex above it. Twelve of the
+fifteen are constructors of `NodeAnchor`; the `mid` family is not, because
+an ex is the face's and this walk has no face — the same missing
+measurement `Cx.metric` names — so `mid`, `mid east` and `mid west` are
+named where they are written and cost their own edge. A circle's corners
+are *not* its bounding box's: pgf's `circle` shape puts `north east` on the
+circle at 45°, so `diag45` (⌊1000·cos 45° + ½⌋ = 707) stands beside the
+declaration it came from.
+
+**The spelling was the engine's own doing.** pgf writes `south west` with a
+space; the deck writes it with a space; the error said `southwest`. A
+statement's tokens are space-filtered before an endpoint's name is joined,
+so both spellings arrive at the lookup as one string — which is why the
+table is keyed on the space-free form with the reason written beside it,
+and why one entry answers both. A row asserts the two spellings ship
+byte-identical path boxes, so a future reader cannot conclude the engine
+accepts a spelling pgf does not.
+
+**The invariant.** `anchorPoint_between`, the registered `_between` shape
+with the node's extent box as its two named bounds: *every* anchor in the
+vocabulary lies inside the box the node registered. It pairs with
+`Ir.Pic.nodeExtent_covers` — that same box holds the label's ink — so the
+composition says an anchored edge starts inside the region a relative
+placement parts, which is what makes `placeRight_border_exact` and its
+three siblings exact about the right box for an anchored endpoint too. A
+containment rather than an equality because it holds for all twelve at
+once: a circle's corners are strictly inside, and `base` stands wherever
+the face put the baseline. That last is why `NodeGeom.baseY` clamps — the
+clamp is inert wherever the extent covers the ink, which is what
+`nodeExtent_covers` says of the number `evalNode` registers, and a guard
+where a metric answers a descender deeper than the node's own border. With
+the clamp the statement needs no hypothesis about the measurement, which
+was the alternative and would have been a premise about another subsystem.
+`anchorPoint_corners_exact` pins each corner as exactly its two sides (the
+shape `offset_corners_exact` already has one level up) and
+`anchorPoint_opposite_exact` the two sides of an axis as opposite
+displacements — a sign error in the table is one failing conjunct of one of
+the three.
+
+**An anchor is a point, not a border.** `Anchor.toward` shortens a bare
+`(name)` endpoint to the border facing the other end; a named anchor is
+used exactly, as pgf uses it, so the resolution returns `.point` and no
+shortening applies. A row reads the two widths off the page and asks that
+they agree, because for `east`/`west` between two nodes in a row the
+declared anchor and the shortened border are the same segment — and that
+coincidence is the only case where the page can check the arithmetic
+against something it already trusted.
+
+**What `base` cannot say in the suite.** `NodeGeom.base` is the baseline
+`Ir.Pic.labelBaseline` gives for the label's first line, read off the same
+shapes the extent was measured from so the anchor and the ink cannot
+disagree. But the walk's metric is a *parameter*
+(`Ir.Pic.LabelMetric`, the still-owed `nodeExtent_covers`), and the suite
+elaborates against one that answers nothing — under which the baseline is
+the centre. So the `base` rows pin what is true under any measurement: the
+edge ships, and the anchor lands inside the node's own border. The offset
+is real in the driver, which does pass a metric, and unobservable in a
+fixture; stated here rather than smoothed over.
+
+**Measured.** On the private reference corpus the error census falls from
+six to three: `C.west`, `X.south` and `Y.south west` are gone, drawn
+natively, with no form or image XObject added and no tool line in the
+verbose log. Ten synthetic rows (`pictureAnchorChecks`, read off
+`Layout.Out`'s `pathBoxes` rather than an IR dump) fail on the parent
+commit and pass here, and seven compat-index rows cover the resolved
+spellings against one `refuse:W0334` row for the `mid` family.
+
 2026-09-24 — `\usetheme{X}` is `\usepackage{beamerthemeX}`, and a theme
 beside the document is read. A deck reported W0319 ("unknown theme"; the
 document unthemed) and 39 W0304 sites ("'fg!50!bg' is not in the palette")
