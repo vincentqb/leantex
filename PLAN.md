@@ -13829,23 +13829,69 @@ because a ratchet can only point one way. With `higher is better` fixed for
 every tier, one comparison serves all of them and no tier can quietly invert
 its own test — the failure mode a per-tier direction flag invites.
 
-**The ratchet.** A value that drops regresses; a baselined item that
-disappears regresses; a new item enters at its measured value and counts as
-an improvement. Retirement is a line in the *committed* baseline —
-`# retired: <item> — <why>` — because only a human knows why a measurement
-stopped being worth making, and a producer regenerating the file carries the
-line forward untouched. Regeneration writes the measurement and then reports
-the delta against what was there before, exiting non-zero if anything fell:
-accepting a fall is a deliberate act taken with a red exit beside the diff.
+**The contract.** A tier's contract is the exit status of its `--check`, and
+nothing else — that is what §1 defines, so it is the only thing every tier's
+writer was told, and four writers built to it in parallel. Two conveniences
+of the shared library are therefore optional and never gating: the porcelain
+line (`scoreboard: tier=… result=…`) adds counts when a tier prints one and
+can never turn a non-zero exit into a pass, and `# encoding:` is a ranking
+hint — a baseline without one is gated like any other and the queue reports
+it unranked. An item may hold spaces. **Corrected 2026-09-25 (review):** the
+first version of this branch gated on both extensions, so the three sibling
+tiers written to §1 read as `fault` and every landing after the first would
+have gone red.
+
+**The ratchet, one rule for every deterministic tier.** A value that drops
+regresses; a baselined item that disappears regresses; and a value that
+**rises** fails `--check` too, unrecorded — `result=stale`, "record it:
+regenerate". Tight in both directions, as the suite already reads
+`subjectDebt` and `siteAccounting`: a floor allowed to lag the tree is a
+floor that admits a silent fall back to it, and the queue, which ranks from
+committed files, ranks on the stale number. In a `headroom` tier an item the
+baseline has never seen enters at the **cap**, so debt arriving under a new
+owner module is a fall rather than an improvement — before that, "is the debt
+going down" was answered by the owner field's spelling.
+
+Weakening is a human act with a written reason, in the file. Retirement is
+`# retired: <item> — <why>`; a **fall** needs
+`# lowered: <item> <old>→<new> — <why>`, and regeneration refuses to write a
+fall no such line authorises, printing the line to add. A lowering
+authorises exactly the fall it names, by item and by both values, so a second
+fall needs a second line; both kinds of line carry forward, and `validate`
+rejects a lowering the file's own rows do not hold. Generated headers carry
+no `# date:` — it was the only line a rebase conflicted on, and dropping it
+removed the last shell-out from regeneration, so every mode is hermetic.
+**Corrected 2026-09-25 (review):** the first version let a rise through
+unrecorded and wrote a fall on the writer's word alone.
 
 **Discovery by convention.** Tier name = tsv basename = `scripts/<tier>.lean`
 root, checked as `lake env lean --run scripts/<tier>.lean --check`. A name in
-`Scoreboard.declaredTiers` with only one of the two files reports `missing`
-rather than being passed over — that is the failure the whole file guards
-against — and `missing` does not fail the gate, so a sibling's tier arriving
-in two commits does not break landing in between. `parity`, `commonmark` and
-`coverage` are declared ahead of their arrival and report `missing` today.
-A malformed or unreadable baseline is `fault`, and does fail.
+`Scoreboard.declaredTiers` missing either half is a **fault**, and fails —
+unless the name is also on `pendingTiers`, the tiers that have not landed
+yet, whose absence reports `missing` and passes, so a sibling's tier arriving
+in two commits does not break landing in between. That permission cannot go
+stale: the selftest fails a pending name whose tier has both halves, so
+landing a tier and removing its name are one commit. A malformed or
+unreadable baseline is `fault`, and so is an absent or empty one under
+`--check`: with no floor there is nothing to check, and truncating the file
+was the cheapest way to discard one. Only regeneration starts from nothing.
+`parity`, `commonmark` and `coverage` are pending today.
+**Corrected 2026-09-25 (review):** the first version passed all three of
+those states — an emptied baseline, a deleted landed tier, and a non-zero
+exit under an `ok` porcelain line.
+
+**The aggregate builds before it measures.** `lake env lean --run` builds
+nothing and reads whatever `.olean` the last build left, so every tier
+measured a stale tree. `Scoreboard.tierImports` names the lake targets the
+tiers import, filtered against `lakefile.toml` so a sibling's `ParityLib` can
+be named before it exists, and a failed build is a `fault` for every tier.
+Measured, not inferred: `lakefile.toml` sets `defaultTargets = ["leantex"]`,
+so `lake build` builds neither `BoardLib` nor the `scoreboard` exe — a
+syntactically broken `Board.lean` passed `lake build` in this worktree during
+this work. Routed to `agent/land`: add `BoardLib scoreboard` to the gates it
+builds, and compare each committed baseline at the branch tip against main's,
+since a branch can regenerate its own floor and a deleted-then-regenerated
+baseline launders a fall.
 
 **The five tiers, with today's values.**
 
@@ -13875,6 +13921,37 @@ monotone the right way; `refuse` is a provenance line. `compat`'s selftest
 pins the correction directly — a refusal becoming an implementation keeps
 `rows`, raises `impl`, and lowers `refuse`.
 
+**One definition of implemented.** Corrected 2026-09-25 (review): `compat`
+counted a row implemented when its verdict was exactly `impl` (303) while the
+`coverage` tier counted `impl` or `inert:` (336) over the same 659 rows — two
+committed numbers for one fact, the defect `scripts/Gate.lean` exists to
+prevent. `compat` now uses the shared definition, an `inert:` row being a
+recognised command that legitimately moves no ink, and its selftest pins both
+halves. That change was 12 rises and no falls, so the tight ratchet reported
+`stale` and regenerating recorded it. The `pkg/<p>.` item prefix that would
+put the two tiers in one namespace is **not** done: it renames all 134 items
+at once, which is 134 vanishes, and the format has no rename line. It belongs
+to the commit that fuses the two tiers and pays the migration once.
+
+**Freshness, for a tier over someone else's artifact.** `htmlreader`
+ratcheted pass counts in a matrix with nothing tying them to the pages this
+engine builds, so the HTML backend could change and the tier would keep
+reporting a browser's verdict on pages nobody emits. `html-oracle` now
+records `src-key:`, a content key over every corpus fixture built to HTML,
+and `htmlreader --check` rebuilds the corpus and faults when the key differs —
+a fault and not a regression, because the counts are not wrong, they are
+about something else. One function (`Scoreboard.corpusHtmlKey`) is called by
+both the writer and the reader, so the number written and the number checked
+cannot differ by how each was built. Measured: 13.2 s, stable across runs
+(7.3 s of it the build, the rest hashing 126 MB — images arrive inlined).
+The matrix was regenerated by running the browser (chromium 151.0.7922.34 via
+Playwright 1.62.0), never by editing it to pass: its **7 failing target cells
+stand** — `images` and `color-scheme` in the feature section, and
+`diagram-boundary`, `diagram`, `figures`, `palette`, `resume` in the fixture
+section — and `html-oracle --check` still exits 1 on them. The rerun also
+picked up 5 corpus fixtures the old matrix predated, all passing, which is
+why the fixture row reads 72/77 against 67/72.
+
 **Runtime.** The aggregate is 1.18 s (three runs: 1180/1175/1144 ms), every
 tier's `--check` in flight at once, each writing to its own files rather than
 to a pipe so no reader can deadlock. It was 17.4 s serially, and 13.9 s in
@@ -13886,18 +13963,26 @@ took it to 1.1 s. The check is unchanged: it is still `bannedWord`, the same
 definition the hook's own gate reads, so the two cannot disagree about what
 counts as an occurrence.
 
-**The queue.** `scoreboard --queue`, 27 ranked lines today. Obligations whose
-blocker names no other open obligation come first — the ones a proof can
-start on today, 17 of the 29 — ordered among themselves by how many *other*
-blockers name them, so discharging one that releases two outranks one that
-releases none. Then each tier's worst three items by its own encoding's
-deficit. What a better ranking needs: the blocker graph as data rather than
-prose (a `blocked-by:` field naming obligations, so readiness stops being a
-substring search over English), a cost per deficit (a compat row is minutes,
-a `_covers` over two private loops is weeks), and the count of documents each
-deficit holds back — the parity ladder's fixtures-held-back number and the
-blocker ranking the `coverage` tier is building. With those three the order
-becomes value over cost; with only these, it is readiness over size.
+**The queue is grouped, not ranked.** `scoreboard --queue`, three labelled
+groups. Obligations whose blocker names no other open obligation come
+first — the ones a proof can start on today, 17 of the 29 — ordered among
+themselves by how many *other* blockers name them, each line carrying its
+owner **file**, since "whose owner files are free" cannot be answered by a
+module name. Then the construct ranking `tests/coverage/blockers.tsv` carries
+when the `coverage` tier has committed it (72 rows in that tier's own copy,
+`setRTLmain` first); absent, the line says which tier writes it. Then each
+tier's worst three items by its own encoding's deficit, skipping values below
+`rawFloor` — a negative value is how a tier says "outside the denominator",
+and ranking `parity`'s `refuses -1` as its worst item would head the queue
+with a measurement that does not count. **Corrected 2026-09-25 (review):** the
+order between groups is policy and the output now says so, because reading
+its head as "the next thing to do" would take a proof obligation while any of
+the 17 ready ones remains, which is a decision and not a measurement. What a
+real ranking still needs: the blocker graph as data rather than prose (a
+`blocked-by:` field naming obligations, so readiness stops being a substring
+search over English), a cost per deficit (a compat row is minutes, a
+`_covers` over two private loops is weeks), and the count of documents each
+deficit holds back — the parity ladder's fixtures-held-back number.
 
 **Bench is a report.** `scoreboard --bench` prints the medians beside the
 last PLAN.md recorded, and gates nothing: it runs another engine, so it can
@@ -13910,28 +13995,110 @@ per document against a committed value, the lualatex column recorded and
 never compared. Noise control: pin the sample count, drop the first run (cold
 page cache), compare medians not means, and take the whole corpus in one
 batch so a busy host moves every row together — one row moving is then a
-signal, and all rows moving is the host.
+signal, and all rows moving is the host. The tolerance is now declared as a
+value — `Scoreboard.benchTolerance`, 9 samples with the first discarded,
+median, +15%, gating the `leantex` column only — rather than as prose, so the
+day it gates, the number it gates at is the one written down.
 
-**Every case broken once.** `scoreboard --selftest` covers nine
-malformations (unsorted, duplicate, non-integer, three fields, retirement
-with no reason, retirement of a live item, whitespace in an item name, no
-rows, no encoding line), four ratchet verdicts, and retirement both ways —
-the same absence regresses without the line and does not with it. Each was
-proved falsifiable by repairing its fixture and confirming the case fails
-and names itself: 15 of 15, no vacuous case. Each tier's ratchet was broken
-once by raising a committed value one above what is measured; all five
-reported `result=regressed` and exit 1. A baseline with no producer reports
-`missing`, and a baseline with its encoding line removed reports `fault`.
+**Every case broken once.** `scoreboard --selftest` covers ten malformations
+(unsorted, duplicate, non-integer, three fields, retirement with no reason,
+retirement of a live item, a lowering with no reason, a malformed lowering, a
+lowering the rows do not hold, no rows), the four ratchet verdicts — each now
+also failing `--check`, the tight rule — retirement both ways, and a lowering
+authorising exactly its own fall and not a fall naming other values. Two
+fixtures that asserted this branch's own extensions became positive
+spec-format cases: a baseline with no encoding line reads as unranked, and an
+item holding a space reads whole. Each case was proved falsifiable by
+repairing its fixture and confirming the case fails and names itself.
 `--selftest` fans out to every tier's own selftest, so the landing gate is
 one command.
 
-**Routed.** Three spellings now exist in more than one gate, each a
-predicate two gates must agree on, which is what `scripts/Gate.lean` is for:
-`fieldOf` (the `-- <key>: <value>` reader, in `scripts/owed.lean` and
-`scripts/Board.lean`), `kwPartial` (in `scripts/precommit.lean` and
-`scripts/purity.lean`), and the matrix reader (in `scripts/html-oracle.lean`
-and `scripts/htmlreader.lean`). The first two are one-line moves into
-`Gate.lean`; the third wants `html-oracle`'s `parseMatrix` in a library the
-tier can import, which is a larger change and belongs to that file's owner.
-`scripts/land.lean` owes a call to `scoreboard --check` and one to
-`scoreboard --selftest`.
+Broken once, beyond the format: the three sibling stand-ins pass and a
+sibling exiting 1 fails; `result=ok` with exit 3 fails; an emptied baseline,
+a deleted landed tier and half a tier each fault; a pending tier with both
+halves fails the selftest; an unrecorded rise is `stale` and regenerating
+clears it; an unauthorised fall is refused with the file untouched, and the
+authorising line lets exactly that fall be written; one obligation staged
+under a new owner module is a fall; a broken `Tests/Diag.lean` faults every
+tier; a sentence added inside one corpus fixture moves the freshness key; a
+malformed owed record is rejected as `owed.lean` rejects it; `refuses -1`
+does not head a raw tier's deficits. Logs: `leantex-evidence/scoreboard-fix/`.
+
+**Routed.** `fieldOf`'s definition is now in `scripts/Gate.lean` as
+`recordField`, and `scripts/Board.lean` reads it. It could not take the name
+`fieldOf`: `scripts/owed.lean` declares its own, and adding the same name to
+`Gate.lean` fails that file's build — which is how this was found, not
+reasoned. `scripts/owed.lean` owes deleting its copy and calling
+`recordField`; the scoreboard selftest carries a row that fails in both
+directions until it does, so the row is a migration step and not a parking
+space. `kwPartial` has one copy, in `scripts/precommit.lean`, so moving it
+needs an edit to a file this agent does not own: routed, not done. The matrix
+reader is still duplicated between `scripts/html-oracle.lean` and
+`scripts/htmlreader.lean`; that wants `parseMatrix` in a library the tier can
+import, which belongs to that file's owner. `scripts/land.lean` owes a call
+to `scoreboard --check` and one to `scoreboard --selftest`, and its gate build
+owes `BoardLib scoreboard` — `lake build` covers neither. CI owes the same,
+plus the tip-against-main baseline comparison that catches a branch
+regenerating its own floor or deleting a baseline and starting over.
+
+
+### 2026-09-25 — which tiers, and what a rung is: one vocabulary per axis
+
+Asked, while the scoreboard was being fixed: what tiers should we have, and
+what are L0–L4? Both questions are about vocabulary as much as content,
+because "tier" was naming three different things across the plans — a
+scoreboard goal, a corpus, and a rung of the parity ladder. One word per
+axis, and the axes are these:
+
+* a **scoreboard tier** is a goal's committed baseline file, `tests/scoreboard/<t>.tsv`;
+* a **parity level** is a rung of the PDF-comparison ladder, `L0`–`L5` plus `R` (raster);
+* a **construct support rung** is a word: unknown / fails / skipped / degraded / rewritten / native / verified;
+* a **corpus set** is pairs / probes / templates / public / private.
+
+"Tier" now means a scoreboard goal only. The rungs are `L`, not `T`, so a
+level never reads as a tier.
+
+**The tiers, one per goal, all gated on `--check`'s exit status under the one
+ratchet.** For PDF: `parity`, the level ladder over committed synthetic
+pairs, and `probes`, one-construct LaTeX documents both engines compile with
+each found defect kept as a case. For HTML — slides, sites, and the rest:
+`htmlreader` with its freshness key, a cross-backend census-agreement tier
+(the same IR fact projected into both artifacts, which is where a
+backend-only claim belongs), and the site port's build as a fixture. For
+CommonMark: `commonmark`, per-section `match`/`cases` pairs. For LaTeX in
+general: one documented-command coverage tier, absorbing `compat`, with the
+one definition of implemented. For Lean used well: `obligations`, `purity`,
+and `diagdebt` over `subjectDebt` only. For speed: `bench`, gating the
+leantex column at the declared tolerance and recording the other engine's.
+
+Hash-pinned public corpora (TeX Live templates, arXiv) stay reports that feed
+the queue's blocker ranking rather than tiers: their denominator moves when
+the pin moves, and a ratchet cannot tell that from a regression. The private
+corpus stays local acceptance and never enters the repo.
+
+**L0–L4, and what to take from flashtex.** The ladder as flashtex writes it,
+cumulative: L0 the reference engine builds the document under
+`-halt-on-error`, else the document leaves the denominator, and this engine
+builds it too; L1 the same page count; L2 the per-page multiset of glyph
+characters; L3 every glyph within 0.5 bp under a one-to-one matching; L4 a
+raster difference under a threshold. `agent/parity` builds L0 build, L1
+pages, L2 per-page Unicode census through `/ToUnicode`, L3 reading order and
+L4 line partition, with glyph placement as L5 and raster reported, never
+gated. flashtex is not on this host, so the rungs are as quoted in the parity
+review and not read from its source.
+
+What is worth taking is the *mechanism*, not the thresholds: cumulative
+levels with an explicit denominator rule, a committed per-document level that
+may not drop, raster measured and never gated, declared exceptions written as
+arms of a level's definition rather than as a skip list, byte-pinned
+references with provenance, and blocker ranking by what defines a construct.
+
+Against **lualatex** rather than pdflatex, which is the engine this project
+compares to, three things change. `/ToUnicode` makes glyph identity exact
+rather than a font-encoding guess, so L2 is a real census. fontspec's `Path=`
+puts both engines on one font file, so a width difference is a layout
+difference and not a font difference. And a reproducible reference needs a
+content-only `/ID`: LuaTeX hashes the working directory into it, so
+"byte-identical" holds only within one directory unless the `/ID` is
+computed from content — the parity branch's finding, and the reason a
+two-directory rebuild is the check rather than a rebuild in place.
