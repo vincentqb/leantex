@@ -406,6 +406,60 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-25 — an anchor sits on the border, and the border is the text plus
+one inner sep (M8b slice 4, node borders). The user's report was exact:
+"the anchor points are a little too close to the node/text". They were, by
+one inner sep, everywhere.
+
+**The constant is sourced.** TikZ manual §17.2.2, the `inner sep` /
+`inner xsep` / `inner ysep` keys: a node's border is its text *plus* the
+inner sep, default `0.3333em`. §17.5.2's anchors sit on that border.
+`innerSepDefault` carries the `0.3333` in ten-thousandths beside the
+section it came from, and it is resolved against *this node's* em — the
+body size times the node's own size scale — rather than frozen, because the
+default is font-relative and a node in a smaller face has a smaller border.
+
+**The defect was a missing term, not a missing key.** `evalNode` computed
+the node's registered half-extents as `max(declared minimum, the label's
+ink)`, straight off `labelInkSpan`. So every anchor was resolved on the
+letters: an edge drawn to a node's `west` started inside its first
+character, and a relative placement parted two nodes by their text rather
+than by their borders. `borderHalf` is the one site that answers "how far
+does this node reach", and it now reads
+`max(declared minimum, ink + inner sep)`.
+
+**The key is read, per axis.** `inner sep` was consumed and discarded with a
+comment arguing it was inert under minimum-only sizing — true when the
+extent was the declared minimum alone and false the moment the walk
+acquired a metric, which it has. It now sets both axes, and `inner xsep` /
+`inner ysep` set one each, so a document that moves its borders moves them.
+
+**The invariant, and what it did to its sibling.** `borderHalf_between` is
+the registered `_between` shape with both bounds named: the border is
+*strictly* greater than the ink and at most one sep beyond it. The strict
+lower bound is exactly what the old arithmetic failed, and it is the tighter
+sibling of `anchorPoint_between` — that one says every anchor is inside the
+box the node registered, this says the box the node registers is outside the
+box its label inks. Composed at `g.a := borderHalf …` they read: an anchor
+lies between the letters and the border, which is pgf's own reading.
+Neither `anchorPoint_between` nor `Ir.Pic.nodeExtent_covers` weakens: both
+are quantified over the half-extent and a larger one satisfies them, so
+growing the extent makes the containment they state hold with room to
+spare.
+
+**The outline did not move.** A node's drawn path is still its declared
+minimum (the emission note in `evalNode` says why), so this entry changes
+where anchors stand and how far a relative placement parts two nodes, and
+changes no stroke on any page that declared a minimum.
+
+Evidence: three rows of `pictureInnerSepChecks` red under the previous
+extent and green here, stated as *differences* between two builds that
+differ only in the declared sep — which pins the arithmetic without
+depending on what the suite's metric answers (it answers nothing, so the ink
+is zero and the extent is the sep alone) and cannot pass under a reader that
+ignores the key. Two control rows, the zero-sep width and `inner xsep`
+leaving the vertical anchors alone, pass either way and say so.
+
 2026-09-25 — a document's macros reach its picture *before* the walk reads
 it (M8b slice 4, macros in the native walk). The boundary standalone had
 carried the document's reachable definitions since the macro-closure entry

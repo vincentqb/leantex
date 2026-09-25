@@ -103,6 +103,9 @@ pre impl \tikzset{zz-one/.style={}}
 pre impl \tikzset{zz-one/.append style={}}
 pre impl \tikzset{zz:one/.style={}}
 pre impl \tikzset{zz1/.style={}}
+body impl \begin{tikzpicture}\node[inner sep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[inner xsep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[inner ysep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize
 pre inert:default \pictures{ tool = lualatex }

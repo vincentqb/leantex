@@ -5950,6 +5950,79 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the node label sets in the face the body sets in"
     (labelFaces.all fun f => bodyFaces.contains f)
 
+/-- **An anchor stands on the node's border, one inner sep clear of the
+letters.** pgf's node border is its text *plus* `inner sep`, default
+`0.3333em` (TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep`
+keys), and §17.5.2's anchors sit on that border. The engine resolved every
+anchor on the label's ink instead, so an edge drawn to a node's `west`
+started inside its first letter and every anchor sat one sep inside where
+pgf puts it — the user's report was exactly "the anchor points are a little
+too close to the text".
+
+The claim is stated as a *difference* rather than against a computed
+absolute: two builds differing only in the declared sep must put their
+anchors exactly that much apart. That makes the row immune to what the
+suite's metric answers (it answers nothing, so the ink is zero and the
+extent is the sep alone) while still pinning the arithmetic, and it is the
+one shape that cannot pass under a reader that ignores the key.
+`Picture.borderHalf_between` is the invariant behind it. Invented
+content. -/
+def pictureInnerSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let pic (opts : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node[" ++ opts ++ "] (aa) at (0, 0) {Pear};\n" ++
+    "\\node[" ++ opts ++ "] (bb) at (4, 0) {Plum};\n" ++
+    "\\draw (aa.east) -- (bb.west);\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let edgeBox (opts : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    let (doc, _) := elabStr (pic opts)
+    ((censusOf (coveredColorsOf doc) (layoutOf oneFace doc))[0]?).bind (·.pathBoxes[0]?)
+  let dflt := edgeBox "text=black"
+  let zero := edgeBox "inner sep=0pt"
+  let twomm := edgeBox "inner sep=2mm"
+  let (_, ds) := elabStr (pic "inner sep=2mm")
+  t "an 'inner sep' node elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  -- The anchors move, so the edge between them is shorter by two seps: one
+  -- at each end. A reader that dropped the key would give three equal
+  -- widths, which is what the defect did.
+  t "a declared 'inner sep' shortens an anchored edge by one sep at each end"
+    (match zero, twomm with
+     | some (_, _, wz, _), some (_, _, w2, _) => wz - w2 == 2 * Dim.mm 2
+     | _, _ => false)
+  t "the default 'inner sep' is pgf's 0.3333em"
+    (match zero, dflt with
+     | some (_, _, wz, _), some (_, _, wd, _) =>
+       wz - wd == 2 * Picture.innerSep Ir.baseFontSize
+     | _, _ => false)
+  -- With no sep and a metric that measures nothing the two anchors are the
+  -- two centres, so the edge spans the declared separation -- to within the
+  -- scaled point a milli coordinate rounds to, which is not the claim.
+  t "a zero 'inner sep' puts the anchor back on the letters"
+    (match zero with
+     | some (_, _, wz, _) => Dim.mm 40 - wz <= 1 && wz <= Dim.mm 40
+     | none => false)
+  -- Per-axis: `inner xsep` moves the side anchors and leaves the top and
+  -- bottom where they were, which is what makes it two keys and not one.
+  let vert (opts : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    let src := "\\begin{document}\n\\begin{tikzpicture}\n" ++
+      "\\node[" ++ opts ++ "] (aa) at (0, 0) {Pear};\n" ++
+      "\\node[" ++ opts ++ "] (bb) at (0, -4) {Plum};\n" ++
+      "\\draw (aa.south) -- (bb.north);\n" ++
+      "\\end{tikzpicture}\n\\end{document}"
+    let (doc, _) := elabStr src
+    ((censusOf (coveredColorsOf doc) (layoutOf oneFace doc))[0]?).bind (·.pathBoxes[0]?)
+  t "'inner xsep' alone leaves the vertical anchors where they stood"
+    (match vert "inner sep=0pt", vert "inner sep=0pt, inner xsep=2mm" with
+     | some (_, _, _, h0), some (_, _, _, hx) => h0 == hx
+     | _, _ => false)
+  t "'inner ysep' alone moves the vertical anchors"
+    (match vert "inner sep=0pt", vert "inner sep=0pt, inner ysep=2mm" with
+     | some (_, _, _, h0), some (_, _, _, hy) => h0 - hy == 2 * Dim.mm 2
+     | _, _ => false)
+
 /-- **A document's own macros reach its pictures before the walk reads
 them.** Expansion precedes execution, as in TeX
 (`Picture.expandMacros`): the stream the statement reader and the label

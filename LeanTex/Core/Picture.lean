@@ -1650,6 +1650,38 @@ theorem circleBorder_step (cx cy r qx qy : Int)
   rw [e1, e2]
   exact ⟨by omega, by omega, by omega, by omega, hsq⟩
 
+/-- `inner sep`'s default, in ten-thousandths of an em: pgf's `0.3333em`
+(TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep` keys). -/
+def innerSepDefault : Int := 3333
+
+/-- One inner sep at this em. -/
+def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
+
+/-- **A node's border half-extent: its text, plus one inner sep, or the
+declared minimum where that is larger.** pgf manual §17.2.2 — a node's
+border is its text *plus* `inner sep`, and §17.5.2's anchors sit on the
+border, not on the letters. One site, so the extent an anchor resolves
+against and the extent a relative placement measures are the same number. -/
+def borderHalf (decl ink sep : Sp) : Sp := max decl (ink + sep)
+
+/-- **The border stands between the letters and one inner sep beyond
+them.** The registered `_between` shape, and the tighter sibling of
+`anchorPoint_between`: that one says every anchor is inside the box the node
+registered; this says the box the node registers is strictly outside the box
+its label inks, by the sep and no more. Composed at `g.a := borderHalf …`,
+an anchor lies between the ink and the border — which is pgf's own reading.
+
+The strict lower bound is what the defect failed: the extent was
+`max decl ink`, the ink itself, so every anchor sat one inner sep inside
+where pgf puts it and an edge drawn to a node's `west` started inside the
+label's first letter. Spelled over bare `Int` binders, since `omega` does
+not read an `Sp`-typed structure field. -/
+theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
+    (hs : 0 < sep) : ink < borderHalf decl ink sep ∧ borderHalf decl ink sep ≤ ink + sep := by
+  have step : ∀ d i s : Int, d ≤ i + s → 0 < s → i < max d (i + s) ∧ max d (i + s) ≤ i + s := by
+    intro d i s h1 h2; omega
+  exact step decl ink sep hd hs
+
 /-- A named node's anchoring geometry: centre and border half-extents (a
 circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
 structure NodeGeom where
@@ -2485,7 +2517,7 @@ def readsNodeOpt (opt : Array Tok) : Bool :=
   | [.ident "font", .sym '=', .ctrl size] => (Ir.sizeScale.lookup size).isSome
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "thick", "text", "fill", "minimum size", "minimum width", "minimum height",
-      "inner sep", "node contents"].contains (keyPath ts)
+      "inner sep", "inner xsep", "inner ysep", "node contents"].contains (keyPath ts)
 
 /-- An entry some statement of this subset reads: what a declaration made
 once for the document, or once for the picture, carries into the brackets
@@ -2663,6 +2695,10 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut thick := false
   let mut minW : Sp := 0
   let mut minH : Sp := 0
+  -- `inner sep` as the document set it, per axis; `none` is pgf's default,
+  -- resolved below against this node's own em.
+  let mut xsep : Option Sp := none
+  let mut ysep : Option Sp := none
   let mut own : Array (Array Tok) := #[]
   -- pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
   -- number of times, up to the `{text}` (TikZ manual §17.2). So the
@@ -2755,10 +2791,26 @@ is dropped")
       | .ok d => minH := max minH d
       | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
 is dropped")
-    -- `inner sep` is inert under minimum-only sizing: the outline is the
-    -- declared minimum (see the emission note below), which already
-    -- dominates the body plus its sep in the class this subset renders.
-    | .ident "inner" :: .ident "sep" :: .sym '=' :: _ => pure ()
+    -- `inner sep` moves the node's *border*: pgf manual §17.2.2 has it
+    -- padding the text on every side, and §17.5.2's anchors sit on the
+    -- border. The outline below is still the declared minimum (see the
+    -- emission note), so what this key moves is where an anchor stands and
+    -- how far a relative placement parts two nodes.
+    | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => xsep := some d; ysep := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'inner sep', {e}; the option \
+is dropped")
+    | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => xsep := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'inner xsep', {e}; the option \
+is dropped")
+    | .ident "inner" :: .ident "ysep" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => ysep := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
+is dropped")
     -- `node contents={...}`: the body a bundle carries, so a use site can
     -- write `\node[bundle] (n);` with nothing of its own (pgf manual
     -- §17.2.1). A body written at the use site wins.
@@ -2830,8 +2882,15 @@ outside the rendered picture subset; the label is not drawn")
   -- `nodeExtent_covers` is why a placement parts text and not centres).
   let declA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
   let declB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
-  let ownA : Sp := max declA inkHalf.1
-  let ownB : Sp := max declB inkHalf.2
+  -- The border is the text *plus* `inner sep` (pgf manual §17.2.2), so an
+  -- anchor stands clear of the letters rather than on them. The default is
+  -- font-relative and this node's own size is its em, which is why it is
+  -- resolved here and not a constant.
+  let em : Sp := cx.bodySize * (scale : Int) / 1000
+  let sepX : Sp := xsep.getD (innerSep em)
+  let sepY : Sp := ysep.getD (innerSep em)
+  let ownA : Sp := borderHalf declA inkHalf.1 sepX
+  let ownB : Sp := borderHalf declB inkHalf.2 sepY
   let pos : Except PDiag (Sp × Sp) :=
     match atCoord with
     | some (xs, ys) =>
