@@ -101,7 +101,7 @@ list.
   countable frame carries the chrome foot (audit-numbering T2's page face,
   restated as a per-page fold over `PageOut.frame` — the attribution and
   the footer are written together at `finishPage`).
-- `elab_inlines_option_run_dropped` — the W0341 arm's content claim as a
+- `elab_inlines_option_run_dropped` — the option-run arm's content claim as a
   commutation: elaboration with and without an unknown command's option
   run agree, whatever the run's text. Statable since the inline knot
   became total; blocked on the proof's elaboration budget, not the
@@ -14215,18 +14215,21 @@ after:   W0370 '\footnotemark' is not paired with its partner yet; its [...]
 The page is unchanged: `pdftotext` output is identical before and after for
 both shapes, so this moved the accounting and not the ink.
 
-**What is a theorem and what is not.** `Elab.unknownCmdDiag_accounts` says the
-code a refusal earns is fixed by the construct alone; `unknownCmdDiag_optionRun_id`
-reads off it that the argument shape does not enter, so the run earns no code.
-Both are statable only because the pure half of the emitter was split out of
-the state thread — `warnOnce`'s first-site flag is a bound variable no
-statement can name, which is the factorization the proof needed rather than a
-tactic to find. What they do *not* cover is the state thread itself
-(`warnOnce_sites_exact`, still owed, its source-side census blocker unchanged)
-and the census's own vacuity: `Diag.tallySites_exact` still carries
-`subject.isSome`, so the theorem that counting is honest remains silent on
-exactly the class that miscounted. That is the total-accounting change, not
-done here, and `subjectDebt` (47 rows after this) is still the interim ratchet.
+**What is a theorem and what is not.** (Corrected 2026-09-25, round 2: the two
+theorem names this paragraph used claimed more than the statements held, and
+the emitter statement it said could not be written has been written. See the
+round-2 entry below.) `Elab.unknownCmdDiag_code_exact` says the code a refusal
+earns is fixed by the construct's name alone; `unknownCmdDiag_shape_id` reads
+off it that the argument shape does not enter, so the run earns no code.
+Neither says anything about the message or the help, where the run's fate
+lives. `Elab.warnUnknownCmd_pushes_one` is the emitter fact — one push per
+call, carrying the construct's code and the subject `ctrl:<name>` — statable
+because `warnOnce`'s state step is a pure function over the state passed in.
+What is still not covered is the source-side census (`warnOnce_sites_exact`,
+still owed, its blocker unchanged) and `Diag.tallySites_exact`'s
+`subject.isSome` hypothesis, which `warnUnknownCmd_pushes_one` now discharges
+for this class but not for the tree; `subjectDebt` (47 rows) is still the
+interim ratchet.
 
 **Two defects in the interrupted draft this continued from,** both invisible to
 `lake build`'s exit code and worth naming because the shape recurs. An invalid
@@ -14241,8 +14244,11 @@ it, and reading the log is the habit.
 `salvage_named` (a check-block label, not a theorem) but passed one naming
 `Obligations.warnOnce_emits_once`, which does not exist — the *dotted*
 spelling escapes the scan. Both citations are corrected here; the scan itself
-is `scripts/cites.lean`, not this agent's file, and the change is to treat a
-namespace-qualified snake_case tail as a citation.
+is `scripts/cites.lean`, and the change is to treat a namespace-qualified
+snake_case tail as a citation. (Corrected 2026-09-25, round 2: the hole was
+wider than "routed" suggested — three dangling citations landed through it in
+this very change, which the reviewer found and this agent then closed. See the
+round-2 entry.)
 
 
 ### 2026-09-25 — the log-only accounting gate matches structure, not words
@@ -14285,3 +14291,118 @@ read `.subject` directly. The shape that keeps those readers source-compatible
 is to make `subject` a derived `def` over the new field rather than a rename,
 so `d.subject` keeps meaning "the named key, if it is named"; that is the
 increment to take next, and it is a unit of its own.
+
+### 2026-09-25 — a counted line is a claim about every site it counts
+
+An independent reviewer blocked the option-run fold, and the blocking finding
+was not in the fold: it was in the delivery. `warnOnce` shows the first site's
+message with the group's total and demotes the rest, and its docstring says the
+notes carry "the same words". Making a refusal's message depend on that call's
+argument shape broke that premise, so on a command called twice in different
+shapes the first call decided what the default log said about both. Measured on
+synthetic probes, base binary against head: a later dropped `[...]` run went
+unmentioned at default verbosity in one order, and `(2 sites)` on a
+run-shaped line read as runs dropped at both in the other.
+
+**The invariant, and why the cheapest fix was refused.** The reviewer offered
+three shapes: a per-site bit the tally renders as "k of n", a visible-line
+wording true of every site, or a declared first-site semantics amending
+`warnOnce`'s docstring. The third is minutes and holds nothing — it writes the
+defect down as a convention. The first needs `Diag.tallySites` to rewrite
+messages, which costs `tallySites_id`'s message-preservation claim. The second
+is what landed, in the form that makes it checkable rather than editorial: the
+group's argument shapes are a *value* (`Elab.RunShape`, two independent bits),
+the wording is a function of that value, and the second shape arriving rewords
+the one line the total is read off. Uniform groups keep their exact sentence
+("its [...] options were dropped"); a mixed group states the rule ("any [...]
+options were dropped"), which is true at a site that carried none.
+
+The property that makes this more than a wording choice is order-independence.
+Both projections of the accumulated shape are `any`, so the wording is a
+function of the *set* of the sites' shapes: `Elab.runShape_fold_exact`. The
+artifact witness is the same document in both orders reporting the identical
+visible line, which the reviewer's own probe shape (the site permutation) is
+what found the defect. `--werror` on the reported uniform shape still goes
+3 → 1; on a mixed shape it goes 2 → 1.
+
+**The emitter statement that was said to be unwritable.** Three docstrings cited
+`Elab.warnUnknownCmd_accounts`, a theorem that never existed, and the
+surrounding prose explained that the emitter half could not be stated because
+`warnOnce`'s first-site flag is "a bound variable no statement can name". That
+was a factorization finding read as an impossibility. `warnOnce`'s state step is
+a pure function over the state passed in now, the flag is a term over it, and
+`Elab.warnUnknownCmd_pushes_one` says what the citations described: one push per
+call, carrying the construct's code and the subject `ctrl:<name>` — the
+`subject.isSome` hypothesis `Diag.tallySites_exact` carries, discharged by
+construction for every refused command. The two theorems that overclaimed are
+restated as what they hold: `unknownCmdDiag_code_exact` (the code is fixed by
+the construct's name) and `unknownCmdDiag_shape_id` (the *code* is shape-blind;
+message and help are not, by design).
+
+**The gate hole was wider than "routed" recorded.** `cites --check` read only
+the bare snake_case spelling, so `Namespace.theorem_name` was not a candidate
+at all — and three dangling citations landed through that hole in the same
+change whose own entry recorded it. Resolving the qualified spelling turned up
+**five more, all pre-existing**: `Layout.spill_accounts` (Ir.lean),
+`Math.accentAttach_covers` (Font.lean), `Picture.labelFace_agree`,
+`Picture.placeRel_exact`, `Picture.place_order_agree` (Tests/Support.lean,
+Tests/Surface.lean). Each is parked in `citePhantomKnown` with its anchor, what
+actually holds the fact and the one-line fix, and routed to its owner. The gate
+was broken once through the path that ships. One property of it worth writing
+down: `cites --check` reads *compiled oleans*, so `lake build cites` alone does
+not see a source edit — an attempt to break it that way passes, and the break
+must follow `lake build` and `lake build Tests`.
+
+**`\urlstyle`, the user's actual report.** The compat layer consumed url.sty's
+selector and refused it, telling a reader who asked for the running face that
+the engine sets URLs mono — which the artifact contradicts whenever no mono
+family is declared, and which then made the slot census count such a URL as
+mono the document had lost. Both follow from discarding the selector. url.sty's
+four values are exactly the engine's three families plus the face in force, so
+the elaborator reads them: `tt`/`rm`/`sf` set mono/roman/sans and `same` sets no
+family style at all. Measured with declared body, mono and sans faces, base
+binary against head: `\urlstyle{same}` and `{rm}` now embed the body face alone
+where base embedded mono *and* warned; `{sf}` embeds the sans; `{tt}`,
+url.sty's default, is unchanged. The three `refuse:W0104` rows in
+`tests/compat-index/url.txt` are `impl`, probed with the `\url` whose family
+they change, because a row probed on the declaration alone moves no ink and the
+gate says so. A value url.sty does not define is still a named skip.
+
+**Retiring a code is a migration.** `\allow{W0341}` built on base and became a
+hard `E0329` — a `dropped` loss, exit 1, no PDF — for a change that took nothing
+away. That is the CLI-surface rule applied to a surface written in documents
+this repository cannot see. `DiagCode.retired` maps a retired spelling to
+whatever names its loss now (`W0341` → `W0301`) or to nothing where the rule
+changed and the loss cannot occur (`W0344`, the `\scshape` decision), and
+`\allow` answers with a note, N0105. A typo is still an error, and the table is
+checked in both directions: no row may name a live code, and every successor
+must be one.
+
+**`\allow{W0301}` is wider than it was**, and this is the decision rather than
+an accident: accepting a refused command's recovery now accepts the dropped
+option run with it, because the run's fate is a clause of that one diagnostic.
+A document that wants the drop kept visible has no way to ask for it. The
+alternative — keeping the run's own code so it could be accepted separately —
+is the two-accountings-at-one-site defect this change removed, so the width is
+the cost of one accounting and is recorded here rather than left implicit.
+
+**Deck evidence, base against head rather than branch against branch.** The
+review noted the earlier deck comparison was two commits of the same branch.
+Rerun on the private reference corpus deck with main's binary at `efcd27e` and
+this head: 198 diagnostics on both sides, identical per code, per severity and
+per span, 36 pages, byte-identical page text, identical embedded faces. Two
+things that answers: no W0341 fired on that deck at base, so its census could
+not have moved; and none of its 13 W0104 was the `\urlstyle` refusal, which the
+mono-slot review had left open. The census is by span rather than by subject
+because the porcelain stream carries no subject field — routed to `Cli/Render`'s
+owner, since a subject-keyed census is what the total-accounting change will
+need.
+
+**Still open, and deliberately.** The preamble/body W0301 pair has the same
+first-site-wording shape (a preamble refusal's "in the preamble; skipped" stands
+over a body site whose arguments were kept) and is untouched here: the rewrite
+targets only the index this emitter recorded, so the preamble's own line is
+never reworded by a body site. Fixing that pair is the same delivery question
+one layer up, and belongs with the total-accounting change — whose contract
+should carry "the visible line is true of every site it counts" as a stated
+property, with `runShape_fold_exact` as the worked example of what that costs.

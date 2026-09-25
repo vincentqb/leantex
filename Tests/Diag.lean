@@ -907,12 +907,12 @@ def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
     (collapsed.slotCollapsed 2 == (collapsed.lookup 2 400 false == collapsed.lookup 0 400 false))
 
 /-- **The subject baseline.** Codes whose loss is censused but whose emission
-carries no subject today, frozen as measured on 2026-09-25 — 48 of them.
+carries no subject today, frozen as measured on 2026-09-25 — 47 of them.
 
 This is a ratchet, not a defect list, and the distinction matters. The law
 "every censused code carries a subject" was the stated target; measured over
-`DiagCode.all` it fails for all 48 of these, which says the law is wrong
-rather than that the engine has 48 bugs. Many of these losses are about a
+`DiagCode.all` it fails for all 47 of these, which says the law is wrong
+rather than that the engine has 47 bugs. Many of these losses are about a
 *place* and not a name — an overfull line (W0005), a measure outside the
 readable band (W0201), headings that skip a level (W0320), ink painted off
 the medium (W0388) — and their cause site is already carried by `Diag.span`.
