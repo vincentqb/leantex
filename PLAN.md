@@ -14983,15 +14983,16 @@ none of the three to module initialization.
 
 
 ### 2026-09-25 — the parity ladder, built: three premises measured, one rung added, one deferred for the reason it is deferred
+### 2026-09-25 — the parity ladder, built: three premises measured, one level added, one deferred for the reason it is deferred
 
-The ladder's first four rungs are built and gated
+The ladder's first levels are built and gated
 (`scripts/parity.lean --check`, `tests/scoreboard/parity.tsv`). The design
 above needed two corrections, both from measurement rather than review.
 
 **The three premises, measured on the committed pairings.** `/ToUnicode` is
 real: the reference reads back 0 unnamed scalars of 477 on `prose`, 252 on
 `pagebreak`, 237 on `measure`, so no glyph-name reconstruction is needed and
-T2 stands as designed. Line breaks agree in practice: on `prose`, 7 of 7
+P2 stands as designed. Line breaks agree in practice: on `prose`, 7 of 7
 lines break at the same word as `lualatex`, with the geometry declared in
 big points on both sides. But **shared advances are not yet measurable**, and
 this is the correction that matters. `lualatex` writes the descendant font's
@@ -15001,19 +15002,19 @@ in `artFontOf` that is not dereferenced. So every reference glyph falls back
 to `/DW` 1000 and an 8-scalar run reads as exactly 80.000 bp against the
 engine's 35.897. Following the reference by hand yields only 4 glyphs, so
 `artWidthMap` also does not parse the form `lualatex` writes. Until both are
-fixed, any tolerance set on a geometry rung would be fitted to a reading
-artifact, not to the reference — so the geometry rung is **not built**, and
+fixed, any tolerance set on a placement level would be fitted to a reading
+artifact, not to the reference — so the placement level is **not built**, and
 that is the whole reason.
 
-**A rung the design did not have.** T3 (reading order) is blind to line
+**A level the design did not have.** P3 (reading order) is blind to line
 breaking, which was assumed rather than checked. Measured on `pagebreak`:
 both sides ship the identical scalar *sequence* while breaking page 2's
 first line at different words — the engine fits one more word. A multiset
-cannot see that and neither can a sequence. So the ladder gains a line rung:
+cannot see that and neither can a sequence. So the ladder gains a line level:
 per page, the same partition of the reading order into lines, grouped by
-exact baseline. It needs no advance widths, so unlike the geometry rung it is
-not blocked on `/W`. The ladder is now T0 build, T1 pages, T2 census, T3
-order, T4 lines; geometry becomes T5 and raster T6, both deferred.
+exact baseline. It needs no advance widths, so unlike the placement level it is
+not blocked on `/W`. The ladder is now P0 build, P1 pages, P2 census, P3
+order, P4 lines; placement is P5 and raster R, both deferred.
 
 The `pagebreak` line disagreement is the ladder's first finding and is
 recorded as a level, not a target: same declared measure on both sides, page
@@ -15021,18 +15022,18 @@ recorded as a level, not a target: same declared measure on both sides, page
 line-breaking tolerance difference or a defect is for whoever owns
 `Layout.lean`; the ratchet's job is that it does not get worse.
 
-**Deferred, each with its reason.** Geometry (T5): the `/W` defect above.
-Raster (T6): it needs `pdftoppm`, so it belongs in the regenerate mode, and
-printing a number nothing reads can wait for a rung that reads it.
+**Deferred, each with its reason.** Placement (P5): the `/W` defect above.
+Raster (R): it needs `pdftoppm`, so it belongs in the regenerate mode, and
+printing a number nothing reads can wait for a level that reads it.
 Accounting (`ink_covered_or_named`): the census agrees exactly on every
 fixture inside the denominator, so there is no unshipped glyph to name yet —
-the rung would be vacuously green, which is the state the subject-debt
+the check would be vacuously green, which is the state the subject-debt
 lesson says to avoid. Cross-backend: the HTML census is a leantex-internal
 agreement, not a cross-engine one, and belongs beside `html-oracle` where the
 HTML reading already lives.
 
 **The divergence registry has teeth.** Six constructors in
-`scripts/ParityCore.lean`, each with a reason and the rungs it may excuse;
+`scripts/ParityCore.lean`, each with a reason and the levels it may excuse;
 harness-side, because nothing the engine emits reads them and a divergence
 only means something once a second engine is in the room. A fixture declares
 one with a `% diverges: <name>` line. A declaration never changes a verdict —
@@ -15056,7 +15057,7 @@ Routed, not mine to edit:
 
 - `Tests/Artifact.lean:290` (`artFontOf`): `artWidthMap ((cid.get? "W").getD .null)`
   needs `deref`, and `artWidthMap` needs to accept the real-valued entries
-  `lualatex` writes. Blocks the geometry rung. The evidence is
+  `lualatex` writes. Blocks the placement level. The evidence is
   `scripts/parity-measure.lean`, which prints the width map read both ways
   per side and stays useful as the regression probe afterwards.
 - `Tests.lean`: the gate is deliberately not in `lake test` — it is a tier
@@ -15064,7 +15065,7 @@ Routed, not mine to edit:
   call it, that is one import and one call in a file this slice does not own.
 
 
-### 2026-09-25 — the parity ladder, corrected: L not T, a ratchet with a writer that refuses, and a reference reproducible anywhere
+### 2026-09-25 — the parity ladder, corrected: P not T, a ratchet with a writer that refuses, and a reference reproducible anywhere
 
 An independent reviewer blocked the ladder's first two commits on two
 claims that were verified once, each in the place most likely to pass.
@@ -15072,16 +15073,22 @@ Both are fixed here, and every correction is a check rather than a
 sentence. Corrections to the two entries above are marked as such; the
 autonomy-loop entry on `main` says T0–T5 and this is its dated correction.
 
-**Corrected: the vocabulary is L, not T.** A *tier* is a scoreboard goal's
+**Corrected: the vocabulary is P, not T.** A *tier* is a scoreboard goal's
 baseline file and, in flashtex, a corpus; using it for a ladder step made
-three things share one word. The ladder's steps are **levels** L0 build,
-L1 pages, L2 census, L3 order, L4 lines, with L5 place and R raster not
+three things share one word. The ladder's steps are **levels** P0 build,
+P1 pages, P2 census, P3 order, P4 lines, with P5 placement and R raster not
 built. Renamed in `Level`/`Level.tag`, the fixture headers, the README,
 the scoreboard header and the report. Mapping to flashtex: its L0–L2 are
-L0–L2 here; L3 and L4 have no analogue and exist because `pagebreak`
-passes census and order and differs in lines; its L3 is L5 and its L4 is R.
+P0–P2 here; P3 and P4 have no analogue and exist because `pagebreak`
+passes census and order and differs in lines; its L3 is P5 and its L4 is R.
+(This branch spelled them L first; round 3 made them P, the vocabulary
+fixed for the whole project.)
 
-**Corrected: `--record` launders nothing.** The ratchet was tight (an
+**Corrected: `--record` launders nothing.** *Superseded in round 3: the
+writer this paragraph describes is deleted, and it did launder one case —
+a lowering line it carried forward re-accepted the same fall after a
+recorded rise. The tier now runs on `Scoreboard.ratchet`; see the round-3
+entry below.* The ratchet was tight (an
 unrecorded rise fails) while its only writer recorded a fall silently with
 exit 0, dropped every `# retired:` line and wrote before the stale check.
 The write is now one pure function, `Parity.recordDecision`, whose
@@ -15129,7 +15136,7 @@ widest: **byte-identical before and after**
 (`leantex-evidence/parity-fix/wprobe-{before,after}.txt`, empty diff). The
 whole effect is on the reference side.
 
-**L5 is measured and deferred, not built.** `ArtRun.glyphs` now carries
+**P5 is measured and deferred, not built.** `ArtRun.glyphs` now carries
 each glyph's own origin — a run is not a comparable unit across writers
 (23 runs against 17 for identical text) — and `Parity.placePairs` matches
 line for line by offset in the line's character stream, skipping a glyph
@@ -15142,12 +15149,14 @@ the page number, `number-placement`, measured at 3.18 bp raw. So a 0.5 bp
 level is **not** green: the two engines distribute justification stretch
 differently. The level waits for an arm that says which quantity is held,
 not for a tolerance wide enough to pass. `scripts/parity-measure.lean`
-prints the distribution and stays the probe.
+prints the distribution and stays the probe. *(Corrected in round 3: the
+error is three separable causes, not justification alone.)*
 
 **The rest of the review, done.** `parity` is a `lean_exe` (0.10 s against
 7.4 s interpreted) whose gate is still hermetic — no `IO.Process` in its
 call graph, fonts from `tests/corpus/fonts`, references from the tree.
-`compiles: no` now requires the engine to have left a `!` error line, and
+`compiles: no` now requires the engine to have left a `!` error line *(corrected
+in round 3: under `-file-line-error` most errors carry no `!`)*, and
 the verdict is computed by `LeanTex.Cli.PicCache.outcome` rather than a
 second copy of that policy: a kill, a failed spawn and a nonzero exit with
 no error line are `.inconclusive`, and abort the regeneration instead of
@@ -15157,12 +15166,13 @@ than scoring level 0, which would have read as every fixture falling.
 `--repin` clears a comment-only edit hermetically — the sidecar now pins
 `src-body-key`, the source without its comment lines, so a repin is
 possible exactly when nothing that can move a glyph moved; it fired on this
-commit's own `% diverges:` rename. L3 and L4 read geometry, not painting:
+commit's own `% diverges:` rename. P3 and P4 read geometry, not painting:
 `linesOf` sorts groups by descending baseline and each line by ascending
-pen, with the paint-order premise gone rather than asserted in prose. L4's
+pen, with the paint-order premise gone rather than asserted in prose. P4's
 "same words" claim is corrected to "same scalars", with the reason. The
-missing L2 blind-spot pair is in the selftest. A declaration that excuses
-nothing about the stop now fails, while a fixture that declares nothing is
+missing P2 blind-spot pair is in the selftest. A declaration that excuses
+nothing about the stop now fails *(corrected in round 3: it printed and
+passed until then)*, while a fixture that declares nothing is
 judged on its measurement.
 
 **Corrected lead: `-recorder` does not pin the shipped font.** The review
@@ -15204,3 +15214,175 @@ a fixture whose reference never reaches it, which the refusing probe shows.
   byte-pinned too and an `autocrlf` checkout would move their keys. One
   line, in the same file as the existing `*.ref.pdf binary` row; left for
   the coordinator to place with the other attribute decisions.
+
+
+
+### 2026-09-25 — the parity tier on the one ratchet: P0–P5, TeX's own log spellings, and what stays owed
+
+The second re-review blocked the ladder on one finding. `--record` matched a
+`# lowered:` line by its item and its two numbers and carried it forward
+verbatim, so one human acceptance became a standing licence: after a
+recorded rise back, the same fall was written again with exit 0. The fix
+is the one AGENTS.md already names, one ratchet for every tier. `parity`
+now runs `Scoreboard.tierMain`, and parity's own copy of the ratchet is
+deleted (`Row`, `parseBaseline`, `renderBaseline`, `retiredOf`, `loweredOf`,
+`carriedOf`, `recordDecision`). A bare `parity` regenerates, as every tier
+does. The tier never landed, so no caller outside this branch used the old
+spelling.
+
+That does not close the finding. `Scoreboard.tierMain` carries lowering
+lines forward too, so **the carried case is owed to the Board**. Measured
+through the shipped binary at `b1d420d`: probe cases 3–4 still write the
+same fall with exit 0. `parity --selftest` says so on every run, and does
+not gate it. Which semantics a consumed lowering has is the Board's to
+decide, and a parity row asserting either answer would turn one of two
+branches red. What the selftest does gate holds under either semantics, and
+it runs through `gate`, the function `main` runs after measuring:
+
+* an unchanged measurement passes;
+* a fall with no lowering fails and is not written;
+* a fall under a new exact lowering is written;
+* a lowering that names other numbers authorises nothing;
+* an unrecorded rise is `stale`.
+
+**Before the ratchet.** Two things stop a run in every mode, exit 2, with
+nothing written:
+
+* a fault: a stale pairing, a moved input, or an unreadable sidecar or
+  reference;
+* a declaration that does not account for the fixture's stop. That covers a
+  divergence that excuses no level the fixture stops on, one declared on a
+  fixture that reaches the top (renamed `outlived`, because `stale` is now
+  the Board's word for an unrecorded rise), and one declared on a fixture
+  outside the denominator.
+
+The `unexplained` arm used to print and pass, although four texts said it
+failed. Deleting it once turned both of its selftest cases red. `src-body-key`
+now pins a source whole when the engine's own lexer reads any part of it
+raw, so a `%` line inside a verbatim body can no longer be cleared by
+`--repin`. Dropping that rule once turned its two cases red.
+
+**The regenerator reads TeX's output as TeX writes it.** Each rule was
+designed from logs captured from lualatex (LuaHBTeX 1.24.0, TeX Live 2026)
+under the regenerator's own argv. Those logs are in
+`leantex-evidence/parity-r3/logs/`, and the selftest carries their lines
+verbatim.
+
+* **Refusals.** `-file-line-error` spells five of seven captured refusal
+  kinds `<file>:<line>: <message>` with no `!`: an undefined command, a
+  missing `$`, `\PackageError`, `\ClassError` and `\errmessage`. A missing
+  file and an `Emergency stop` keep `!`. Every kind ends in the halt
+  trailer. A lualatex killed mid-run left 74 lines, exit 137, and none of
+  those spellings, so it stays a machine fault.
+* **Reruns.** A rerun request is a LaTeX warning paragraph that says
+  "rerun" as a word. `rerunfilecheck`'s version banner and its name are
+  not requests. biblatex's "Please (re)run Biber" is one. The regenerator
+  does not run biber, so that request cannot clear, and such a reference
+  would be refused as unsettled. That is inferred, not run, and it fails
+  closed.
+* **Output.** The engine writes into a scratch `-output-directory`, and a
+  result reaches the tree only once it is a verdict. A source edited to
+  ship no page now records `compiles: no` and removes the stale reference,
+  where it used to adopt the PDF a previous run had left.
+
+When `lualatex` is installed, the selftest also builds four one-construct
+documents live, and on a host matching the sidecar's `engine:` and
+`format:` it compares its two-directory rebuild with the committed bytes.
+Each check was broken once, and the selftest named every break: the old
+refusal rule restored, the old rerun rule restored, the outputs sent back
+beside the source, and the committed key corrupted. Regenerating all four
+references left each PDF byte-identical (sha256 `78814230…`, `f8aa7fca…`,
+`12d59e20…`); only each sidecar's `argv:` line changed.
+
+**The reproduced cases, re-run through the binary and the regenerator in
+scratch clones.** Scripts and output are in
+`leantex-evidence/parity-r3/probe-*/`.
+
+| case | `b707a5e` (the rebased pre-fix tip) | `b1d420d` |
+|---|---|---|
+| fall with no lowering | refused | refused |
+| exact new lowering | written | written |
+| carried lowering, same fall again | written, exit 0 | written, exit 0 (owed to Board) |
+| unrecorded rise | fails | fails, `stale` |
+| stale pairing | refused | exit 2, nothing written |
+| conflict markers in the board | uncaught exception | fault, exit 2 |
+| declaration that excuses nothing | `--check` exit 0 | exit 2 |
+| retirement of a live fixture | licence to vanish | fault, exit 2 |
+| three `-file-line-error` refusals | abort as machine faults | `compiles: no` |
+| hyperref reference | never settles | settles on pass 2 |
+| source shipping no page | stale PDF adopted | `compiles: no`, and `--check` reads the fall |
+
+**Measured, not assumed.**
+
+* `.gitattributes` now marks `tests/parity/*.tex -text`. On a
+  `core.autocrlf=true` checkout of `293f30e`, both halves arrive with CRLF
+  and every pairing reads as stale (exit 2). With the line in place, the
+  gate passes.
+* Micro-typography, the first of the three causes the re-review found in
+  the placement error. `prose` now declares protrusion and expansion off,
+  because the reference loads no `microtype`. No level moves. Placement
+  p95 goes from 1.58 bp to 1.32 bp and the max from 2.34 bp to 1.88 bp.
+  The painted advance of a shared run goes from −0.763 bp to −0.03 bp,
+  which confirms that the old delta was expansion (`Tz`), not the `hmtx`.
+  The re-review measured the residue as the engine flooring `/W` (3663
+  against 3666 thousandths); that part was not re-measured here.
+* `pagebreak` with the same declaration **falls from P4 to P2**. The
+  engine hyphenates "believed" at the end of page 2's first line, where
+  lualatex sets it whole on the next. So its recorded P4 holds only
+  because of expansion the reference does not have. It is left undeclared,
+  and its header says so.
+* `measure`'s census stop is the engine's hyphen in "agree-", on one page.
+  It is not scalars moving between pages, which is what its header claimed.
+
+**Vocabulary, mapped for the entries on `main`**, which are not edited:
+
+* the autonomy-loop entry's T0–T3 are P0–P3;
+* its T4, a per-word placement tolerance, is **P5**;
+* its T5, raster, is **R**;
+* P4, lines, has no row there, because it was added by measurement.
+
+The "which tiers" entry's L0–L5 plus R are P0–P5 plus R, index for index.
+L0–L4 in its flashtex paragraph are flashtex's own. This branch's two
+earlier entries are corrected in place.
+
+**Corrections to the brief.**
+
+* "Map T0–T5 to P0–P5" is not index-preserving, as mapped above.
+* The rebased tip was not green on every gate. `scoreboard --selftest`
+  failed at `b707a5e`, because `parity` had both halves and was still
+  pending. The port removes the name, in the commit that completes the
+  tier.
+* The cached-external-answer policy takes any log as evidence. The
+  regenerator keeps a stricter rule, a TeX error spelling in the log,
+  because a killed lualatex leaves a log too.
+
+**Routed, with call sites.**
+
+* `scripts/Board.lean`, `tierMain`'s regenerate path and
+  `Lowered.authorises`: a carried lowering re-authorises its fall after a
+  recorded rise. AGENTS.md's tier row ("retirement and lowering lines both
+  carry forward") owes the same correction.
+* `LeanTex/Core/Pdf.lean:314`, `wArray`: widths are floored to integer
+  thousandths (read in the source). The re-review measured interword `TJ`
+  displacements floored the same way. Fix both before P5's arm is
+  designed.
+* `LeanTex/Cli/PicCache.lean:53`, `outcome`: an `.exited` code with any
+  log is `.refused`. A tool killed from outside would leave a partial log.
+  Whether the driver ever sees such an exit is inferred, not measured.
+* `scripts/scoreboard.lean:100`, `collectTier`: a tier's
+  `result=stale` under a non-zero exit is reported as `fail`.
+* Layout: the `pagebreak` finding above, for whoever owns line breaking.
+* Still owed from the last entry: CI (`parity` built, `--selftest` and
+  `--check` run) and `Tests/Support.lean` `oneFaceOf`.
+* Owed here, next round: `Tests/Artifact.lean:482` adds `Td` to the pen
+  rather than to the line start, and `TD`, `T*`, `'`, `"`, `Tc` and `Tw`
+  are unhandled. No reference uses them yet.
+
+**For the human.**
+
+* `pagebreak`: declare micro-typography off and accept
+  `# lowered: pagebreak 4→2`, or keep a P4 held up by undeclared
+  expansion.
+* Sentence spacing, P5's other prerequisite: implement LaTeX's
+  `\nonfrenchspacing` default, or have the references declare
+  `\frenchspacing`.
