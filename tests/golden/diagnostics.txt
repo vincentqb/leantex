@@ -169,6 +169,9 @@ note[N0102]: frame option 'fragile' is not modelled; ignored
 note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
 ── N0104 (info) a frame declared for another mode ships no page in this one
 note[N0104]: '<presentation:0>' declares no presentation slides; this frame ships no page
+── N0105 (info) \allow names a retired code; its successor answers
+note[N0105]: '\allow' names the retired code 'W0341'; 'W0301' accepts that loss now
+note[N0105]: '\allow' names the retired code 'W0344'; the loss it named cannot occur
 ── N0114 (info) TeX '\ifdefined' resolved from the document's own definitions
 note[N0114]: '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
 note[N0114]: '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept

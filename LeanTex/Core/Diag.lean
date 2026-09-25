@@ -157,7 +157,7 @@ inductive DiagCode where
   | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336 | E0340
   | E0401 | E0402 | E0403 | E0404 | E0405
   | E0501 | E0502 | E0503
-  | N0100 | N0102 | N0103 | N0104 | N0114 | N0200
+  | N0100 | N0102 | N0103 | N0104 | N0105 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013 | W0014 | W0015
   | N0016 | N0018 | N0017 | N0019 | N0020
@@ -258,6 +258,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0102 => ("0102", .info, "option ignored: it configures machinery the engine does not model")
   | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
   | .N0104 => ("0104", .info, "a frame declared for another mode ships no page in this one")
+  | .N0105 => ("0105", .info, "\\allow names a retired code; its successor answers")
   | .N0114 => ("0114", .info, "TeX '\\ifdefined' resolved from the document's own definitions")
   | .W0111 => ("0111", .config, "a styling declaration names no styleable element; ignored")
   | .N0200 => ("0200", .info, "page set short: its skips gave their shrink")
@@ -458,6 +459,31 @@ theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 /-- The code a string names, for validating a document's `\allow` list. -/
 def DiagCode.ofString? (s : String) : Option DiagCode :=
   DiagCode.all.find? (·.code == s)
+
+/-- **A code a document can name is a surface, so retiring one is a
+migration.** `\allow{<code>}` is written in documents this repository cannot
+see, exactly as a CLI flag is invoked from build recipes it cannot see, and
+the same rule applies: the old spelling keeps answering, with a note saying
+what answers it now. Without this row a retirement turned a building document
+into a hard error (`E0329`, a `dropped` loss: exit 1, no PDF) for a change
+that took nothing away.
+
+`some succ` means the loss is still named, under `succ`, and `\allow` accepts
+that instead. `none` means the loss cannot occur any more — the engine's rule
+changed — so there is nothing to accept and nothing to fail over.
+
+A row leaves this list only when a document naming the old code is
+implausible, which is a judgement about the world and not about this tree, so
+in practice rows stay. -/
+def DiagCode.retired : List (String × Option String) :=
+  [-- A refused command's leading `[...]` run was named by its own code at
+   -- the same span as the command's refusal. Its fate is a clause of that
+   -- refusal's message now, so W0301 accepts the drop.
+   ("W0341", some "W0301"),
+   -- `\scshape` means uniform small caps, so a casing lie in the source is
+   -- no longer how the canonical form is reached: the loss this named cannot
+   -- occur.
+   ("W0344", none)]
 
 /-- A diagnostic as delivered: `kind` is the registered code, and both the
 rendered code string and the severity are its projections — no free

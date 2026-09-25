@@ -216,6 +216,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
   | .N0104 => dvE (dvDeck ""
       "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")
+  | .N0105 =>
+    dvE (dvDoc "\\allow{W0341}\n" "x") ++ dvE (dvDoc "\\allow{W0344}\n" "x")
   | .N0114 =>
     dvE (dvDoc "\\ifdefined\\shiny\\sloppy\\else\\relax\\fi\n" "x") ++
     dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")
@@ -557,9 +559,10 @@ def dvForeignCodes (own : String) (s : String) : List String := Id.run do
       tok := ""
   return out
 
-/-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329)
-quote codes the user wrote in their own document, so the foreign-code check
-does not apply to them. -/
+/-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329,
+N0105) quote codes the user wrote in their own document, so the foreign-code
+check does not apply to them — N0105's whole job is to say which live code
+answers for a retired one the document names. -/
 def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
   let judge (part : String) (s : String) : IO Unit := do
     if dvInternalRef s then
@@ -570,7 +573,7 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
       fail s!"{d.code} {part}: starts uppercase without a proper noun: {s}"
     if (s.splitOn "\"\\").length > 1 then
       fail s!"{d.code} {part}: a construct is double-quoted; the convention is '...': {s}"
-    unless d.code == "W0013" || d.code == "E0329" do
+    unless d.code == "W0013" || d.code == "E0329" || d.code == "N0105" do
       for tok in dvForeignCodes d.code s do
         fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
   judge "message" d.message
@@ -797,6 +800,35 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- and silent — a registered code with no witness is unreviewable prose.
   t "option run: the fragment's own code is retired from the registry"
     ((DiagCode.ofString? "W0341").isNone)
+  -- Retiring a code a document can name is a migration, not a deletion.
+  -- `\allow{W0341}` built on base and must keep building: the old spelling
+  -- resolves to whatever answers for that loss now, with a note. Read off
+  -- the accepted list and the note's code, never the wording.
+  let (retDoc, retDs) := elabStr (dvDoc "\\allow{W0341}\n" "Alpha \\zzret[16]{Bravo}.")
+  t "retired allow (fails on base): a retired code is not an error"
+    (retDs.all (·.code != "E0329"))
+  t "retired allow: it resolves to the code that names that loss now"
+    (retDoc.allow.contains "W0301")
+  t "retired allow: and says so, once, as a note"
+    ((retDs.filter (·.code == "N0105")).size == 1 &&
+      (retDs.filter (·.code == "N0105")).all (·.subject == some "allow:W0341"))
+  -- A retirement with no successor accepts nothing and still does not fail.
+  let (goneDoc, goneDs) := elabStr (dvDoc "\\allow{W0344}\n" "x")
+  t "retired allow: a loss that cannot occur grants no acceptance"
+    (goneDs.all (·.code != "E0329") && goneDoc.allow.isEmpty &&
+      (goneDs.filter (·.code == "N0105")).size == 1)
+  -- A typo is still an error: the table must not become a blanket.
+  t "retired allow: an unknown code is still an error"
+    (((elabStr (dvDoc "\\allow{W9999}\n" "x")).2).any (·.code == "E0329"))
+  -- The table is honest in both directions: a row naming a code the registry
+  -- still holds would shadow a live code, and a successor must exist.
+  t "retired allow: no row names a live code"
+    (DiagCode.retired.all fun r => (DiagCode.ofString? r.1).isNone)
+  t "retired allow: every named successor is a live code"
+    (DiagCode.retired.all fun r =>
+      match r.2 with
+      | some s => (DiagCode.ofString? s).isSome
+      | none => true)
 
 /-- **The mono slot, and what a diagnostic may claim about it.** Two halves
 of one defect, the second the larger.

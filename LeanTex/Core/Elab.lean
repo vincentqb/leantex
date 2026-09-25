@@ -10301,7 +10301,10 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
 /-- `\allow{W0307, E0502}`: the document accepts the named losses. The
 teeth: an unknown code is an error (a typo must not grant a silent
 blanket), an entry that never fires warns (Main), and the acceptance always
-prints in the build summary. -/
+prints in the build summary. A *retired* code is not an unknown one: it
+resolves through `DiagCode.retired` to whatever answers for its loss now,
+with a note (N0105), because a document that names it was written against an
+engine that had it. -/
 private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : Pos) :
     Array String × Array PEvent := Id.run do
   let mut allow := allow
@@ -10314,9 +10317,21 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
       unless allow.contains c.code do
         allow := allow.push c.code
     | none =>
-      evs := evs.push (.say (diagOf ctx .E0329
-        s!"'\\allow' names no diagnostic code '{code}'" (some pos)
-        (help := "codes look like 'E0333'; each names the one loss it accepts")))
+      match DiagCode.retired.lookup code with
+      | some (some succ) =>
+        unless allow.contains succ do
+          allow := allow.push succ
+        evs := evs.push (.say (diagOf ctx .N0105
+          s!"'\\allow' names the retired code '{code}'; '{succ}' accepts that loss now"
+          (some pos) (subject := some ("allow:" ++ code))))
+      | some none =>
+        evs := evs.push (.say (diagOf ctx .N0105
+          s!"'\\allow' names the retired code '{code}'; the loss it named cannot occur"
+          (some pos) (subject := some ("allow:" ++ code))))
+      | none =>
+        evs := evs.push (.say (diagOf ctx .E0329
+          s!"'\\allow' names no diagnostic code '{code}'" (some pos)
+          (help := "codes look like 'E0333'; each names the one loss it accepts")))
   return (allow, evs)
 
 /-- One keyed apply step, finished: fulfil its reporting events and return
