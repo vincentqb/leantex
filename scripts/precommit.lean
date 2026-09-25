@@ -175,6 +175,22 @@ def addedPathFaults (numstat : String) : Array (String × String) := Id.run do
     | _ => pure ()
   return out
 
+/-- Pairs of tracked paths that differ only by letter case. A checkout on a
+case-insensitive filesystem keeps one of the two, and for a Lean module the
+compiled `.olean` names collide as well — `scripts/Land.lean` beside
+`scripts/land.lean` was found that way. Compared by the whole path folded
+down, so a directory's case counts too; grouped through a sort rather than
+the obvious double loop, which is quadratic over the whole tracked tree. -/
+def caseCollisions (paths : Array String) : Array (String × String) := Id.run do
+  let keyed := (paths.map fun p => (p.toLower, p)).qsort fun a b =>
+    a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
+  let mut out : Array (String × String) := #[]
+  for i in [1:keyed.size] do
+    let (k, p) := keyed[i]!
+    let (k', p') := keyed[i - 1]!
+    if k == k' && p != p' then out := out.push (p', p)
+  return out
+
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
 
@@ -1428,6 +1444,15 @@ def selftest : IO UInt32 := do
   if addedPathFaults ns != #[("empty.txt", "empty file"),
       ("a b", "characters outside [A-Za-z0-9._/-]"), ("a b", "empty file")] then
     fails.modify ("addedPathFaults: wrong hits on the empty/mangled/plain/binary case" :: ·)
+  -- the case walker: the collision that prompted it, a directory's case, and
+  -- two paths that merely share a stem. Pairs come out ordered by path.
+  if caseCollisions #["scripts/land.lean", "scripts/Gate.lean", "scripts/Land.lean"]
+      != #[("scripts/Land.lean", "scripts/land.lean")] then
+    fails.modify ("caseCollisions: missed the module-name collision" :: ·)
+  if caseCollisions #["a/b.lean", "A/b.lean"] != #[("A/b.lean", "a/b.lean")] then
+    fails.modify ("caseCollisions: a directory's case does not count" :: ·)
+  if !(caseCollisions #["scripts/land.lean", "scripts/LandCore.lean", "scripts/lands.lean"]).isEmpty then
+    fails.modify ("caseCollisions: fired on distinct names" :: ·)
 
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
@@ -1743,6 +1768,19 @@ def main (args : List String) : IO UInt32 := do
 {hits}
   Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
   never with -A or ."
+
+  -- Two paths that differ only by case. Read from the index, which already
+  -- holds a staged addition, so the pair is caught by the commit that
+  -- creates it rather than by a checkout on another filesystem.
+  let tracked ← git #["ls-files", "-z"]
+  let collisions := caseCollisions
+    ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
+  if !collisions.isEmpty then
+    let hits := String.intercalate "\n" (collisions.toList.map fun (a, b) => s!"  {a}\n  {b}")
+    say s!"pre-commit: two tracked paths differ only by case:
+{hits}
+  Fix: rename one. A case-insensitive checkout keeps one of the two, and for
+  a Lean module the compiled .olean names collide as well."
 
   if src == .index && !staged.any relevant then
     return (if ← failed.get then 1 else 0)

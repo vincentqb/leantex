@@ -93,12 +93,12 @@ globs = ["scripts.ParityCore"]
 name = "parity"
 root = "scripts.parity"
 
-# The landing procedure. `Land` is its pure core — a state machine over
+# The landing procedure. `LandCore` is its pure core — a state machine over
 # observations whose only outputs are actions, with the merge-needs-gates
 # theorem; `land` is the boundary that feeds it from files.
 [[lean_lib]]
 name = "LandLib"
-globs = ["scripts.Land"]
+globs = ["scripts.LandCore"]
 
 [[lean_exe]]
 name = "land"

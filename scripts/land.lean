@@ -13,14 +13,14 @@ step, one `land: result=…` line at the end. Exit 0 ok, 1 gate failed,
 2 precondition or conflict, 3 internal. Composition is left to the caller —
 this tool never drives a terminal, never prompts, and never loops.
 
-The decisions live in `scripts/Land.lean`; this file is only the boundary.
+The decisions live in `scripts/LandCore.lean`; this file is only the boundary.
 Every command's output is written to `$(git rev-parse --git-common-dir)/land
 /<run-id>/<step>.log` and every fact the core acts on is *read back from a
 file* — never from a return value a summarizer could have shortened. That is
 the whole point: a coordinating agent once reported three merges, a push and
 three worktrees that did not exist, having read narration instead of state.
 -/
-import scripts.Land
+import scripts.LandCore
 
 open Land
 
