@@ -13610,3 +13610,69 @@ precedent: a frozen count that may fall and never rise.
 
 How it was made to fail: deleting `W0341` from the baseline. The gate
 reports `a counted loss with no subject, and no baseline row`.
+
+
+### 2026-09-25 — the mono slot, and a warning that claimed the opposite
+
+A user reported `\urlstyle{same}` drawing
+
+```
+warning[W0104]: '\urlstyle{same}' asks for a URL face; URLs are set mono
+here (url.sty's own default)
+```
+
+and said the rendering is as intended and does not use mono. They were
+right, and the warning was wrong in a way worth naming precisely.
+
+Measured from the artifacts. Five builds of one synthetic document differing
+only in the `\urlstyle` line — `same`, `tt`, `rm`, `sf`, and the line absent
+— produce identical text and embed exactly one face. `\urlstyle` changes
+nothing in any value, and the URL sets in the body face, which is what
+`same` asked for. So the warning claimed a loss that did not occur, which is
+worse than silence: it teaches a reader to skip the code.
+
+The message was false in both branches, because the premise "URLs are set
+mono here" is false in the default configuration. `\texttt`, `\url` and
+`verbatim` all ask for slot 2, and `FontSet.lookup` falls through the slot's
+regular to face 0 when no mono family is declared. The arm asserted a
+property of another subsystem and the assertion had rotted — the shape the
+premise gate exists for.
+
+#### The silent half is the larger one
+
+A synthetic document carrying `\texttt`, `\url` *and* a verbatim block, with
+no `\fonts` declaration, emits **no diagnostic at all** and embeds one face.
+With `mono` declared against the shipped corpus fonts it embeds two. Three
+constructs that ask for a mono face collapse onto body prose, and the loss is
+visible to `pdffonts` and invisible to the reader. That is a `degraded` loss
+— content in the output but not as declared — and it has never been named.
+
+`Font.FontSet.slotCollapsed` is the fact, stated where `FontSet` can see it:
+a slot past the body that resolves where the body resolves.
+`slotCollapsed_exact` says it is the equality it looks like rather than a
+proxy, and `slotCollapsed_body` keeps a caller from reading a vacuous truth
+off slot 0. Emission is **not** here: the driver is the one place holding
+both the document's `\fonts` declaration and the resolved index, so the
+diagnostic belongs there (effects as data). That file is outside this slice —
+routed, with the predicate and its regression test in place for whoever
+lands it.
+
+The `\urlstyle` message now speaks of the *slot*, which is true in every
+configuration, and the help names the lever that actually exists
+(`\fonts{ mono = ... }`) rather than only the per-link escape. Closing the
+remaining case — `same` is genuinely *satisfied* when no distinct mono is
+declared, so it should stay silent there — needs the same font facts the
+driver holds, and is routed with them.
+
+#### What the golden could not see
+
+Changing that message moved no golden. `urlstyle` does not appear in
+tests/golden/diagnostics.txt at all: W0104's witness fires four of its arms,
+and this was not one of them. A per-*code* witness cannot cover a code with
+38 emission sites, which is the argument for per-*arm* coverage — and until
+that exists, `monoSlotChecks` is the only thing holding this arm's voice.
+
+Measured after, on the private reference corpus: the résumé's warning now
+names the slot and the lever; the deck is unchanged at 36 pages, 0 errors,
+13 × W0104 — those thirteen are beamer theme-element refusals from a
+different arm, correctly `config`, and untouched by this change.

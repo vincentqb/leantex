@@ -667,6 +667,65 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"site accounting {a}/{b}: the row still describes a live collision"
       (seen.contains (a, b))
 
+/-- **The mono slot, and what a diagnostic may claim about it.** Two halves
+of one defect, the second the larger.
+
+A `\texttt`, `\url` or `verbatim` run asks for the mono slot. When the
+document declares no mono family that slot resolves to the body face —
+`FontSet.lookup` falls through the slot's regular to face 0 — so the run sets
+in body prose. Measured from the bytes on a synthetic document carrying all
+three constructs, against the shipped corpus fonts: with `mono` declared the
+PDF embeds two faces, without it one, and *both* builds emit no diagnostic at
+all. The loss is visible to `pdffonts` and invisible to the reader.
+
+The first half is that `\urlstyle`'s refusal was asserting the opposite. It
+said URLs "are set mono here", which is false in exactly the configuration
+that is the default — no `\fonts` declaration — and a reader looking at
+plainly non-mono URLs was being told otherwise. A warning that claims a loss
+the reader can see did not happen is worse than silence: it teaches them to
+skip the code. The message now speaks of the *slot*, which is true either
+way, and the help names the lever (`\fonts{ mono = ... }`) rather than only
+the per-link escape.
+
+Invented content throughout; the fonts are the ones the corpus ships. -/
+def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The refusal must not assert that URLs are mono: that is the claim the
+  -- artifact contradicts whenever no mono family is declared.
+  let ds := (elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{same}\n"
+    "A link \\url{https://example.org/a} here.")).2
+  let urlDs := ds.filter (·.code == "W0104")
+  t "urlstyle: the refusal names the slot, not a face the page may not carry"
+    (urlDs.any fun d => hasStr d.message "mono slot")
+  t "urlstyle: the refusal no longer claims URLs are set mono"
+    (urlDs.all fun d => !hasStr d.message "are set mono")
+  t "urlstyle: the help names the slot's own lever"
+    (urlDs.any fun d => (d.help.map fun h => hasStr h "mono =").getD false)
+  -- The slot fact itself. One face in every slot is the no-mono default and
+  -- the collapse; a distinct face in slot 2 is a declared mono.
+  let load (name : String) : IO (Option Font.Font) := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure (some f)
+    | .error _ => pure none
+  let some body ← load "SourceSerifPro-Regular.otf"
+    | failures ref "mono slot: SourceSerifPro-Regular.otf missing"; return
+  let some code ← load "SourceCodePro-Regular.otf"
+    | failures ref "mono slot: SourceCodePro-Regular.otf missing"; return
+  let slots (idx0 idx2 : Nat) : Array ((Nat × Nat × Bool) × Nat) :=
+    #[((0, 400, false), idx0), ((1, 400, false), idx0), ((2, 400, false), idx2)]
+  let collapsed : Font.FontSet := { fonts := #[body], index := slots 0 0 }
+  let declared : Font.FontSet := { fonts := #[body, code], index := slots 0 1 }
+  t "mono slot: no declared mono resolves the slot onto the body face"
+    (collapsed.slotCollapsed 2)
+  t "mono slot: a declared mono resolves the slot to its own face"
+    (!declared.slotCollapsed 2)
+  -- The body slot is the reference, never a collapse report of its own.
+  t "mono slot: the body slot is the reference" (!collapsed.slotCollapsed 0)
+  -- An unresolved key still answers, so the predicate is about resolution
+  -- and not about the index being sparse.
+  t "mono slot: the collapse is the resolved equality"
+    (collapsed.slotCollapsed 2 == (collapsed.lookup 2 400 false == collapsed.lookup 0 400 false))
+
 /-- **The subject baseline.** Codes whose loss is censused but whose emission
 carries no subject today, frozen as measured on 2026-09-25 — 48 of them.
 

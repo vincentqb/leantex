@@ -1152,6 +1152,38 @@ theorem index_total (fs : FontSet) (h0 : 0 < fs.fonts.size)
     next heq => exact hwf _ (Array.mem_of_find?_eq_some heq)
     next => exact h0
 
+/-- **Does this slot resolve to the body face?** Slot 2 is mono, and a
+document that declares no mono family gets one: `lookup` falls through the
+slot's regular to face 0, so a `\texttt`, `\url` or `verbatim` run sets in the
+body face.
+
+That fallback is correct — there is nothing else to set it in — but it is a
+`degraded` loss and it has never been named. Measured from the bytes on a
+synthetic document carrying all three constructs: with `mono` declared the PDF
+embeds two faces, without it one, and the diagnostics are empty in both cases.
+`pdffonts` can see the loss and the reader cannot.
+
+The predicate is here rather than at a call site because `FontSet` is what
+knows: the driver resolves the index, and whether two slots landed on one face
+is a fact about the resolved set. Emission belongs to the driver, which is the
+one place that holds both the document's `\fonts` declaration and the resolved
+index (effects as data: this is the fact, not the diagnostic). -/
+def slotCollapsed (fs : FontSet) (slot : Nat) : Bool :=
+  slot != 0 && fs.lookup slot 400 false == fs.lookup 0 400 false
+
+/-- Slot 0 is the body face, so asking whether it collapsed onto itself is
+not a question this predicate answers — it is the reference. Keeps a caller
+from reading "the body face collapsed" out of a vacuous truth. -/
+theorem slotCollapsed_body (fs : FontSet) : fs.slotCollapsed 0 = false := by
+  simp [slotCollapsed]
+
+/-- **A collapsed slot is exactly a slot that resolves where the body does.**
+The predicate is the equality it looks like, for every slot past the body, so
+a diagnostic resting on it names the real condition rather than a proxy. -/
+theorem slotCollapsed_exact (fs : FontSet) (slot : Nat) (h : slot != 0) :
+    fs.slotCollapsed slot = (fs.lookup slot 400 false == fs.lookup 0 400 false) := by
+  simp [slotCollapsed, h]
+
 /-- The font that sets a glyph the styled face lacks, if any face can. -/
 def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=
   (fs.fallback.find? (·.1 == c)).map (·.2)
