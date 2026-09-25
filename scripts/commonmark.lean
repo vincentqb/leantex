@@ -38,10 +38,17 @@ def specPath : String := "tests/commonmark/spec-0.31.2.txt"
 def verdictPath : String := "tests/commonmark/verdicts.tsv"
 def tierPath : String := "tests/scoreboard/commonmark.tsv"
 
-/-- The sha256 the provenance file records, restated here so a swapped
-input file fails the run rather than silently reclassifying every case. -/
+/-- The sha256 the provenance file records. Provenance, not the gate: it is
+what a human verifies against upstream, and `PROVENANCE.txt` carries it. -/
 def specSha : String :=
   "257c41ad946f7a1414a499aca402a1aa8fdac3678532266611348c1cf54f4b80"
+
+/-- The gate on the vendored input: an in-Lean content key, so the check
+needs no host tool. `sha256sum` was shelled out to, which fails under the
+repo's own hermetic check — PATH pointed at an empty directory — and a
+classifier whose first act is to spawn a process cannot run there at all. -/
+def specKey : String :=
+  "9AED364DA0B11E9BF5347E88BB9B04E1"
 
 -- ## The declared normalizations
 --
@@ -514,21 +521,64 @@ def Verdict.ofName? (s : String) : Option Verdict :=
   | "owed" => some .owed
   | _ => none
 
-/-- The verdict one case earns, and the two canonical forms behind it. A
-refusal outranks a comparison: where the dialect says no, that *is* the
-answer, and comparing trees afterwards would report the refusal as a
-defect. -/
-def classify (base : Nat) (ex : Example) : Verdict × String × String :=
+/-- The three subjects the strict dialect refuses by design. `rejected`
+means *one of these*, keyed on the subject — not "the reader raised an
+`E0390`". Read off the code alone, a reader defect certified itself: 29 valid
+CommonMark cases were filed as design decisions because an over-wide
+raw-HTML test refused them. -/
+def strictSubjects : List String :=
+  ["md:raw-html", "md:indented-code", "md:lazy-continuation"]
+
+/-- The typographic characters the elaborator's `smartPunct` produces, mapped
+back to the ASCII the spec writes. A case whose only difference is this is
+not a defect and not a decided divergence: it is waiting on a dialect
+decision the user owns, so it stays `owed` and carries the note. -/
+def unsmarten (s : String) : String := Id.run do
+  let mut out := ""
+  for c in s.toList do
+    if c == '\u2014' then out := out ++ "---"
+    else if c == '\u2013' then out := out ++ "--"
+    else if c == '\u2026' then out := out ++ "..."
+    else if c == '\u201c' || c == '\u201d' then out := out.push '"'
+    else if c == '\u2018' || c == '\u2019' then out := out.push '\''
+    else out := out.push c
+  return out
+
+/-- The note a pending dialect decision carries. -/
+def smartNote : String := "pending-decision:smart-punctuation"
+
+/-- Did the run name a loss? A routed construct is a loss the engine admits
+to, so its case cannot be a `match` however the trees compare — the
+normalizations are blind to exactly the attributes the routes are about, and
+six cases read as `match` while the same run raised `md:code-info`. -/
+def namesALoss (diags : Array Diag) : Bool :=
+  diags.any fun d =>
+    (d.kind == .W0307 || d.kind == .W0392)
+      && ((d.subject.map (fun s => s.startsWith "md:")).getD false)
+
+/-- The note a case carries when its trees agree but the run names a loss. -/
+def lossNote : String := "tree-agrees-but-a-loss-is-named"
+
+/-- The verdict one case earns, the two canonical forms behind it, and the
+note it carries. A strict refusal outranks a comparison: where the dialect
+says no, that *is* the answer. Any other error is a defect, not a
+decision. -/
+def classify (base : Nat) (ex : Example) : Verdict × String × String × String :=
   -- The spec's own base is 1 (`#` is `<h1>`); the engine's is measured.
   -- Subtracting one number from both sides collapsed h1 and h2 to the same
   -- ordinal and reported every two-level heading document as owed.
   let want := canonList 1 false "" (hParse ex.html).toList
   let (ns, diags) := engineFragment ex.md
   let got := canonList base false "" ns.toList
-  if diags.any (·.kind == .E0390) then (.rejected, want, got)
-  else if (divergences.find? (·.1 == ex.id)).isSome then (.divergence, want, got)
-  else if want == got then (.match_, want, got)
-  else (.owed, want, got)
+  let strict := diags.any fun d =>
+    d.kind == .E0390 && ((d.subject.map (strictSubjects.contains ·)).getD false)
+  if strict then (.rejected, want, got, "")
+  else if (divergences.find? (·.1 == ex.id)).isSome then
+    (.divergence, want, got, ((divergences.find? (·.1 == ex.id)).map (·.2)).getD "")
+  else if want == got then
+    if namesALoss diags then (.owed, want, got, lossNote) else (.match_, want, got, "")
+  else if unsmarten got == want then (.owed, want, got, smartNote)
+  else (.owed, want, got, "")
 
 
 -- ## The committed tables
@@ -586,6 +636,18 @@ def tierText (exs : Array Example) (rows : Array Row) (sha : String) : String :=
   s := s ++ "# Higher is better; a value may not drop and a row may not disappear.\n"
   s := s ++ s!"# spec: 0.31.2 sha256 {sha}\n"
   s := s ++ s!"# cases: {exs.size}\n"
+  s := s ++ "# 2026-09-25 correction, declared: this baseline is LOWER than the one it\n"
+  s := s ++ "# replaces in six sections, because the measurement was wrong, not because\n"
+  s := s ++ "# the engine regressed. Two rules changed. (1) `rejected` is keyed on the\n"
+  s := s ++ "# three strict subjects, not on the E0390 code, and the raw-HTML test now\n"
+  s := s ++ "# implements the tag grammar: 25 valid cases left `rejected`, 14 of them to\n"
+  s := s ++ "# `match`. (2) A case whose run names a routed loss can no longer be a\n"
+  s := s ++ "# `match` however the trees compare: 11 cases moved to `owed`, 9 of them\n"
+  s := s ++ "# from `match` (Tabs 4; List items 256, 258, 259, 262, 277; Lists 325, 326;\n"
+  s := s ++ "# Block quotes 108), all nine on md:loose-list, which over-reports because\n"
+  s := s ++ "# the HTML backend already wraps a multi-block item in <p>. Each of the\n"
+  s := s ++ "# eleven carries the note `tree-agrees-but-a-loss-is-named`, and --check\n"
+  s := s ++ "# compares notes, so none of them can quietly become a `match` again.\n"
   for sec in sectionsOf exs do
     let n := (rows.filter (fun r => r.section_ == sec && r.verdict == .match_)).size
     s := s ++ sec ++ "\t" ++ toString n ++ "\n"
@@ -605,9 +667,9 @@ def verdictText (rows : Array Row) : String := Id.run do
 
 -- ## The modes
 
-def sha256Of (path : String) : IO String := do
-  let out ← IO.Process.output { cmd := "sha256sum", args := #[path] }
-  return ((out.stdout.splitOn " ").headD "").trimAscii.toString
+def keyOf (path : String) : IO String := do
+  let bytes ← IO.FS.readBinFile path
+  return Flate.contentKey bytes
 
 def counts (rows : Array Row) : Nat × Nat × Nat × Nat :=
   ((rows.filter (·.verdict == .match_)).size,
@@ -621,10 +683,7 @@ def classifyAll (exs : Array Example) : Array Row × Array (Nat × String × Str
   let mut rows : Array Row := #[]
   let mut diffs : Array (Nat × String × String) := #[]
   for e in exs do
-    let (v, want, got) := classify base e
-    let note := match v with
-      | .divergence => ((divergences.find? (·.1 == e.id)).map (·.2)).getD ""
-      | _ => ""
+    let (v, want, got, note) := classify base e
     rows := rows.push { id := e.id, section_ := e.section_, verdict := v, note }
     unless v == .match_ do diffs := diffs.push (e.id, want, got)
   return (rows, diffs)
@@ -721,6 +780,39 @@ def selftest : IO UInt32 := do
       bad := bad.push s!"verdict '{v.name}' does not round-trip"
   unless (Verdict.ofName? "nearly").isNone do
     bad := bad.push "an unknown verdict name was accepted"
+  -- Each verdict rule, broken once. A normalization that hides a real loss
+  -- is exactly how six cases read as `match` while the same run named
+  -- `md:code-info`, so the rules are mutated here rather than trusted.
+  let lossy : Array Diag :=
+    #[{ kind := .W0392, message := "m", subject := some "md:list-start" }]
+  let lossyPending : Array Diag :=
+    #[{ kind := .W0307, message := "m", subject := some "md:thematic-break" }]
+  let unrelated : Array Diag :=
+    #[{ kind := .W0392, message := "m", subject := some "tex:something" },
+      { kind := .W0601, message := "m", subject := some "md:image" }]
+  unless namesALoss lossy do
+    bad := bad.push "a degraded md route was not read as a loss"
+  unless namesALoss lossyPending do
+    bad := bad.push "a pending md route was not read as a loss"
+  if namesALoss unrelated then
+    bad := bad.push "a diagnostic outside the md routes was read as a loss"
+  if namesALoss #[] then bad := bad.push "an empty diagnostic list was read as a loss"
+  -- `rejected` is keyed on the strict subject, never on the code alone: a
+  -- reader defect raising E0390 under any other subject is a defect.
+  unless strictSubjects.length == 3 do
+    bad := bad.push s!"strict classes: {strictSubjects.length}, want 3"
+  for s in strictSubjects do
+    unless s.startsWith "md:" do bad := bad.push s!"strict subject '{s}' is not an md subject"
+  -- The smart-punctuation map, in the direction the classifier uses it.
+  let sm : List (Option String) :=
+    [check "unsmarten dash" (unsmarten "a\u2013b") "a--b",
+     check "unsmarten em dash" (unsmarten "a\u2014b") "a---b",
+     check "unsmarten ellipsis" (unsmarten "a\u2026") "a...",
+     check "unsmarten quotes" (unsmarten "\u201cq\u201d") "\"q\"",
+     check "unsmarten apostrophe" (unsmarten "it\u2019s") "it's",
+     check "unsmarten leaves plain text" (unsmarten "plain --- text") "plain --- text"]
+  for c in sm do
+    if let some m := c then bad := bad.push m
   -- The tables parse, and a malformed row is refused rather than skipped.
   match parseVerdicts "1\tSec\tmatch\n2\tSec\towed\tnote\n" with
   | .error e => bad := bad.push s!"verdict table: {e}"
@@ -739,6 +831,10 @@ def selftest : IO UInt32 := do
 def report (exs : Array Example) (rows : Array Row) : IO Unit := do
   let (m, r, d, o) := counts rows
   IO.println s!"cases {exs.size}: match {m}, rejected {r}, divergence {d}, owed {o}"
+  let pend := (rows.filter (·.note == smartNote)).size
+  let lossy := (rows.filter (·.note == lossNote)).size
+  IO.println s!"  pending decision (smart punctuation): {pend} cases, all owed"
+  IO.println s!"  trees agree but a loss is named: {lossy} cases, all owed"
   for sec in sectionsOf exs do
     let ss := rows.filter (·.section_ == sec)
     let (m, r, d, o) := counts ss
@@ -747,9 +843,9 @@ def report (exs : Array Example) (rows : Array Row) : IO Unit := do
 def run (check : Bool) : IO UInt32 := do
   unless ← System.FilePath.pathExists specPath do
     return ← die 1 s!"commonmark: {specPath} is missing"
-  let got ← sha256Of specPath
-  unless got == specSha do
-    return ← die 1 s!"commonmark: {specPath} is sha256 {got}, expected {specSha}"
+  let got ← keyOf specPath
+  unless got == specKey do
+    return ← die 1 s!"commonmark: {specPath} has content key {got}, expected {specKey}"
   let text ← IO.FS.readFile specPath
   let exs := readExamples text
   unless exs.size == 652 do
@@ -771,6 +867,13 @@ def run (check : Bool) : IO UInt32 := do
         unless c.verdict == r.verdict do
           bad := bad.push
             s!"case {r.id} ({r.section_}): {r.verdict.name}, committed {c.verdict.name}"
+        -- The note is part of the verdict, checked in both directions: a
+        -- case parked on a pending dialect decision or on a named loss must
+        -- not quietly become a `match`, and a case must not acquire a note
+        -- nobody reviewed.
+        unless c.note == r.note do
+          bad := bad.push
+            s!"case {r.id} ({r.section_}): note '{r.note}', committed '{c.note}'"
     for c in committed do
       unless rows.any (·.id == c.id) do
         bad := bad.push s!"committed case {c.id} is not in the spec"
@@ -786,10 +889,12 @@ def run (check : Bool) : IO UInt32 := do
       for b in bad do IO.eprintln s!"commonmark: {b}"
       return ← die 1 s!"commonmark: {bad.size} findings"
     report exs rows
+    for (s, n) in strictTouch exs do
+      IO.println s!"  strict class {s}: {n} cases"
     IO.println s!"commonmark --check: ok ({ms} ms)"
     return 0
   IO.FS.writeFile verdictPath (verdictText rows)
-  IO.FS.writeFile tierPath (tierText exs rows got)
+  IO.FS.writeFile tierPath (tierText exs rows specSha)
   report exs rows
   let touch := strictTouch exs
   for (s, n) in touch do
@@ -809,8 +914,8 @@ def main (argv : List String) : IO UInt32 := do
     let exs := readExamples text
     let some ex := exs.find? (·.id == id) | return ← die 2 s!"commonmark: no case {id}"
     let base := measuredBase
-    let (v, want, got) := classify base ex
-    IO.println s!"case {id} ({ex.section_}): {v.name}"
+    let (v, want, got, note) := classify base ex
+    IO.println s!"case {id} ({ex.section_}): {v.name}{if note.isEmpty then "" else "  [" ++ note ++ "]"}"
     IO.println s!"  md   {ex.md.replace "\n" "\\n"}"
     IO.println s!"  want {want}"
     IO.println s!"  got  {got}"

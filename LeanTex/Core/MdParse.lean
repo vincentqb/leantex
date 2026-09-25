@@ -243,19 +243,180 @@ def setextAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
       unless c == c0 || isSpaceOrTab c do return none
   return some (if c0 == '=' then 1 else 2)
 
-/-- An HTML block start, as far as the strict dialect needs to know it: a
-`<` followed by a tag name, a closing tag, a comment, a processing
-instruction, a declaration, or CDATA. The dialect refuses it, so the test
-does not have to distinguish the spec's seven conditions. -/
+-- ## Raw HTML, recognized rather than guessed
+--
+-- The dialect refuses raw HTML, so what counts *as* raw HTML decides what
+-- the reader refuses — and a test wider than the grammar refuses valid
+-- CommonMark. Twenty-nine spec cases were refused by a test that fired on
+-- any `<` followed by a letter: `<https://example.org>` at the start of a
+-- line, and literal text such as `x <y for comparison`. So the tag grammar
+-- (§6.6) is implemented, and anything it does not accept is text.
+
+/-- Is the literal `lit` at `i`, case-folded? -/
+def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
+  let ls := lit.toList.toArray
+  for k in [0:ls.size] do
+    if h : k < ls.size then
+      match cs[i + k]? with
+      | none => return false
+      | some c => unless c.toLower == ls[k].toLower do return false
+  return true
+
+/-- The index past the first occurrence of `lit` at or after `i`. -/
+def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
+  let mut j := i
+  for _ in [0:cs.size + 1] do
+    if j > cs.size then break
+    if litAt cs j lit then return some (j + lit.length)
+    j := j + 1
+  return none
+
+/-- A tag name: an ASCII letter then letters, digits and `-` (§6.6). -/
+def tagNameAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+  let some c0 := cs[i]? | return none
+  unless isAsciiAlpha c0 do return none
+  let mut j := i + 1
+  for _ in [0:cs.size + 1] do
+    match cs[j]? with
+    | some c => if isAsciiAlpha c || isAsciiDigit c || c == '-' then j := j + 1 else break
+    | none => break
+  return some j
+
+def isAttrStart (c : Char) : Bool := isAsciiAlpha c || c == '_' || c == ':'
+
+def isAttrRest (c : Char) : Bool :=
+  isAsciiAlpha c || isAsciiDigit c || c == '_' || c == '.' || c == ':' || c == '-'
+
+/-- A run of whitespace: the index past it. -/
+def wsAt (cs : Array Char) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:cs.size + 1] do
+    match cs[j]? with
+    | some c => if isMdSpace c then j := j + 1 else break
+    | none => break
+  return j
+
+/-- The characters an unquoted attribute value may not hold (§6.6). -/
+def isAttrValueStop (c : Char) : Bool :=
+  isMdSpace c || c == '"' || c == '\'' || c == '=' || c == '<' || c == '>' || c == '`'
+
+/-- An attribute value at `i`: quoted or unquoted. -/
+def attrValueAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+  let some c0 := cs[i]? | return none
+  if c0 == '"' || c0 == '\'' then
+    let mut j := i + 1
+    for _ in [0:cs.size + 1] do
+      match cs[j]? with
+      | none => return none
+      | some c => if c == c0 then return some (j + 1) else j := j + 1
+    return none
+  if isAttrValueStop c0 then return none
+  let mut j := i
+  for _ in [0:cs.size + 1] do
+    match cs[j]? with
+    | none => break
+    | some c => if isAttrValueStop c then break else j := j + 1
+  return some j
+
+/-- One attribute at `i`, its leading whitespace already consumed. -/
+def attrAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+  let some c0 := cs[i]? | return none
+  unless isAttrStart c0 do return none
+  let mut j := i + 1
+  for _ in [0:cs.size + 1] do
+    match cs[j]? with
+    | some c => if isAttrRest c then j := j + 1 else break
+    | none => break
+  -- An optional value, after optional whitespace either side of `=`.
+  let k := wsAt cs j
+  if cs[k]? == some '=' then
+    let v := wsAt cs (k + 1)
+    match attrValueAt cs v with
+    | some e => return some e
+    | none => return some j
+  return some j
+
+/-- A complete raw-HTML construct at `i` (§6.6): an open tag, a closing tag,
+a comment, a processing instruction, a declaration, or CDATA. The index past
+it, or `none` — and `none` means the text is text. -/
+def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+  unless cs[i]? == some '<' do return none
+  if litAt cs i "<!--" then return findLit cs (i + 4) "-->"
+  if litAt cs i "<![CDATA[" then return findLit cs (i + 9) "]]>"
+  if litAt cs i "<?" then return findLit cs (i + 2) "?>"
+  if cs[i + 1]? == some '!' then
+    if ((cs[i + 2]?).map isAsciiAlpha).getD false then
+      return findLit cs (i + 2) ">"
+    return none
+  if cs[i + 1]? == some '/' then
+    let some j := tagNameAt cs (i + 2) | return none
+    let j := wsAt cs j
+    if cs[j]? == some '>' then return some (j + 1) else return none
+  let some j := tagNameAt cs (i + 1) | return none
+  let mut k := j
+  for _ in [0:cs.size + 1] do
+    let w := wsAt cs k
+    if w == k then break
+    match attrAt cs w with
+    | some k2 => k := k2
+    | none => break
+  let e0 := wsAt cs k
+  let e := if cs[e0]? == some '/' then e0 + 1 else e0
+  if cs[e]? == some '>' then return some (e + 1) else return none
+
+/-- The tag names §4.6 condition 1 names: their block runs to a closing tag,
+not to a blank line. -/
+def htmlRawTags : List String := ["pre", "script", "style", "textarea"]
+
+/-- The block-level tag names §4.6 condition 6 names. -/
+def htmlBlockTags : List String :=
+  ["address", "article", "aside", "base", "basefont", "blockquote", "body",
+   "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir",
+   "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
+   "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header",
+   "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem",
+   "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search",
+   "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead",
+   "title", "tr", "track", "ul"]
+
+/-- A tag name at `i` drawn from `names`, ending at whitespace, `>`, `/>` or
+the end of the line. -/
+private def namedTagAt (cs : Array Char) (i : Nat) (names : List String) : Bool :=
+  match tagNameAt cs i with
+  | none => false
+  | some j =>
+    let nm := (sliceStr cs i j).toLower
+    names.contains nm &&
+      (match cs[j]? with
+       | none => true
+       | some c => isMdSpace c || c == '>' || (c == '/' && cs[j + 1]? == some '>'))
+
+/-- Does an HTML block start at `i` (§4.6)? Conditions 1–6 by their own
+tests; condition 7 is a complete tag with nothing but whitespace after it.
+Condition 7 may not interrupt a paragraph, which is `interrupts`' business,
+not this one's. -/
 def htmlBlockAt (cs : Array Char) (i : Nat) : Bool := Id.run do
   unless cs[i]? == some '<' do return false
-  match cs[i + 1]? with
+  if litAt cs i "<!--" || litAt cs i "<?" || litAt cs i "<![CDATA[" then return true
+  if cs[i + 1]? == some '!' && ((cs[i + 2]?).map isAsciiAlpha).getD false then return true
+  if namedTagAt cs (i + 1) htmlRawTags then return true
+  if namedTagAt cs (i + 1) htmlBlockTags then return true
+  if cs[i + 1]? == some '/' && namedTagAt cs (i + 2) htmlBlockTags then return true
+  match htmlTagAt cs i with
+  | some j => return isBlankFrom cs j
   | none => return false
-  | some c =>
-    if isAsciiAlpha c || c == '!' || c == '?' then return true
-    if c == '/' then
-      return (cs[i + 2]?.map isAsciiAlpha).getD false
-    return false
+
+/-- Conditions 1–6 only: what may interrupt a paragraph. Condition 7 may
+not, and reading it as an interrupter refused a paragraph line holding a
+bare `<span>`. -/
+def htmlBlockInterruptAt (cs : Array Char) (i : Nat) : Bool := Id.run do
+  unless cs[i]? == some '<' do return false
+  if litAt cs i "<!--" || litAt cs i "<?" || litAt cs i "<![CDATA[" then return true
+  if cs[i + 1]? == some '!' && ((cs[i + 2]?).map isAsciiAlpha).getD false then return true
+  if namedTagAt cs (i + 1) htmlRawTags then return true
+  if namedTagAt cs (i + 1) htmlBlockTags then return true
+  if cs[i + 1]? == some '/' && namedTagAt cs (i + 2) htmlBlockTags then return true
+  return false
 
 end LeanTex.Core.Md
 
@@ -591,9 +752,9 @@ def Strict.message : Strict → String
   | .lazyContinuation => "a lazy continuation line is refused: a paragraph line inside a container repeats the container's marker"
 
 def Strict.fixit : Strict → String
-  | .rawHtml => "write it as a command, or quote the text as a code span with `...`"
+  | .rawHtml => "quote the text as a code span with `...`, or delete the tag"
   | .indentedCode => "fence the block with ``` instead"
-  | .lazyContinuation => "start the line with its container's marker, '>' or the list bullet"
+  | .lazyContinuation => "indent the line to its container's content column, or repeat a quote's '>'"
 
 /-- The refusal, as a diagnostic. The subject is what folds repeats into one
 line with a site count (`Diag.tallySites`), so a document with fifty raw
@@ -664,16 +825,14 @@ def scanInlines (file : String) (c : Chars) :
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          -- Raw HTML: refused by design, and the text is dropped.
-          if (c.at? (i + 1)).map (fun d =>
-                isAsciiAlpha d || d == '/' || d == '!' || d == '?') == some true then
+          -- Raw HTML: refused by design, and the text is dropped. Only a
+          -- complete tag (§6.6) is raw HTML; anything else is text, which
+          -- is why `x <y for comparison` no longer fails the build.
+          match htmlTagAt c.cs i with
+          | some next =>
             diags := diags.push (refuse file .rawHtml p)
-            -- Skip to the closing `>` so the tag's own text does not ship.
-            let mut k := i + 1
-            for _ in [0:c.size + 1] do
-              if k < c.size && c.at? k != some '>' then k := k + 1
-            i := if k < c.size then k + 1 else c.size
-          else
+            i := next
+          | none =>
             pending := pending.push '<'
             i := i + 1
       else if ch == '\n' then
@@ -953,11 +1112,14 @@ private structure Frame where
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
-/-- The leaf open at the innermost container. -/
+/-- The leaf open at the innermost container. A fence carries the indent its
+opener stood at: §4.5 strips up to that many columns from each content line,
+so a fence inside a list item does not ship the item's indent as code. -/
 private inductive Leaf where
   | none
   | para (lines : Array (String × Pos))
-  | fenced (ch : Char) (len : Nat) (info : String) (pos : Pos) (lines : Array String)
+  | fenced (ch : Char) (len : Nat) (info : String) (pos : Pos) (indent : Nat)
+      (lines : Array String)
   deriving Inhabited
 
 private def Leaf.isPara : Leaf → Bool
@@ -968,7 +1130,7 @@ private def Leaf.isPara : Leaf → Bool
 spec's interrupter list, which is what decides whether a paragraph ends. -/
 private def interrupts (cs : Array Char) (i : Nat) : Bool :=
   (atxAt cs i).isSome || thematicAt cs i || (fenceAt cs i).isSome
-    || cs[i]? == some '>' || htmlBlockAt cs i
+    || cs[i]? == some '>' || htmlBlockInterruptAt cs i
     || (match bulletAt cs i with
         | some (_, j) => !isBlankFrom cs j
         | none => false)
@@ -998,18 +1160,11 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     let some ln := lines[li]? | continue
     let cs := ln.cs
     let lpos : Pos := ⟨ln.no, 1⟩
-    -- A fenced block swallows lines until its closer.
-    match leaf with
-    | .fenced fch flen finfo fpos flines =>
-      let (_, find) := indentAt cs 0 0
-      if find ≤ 3 && closesFence cs fch flen then
-        acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
-        leaf := .none
-      else
-        leaf := .fenced fch flen finfo fpos (flines.push (sliceStr cs 0 cs.size))
-      continue
-    | _ => pure ()
-    -- Match the open containers.
+    -- Match the open containers. A fence does not exempt a line from this:
+    -- skipping it left the fence open past its container, so a fence in a
+    -- quote or a nested item swallowed every block that followed and the
+    -- closing fence, the paragraph and the heading after it all shipped as
+    -- code — with no diagnostic.
     let mut i := 0
     let mut col := 0
     let mut matched := 0
@@ -1053,6 +1208,29 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
             else
               ok := false
         | some (FKind.list _ _ _) => matched := matched + 1
+    -- An open fenced block, inside the containers that matched: its closer
+    -- is tested on the line *after* the container prefixes, and its content
+    -- lines keep neither those prefixes nor the opener's own indent (§4.5).
+    match leaf with
+    | .fenced fch flen finfo fpos find flines =>
+      if !ok then
+        -- The fence closes with its container, unclosed (§4.5).
+        acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
+        leaf := .none
+      else
+        let rest := cs.extract i cs.size
+        let (_, cind) := indentAt rest 0 0
+        if cind ≤ 3 && closesFence rest fch flen then
+          acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
+          leaf := .none
+        else
+          -- Strip up to the opener's own indent, no more.
+          let (ci, _) := indentAt rest 0 0
+          let strip := min find ci
+          leaf := .fenced fch flen finfo fpos find
+            (flines.push (sliceStr rest strip rest.size))
+        continue
+    | _ => pure ()
     let blank := isBlankFrom cs i
     -- Closing the open paragraph, wherever a branch below needs it done.
     let closePara : Leaf → Array Blk → Pos → Array Blk × Array Diag :=
@@ -1244,7 +1422,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
-      leaf := .fenced fch flen finfo lpos #[]
+      leaf := .fenced fch flen finfo lpos (j - i) #[]
     else if htmlBlockAt cs j then
       diags := diags.push (refuse file .rawHtml lpos)
       let (a, ds) := closePara leaf acc lpos
@@ -1263,7 +1441,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     let (inl, ds) := inlines file (charsOf pls)
     acc := acc.push (.para inl ((pls[0]?.map (·.2)).getD {}))
     diags := diags ++ ds
-  | .fenced _ _ finfo fpos flines =>
+  | .fenced _ _ finfo fpos _ flines =>
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
   | .none => pure ()
   for _ in [0:frames.size] do

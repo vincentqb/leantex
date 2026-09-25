@@ -114,7 +114,7 @@ error[E0382]: 'lualatex' drew nothing for this picture; the page would carry an 
   help: lualatex says: ! Undefined control sequence. · l.7 \nope
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
 error[E0390]: raw HTML in markdown is refused: document content can never become markup here
-  help: write it as a command, or quote the text as a code span with `...`
+  help: quote the text as a code span with `...`, or delete the tag
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
@@ -507,6 +507,8 @@ warning[W0390]: nothing declares a 'mono' family; typewriter runs set in the bod
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
 note[W0391]: unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text
   help: \define \name(...) {body} declares it
+── W0391 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
+warning[W0391]: a link's title is not carried: the link sets without it
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

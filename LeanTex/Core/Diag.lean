@@ -212,6 +212,7 @@ inductive DiagCode where
   | W0390
   | W0391
   | E0390
+  | W0392
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -393,6 +394,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0390 => ("0390", .degraded, "no family is declared for a font slot the document sets in; the body face serves it")
   | .W0391 => ("0391", .config, "an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text")
   | .E0390 => ("0390", .dropped, "a markdown construct this dialect refuses by design; its content is dropped")
+  | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

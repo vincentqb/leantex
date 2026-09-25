@@ -2,28 +2,40 @@
 # Higher is better; a value may not drop and a row may not disappear.
 # spec: 0.31.2 sha256 257c41ad946f7a1414a499aca402a1aa8fdac3678532266611348c1cf54f4b80
 # cases: 652
-Tabs	2
+# 2026-09-25 correction, declared: this baseline is LOWER than the one it
+# replaces in six sections, because the measurement was wrong, not because
+# the engine regressed. Two rules changed. (1) `rejected` is keyed on the
+# three strict subjects, not on the E0390 code, and the raw-HTML test now
+# implements the tag grammar: 25 valid cases left `rejected`, 14 of them to
+# `match`. (2) A case whose run names a routed loss can no longer be a
+# `match` however the trees compare: 11 cases moved to `owed`, 9 of them
+# from `match` (Tabs 4; List items 256, 258, 259, 262, 277; Lists 325, 326;
+# Block quotes 108), all nine on md:loose-list, which over-reports because
+# the HTML backend already wraps a multi-block item in <p>. Each of the
+# eleven carries the note `tree-agrees-but-a-loss-is-named`, and --check
+# compares notes, so none of them can quietly become a `match` again.
+Tabs	1
 Backslash escapes	6
 Entity and numeric character references	10
 Precedence	0
 Thematic breaks	5
 ATX headings	14
 Setext headings	11
-Indented code blocks	3
-Fenced code blocks	21
+Indented code blocks	2
+Fenced code blocks	25
 HTML blocks	0
 Link reference definitions	3
 Paragraphs	7
 Blank lines	1
-Block quotes	13
-List items	19
-Lists	8
+Block quotes	14
+List items	14
+Lists	6
 Code spans	10
 Emphasis and strong emphasis	119
-Links	33
+Links	34
 Images	4
-Autolinks	4
-Raw HTML	1
+Autolinks	16
+Raw HTML	2
 Hard line breaks	12
 Soft line breaks	2
 Textual content	2

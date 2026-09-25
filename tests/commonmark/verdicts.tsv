@@ -7,7 +7,7 @@
 1	Tabs	rejected
 2	Tabs	rejected
 3	Tabs	rejected
-4	Tabs	match
+4	Tabs	owed	tree-agrees-but-a-loss-is-named
 5	Tabs	rejected
 6	Tabs	rejected
 7	Tabs	owed
@@ -23,14 +23,14 @@
 17	Backslash escapes	match
 18	Backslash escapes	rejected
 19	Backslash escapes	match
-20	Backslash escapes	rejected
+20	Backslash escapes	owed
 21	Backslash escapes	rejected
 22	Backslash escapes	owed
 23	Backslash escapes	owed
 24	Backslash escapes	match
 25	Entity and numeric character references	owed
 26	Entity and numeric character references	match
-27	Entity and numeric character references	owed
+27	Entity and numeric character references	owed	pending-decision:smart-punctuation
 28	Entity and numeric character references	match
 29	Entity and numeric character references	match
 30	Entity and numeric character references	match
@@ -44,12 +44,12 @@
 38	Entity and numeric character references	match
 39	Entity and numeric character references	match
 40	Entity and numeric character references	match
-41	Entity and numeric character references	owed
+41	Entity and numeric character references	owed	pending-decision:smart-punctuation
 42	Precedence	owed
 43	Thematic breaks	owed
 44	Thematic breaks	match
 45	Thematic breaks	match
-46	Thematic breaks	owed
+46	Thematic breaks	owed	pending-decision:smart-punctuation
 47	Thematic breaks	owed
 48	Thematic breaks	rejected
 49	Thematic breaks	match
@@ -58,7 +58,7 @@
 52	Thematic breaks	owed
 53	Thematic breaks	rejected
 54	Thematic breaks	owed
-55	Thematic breaks	owed
+55	Thematic breaks	owed	pending-decision:smart-punctuation
 56	Thematic breaks	match
 57	Thematic breaks	owed
 58	Thematic breaks	owed
@@ -90,11 +90,11 @@
 84	Setext headings	match
 85	Setext headings	rejected
 86	Setext headings	match
-87	Setext headings	owed
+87	Setext headings	owed	pending-decision:smart-punctuation
 88	Setext headings	owed
 89	Setext headings	owed
 90	Setext headings	match
-91	Setext headings	rejected
+91	Setext headings	owed
 92	Setext headings	owed
 93	Setext headings	rejected
 94	Setext headings	owed
@@ -109,9 +109,9 @@
 103	Setext headings	match
 104	Setext headings	owed
 105	Setext headings	rejected
-106	Setext headings	owed
+106	Setext headings	owed	pending-decision:smart-punctuation
 107	Indented code blocks	rejected
-108	Indented code blocks	match
+108	Indented code blocks	owed	tree-agrees-but-a-loss-is-named
 109	Indented code blocks	match
 110	Indented code blocks	rejected
 111	Indented code blocks	rejected
@@ -131,12 +131,12 @@
 125	Fenced code blocks	match
 126	Fenced code blocks	match
 127	Fenced code blocks	owed
-128	Fenced code blocks	owed
+128	Fenced code blocks	match
 129	Fenced code blocks	owed
 130	Fenced code blocks	match
-131	Fenced code blocks	owed
-132	Fenced code blocks	owed
-133	Fenced code blocks	owed
+131	Fenced code blocks	match
+132	Fenced code blocks	match
+133	Fenced code blocks	match
 134	Fenced code blocks	rejected
 135	Fenced code blocks	match
 136	Fenced code blocks	match
@@ -200,7 +200,7 @@
 194	Link reference definitions	owed
 195	Link reference definitions	rejected
 196	Link reference definitions	owed
-197	Link reference definitions	owed
+197	Link reference definitions	owed	pending-decision:smart-punctuation
 198	Link reference definitions	owed
 199	Link reference definitions	match
 200	Link reference definitions	owed
@@ -212,7 +212,7 @@
 206	Link reference definitions	owed
 207	Link reference definitions	owed
 208	Link reference definitions	owed
-209	Link reference definitions	owed
+209	Link reference definitions	owed	pending-decision:smart-punctuation
 210	Link reference definitions	owed
 211	Link reference definitions	rejected
 212	Link reference definitions	match
@@ -240,7 +240,7 @@
 234	Block quotes	owed
 235	Block quotes	match
 236	Block quotes	rejected
-237	Block quotes	owed
+237	Block quotes	match
 238	Block quotes	rejected
 239	Block quotes	match
 240	Block quotes	match
@@ -259,14 +259,14 @@
 253	List items	rejected
 254	List items	rejected
 255	List items	match
-256	List items	match
+256	List items	owed	tree-agrees-but-a-loss-is-named
 257	List items	rejected
-258	List items	match
-259	List items	match
+258	List items	owed	tree-agrees-but-a-loss-is-named
+259	List items	owed	tree-agrees-but-a-loss-is-named
 260	List items	match
 261	List items	match
-262	List items	match
-263	List items	owed
+262	List items	owed	tree-agrees-but-a-loss-is-named
+263	List items	owed	tree-agrees-but-a-loss-is-named
 264	List items	rejected
 265	List items	owed
 266	List items	match
@@ -280,7 +280,7 @@
 274	List items	rejected
 275	List items	match
 276	List items	match
-277	List items	match
+277	List items	owed	tree-agrees-but-a-loss-is-named
 278	List items	owed
 279	List items	rejected
 280	List items	owed
@@ -327,9 +327,9 @@
 321	Lists	owed
 322	Lists	match
 323	Lists	owed
-324	Lists	owed
-325	Lists	match
-326	Lists	match
+324	Lists	owed	tree-agrees-but-a-loss-is-named
+325	Lists	owed	tree-agrees-but-a-loss-is-named
+326	Lists	owed	tree-agrees-but-a-loss-is-named
 327	Lists	owed
 328	Code spans	match
 329	Code spans	match
@@ -349,24 +349,24 @@
 343	Code spans	owed
 344	Code spans	rejected
 345	Code spans	owed
-346	Code spans	rejected
+346	Code spans	owed
 347	Code spans	owed
 348	Code spans	owed
 349	Code spans	owed
 350	Emphasis and strong emphasis	match
 351	Emphasis and strong emphasis	match
-352	Emphasis and strong emphasis	owed
+352	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 353	Emphasis and strong emphasis	owed
 354	Emphasis and strong emphasis	owed
 355	Emphasis and strong emphasis	match
 356	Emphasis and strong emphasis	match
 357	Emphasis and strong emphasis	match
 358	Emphasis and strong emphasis	match
-359	Emphasis and strong emphasis	owed
+359	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 360	Emphasis and strong emphasis	match
 361	Emphasis and strong emphasis	match
 362	Emphasis and strong emphasis	match
-363	Emphasis and strong emphasis	owed
+363	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 364	Emphasis and strong emphasis	match
 365	Emphasis and strong emphasis	match
 366	Emphasis and strong emphasis	match
@@ -383,12 +383,12 @@
 377	Emphasis and strong emphasis	match
 378	Emphasis and strong emphasis	match
 379	Emphasis and strong emphasis	match
-380	Emphasis and strong emphasis	owed
+380	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 381	Emphasis and strong emphasis	match
 382	Emphasis and strong emphasis	match
 383	Emphasis and strong emphasis	match
 384	Emphasis and strong emphasis	match
-385	Emphasis and strong emphasis	owed
+385	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 386	Emphasis and strong emphasis	match
 387	Emphasis and strong emphasis	match
 388	Emphasis and strong emphasis	match
@@ -398,7 +398,7 @@
 392	Emphasis and strong emphasis	match
 393	Emphasis and strong emphasis	match
 394	Emphasis and strong emphasis	match
-395	Emphasis and strong emphasis	owed
+395	Emphasis and strong emphasis	owed	pending-decision:smart-punctuation
 396	Emphasis and strong emphasis	match
 397	Emphasis and strong emphasis	match
 398	Emphasis and strong emphasis	match
@@ -496,7 +496,7 @@
 490	Links	match
 491	Links	rejected
 492	Links	match
-493	Links	rejected
+493	Links	match
 494	Links	rejected
 495	Links	match
 496	Links	match
@@ -511,7 +511,7 @@
 505	Links	owed
 506	Links	owed
 507	Links	owed
-508	Links	owed
+508	Links	owed	pending-decision:smart-punctuation
 509	Links	owed
 510	Links	owed
 511	Links	match
@@ -593,27 +593,27 @@
 587	Images	owed
 588	Images	owed
 589	Images	owed
-590	Images	owed
+590	Images	owed	pending-decision:smart-punctuation
 591	Images	owed
 592	Images	owed
 593	Images	owed
-594	Autolinks	rejected
-595	Autolinks	rejected
-596	Autolinks	rejected
-597	Autolinks	rejected
-598	Autolinks	rejected
-599	Autolinks	rejected
-600	Autolinks	rejected
-601	Autolinks	rejected
-602	Autolinks	rejected
-603	Autolinks	rejected
-604	Autolinks	rejected
-605	Autolinks	rejected
-606	Autolinks	rejected
+594	Autolinks	match
+595	Autolinks	match
+596	Autolinks	match
+597	Autolinks	match
+598	Autolinks	match
+599	Autolinks	match
+600	Autolinks	match
+601	Autolinks	match
+602	Autolinks	match
+603	Autolinks	owed
+604	Autolinks	match
+605	Autolinks	match
+606	Autolinks	owed
 607	Autolinks	match
 608	Autolinks	match
-609	Autolinks	rejected
-610	Autolinks	rejected
+609	Autolinks	owed
+610	Autolinks	match
 611	Autolinks	match
 612	Autolinks	match
 613	Raw HTML	rejected
@@ -622,12 +622,12 @@
 616	Raw HTML	rejected
 617	Raw HTML	rejected
 618	Raw HTML	match
-619	Raw HTML	rejected
-620	Raw HTML	rejected
-621	Raw HTML	rejected
-622	Raw HTML	rejected
+619	Raw HTML	owed	pending-decision:smart-punctuation
+620	Raw HTML	owed	pending-decision:smart-punctuation
+621	Raw HTML	match
+622	Raw HTML	owed	pending-decision:smart-punctuation
 623	Raw HTML	rejected
-624	Raw HTML	rejected
+624	Raw HTML	owed	pending-decision:smart-punctuation
 625	Raw HTML	rejected
 626	Raw HTML	rejected
 627	Raw HTML	rejected
@@ -635,7 +635,7 @@
 629	Raw HTML	rejected
 630	Raw HTML	rejected
 631	Raw HTML	rejected
-632	Raw HTML	rejected
+632	Raw HTML	owed	pending-decision:smart-punctuation
 633	Hard line breaks	match
 634	Hard line breaks	match
 635	Hard line breaks	match
@@ -653,6 +653,6 @@
 647	Hard line breaks	match
 648	Soft line breaks	match
 649	Soft line breaks	match
-650	Textual content	owed
+650	Textual content	owed	pending-decision:smart-punctuation
 651	Textual content	match
 652	Textual content	match

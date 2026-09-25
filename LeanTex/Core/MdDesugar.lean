@@ -11,21 +11,43 @@ carries.
 
 The asymmetry is one-directional by design: md ⊂ tex-expressible. Where the
 surface AST cannot express a markdown construct, the construct is *routed* —
-named by a `W0307` carrying its own subject — rather than the elaborator
-being extended to meet markdown. Four constructs are routed today
-(`md:thematic-break`, `md:heading-depth`, `md:list-start`, `md:loose-list`),
-each because the IR has no field for it; the routing is the record of what
-the kernel owes, not a silence. -/
+named by its own subject — rather than the elaborator being extended to meet
+markdown. The code a route takes is decided by what reaches the page, which
+is the registry's rule and not a habit:
+
+* `W0307` (`pending`, floor `absent`) for a construct that ships nothing.
+  One today: `md:thematic-break`, which has no block in this engine.
+* `W0392` (`degraded`, floor `content`) for a construct that ships,
+  diminished: `md:heading-depth`, `md:list-start`, `md:loose-list`,
+  `md:link-title`, `md:image-title`. Each of these once took `W0307`, and
+  the census then read four shipping constructs as absent content.
+
+A construct the surface AST *can* express is never routed: a fenced block's
+info string rides `{lstlisting}`'s `language=` key and an image's text
+alternative rides `\includegraphics`'s braced `alt`, both through their one
+existing resolving site. -/
 
 namespace LeanTex.Core.Md
 
 open LeanTex.Core LeanTex.Core.Parse
 
-/-- A `W0307`: a markdown construct the surface AST cannot yet express. The
-subject is the construct, so repeats fold into one line with a site count
-(`Diag.tallySites`) and the census can name what was lost. -/
+/-- A `W0307`: a markdown construct the surface AST cannot yet express *and*
+whose content does not reach the page. `pending` means exactly that (its
+floor is `absent`), so only a construct that ships nothing takes this code —
+today the thematic break, which has no block in the engine at all.
+
+A construct that *does* ship, diminished, takes `routeDegraded` instead. The
+two were one code, and the census then read four shipping constructs as
+absent content. -/
 def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
   { kind := .W0307, message := what, span := some ⟨file, pos⟩,
+    subject := some ("md:" ++ subject) }
+
+/-- A `W0392`: the construct sets, with part of its declaration dropped —
+`degraded`, floor `content`, which is what the census must see for a heading
+that sets one level up or a link that sets without its title. -/
+def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
+  { kind := .W0392, message := what, span := some ⟨file, pos⟩,
     subject := some ("md:" ++ subject) }
 
 /-- Literal text as surface words and spaces: one `word` per run of
@@ -97,25 +119,27 @@ def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .strong body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     (#[.ctrl "textbf" p, .group rs p], ds)
-  | .link dest _ body p =>
+  | .link dest title body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
+    let ds := if title.isEmpty then ds else
+      ds.push (routeDegraded file "link-title"
+        "a link's title is not carried: the link sets without it" p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
-  | .image dest _ alt p =>
-    -- The alt text rides `\includegraphics`'s own `alt` key, so the text
-    -- alternative survives the trip and W0376 has nothing to report. The
-    -- option run is read as source text, so a value carrying `,` or `]`
-    -- would be re-split as two keys: that case is routed instead.
+  | .image dest title alt p =>
+    -- The alt text rides `\includegraphics`'s own `alt` key, braced, so a
+    -- value carrying `,`, `]` or `=` survives the option split rather than
+    -- being routed: `Decl.splitEntries` tracks brace depth and
+    -- `readImageOpts` strips the braces.
     let text := inlText alt
+    let ds := if title.isEmpty then #[] else
+      #[routeDegraded file "image-title"
+        "an image's title is not carried: the image sets without it" p]
     if text.isEmpty then
-      (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], #[])
-    else if text.any (fun c => c == ',' || c == ']' || c == '=') then
-      (#[.ctrl "includegraphics" p, .group (textRaws dest p) p],
-       #[route file "image-alt"
-          "an image's text alternative carries a comma, a bracket or an equals sign and is not passed on" p])
+      (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
       (#[.ctrl "includegraphics" p, .sym '[' p]
-         ++ textRaws ("alt=" ++ text) p
-         ++ #[.sym ']' p, .group (textRaws dest p) p], #[])
+         ++ textRaws "alt=" p
+         ++ #[.group (textRaws text p) p, .sym ']' p, .group (textRaws dest p) p], ds)
 
 /-- A list of inline nodes, accumulating: prepending to the recursive result
 would copy it at every element. -/
@@ -138,15 +162,24 @@ def blkRaws (file : String) : Blk → Array Raw × Array Diag
   | .heading level body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     let ds := if level > 3 then
-        ds.push (route file "heading-depth"
+        ds.push (routeDegraded file "heading-depth"
           "a markdown heading below the third level sets at the third" p)
       else ds
     (#[.ctrl (sectionCtrl level) p, .word "*" p, .group rs p], ds)
   | .code info text p =>
-    let ds := if info.isEmpty then #[] else
-      #[route file "code-info"
-          "a fenced block's info string is not carried to the code block" p]
-    (#[.verb "verbatim" text p], ds)
+    -- The info string's first word is the language, which the IR carries
+    -- (`Ir.ListingSpec.language`) and both artifacts project — the HTML
+    -- `code` element's class and the markdown fence's info string. So it
+    -- rides `{lstlisting}`'s own `language=` key through the one resolving
+    -- site rather than being routed: a spelling outside the token grammar
+    -- is the elaborator's W0110 to name, not the reader's to guess. Only
+    -- the first word is the language, which is what the spec's own expected
+    -- HTML carries.
+    let lang := ((info.splitOn " ").headD "").trimAscii.toString
+    if lang.isEmpty then
+      (#[.verb "verbatim" text p], #[])
+    else
+      (#[.verb "lstlisting" ("[language=" ++ lang ++ "]\n" ++ text) p], #[])
   | .rule p =>
     (#[], #[route file "thematic-break"
       "a thematic break has no block in this engine and is not drawn" p])
@@ -156,11 +189,11 @@ def blkRaws (file : String) : Blk → Array Raw × Array Diag
   | .list ordered start tight items p =>
     let (rs, ds) := itemsRaws file #[] #[] items.toList p
     let ds := if ordered && start != 1 then
-        ds.push (route file "list-start"
+        ds.push (routeDegraded file "list-start"
           "an ordered list's start number is not carried and the list counts from one" p)
       else ds
     let ds := if tight then ds else
-      ds.push (route file "loose-list"
+      ds.push (routeDegraded file "loose-list"
         "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
     (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
 

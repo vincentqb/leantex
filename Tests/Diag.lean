@@ -422,6 +422,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- The witness names the class whose fix-it is hardest to write blind: a
   -- raw tag, whose text this reader drops rather than passing through.
   | .E0390 => dvMd "a paragraph\n\n<div>raw</div>\n"
+  | .W0392 => dvMd "[a link](https://example.org \"the title\")\n"
   -- A title whose author declared two lines and whose first does not fit
   -- the measure: the breaker finds a legal break inside the declared line,
   -- so a third line ships and its remainder returns to the flush-left
