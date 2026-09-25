@@ -2281,6 +2281,71 @@ def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array 
   (unread.filter fun e => !setsEngineKey e && !readsOpt after e).filterMap fun e =>
     (e[0]?).map tokText
 
+/-- One part of a `\node` statement's prologue: everything before the
+body. pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
+number of times, ending at the `{text}` (TikZ manual §17.2, the node
+specification), so a prologue is a *fold* over these rather than a fixed
+sequence — a second bracket is ordinary pgf, and so is a bracket standing
+after `at`. -/
+inductive Part where
+  | brack (inner : Array Tok)
+  | name (n : String)
+  | atCoord (xs ys : Array Tok)
+  deriving Repr, Inhabited
+
+/-- A node's prologue as read so far. -/
+structure Prologue where
+  /-- Every option bracket's inner tokens, in source order: a later
+  bracket's keys stand later, so precedence stays the merge's own rule
+  (`mergeOpts`) and is not this reader's to decide. -/
+  brackets : Array (Array Tok) := #[]
+  name : Option String := none
+  /-- The `at (x, y)` coordinate's two expression slices. -/
+  at? : Option (Array Tok × Array Tok) := none
+  deriving Repr, Inhabited
+
+/-- Fold one part in. The shape is what makes the reader order-free by
+construction rather than by inspection: each part touches one field, so no
+part can be the one a position forgot. -/
+def Prologue.step (p : Prologue) : Part → Prologue
+  | .brack inner => { p with brackets := p.brackets.push inner }
+  | .name n => { p with name := p.name.orElse fun _ => some n }
+  | .atCoord xs ys => { p with at? := some (xs, ys) }
+
+/-- **A name is the node's whichever side of the bracket it stands on, and
+a bracket is the node's whichever side of `at`.** Folding two different
+parts in either order leaves the same prologue: the registered `_agree`
+shape over the spellings pgf reads alike.
+
+The defect this closes was a reader one position short of a loop — one
+bracket, and only before `at` — so `\node[keys] (n) [keys] {text}` and
+`\node (n) at (c) [keys] {text}`, both of which pgf compiles without
+complaint, reached the body arm with a `[` where a `{` was expected and
+were refused for *needing a body they had written*. Three errors on the
+private reference corpus read as a missing label. Stated as commutation
+rather than as a list of accepted orders, because the list is what the old
+reader was. -/
+theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
+    (xs ys : Array Tok) :
+    (p.step (.brack inner)).step (.name n) = (p.step (.name n)).step (.brack inner) ∧
+    (p.step (.brack inner)).step (.atCoord xs ys)
+      = (p.step (.atCoord xs ys)).step (.brack inner) ∧
+    (p.step (.name n)).step (.atCoord xs ys)
+      = (p.step (.atCoord xs ys)).step (.name n) := by
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- Nothing a bracket said is lost to a later part: a fold step either
+leaves the bracket list alone or appends to it, and never rewrites it — so
+a key cannot be dropped by what was written after it. The `_covers` half of
+the pair above. -/
+theorem prologue_brackets_covers (p : Prologue) (part : Part) :
+    (p.step part).brackets = p.brackets ∨
+      ∃ inner, (p.step part).brackets = p.brackets.push inner := by
+  cases part
+  · exact Or.inr ⟨_, rfl⟩
+  · exact Or.inl rfl
+  · exact Or.inl rfl
+
 /-- A `(name)` group at `i`: the name and the index past its `)`. A name
 holding a `,` is a coordinate, not a name. -/
 private def readName (ts : Array Tok) (i : Nat) : Option (String × Nat) := Id.run do
@@ -2327,29 +2392,48 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut minW : Sp := 0
   let mut minH : Sp := 0
   let mut own : Array (Array Tok) := #[]
-  -- pgf reads `\node (n) [keys] {body}` and `\node [keys] (n) {body}`
-  -- alike: the name may stand on either side of the option bracket.
-  let mut nodeName : Option String := none
-  if let some (nm, i2) := readName ts i then
-    nodeName := some nm
-    i := i2
-  if ts[i]? == some (.sym '[') then
-    let mut j := i + 1
-    let mut inner : Array Tok := #[]
-    for _ in [i+1:ts.size + 1] do
-      if h : j < ts.size then
-        if ts[j] == .sym ']' then break
-        inner := inner.push ts[j]
-        j := j + 1
-      else break
-    unless ts[j]? == some (.sym ']') do
-      return ev.diag (.E0333, "'\\node' options miss their ']'; the node is not drawn")
-    own := expandOpts cx.styles inner
-    i := j + 1
-  if nodeName.isNone then
-    if let some (nm, i2) := readName ts i then
-      nodeName := some nm
-      i := i2
+  -- pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
+  -- number of times, up to the `{text}` (TikZ manual §17.2). So the
+  -- prologue is a loop over the three parts, folded through
+  -- `Prologue.step` — whose `prologue_swap_agree` is why no position can
+  -- be the one a part was forgotten in.
+  let mut pro : Prologue := {}
+  let mut bad : Option PDiag := none
+  for _ in [0:ts.size + 1] do
+    if h : i < ts.size then
+      if ts[i] == .sym '[' then
+        let mut j := i + 1
+        let mut inner : Array Tok := #[]
+        for _ in [i+1:ts.size + 1] do
+          if h2 : j < ts.size then
+            if ts[j] == .sym ']' then break
+            inner := inner.push ts[j]
+            j := j + 1
+          else break
+        unless ts[j]? == some (.sym ']') do
+          bad := some (.E0333, "'\\node' options miss their ']'; the node is not drawn")
+          break
+        pro := pro.step (.brack inner)
+        i := j + 1
+      else if ts[i] == .ident "at" then
+        match readCoord ts (i + 1) with
+        | .error e =>
+          bad := some (.E0333, s!"in '\\node', {e}; the node is not drawn")
+          break
+        | .ok ((xs, ys), i2) =>
+          pro := pro.step (.atCoord xs ys)
+          i := i2
+      else
+        match readName ts i with
+        | some (nm, i2) =>
+          pro := pro.step (.name nm)
+          i := i2
+        | none => break
+    else break
+  if let some d := bad then return ev.diag d
+  for inner in pro.brackets do
+    own := own ++ expandOpts cx.styles inner
+  let nodeName : Option String := pro.name
   ev := { ev with readOpts := true }
   let dsc : Sp × Sp := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
   let mut place : Option (Dir × String × (Sp × Sp)) := none
@@ -2424,17 +2508,7 @@ picture subset; the option is dropped")
   -- declaration order does not decide it (`evalFixed`): a reference to a
   -- node written later resolves on the next run, and only a name no node
   -- carries — or a cycle — is refused, by that name.
-  let mut atCoord : Option (Array Tok × Array Tok) := none
-  if ts[i]? == some (.ident "at") then
-    match readCoord ts (i + 1) with
-    | .error e => return ev.diag (.E0333, s!"in '\\node', {e}; the node is not drawn")
-    | .ok ((xs, ys), i2) =>
-      atCoord := some (xs, ys)
-      i := i2
-    if nodeName.isNone then
-      if let some (nm, i2) := readName ts i then
-        nodeName := some nm
-        i := i2
+  let atCoord : Option (Array Tok × Array Tok) := pro.at?
   let unresolved : Bool :=
     atCoord.isNone && (match place with
       | some (_, target, _) => (ev.nodes.lookup target).isNone

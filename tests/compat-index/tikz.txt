@@ -53,6 +53,11 @@ body impl \begin{tikzpicture}[thick]\draw (0,0) -- (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}[minimum size=8mm]\node[draw] (u) at (0,0) {x};\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.east) -- (v.west);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.north) -- (v.south);\end{tikzpicture}
+body impl \begin{tikzpicture}\node[minimum width=15mm] (u) [minimum height=6mm, draw] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) at (0,0) [draw, minimum size=8mm] {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[draw] at (0,0) (u) [minimum size=8mm] {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node at (0,0) [draw, minimum size=8mm] (u) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) [draw, minimum size=8mm] at (0,0) {};\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.south east) -- (v.north west);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.southeast) -- (v.northwest);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.center) -- (v.center);\end{tikzpicture}

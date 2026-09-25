@@ -5256,6 +5256,90 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (!(layoutDiags (frame "\\node (a) {A Wide First Line\\\\A Wide Second Line};\n")).any
       fun d => d.code == "W0336")
 
+/-- **A node's options are its brackets', wherever the brackets stand**
+(`Picture.prologue_swap_agree`, `Picture.prologue_brackets_covers`). pgf
+reads `[keys]`, `(name)` and `at (coord)` in any order and any number of
+times up to the `{text}`; the walk read one bracket, only before `at`. So
+`\node[keys] (n) [keys] {text}` — two brackets, which real TikZ compiles
+without complaint — reached the body arm with a `[` where a `{` was
+expected and was refused for *needing a body it had written*, and the node
+never registered its name, so every edge touching it went too.
+
+Read off the shipped path spans and boxes: which keys a node honoured is
+visible only as the outline it drew and where it drew it. Invented content
+throughout. -/
+def pictureNodePrologueChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let pic (body : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++
+    "\\end{tikzpicture}\n\\end{document}"
+  -- Two brackets on one node: the width comes from the first, the height
+  -- and the outline from the second, so a span of both is the proof that
+  -- neither was dropped.
+  let twoBrackets := "\\node[minimum width=15mm] (nn) [minimum height=6mm, draw] {Quince};\n"
+  let (_, ds) := elabStr (pic twoBrackets)
+  t "a node carrying two option brackets elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  let two := censusSrc (pic twoBrackets)
+  -- Stated as an agreement rather than against an absolute length: one
+  -- bracket carrying both keys and two brackets carrying one each must
+  -- ship the same outline, which is the whole claim and bakes in no
+  -- rounding of the engine's own dimension reading.
+  let oneBracket := censusSrc (pic
+    "\\node[minimum width=15mm, minimum height=6mm, draw] (nn) {Quince};\n")
+  t "both of a node's option brackets reach its outline"
+    ((two[0]?.map (·.pathSpans)) == (oneBracket[0]?.map (·.pathSpans)) &&
+      (two[0]?.map (·.paths == 1)).getD false)
+  t "no boundary box stands where the two-bracket picture is"
+    ((two[0]?.map (·.images == 0)).getD false)
+  -- The three prologue parts in every order that puts the name and the
+  -- bracket either side of `at`: the page must not know which was written.
+  let orders : List String :=
+    [ "\\node[draw, minimum size=8mm] (nn) at (2,0) {Quince};\n"
+    , "\\node (nn) [draw, minimum size=8mm] at (2,0) {Quince};\n"
+    , "\\node (nn) at (2,0) [draw, minimum size=8mm] {Quince};\n"
+    , "\\node[draw] at (2,0) (nn) [minimum size=8mm] {Quince};\n"
+    , "\\node at (2,0) [draw, minimum size=8mm] (nn) {Quince};\n" ]
+  let boxesOf (body : String) : Option (Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)) :=
+    (censusSrc (pic body))[0]?.map (·.pathBoxes)
+  let first := boxesOf (orders.headD "")
+  t "a node's outline ships whatever order its prologue was written in"
+    ((first.map (·.size == 1)).getD false &&
+      orders.all fun o => boxesOf o == first)
+  -- The name registers from any position, which is what an edge reads.
+  let edged := censusSrc (pic
+    ("\\node[draw, minimum size=8mm] at (0,0) (aa) [thick] {Pear};\n" ++
+     "\\node (bb) at (3,0) [draw, minimum size=8mm] {Plum};\n" ++
+     "\\draw (aa) -- (bb);\n"))
+  t "a node names itself from any prologue position, so an edge to it draws"
+    ((edged[0]?.map (·.paths == 3)).getD false)
+  -- A bracket that never closes is still the node's loss, named. A second
+  -- drawn node stands beside it so the picture ships shapes: with none the
+  -- whole picture routes to the boundary and the engine's own refusal is
+  -- not what the reader gets.
+  let standby := "\\node (zz) [draw, minimum size=8mm] at (4,0) {Plum};\n"
+  let (_, openDs) := elabStr (pic ("\\node (nn) [draw {Quince};\n" ++ standby))
+  t "an option bracket that misses its ']' is refused"
+    (openDs.any fun d => d.code == "E0333")
+  -- And a node with no body at all stays refused: pgf rejects that too
+  -- ("a node must have a (possibly empty) label text"), so the engine's
+  -- error is the input's, not a gap in the subset.
+  let (_, noBody) := elabStr (pic ("\\node (nn) [draw, minimum size=8mm] ;\n" ++ standby))
+  t "a node with no body at all is still refused"
+    (noBody.any fun d => d.code == "E0333")
+  -- Empty braces *are* a body, and ink nothing: pgf's "possibly empty"
+  -- label. Stated against the same node carrying a word, so the outline is
+  -- the constant and the text the difference.
+  let empty := censusSrc (pic "\\node (nn) [draw, minimum size=8mm] {};\n")
+  let worded := censusSrc (pic "\\node (nn) [draw, minimum size=8mm] {Quince};\n")
+  t "empty braces are a body: the outline ships and inks no text"
+    ((empty[0]?.map (·.pathSpans)) == (worded[0]?.map (·.pathSpans)) &&
+      pageHas worded 0 "Quince" && !pageHas empty 0 "Quince")
+
 /-- **A named anchor on a node resolves, and lands on that node's own
 border** (`Picture.anchorPoint_between`, `Picture.anchorPoint_corners_exact`).
 The defect: `(n.west)` and its siblings — pgf's core positioning

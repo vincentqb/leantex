@@ -389,6 +389,60 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — a node's prologue is a loop, and the walk read a sequence
+(M8b slice 3, the node prologue). pgf reads `[keys]`, `(name)` and
+`at (coord)` in any order and any number of times up to the `{text}` — the
+node specification, TikZ manual §17.2 — and `evalNode` read at most *one*
+bracket, only before `at`. So `\node[keys] (n) [keys] {text}`, which real
+TikZ compiles without complaint (checked against `pdflatex`, not inferred),
+reached the body arm with a `[` where a `{` was expected and was refused
+for **needing a body it had written**. Three errors on the private
+reference corpus read to a user as a missing label, and the node never
+registered its name either, so two more edges went with it.
+
+**The brief for this slice asked for something else, and the something else
+was wrong.** The diagnosis on the table was "an empty `{}` body is legal
+pgf and the engine refuses it". Both halves fail on contact: `{}` already
+worked, and `\node (n) [draw] ;` with no braces at all is an *error* in
+pgf — "A node must have a (possibly empty) label text", from `pdflatex` on
+a two-line probe. So `E0333` for a genuinely absent body is the input's
+loss, not a gap in the subset, and it stays; a row pins that, beside one
+pinning that empty braces ship the outline and no text. What was actually
+wrong was the position of the bracket, which the error message could not
+say because the walk had already stopped looking.
+
+**The invariant, and it is commutation.** `Prologue.step` folds one part
+(`Part.brack`, `.name`, `.atCoord`) into the prologue read so far, and each
+part touches one field — so no part can be the one a position forgot.
+`prologue_swap_agree` is the registered `_agree` shape: folding any two
+different parts in either order leaves the same prologue, for all three
+pairs. Stated as commutation rather than as a list of accepted orders,
+because the list is precisely what the old reader was, and the next
+spelling would have been the next defect. `prologue_brackets_covers` is the
+`_covers` half: a step either leaves the bracket list alone or appends to
+it, never rewrites it, so a key cannot be dropped by what was written after
+it. Precedence stays `mergeOpts`' own — a later bracket's entries simply
+stand later, which is the reading pgf gives them.
+
+**What the fix did not move.** The three bracket positions all feed one
+`own` array, so `merge_own_exact`, `merge_every_exact` and the rest hold
+unchanged: this slice changes where a bracket may be *written*, never what
+a bracket *means*. The one visible consequence beyond the errors is the
+recorded native-first ordering working again — an in-path `node {}` after
+`--` now names its own W0334 on fixtures where the picture used to route
+whole to the boundary and the refusal was never the reader's.
+
+**Measured.** The private reference corpus falls from three errors to
+two — the "needs a body" error is gone, and the unresolved-name error drops
+from five sites to two, because the nodes that failed to register were
+failing on their second bracket. Seven synthetic rows
+(`pictureNodePrologueChecks`, over `Layout.Out`'s `pathSpans` and
+`pathBoxes`; four fail on the parent commit) and five compat-index rows
+covering the orders, including the two pgf accepts that the engine did not.
+The outline rows are stated as an agreement between one bracket and two
+rather than against an absolute length, so no rounding of the engine's own
+dimension reading is baked into a fixture.
+
 2026-09-24 — a node anchor is a name, and the engine read it as a name
 nothing declared (M8b slice 3, node anchors). `(C.west)`, `(X.south)` and
 `(Y.south west)` are pgf's core positioning vocabulary — the `rectangle`
