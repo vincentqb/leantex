@@ -1,11 +1,14 @@
 fixture: pagebreak
 compiles: yes
-pdf-key: 95027546B544DB6227E38B501CA038EC
-pdf-size: 8520
-src-key: 4C5C474D0B073BD8CFBEB9DAD7E9130A
+pdf-key: 689A1B55E6A5165056CE2DEF0691C1B2
+pdf-size: 8518
+src-key: 226DDA5D110D3216E664DD2CBE2E4040
+src-body-key: 46944B525512F61DCED1C996D5AA2AEB
 ref-src-key: 32A3189BAB79CF6C353BF923F8D6FA76
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
-argv: -halt-on-error -interaction=nonstopmode -file-line-error pagebreak.ref.tex
+format: LaTeX2e <2025-11-01>
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -jobname=pagebreak.ref \pdfvariable trailerid{[<32A3189BAB79CF6C353BF923F8D6FA76> <32A3189BAB79CF6C353BF923F8D6FA76>]}\input{pagebreak.ref.tex}
+inputs: ./pagebreak.ref.tex=32A3189BAB79CF6C353BF923F8D6FA76 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D
 pages: 2
 overfull: 0
-provenance: two pages with the break declared rather than computed, which separates the page-count rung from either engine's page-breaking policy
+provenance: two pages with the break declared rather than computed, which separates the page-count level from either engine's page-breaking policy

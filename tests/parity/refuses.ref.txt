@@ -2,10 +2,13 @@ fixture: refuses
 compiles: no
 pdf-key: 
 pdf-size: 0
-src-key: AE736726D3DCED6133AB216DD282F3E3
+src-key: 8ABF0E86391E91074DEFC19622AA08E9
+src-body-key: 7D7459434E8197089DA2AA95B46E1F36
 ref-src-key: 0077671FF4D724574B017DAA28F706E5
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
-argv: -halt-on-error -interaction=nonstopmode -file-line-error refuses.ref.tex
+format: 
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -jobname=refuses.ref \pdfvariable trailerid{[<0077671FF4D724574B017DAA28F706E5> <0077671FF4D724574B017DAA28F706E5>]}\input{refuses.ref.tex}
+inputs: ./refuses.ref.tex=0077671FF4D724574B017DAA28F706E5
 pages: 0
 overfull: 0
-provenance: the denominator probe — the reference half does not compile, so this fixture is outside the denominator and records -1 rather than a rung
+provenance: the denominator probe — the reference half does not compile, so this fixture is outside the denominator and records -1 rather than a level

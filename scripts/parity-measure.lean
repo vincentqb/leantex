@@ -21,7 +21,7 @@ The three premises, from the ladder's design:
   3. lualatex's line breaks agree with the engine's Knuth-Plass in
      practice. Measured by grouping each side's runs into lines by
      baseline and comparing the line texts — the reading the page-level
-     order rung is blind to.
+     order level is blind to.
 -/
 import scripts.ParityCore
 
@@ -35,10 +35,12 @@ structure ArtLine where
   width : Dim.Sp
   deriving Repr, Inhabited
 
-/-- A page's lines, in painting order, grouped by baseline. Both engines
-emit runs down the page, so first appearance order is reading order; the
-grouping is by exact `y` because both writers position each line once. -/
-def linesOf (p : ArtPage) : Array ArtLine := Id.run do
+/-- A page's lines *with their geometry*: the baseline and the extent, which
+the shared `Parity.linesOf` deliberately drops — it answers which scalars
+share a line and nothing about where. This one exists for the report's
+advance and measure numbers, and is ordered by painting because it is only
+ever printed. -/
+def lineBoxesOf (p : ArtPage) : Array ArtLine := Id.run do
   let mut ys : Array Dim.Sp := #[]
   let mut texts : Array String := #[]
   let mut x0 : Array Dim.Sp := #[]
@@ -103,8 +105,8 @@ def lineReport (stem : String) (e r : Array ArtPage) : IO Unit := do
   let mut total := 0
   let mut firstDiff : Option String := none
   for pi in [0:min e.size r.size] do
-    let el := linesOf e[pi]!
-    let rl := linesOf r[pi]!
+    let el := lineBoxesOf e[pi]!
+    let rl := lineBoxesOf r[pi]!
     total := total + max el.size rl.size
     for li in [0:min el.size rl.size] do
       if el[li]!.text == rl[li]!.text then agree := agree + 1
@@ -165,6 +167,40 @@ def widthEntryShape (pdf : ByteArray) : Except String (Array String) := do
     out := out.push s!"/W in place is {shape raw}; followed it is {shape (deref raw)}"
   return out
 
+/-- The placement distribution, per page: one-to-one same-character
+matching, then |Δx| and |Δy| as p50 / p95 / max, raw and with the page's own
+first-baseline offset removed.
+
+The offset arm is not a tolerance. `Divergence.firstBaseline` is a measured
+origin offset — both engines derive the first baseline from the top margin
+by their own rules, uniformly down the page — so the raw Δy answers "do the
+two engines agree about where the text block starts", which is a declared
+divergence, and the corrected Δy answers "do they agree about where each
+glyph sits within it", which is what a placement level is for. Both are
+printed; neither is chosen here, because this file never gates. -/
+def placeReport (stem : String) (e r : Array ArtPage) : IO Unit := do
+  for pi in [0:min e.size r.size] do
+    let (pairs, unmatched) := placePairs e[pi]! r[pi]!
+    if pairs.isEmpty then
+      IO.println s!"  place p{pi + 1}: nothing paired"
+      continue
+    -- The page's own baseline offset: the median Δy, which an origin offset
+    -- makes constant and a real placement difference does not.
+    let dys := pairs.map fun (a, b) => a.2 - b.2
+    let shift := atPercentile dys 50
+    let dxs := pairs.map fun (a, b) => (a.1 - b.1).natAbs
+    let raw := pairs.map fun (a, b) => (a.2 - b.2).natAbs
+    let corrected := pairs.map fun (a, b) => (a.2 - b.2 - shift).natAbs
+    let dist (label : String) (xs : Array Nat) : String :=
+      let ys : Array Dim.Sp := xs.map (fun n => Int.ofNat n)
+      s!"{label} p50 {Dim.Sp.toPtString (atPercentile ys 50)}, \
+p95 {Dim.Sp.toPtString (atPercentile ys 95)}, \
+max {Dim.Sp.toPtString (atPercentile ys 100)}"
+    IO.println s!"  place p{pi + 1}: {pairs.size} glyph(s) paired, {unmatched} skipped"
+    IO.println s!"    {dist "|dx|" dxs}"
+    IO.println s!"    {dist "|dy| raw" raw}"
+    IO.println s!"    {dist s!"|dy| less the page shift {Dim.Sp.toPtString shift}" corrected}"
+
 def main : IO UInt32 := do
   let pats := Hyphen.english.get
   let some fontData ← findFont | throw (IO.userError "parity-measure: no corpus font")
@@ -208,4 +244,5 @@ with the reference followed {followed}, /DW {dw}"
       | .error _ => pure ()
       | .ok shapes => for s in shapes do IO.println s!"  widths ({label}): {s}"
     lineReport stem ePages rPages
+    placeReport stem ePages rPages
   return 0
