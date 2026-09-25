@@ -17,7 +17,9 @@ The three premises, from the ladder's design:
      reference's reading — the reader substitutes U+FFFD for a glyph it
      cannot name, so the count of those *is* the measurement.
   2. fontspec pointed at the fixture's own font gives identical advances.
-     Measured as the width of the longest shared run on each side.
+     Measured as the painted width of the longest shared run on each side,
+     so it reads the `hmtx` only where both sides declare micro-typography
+     alike: expansion scales a line's painted widths.
   3. lualatex's line breaks agree with the engine's Knuth-Plass in
      practice. Measured by grouping each side's runs into lines by
      baseline and comparing the line texts — the reading the page-level
@@ -82,8 +84,11 @@ def scalarCount (pages : Array ArtPage) : Nat :=
 
 /-- The widest run both sides paint with identical text, and each side's
 advance for it. The comparison is per identical string so the two numbers
-are advances over the same glyphs: a difference is the `hmtx` read
-differently, which is premise 2 falsified. -/
+are advances over the same glyphs. They are *painted* advances: a run's
+width carries the horizontal scale (`Tz`) it was set at, so where one side
+expands a line and the other does not, the delta is the expansion and not
+the `hmtx`. Premise 2 is read here only for a pairing that declares
+micro-typography alike on both sides. -/
 def sharedRunDelta (e r : Array ArtPage) : Option (String × Dim.Sp × Dim.Sp) := Id.run do
   let mut best : Option (String × Dim.Sp × Dim.Sp) := none
   for pi in [0:min e.size r.size] do
@@ -178,7 +183,7 @@ two engines agree about where the text block starts", which is a declared
 divergence, and the corrected Δy answers "do they agree about where each
 glyph sits within it", which is what a placement level is for. Both are
 printed; neither is chosen here, because this file never gates. -/
-def placeReport (stem : String) (e r : Array ArtPage) : IO Unit := do
+def placeReport (e r : Array ArtPage) : IO Unit := do
   for pi in [0:min e.size r.size] do
     let (pairs, unmatched) := placePairs e[pi]! r[pi]!
     if pairs.isEmpty then
@@ -230,8 +235,8 @@ def main : IO UInt32 := do
 engine {eu} of {scalarCount ePages}"
     match sharedRunDelta ePages rPages with
     | some (t, ew, rw) =>
-      IO.println s!"  advances: {repr t} ({t.length} scalars) — engine {Dim.Sp.toPtString ew}, \
-reference {Dim.Sp.toPtString rw}, delta {Dim.Sp.toPtString (ew - rw)}"
+      IO.println s!"  advances (painted, horizontal scale included): {repr t} ({t.length} scalars) — \
+engine {Dim.Sp.toPtString ew}, reference {Dim.Sp.toPtString rw}, delta {Dim.Sp.toPtString (ew - rw)}"
     | none => IO.println "  advances: the two sides share no run of four scalars or more"
     for (label, bytes) in [("engine", driverPdf fs geom doc out {}), ("reference", refBytes)] do
       match widthMapSizes bytes with
@@ -244,5 +249,5 @@ with the reference followed {followed}, /DW {dw}"
       | .error _ => pure ()
       | .ok shapes => for s in shapes do IO.println s!"  widths ({label}): {s}"
     lineReport stem ePages rPages
-    placeReport stem ePages rPages
+    placeReport ePages rPages
   return 0

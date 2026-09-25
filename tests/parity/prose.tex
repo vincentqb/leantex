@@ -1,10 +1,15 @@
 % parity: one page of justified prose at a fully declared geometry; every level is expected to hold, so a failure here is the engine changing
 % Floor probe. Page size, margins, body size and the paragraph gap are all
-% declared, so neither engine's defaults take part and neither engine's
-% point unit does either — the reference declares the same quantities in
-% big points, which is what the engine measures in.
+% declared on both sides, and the reference declares them in big points,
+% which is what the engine measures in, so neither point unit takes part.
+% Micro-typography is declared off here because the reference loads no
+% microtype: left at the engine's default, protrusion and expansion set
+% every line at its own horizontal scale, which the placement level would
+% read as a difference neither half declared. Measured 2026-09-25: turning
+% them off moves no level this ladder has, and takes the placement p95
+% from 1.58 to 1.32 bp.
 \documentclass{article}
-\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free }
+\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free, protrusion = off, expansion = off }
 \fonts{ body = "Open Sans" }
 \begin{document}
 The harbour office keeps two ledgers, and the clerk who reconciles them
