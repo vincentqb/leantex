@@ -377,6 +377,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- presentation does not, because a math list carries neither.
   | .W0385 =>
     dvE "$\\textcolor{indigo}{x}$" ++ dvE "$\\text{\\textbf{bold} word}$"
+  -- A construct outside the modeled subset whose one content operand stands
+  -- in its place: the formula around it parses, so the loss is the
+  -- construct's rather than the display's.
+  | .W0389 => dvE "$\\cancelto{0}{\\sum_{k} x_k}$"
   -- A title whose author declared two lines and whose first does not fit
   -- the measure: the breaker finds a legal break inside the declared line,
   -- so a third line ships and its remainder returns to the flush-left

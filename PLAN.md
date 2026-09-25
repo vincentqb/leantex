@@ -378,6 +378,23 @@ list.
   own walk over `Math.MList` instead of reusing
   `Math.MList.scalarsList`, whose job is the coverage census and whose
   omissions (no radical sign is ever pushed) are right there and wrong here.
+- `mathContain_accounts` — containment fires only inside the family the
+  floor has ruled on. A construct reduced to its content operand in the
+  token stream is a control word this slice does not model *and* one whose
+  operands `Ir.floorNamedArgs` declares, so the reduction applies a decision
+  already made instead of inventing one. The boundary is not decorative:
+  `$a \xleftarrow{f} b$` has one operand and no table row, and reducing it
+  to `𝑎𝑓𝑏` is `formulaFloor_separates`'s falsity one construct further out,
+  so a single operand is not sufficient and the table row is. Blocked on a
+  monad gap rather than a census: the walk runs in `Except String` and
+  `LeanTex.Core.Loop` reads a `forIn` in `Id`, so neither `forIn_range_inv`
+  nor `bind_eq_of_inv` types against steps that may `throw`. The refactor
+  that closes it is named in the record — split the walk into a pure refusal
+  test and a pure mask, after which `floorMask_id`'s proof shape transfers —
+  and was declined here because it would put LaTeX's positional argument
+  scan in two places, which is the drift `Ir.floorMask`'s own comment
+  records as having once deleted a formula's only ink. `keptToks_mem` is the
+  proved upper bound beside it.
 - `nameRefusals_asked` — the general form: a declaration the engine refuses
   as unknown-by-name asked the input path first, so no refusal outlives a
   file beside the document that would have defined it. Waits on a declared
@@ -13379,3 +13396,115 @@ properties, with the PDF's runs through the same solver), and adding the title
 page to that list is a second slice because it owes the PDF-side scope beside
 the CSS one. Until then a content colour that fails on a dark title page is a
 named diagnostic rather than a silent repair, which is the honest floor.
+
+
+### 2026-09-25 — math granularity: an unmodelled construct costs itself
+
+A display in the private reference corpus set as body text end to end
+because one control word in one addend of one alignment row was outside
+the modelled subset. Measured on a raster of the affected page: both
+`\sum` signs gone, every subscript on the baseline, a superscript
+flattened to a digit, hyphens where minus signs belonged — while inline
+math on the same page set correctly, which is what said the machinery was
+fine and the *granularity* was the defect.
+
+The granularity boundary was per-environment, and structurally so:
+`MathParse.parseToks` answers `Except String (MList × Array Note)`, one
+`.error` for the whole formula, and `Elab.elabMathEnv` has nothing finer
+to degrade than what it is handed. So the deliverable is a parser-shape
+change, not an arm change.
+
+Two facts were checked before designing, one of which contradicted the
+advisory that prompted this work:
+
+* `Math.MList.scalarsList` **does** push a big operator's glyph.
+  `Ir.formulaFloor` over a parsed `\sum_{k} x` is `"∑𝑘𝑥"`. The census's
+  recorded omission is the radical sign, and that is the whole of it —
+  `\sqrt{x}` floors to `"𝑥"`. So the advisory's hypothesis (that `\sum`
+  was missing from the scalars, and that this was why it vanished) is
+  false, and no change to the census was owed here.
+* `\sum` vanished because the parse *failed*, which routes recovery to
+  the source floor: `Ir.mathFloor "\\sum_{k} R_{uk}"` is `"k Ruk"`, the
+  control word dropped as markup by `Ir.floorMask`. Containing the one
+  unmodelled construct so the parse *succeeds* therefore fixes the sum
+  sign as a side effect of fixing the granularity, and nothing else had
+  to move.
+
+**The repair.** Containment is a pre-pass over the flattened token
+stream, mirroring `Ir.floorMask` over a source's characters and for the
+same reason: the salvage is then a *filter*, so no token can be invented,
+and `keptToks_mem` reads that off the filter exactly as
+`Ir.floorChars_mem` does at the other floor. The construct's name, its
+option run and the leading arguments `Ir.floorNamedArgs` declares as
+naming are dropped; its content operand stays in the stream and parses as
+mathematics with everything around it. So `\cancelto{0}{X}` inks `X` as
+real mathematics rather than `0X` as text, which is the naming-arity
+table's own decision applied at a smaller scope rather than a second
+policy.
+
+**What is contained, and the boundary that was tightened once.** The
+first cut contained any control word the slice does not model whose
+operands did not have to be juxtaposed — at most one group left. The
+compat index refused it, and was right to: twenty documented commands
+changed the code they fire, and one of them showed the rule was wrong,
+not merely broad. `$a \xleftarrow{f} b$` has exactly one operand;
+reducing it to `𝑎𝑓𝑏` drops a *relation* and leaves its label juxtaposed
+with the neighbours, which is `formulaFloor_separates`'s falsity one
+construct further out. A glyph can be load-bearing between its
+neighbours rather than around its argument, and a token walk cannot see
+which.
+
+So containment is confined to the commands `Ir.floorNamedArgs` names.
+For those, and only those, the floor has already ruled on every
+operand — which name, which carries — so the reduction applies a decision
+already made. `mathContain_accounts` states that confinement and is owed;
+`keptToks_mem` is the proved upper bound beside it.
+
+**What still degrades whole, and why.**
+
+* A construct with no naming-arity row, *even with a single operand*.
+  Nothing has ruled on its operands, and `\xleftarrow` is the worked
+  counterexample. Extending containment to a wrapper family
+  (`\cancel`, `\pmb`, `\symbf`) is a per-command judgement about wrapper
+  versus operator, and it belongs beside the compat tables that already
+  make such judgements, not in the token walk. Recorded as the next step
+  rather than taken here.
+* A construct whose naming arguments leave more than one group as
+  content — `\overset{a}{b}` as `ab` reads as a product. This is the
+  direct `formulaFloor_separates` case.
+* Anything that changes what the *rows* are: an alignment tab outside a
+  grid, a row separator with an option run, an unbalanced group, `\left`
+  without its `\right`, nested math, a blank line, an unsupported
+  environment inside the body. These are `flattenErr` and stack-discipline
+  answers, and no smaller unit exists to isolate: the failure is the row
+  structure rather than a term in it.
+* A formula containment leaves inking nothing at all. The whole-formula
+  floor is the better recovery there because it has a declared
+  placeholder (`Ir.floorInk_accounts`) where this path would ship a
+  blank, so the construct is named through the channel it always was and
+  W0012's message for that case is byte-identical to before.
+
+**The diagnostic.** W0389, `degraded`, so `Floor.content` by derivation —
+the construct's place owes ink and its content operand is what stands
+there. A new code rather than a widened W0012 because the recovery
+differs in kind: W0012 says the formula set as text, W0389 says the
+formula set as mathematics and one construct did not. One code, one
+meaning. Registering it moved the diagnostics golden by exactly its
+registry block and its firing witness, and moved two compat-index rows
+(`\cancelto`, `\tag`) from `refuse:W0012` to `refuse:W0389` — the two
+members of the documented families that carry a naming-arity row. The
+stale note in `tests/compat-index/cancel.txt` claiming the table "owes
+and does not yet have" a `cancelto` row was corrected while there: it has
+carried one since 2026-09-24.
+
+`structuralCtrl` is a list standing beside a `match`, which is a drift
+hazard of exactly the kind a generated module's embedded code is: a name
+that stopped being structural would silently start being refused.
+`mathContainChecks` probes every name on it through `parseMath`, so the
+drift fails the suite rather than the page.
+
+Measured after, on the same page of the private corpus and on the
+synthetic fixture: both big operators set as display operators with
+limits below, variables in math italic with real subscripts, minus signs
+rather than hyphens, the superscript raised. One warning naming the one
+construct, where the whole display was named before.

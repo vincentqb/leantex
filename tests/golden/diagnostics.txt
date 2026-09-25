@@ -480,6 +480,8 @@ warning[W0387]: '\thispagestyle' was read and had no effect
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
 warning[W0388]: the \framefoot note reaches 231.57 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
   help: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
+── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
+warning[W0389]: math with \cancelto is not rendered yet; its content operand sets in its place
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

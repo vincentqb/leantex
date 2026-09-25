@@ -1,5 +1,6 @@
 import LeanTex.Core.Parse
 import LeanTex.Core.Math
+import LeanTex.Core.Ir
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated
 into `Math.MList` atoms. Pure and total; the caller (the elaborator) owns
@@ -258,6 +259,11 @@ inductive Note where
   /-- A colour or font change inside math whose content renders in the
   surrounding style: `what` names the change for the message. -/
   | styleDropped (what : String)
+  /-- A construct outside this slice that cost only itself: its name and its
+  naming arguments are gone and its one content operand stands in its place,
+  parsed as mathematics along with the rest of the formula. `what` names the
+  construct. -/
+  | constructFloored (what : String)
   deriving Repr, BEq
 
 /-- Text-style commands whose styling cannot be carried inside `\text`:
@@ -300,6 +306,28 @@ def delimChar : Char → Option (Option Char)
   | '<' => some (some '\u27E8')
   | '>' => some (some '\u27E9')
   | _ => none
+
+/-- The control words `parseToks` reads structurally, rather than through one
+of the symbol tables: every name that reaches a `.ctrl` arm of the parse loop
+by itself. Together with the tables, this is the whole of what this slice
+models, and `knownCtrl` is the question the containment pass asks.
+
+Listed rather than derived because the parse loop's arms are a `match` and
+not a table; `containKnownChecks` probes each name here through
+`parseMath`, so a name that stops being structural fails the suite rather
+than quietly starting to be contained. -/
+def structuralCtrl : List String :=
+  ["over", "frac", "dfrac", "tfrac", "sqrt", "ensuremath", "left", "right",
+   "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor"]
+
+/-- Does this slice model the control word at all? -/
+def knownCtrl (n : String) : Bool :=
+  structuralCtrl.contains n
+    || (alphaCtrl.lookup n).isSome
+    || (accentCtrl.lookup n).isSome
+    || (ctrlSpace.lookup n).isSome
+    || (ctrlAtom.lookup n).isSome
+    || (ctrlWord.lookup n).isSome
 
 /-- The flat token stream a formula parses from: group edges, alignment
 edges, and array boundaries become explicit markers, so the parser is one
@@ -361,6 +389,174 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
     | none => .error "this construct"
 
 end
+
+/-- Past the spaces at `i`. -/
+private def skipTokWs (toks : Array MTok) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:toks.size + 1] do
+    if j ≥ toks.size then break
+    if toks[j]? != some .ws then break
+    j := j + 1
+  return j
+
+/-- Past a `[...]` option run beginning at `i`, else `i` itself. A command's
+option run is markup with its name, whether or not this slice knows the
+command — the rule `Ir.floorMask` already applies to a math source, here at
+token scope. -/
+private def skipTokOption (toks : Array MTok) (i : Nat) : Nat := Id.run do
+  if toks[i]? != some (.ch '[') then return i
+  let mut j := i + 1
+  for _ in [0:toks.size + 1] do
+    if j ≥ toks.size then break
+    let t := toks[j]?
+    j := j + 1
+    if t == some (.ch ']') then break
+  return j
+
+/-- Past a balanced `{...}` beginning at `i`, or `i` itself when no group
+opens there. An index loop, so the bound is the array and no measure is
+owed — the shape `Ir.skipBalanced` has over characters. -/
+private def skipTokGroup (toks : Array MTok) (i : Nat) : Nat := Id.run do
+  if toks[i]? != some .openGrp then return i
+  let mut j := i
+  let mut depth := 0
+  for _ in [0:toks.size + 1] do
+    if j ≥ toks.size then break
+    match toks[j]? with
+    | some .openGrp =>
+      depth := depth + 1
+      j := j + 1
+    | some .closeGrp =>
+      j := j + 1
+      if depth ≤ 1 then break else depth := depth - 1
+    | _ => j := j + 1
+  return j
+
+/-- How many braced groups stand contiguously at `i`, spaces between them
+ignored as LaTeX ignores them when it collects a command's arguments. The
+containment decision reads this and nothing else about the operands. -/
+private def countTokGroups (toks : Array MTok) (i : Nat) : Nat := Id.run do
+  let mut j := skipTokWs toks i
+  let mut n := 0
+  for _ in [0:toks.size + 1] do
+    let stop := skipTokGroup toks j
+    if stop == j then break
+    n := n + 1
+    j := skipTokWs toks stop
+  return n
+
+/-- Which tokens of a formula survive containment, and the constructs
+contained: one flag per token, the shape `Ir.floorMask` has over a source's
+characters and for the same reason — the salvage is then a filter, so no
+token can be invented (`keptToks_mem`).
+
+Containment is confined to the commands `Ir.floorNamedArgs` names, and that
+confinement is the whole of the judgement here. For those the floor has
+*already* ruled on every operand — which ones name and which one carries —
+so reducing the construct to its content operand applies a decision already
+made rather than making a new one. The name, the option run and the naming
+arguments are markup exactly as they are to `Ir.floorMask`; what remains
+parses as mathematics with the rest of the formula.
+
+Two refusals, both of them the same rule:
+
+* more than one group left after the naming arguments — the operands would
+  have to be juxtaposed, and `formulaFloor_separates` is the statement that
+  juxtaposing two content operands states a claim the source does not
+  (`\overset{a}{b}` as `ab` reads as a product);
+* a command with no entry at all, whose operands nothing has ruled on. A
+  glyph can be load-bearing between its neighbours rather than around its
+  argument: `$a \xleftarrow{f} b$` reduced to its one operand is `𝑎𝑓𝑏`,
+  which is the same falsity one construct further out. Whether a command is
+  a wrapper or an operator is a per-command judgement and belongs beside the
+  tables that already make it, not to a token walk that cannot see it.
+
+A refused construct degrades the formula whole and is named as it was
+before, so a lossy floor stays the contract and a false one stays
+unreachable. -/
+private def containPlan (toks : Array MTok) :
+    Except String (Array Bool × Array String) := do
+  let mut keep : Array Bool := Array.replicate toks.size true
+  let mut names : Array String := #[]
+  let mut i := 0
+  for _ in [0:toks.size + 1] do
+    if i ≥ toks.size then break
+    match toks[i]? with
+    | some (.ctrl n) =>
+      if knownCtrl n then
+        i := i + 1
+      else
+        let some naming := Ir.floorNamedArgs.lookup n | throw s!"\\{n}"
+        let mut j := i + 1
+        let o0 := skipTokWs toks j
+        let o1 := skipTokOption toks o0
+        if o1 != o0 then j := o1
+        for _ in [0:naming] do
+          let opened := skipTokWs toks (skipTokOption toks (skipTokWs toks j))
+          if toks[opened]? != some .openGrp then
+            j := opened
+            break
+          j := skipTokGroup toks opened
+        if countTokGroups toks j > 1 then throw s!"\\{n}"
+        for m in [i:j] do
+          keep := keep.setIfInBounds m false
+        names := names.push s!"\\{n}"
+        i := j
+    | some _ => i := i + 1
+    | none => break
+  return (keep, names)
+
+/-- The tokens a plan keeps, in order. Factored out of `containUnknown` so
+that the salvage is a filter over the input with nothing else in the way,
+which is what makes `keptToks_mem` readable off it. -/
+private def keptToks (toks : Array MTok) (keep : Array Bool) : Array MTok :=
+  (toks.toList.zipIdx.filterMap fun (t, i) =>
+    if (keep[i]?.getD true) then some t else none).toArray
+
+/-- **Nothing invented: every token kept is a token of the input.** The
+upper bound on containment, and the reason it is stated as a filter — the
+same argument `Ir.floorChars_mem` makes for the filtered salvage, at the
+scope where what survives is parsed as mathematics rather than set as text.
+
+What it deliberately does not say, exactly as at the other floor: this
+permits a plan that dropped everything. The clause that bounds *when* the
+plan may drop anything at all is `mathContain_accounts`, and the page-level
+witness is `mathContainChecks`. -/
+private theorem keptToks_mem (toks : Array MTok) (keep : Array Bool) :
+    ∀ t ∈ keptToks toks keep, t ∈ toks := by
+  intro t ht
+  simp only [keptToks, List.mem_toArray, List.mem_filterMap] at ht
+  obtain ⟨p, hp, hq⟩ := ht
+  have hfst : p.1 ∈ toks.toList := by
+    have hm := List.mem_map_of_mem (f := Prod.fst) hp
+    rwa [List.zipIdx_map_fst] at hm
+  split at hq
+  · cases hq
+    simpa using hfst
+  · simp at hq
+
+/-- The token stream a formula parses from once every construct outside this
+slice has been reduced to its content operand, and the names of the
+constructs so reduced. -/
+private def containUnknown (toks : Array MTok) :
+    Except String (Array MTok × Array String) :=
+  match containPlan toks with
+  | .error e => .error e
+  | .ok (keep, names) => .ok (keptToks toks keep, names)
+
+/-- `keptToks_mem` where the parser reads it: whatever plan `containPlan`
+made, the stream `parseToks` consumes is drawn from the author's own
+tokens. -/
+private theorem containUnknown_mem (toks out : Array MTok) (names : Array String)
+    (h : containUnknown toks = .ok (out, names)) : ∀ t ∈ out, t ∈ toks := by
+  simp only [containUnknown] at h
+  cases hp : containPlan toks with
+  | error e => rw [hp] at h; simp at h
+  | ok pn =>
+    rw [hp] at h
+    simp only [Except.ok.injEq, Prod.mk.injEq] at h
+    rw [← h.1]
+    exact keptToks_mem toks pn.1
 
 /-- Attach a script to the last atom of `acc`, or to a fresh empty atom when
 none is there to take it (`$^2$`, TeX's empty-nucleus behaviour). A second
@@ -913,14 +1109,30 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
 
 /-- Parse a formula's raw body into a math list, or name the construct that
 puts it outside this slice. Notes name ragged alignment rows (an `array`
-inside the formula). -/
+inside the formula) and each construct contained rather than modelled.
+
+Containment runs first, so an unmodelled construct costs itself and not the
+mathematics around it: its name and naming arguments go, its content operand
+stays, and the formula parses. Where containment leaves the formula inking
+nothing at all the whole-formula floor is the better recovery — it has a
+declared placeholder (`Ir.floorInk_accounts`) where this path would ship a
+blank — so the construct is named through the same channel it always was. -/
 def parseMath (raws : Array Parse.Raw) : Except String (MList × Array Note) := do
-  parseToks (← flattenList #[] raws.toList) none
+  let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
+  let (l, notes) ← parseToks toks none
+  if let some n := names[0]? then
+    if (MList.scalarsList #[] l).isEmpty then throw n
+  return (l, names.map Note.constructFloored ++ notes)
 
 /-- Parse an alignment environment's body (`align`/`gather` rows split at
-`&` and `\\`) into one grid formula. -/
+`&` and `\\`) into one grid formula. Containment applies as it does to a
+formula (`parseMath`): one unmodelled addend of one row costs that addend. -/
 def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) :
     Except String (MList × Array Note) := do
-  parseToks (← flattenList #[] raws.toList) (some kind)
+  let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
+  let (l, notes) ← parseToks toks (some kind)
+  if let some n := names[0]? then
+    if (MList.scalarsList #[] l).isEmpty then throw n
+  return (l, names.map Note.constructFloored ++ notes)
 
 end LeanTex.Core.MathParse

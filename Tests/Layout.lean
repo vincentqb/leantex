@@ -1946,6 +1946,98 @@ def floorPolicyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a bracket run opening a formula stays on the page"
     (pageText "$\\overset{a}{b}[2,3]$" == "ab[2,3]")
 
+/-- **An unrenderable construct costs itself, not the formula around it.**
+The granularity of a math failure, read off `Layout.Out` with a math face
+present so that "set as mathematics" is a claim about glyphs rather than
+about an IR dump.
+
+The defect these rows pin: one unmodelled control word in one addend of one
+row degraded a whole display to body text, and the source floor then dropped
+every control word in it — so a sum sign vanished, a superscript flattened to
+a digit on the baseline, and every subscript went to the baseline too, while
+inline math on the same page set correctly. Nothing was wrong with the
+machinery; the failure was whole-environment when the construct was one atom.
+
+The boundary is `Ir.floorNamedArgs` and `formulaFloor_separates`, not
+convenience. A construct is reduced only where that table has already ruled
+on its operands, and then only where one content operand is left: two would
+have to be juxtaposed, which is the falsity the obligation names
+(`\overset{a}{b}` as `ab` reads as a product). A command the table says
+nothing about degrades the formula whole even with a single operand, because
+a glyph can be load-bearing between its neighbours rather than around its
+argument — `$a \xleftarrow{f} b$` reduced to `𝑎𝑓𝑏` is the same falsity one
+construct further out. -/
+def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let mathSet ← mathSetOf oneFace
+  let mathText (src : String) : String := pageTextOf mathSet src (some ({} : Layout.Geom))
+  let has := hasStr
+  -- The measured defect, at synthetic scale: one unmodelled construct in one
+  -- addend of a display whose other addends are ordinary mathematics.
+  let disp := "\\begin{align*} P_u = Q_u \
++ \\cancelto{0}{\\sum_{k} R_{uk}} + \\sum_{km} G_{ukm} \\end{align*}"
+  let d := mathText disp
+  t "a big operator beside an unmodelled construct still sets as mathematics"
+    (has d "\u2211")
+  t "both of the display's big operators survive one unmodelled addend"
+    ((d.splitOn "\u2211").length == 3)
+  t "the display's variables set as math italic, not as body letters"
+    (has d "𝑃" && has d "𝑄" && !has d "P" && !has d "Q")
+  t "a contained construct leaks no markup onto the page"
+    (!has d "\\" && !has d "{" && !has d "}" && !has d "&")
+  -- The construct's own loss is still named, and named as containment
+  -- rather than as the whole-formula degrade it is no longer.
+  t "containment names the construct by its own code"
+    ((warnCodes disp).contains "W0389" && !(warnCodes disp).contains "W0012")
+  -- The sub-expression floor is the whole-formula policy at a smaller
+  -- scope: `Ir.floorNamedArgs` says `\cancelto`'s first argument names, so
+  -- the value may not stand beside the content as a product.
+  let one := mathText "$\\cancelto{0}{x}$"
+  t "a contained construct ships its content operand as mathematics"
+    (has one "𝑥")
+  t "a contained construct does not ship its naming argument"
+    (!has one "0")
+  -- The boundary, stated as a page fact: two content operands are not
+  -- isolable, so the formula degrades whole and its floor is the filtered
+  -- source — exactly the behaviour `recoveryChecks` pins.
+  t "a construct with two content operands degrades the formula whole"
+    (mathText "$\\overset{a}{b}$" == "ab" &&
+     (warnCodes "$\\overset{a}{b}$").contains "W0012")
+  -- The second half of the boundary, and the one a single operand makes
+  -- tempting: nothing has ruled on an unlisted command's operands, so it is
+  -- refused even though exactly one group follows it.
+  t "a single operand is not enough where nothing ruled on it"
+    ((warnCodes "$\\zzz{q}$").contains "W0012" &&
+     !(warnCodes "$\\zzz{q}$").contains "W0389")
+  -- A row-structural failure is not isolable either: an alignment tab
+  -- outside a grid changes what the rows are.
+  t "a misplaced alignment tab still degrades the formula whole"
+    ((warnCodes "$a & b$").contains "W0012")
+  -- Scripts are the other half of the measured loss: a superscript beside a
+  -- contained construct stays a script, so its digit leaves the baseline.
+  let sup := mathText "$\\cancelto{0}{y} + z^2$"
+  t "a script beside a contained construct is still a script"
+    (has sup "2" && has sup "𝑧")
+  -- `structuralCtrl` is a list beside a `match`, so it can drift from the
+  -- arms it names. Every name on it must still reach a parse arm: a name
+  -- that stops being structural would start being contained, or refused,
+  -- silently. Probed through `parseMath`, which is where the drift would
+  -- show — never by reading the list back.
+  let structuralParses (n : String) : Bool :=
+    let src := match n with
+      | "over" => "$a \\over b$"
+      | "frac" | "dfrac" | "tfrac" => s!"$\\{n}\{a}\{b}$"
+      | "left" | "right" => "$\\left( a \\right)$"
+      | "limits" => "$\\sum\\limits_k a$"
+      | "nolimits" => "$\\sum\\nolimits_k a$"
+      | "textcolor" => "$\\textcolor{teal}{a}$"
+      | "ensuremath" => "$\\ensuremath{a}$"
+      | _ => s!"$\\{n}\{a}$"
+    let cs := warnCodes src
+    !cs.contains "W0012" && !cs.contains "W0389"
+  t "every structurally read control word still reaches its parse arm"
+    (MathParse.structuralCtrl.all structuralParses)
+
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top
 chrome never moves with the body. -/

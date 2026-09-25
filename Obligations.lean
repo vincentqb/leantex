@@ -927,6 +927,24 @@ theorem formulaFloor_separates (num den : Math.MList)
       ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
   sorry
 
+-- owed: mathContain_accounts
+-- owner: LeanTex.Core.MathParse
+-- source: the math granularity defect (PLAN 2026-09-25): one unmodelled control word in one addend of one alignment row degraded a whole display to body text, and the source floor then dropped every control word in it, so two `\sum` signs vanished, a superscript flattened onto the baseline and every subscript followed it — while inline math on the same page set correctly. The repair reduces such a construct to its content operand in the token stream, so the mathematics around it still parses. This is the confinement that makes the repair safe rather than a second source of falsity: containment may fire only for a control word the slice does not model AND on whose operands `Ir.floorNamedArgs` has already ruled, so reducing the construct applies a decision the floor already made instead of making a new one. The counterexample that fixed the boundary is `$a \xleftarrow{f} b$`: one operand, no table row, and reducing it to `𝑎𝑓𝑏` is `formulaFloor_separates`'s falsity one construct further out — which is why a single operand is not sufficient and the table row is. `keptToks_mem` is the upper bound and is proved (nothing invented: every token parsed is a token the author wrote); this is the clause that bounds *when* the reduction may happen at all.
+-- blocker: the walk runs in `Except String`, and the loop-reading layer (`LeanTex.Core.Loop`) reads a `forIn` in `Id` — `forIn_range_inv` carries a state invariant and `bind_eq_of_inv` peels a chained `Id.run do`, neither of which types against a loop whose steps may `throw`. So this is a monad gap rather than a census gap, and the refactor that closes it is named: split `containPlan` into a pure refusal test (`Id`, "is every construct here isolable?") and a pure mask (`Id`, "which tokens survive"), after which `floorMask_id`'s proof shape transfers line for line. That split was not taken here because it would put the positional argument scan — the option run, the naming arguments, LaTeX's own reading of what follows a control word — in two places, and `Ir.floorMask`'s own comment records what that cost the other floor: a counter form once let `\color\textcolor{red}{x}` spend a drop on the content group and delete a formula's only ink. One walk with an owed statement is the better trade until `Loop` grows an `Except` companion. The executable witness meanwhile is `mathContainChecks`, whose boundary rows fail under a containment that fired outside the table (the unlisted single-operand row) and under one that refused inside it (the `\cancelto` rows), and the compat index, which pins the code every documented member of the family fires.
+-- goldens: no
+/-- **Containment fires only inside the family the floor has ruled on.** A
+note naming a reduced construct names a control word this slice does not
+model and whose operands `Ir.floorNamedArgs` declares — so the reduction
+applies a decision already made rather than inventing one, and a construct
+the table says nothing about degrades its formula whole instead. -/
+theorem mathContain_accounts (raws : Array Parse.Raw) (l : Math.MList)
+    (notes : Array MathParse.Note)
+    (h : MathParse.parseMath raws = .ok (l, notes)) :
+    ∀ w, MathParse.Note.constructFloored w ∈ notes →
+      ∃ n, w = "\\" ++ n ∧ MathParse.knownCtrl n = false ∧
+        (Ir.floorNamedArgs.lookup n).isSome := by
+  sorry
+
 -- The prefix LaTeX puts before a refused name on its way to a filename now
 -- lives with the scan that reads it (`Compat.nameRefusalAsk`), where it is
 -- closed against the code list rather than kept here by hand: a refusal

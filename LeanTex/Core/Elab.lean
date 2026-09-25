@@ -1134,6 +1134,10 @@ private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
   | .styleDropped what =>
     warnOnce ctx ("math:style:" ++ what) .W0385
       s!"{where_}{what} inside math sets in the surrounding style" pos
+  | .constructFloored what =>
+    warnOnce ctx ("math:contain:" ++ what) .W0389
+      s!"{where_}math with {what} is not rendered yet; its content operand sets \
+in its place" pos
 
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as its text content with a warning naming the construct when it cannot —
