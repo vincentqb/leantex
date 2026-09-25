@@ -16669,14 +16669,28 @@ directories are kept to the newest fifty; `scripts/Land.lean` became
 paths that differ only by case — a check that fails on this branch's own base
 commit, where `Land.lean` and `land.lean` both stood.
 
+**The driver is now driven, by a gate.** `land --scratch-selftest` builds a
+throwaway repository under a temporary directory with git and nothing else,
+runs the binary against it under a one-command gate list, and asserts the
+verdict *and the refs*: a clean landing moves `main` to the gated tip; a
+commit arriving during the gates is refused with `main` unmoved; a main
+worktree leaving `main` is refused; a rebase conflict is refused with the
+branch back at its pre-rebase tip and clean; an override without the
+repository's opt-in is refused; and `land check` with no name is refused
+rather than landing `agent/check`. It is the `land-scenarios` gate, so the
+must-fix items stay fixed. It also answers the one defect no build can
+catch — a guard weakened together with its statement. Measured: replacing the
+post-gate tip comparison with `if false` leaves `lake build --wfail land`
+green, because that comparison is in no theorem; the scenario harness fails
+on it, reporting `main` moved to a commit the gates never saw. A harness that
+asserts repository facts is what covers the gap a theorem cannot.
+
 Left for a next round. `land check` still rebases the agent's branch; it now
 records the pre-rebase tip on its porcelain line and in its `checked` row,
 but the honest fix is a detached scratch worktree, which needs a seeded build
-cache to stay affordable. The driver's scenarios are reproduced by scripts in
-the evidence directory rather than by a gate; a `land --scratch-selftest`
-that needs only git is the shape wanted. `created` and `retired` rows carry
-no `gateset`, since no gate list applies to them. Two routes out of this
-branch: CI owes the same `land` build and `land --selftest` step the gate list
-now has, and `scripts/cites.lean`'s `treeRoots` owes an entry for
-`scripts.land`, without which a docstring in the landing modules cannot cite
-its own theorem by name.
+cache to stay affordable. `created` and `retired` rows carry no `gateset`,
+since no gate list applies to them. Two routes out of this branch: CI owes the
+same `land` build and the `land --selftest` and `land --scratch-selftest`
+steps the gate list now has, and `scripts/cites.lean`'s `treeRoots` owes an
+entry for `scripts.land`, without which a docstring in the landing modules
+cannot cite its own theorem by name.
