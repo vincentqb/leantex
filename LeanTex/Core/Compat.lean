@@ -86,6 +86,39 @@ def beamerColorRoles : List (String × String × String) :=
    ("footline", "muted", ""),
    ("page number in head/foot", "muted", "")]
 
+/-- Beamer's font elements, mapped onto the engine's styleable element and
+the `\style` key that carries the font: the author line is the title page's
+`author-font`, everything else its element's `font`.
+
+**The element names are beamer's own**: beamerfontthemedefault.sty's element
+list (the font-element list of the beamer user guide's "Fonts" part), plus
+the moloch lineage's additions from beamerfontthememoloch.sty (`section
+title`, `standout`). Where beamer's name and the engine's furniture name
+differ, the furniture is the same: beamer's `section title` is the section
+page's heading, its `title` and `author` the title page's two lines.
+
+Deliberately absent, and therefore named rather than guessed: `normal text`
+is the *document's* font, which is `\fonts` and not an element style;
+beamer's list elements name a marker font where the engine's list style
+names the item's, so mapping them would restyle the wrong thing; and
+`block title`, `footline`, `headline`, `caption`, `date`, `institute`,
+`subtitle` and `framesubtitle` have no styleable element here at all. -/
+def beamerFontElements : List (String × String × String) :=
+  [("frametitle", "frametitle", "font"),
+   ("standout", "standout", "font"),
+   ("section title", "sectionpage", "font"),
+   ("title", "titlepage", "font"),
+   ("author", "titlepage", "author-font"),
+   ("abstract title", "abstract", "font")]
+
+/-- Beamer's font keys, whose values are already TeX font commands (beamer's
+"Fonts" part, beamerbasefont.sty): the value *is* the translation, so the
+engine adds no vocabulary and invents no canonical order — the commands
+compose in the order the author wrote them, which is what a
+`\fontsize{..}{..}\selectfont` value needs. `parent` is inheritance the
+engine does not model and is named where it stands. -/
+def beamerFontKeys : List String := ["size", "series", "shape", "family"]
+
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
@@ -235,13 +268,15 @@ cascade per construct). `\usetheme` is not here: it rewrites to `\theme`.
 Neither is `\setbeamertemplate`: `frame footer` has a native meaning
 (`\framefoot`) and its own arm; every other template skips there. And
 neither are `\usefonttheme` and `\setbeameroption`, whose own arms silence
-the one argument each that asks for what the engine already does. -/
+the one argument each that asks for what the engine already does. And
+neither are `\setbeamercolor` and `\setbeamerfont`: each element beamer
+names is a `\palette` entry or a `\style` key, and each has its own
+translating arm. -/
 def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("useinnertheme", 1),
    ("useoutertheme", 1),
    ("addtobeamertemplate", 3),
-   ("setbeamerfont", 2),
    ("metroset", 1),
    ("beamertemplatenavigationsymbolsempty", 0)]
 
@@ -2454,6 +2489,67 @@ its value is skipped" pos
     -- neither reduces to a box of declared measure — and dropping it
     -- silently would move ink, so the drop is named once; the content stays
     -- in the stream.
+  | "setbeamerfont" =>
+    -- The other half of the same finding: the W0104 help named
+    -- `\style{element}{ font = {...} }` and then dropped the declaration.
+    -- beamer's font keys are TeX font commands already
+    -- (`beamerFontKeys`), so the value side needs no vocabulary of its
+    -- own — the commands compose in the order the author wrote them, and
+    -- the engine invents no canonical order. `beamerFontElements` carries
+    -- the element mapping and its source.
+    let j := skipStar raws start
+    let (args, k) := takeGroups raws j 2
+    if h : args.size = 2 then
+      let element := (rawSrc args[0]).trimAscii.toString
+      match beamerFontElements.lookup element with
+      | none =>
+        if element == "normal text" then
+          -- Not a missing element: the document's own font is `\fonts`,
+          -- and offering `\style` for something `\style` cannot reach
+          -- would be a help text that does not help.
+          sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
+            s!"'\\setbeamerfont\{{element}}' sets the document's font, which is \
+not an element style; skipped" pos
+            (help := "\\fonts selects the document's families; \
+\\style{element}{ font = {...} } styles one element")
+        else
+          sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
+            s!"'\\setbeamerfont\{{element}}' names a beamer font element the engine \
+has no styleable element for; skipped" pos
+            (help := beamerNative.lookup "setbeamerfont")
+        return some (#[], k)
+      | some (target, styleKey) =>
+        let mut cmds : String := ""
+        for e in (rawSrc args[1]).splitOn "," do
+          match (e.splitOn "=").map (·.trimAscii.toString) with
+          | [key, v] =>
+            if key == "parent" then
+              sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+                s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
+no font inheritance, so only declared commands are taken" pos
+                (help := beamerNative.lookup "setbeamerfont")
+            else if beamerFontKeys.contains key then
+              cmds := cmds ++ v
+            else
+              -- Never pasted into the template: an unknown key's value
+              -- would set as prose beside the element it was meant to size.
+              sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+                s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
+its value is skipped" pos
+                (help := beamerNative.lookup "setbeamerfont")
+          | _ => pure ()
+        if cmds.isEmpty then
+          return some (#[], k)
+        else
+          let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }"
+          became s!"\\setbeamerfont\{{element}}" native pos
+          return some (← synthAt native pos, k)
+    else return none
+  | "mbox" | "makebox" | "parbox" =>
+    -- The box geometry is not modelled and dropping it silently would move
+    -- ink, so the drop is named once; the content stays in the stream.
+    -- `\parbox`'s width is a mandatory brace group, so it is consumed here —
+    -- left in the stream it sets as prose.
     let (opts, widths) := match boxShape.lookup name with
       | some (o, w) => (o, w)
       | none => (0, 0)

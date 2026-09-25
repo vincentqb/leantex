@@ -280,6 +280,7 @@ def main (args : List String) : IO UInt32 := do
   themeStyChecks ref
   themeSpellingChecks ref
   beamerColorChecks ref
+  beamerFontChecks ref
   missingFileSpanChecks ref
   citeNoBibChecks ref
   surfaceSuiteChecks ref

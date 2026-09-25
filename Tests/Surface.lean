@@ -4253,6 +4253,84 @@ def beamerColorChecks (ref : IO.Ref (List String)) : IO Unit := do
         (barFills "\\setbeamercolor{frametitle}{fg=#FFFFFF,bg=#204060}" >
          barFills "\\setbeamercolor{sidebar}{fg=#204060}")
 
+/-- **The font half of the same finding.** `\setbeamerfont`'s W0104 help read
+"declare it with `\style{element}{ font = {...} }`" and then dropped the
+declaration — four sites in one theme of the private reference corpus,
+every font it declares. beamer's font keys are TeX font commands already
+(`size=\large`, `series=\bfseries`, `shape=`, `family=`; beamer's "Fonts"
+part, beamerbasefont.sty), so the value side needs no vocabulary of its
+own: the commands the author wrote become the `font` template, **in the
+order they wrote them** — the engine invents no canonical order, so a
+`\fontsize{..}{..}\selectfont` value composes the way its author meant.
+
+The claim each check makes is equality with the native spelling the help
+text names: the translation of a beamer font declaration *is* the `\style`
+declaration, not merely something like it. Element names are beamer's own
+(beamerfontthemedefault.sty's element list, plus the moloch lineage's
+additions from beamerfontthememoloch.sty). Fixtures in
+tests/corpus/sty-parity, synthetic and invented. -/
+def beamerFontChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let styleOf (pre : String) (element : String) : Option Ir.ElementStyle :=
+    (elabStr (deck169 pre "x")).1.styles.find? element
+  -- was: one blanket W0104, every font dropped. The declared value is one
+  -- the default bundle does not already carry, so the equality is a real
+  -- comparison rather than two copies of the bundle's own frame-title font.
+  t "a frame-title font declaration is the \\style declaration it names"
+    (styleOf "\\setbeamerfont{frametitle}{size=\\Large,shape=\\itshape}" "frametitle" ==
+     styleOf "\\style{frametitle}{ font = {\\Large\\itshape} }" "frametitle" &&
+     styleOf "\\setbeamerfont{frametitle}{size=\\Large,shape=\\itshape}" "frametitle" !=
+     styleOf "" "frametitle")
+  t "the keys translate in the order the author wrote them"
+    (styleOf "\\setbeamerfont{frametitle}{series=\\bfseries,size=\\large}" "frametitle" ==
+     styleOf "\\style{frametitle}{ font = {\\bfseries\\large} }" "frametitle")
+  t "a shape or family key is the same font command in the template"
+    (styleOf "\\setbeamerfont{standout}{family=\\sffamily,shape=\\itshape}" "standout" ==
+     styleOf "\\style{standout}{ font = {\\sffamily\\itshape} }" "standout")
+  -- The furniture whose beamer name and engine element differ.
+  t "beamer's section title font styles the section page"
+    (styleOf "\\setbeamerfont{section title}{size=\\Large}" "sectionpage" ==
+     styleOf "\\style{sectionpage}{ font = {\\Large} }" "sectionpage")
+  t "beamer's title font styles the title page"
+    (styleOf "\\setbeamerfont{title}{size=\\Large}" "titlepage" ==
+     styleOf "\\style{titlepage}{ font = {\\Large} }" "titlepage")
+  -- The author line has its own key on the same element, so the two
+  -- declarations must compose rather than replace: `\style` edits keys.
+  t "beamer's author font is the title page's own author-font key"
+    (styleOf "\\setbeamerfont{author}{size=\\small}" "titlepage" ==
+     styleOf "\\style{titlepage}{ author-font = {\\small} }" "titlepage")
+  let both := "\\setbeamerfont{title}{size=\\Large}\\setbeamerfont{author}{size=\\small}"
+  t "a title font and an author font compose on one element"
+    (((styleOf both "titlepage").bind (·.font)).isSome &&
+     ((styleOf both "titlepage").bind (·.authorFont)).isSome)
+  -- The named losses, each naming itself.
+  let dsOf (pre : String) : Array Diag := (elabStr (deck169 pre "x")).2
+  t "a font element with no engine element is named, with its own name"
+    ((dsOf "\\setbeamerfont{framesubtitle}{size=\\small}").any fun d =>
+      d.code == "W0104" && (d.message.splitOn "framesubtitle").length == 2)
+  -- The document's own font is not an element style: it is `\fonts`, and
+  -- the help has to say so rather than offer `\style` for something
+  -- `\style` cannot reach.
+  t "the document font is refused toward \\fonts, not toward \\style"
+    ((dsOf "\\setbeamerfont{normal text}{family=\\sffamily}").any fun d =>
+      d.code == "W0104" && (d.message.splitOn "normal text").length == 2 &&
+      ((d.help.getD "").splitOn "\\fonts").length == 2)
+  t "beamer's font inheritance is named, never silently dropped"
+    ((dsOf "\\setbeamerfont{frametitle}{parent=structure}").any fun d =>
+      d.code == "W0104" && (d.message.splitOn "parent").length == 2)
+  -- A key beamer does not define is named rather than pasted into a font
+  -- template, where it would set as prose.
+  t "an unknown font key is named, not pasted into the template"
+    ((dsOf "\\setbeamerfont{frametitle}{invented=\\bfseries}").any fun d =>
+      d.code == "W0104" && (d.message.splitOn "invented").length == 2)
+  -- And the whole path through a spliced local theme file.
+  let (docF, _, _) ← runStyParity "themepalette"
+  t "a local theme file's declared fonts reach the styles through the splice"
+    (((docF.styles.find? "frametitle").bind (·.font)).isSome &&
+     ((docF.styles.find? "titlepage").bind (·.font)).isSome &&
+     ((docF.styles.find? "titlepage").bind (·.authorFont)).isSome &&
+     ((docF.styles.find? "sectionpage").bind (·.font)).isSome)
+
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a

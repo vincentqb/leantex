@@ -627,6 +627,49 @@ verbose log. Ten synthetic rows (`pictureAnchorChecks`, read off
 commit and pass here, and seven compat-index rows cover the resolved
 spellings against one `refuse:W0334` row for the `mid` family.
 
+2026-09-24 — `\setbeamerfont` is the `\style` declaration its help names.
+The same shape as the colour entry below it: the W0104 help read "declare it
+with `\style{element}{ font = {...} }`" and then dropped the declaration —
+four sites in one theme of the private reference corpus, every font it
+declares.
+
+The value side needed no vocabulary of its own. beamer's font keys carry TeX
+font commands already (`size=\large`, `series=\bfseries`, `shape=`,
+`family=`; beamer's "Fonts" part, beamerbasefont.sty), so the translation is
+the commands themselves, composed **in the order the author wrote them** —
+no canonical order invented here, which is what a
+`size={\fontsize{..}{..}\selectfont}` value needs to survive. The element
+names come from beamerfontthemedefault.sty's element list with the moloch
+lineage's additions (beamerfontthememoloch.sty), and where beamer's name and
+the engine's differ the furniture is the same: beamer's `section title` is
+the section page's heading, its `title` and `author` the title page's two
+lines — the second onto `author-font`, so the two declarations compose on one
+element rather than replacing each other (`\style` edits keys).
+
+Four elements are deliberately *not* mapped, and each names itself instead of
+being guessed at: `normal text` is the document's font, which is `\fonts` and
+not an element style at all — so its help names `\fonts` rather than offering
+`\style` for something `\style` cannot reach; beamer's list elements name a
+marker font where the engine's list style names the item's, so a mapping
+would restyle the wrong thing; `parent=` is inheritance the engine does not
+model; and a key beamer does not define is named rather than pasted into the
+font template, where its value would set as prose beside the element it was
+meant to size.
+
+The claim each check makes is equality with the native spelling: the
+translation of a beamer font declaration *is* the `\style` declaration, not
+merely something like it. One check needed care — the deck default bundle
+already styles `frametitle` as `\large\bfseries`, so an equality written over
+that value passes with the arm absent; the fixture declares a value the
+bundle does not carry, and asserts the result differs from the undeclared
+build.
+
+Measured on the artifact, not the IR: on the private reference corpus the
+frame-title band deepens from 17 rows to 20 (rows 0–19 of 142, 40 dpi) as the
+declared frame-title size takes effect. Of the four sites, one translates and
+three are named — all three are the theme's *own* private element names,
+which beamer does not define either, so no mapping could exist for them.
+
 2026-09-24 — a construct whose diagnostic names its own translation is
 translated. `\setbeamercolor`'s W0104 help read "declare the colour with
 `\palette{ name = #RRGGBB }`" — the engine naming the exact mechanical
