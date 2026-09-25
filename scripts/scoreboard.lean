@@ -216,6 +216,13 @@ units; not comparable across tiers"
     match parse text with
     | .error e => lines := lines.push s!"queue: tier {t} unreadable: {e}"
     | .ok tsv =>
+      -- Faults about the row set, reported here rather than only at
+      -- `--check` time: a sibling's tier whose rows are not sorted parses
+      -- and gates fine today (the aggregate reads its exit status), and the
+      -- fault only bites the day it ports onto `tierMain`. Saying so now is
+      -- cheaper than saying so then.
+      for f in validate tsv do
+        lines := lines.push s!"queue: tier {t} baseline fault: {f}"
       if tsv.encoding.isNone then
         lines := lines.push s!"queue: tier {t} not ranked: no `# encoding:` line"
       let ds := deficits tsv
