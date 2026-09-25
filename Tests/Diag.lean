@@ -821,17 +821,34 @@ the per-link escape.
 Invented content throughout; the fonts are the ones the corpus ships. -/
 def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- The refusal must not assert that URLs are mono: that is the claim the
-  -- artifact contradicts whenever no mono family is declared.
-  let ds := (elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{same}\n"
-    "A link \\url{https://example.org/a} here.")).2
-  let urlDs := ds.filter (·.code == "W0104")
-  t "urlstyle: the refusal names the slot, not a face the page may not carry"
-    (urlDs.any fun d => hasStr d.message "mono slot")
-  t "urlstyle: the refusal no longer claims URLs are set mono"
-    (urlDs.all fun d => !hasStr d.message "are set mono")
-  t "urlstyle: the help names the slot's own lever"
-    (urlDs.any fun d => (d.help.map fun h => hasStr h "mono =").getD false)
+  -- The selector is honoured now, not refused: `\urlstyle{same}` asks for
+  -- the face in force and gets it, with no diagnostic at all. Asserted over
+  -- the elaborated inline — the presence of a family style, not a word in a
+  -- message — because that is what the page carries.
+  let (doc, ds) := elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{same}\n"
+    "A link \\url{https://example.org/a} here.")
+  t "urlstyle (fails on base): a satisfied selector draws no diagnostic"
+    ((ds.filter (·.code == "W0104")).isEmpty)
+  let famRuns (sty : Ir.Style) (d : Ir.Doc) : Nat :=
+    Ir.foldBlocks (fun n _ => n) (fun n i => match i with
+      | .styled s _ => if s == sty then n + 1 else n
+      | _ => n) 0 d.body
+  let monoRuns (d : Ir.Doc) : Nat := famRuns .mono d
+  t "urlstyle (fails on base): 'same' sets no family on the URL"
+    (monoRuns doc == 0)
+  let (ttDoc, _) := elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{tt}\n"
+    "A link \\url{https://example.org/a} here.")
+  t "urlstyle: 'tt', url.sty's default, still sets the mono family"
+    (monoRuns ttDoc == 1)
+  let (sfDoc, _) := elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{sf}\n"
+    "A link \\url{https://example.org/a} here.")
+  t "urlstyle: 'sf' sets the sans family, not the mono one"
+    (monoRuns sfDoc == 0 && famRuns .sans sfDoc == 1)
+  -- A value url.sty does not define is still a named skip.
+  t "urlstyle: a value url.sty does not define is named"
+    (((elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{zzbogus}\n"
+        "A link \\url{https://example.org/a} here.")).2).any fun d =>
+      d.code == "W0104" && d.subject == some "ctrl:urlstyle")
   -- The slot fact itself. One face in every slot is the no-mono default and
   -- the collapse; a distinct face in slot 2 is a declared mono.
   let load (name : String) : IO (Option Font.Font) := do

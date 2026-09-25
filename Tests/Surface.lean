@@ -1406,15 +1406,27 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "\\url{https://example.org/a_b}").1.body ==
       #[.para #[.link "https://example.org/a_b"
         #[.styled .mono #[.text "https://example.org/a_b"]]]])
-  -- \urlstyle{tt} is that default said back (a note); any other face is a
-  -- refusal whose help names the door that exists — \href's text half is
-  -- set in the running face — because a URL is not a styleable element.
-  t "urlstyle tt is agreement; another face is refused with the href door"
-    (let tt := (elabStr (dvDoc "\\urlstyle{tt}" "x")).2
-     let same := (elabStr (dvDoc "\\urlstyle{same}" "x")).2
-     tt.all (·.severity != .warning) &&
-       same.any (fun d => d.code == "W0104" &&
-         (d.help.map (hasStr · "\\href{url}{url}")).getD false))
+  -- \urlstyle names the family, honoured where \url elaborates (url.sty's
+  -- own semantics): tt the mono family, rm the roman, sf the sans, same the
+  -- face in force — no family style at all. url.sty's default is tt, so the
+  -- selector-free form above is the tt form.
+  t "urlstyle picks the family, and same picks none"
+    (let bodyOf (v : String) : Array Ir.Block :=
+       (elabStr ("\\documentclass{article}\\usepackage{url}\\urlstyle{" ++ v ++
+         "}\\begin{document}\\url{https://example.org/a}\\end{document}")).1.body
+     bodyOf "tt" == #[.para #[.link "https://example.org/a"
+         #[.styled .mono #[.text "https://example.org/a"]]]] &&
+       bodyOf "rm" == #[.para #[.link "https://example.org/a"
+         #[.styled .roman #[.text "https://example.org/a"]]]] &&
+       bodyOf "sf" == #[.para #[.link "https://example.org/a"
+         #[.styled .sans #[.text "https://example.org/a"]]]] &&
+       bodyOf "same" == #[.para #[.link "https://example.org/a"
+         #[.text "https://example.org/a"]]])
+  t "urlstyle (fails on base): a selector url.sty defines draws no warning"
+    (let diagsOf (v : String) : Array Diag :=
+       (elabStr (dvDoc ("\\usepackage{url}\\urlstyle{" ++ v ++ "}") "x")).2
+     ["tt", "rm", "sf", "same"].all fun v =>
+       (diagsOf v).all (·.severity != .warning))
   -- A definition standing between paragraphs binds from there on (the
   -- corpus's mid-document \newcommand); inline positions keep E0312.
   t "body define binds for the rest of the flow"

@@ -1,11 +1,13 @@
 # source: url package documentation (url.sty header) — \url, \urldef,
-# \urlstyle, \DeclareUrlCommand. URLs are set mono already, so \urlstyle{tt}
-# asks for the face in force and moves no ink (inert:noop); every other style
-# it can name is refused (W0104).
+# \urlstyle, \DeclareUrlCommand. \urlstyle names the family \url sets in:
+# tt/rm/sf are the mono/roman/sans families and same is the face in force,
+# all four honoured where \url elaborates. tt is url.sty's own default, so
+# it moves no ink (inert:noop); the other three are probed with the \url
+# whose family they change, which is where their effect lands.
 body impl \url{https://example.org}
 pre inert:noop \urlstyle{tt}
 pre refuse:W0301 \urldef\myurl\url{https://example.org}
 pre refuse:W0301 \DeclareUrlCommand\myp{\urlstyle{tt}}
-pre refuse:W0104 \urlstyle{same}
-pre refuse:W0104 \urlstyle{rm}
-pre refuse:W0104 \urlstyle{sf}
+body impl \urlstyle{same}\url{https://example.org}
+body impl \urlstyle{rm}\url{https://example.org}
+body impl \urlstyle{sf}\url{https://example.org}

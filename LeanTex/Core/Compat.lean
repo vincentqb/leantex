@@ -2753,32 +2753,6 @@ dims (dim-not-hide), it is never hidden" pos
         (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
-  | "urlstyle" =>
-    -- url.sty's face selector. The engine sets a `\url` in its mono slot,
-    -- which is url.sty's own tt default (url package documentation,
-    -- \urlstyle) — so `tt` is agreement, said as a note. Any other value
-    -- asks to switch that face, and a URL is not a styleable element
-    -- (`Ir.styleableElements`): the slot is fixed where `\url` elaborates,
-    -- so the selector is not honoured.
-    --
-    -- What this arm must NOT say is that URLs are set *mono*. The mono slot
-    -- is a distinct mono face only when the document declares one; with no
-    -- `\fonts{ mono = ... }` it resolves to the body face
-    -- (`Font.FontSet.slotCollapsed`), and a reader whose URLs plainly were
-    -- not mono was being told they were. The honest statement is about the
-    -- slot, which is true in every configuration, and the help names the two
-    -- levers that exist: the slot's family, and a per-link face.
-    let (args, k) := takeGroups raws start 1
-    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    if v == "tt" then
-      became "\\urlstyle{tt}" "nothing: a URL is set in the mono slot already" pos
-    else
-      sayOnce "ctrl:urlstyle" .W0104
-        s!"'\\urlstyle\{{v}}' selects a face for URLs; the engine sets a URL in \
-its mono slot and does not switch it" pos
-        (help := "\\fonts{ mono = \"<family>\" } chooses that slot's family; \
-\\href{url}{url} sets one link in the running face")
-    return some (#[], k)
   | "KOMAoptions" =>
     -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
     -- switches take true/on/yes and false/off/no). headsepline and

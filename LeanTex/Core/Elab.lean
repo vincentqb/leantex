@@ -323,6 +323,12 @@ structure ESt where
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
   bibStyle : Option String := none
+  /-- The family a `\url`/`\nolinkurl` sets in, from url.sty's `\urlstyle`:
+  `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
+  running face, which is `none` — no family style at all, not a fourth
+  family. url.sty's own default is `tt`, so that is the initial value.
+  Flow scope, as `flowPalette` is: a selector applies to the URLs after it. -/
+  urlFamily : Option Ir.Style := some .mono
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
   `elabBlocks` iteration, so a declaration inside a nested scope reaches
@@ -587,6 +593,18 @@ private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st => { st with spans :=
     { st.spans with bib := st.spans.bib.push (src, ⟨ctx.file, pos⟩) } }
+
+/-- **url.sty's `\urlstyle` values, as the family each names.** `tt`, `rm`
+and `sf` name the mono, roman and sans families; `same` asks for the face in
+force, which is no family style at all rather than a fourth family — hence
+the nested `Option`. Anything else is not a url.sty value (url.sty header,
+`\urlstyle`). -/
+def urlStyleFamily? : String → Option (Option Ir.Style)
+  | "tt" => some (some .mono)
+  | "rm" => some (some .roman)
+  | "sf" => some (some .sans)
+  | "same" => some none
+  | _ => none
 
 /-- Reserved control words, and the code each skip earns — W0307 (pending,
 a warning: a milestone owns the construct) when the skipped arguments carry
@@ -3525,22 +3543,56 @@ no extent is reserved for it" pos
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
+        else if name == "urlstyle" then
+          -- url.sty's face selector for `\url`/`\nolinkurl`: four values,
+          -- `tt`/`rm`/`sf` naming a family and `same` the running face.
+          -- Flow scope, as `\centering` and `\palette` are: it applies to
+          -- the URLs after it, with no brace revert.
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
+          | some (.group vRaw _) =>
+            have hjlt := getElem?_lt hj
+            let v := (Parse.rawSrc vRaw).trimAscii.toString
+            match urlStyleFamily? v with
+            | some fam => modify fun st => { st with urlFamily := fam }
+            | none =>
+              warnOnce ctx "ctrl:urlstyle" .W0104
+                s!"'\\urlstyle\{{v}}' names no URL face; skipped" pos
+                (help := "url.sty defines tt, rm, sf and same")
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) acc sb
+          | _ =>
+            diag ctx .E0304 s!"'\\{name}' needs a \{tt|rm|sf|same} group" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "url" || name == "nolinkurl" then
           -- hyperref/url/xurl's one-argument sibling of `\href`: the URL is
-          -- its own text, set mono (url.sty's `\urlstyle{tt}` default).
+          -- its own text, set in the family `\urlstyle` names — url.sty's
+          -- own semantics, whose default is `tt` (mono) and whose `same`
+          -- asks for the running face, so no family style at all.
           -- `\nolinkurl` is the same command minus the link (hyperref
           -- manual, "User macros": "\nolinkurl{URL} ... without a link"),
           -- so it resolves HERE, from the same group, the same text and the
           -- same face — one site, one difference. Two sites is how the face
           -- went missing: the URL was set as plain text elsewhere, which is
           -- byte-identical to dropping an unknown command.
+          --
+          -- The selector is read here rather than refused in the compat
+          -- layer because that refusal was false twice over: it told a
+          -- reader who asked for the running face that the engine sets URLs
+          -- mono, and the slot census then counted the URL as mono the
+          -- document had lost.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
+          let fam := (← get).urlFamily
           match hj : raws[j]? with
           | some (.group urlRaw _) =>
             have hjlt := getElem?_lt hj
             let url := argText ctx urlRaw
-            let set : Ir.Inline := .styled .mono #[.text url]
+            let set : Ir.Inline := match fam with
+              | some s => .styled s #[.text url]
+              | none => .text url
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
@@ -9927,6 +9979,10 @@ inductive PDecl where
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
   | captionsetup (unclosed : Option Pos) (body : Option String) (pos : Pos)
+  /-- url.sty's `\urlstyle`: the family `\url`/`\nolinkurl` set in. Legal in
+  the preamble, where url.sty documents it, and in the body, where the inline
+  arm reads it. -/
+  | urlstyle (v : Option String) (pos : Pos)
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw)) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
@@ -10151,6 +10207,14 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           | "fonts" => out := out.push (.fonts src pos)
           | "pictures" => out := out.push (.pictures src pos)
           | _ => out := out.push (.pdfmeta src pos)
+        else if name == "urlstyle" then
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group gbody _) =>
+            i := j + 1
+            out := out.push (.urlstyle (some ((rawSrc gbody).trimAscii.toString)) pos)
+          | _ =>
+            out := out.push (.urlstyle none pos)
         else if name == "captionsetup" then
           let mut j := i
           let mut unclosed : Option Pos := none
@@ -10649,6 +10713,26 @@ tool = none refuses the boundary")
       return s
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
+  | .urlstyle v pos =>
+    -- url.sty's face selector, honoured rather than refused: the four
+    -- values it defines map onto the engine's three families and the
+    -- running face. Refusing it was wrong twice — it told a reader who
+    -- asked for the running face that URLs are set mono, and the slot
+    -- census then counted such a URL as mono the document had lost.
+    match v with
+    | some val =>
+      match urlStyleFamily? val with
+      | some fam =>
+        modify fun st => { st with urlFamily := fam }
+        return s
+      | none =>
+        warnOnce s.ctx "ctrl:urlstyle" .W0104
+          s!"'\\urlstyle\{{val}}' names no URL face; skipped" pos
+          (help := "url.sty defines tt, rm, sf and same")
+        return s
+    | none =>
+      diag s.ctx .E0304 "'\\urlstyle' needs a {tt|rm|sf|same} group" (some pos)
+      return s
   | .captionsetup unclosed body pos =>
     -- The caption package's option interface (caption manual §2–4).
     -- `position`/`tableposition`/`figureposition` declare which side
