@@ -14980,3 +14980,85 @@ none of the three to module initialization.
   subject rather than by its line.
 - **`LeanTex/Core/Font.lean`**, the `slotCollapsed` docstring: it still
   says the loss "has never been named", but W0390 names it.
+
+
+### 2026-09-25 — the parity ladder, built: three premises measured, one rung added, one deferred for the reason it is deferred
+
+The ladder's first four rungs are built and gated
+(`scripts/parity.lean --check`, `tests/scoreboard/parity.tsv`). The design
+above needed two corrections, both from measurement rather than review.
+
+**The three premises, measured on the committed pairings.** `/ToUnicode` is
+real: the reference reads back 0 unnamed scalars of 477 on `prose`, 252 on
+`pagebreak`, 237 on `measure`, so no glyph-name reconstruction is needed and
+T2 stands as designed. Line breaks agree in practice: on `prose`, 7 of 7
+lines break at the same word as `lualatex`, with the geometry declared in
+big points on both sides. But **shared advances are not yet measurable**, and
+this is the correction that matters. `lualatex` writes the descendant font's
+`/W` behind an indirect reference (`7 0 R` → an array of 18 items), and
+`artWidthMap` is called on `(cid.get? "W")` without `deref` — the one field
+in `artFontOf` that is not dereferenced. So every reference glyph falls back
+to `/DW` 1000 and an 8-scalar run reads as exactly 80.000 bp against the
+engine's 35.897. Following the reference by hand yields only 4 glyphs, so
+`artWidthMap` also does not parse the form `lualatex` writes. Until both are
+fixed, any tolerance set on a geometry rung would be fitted to a reading
+artifact, not to the reference — so the geometry rung is **not built**, and
+that is the whole reason.
+
+**A rung the design did not have.** T3 (reading order) is blind to line
+breaking, which was assumed rather than checked. Measured on `pagebreak`:
+both sides ship the identical scalar *sequence* while breaking page 2's
+first line at different words — the engine fits one more word. A multiset
+cannot see that and neither can a sequence. So the ladder gains a line rung:
+per page, the same partition of the reading order into lines, grouped by
+exact baseline. It needs no advance widths, so unlike the geometry rung it is
+not blocked on `/W`. The ladder is now T0 build, T1 pages, T2 census, T3
+order, T4 lines; geometry becomes T5 and raster T6, both deferred.
+
+The `pagebreak` line disagreement is the ladder's first finding and is
+recorded as a level, not a target: same declared measure on both sides, page
+1 agreeing, one marginal line on page 2 differing. Whether that is a
+line-breaking tolerance difference or a defect is for whoever owns
+`Layout.lean`; the ratchet's job is that it does not get worse.
+
+**Deferred, each with its reason.** Geometry (T5): the `/W` defect above.
+Raster (T6): it needs `pdftoppm`, so it belongs in the regenerate mode, and
+printing a number nothing reads can wait for a rung that reads it.
+Accounting (`ink_covered_or_named`): the census agrees exactly on every
+fixture inside the denominator, so there is no unshipped glyph to name yet —
+the rung would be vacuously green, which is the state the subject-debt
+lesson says to avoid. Cross-backend: the HTML census is a leantex-internal
+agreement, not a cross-engine one, and belongs beside `html-oracle` where the
+HTML reading already lives.
+
+**The divergence registry has teeth.** Six constructors in
+`scripts/ParityCore.lean`, each with a reason and the rungs it may excuse;
+harness-side, because nothing the engine emits reads them and a divergence
+only means something once a second engine is in the room. A fixture declares
+one with a `% diverges: <name>` line. A declaration never changes a verdict —
+that would be the suppression list this design refuses. It is checked in both
+directions: an unregistered name fails, and a fixture that declares a
+divergence while reaching the top fails, because a declaration nobody removed
+when the engine improved would excuse the next regression. Verified by
+breaking each once.
+
+Reference provenance holds: a forced regeneration of all four references
+produced byte-identical files under `SOURCE_DATE_EPOCH=0`. Hermeticity
+verified under `env -i` with a PATH holding no TeX — `--check` exits 0 and
+`--force` regenerates nothing and calls that success, since a missing install
+is a fact about the machine and never a verdict about a document. Runtimes:
+`--check` 7.4 s, regenerate-all 8.4 s, four fixtures.
+
+`tests/parity/` is outside the `censusTable` coverage check, which scans
+`tests/corpus` only — so no census row is owed, checked rather than assumed.
+
+Routed, not mine to edit:
+
+- `Tests/Artifact.lean:290` (`artFontOf`): `artWidthMap ((cid.get? "W").getD .null)`
+  needs `deref`, and `artWidthMap` needs to accept the real-valued entries
+  `lualatex` writes. Blocks the geometry rung. The evidence is
+  `scripts/parity-measure.lean`, which prints the width map read both ways
+  per side and stays useful as the regression probe afterwards.
+- `Tests.lean`: the gate is deliberately not in `lake test` — it is a tier
+  script with its own three modes, like `html-oracle`. If the suite should
+  call it, that is one import and one call in a file this slice does not own.
