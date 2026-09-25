@@ -406,6 +406,55 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-25 — an edge's label stands beside its path, and `auto` was dropped
+(M8b slice 4, automatic placement). The lowest-value of this slice's four
+and the one with the clearest symptom: a label sat on its own line and the
+stroke ran through the middle of it.
+
+**Sourced.** TikZ manual §17.8, the automatic-placement keys: `auto` sets an
+in-path node beside the path rather than centred on it, on the left of the
+path's own direction; `swap` — spelled `'` — takes the other side;
+`auto=left` / `auto=right` name it outright and `auto=false` turns it off.
+All six spellings are read. What is *not* covered is `sloped`, which rotates
+the label along the path: a label shape here carries one anchor and no
+rotation, so `sloped` stays a named loss rather than a label set straight
+where the author asked for it turned.
+
+**The quantisation is the honest part.** A label shape carries one of five
+alignments, four of which are the cardinal sides, so "the left of the path's
+direction" is resolved to whichever axis the segment runs along more: a
+rightward path puts its label above (anchor `south`), an upward one to the
+left (anchor `east`). That is the whole of what `auto` can mean for a label
+with one anchor, and it is exact for the horizontal and vertical edges a
+node diagram is made of. A curve reads its chord rather than the tangent at
+its midpoint, because the four cardinal anchors cannot tell the two apart
+for any curve this subset's control distance produces.
+
+**Read at every level pgf reads it at.** The document's `\tikzset`, the
+picture's bracket, `every path`, and the statement's own — because a deck
+declares `auto` once and expects every edge to honour it, which is exactly
+how it was written on the private reference corpus. A label's own
+`above`/`below`/`left`/`right` still wins, as every inner setting does, and
+a label's own `swap` flips whichever side the path had in force.
+
+**The invariant.** `autoAlign_mem`, the registered `_mem` shape: the side
+comes from the four off-line anchors, so `center` — the one placement `auto`
+exists to prevent — cannot come out of it. `autoSide` is factored out of
+`autoAlign` so the statement can case on the two decisions that name the
+side rather than on the arithmetic that computes it; that factoring is what
+made the proof three lines instead of an eight-way `split` that left free
+variables behind.
+
+Evidence: twelve rows of `pictureAutoLabelChecks` red on the parent commit
+and green here. Each placement claim is an equality against `node[above]`,
+`node[below]`, `node[left]` or `node[right]` — placements the engine already
+shipped and the suite already trusts — rather than against a sign
+convention, because the picture's own box grows toward whichever side the
+label took and so moves both the label and the edge on the page together.
+Three rows assert the references are three distinct places, so the
+equalities say something. Read off `Layout.Out`: whether a label clears its
+line is a fact about where the shipped ink stands.
+
 2026-09-25 — an anchor sits on the border, and the border is the text plus
 one inner sep (M8b slice 4, node borders). The user's report was exact:
 "the anchor points are a little too close to the node/text". They were, by

@@ -18,7 +18,11 @@
 # before the walk reads it, as expansion precedes execution in TeX, so a
 # macro works in a node body, an edge label, a coordinate and a
 # conditional's test alike. Arity 0, 1 and 2 are expanded; a wider macro is
-# left standing and named, §14 paths (\draw, \path, the -- line-to,
+# left standing and named,
+# §17.8 (automatic placement: auto, swap and its ' shorthand, auto=left /
+# auto=right / auto=false — an in-path label stands beside the path on the
+# left of its direction, quantised to the four cardinal anchors a label
+# shape carries), §14 paths (\draw, \path, the -- line-to,
 # §14.13 to paths with out=/in= and the edge operation whose every edge
 # carries draw; the circle path operation is outside the subset),
 # TeXbook chapter 20 for the conditionals a picture body may hold: every
@@ -106,6 +110,13 @@ pre impl \tikzset{zz1/.style={}}
 body impl \begin{tikzpicture}\node[inner sep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[inner xsep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[inner ysep=2mm] (u) at (0,0) {Q};\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[auto] (0,0) -- node {Q} (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[auto,swap] (0,0) -- node {Q} (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[auto=left] (0,0) -- node {Q} (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[auto=right] (0,0) -- node {Q} (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[auto=false] (0,0) -- node {Q} (1,0);\end{tikzpicture}
+pre impl \tikzset{auto}
+pre impl \tikzset{swap}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize
 pre inert:default \pictures{ tool = lualatex }

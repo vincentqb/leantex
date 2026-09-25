@@ -5950,6 +5950,116 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the node label sets in the face the body sets in"
     (labelFaces.all fun f => bodyFaces.contains f)
 
+/-- **`auto` puts an edge's label beside the path, not on it.** pgf's
+automatic placement (TikZ manual §17.8, the `auto` and `swap`/`'` keys):
+the in-path node stands on the left of the path's own direction, `swap`
+takes the other side, and `auto=left`/`auto=right` name it outright. The
+engine dropped the key, so the label kept the `center` alignment a label
+with no placement takes, sat on the segment's midpoint, and the line was
+stroked straight through it — "GR is on the line instead of right above".
+
+`auto` is read at every level pgf reads it at (the document's `\tikzset`,
+the picture's bracket, `every path`, the statement's own), because that is
+where a deck declares it once; a label's own `above`/`below`/`left`/`right`
+still wins, as every inner setting does.
+
+Read off `Layout.Out`: whether a label clears its line is a fact about
+where the shipped ink stands, and only the page can say it.
+`Picture.autoAlign_mem` is the invariant. Invented content. -/
+def pictureAutoLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  -- One edge with an in-path label at its middle. The edge is the only
+  -- path, and the label's is the only text line.
+  let pic (pre pathOpts labelOpts endPt : String) : String :=
+    pre ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\draw[" ++ pathOpts ++ "] (0, 0) -- node[" ++ labelOpts ++ "] {Kappa} " ++
+    endPt ++ ";\n\\end{tikzpicture}\n\\end{document}"
+  -- Where the label's baseline stands *relative to the shipped edge*. The
+  -- picture's own box grows toward whichever side the label took, so the
+  -- page positions of both move together and only their difference is a
+  -- fact about the placement.
+  let offset (pre pathOpts labelOpts endPt : String) : Option Dim.Sp :=
+    let (doc, _) := elabStr (pic pre pathOpts labelOpts endPt)
+    let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+    match (c[0]?.bind (·.pathBoxes[0]?)),
+          (c[0]?.bind fun p => (p.lines.find? fun l => hasStr l.text "Kappa")) with
+    | some (_, ey, _, _), some l => some (l.y - ey)
+    | _, _ => none
+  let horiz (pre pathOpts labelOpts : String) : Option Dim.Sp :=
+    offset pre pathOpts labelOpts "(4, 0)"
+  -- The references: `above` and `below` are placements the engine already
+  -- shipped and the suite already trusts, so `auto` is pinned against them
+  -- rather than against a sign convention this row would have to assume.
+  let above := horiz "" "" "above"
+  let below := horiz "" "" "below"
+  let onLine := horiz "" "" ""
+  let (_, ds) := elabStr (pic "" "auto" "" "(4, 0)")
+  t "an 'auto' edge label elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  t "'auto' is no longer named as a dropped key"
+    (!ds.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "auto")
+  -- The three references are three different places, so an equality against
+  -- one of them says something.
+  t "on the line, above it and below it are three different placements"
+    (above.isSome && above != below && above != onLine && below != onLine)
+  -- The defect: with no `auto` the label is centred on the segment's
+  -- midpoint and the stroke runs through it.
+  t "a label with no placement and no 'auto' is centred on the line"
+    (horiz "" "" "" == onLine)
+  t "'auto' on a left-to-right edge places the label as 'above' does"
+    (horiz "" "auto" "" == above)
+  t "'swap' takes the other side, as 'below' does"
+    (horiz "" "auto, swap" "" == below)
+  t "the ' shorthand is 'swap'"
+    (horiz "" "auto, '" "" == below)
+  t "'auto=right' is 'auto, swap'"
+    (horiz "" "auto=right" "" == below)
+  t "'auto=left' is plain 'auto'"
+    (horiz "" "auto=left" "" == above)
+  t "'auto=false' leaves the label on the line"
+    (horiz "" "auto=false" "" == onLine)
+  -- Declared once for the document, as a deck declares it: the outermost
+  -- bracket reaches a path that carries none of its own.
+  t "'auto' declared for the document reaches an edge that declares none"
+    (horiz "\\tikzset{auto}\n" "" "" == above)
+  t "'auto' declared by 'every path' reaches it too"
+    (horiz "\\tikzset{every path/.style={auto}}\n" "" "" == above)
+  t "'auto' declared for the picture reaches its edges"
+    (offset "" "" "" "(4, 0)" != above &&
+     (let src := "\\begin{document}\n\\begin{tikzpicture}[auto]\n" ++
+        "\\draw (0, 0) -- node {Kappa} (4, 0);\n" ++
+        "\\end{tikzpicture}\n\\end{document}"
+      let (doc, _) := elabStr src
+      let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+      (match (c[0]?.bind (·.pathBoxes[0]?)),
+             (c[0]?.bind fun p => (p.lines.find? fun l => hasStr l.text "Kappa")) with
+       | some (_, ey, _, _), some l => some (l.y - ey)
+       | _, _ => none) == above))
+  -- The label's own placement still wins over the computed side, as every
+  -- inner setting does.
+  t "a label's own placement beats the side 'auto' computed"
+    (horiz "" "auto" "below" == below)
+  -- A vertical edge takes the other axis: the left of an upward path is
+  -- toward smaller x, so the label stands left of the line — which is what
+  -- the `left` placement does, and it is the reference again.
+  let vertX (pathOpts labelOpts : String) : Option Dim.Sp :=
+    let src := "\\begin{document}\n\\begin{tikzpicture}\n" ++
+      "\\draw[" ++ pathOpts ++ "] (2, 0) -- node[" ++ labelOpts ++
+      "] {Kappa} (2, 4);\n\\end{tikzpicture}\n\\end{document}"
+    let (doc, _) := elabStr src
+    let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+    match (c[0]?.bind (·.pathBoxes[0]?)),
+          (c[0]?.bind fun p => (p.lines.find? fun l => hasStr l.text "Kappa")) with
+    | some (ex, _, _, _), some l => some (l.x - ex)
+    | _, _ => none
+  t "an upward edge's 'left' and 'right' are two different placements"
+    ((vertX "" "left").isSome && vertX "" "left" != vertX "" "right")
+  t "'auto' on an upward edge places the label as 'left' does"
+    (vertX "auto" "" == vertX "" "left")
+  t "'swap' on an upward edge places it as 'right' does"
+    (vertX "auto, swap" "" == vertX "" "right")
+
 /-- **An anchor stands on the node's border, one inner sep clear of the
 letters.** pgf's node border is its text *plus* `inner sep`, default
 `0.3333em` (TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep`

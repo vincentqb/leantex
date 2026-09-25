@@ -1682,6 +1682,50 @@ theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
     intro d i s h1 h2; omega
   exact step decl ink sep hd hs
 
+/-- Which side of a segment `auto` puts a label on, as the two decisions
+that name it: does the segment run mostly horizontally, and does the label
+stand on the positive side of that axis? Factored out of `autoAlign` so the
+statement below can case on it — the arithmetic and the naming are separate
+facts and only the second is what an anchor reads. -/
+def autoSide (left : Bool) (dx dy : Sp) : Bool × Bool :=
+  let ax := if dx < 0 then -dx else dx
+  let ay := if dy < 0 then -dy else dy
+  let horiz := ay ≤ ax
+  (horiz, (0 ≤ if horiz then dx else dy) == left)
+
+/-- **Where `auto` puts an edge's label.** pgf's automatic placement (TikZ
+manual §17.8, the `auto` / `swap` keys): the node is set *beside* the path
+rather than centred on it, on the left of the path's own direction, and
+`swap` (spelled `'`) takes the other side. The four anchors a label shape
+carries are the four cardinal ones, so the side is quantised to whichever
+axis the segment runs along more — which is the whole of what `auto` can
+mean for a label that carries one anchor.
+
+A path running right has its left side up, so the label stands *above* the
+line and its anchor is `south`; running up, the left side is toward smaller
+x, so the label stands left and its anchor is `east`. -/
+def autoAlign (left : Bool) (dx dy : Sp) : Ir.Pic.LabelAlign :=
+  match autoSide left dx dy with
+  | (true, true) => .south
+  | (true, false) => .north
+  | (false, true) => .east
+  | (false, false) => .west
+
+/-- **An `auto` label is never centred on its own path.** The registered
+`_mem` shape: the result is drawn from the four off-line anchors, so the one
+placement `auto` exists to prevent cannot come out of it.
+
+That placement is exactly what the defect shipped. `auto` was not read at
+all, so an edge's label kept the `center` alignment a label with no
+placement takes, sat on the segment's midpoint, and the line was stroked
+through the middle of it. The user's words were "GR is on the line instead
+of right above". -/
+theorem autoAlign_mem (left : Bool) (dx dy : Sp) :
+    autoAlign left dx dy ∈ [Ir.Pic.LabelAlign.north, .south, .east, .west] := by
+  unfold autoAlign
+  rcases h : autoSide left dx dy with ⟨a, b⟩
+  cases a <;> cases b <;> simp
+
 /-- A named node's anchoring geometry: centre and border half-extents (a
 circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
 structure NodeGeom where
@@ -2506,7 +2550,8 @@ def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool 
       match tipName rest with
       | some tip => drawsAsArrow styles tip
       | none => false
-    | ts => ["thick", "draw", "dashed", "dotted", "densely dotted"].contains (keyPath ts)
+    | ts => ["thick", "draw", "dashed", "dotted", "densely dotted",
+        "auto", "swap", "'"].contains (keyPath ts)
 
 /-- The keys a node statement's option loop reads. A placement and a size
 switch are read through the same functions the loop reads them with, so the
@@ -3146,6 +3191,13 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- The subset draws one stroke per edge, so a second declaration is a
   -- loss to name rather than resolve in silence.
   let mut opStroke := false
+  -- `auto`/`swap` (pgf manual §17.8): whether an in-path label stands beside
+  -- the path, and on which side of its direction. Set at any level — the
+  -- document's `\tikzset`, the picture's bracket, `every path`, or this
+  -- statement's own — because that is where pgf reads it; a label's own
+  -- bracket still wins, as every inner setting does.
+  let mut autoOn := false
+  let mut autoLeft := true
   let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
     let mut j := 1
@@ -3173,6 +3225,14 @@ picture subset; the edge is drawn without a head")
     match opt.toList with
     | [.ident "thick"] => thick := true
     | [.ident "draw"] => strokes := true
+    -- `auto` puts an in-path label beside the path instead of on it;
+    -- `auto=left`/`auto=right` name the side and `auto=false` turns it off.
+    -- `swap` (and its `'` shorthand) flips whichever side is in force.
+    | [.ident "auto"] => autoOn := true
+    | [.ident "auto", .sym '=', .ident "left"] => autoOn := true; autoLeft := true
+    | [.ident "auto", .sym '=', .ident "right"] => autoOn := true; autoLeft := false
+    | [.ident "auto", .sym '=', .ident "false"] => autoOn := false
+    | [.ident "swap"] | [.sym '\''] => autoLeft := !autoLeft
     | [.ident "dashed"] => dash := .dashed
     | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
     -- `>=<tip>` names which head the `->` shorthand draws; a declared tip
@@ -3260,7 +3320,8 @@ picture subset; the edge is not drawn")
       | none =>
         return .error (unreachedName (ev.gapped || cx.parseGap) nm)
   let mut pts : Array Anchor := #[]
-  let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat × Ir.Pic.LabelAlign)) := #[]
+  let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat ×
+    Option Ir.Pic.LabelAlign × Bool)) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
@@ -3356,7 +3417,8 @@ outside the rendered picture subset; it is drawn as a straight line")
 outside the rendered picture subset; the edge is not drawn")
       -- an in-path `node[...] {...}`: an edge label at the segment's
       -- midpoint; a placement option (`right`, …) loses only itself
-      let mut mid : Option (Array LabelLine × Ir.Color × Nat × Ir.Pic.LabelAlign) := none
+      let mut mid : Option (Array LabelLine × Ir.Color × Nat ×
+        Option Ir.Pic.LabelAlign × Bool) := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
         -- An edge label reads its own bracket alone: neither the picture's
@@ -3367,7 +3429,11 @@ outside the rendered picture subset; the edge is not drawn")
 the rendered picture subset; the keys are dropped")
         let mut mcolor := Ir.Color.black
         let mut mscale : Nat := factor
-        let mut malign := Ir.Pic.LabelAlign.center
+        -- `none` is "this label declared no placement": it then takes the
+        -- side `auto` computes from the path's direction, or the path's
+        -- midpoint where no `auto` is in force.
+        let mut malign : Option Ir.Pic.LabelAlign := none
+        let mut mLeft := autoLeft
         if ts[i]? == some (.sym '[') then
           let mut j := i + 1
           let mut inner : Array Tok := #[]
@@ -3397,10 +3463,13 @@ the rendered picture subset; the option is dropped")
 dropped")
             -- placement: pgf §17.5.2 — `right` is anchor=west, the label
             -- standing right of the point, and so around
-            | [.ident "right"] => malign := .west
-            | [.ident "left"] => malign := .east
-            | [.ident "above"] => malign := .south
-            | [.ident "below"] => malign := .north
+            | [.ident "right"] => malign := some .west
+            | [.ident "left"] => malign := some .east
+            | [.ident "above"] => malign := some .south
+            | [.ident "below"] => malign := some .north
+            -- The label's own side, on top of whatever the path set.
+            | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
+            | [.ident "auto"] => pure ()
             | [] => pure ()
             | o :: _ =>
               ev := ev.diag (.W0334, s!"edge node option {tokText o} is outside \
@@ -3409,7 +3478,7 @@ the rendered picture subset; the option is dropped")
         | some (.group body) =>
           let (lines, mdiags) := nodeLabel cx env body
           ev := mdiags.foldl Ev.diag ev
-          mid := some (lines, mcolor, mscale, malign)
+          mid := some (lines, mcolor, mscale, malign, mLeft)
           i := i + 1
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
@@ -3446,9 +3515,14 @@ edge is not drawn")
           | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         else
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-        if let some (lines, mc, msc, mal) := mid then
+        if let some (lines, mc, msc, mal, mlf) := mid then
+          -- A label that declared no placement of its own takes the side
+          -- `auto` computes from this segment's direction, and the segment's
+          -- midpoint where no `auto` is in force.
+          let al := mal.getD
+            (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
           labels := stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
-            cx.bodySize msc mc mal lines labels
+            cx.bodySize msc mc al lines labels
       | .curve oA iA =>
         let p1 := a.towardDir oA
         let p2 := c.towardDir iA
@@ -3463,11 +3537,16 @@ edge is not drawn")
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
-        if let some (lines, mc, msc, mal) := mid then
-          -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint
+        if let some (lines, mc, msc, mal, mlf) := mid then
+          -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint. `auto`
+          -- reads the chord's direction rather than the tangent at that
+          -- point: the four cardinal anchors cannot tell the two apart
+          -- for any curve this subset's control distance produces.
+          let al := mal.getD
+            (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
           labels := stackLabels
             ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc mal lines labels
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc al lines labels
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them.
