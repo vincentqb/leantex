@@ -1,0 +1,58 @@
+# The declared public corpus the blocker ranking reads: documents the TeX
+# distribution itself ships, as paths relative to its root
+# (`kpsewhich -var-value TEXMFDIST`). `blockers --rank` resolves each entry
+# inside that root, following symlinks, and refuses one that leaves it, so
+# this file can only ever name the distribution's own files. One document
+# per entry: an entry is a content-distinct document, and the ranking keys
+# documents by content, so a second path to the same bytes counts once.
+# Provenance: the 45 content-distinct documents that built with lualatex
+# -halt-on-error -interaction=nonstopmode (TeX Live 2026) out of a screen of
+# 111 candidates taken from the distribution on 2026-09-25; the candidate
+# selection was not recorded. 31 of the 45 are one package's pictures
+# (tex/latex/ghsystem/pictures), so the corpus is narrow and the ranking
+# reads as a smoke test of the method, not as a survey of LaTeX in use.
+tex/latex-dev/tools/verbtest.tex
+tex/latex/base/lppl.tex
+tex/latex/base/sample2e.tex
+tex/latex/base/small2e.tex
+tex/latex/beamer/beamericonbook.tex
+tex/latex/calxxxx-yyyy/calxxxx-yyyy-doc.tex
+tex/latex/custom-bib/geophys.tex
+tex/latex/custom-bib/shorthnd.tex
+tex/latex/ghsystem/pictures/ghsystem_acid-8.tex
+tex/latex/ghsystem/pictures/ghsystem_acid.tex
+tex/latex/ghsystem/pictures/ghsystem_aqpol.tex
+tex/latex/ghsystem/pictures/ghsystem_bottle-2-black.tex
+tex/latex/ghsystem/pictures/ghsystem_bottle-2-white.tex
+tex/latex/ghsystem/pictures/ghsystem_bottle.tex
+tex/latex/ghsystem/pictures/ghsystem_exclam.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-1.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-2.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-3.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-4.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-5.tex
+tex/latex/ghsystem/pictures/ghsystem_explos-6.tex
+tex/latex/ghsystem/pictures/ghsystem_explos.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-2-black.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-2-white.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-3-black.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-3-white.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-4-1.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-4-2.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-4-3-black.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-4-3-white.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-5-2-black.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-5-2-white.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-O-5-1.tex
+tex/latex/ghsystem/pictures/ghsystem_flame-O.tex
+tex/latex/ghsystem/pictures/ghsystem_flame.tex
+tex/latex/ghsystem/pictures/ghsystem_health.tex
+tex/latex/ghsystem/pictures/ghsystem_skull-2.tex
+tex/latex/ghsystem/pictures/ghsystem_skull-6.tex
+tex/latex/ghsystem/pictures/ghsystem_skull.tex
+tex/latex/mwe/example-image-empty.tex
+tex/latex/mwe/example-image-plain.tex
+tex/latex/mwe/example-movie.tex
+tex/latex/nicetext/run/substr.tex
+tex/latex/tools/verbtest.tex
+tex/lualatex/luabidi/luabidi-test-arabmaths.tex

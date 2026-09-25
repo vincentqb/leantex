@@ -17340,36 +17340,75 @@ engine defect, below.
 **The blocker ranking, with confinement made structural.**
 `scripts/blockers.lean` screens a directory with lualatex `-halt-on-error`,
 elaborates each survivor, reads the W0301/W0302 subjects as the constructs
-that hold it back, and ranks them by `sole` and `share`. Four changes:
+that hold it back, and ranks them by `sole` and `share`.
 
-- **A construct name is published only when something public defines it** — a
-  TeX primitive, the LaTeX kernel, or a class or package file `kpsewhich`
-  resolved out of the TeX installation. Every other name, including every
-  one the definer scan could not attribute, folds into one aggregate row per
-  owner carrying counts and no names. The rule is a function of the owner
-  alone with no branch that would write a corpus-chosen name, so pointing
-  `--rank` at the private reference corpus cannot leak a macro name into the
-  tree. `--selftest` breaks it once against a synthetic document that
-  defines a name of its own and uses another it never defines: both are
-  blockers, one is attributed to the document, and neither reaches the
-  table. 35 of the 72 constructs over the public corpus fold away.
-- **A kill is not a verdict.** The screen bounds its pool at 16 and writes
-  the runs `timeout` killed to a third list, counted as neither buildable
-  nor unbuildable. An unbounded pool over a real corpus means contention,
-  and contention under a per-file timeout silently shrinks the denominator.
-  The tree's rule for cached tool answers, applied to a screen.
-- **"Blocked" is narrower than T0, and the gap is a number.** A blocker is
+- **Confinement is two rules the writer cannot route around.** An earlier
+  draft of this entry called confinement structural when it was not: the
+  published owner was built from the document's own load argument, so a
+  style loaded by absolute path put its path and its macro name into the
+  committed table, and a style found through TEXINPUTS put its name and its
+  macro name there. Reproduced before the fix with a planted corpus under a
+  scratch checkout: `--rank` wrote 2 such lines, and 3 with TEXINPUTS set.
+  Now:
+  - *Only the public corpus reaches the tree.* `tests/coverage/blockers.tsv`
+    is ranked by `blockers --rank` from `tests/coverage/public-corpus.txt`
+    alone — paths relative to the TeX distribution's root, each resolved
+    with symlinks followed and refused if it leaves the root. Any other list
+    is ranked by `--rank <list> <out>`, and an `<out>` inside a leantex
+    checkout (any worktree or clone, found by walking up to a
+    `lakefile.toml` that names the package) is refused. So not even a
+    private corpus's composition — which public classes it loads, whose
+    commands it reaches for — can reach the tree.
+  - *Only a public definer is named.* A class or package is published only
+    when the load argument has no path separator and the file it resolves to
+    lies inside the root, and it is named by that file's stem, never by the
+    argument. A path load, a file found through TEXINPUTS, TEXMFHOME or the
+    working directory, and every name the definer scan cannot attribute fold
+    into aggregate rows whose owners — `document`, `nonpublic`,
+    `unattributed` — are constructors that carry no payload, so there is
+    nothing a document chose that could be written through them.
+  - The root is asked of kpsewhich with every variable that could redirect
+    it unset, so a shell that points TEXMFDIST at a private tree does not
+    make that tree public.
+
+  `blockers --selftest` plants private-looking names behind each lookup — a
+  style by absolute path, a class by path, a style found through TEXINPUTS,
+  a document-local macro, a name nothing defines — runs the writer that
+  ships, and reads back every file it wrote. Each of the seven guards (the
+  public-owner test, the root check, the path-separator rule, the unset
+  redirects, the checkout refusal, content keys, and the never-ran verdict
+  below) was broken once by mutating its line, and each break failed that
+  selftest.
+- **The corpus was counted by path.** The 50 buildable public documents
+  were 45 distinct ones — `sample2e` and `small2e` three times each, `lppl`
+  twice — and the constructs those share led the ranking on that alone.
+  Documents are keyed by content now, and the manifest lists the 45. It is
+  a narrow corpus: 31 of the 45 are one package's pictures, so the ranking
+  exercises the method more than it surveys LaTeX in use.
+- **Neither a kill nor a tool that never ran is a verdict.** The screen
+  bounds its pool at 16 and writes a run `timeout` killed, and one `timeout`
+  could not start (exit 125, 126 or 127, or a copy that failed), to a third
+  list counted as neither buildable nor unbuildable. Before the fix a screen
+  with lualatex absent from `PATH` recorded every document as one that does
+  not build. The screen's own output holds absolute corpus paths, so it takes
+  the same checkout refusal as `--rank <list> <out>`.
+- **"Blocked" is narrower than P0, and the gap is a number.** A blocker is
   an unknown *name*, so a document that elaborates with errors and none
-  counts as unblocked here and still fails T0. Over the 50 buildable public
-  documents, 14 are blocked and **33** error without being blocked. Both are
-  in the table's header, so "implementing it makes those documents clean"
-  reads as clean of unknown names, which is what it means.
+  counts as unblocked here and still fails P0. Over the 45 distinct public
+  documents (`blockers --rank`), 11 are blocked and **33** error without
+  being blocked; 36 public constructs are ranked by name and 36 names fold
+  into 2 aggregate rows. Both counts are in the table's header, so
+  "implementing it makes those documents clean" reads as clean of unknown
+  names, which is what it means.
 - **Attribution reads the spellings `latex.ltx` really uses** — a bare
   `\newcommand\name`, a bare `\DeclareRobustCommand\name`, `\let` with no
   `=`, expl3's `\cs_new:Npn` — and a construct keeps the kind that
-  namespaces it, so `verse` the environment and `em` the command are two work
+  namespaces it, so `\em` the command and `em` the environment are two work
   items. `\hspace`, `\em`, `\markboth` and `\markright` are attributed to the
-  kernel now; they were unattributed.
+  kernel now; they were unattributed. A name ends at a character that could
+  not continue it in the file being read — a letter, `@`, `_` and `:` all
+  can — which is what stopped `\def\active@math@prime` from attributing
+  `\active` to the kernel.
 
 **What this says about the loop.** A probe is a claim, so it ships with
 positive controls, and the cheapest positive control is the repo's own

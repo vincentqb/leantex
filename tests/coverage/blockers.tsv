@@ -1,39 +1,36 @@
-# The blocker ranking: constructs nothing in this engine answers, over a
-# public corpus, ranked by the documents they hold back. A report, never a
-# gate. sole: documents this construct alone blocks. share: thousandths of
-# a document summed over the documents it blocks, splitting each document
-# between its blockers. docs: documents it appears in. kind: the subject
-# namespace (ctrl | env | aggregate). owner: what defines it (primitive |
-# kernel | class:<c> | pkg:<p>, or an aggregate row for the rest).
-# A construct is named only when something public defines it; a name the
-# document itself chose, or one the definer scan could not attribute, is
-# folded into an aggregate row carrying counts and no name. No corpus
-# document is committed and this table carries no document text.
+# The blocker ranking: constructs nothing in this engine answers, ranked by
+# the documents they hold back. A report, never a gate. sole: documents this
+# construct alone blocks. share: thousandths of a document summed over the
+# documents it blocks, splitting each document between its blockers. docs:
+# documents it appears in (an aggregate row sums its constructs'). kind: the
+# subject namespace (ctrl | env | aggregate). owner: what defines it
+# (primitive | kernel | class:<c> | pkg:<p>, a file inside the TeX
+# distribution named by its own stem; or document | nonpublic | unattributed,
+# each folded into one aggregate row carrying counts and no name).
 # "Blocked" means "has at least one unknown construct", which is narrower
-# than the parity ladder's T0: a document that elaborates with errors and
-# no unknown name is unblocked here and still fails T0.
-# corpus: 50 lualatex-buildable document(s), 14 with at least one blocker
-# errored but unblocked: 33 document(s) — the T0 gap this table does not rank
-# names folded into aggregate rows: 35
-# screened-by: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
-# date: 2026-09-25
+# than the parity ladder's P0: a document that elaborates with errors and no
+# unknown name is unblocked here and still fails P0.
+# corpus-manifest: tests/coverage/public-corpus.txt, 45 entr(ies), each resolved inside `kpsewhich -var-value TEXMFDIST`
+# corpus: 45 distinct document(s) (by content; 0 duplicate path(s) and 0 unreadable skipped), 11 with at least one blocker, key 958:00000000271DBDF7
+# errored but unblocked: 33 document(s) — the P0 gap this table does not rank
+# names folded into aggregate rows: 36
+# tex: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 kind	construct	owner	sole	share	docs
 ctrl	setRTLmain	pkg:luabidi	1	1000	1
-aggregate	(unattributed)	unattributed	0	3226	36
-ctrl	@	kernel	0	999	3
-env	em	kernel	0	999	3
-env	verse	class:article	0	999	3
-aggregate	(document)	document	0	832	4
-env	description	class:article	0	832	3
-ctrl	endinput	primitive	0	666	2
+aggregate	(unattributed)	unattributed	0	3392	38
+aggregate	(document)	document	0	499	3
+env	description	class:article	0	499	2
 ctrl	addtolength	kernel	0	400	2
 ctrl	newwrite	kernel	0	400	2
 ctrl	typeout	kernel	0	400	2
 ctrl	ProvidesFile	kernel	0	377	4
+ctrl	@	kernel	0	333	1
+env	em	kernel	0	333	1
+ctrl	endinput	primitive	0	333	1
+env	verse	class:article	0	333	1
 ctrl	LaTeXe	kernel	0	166	1
 ctrl	NeedsTeXFormat	kernel	0	166	1
 ctrl	^	kernel	0	166	2
-ctrl	active	kernel	0	166	2
 ctrl	begingroup	primitive	0	166	2
 ctrl	catcode	primitive	0	166	2
 ctrl	endgroup	primitive	0	166	2
