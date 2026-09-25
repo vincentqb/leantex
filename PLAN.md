@@ -18566,31 +18566,46 @@ corpus: 8 of 8 rasters identical, census identical.
 document was written in: `leantex doc.md -o doc.html` and `-o doc.pdf`
 both go through `Elab.runRaws`, the same door `.tex` uses. The whole md
 path is one dispatch in `Main.frontend`; there is no second elaborator,
-no generated tex text, and no re-parse.
+no generated tex source, and no re-parse of reader text.
+
+This entry is corrected in place after two review rounds. Every count
+below names the command that produced it and the tree it ran on; the
+third round's evidence is kept outside the repository, each run named by
+the sha it was about.
 
 **The design held, and the one thing it bought was measurable.** Because
 the desugaring targets `Parse.Raw` rather than source text, markdown body
 text goes through `Raw.word` and so carries `$`, `%` and `#` with no
 escape — they never become control tokens. Three rows in
-`mdSurfaceChecks` pin that. It is the concrete form of "md ⊂
-tex-expressible": where the surface AST has no field for a construct, the
-construct is *routed* by a keyed diagnostic carrying its own subject,
-never silently dropped — and the code it takes is decided by what reaches
-the page. `W0307` is `pending`, floor `absent`, so it names only a
-construct that ships nothing: `md:thematic-break`, since `Ir` has no rule
-block. `W0391` is `degraded`, floor `content`, for a construct that ships
-diminished: `md:heading-depth` (three sectioning levels), `md:list-start`
-and `md:loose-list` (`Ir.Block.list` carries neither a start number nor
-tightness), `md:link-title` and `md:image-title` (`Ir.Inline.link` has no
-title field). Two constructs that *were* routed are not gaps at all and
-are now carried through their one existing resolving site: a fenced
-block's info string rides `{lstlisting}`'s `language=` key into
-`Ir.ListingSpec.language`, and an image's text alternative rides a braced
-`\includegraphics[alt={...}]`.
+`mdSurfaceChecks` pin that. Where the surface AST has no field for a
+construct, the construct is *routed* by a keyed diagnostic carrying its
+own subject, never silently dropped, and the code it takes is decided by
+what reaches the page. `W0307` is `pending`, floor `absent`, so it names
+only a construct that ships nothing: `md:thematic-break`, since `Ir` has
+no rule block. `W0391` is `degraded`, floor `content`, for a construct
+that ships diminished: `md:heading-depth` (three sectioning levels),
+`md:list-start` and `md:loose-list` (`Ir.Block.list` carries neither a
+start number nor tightness), `md:link-title` and `md:image-title`
+(`Ir.Inline.link` and `.image` have no title field), `md:code-info` (an
+info word outside the listing-language grammar) and `md:image-alt` (an
+alternative no option spelling can carry, set with its straight double
+quotes curly).
 
-**Four defects, all invisible to the IR.** Each produced a plausible md
-AST and a plausible `Ir.Doc`, and each was found by reading the emitted
-page instead:
+**No reader text reaches a re-parse.** The elaborator reads a listing's
+language and an image's alternative back from option text. Round 2
+spliced the author's text into both, which was an injection path: an info
+string `a]b` shipped `b]` as code, `python,numbers=left` switched on line
+numbers, and `{r, echo=FALSE}` shipped `[language={r,]` as the code's
+first line, none with a diagnostic. What crosses now is an
+`Ir.ListingLang` — the IR's own value, whose grammar holds nothing the
+option head reads — or, for an alternative, the one spelling the
+elaborator's own splitter is checked to read back exactly
+(`MdDesugar.altSource`). The info string's escapes and references are
+resolved first (§4.5), and its first word ends at a space or a tab.
+
+**Round 1's four defects, all invisible to the IR.** Each produced a
+plausible md AST and a plausible `Ir.Doc`, and each was found by reading
+the emitted page instead:
 
 - a sibling list item whose container frame failed to match was read as a
   lazy continuation, so the second item of every ordered list not
@@ -18598,155 +18613,281 @@ page instead:
 - a marker of a different kind opened a list *inside* the open one rather
   than closing it;
 - a list frame outlived its items and swallowed every block that
-  followed — an ordered list, a quote, a fence, a heading and a paragraph
-  all landed in its last item and shipped nowhere;
+  followed;
 - `---` under a paragraph was tested as a thematic break before it was
   tested as a setext underline, which dropped the heading's title into
   the paragraph above.
 
-The invariant each one lacked is now a row in `mdSurfaceChecks`, asserted
-over the typed HTML tree. The setext row was broken once on purpose (the
-precedence reordered, the suite run, one `FAIL`, the file restored from a
-copy) so the floor is known to fail before the fix rather than assumed to.
-
 **The classifier is the deliverable, not the count.** The 652 spec cases
 are vendored whole (`tests/commonmark/spec-0.31.2.txt`, sha256 pinned in
-both the provenance file and the script, CC-BY-SA 4.0) and every case
+both the provenance file and the script, CC-BY-SA 4.0), and every case
 carries a committed verdict in `tests/commonmark/verdicts.tsv`:
 `match | rejected | divergence | owed`. `scripts/commonmark.lean` has
-`html-oracle`'s three modes plus `--explain <case>`, which prints the two
-canonical forms side by side. Today: **match 321, rejected 128,
-divergence 0, owed 203**, in 0.9 s for all 652 — of the owed, 22 carry the
-note `pending-decision:smart-punctuation` and 11 the note
-`tree-agrees-but-a-loss-is-named`.
+`html-oracle`'s three modes plus `--explain <case>`, `--audit` and
+`--scaling`. `lake env lean --run scripts/commonmark.lean --check` at
+62c89d8: **match 323, rejected 127, divergence 0, owed 202**, 994 ms for
+all 652. Of the owed, 22 carry `pending-decision:smart-punctuation`, 58
+`blocked-by:<gap>`, one `uncorroborated:md:raw-html` (case 195), and 121
+no note: reader deficits, ranked by section in the tier. The committed
+tables give 310/154/0/188 at round 1 (e4e9b32) and 321/128/0/203 at the
+end of round 2 (6bb87f4).
 
 Comparison is over *trees*. The engine's HTML is a typed tree already;
 the spec's expected HTML is read by a tolerant reader in the script into
 the same `Html.Node` shape, and both go through one `canon`. Seven
 normalizations are declared in the script, each with the thing it would
-hide named beside it, and each mutated in `--selftest`. Two were bugs the declaration exposed: `canon`
-emitted a closing tag for void elements, and the heading-level offset was
-subtracted from *both* sides, which collapsed `h1` and `h2` to one
-ordinal and reported every two-level heading document as owed. Fixing
-that second one moved 20 cases from `owed` to `match` and changed nothing
-about the engine — a normalization is a claim, and an unchecked claim
-about the comparison is as expensive as one about the code. The
-script's `--selftest` now records its findings instead of printing them;
-written to print, it reported a real mismatch and the run still said
-`ok`.
+hide named beside it, and `--selftest` breaks every one in both
+directions: it hides what it declares, and not the difference beside it.
+Round 2 made that claim before it was true — the selftest then mutated
+the verdict rules, and its one normalization check asserted that `canon`
+drops `class`. Declaring them found two bugs in the comparison itself:
+`canon` emitted a closing tag for void elements, and the heading-level
+offset was subtracted from *both* sides, which collapsed `h1` and `h2` to
+one ordinal and reported every two-level heading document as owed. Fixing
+that one moved 20 cases from `owed` to `match` and changed nothing about
+the engine.
 
-**The three strict classes, measured.** Raw HTML passthrough touches 73
-spec cases, indented code blocks 52, lazy continuation 12 — read off the
-subject each refusal carried, not counted by hand. They are one code
-(`E0390`) with three subjects, so `Diag.tallySites` folds repeats and
-flipping a class is a verdict-table change plus one reader arm. The
-decision is the user's; the reader is built so that decision is data.
+**A verdict needs a witness from outside the reader.** Each rule below
+closes a way the ledger certified itself:
 
-`tests/scoreboard/commonmark.tsv` is the tier: one row per spec section,
-value = cases matching, a value may not drop and a row may not vanish.
-The deficits are the ranking the autonomy loop asked for — Links 34/90,
-Link reference definitions 3/27 (no definition map yet), Images 4/22,
-Lists 6/27, Setext 11/27 — and they are read from the table rather than
-guessed.
+- **`rejected` is a claim, corroborated from outside the reader.** A
+  raw-HTML refusal's text must pass through the spec's expected HTML
+  verbatim (escaped text there is `&lt;`, so a literal prefix is markup
+  the spec passed through). An indented-code or lazy refusal must be on
+  `tests/commonmark/strict-reviewed.tsv` — 60 rows (`grep -c '^[0-9]'`),
+  reviewed against the spec with pandoc 3.11's CommonMark reader as a
+  second opinion — and the list fails in both directions. Round 1 filed
+  any `E0390` as `rejected`; round 2 keyed the verdict on the three strict
+  subjects, but the reader's one `E0390` constructor always sets one, so
+  the key was the code under another name. Case 195 — a link reference
+  definition whose `<my url>` destination reads as a tag — stayed
+  `rejected`. It is `owed` now, named `uncorroborated:md:raw-html`. The
+  reader still refuses it, because link reference definitions are not
+  implemented.
+- **A case whose run names a loss is never a `match`.** That covers every
+  md route and a `W0110` on a markdown run. `canon` keeps a code element's
+  `language-*` class on both sides and drops only styling classes and ids.
+  Round 2 dropped `class` whole, so 24, 34 and 144 read as `match` while
+  the run named the lost language with `W0110`. Case 24 now matches on a
+  carried language. Case 34 (`föö`, not ASCII) and case 144 (`;`) are owed
+  on `md:code-info`.
+- **`owed` never hides silence.** Take a gap construct the expected page
+  carries: a rule, a start number, a title, a language, or a fourth-level
+  heading. If the engine's page drops it but ships the element it sits on,
+  the run must name it, or every mode fails (`silentGaps`). This reader
+  has zero such cases. Run through `--check` on the 6bb87f4 reader, the
+  rule names exactly 60 and 88, the two breaks round 2 lost unnamed.
 
-**Correction, same day: a reviewer blocked this, and five of the findings
-were about the ledger rather than the reader.** The architecture held and
-the hand-checked matches were genuine. What did not hold:
+An owed case whose trees agree once exactly its named gaps are hidden
+carries `blocked-by:<gap>`. That note is the verdict row each IR gap owes,
+listed below.
 
-- **An oracle certified itself.** `classify` filed *any* `E0390` as
-  `rejected`, and `rejected` then meant "whatever the reader under test
-  refused". Twenty-nine of the 154 were reader defects on valid
-  CommonMark: `htmlBlockAt` fired on any `<` followed by a letter, so
-  `<https://example.org>` at the start of a line and literal text such as
-  `x <y for comparison` failed the build. The fix is both halves. The
-  reader implements the §6.6 tag grammar (`htmlTagAt`) — a name, its
-  attributes, quoted or unquoted values, comments, processing
-  instructions, declarations, CDATA — and the block test implements §4.6's
-  conditions 1–6 by name with condition 7 as a complete tag alone on its
-  line, split from `htmlBlockInterruptAt` because condition 7 may not
-  interrupt a paragraph. And the verdict is keyed on the three declared
-  refusal *subjects*, never on the code: an `E0390` from anywhere else is
-  a defect, not a decision. Twenty-five cases left `rejected`, 14 of them
-  to `match`. **No bucket may be defined by the code under test** is now
-  the surface-reader row in AGENTS.md.
-- **A fence outlived its container.** A fenced leaf skipped container
-  matching entirely, so a fence inside a blockquote or a nested item never
-  closed: the closing fence, the paragraph and the heading after it all
-  shipped inside one `<pre><code>`, with the container's `> ` prefixes
-  intact and no diagnostic. Containers are matched first now; the closer
-  is tested on the line after the prefixes; content lines are stripped of
-  the opener's own indent and no more; and the fence closes with its
-  container (§4.5). Six rows in `mdSurfaceChecks`, one per container kind
-  plus the sibling and the following block.
-- **Six matches existed only because a normalization dropped `class`.**
-  The rule is now general and mutation-tested: a case whose run *names a
-  loss* can never be a `match`, however the trees compare. That demoted 11
-  cases, 9 of them on `md:loose-list`, which over-reports because the HTML
-  backend already wraps a multi-block item in `<p>`. The six info-string
-  cases are genuine matches now that the language is carried. The tier
-  baseline is *lower* in six sections as a result; the drop is declared in
-  the tier file's own header with the case numbers, and `--check` compares
-  notes as well as verdicts, so none of the eleven can quietly become a
-  `match` again.
-- **Titles were dropped in silence** and the wrong fix-its shipped. Link
-  and image titles are named by `W0391`; the raw-HTML help no longer says
-  "write it as a command", which markdown cannot do, and the lazy help
-  says to indent to the container's content column rather than to repeat a
-  bullet, which would start a new item.
-- **Smart punctuation on markdown text is the user's decision, not the
-  reader's.** The elaborator's `smartPunct` rewrites `--`, `...` and
-  straight quotes in md body text; CommonMark keeps them literal. Twenty-two
-  cases differ from the spec by nothing else. They stay `owed`, out of
-  `match`, each carrying the note `pending-decision:smart-punctuation`, and
-  the run prints the count. Deciding it either declares 22 divergences with
-  a reason or gives the surface a literal-word form the desugaring can emit.
+**The three strict classes, measured**, read off the subject each refusal
+carried (`--check` at 62c89d8):
 
-**The inline phase was quadratic, and nothing could have noticed.** One
-64 KB paragraph of `*a*` took 31.8 s and 112 KB of links 165 s, against
-0.9 s and 0.6 s for the same content written as tex. Two independent
-causes, both the same shape: `buildInlines` filtered the two pair tables
-once per token, and five bounded `for` loops were used as while-loops that
-ran to the paragraph length after their own run had ended. The pair tables
-are indexed by token before the pass; the loops break; `matchEmphasis`
-walks only run tokens and stops at the spec's openers-bottom floor.
-Measured through the binary: emphasis 64 KB 31,831 → 905 ms, links 56 KB
-55,297 → 519 ms, links 112 KB 164,666 → 982 ms. All 652 verdicts are
-unchanged across the rewrite, which is the correctness evidence.
+- raw HTML touches 73 cases, 72 of them corroborated;
+- indented code touches 48, all corroborated;
+- lazy continuation touches 12, all corroborated.
 
-The gate is new and is a *mechanism*, not a number: `--scaling` runs every
-inline shape at 1×/2×/4× plus the pathological ones (nested brackets, open
-brackets, mixed delimiter runs) and fails above 2.6× per doubling. It
-measures wall-clock, so it is a deep oracle run when the reader is touched,
-not part of `lake test`. Measured after: every shape 1.86–2.02×. Broken
-once through its own path — the per-token pair filters reinstated, the tool
-run, exit 1 at 3.87× and 3.93× — then restored from a file copy.
+Round 1's entry said 98/52/12 and round 2's said 73/52/12. `--check`
+printed 73/53/10 at the end of round 2, because five refusals had the
+wrong class. 238 and 312 are lazy continuations whose line is indented
+four columns; they were refused as indented code, with that class's
+fix-it. 149, 182 and 291 carried a second, spurious indented-code refusal,
+from lines inside an HTML block or after a lazy line. The fixes follow the
+spec:
 
-Three container defects the reviewer found are also fixed, each with its
-own rows: `* * *` and `- - -` opened three nested empty lists because the
-container loop ran before the thematic-break test; the spaces after a
-marker were counted from the second one, so `-     foo` set its content as
-item text where the strict dialect owes an indented-code refusal; and a
-line that was only markers opened an empty paragraph, which made the next
-line a lazy continuation of it. `splitLines` folds over the string instead
-of materializing `input.toList`, and the classifier's input gate is
-`Flate.contentKey` in Lean rather than a `sha256sum` subprocess — the
-sha256 stays as provenance, which is what a human verifies upstream, but a
-hermetic run cannot spawn a process.
+- a four-column line under an open paragraph starts no block, so it is
+  lazy;
+- a refused lazy line is consumed with its containers left open;
+- a refused HTML block is consumed to its §4.6 end;
+- a condition-7 tag no longer interrupts a paragraph.
 
-**Routed, as IR gaps, not the reader's to fix.** `Ir.Block.list`
-(`Ir.lean:3599`, `list (ordered : Bool) (items : Array (Array Block))`) has
-no `start` and no `tight` field, so `md:list-start` and `md:loose-list` stay
-routed, and `md:loose-list` over-reports on the HTML side until tightness is
-a field the backend reads. `Ir.Inline.link` (`Ir.lean:2029`,
-`link (url : String) (body : Array Inline)`) has no `title` field, and
-`Ir.Inline.image` (`Ir.lean:2099`) none either, so `md:link-title` and
-`md:image-title` stay routed. Heading depth beyond three levels is a kernel
-decision about sectioning, not a markdown one.
-**Left undone**, named rather than hidden: `charsOf` (`MdParse`) and
-`textRaws` (`MdDesugar`) still build a `List Char` per paragraph;
-`squeeze` and `keptAttrs` in the classifier are still wider than their
-declarations (measured to inflate nothing today, but unchecked); the
-classifier is still not in CI, which is the coordinator's commit; link
-reference definitions still render as paragraph text rather than being
-named; and `matchEmphasis` still neither removes delimiters between a
-matched pair nor applies the rule of three to the original run lengths.
+The classes are one code (`E0390`) with three subjects, so
+`Diag.tallySites` folds repeats and flipping a class is a verdict-table
+change plus one reader arm. The decision is the user's.
+
+**The tier is on the shared format.** `tests/scoreboard/commonmark.tsv`
+is written by `Scoreboard.tierMain`: a `<section>.match` and a
+`<section>.cases` row per section, encoded `pairs match/cases`, sorted,
+under the one ratchet. `commonmark` left `Board.pendingTiers` in the same
+commit (10f505d), and the port changed no value (25 sections, 321
+matches). The three false matches came off with human-written
+`# lowered:` lines naming the cases. Round 2's header said six sections
+fell; by the committed tables four did (Tabs, Indented code blocks, List
+items, Lists), and the case it filed under Block quotes, 108, is an
+Indented code blocks case. The deficits are the ranking (`--check` at
+62c89d8): Links 35/90, Link reference definitions 3/27, Images 5/22,
+Lists 6/27, Setext headings 11/27, List items 15/48.
+
+**Round 2, as a reviewer found it.** The architecture held and the
+hand-checked matches were genuine. The oracle certified itself: `classify`
+filed any `E0390` as `rejected`, so reader defects on valid CommonMark
+read as design decisions. `htmlBlockAt` fired on any `<` followed by a
+letter, so
+`<https://example.org>` at the start of a line and text such as
+`x <y for comparison` failed the build. The reader now implements the
+§6.6 tag grammar and §4.6's conditions 1–7 by name. By the committed
+tables, 25 cases left `rejected` in the first fix commit (e55b4e8: 14 to
+`match`, 11 to `owed`). By the end of the round 28 had left (15 to
+`match`, 13 to `owed`), and two had entered: 7 and 278, both genuine
+indented code. Round 2 also fixed these defects:
+
+- a fence outlived its container: it skipped container matching, so a
+  fence inside a quote or a nested item swallowed the rest of the
+  document as code;
+- link and image titles were dropped in silence;
+- the fix-its told a markdown author to write a command;
+- `* * *` and `- - -` opened three nested empty lists, because the
+  container loop ran before the thematic-break test;
+- the spaces after a marker were counted from the second one;
+- a line of only markers opened an empty paragraph.
+
+**Round 3: three silent defects the ledger could not see.** A reviewer
+blocked round 2 on regressions that left every verdict in place:
+
+- **A list close dropped the rest of the document.** When `- foo` was
+  followed by `* * *` or `- - -`, the list frame stayed open with no item
+  in it. Every later block landed in the frame's own accumulator, and each
+  of four hand-written close sites discarded it, with no diagnostic at
+  all. The decision to close was a prediction made before the container
+  loop: a second copy of its marker test, and the copy that lacked the
+  break's precedence. Now one `closeTop` closes every frame and carries a
+  list's accumulator after it, and a list closes, once the containers are
+  read, if the line opened no item in it. The invariant — every source
+  block reaches the page or a diagnostic — is tested over a generated
+  family of 1,920 documents: container × marker × break spelling ×
+  nesting × blank line × following block. 960 of them failed before the
+  fix (`mdAccountsChecks`). A setext underline admits no internal spaces,
+  so `Foo` over `- - -` is a paragraph and a break.
+- **Emphasis is processed per bracket region, as §6.3 does.** The linear
+  matcher shared one openers-bottom floor per shape across regions. A
+  closer inside a link could then raise the floor above a valid opener
+  outside it, and `*a [b*](c) d*` stopped pairing. The matcher now runs
+  cmark's `process_emphasis` over each region's runs:
+  - innermost regions first;
+  - a stack of potential openers, which a match pops above its opener
+    (without that, `*foo _bar* baz_` built crossing emphasis);
+  - twelve floors per region;
+  - the rule of three, applied to original run lengths.
+
+  A closed link deactivates open link openers by a watermark, and image
+  openers stay active. Spec 469, 470, 520 and 575 now match (`owed` in
+  6bb87f4's table).
+- **Reader text reached a re-parse**, as described above.
+
+Each fix's rows failed on the reader before it. The check: swap in the
+previous commit's reader, keep the head's tests, and run `lake test`:
+
+- on cbcdd84's reader, 24 rows fail: every no-re-parse row (15), every
+  strict-subject row (8) and both scan rows (2), except
+  `balanced double quotes in an alternative reach the page whole`;
+- on c6b3485's reader, the 8 strict-subject rows and the 2 scan rows
+  fail;
+- on 36ea2f0's reader, the 2 scan rows fail.
+
+The quotes row passes on every earlier reader. It witnesses no old
+defect; it guards the new spelling choice, and it fails when `altSource`
+is forced to fail.
+
+**The inline phase was quadratic, twice.** In round 2, one 64 KB
+paragraph of `*a*` took 31.8 s and 112 KB of links 165 s, against 0.9 s
+and 0.6 s for the same content written as tex. `buildInlines` filtered
+two pair tables once per token, and five bounded loops ran to the
+paragraph's length. The gate that followed measured only matched shapes
+at 4–16 KB, and nine shapes outside it stayed quadratic in the reader.
+The fixes:
+
+- a failed search for a construct's closing literal is remembered, so a
+  later search from further on is answered without a scan;
+- an angle destination stops at an unescaped `<`, a parenthesized title
+  at an unescaped `(`, a bare destination at 32 levels of nesting, and an
+  autolink at `<`;
+- a code span's closer is a lookup in a per-stretch index of backtick
+  strings;
+- each item frame reads only the columns it consumes.
+
+Measured through the binary on the re-review's shapes and sizes, 6bb87f4
+against 84dbe79 (head: the minimum of three runs):
+
+| shape | size | 6bb87f4 | 84dbe79 |
+|---|---|---|---|
+| unclosed `<!--` | 78 KB | 132,909 ms | 494 ms |
+| `<?` | 46 KB | 61,300 ms | 514 ms |
+| `<!A` | 62 KB | 59,385 ms | 470 ms |
+| CDATA | 78 KB | 66,453 ms | 340 ms |
+| `[a](<b` | 54 KB | 14,420 ms | 282 ms |
+| `[a](b` | 39 KB | 3,955 ms | 239 ms |
+| `[ (](` | 78 KB | 15,996 ms | 541 ms |
+| nested strong emphasis | 109 KB | 9,793 ms | 1,898 ms |
+| a list nested 5,000 deep | 24 MB | 207,739 ms | 4,595 ms |
+
+`--scaling` now runs cmark's pathological suite and seven block shapes at
+8/16/32 KB. It gates the reader at 2.6× per doubling and reports the
+whole path. It was broken once, by restoring the unbounded item match,
+and exited 1 at 2.74×.
+
+**Routed, as IR gaps, with the cases each blocks** (`--check` at 62c89d8,
+`blocked-by:`):
+
+| gap | cases blocked |
+|---|---|
+| thematic break (no rule block in `Ir`) | 24 |
+| loose list (`Ir.Block.list`, `Ir.lean:3599`, has no `tight` field) | 16 |
+| list start (the same constructor has no `start` field) | 6 |
+| link title (`Ir.Inline.link`, `Ir.lean:2029`, has no title) | 6 |
+| image title (`Ir.Inline.image`, `Ir.lean:2099`) | 2 |
+| heading depth (a kernel decision about sectioning) | 2 |
+| code info (34 and 144; the listing-language grammar is ASCII letters, digits, `+`, `#`, `-` and `.`) | 2 |
+
+`md:loose-list` over-reports on the HTML side until tightness is a field
+the backend reads.
+
+**Routed to other owners**, measured this round, outside the reader:
+
+- **`HtmlDoc.lean:4638`, `claimId`.** It probes `base`, `base-2`, … afresh
+  for each heading, so k headings sharing a title cost k²/2 probes: 4,096
+  of them take 17.5 s in the HTML phase (interpreted, `lake env lean
+  --run`), 4× per doubling, and the same for `\section*{a}`.
+- **`Html.lean:275`, `renderInto`.** It indents two spaces per nesting
+  level, so nesting d deep ships about 2d² bytes. Block quotes 20,000,
+  40,000 and 80,000 deep write 0.8, 3.2 and 12.8 GB of HTML, in 2.6, 9.9
+  and 43.9 s. In process, the reader, the elaborator and the tree stay
+  linear to 40,000 deep.
+- **`Layout.lean:3128`.** A tab in verbatim content fails the build with
+  `E0405`, for a tex `verbatim` and a markdown fence alike, on both
+  backends.
+- **`Ir.lean:11102`.** `W0376`'s help tells a markdown author to write
+  `\includegraphics[alt={...}]`.
+- **`Board.lean:308`, `Lowered.authorises`.** A lowered line authorises
+  the same fall again after a rise. This tier carries
+  `Backslash escapes.match 6→5` while the value is 6 again, so a
+  regression of case 24 would regenerate with no human signature.
+
+**Human decisions, reported and not taken.** Four dialect questions stand
+as they are:
+
+- raw HTML refused (73 cases);
+- indented code refused (48);
+- lazy continuation refused (12);
+- smart punctuation on markdown text (22 cases wait on it; deciding it
+  either declares 22 divergences or gives the surface a literal-word
+  form).
+
+One mapping question stands too: `#` sets as the document's first
+sectioning level, one below its title's `h1`, and the classifier
+normalizes that offset.
+
+**Left undone**, named rather than hidden:
+
+- **Link reference definitions are not implemented.** A definition renders
+  as paragraph text and its references as bracketed text, with no
+  diagnostic. That covers Link reference definitions (3/27 match) and most
+  of the 51 owed Links cases. The silence rule reads these as the link's
+  defect, not the title's, so they are among the 121 owed cases with no
+  note.
+- `charsOf` (`MdParse`) and `textRaws` (`MdDesugar`) still build a
+  `List Char` per paragraph.
+- The classifier is not in CI; that is the coordinator's commit.
+- The reader's accounting invariant is a generated test family and a
+  ledger rule, not a theorem.
