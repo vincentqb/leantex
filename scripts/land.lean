@@ -7,6 +7,7 @@
   land retire <name>       remove a merged, clean worktree and its branch
   land status              porcelain listing of the agent worktrees
   land --selftest          drive the pure core over scripted observations
+  land --scratch-selftest  drive the driver against throwaway repositories
 
 Output is porcelain and nothing else: one `land: step=… result=…` line per
 step, one `land: result=…` line at the end. A value carrying whitespace or a
@@ -263,6 +264,8 @@ def gateList : Array Gate := #[
   { name := "test", cmd := "lake", args := #["test"], needsTarget := none },
   { name := "land-selftest", cmd := ".lake/build/bin/land",
     args := #["--selftest"], needsTarget := none },
+  { name := "land-scenarios", cmd := ".lake/build/bin/land",
+    args := #["--scratch-selftest"], needsTarget := none },
   { name := "precommit-selftest", cmd := ".lake/build/bin/precommit",
     args := #["--selftest"], needsTarget := none },
   { name := "precommit-tree", cmd := ".lake/build/bin/precommit",
@@ -1031,11 +1034,194 @@ def selftest : IO UInt32 := do
   if bad == 0 then sayFinal .checked [("cases", toString cases.length)]; return 0
   else sayFinal .failed [("cases", toString cases.length), ("bad", toString bad)]; return 1
 
+
+-- ## The scratch scenarios
+--
+-- The selftest above drives the core over values; this drives the *driver*
+-- over a repository. It needs git and nothing else: every scenario builds a
+-- throwaway repository under a temporary directory, runs this very binary
+-- against it with a one-command gate list, and asserts the verdict and the
+-- refs. Each scenario is one the reviewer reproduced against a landing that
+-- reported what had not happened, so a regression here is that defect back.
+-- No real worktree is ever named: the tool under test may not be pointed at
+-- one, and this harness structurally cannot be.
+
+/-- Run a command for the harness. Not `sh`: there is no run directory yet,
+and the harness asserts on exit codes rather than on parsed facts. -/
+def hrun (cmd : String) (args : Array String) (cwd : Option String)
+    (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
+  let r ← try
+      IO.Process.output
+        { cmd, args, cwd := cwd.map System.FilePath.mk, env := extraEnv, stdin := .null }
+    catch ex => pure { exitCode := 127, stdout := "", stderr := toString ex }
+  return (r.exitCode.toNat, trimWs (r.stdout ++ r.stderr))
+
+def hgit (args : Array String) (cwd : String) : IO (Nat × String) :=
+  hrun "git" args (some cwd)
+
+/-- A scratch repository on `main` with one commit, opted in to gate
+overrides, plus a worktree for `agent/<name>` carrying one commit. -/
+structure Scratch where
+  root : String
+  repo : String
+  wt : String
+
+def writeExe (path body : String) : IO Unit := do
+  IO.FS.writeFile path body
+  let _ ← hrun "chmod" #["+x", path] none
+  pure ()
+
+def mkScratch (root name : String) : IO Scratch := do
+  let repo := s!"{root}/repo"
+  IO.FS.createDirAll repo
+  let _ ← hgit #["init", "-q", "-b", "main", "."] repo
+  let _ ← hgit #["config", "user.name", "Scratch"] repo
+  let _ ← hgit #["config", "user.email", "scratch@example.org"] repo
+  let _ ← hgit #["config", "--local", "land.allowGateOverride", "true"] repo
+  IO.FS.writeFile s!"{repo}/base.txt" "base\n"
+  let _ ← hgit #["add", "base.txt"] repo
+  let _ ← hgit #["commit", "-qm", "Base"] repo
+  let wt := s!"{root}/lt-{name}"
+  let _ ← hgit #["worktree", "add", "-q", "-b", s!"agent/{name}", wt, "main"] repo
+  IO.FS.writeFile s!"{wt}/{name}.txt" s!"{name}\n"
+  let _ ← hgit #["add", s!"{name}.txt"] wt
+  let _ ← hgit #["commit", "-qm", s!"Add {name}"] wt
+  return { root, repo, wt }
+
+def revOf (repo rev : String) : IO String := do
+  let (c, o) ← hgit #["rev-parse", rev] repo
+  return if c == 0 then o else ""
+
+/-- One scenario's verdict: what it expected, and what it got. -/
+structure Outcome where
+  label : String
+  ok : Bool
+  detail : String
+
+/-- Run `land` (this binary) in a scratch repository under a gate override. -/
+def landIn (self repo : String) (args : Array String) (gates : String) :
+    IO (Nat × String) :=
+  hrun self args (some repo) #[("LAND_GATES", some gates),
+    ("GIT_TERMINAL_PROMPT", some "0")]
+
+def scenarioBranchMoves (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/moves" "moves"
+  writeExe s!"{s.root}/race.sh"
+    "#!/bin/sh\necho bad > BAD && git add BAD && git commit -qm concurrent\n"
+  let before ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["moves"] s!"race={s.root}/race.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let moved := (out.splitOn "moved during the gates").length > 1
+  return { label := "a commit during the gates is refused"
+         , ok := code == 2 && before == after && moved
+         , detail := s!"exit={code} main-before={before} main-after={after}" }
+
+def scenarioMainLeaves (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/leaves" "leaves"
+  let _ ← hgit #["branch", "side", "main"] s.repo
+  writeExe s!"{s.root}/switch.sh"
+    s!"#!/bin/sh\ngit -C {s.repo} checkout -q side\n"
+  let before ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["leaves"] s!"switch={s.root}/switch.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let _ ← hgit #["checkout", "-q", "main"] s.repo
+  let left := (out.splitOn "left main during the gates").length > 1
+  return { label := "the main worktree leaving main is refused"
+         , ok := code == 2 && before == after && left
+         , detail := s!"exit={code} main-before={before} main-after={after}" }
+
+def scenarioConflict (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/conflict" "conflict"
+  IO.FS.writeFile s!"{s.repo}/shared.txt" "theirs\n"
+  let _ ← hgit #["add", "shared.txt"] s.repo
+  let _ ← hgit #["commit", "-qm", "main writes shared"] s.repo
+  IO.FS.writeFile s!"{s.wt}/shared.txt" "ours\n"
+  let _ ← hgit #["add", "shared.txt"] s.wt
+  let _ ← hgit #["commit", "-qm", "branch writes shared"] s.wt
+  let bBefore ← revOf s.repo "refs/heads/agent/conflict"
+  let mBefore ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["conflict"] "t=true"
+  let bAfter ← revOf s.repo "refs/heads/agent/conflict"
+  let mAfter ← revOf s.repo "refs/heads/main"
+  let (_, st) ← hgit #["status", "--porcelain"] s.wt
+  let named := (out.splitOn "rebase conflict: shared.txt").length > 1
+  let restored := (out.splitOn "step=rebase-abort result=ok").length > 1
+  return { label := "a rebase conflict is refused and the branch restored"
+         , ok := code == 2 && bBefore == bAfter && mBefore == mAfter && st.isEmpty
+             && named && restored
+         , detail := s!"exit={code} branch={bBefore}->{bAfter} main={mBefore}->{mAfter} \
+status=[{st}]" }
+
+def scenarioLands (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/lands" "lands"
+  let tip ← revOf s.repo "refs/heads/agent/lands"
+  let (code, out) ← landIn self s.repo #["lands"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  let pinned := (out.splitOn s!"gated={tip} tip={tip}").length > 1
+  return { label := "a clean landing moves main to the gated tip"
+         , ok := code == 0 && after == tip && pinned
+         , detail := s!"exit={code} gated={tip} main-after={after}" }
+
+def scenarioNoOptIn (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/optin" "optin"
+  let _ ← hgit #["config", "--local", "--unset", "land.allowGateOverride"] s.repo
+  let before ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["optin"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  let named := (out.splitOn "does not allow gate overrides").length > 1
+  return { label := "a gate override needs the repository to opt in"
+         , ok := code == 2 && before == after && named
+         , detail := s!"exit={code} main-before={before} main-after={after}" }
+
+def scenarioReserved (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/reserved" "check"
+  let before ← revOf s.repo "refs/heads/main"
+  -- `land check` with no name: the branch `agent/check` exists, so a
+  -- fall-through to the bare-name form would land it.
+  let (code, _) ← landIn self s.repo #["check"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  return { label := "a subcommand word is not an agent name"
+         , ok := code == 3 && before == after
+         , detail := s!"exit={code} main-before={before} main-after={after}" }
+
+/-- Drive the driver against throwaway repositories. -/
+def scratchSelftest : IO UInt32 := do
+  let self := (← IO.appPath).toString
+  let nanos ← IO.monoNanosNow
+  let root := ((← IO.getEnv "LAND_SCRATCH_DIR").getD "/tmp") ++ s!"/land-scenarios-{nanos % 1000000}"
+  IO.FS.createDirAll root
+  let (gv, _) ← hrun "git" #["--version"] none
+  if gv != 0 then
+    say "scenario" "skip" [("why", "git is not available")]
+    sayFinal .checked [("scenarios", "0")]
+    return 0
+  let outcomes ← do
+    let a ← scenarioLands self root
+    let b ← scenarioBranchMoves self root
+    let c ← scenarioMainLeaves self root
+    let d ← scenarioConflict self root
+    let e ← scenarioNoOptIn self root
+    let f ← scenarioReserved self root
+    pure [a, b, c, d, e, f]
+  let mut bad := 0
+  for o in outcomes do
+    if o.ok then say "scenario" "ok" [("case", o.label)]
+    else
+      bad := bad + 1
+      say "scenario" "fail" [("case", o.label), ("detail", o.detail)]
+  rmQuiet root
+  if bad == 0 then
+    sayFinal .checked [("scenarios", toString outcomes.length)]
+    return 0
+  else
+    sayFinal .failed [("scenarios", toString outcomes.length), ("bad", toString bad)]
+    return 1
+
 -- ## Entry
 
 def usage : String :=
   "usage: land new <name> | land check <name> | land <name> [--push] | \
-land retire <name> | land status | land --selftest"
+land retire <name> | land status | land --selftest | land --scratch-selftest"
 
 /-- The subcommand words, which are not agent names. `land check` with no
 name once fell through to the bare-name form and would have landed
@@ -1058,6 +1244,7 @@ def main (argv : List String) : IO UInt32 := do
   match argv with
   | [] => IO.eprintln usage; return 3
   | ["--selftest"] => selftest
+  | ["--scratch-selftest"] => scratchSelftest
   | args => do
     match ← mkEnv with
     | .error e => IO.eprintln s!"land: {e}"; return 3
