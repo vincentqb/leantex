@@ -1590,3 +1590,108 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" ("\\documentclass{article}\\fonts{ math = \"Fira Math\" }" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
 
+
+
+/-- **A family slot that fell to the body face, and the report that names
+it.** The larger half of the mono-slot defect: a `\texttt`, `\url` or
+verbatim run in a document with no `\fonts{ mono = ... }` sets in body
+prose, and until now said nothing. Measured from the bytes on a synthetic
+document carrying all three constructs against the shipped corpus fonts —
+with `mono` declared the PDF embeds two faces, without it one — and both
+builds were silent.
+
+Two groups, each falsifying one thing this could get wrong. The census:
+a document that never asks for the slot is never told about it, and the
+descent is the fold's, so a `\texttt` inside a footnote or a running head
+counts. The report: all three conditions are load-bearing, and the
+body slot is the reference rather than a subject of its own.
+
+Hermetic and synthetic throughout: the faces are the two the corpus ships,
+every index is built here, and no decision reaches the host. Invented
+content, `example.org` links. -/
+def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let doc (body : String) : Ir.Doc := (elabStr ("\\documentclass{article}\n" ++
+    "\\begin{document}\n" ++ body ++ "\n\\end{document}")).1
+  -- The census: which slots a document's own content asks for.
+  t "slot census: a plain paragraph asks for no family slot past the body"
+    ((SlotLoss.slotsUsed (doc "Plain body prose here.")).isEmpty)
+  t "slot census: '\\texttt' asks for the mono slot"
+    ((SlotLoss.slotsUsed (doc "A \\texttt{fixed pitch} run.")).contains 2)
+  t "slot census: '\\url' asks for the mono slot"
+    ((SlotLoss.slotsUsed (doc "A link \\url{https://example.org/a} here.")).contains 2)
+  t "slot census: a verbatim block asks for the mono slot"
+    ((SlotLoss.slotsUsed (doc "\\begin{verbatim}\nliteral\n\\end{verbatim}")).contains 2)
+  t "slot census: '\\textsf' asks for the sans slot"
+    ((SlotLoss.slotsUsed (doc "A \\textsf{sans} run.")).contains 1)
+  t "slot census: '\\texttt' asks for no sans slot"
+    (!(SlotLoss.slotsUsed (doc "A \\texttt{fixed pitch} run.")).contains 1)
+  -- The descent is the fold's: a construct nested where a hand-rolled walk
+  -- would have stopped still counts. An image inside a footnote once
+  -- shipped a silent placeholder for exactly this reason.
+  t "slot census: the fold reaches a footnote body"
+    ((SlotLoss.slotsUsed (doc "Text\\footnote{A \\texttt{note} run.}")).contains 2)
+  t "slot census: the fold reaches a running head"
+    ((SlotLoss.slotsUsed ((elabStr ("\\documentclass{article}\n" ++
+      "\\runninghead{A \\texttt{head} run}\n\\begin{document}\nx\n\\end{document}")).1)).contains 2)
+  -- The resolved sets. `collapsed` is the no-declaration default: one face
+  -- serves every slot. `declared` is a distinct mono in slot 2.
+  let load (name : String) : IO (Option Font.Font) := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure (some f)
+    | .error _ => pure none
+  let some body ← load "SourceSerifPro-Regular.otf"
+    | failures ref "slot loss: SourceSerifPro-Regular.otf missing"; return
+  let some code ← load "SourceCodePro-Regular.otf"
+    | failures ref "slot loss: SourceCodePro-Regular.otf missing"; return
+  let slots (idx0 idx1 idx2 : Nat) : Array ((Nat × Nat × Bool) × Nat) :=
+    #[((0, 400, false), idx0), ((1, 400, false), idx1), ((2, 400, false), idx2)]
+  let collapsed : Font.FontSet := { fonts := #[body], index := slots 0 0 0 }
+  let declared : Font.FontSet := { fonts := #[body, code], index := slots 0 0 1 }
+  let monoSpec : Ir.FontSpec := { mono := some "Source Code Pro" }
+  let usesMono := doc "A \\texttt{fixed pitch} run."
+  let usesNeither := doc "Plain body prose here."
+  -- The report, and each of its three conditions.
+  t "slot loss: an undeclared mono slot on the body face is reported"
+    ((SlotLoss.diags {} collapsed usesMono).size == 1)
+  t "slot loss: the report is the mono slot"
+    ((SlotLoss.losses {} collapsed #[2]).map (·.key) == #["mono"])
+  t "slot loss: a declared mono family is not reported"
+    ((SlotLoss.diags monoSpec declared usesMono).isEmpty)
+  t "slot loss: a declared family resolving onto the body face is still the document's own choice"
+    ((SlotLoss.diags monoSpec collapsed usesMono).isEmpty)
+  t "slot loss: a slot the document never asks for is not reported"
+    ((SlotLoss.diags {} collapsed usesNeither).isEmpty)
+  t "slot loss: a slot with its own face is not reported"
+    ((SlotLoss.losses {} declared #[2]).isEmpty)
+  -- The body slot is the reference, never a subject: no report names it,
+  -- whatever is asked of it.
+  t "slot loss: the body slot is never reported"
+    ((SlotLoss.losses {} collapsed #[0, 1, 2]).all (·.slot != 0))
+  -- One loss per slot, not one per run: five mono sites and one sans site
+  -- are two diagnostics.
+  let manyRuns := doc ("A \\texttt{one} run, a \\texttt{two} run, a \\texttt{three} run, " ++
+    "\\url{https://example.org/a}, and \\textsf{sans}.\n" ++
+    "\\begin{verbatim}\nliteral\n\\end{verbatim}")
+  t "slot loss: one report per collapsed slot, not one per run"
+    ((SlotLoss.diags {} collapsed manyRuns).size == 2)
+  -- The diagnostic itself: the code, and the subject the census counts on.
+  let monoDiag := (SlotLoss.diags {} collapsed usesMono)[0]?
+  t "slot loss: the report is a degraded face substitution (W0006)"
+    ((monoDiag.map (·.code)) == some "W0006")
+  t "slot loss: the report carries its slot as subject, so it is counted"
+    ((monoDiag.bind (·.subject)) == some "slot:mono")
+  t "slot loss: a counted loss is what W0006 declares"
+    (DiagCode.W0006.censused && DiagCode.W0006.loss == Loss.degraded)
+  t "slot loss: the report names no face, so it reads the same on every host"
+    ((monoDiag.map fun d => !hasStr d.message "Serif").getD false)
+  -- **The settled/provisional gate is load-bearing.** A provisional
+  -- assembly resolves slot 0 and skips the others, so its index has no
+  -- entry past the body and every slot reads as collapsed. Two index
+  -- shapes, one document, different reports: that is what the gate in the
+  -- driver's assembly is for, and why it is not decoration.
+  let provisional : Font.FontSet := { fonts := #[body], index := #[((0, 400, false), 0)] }
+  t "slot loss: a slot-0-only index reports every other slot, which the gate exists to suppress"
+    ((SlotLoss.losses {} provisional #[1, 2]).size == 2)
+  t "slot loss: the same document on a settled index reports only what it lost"
+    ((SlotLoss.losses monoSpec declared #[1, 2]).size == 1)

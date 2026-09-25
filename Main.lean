@@ -377,6 +377,22 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     index := index
     fallback := fallback
     math := mathIdx }
+  -- **A slot that fell to the body face is named here.** This is the one
+  -- place holding both the document's `\fonts` declaration and the index
+  -- the slots resolved to, which is what the report needs
+  -- (`Cli.SlotLoss.losses`, over `Font.FontSet.slotCollapsed`).
+  --
+  -- Settled assemblies only. A provisional assembly resolves slot 0 and
+  -- skips the others deliberately, so its index has no entry past the body
+  -- and every slot reads as collapsed; a report there would be about the
+  -- driver's own shortcut rather than about the document.
+  -- premise: slotLossChecks — one document over two index shapes: a
+  -- slot-0-only index (the provisional shape) reports every other slot,
+  -- a settled index reports only what the document lost. The gate is
+  -- load-bearing rather than decorative.
+  match purpose with
+    | .settled => diags := diags ++ SlotLoss.diags spec set doc
+    | .provisional _ => pure ()
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
 def since (t0 : Nat) : IO Nat := do

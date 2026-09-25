@@ -14483,3 +14483,126 @@ Measurements: 192 cores, load recorded per run in
 `leantex-evidence/perf/load-*.txt`; every wall number an interleaved median
 against a binary built from the merge base, never one live tree against
 another.
+
+
+### 2026-09-25 — a collapsed family slot is named
+
+The larger half of the mono-slot defect, and the half the reader could see.
+A `\texttt`, `\url` or verbatim run in a document with no
+`\fonts{ mono = ... }` sets in body prose, because slot 2 falls through the
+slot's regular to face 0 — and said nothing. Measured from the bytes on a
+synthetic document carrying all three constructs: **undeclared, one embedded
+face and zero diagnostics; `mono` declared against the shipped corpus fonts,
+two faces and zero diagnostics.** `pdffonts` could see the loss and the
+reader could not. The engine's standing rule is that a construct either
+ships the ink it asked for or names the loss, so this was a `degraded` loss
+running unnamed.
+
+After: the undeclared build still embeds one face and now emits
+`warning[W0006]`; the declared build still embeds two and stays silent. The
+gate is the artifact, not a golden.
+
+#### The code: W0006, argued from the registry
+
+Three codes were candidates and the axis decides between them. W0006 is the
+variant axis (`FontDb.Substituted.variant`: a family was resolved and the
+requested bold/italic/regular face within it was not there). W0366 is the
+weight axis (weight 500 asked, nearest installed substitutes). W0009 is the
+glyph axis. This loss is on a fourth: the **family slot**, where no family
+was resolved for the slot at all and the engine's own fallback order filled
+it from the body declaration.
+
+W0366 is decisively wrong — 400 was asked and 400 was delivered, no weight
+is involved. Between W0006 and a new constructor, W0006 wins on two
+readings and loses on one, and the deciding fact is that its *registry line
+is already looser than its own emissions*: `resolveVariant`'s undeclared arm
+emits "'X' has no bold face; 'Y' substitutes" under a code whose spec line
+says "**declared** face variant missing". The code as emitted already means
+*a requested face was not available and another face substitutes*, which is
+exactly this loss, at the same `degraded` class and the same `Floor.content`.
+It is also the one door `DriverDiag.substituted` renders every font
+substitution through, and this site is a substitution in the same
+`buildFontSet` loop that already renders W0006 and W0366 — so routing it
+elsewhere would put two accountings at one site.
+
+What W0006 loses on is the word "declared", which is false here. **That is a
+real debt and it is registry-side**: the fix is to reword the `spec` line in
+`LeanTex/Core/Diag.lean` to the meaning the code already carries ("a
+requested face was not available; another face substitutes"), or to split
+the family-slot axis into its own constructor. Both are edits to
+`Core/Diag.lean` and — for a new code — to `Tests/Diag.lean`, which owns
+`diagWitness` and `driverProbes`. Routed, not taken here.
+
+One consequence to record: this emission has **no witness in
+tests/golden/diagnostics.txt**. W0006's `diagWitness` arm is a hand-built
+`resolveVariant` pair, so the golden did not move, and the new arm's voice
+is held only by `slotLossChecks`. That is the same per-code-versus-per-arm
+gap the `\urlstyle` arm hit one entry above, now at a second code.
+
+#### Where the values sit, and which side of the IO line
+
+`Font.FontSet.slotCollapsed` (the fact) stays in `Core/`, below the IR,
+where `FontSet` can see it. The decision is `LeanTex/Cli/SlotLoss.lean`, and
+every value crossing into it is data: a resolved `FontSet`, a declared
+`FontSpec`, an `Ir.Doc`. Nothing there opens a file or asks the host
+anything, and the answer leaves as `Diag` values — so the whole policy is
+checkable with no font installed, which is the `Cli/PicCache.lean` and
+`Cli/FontFix.lean` shape. No flag was added and none could help:
+`artifact_flag_free` says the artifact is a function of the document and the
+font environment, and both halves of this decision are already in that pair.
+
+It is under `Cli/` rather than inlined in the entry path for the reason the
+`driverProbes` docstring gives: a decision that is a module returning its
+diagnostics is reachable as a unit, so a probe can run the real path instead
+of rebuilding it. A `driverProbes` row for this arm is now a two-line
+addition in a file this slice does not own.
+
+#### Firing once, and only for a slot the document uses
+
+`slotsUsed` is a `foldBlocks`/`foldInlines` leaf pair — no new walk, so no
+new conservation obligation, and the descent through a footnote body, a
+running head and a style's font template is the fold's rather than
+re-decided. Slot 2 is reached two ways and both are leaves: `Ir.Style.mono`
+on a `.styled` inline, and `Ir.Block.verbatim`, which the layout sets by
+wrapping in `.styled .mono`.
+
+`losses` takes three conditions, each load-bearing: the document asks for
+the slot, declared no family for it, and the index puts it on the body
+face. Drop the first and a document with no code in it is lectured about
+mono; drop the second and a document that declared `mono = <the body
+family>` is told it lost something it chose; drop the third and a slot with
+its own face is reported. `losses_exact` states the conjunction,
+`losses_declared` and `losses_used` the two directions that matter, and
+`words_nonzero` keeps slot 0 out — it is the reference the others are
+compared against, so a report about it would be a vacuous truth.
+
+The subject is `slot:<key>`, namespaced as `ctrl:<name>` is, so `tallySites`
+counts the loss once per slot however many runs set it. Measured on a
+synthetic document with three `\texttt` runs, a `\url`, a verbatim block and
+a `\textsf`: six sites, two diagnostics. W0006 keeps its `subjectDebt` row,
+because its existing witness still fires without a subject — the ratchet is
+untouched and needs no baseline edit.
+
+The emission is gated to settled assemblies. A provisional assembly resolves
+slot 0 and skips the rest deliberately, so its index has no entry past the
+body and every slot reads as collapsed; the pin is `slotLossChecks`, which
+runs one document over both index shapes and shows the gate is
+load-bearing rather than decorative.
+
+#### A case this does not yet catch
+
+A deck declaring **both** a body and a distinct sans family puts slot 0 on
+the sans face and slot 2 on the body family's own face — different indices,
+so `slotCollapsed 2` is false and nothing fires, although the `\texttt` run
+is still not mono. The predicate compares against slot 0 only. Naming that
+case needs "the slot resolved onto a *text* slot's face" rather than "onto
+face 0", which is a widening of `slotCollapsed` and its two theorems;
+recorded here rather than widened silently.
+
+Measured on the private reference corpus: the deck is unchanged — 36 pages,
+0 errors, 13 × W0104, 7 × W0376, 6 × W0334 and one each of W0389, W0385,
+W0384, W0361, W0345, W0315, W0103, W0009. The zero delta is the used-gate
+working rather than luck: the deck asks for neither the mono nor the sans
+slot anywhere, so there is no loss to name. The thirteen W0104 are beamer
+theme-element and `\directlua` refusals from another arm, correctly
+`config`, and none of them is this defect class.

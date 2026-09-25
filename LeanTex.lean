@@ -49,6 +49,7 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.Input
 import LeanTex.Cli.FontEnv
 import LeanTex.Cli.FontFix
+import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
