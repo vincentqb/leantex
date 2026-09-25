@@ -16482,10 +16482,20 @@ merge, so the `all` is not vacuous) and `step_ff_gates_complete` (the
 fast-forward is proposed only with the gate list exhausted, not merely
 unfalsified). Both guards are written as conditionals in `afterGates` and
 the push transition rather than argued from the surrounding cases: deleting
-one leaves `step_mutates_gated` with unsolved goals, which is a broken
-build.
+one leaves `step_mutates_gated` with unsolved goals.
 
-`land --selftest` drives the core over 19 scripted observation sequences
+Corrected 2026-09-25 (round 2): as first written that was a prose guarantee,
+not a guarantee. No gate, hook or CI step built `land` or `LandLib`, so the
+unsolved goals were a failure of a build nothing ran — an independent
+reviewer landed a branch that replaced the guard with `if true` through
+`land` itself, with every default gate green. The `build` gate is now
+`lake build --wfail leantex precommit owed cites land`, the pre-commit hook
+builds `land` in its own `--wfail` step, and `land --selftest` is a gate.
+Broken once through both: the hook refuses the guard-dropping commit
+(exit 1), and a branch carrying that commit from elsewhere is refused by the
+`build` gate (exit 1, `why=gate build failed`), with `main` unmoved.
+
+`land --selftest` drives the core over scripted observation sequences
 with no repository present: a rebase conflict in a non-union file, a gate
 that fails first and a gate that fails last, a tip that does not read back,
 a truncated sha, garbled output at three different stages, a dirty main, a
@@ -16531,9 +16541,12 @@ a non-union file that `main` had changed refused with exit 2, aborted the
 rebase, and left both the branch worktree and `main` untouched.
 
 Two corrections to the gate list, found by running it rather than reading
-it. Scanning output for `warning:` is the wrong check: on a warm cache
-nothing recompiles and nothing prints, so the gate is `lake build --wfail`,
-which is what the pre-commit hook already uses. And `lake build precommit
+it. Scanning output for `warning:` is the wrong check — but not for the
+reason first written here. A warm cache does *not* stay silent: lake replays
+a module's logged warning without recompiling it, which is why
+`lake build --wfail` fails on a replayed warning and a scan of a quiet build
+proves nothing about the module that did not rebuild. The gate is
+`lake build --wfail`, which is what the pre-commit hook already uses. And `lake build precommit
 owed cites Obligations` must *not* take that flag — `Obligations` is the
 staging area for open proofs and warns once per staged statement by design,
 so a `--wfail` on it fails a healthy tree. It failed exactly that way on
@@ -16549,6 +16562,121 @@ rather than relied upon: the driver flushes stdout before every spawn.
 
 `LAND_GATES` replaces the gate list (`name=cmd args;…`) so the whole
 procedure is exercisable on a scratch repository, which cannot afford the
-real gates on every scenario. It never weakens a landing silently: the run
-line says `gates=override`, the ledger record carries `gateset`, and the
-core still observes each gate, so the merge guard is untouched.
+real gates on every scenario.
+
+Corrected 2026-09-25 (round 2): "never weakens a landing silently" held only
+for a reader of the *first* line. The final `land: result=…` line and
+`land status` carried no gateset, so an override landing and a real one read
+identically where a coordinator looks; the variable was honoured in every
+repository, and an exported variable is inherited by every later command in
+a shell; a malformed entry was dropped silently and a duplicate name shadowed
+a later gate, running the first gate twice. Now: the variable is honoured
+only in a repository that opted in with
+`git config --local land.allowGateOverride true` (exit 2 otherwise), a
+malformed or duplicated entry is a refusal, and `gateset` appears on the
+final line, in `status`, and in every ledger row of the run.
+
+
+### 2026-09-25 — the landing's own records had to be made true
+
+An independent reviewer blocked the landing tool with reproductions. Two of
+them are the reasons it exists, turned back on it. A branch that replaced the
+merge guard with `if true` landed *through* `land`, because no gate built the
+module the theorem lives in. And on a scratch clone the tool wrote a `landed`
+row and a `pushed` row while `main` and the remote never moved, because every
+comparison it made was between two live refs rather than against the commit
+under test. The four fixes below are each broken once through the path that
+ships; the transcripts are in the evidence directory for this task.
+
+**A check is trusted only when its break is caught by the path that ships.**
+The guard had been broken once, and caught — by a hand-run `lake build land`
+beside the tool, not by the tool. So the `build` gate is now
+`lake build --wfail leantex precommit owed cites land`, `Obligations` is its
+own unflagged build (staged `sorry`s warn by design), `land --selftest` is a
+gate, and the pre-commit hook's `--wfail` step names `land` too. The
+guard-dropping commit is now refused by the hook, and a branch carrying it
+from a machine without hooks is refused by the `build` gate with `main`
+unmoved.
+
+**A sha travels with the run.** `Obs.rebaseOk` carries the tip the rebase
+produced, read back through `isSha`; that tip is `gatedTip`. After the gates
+the branch is re-read and refused unless it is still that tip and still clean
+— which also catches a gate that edits tracked files. Before the merge the
+main worktree is re-read and refused unless `HEAD` is still `refs/heads/main`
+at the tip this run started from. The merge is `git merge --ff-only
+<gatedTip>`, never a branch name. Verification reads `refs/heads/main` and the
+core compares it to `gatedTip`; verify-push reads `git ls-remote origin
+refs/heads/main`, not the tracking ref git updates from its own push result,
+and compares it to the landed tip. A directory under `land/` serialises
+landings, because creating a directory is atomic where "does it exist" then
+"write" is not. The statement is `run_landed_exact`: a verdict claiming a
+landing implies the `main` the run read back equals `gatedTip` and that
+`gatedTip` is a sha — stated over the step function, proved as a preserved
+invariant (`step_pinned`), and lifted over any observation sequence. Both
+races the reviewer reproduced now refuse: a commit arriving during the gates
+at `post-gate`, a main worktree switched off `main` at `pre-merge`, with no
+row claiming either.
+
+**A rebase that fails is read back, not narrated.** Any non-zero rebase
+aborts when a rebase is in progress, then reads `HEAD`, whether the branch is
+checked out, and the status — and `rebase-abort ok` is printed only from that
+read-back, compared against the tip recorded *before* the rebase. The core
+has `rebaseFailed` carrying those three facts plus the unmerged paths: a
+conflict and a signing failure are now different refusals, and a worktree
+left mid-rebase is exit 3 rather than a message about unparseable output.
+
+**A proof that resists is a factorization finding.** The whole machine in one
+`match` put every proof behind a heartbeat limit once three stages stood
+between the guard and the mutation. The fix is a split: `stepPre`, `stepGate`
+and `stepMerge`, dispatched by `phaseOf` — a function of the stage alone, so
+each theorem splits one free variable instead of a goal that mentions `s`
+four more ways. The three phase functions are `irreducible` once their own
+lemmas are proved, so an `exact` against the wrong phase fails instead of
+unfolding a hundred lines. The pinning invariant is one boolean formula
+rather than a match over stages, for the same reason. Two consequences worth
+recording: the fast-forward re-asserts `proven && gateIdx == plan.size` at
+its own site rather than inheriting the guard from `afterGates` three stages
+back; and the invariant needs "a verdict claiming a landing appears only at
+`done`", which is what stops the gated tip being rewritten under a live
+claim.
+
+**A gate observation carries an index, not a name.** The core dispatched by
+name and accepted `gateOk` for any name and `gateAbsent` for any gate, so a
+duplicate override name ran the first gate twice and the second never ran.
+Now `Act.gate` carries the plan index, an observation carries only that
+index, and the core checks it against the index it dispatched; the permission
+to be absent lives in the plan. `step_ff_covers` says the fast-forward is
+proposed only with the index at the plan's size — every planned gate
+observed, by the plan's own names, which no observation can spell. The
+scoreboard's gates became `lake build scoreboard` then `--check`, skipped
+only when the branch's lakefile declares no such target — the old skip probed
+a binary no gate built, so it would have skipped forever once the scoreboard
+landed.
+
+Smaller repairs in the same round, each one a defect the reviewer named:
+standard output and standard error go to separate files and only the first is
+parsed (a git warning on stderr once made a clean worktree read dirty); the
+three bootstrap probes are written to `bootstrap.log`, so "every fact from a
+file" is true of them too; porcelain values carrying whitespace are quoted;
+`GIT_TERMINAL_PROMPT=0` and a null stdin, so a command that would ask a human
+fails instead; the subcommand words are reserved, because `land check` with
+no name would have landed `agent/check`; the ledger escapes every control
+character, flushes before its read-back, writes a `landing` row carrying the
+gated tip *before* any ref moves, checks the writes it used to ignore, and
+records a `checked` row with the tip `check` rebased away from; run
+directories are kept to the newest fifty; `scripts/Land.lean` became
+`scripts/LandCore.lean`, and the pre-commit hook now refuses two tracked
+paths that differ only by case — a check that fails on this branch's own base
+commit, where `Land.lean` and `land.lean` both stood.
+
+Left for a next round. `land check` still rebases the agent's branch; it now
+records the pre-rebase tip on its porcelain line and in its `checked` row,
+but the honest fix is a detached scratch worktree, which needs a seeded build
+cache to stay affordable. The driver's scenarios are reproduced by scripts in
+the evidence directory rather than by a gate; a `land --scratch-selftest`
+that needs only git is the shape wanted. `created` and `retired` rows carry
+no `gateset`, since no gate list applies to them. Two routes out of this
+branch: CI owes the same `land` build and `land --selftest` step the gate list
+now has, and `scripts/cites.lean`'s `treeRoots` owes an entry for
+`scripts.land`, without which a docstring in the landing modules cannot cite
+its own theorem by name.

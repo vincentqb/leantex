@@ -137,7 +137,11 @@ in this repo; refer to the private reference corpus abstractly.
   `Diag.subject`, never the message text), `_projects` (a backend value
   is the projection of one IR value — `footBand_projects` is the shape),
   `_agree` (two projections of one IR value agree — `backend_gaps_agree`
-  is the shape). A new property instantiates a
+  is the shape), `_gated` (a mutating output implies a proven state — the
+  landing's merge and push are proposed only from a state whose every gate
+  observation was ok; a shape of its own because the antecedent is the
+  *action*, not the value, so no other suffix's reading applies). A new
+  property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
   for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an
@@ -319,14 +323,19 @@ in this repo; refer to the private reference corpus abstractly.
 - Commit each verified unit (build + tests green); imperative subject line.
 - Never push without being asked.
 - Landing a branch onto `main` goes through `land` (`scripts/land.lean`) — never
-  a hand rebase, merge, or conflict resolution. It reads preconditions from
+  a hand rebase or merge. It reads preconditions from
   `git status --porcelain` and `git rev-parse` *through files*, rebases in the
-  branch's own worktree, runs every gate, reads the new tip back, and writes one
-  ledger row per fact; its pure core cannot propose a fast-forward or a push
-  unless every gate observation was ok (`step_mutates_gated`). Prose reports of
+  branch's own worktree, runs every gate, re-reads the branch and `main` after
+  them, fast-forwards to the *sha the gates ran on*, reads the new tip back,
+  and writes one ledger row per fact; its pure core cannot propose a
+  fast-forward or a push unless every gate observation was ok, and a verdict
+  claiming a landing implies `main` was read back at that sha. Prose reports of
   repository state obey the rule claims about a page obey: from the artifact.
-  A conflict outside the union-merged files is a refusal with exit 2, not a
-  resolution — keep-both once doubled an owed record's `blocker:` line.
+  The landing never resolves a conflict: a conflict outside the union-merged
+  files is a refusal with exit 2, the branch is restored to its pre-rebase tip,
+  and the branch's owner rebases and resolves it in their own worktree, then
+  re-runs `land check` — keep-both once doubled an owed record's `blocker:`
+  line, which is why the tool refuses rather than guesses.
 - Never `git stash`: the stack is per-repository, not per-worktree, and agents
   here work in parallel worktree checkouts — a `pop` can apply, and drop,
   another worktree's entry. Set work aside with file copies instead (the file
