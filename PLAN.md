@@ -18557,3 +18557,85 @@ corpus: 8 of 8 rasters identical, census identical.
   (`TitleTemplate.fontOf`), so that title ships at the body size.
 - `\usebeamercolor` is named, not read: beamer colour elements beyond the
   palette's roles are not recorded (`Compat`'s `\setbeamercolor` arm).
+
+### 2026-09-25 — markdown exists, and the 652 cases are a ledger, not a score
+
+`.md` exited 3. It now reads. The reader is two modules — `MdParse`
+(source → md AST) and `MdDesugar` (md AST → the surface AST
+`Parse.parse` produces) — and nothing downstream knows which surface a
+document was written in: `leantex doc.md -o doc.html` and `-o doc.pdf`
+both go through `Elab.runRaws`, the same door `.tex` uses. The whole md
+path is one dispatch in `Main.frontend`; there is no second elaborator,
+no generated tex text, and no re-parse.
+
+**The design held, and the one thing it bought was measurable.** Because
+the desugaring targets `Parse.Raw` rather than source text, markdown body
+text goes through `Raw.word` and so carries `$`, `%` and `#` with no
+escape — they never become control tokens. Three rows in
+`mdSurfaceChecks` pin that. It is the concrete form of "md ⊂
+tex-expressible": where the surface AST has no field for a construct, the
+construct is *routed* by a `W0307` carrying its own subject
+(`md:thematic-break`, `md:heading-depth`, `md:list-start`,
+`md:loose-list`, `md:code-info`, `md:image-alt`), never silently dropped.
+Four of those six are the kernel's, not markdown's: `Ir` has no rule
+block, three sectioning levels, and `Ir.Block.list` carries neither a
+start number nor tightness.
+
+**Four defects, all invisible to the IR.** Each produced a plausible md
+AST and a plausible `Ir.Doc`, and each was found by reading the emitted
+page instead:
+
+- a sibling list item whose container frame failed to match was read as a
+  lazy continuation, so the second item of every ordered list not
+  starting at 1 raised `E0390` and lost its text;
+- a marker of a different kind opened a list *inside* the open one rather
+  than closing it;
+- a list frame outlived its items and swallowed every block that
+  followed — an ordered list, a quote, a fence, a heading and a paragraph
+  all landed in its last item and shipped nowhere;
+- `---` under a paragraph was tested as a thematic break before it was
+  tested as a setext underline, which dropped the heading's title into
+  the paragraph above.
+
+The invariant each one lacked is now a row in `mdSurfaceChecks`, asserted
+over the typed HTML tree. The setext row was broken once on purpose (the
+precedence reordered, the suite run, one `FAIL`, the file restored from a
+copy) so the floor is known to fail before the fix rather than assumed to.
+
+**The classifier is the deliverable, not the count.** The 652 spec cases
+are vendored whole (`tests/commonmark/spec-0.31.2.txt`, sha256 pinned in
+both the provenance file and the script, CC-BY-SA 4.0) and every case
+carries a committed verdict in `tests/commonmark/verdicts.tsv`:
+`match | rejected | divergence | owed`. `scripts/commonmark.lean` has
+`html-oracle`'s three modes plus `--explain <case>`, which prints the two
+canonical forms side by side. Today: **match 310, rejected 154,
+divergence 0, owed 188**, in 0.9 s for all 652.
+
+Comparison is over *trees*. The engine's HTML is a typed tree already;
+the spec's expected HTML is read by a tolerant reader in the script into
+the same `Html.Node` shape, and both go through one `canon`. Six
+normalizations are declared in the script, each with the thing it would
+hide named beside it. Two were bugs the declaration exposed: `canon`
+emitted a closing tag for void elements, and the heading-level offset was
+subtracted from *both* sides, which collapsed `h1` and `h2` to one
+ordinal and reported every two-level heading document as owed. Fixing
+that second one moved 20 cases from `owed` to `match` and changed nothing
+about the engine — a normalization is a claim, and an unchecked claim
+about the comparison is as expensive as one about the code. The
+script's `--selftest` now records its findings instead of printing them;
+written to print, it reported a real mismatch and the run still said
+`ok`.
+
+**The three strict classes, measured.** Raw HTML passthrough touches 98
+spec cases, indented code blocks 52, lazy continuation 12 — read off the
+subject each refusal carried, not counted by hand. They are one code
+(`E0390`) with three subjects, so `Diag.tallySites` folds repeats and
+flipping a class is a verdict-table change plus one reader arm. The
+decision is the user's; the reader is built so that decision is data.
+
+`tests/scoreboard/commonmark.tsv` is the tier: one row per spec section,
+value = cases matching, a value may not drop and a row may not vanish.
+The deficits are the ranking the autonomy loop asked for — Links 33/90,
+Link reference definitions 3/27 (no definition map yet), Images 4/22,
+Lists 8/27, Setext 11/27 — and they are read from the table rather than
+guessed.

@@ -1,0 +1,22 @@
+# The CommonMark specification, vendored as the classifier's input.
+#
+# source:   https://raw.githubusercontent.com/commonmark/commonmark-spec/0.31.2/spec.txt
+# version:  0.31.2 (dated 2024-01-28 in the document's own front matter)
+# fetched:  2026-09-25
+# sha256:   257c41ad946f7a1414a499aca402a1aa8fdac3678532266611348c1cf54f4b80
+# license:  CC-BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/),
+#           declared by the document's front matter; author John MacFarlane.
+# examples: 652, each delimited by a line of exactly 32 backticks followed by
+#           " example", the markdown and the expected HTML separated by a
+#           line holding a single ".", closed by 32 backticks. Tabs in an
+#           example body are written as the two characters "→" (U+2192) and
+#           restored by the reader.
+#
+# Vendored whole rather than pre-extracted so this sha256 is the thing a
+# reader checks: the extraction is code (scripts/commonmark.lean, its
+# --selftest covers it) and code is reviewable, while a pre-extracted file
+# would be a second artifact nobody can verify against upstream.
+#
+# Section headings are "## " lines *outside* an example block. Counting them
+# naively finds 39; six of those are inside examples (the spec documents ATX
+# headings by writing them), so the reader tracks example boundaries.

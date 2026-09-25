@@ -1198,6 +1198,13 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     let (j, ind) := indentAt cs i col
     if ind ≥ 4 && !leaf.isPara then
       diags := diags.push (refuse file .indentedCode lpos)
+    else if ind ≥ 4 && leaf.isPara then
+      -- Four spaces under an open paragraph is continuation text, not a
+      -- block start: `foo` then `    # bar` is one paragraph. Tested for
+      -- block starts first, the indented line became an ATX heading.
+      leaf := .para (match leaf with
+        | .para pls => pls.push (sliceStr cs j cs.size, ⟨ln.no, j + 1⟩)
+        | _ => #[(sliceStr cs j cs.size, ⟨ln.no, j + 1⟩)])
     else if let some (level, k) := atxAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1214,6 +1221,19 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       let (inl, ds2) := inlines file (charsOfOne (body.trimAscii.toString) ⟨ln.no, k + 1⟩)
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
+    else if leaf.isPara && (setextAt cs j).isSome then
+      -- A `---` line under a paragraph is a setext underline, not a
+      -- thematic break: the spec gives the heading precedence, and testing
+      -- the break first read every level-2 setext heading as a rule and
+      -- dropped its title into the paragraph above.
+      let level := (setextAt cs j).getD 1
+      match leaf with
+      | .para pls =>
+        let (inl, ds) := inlines file (charsOf pls)
+        acc := acc.push (.heading level inl ((pls[0]?.map (·.2)).getD lpos))
+        diags := diags ++ ds
+      | _ => pure ()
+      leaf := .none
     else if thematicAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1225,15 +1245,6 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       acc := a
       diags := diags ++ ds
       leaf := .fenced fch flen finfo lpos #[]
-    else if leaf.isPara && (setextAt cs j).isSome then
-      let level := (setextAt cs j).getD 1
-      match leaf with
-      | .para pls =>
-        let (inl, ds) := inlines file (charsOf pls)
-        acc := acc.push (.heading level inl ((pls[0]?.map (·.2)).getD lpos))
-        diags := diags ++ ds
-      | _ => pure ()
-      leaf := .none
     else if htmlBlockAt cs j then
       diags := diags.push (refuse file .rawHtml lpos)
       let (a, ds) := closePara leaf acc lpos

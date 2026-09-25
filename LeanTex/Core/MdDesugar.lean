@@ -62,6 +62,29 @@ def sectionCtrl : Nat → String
 
 mutual
 
+/-- One inline node's text. -/
+def inlText1 : Inl → String
+  | .text s _ => s
+  | .code s _ => s
+  | .soft _ => " "
+  | .hard _ => " "
+  | .emph b _ => inlTextList "" b.toList
+  | .strong b _ => inlTextList "" b.toList
+  | .link _ _ b _ => inlTextList "" b.toList
+  | .image _ _ a _ => inlTextList "" a.toList
+
+def inlTextList (acc : String) : List Inl → String
+  | [] => acc
+  | x :: rest => inlTextList (acc ++ inlText1 x) rest
+
+end
+
+/-- The flattened text of inline content: what an `alt` attribute carries,
+which HTML states as text and markdown writes as inline content. -/
+def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
+
+mutual
+
 /-- One inline node as surface raws. -/
 def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
@@ -78,8 +101,21 @@ def inlRaws (file : String) : Inl → Array Raw × Array Diag
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest _ alt p =>
-    let (_, ds) := inlListRaws file #[] #[] alt.toList
-    (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
+    -- The alt text rides `\includegraphics`'s own `alt` key, so the text
+    -- alternative survives the trip and W0376 has nothing to report. The
+    -- option run is read as source text, so a value carrying `,` or `]`
+    -- would be re-split as two keys: that case is routed instead.
+    let text := inlText alt
+    if text.isEmpty then
+      (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], #[])
+    else if text.any (fun c => c == ',' || c == ']' || c == '=') then
+      (#[.ctrl "includegraphics" p, .group (textRaws dest p) p],
+       #[route file "image-alt"
+          "an image's text alternative carries a comma, a bracket or an equals sign and is not passed on" p])
+    else
+      (#[.ctrl "includegraphics" p, .sym '[' p]
+         ++ textRaws ("alt=" ++ text) p
+         ++ #[.sym ']' p, .group (textRaws dest p) p], #[])
 
 /-- A list of inline nodes, accumulating: prepending to the recursive result
 would copy it at every element. -/

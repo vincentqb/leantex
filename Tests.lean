@@ -1,6 +1,7 @@
 import Tests.Support
 import Tests.Surface
 import Tests.Layout
+import Tests.Markdown
 import Tests.Census
 import Tests.Backends
 import Tests.Images
@@ -321,6 +322,7 @@ def main (args : List String) : IO UInt32 := do
   themeSuiteChecks ref
   fontFaceSuiteChecks ref
   layoutSuiteChecks ref
+  mdSurfaceChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

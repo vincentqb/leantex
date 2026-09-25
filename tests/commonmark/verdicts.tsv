@@ -1,0 +1,658 @@
+# One row per CommonMark 0.31.2 spec example: id, section, verdict, note.
+# verdicts: match | rejected | divergence | owed.
+# `rejected` is the strict dialect refusing the construct by design (E0390);
+# `divergence` needs a row in `divergences` in scripts/commonmark.lean;
+# `owed` is not implemented yet and the ratchet lets it only fall.
+# This file is written only by scripts/commonmark.lean.
+1	Tabs	rejected
+2	Tabs	rejected
+3	Tabs	rejected
+4	Tabs	match
+5	Tabs	rejected
+6	Tabs	rejected
+7	Tabs	owed
+8	Tabs	rejected
+9	Tabs	owed
+10	Tabs	match
+11	Tabs	owed
+12	Backslash escapes	owed
+13	Backslash escapes	match
+14	Backslash escapes	owed
+15	Backslash escapes	match
+16	Backslash escapes	match
+17	Backslash escapes	match
+18	Backslash escapes	rejected
+19	Backslash escapes	match
+20	Backslash escapes	rejected
+21	Backslash escapes	rejected
+22	Backslash escapes	owed
+23	Backslash escapes	owed
+24	Backslash escapes	match
+25	Entity and numeric character references	owed
+26	Entity and numeric character references	match
+27	Entity and numeric character references	owed
+28	Entity and numeric character references	match
+29	Entity and numeric character references	match
+30	Entity and numeric character references	match
+31	Entity and numeric character references	rejected
+32	Entity and numeric character references	owed
+33	Entity and numeric character references	owed
+34	Entity and numeric character references	match
+35	Entity and numeric character references	match
+36	Entity and numeric character references	rejected
+37	Entity and numeric character references	match
+38	Entity and numeric character references	match
+39	Entity and numeric character references	match
+40	Entity and numeric character references	match
+41	Entity and numeric character references	owed
+42	Precedence	owed
+43	Thematic breaks	owed
+44	Thematic breaks	match
+45	Thematic breaks	match
+46	Thematic breaks	owed
+47	Thematic breaks	owed
+48	Thematic breaks	rejected
+49	Thematic breaks	match
+50	Thematic breaks	owed
+51	Thematic breaks	owed
+52	Thematic breaks	owed
+53	Thematic breaks	rejected
+54	Thematic breaks	owed
+55	Thematic breaks	owed
+56	Thematic breaks	match
+57	Thematic breaks	owed
+58	Thematic breaks	owed
+59	Thematic breaks	match
+60	Thematic breaks	owed
+61	Thematic breaks	owed
+62	ATX headings	owed
+63	ATX headings	match
+64	ATX headings	match
+65	ATX headings	match
+66	ATX headings	match
+67	ATX headings	match
+68	ATX headings	match
+69	ATX headings	rejected
+70	ATX headings	match
+71	ATX headings	match
+72	ATX headings	owed
+73	ATX headings	match
+74	ATX headings	match
+75	ATX headings	match
+76	ATX headings	match
+77	ATX headings	owed
+78	ATX headings	match
+79	ATX headings	match
+80	Setext headings	match
+81	Setext headings	match
+82	Setext headings	match
+83	Setext headings	match
+84	Setext headings	match
+85	Setext headings	rejected
+86	Setext headings	match
+87	Setext headings	owed
+88	Setext headings	owed
+89	Setext headings	owed
+90	Setext headings	match
+91	Setext headings	rejected
+92	Setext headings	owed
+93	Setext headings	rejected
+94	Setext headings	owed
+95	Setext headings	match
+96	Setext headings	owed
+97	Setext headings	match
+98	Setext headings	owed
+99	Setext headings	owed
+100	Setext headings	rejected
+101	Setext headings	owed
+102	Setext headings	match
+103	Setext headings	match
+104	Setext headings	owed
+105	Setext headings	rejected
+106	Setext headings	owed
+107	Indented code blocks	rejected
+108	Indented code blocks	match
+109	Indented code blocks	match
+110	Indented code blocks	rejected
+111	Indented code blocks	rejected
+112	Indented code blocks	rejected
+113	Indented code blocks	match
+114	Indented code blocks	rejected
+115	Indented code blocks	rejected
+116	Indented code blocks	rejected
+117	Indented code blocks	rejected
+118	Indented code blocks	rejected
+119	Fenced code blocks	match
+120	Fenced code blocks	match
+121	Fenced code blocks	owed
+122	Fenced code blocks	match
+123	Fenced code blocks	match
+124	Fenced code blocks	match
+125	Fenced code blocks	match
+126	Fenced code blocks	match
+127	Fenced code blocks	owed
+128	Fenced code blocks	owed
+129	Fenced code blocks	owed
+130	Fenced code blocks	match
+131	Fenced code blocks	owed
+132	Fenced code blocks	owed
+133	Fenced code blocks	owed
+134	Fenced code blocks	rejected
+135	Fenced code blocks	match
+136	Fenced code blocks	match
+137	Fenced code blocks	match
+138	Fenced code blocks	match
+139	Fenced code blocks	match
+140	Fenced code blocks	match
+141	Fenced code blocks	match
+142	Fenced code blocks	match
+143	Fenced code blocks	match
+144	Fenced code blocks	match
+145	Fenced code blocks	match
+146	Fenced code blocks	match
+147	Fenced code blocks	match
+148	HTML blocks	rejected
+149	HTML blocks	rejected
+150	HTML blocks	rejected
+151	HTML blocks	rejected
+152	HTML blocks	rejected
+153	HTML blocks	rejected
+154	HTML blocks	rejected
+155	HTML blocks	rejected
+156	HTML blocks	rejected
+157	HTML blocks	rejected
+158	HTML blocks	rejected
+159	HTML blocks	rejected
+160	HTML blocks	rejected
+161	HTML blocks	rejected
+162	HTML blocks	rejected
+163	HTML blocks	rejected
+164	HTML blocks	rejected
+165	HTML blocks	rejected
+166	HTML blocks	rejected
+167	HTML blocks	rejected
+168	HTML blocks	rejected
+169	HTML blocks	rejected
+170	HTML blocks	rejected
+171	HTML blocks	rejected
+172	HTML blocks	rejected
+173	HTML blocks	rejected
+174	HTML blocks	rejected
+175	HTML blocks	rejected
+176	HTML blocks	rejected
+177	HTML blocks	rejected
+178	HTML blocks	rejected
+179	HTML blocks	rejected
+180	HTML blocks	rejected
+181	HTML blocks	rejected
+182	HTML blocks	rejected
+183	HTML blocks	rejected
+184	HTML blocks	rejected
+185	HTML blocks	rejected
+186	HTML blocks	rejected
+187	HTML blocks	rejected
+188	HTML blocks	rejected
+189	HTML blocks	rejected
+190	HTML blocks	rejected
+191	HTML blocks	rejected
+192	Link reference definitions	owed
+193	Link reference definitions	owed
+194	Link reference definitions	owed
+195	Link reference definitions	rejected
+196	Link reference definitions	owed
+197	Link reference definitions	owed
+198	Link reference definitions	owed
+199	Link reference definitions	match
+200	Link reference definitions	owed
+201	Link reference definitions	rejected
+202	Link reference definitions	owed
+203	Link reference definitions	owed
+204	Link reference definitions	owed
+205	Link reference definitions	owed
+206	Link reference definitions	owed
+207	Link reference definitions	owed
+208	Link reference definitions	owed
+209	Link reference definitions	owed
+210	Link reference definitions	owed
+211	Link reference definitions	rejected
+212	Link reference definitions	match
+213	Link reference definitions	match
+214	Link reference definitions	owed
+215	Link reference definitions	owed
+216	Link reference definitions	owed
+217	Link reference definitions	owed
+218	Link reference definitions	owed
+219	Paragraphs	match
+220	Paragraphs	match
+221	Paragraphs	match
+222	Paragraphs	match
+223	Paragraphs	match
+224	Paragraphs	match
+225	Paragraphs	rejected
+226	Paragraphs	match
+227	Blank lines	match
+228	Block quotes	match
+229	Block quotes	match
+230	Block quotes	match
+231	Block quotes	rejected
+232	Block quotes	rejected
+233	Block quotes	rejected
+234	Block quotes	owed
+235	Block quotes	match
+236	Block quotes	rejected
+237	Block quotes	owed
+238	Block quotes	rejected
+239	Block quotes	match
+240	Block quotes	match
+241	Block quotes	match
+242	Block quotes	match
+243	Block quotes	match
+244	Block quotes	match
+245	Block quotes	match
+246	Block quotes	owed
+247	Block quotes	rejected
+248	Block quotes	match
+249	Block quotes	match
+250	Block quotes	rejected
+251	Block quotes	rejected
+252	Block quotes	rejected
+253	List items	rejected
+254	List items	rejected
+255	List items	match
+256	List items	match
+257	List items	rejected
+258	List items	match
+259	List items	match
+260	List items	match
+261	List items	match
+262	List items	match
+263	List items	owed
+264	List items	rejected
+265	List items	owed
+266	List items	match
+267	List items	owed
+268	List items	owed
+269	List items	match
+270	List items	rejected
+271	List items	rejected
+272	List items	rejected
+273	List items	rejected
+274	List items	rejected
+275	List items	match
+276	List items	match
+277	List items	match
+278	List items	owed
+279	List items	rejected
+280	List items	owed
+281	List items	match
+282	List items	match
+283	List items	match
+284	List items	match
+285	List items	match
+286	List items	rejected
+287	List items	rejected
+288	List items	rejected
+289	List items	rejected
+290	List items	rejected
+291	List items	rejected
+292	List items	rejected
+293	List items	rejected
+294	List items	owed
+295	List items	match
+296	List items	owed
+297	List items	owed
+298	List items	match
+299	List items	owed
+300	List items	owed
+301	Lists	match
+302	Lists	owed
+303	Lists	match
+304	Lists	match
+305	Lists	match
+306	Lists	owed
+307	Lists	owed
+308	Lists	rejected
+309	Lists	rejected
+310	Lists	match
+311	Lists	owed
+312	Lists	rejected
+313	Lists	rejected
+314	Lists	owed
+315	Lists	owed
+316	Lists	owed
+317	Lists	owed
+318	Lists	owed
+319	Lists	owed
+320	Lists	owed
+321	Lists	owed
+322	Lists	match
+323	Lists	owed
+324	Lists	owed
+325	Lists	match
+326	Lists	match
+327	Lists	owed
+328	Code spans	match
+329	Code spans	match
+330	Code spans	match
+331	Code spans	match
+332	Code spans	match
+333	Code spans	match
+334	Code spans	owed
+335	Code spans	owed
+336	Code spans	owed
+337	Code spans	owed
+338	Code spans	owed
+339	Code spans	match
+340	Code spans	match
+341	Code spans	match
+342	Code spans	match
+343	Code spans	owed
+344	Code spans	rejected
+345	Code spans	owed
+346	Code spans	rejected
+347	Code spans	owed
+348	Code spans	owed
+349	Code spans	owed
+350	Emphasis and strong emphasis	match
+351	Emphasis and strong emphasis	match
+352	Emphasis and strong emphasis	owed
+353	Emphasis and strong emphasis	owed
+354	Emphasis and strong emphasis	owed
+355	Emphasis and strong emphasis	match
+356	Emphasis and strong emphasis	match
+357	Emphasis and strong emphasis	match
+358	Emphasis and strong emphasis	match
+359	Emphasis and strong emphasis	owed
+360	Emphasis and strong emphasis	match
+361	Emphasis and strong emphasis	match
+362	Emphasis and strong emphasis	match
+363	Emphasis and strong emphasis	owed
+364	Emphasis and strong emphasis	match
+365	Emphasis and strong emphasis	match
+366	Emphasis and strong emphasis	match
+367	Emphasis and strong emphasis	match
+368	Emphasis and strong emphasis	match
+369	Emphasis and strong emphasis	match
+370	Emphasis and strong emphasis	match
+371	Emphasis and strong emphasis	match
+372	Emphasis and strong emphasis	match
+373	Emphasis and strong emphasis	match
+374	Emphasis and strong emphasis	match
+375	Emphasis and strong emphasis	match
+376	Emphasis and strong emphasis	match
+377	Emphasis and strong emphasis	match
+378	Emphasis and strong emphasis	match
+379	Emphasis and strong emphasis	match
+380	Emphasis and strong emphasis	owed
+381	Emphasis and strong emphasis	match
+382	Emphasis and strong emphasis	match
+383	Emphasis and strong emphasis	match
+384	Emphasis and strong emphasis	match
+385	Emphasis and strong emphasis	owed
+386	Emphasis and strong emphasis	match
+387	Emphasis and strong emphasis	match
+388	Emphasis and strong emphasis	match
+389	Emphasis and strong emphasis	match
+390	Emphasis and strong emphasis	match
+391	Emphasis and strong emphasis	match
+392	Emphasis and strong emphasis	match
+393	Emphasis and strong emphasis	match
+394	Emphasis and strong emphasis	match
+395	Emphasis and strong emphasis	owed
+396	Emphasis and strong emphasis	match
+397	Emphasis and strong emphasis	match
+398	Emphasis and strong emphasis	match
+399	Emphasis and strong emphasis	match
+400	Emphasis and strong emphasis	match
+401	Emphasis and strong emphasis	match
+402	Emphasis and strong emphasis	match
+403	Emphasis and strong emphasis	match
+404	Emphasis and strong emphasis	match
+405	Emphasis and strong emphasis	match
+406	Emphasis and strong emphasis	match
+407	Emphasis and strong emphasis	match
+408	Emphasis and strong emphasis	match
+409	Emphasis and strong emphasis	match
+410	Emphasis and strong emphasis	match
+411	Emphasis and strong emphasis	match
+412	Emphasis and strong emphasis	match
+413	Emphasis and strong emphasis	match
+414	Emphasis and strong emphasis	match
+415	Emphasis and strong emphasis	match
+416	Emphasis and strong emphasis	match
+417	Emphasis and strong emphasis	match
+418	Emphasis and strong emphasis	match
+419	Emphasis and strong emphasis	match
+420	Emphasis and strong emphasis	match
+421	Emphasis and strong emphasis	match
+422	Emphasis and strong emphasis	match
+423	Emphasis and strong emphasis	match
+424	Emphasis and strong emphasis	match
+425	Emphasis and strong emphasis	match
+426	Emphasis and strong emphasis	match
+427	Emphasis and strong emphasis	match
+428	Emphasis and strong emphasis	match
+429	Emphasis and strong emphasis	match
+430	Emphasis and strong emphasis	match
+431	Emphasis and strong emphasis	match
+432	Emphasis and strong emphasis	match
+433	Emphasis and strong emphasis	match
+434	Emphasis and strong emphasis	match
+435	Emphasis and strong emphasis	match
+436	Emphasis and strong emphasis	match
+437	Emphasis and strong emphasis	match
+438	Emphasis and strong emphasis	match
+439	Emphasis and strong emphasis	match
+440	Emphasis and strong emphasis	match
+441	Emphasis and strong emphasis	match
+442	Emphasis and strong emphasis	match
+443	Emphasis and strong emphasis	match
+444	Emphasis and strong emphasis	match
+445	Emphasis and strong emphasis	match
+446	Emphasis and strong emphasis	match
+447	Emphasis and strong emphasis	match
+448	Emphasis and strong emphasis	match
+449	Emphasis and strong emphasis	match
+450	Emphasis and strong emphasis	match
+451	Emphasis and strong emphasis	match
+452	Emphasis and strong emphasis	match
+453	Emphasis and strong emphasis	match
+454	Emphasis and strong emphasis	match
+455	Emphasis and strong emphasis	match
+456	Emphasis and strong emphasis	match
+457	Emphasis and strong emphasis	match
+458	Emphasis and strong emphasis	match
+459	Emphasis and strong emphasis	match
+460	Emphasis and strong emphasis	match
+461	Emphasis and strong emphasis	match
+462	Emphasis and strong emphasis	match
+463	Emphasis and strong emphasis	match
+464	Emphasis and strong emphasis	match
+465	Emphasis and strong emphasis	match
+466	Emphasis and strong emphasis	match
+467	Emphasis and strong emphasis	match
+468	Emphasis and strong emphasis	match
+469	Emphasis and strong emphasis	owed
+470	Emphasis and strong emphasis	owed
+471	Emphasis and strong emphasis	match
+472	Emphasis and strong emphasis	match
+473	Emphasis and strong emphasis	match
+474	Emphasis and strong emphasis	match
+475	Emphasis and strong emphasis	rejected
+476	Emphasis and strong emphasis	rejected
+477	Emphasis and strong emphasis	rejected
+478	Emphasis and strong emphasis	match
+479	Emphasis and strong emphasis	match
+480	Emphasis and strong emphasis	match
+481	Emphasis and strong emphasis	match
+482	Links	owed
+483	Links	match
+484	Links	match
+485	Links	match
+486	Links	match
+487	Links	match
+488	Links	match
+489	Links	owed
+490	Links	match
+491	Links	rejected
+492	Links	match
+493	Links	rejected
+494	Links	rejected
+495	Links	match
+496	Links	match
+497	Links	match
+498	Links	match
+499	Links	match
+500	Links	match
+501	Links	match
+502	Links	owed
+503	Links	owed
+504	Links	owed
+505	Links	owed
+506	Links	owed
+507	Links	owed
+508	Links	owed
+509	Links	owed
+510	Links	owed
+511	Links	match
+512	Links	match
+513	Links	match
+514	Links	match
+515	Links	match
+516	Links	match
+517	Links	match
+518	Links	match
+519	Links	match
+520	Links	owed
+521	Links	match
+522	Links	match
+523	Links	match
+524	Links	rejected
+525	Links	match
+526	Links	owed
+527	Links	owed
+528	Links	owed
+529	Links	owed
+530	Links	owed
+531	Links	owed
+532	Links	owed
+533	Links	owed
+534	Links	owed
+535	Links	owed
+536	Links	rejected
+537	Links	owed
+538	Links	owed
+539	Links	owed
+540	Links	owed
+541	Links	owed
+542	Links	owed
+543	Links	owed
+544	Links	owed
+545	Links	owed
+546	Links	match
+547	Links	match
+548	Links	match
+549	Links	owed
+550	Links	owed
+551	Links	match
+552	Links	match
+553	Links	owed
+554	Links	owed
+555	Links	owed
+556	Links	owed
+557	Links	owed
+558	Links	owed
+559	Links	owed
+560	Links	owed
+561	Links	owed
+562	Links	owed
+563	Links	owed
+564	Links	owed
+565	Links	owed
+566	Links	owed
+567	Links	owed
+568	Links	owed
+569	Links	owed
+570	Links	owed
+571	Links	owed
+572	Images	owed
+573	Images	owed
+574	Images	match
+575	Images	owed
+576	Images	owed
+577	Images	owed
+578	Images	match
+579	Images	owed
+580	Images	match
+581	Images	match
+582	Images	owed
+583	Images	owed
+584	Images	owed
+585	Images	owed
+586	Images	owed
+587	Images	owed
+588	Images	owed
+589	Images	owed
+590	Images	owed
+591	Images	owed
+592	Images	owed
+593	Images	owed
+594	Autolinks	rejected
+595	Autolinks	rejected
+596	Autolinks	rejected
+597	Autolinks	rejected
+598	Autolinks	rejected
+599	Autolinks	rejected
+600	Autolinks	rejected
+601	Autolinks	rejected
+602	Autolinks	rejected
+603	Autolinks	rejected
+604	Autolinks	rejected
+605	Autolinks	rejected
+606	Autolinks	rejected
+607	Autolinks	match
+608	Autolinks	match
+609	Autolinks	rejected
+610	Autolinks	rejected
+611	Autolinks	match
+612	Autolinks	match
+613	Raw HTML	rejected
+614	Raw HTML	rejected
+615	Raw HTML	rejected
+616	Raw HTML	rejected
+617	Raw HTML	rejected
+618	Raw HTML	match
+619	Raw HTML	rejected
+620	Raw HTML	rejected
+621	Raw HTML	rejected
+622	Raw HTML	rejected
+623	Raw HTML	rejected
+624	Raw HTML	rejected
+625	Raw HTML	rejected
+626	Raw HTML	rejected
+627	Raw HTML	rejected
+628	Raw HTML	rejected
+629	Raw HTML	rejected
+630	Raw HTML	rejected
+631	Raw HTML	rejected
+632	Raw HTML	rejected
+633	Hard line breaks	match
+634	Hard line breaks	match
+635	Hard line breaks	match
+636	Hard line breaks	match
+637	Hard line breaks	match
+638	Hard line breaks	match
+639	Hard line breaks	match
+640	Hard line breaks	owed
+641	Hard line breaks	match
+642	Hard line breaks	rejected
+643	Hard line breaks	rejected
+644	Hard line breaks	match
+645	Hard line breaks	match
+646	Hard line breaks	match
+647	Hard line breaks	match
+648	Soft line breaks	match
+649	Soft line breaks	match
+650	Textual content	owed
+651	Textual content	match
+652	Textual content	match
