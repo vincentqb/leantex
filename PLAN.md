@@ -17146,10 +17146,11 @@ entry above loses its open item about running that rebase in the gate tree.
 ### 2026-09-25 — how much of LaTeX: 33.8%, measured, and the support ladder under it
 ### 2026-09-25 — how much of LaTeX: 41.1%, measured in context, and the rungs under it
 ### 2026-09-25 — how much of LaTeX: 40.4%, measured in context, and the rungs under it
+### 2026-09-25 — how much of LaTeX: 40.2%, measured in context, and the rungs under it
 
 The engine had no answer to "how much of LaTeX does this support?", so
 every claim about breadth was taste. It has one now, and the number is
-**540/1338 = 40.4%** of a documented-command denominator: kernel 204 of
+**538/1338 = 40.2%** of a documented-command denominator: kernel 202 of
 679, packages 336 of 659 (`lake env lean --run scripts/coverage.lean
 --report`). `scripts/coverage.lean` publishes it and the kernel half is
 measured rather than listed. `tests/scoreboard/coverage.tsv` ratchets the
@@ -17168,7 +17169,7 @@ had put it in the body — while every probe document used all three. That
 list was about to become the autonomy loop's work queue. The corrections are
 below, and each one is now a check. A second review found the second draft's
 headline honest — 555/1349 = 41.1% — and four of its sentences false; the
-corrections it asked for moved the number down, to 40.4%.
+corrections it asked for moved the number down, to 40.2%.
 
 **The denominator is external, pinned, and verified.**
 `tests/coverage/latex2e-index.txt` holds every command name the LaTeX2e
@@ -17259,10 +17260,12 @@ That qualification is the whole of the fix. W0301, W0302 and W0012 carry
 `ctrl:<name>`, `env:<name>` and `math:\<name>` subjects; the probe's own
 argument errors (E0304, E0312, E0205) carry none. A subjectless warning or
 error is the probe's mistake, and a name whose every shape produced only
-those is `unprobed` — reported beside the gaps, not counted as one. Nine
+those is `unprobed` — reported beside the gaps, not counted as one. Eleven
 names land there. Seven are ones a fragment cannot spell: `\begin`, `\end`,
-`\documentclass`, and the parenthesis and bracket characters. The other two
-can be written — `\ClassError` and `\PackageError` read `unprobed` only
+`\documentclass`, and the parenthesis and bracket characters. Two need three
+arguments, which no probe shape has: `\newenvironment` and
+`\renewenvironment`, below. And two can be written — `\ClassError` and
+`\PackageError` read `unprobed` only
 because the engine answers them with W0387, "read and had no effect", a
 `config` answer that carries no subject, and the rule takes a subjectless
 warning for the probe's own shape. Only censused codes promise a subject, so
@@ -17304,7 +17307,8 @@ invented, and reading that as nothing left `\ref` in the queue. It reads
 `degraded` there, which is what an unresolved reference is, and `native`
 after a label, the place it is defined relative to.
 
-Two more the second review found, both in the order the readings are taken:
+Two more the second review found, and a third it did not, all in the order
+the readings are taken:
 
 - **A rewrite onto nothing is not a translation.** The engine names a
   construct it consumed and dropped with the subject `ctrl:nothing:<name>`,
@@ -17320,13 +17324,24 @@ Two more the second review found, both in the order the readings are taken:
   subjects, so a rewrite whose document also errored counted — a bare
   `\vspace` draws N0100 and a subjectless E0320. It now comes after the
   subjectless-error reading. Measured over every counted name, that order
-  changed no verdict, so it was fixed while it cost nothing. A stricter rule
-  — no rewrite beside any complaint at all — was measured too and dropped
-  seven names a natural usage shows are implemented (`\fontseries`,
-  `\linespread`, `\newenvironment`, `\renewenvironment`, `\parbox`,
-  `\setlength`, `\vspace`): the complaint beside a rewrite names an operand
-  the probe invented or the construct the rewrite produced, so it still
-  counts, stated in the rule as its one latent cost.
+  changed no verdict, so it was fixed while it cost nothing.
+- **So does a place's own complaint.** A complaint the place draws around
+  any fragment — measured once per place against a name nothing knows; today
+  only the dimension-operand place's W0314 for a width it cannot read — says
+  the probe perturbed its context. The first cut of this rule, earlier in
+  this round, called that reading a latent cost and said nothing rested on
+  it. Measured with the rule varied, two verdicts did: `\newenvironment` and
+  `\renewenvironment` had
+  no counting witness but a rewrite beside that place's W0314. Both are
+  implemented — a three-argument definition in the preamble works — and no
+  probe shape has three arguments, so both now read `unprobed`, and the
+  corpus control, which sees fixtures use both cleanly, demanded the
+  `probe`-side explanations they carry. The headline lost those two, to
+  538/1338. A stricter rule still — no rewrite beside any complaint at all —
+  was measured too and dropped five more names a natural usage shows are
+  implemented (`\fontseries`, `\linespread`, `\parbox`, `\setlength`,
+  `\vspace`): the complaint beside those rewrites names an operand the
+  probe invented or the construct the rewrite produced, so it still counts.
 
 **The positive control is the repo's own golden corpus, read in both
 directions.** A name the probe calls `unknown` that a fixture uses where
@@ -17337,7 +17352,7 @@ corpus uses cleanly pass unremarked: `\left`, `\right` and `\ref` read
 `degraded`, `\maketitle` and `\usepackage` `skipped`, and `\begin`, `\end`
 and `\documentclass` `unprobed`. Two new places answer `\ref` and
 `\maketitle`; the rest are explained. On the context-blind place list there
-are **40** contradictions; on the shipped list **14** (`--report`), and every
+are **40** contradictions; on the shipped list **16** (`--report`), and every
 one carries its side and a natural usage that must read the way that side
 says — a `corpus` row's usage must not be answered, a `probe` row's must.
 That falsifier is what the first explanation table lacked: it filed `\fill`
@@ -17346,9 +17361,9 @@ and `\parskip` as corpus artifacts, "the construct really is a gap", while
 rows are `corpus` (`\accent`, `\bf`, `\hsize`, `\k`, `\rule`, `\vbox`: four
 sit in a `\renewcommand{\@maketitle}` body elaboration never reaches, two
 mean something else there — a palette role and a TikZ coordinate — and each
-natural usage draws W0301). Eight are
+natural usage draws W0301). Ten are
 `probe` — known false readings below the cut, which `--report` now prints —
-and `\multicolumn`, which no fixture uses, is a ninth from a spot check:
+and `\multicolumn`, which no fixture uses, is an eleventh from a spot check:
 answered with three arguments at the start of a cell, where no probe shape
 reaches. `--selftest` fails on an unexplained contradiction, a stale row, a
 row whose usage reads the other side's way, and a context-blind place list
@@ -17392,8 +17407,8 @@ better than silence and is still not support, the same judgement
 `ink_covered_or_named` makes one level up. `verified` is the rung that joins
 the two ladders, it is the only one that needs a rendered page, and nothing
 here can award it — it reads 0 today and the scoreboard header says whose it
-is to award. Today's kernel buckets: 9 unprobed, 434 unknown, 0 fails, 25
-skipped, 7 degraded, 22 rewritten, 182 native.
+is to award. Today's kernel buckets: 11 unprobed, 434 unknown, 0 fails, 25
+skipped, 7 degraded, 20 rewritten, 182 native.
 
 `fails` being empty is itself a finding: no construct earns a `dropped` code
 that names it. Errors in this engine are overwhelmingly subjectless, which is

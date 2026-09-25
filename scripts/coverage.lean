@@ -381,20 +381,23 @@ defect it answers.
    without a subject does not count — a bare `\vspace` draws N0100 and
    E0320. Reading the rewrite first changed no verdict, which is why the
    order could be fixed before it mattered.
-4. A rewrite note is positive whatever subject-carrying complaint stands
-   beside it. The complaint names an operand the probe invented or the
-   construct the rewrite produced — `\setlength{\zzprobe}{y}` draws a W0301
-   for the placeholder, `\linespread{x}` in a body a W0340 about the `\page`
-   it became — and requiring a complaint-free rewrite dropped seven names
-   (`\fontseries`, `\linespread`, `\newenvironment`, `\renewenvironment`,
-   `\parbox`, `\setlength`, `\vspace`) that a natural usage shows the engine
-   implements. The cost is a latent one, stated: a place's own complaint
-   beside some other rewrite would count too, and nothing reads that way
-   today.
-5. A document with no complaint is clean.
-6. Otherwise a complaint about one of the probe's own operands says the
+4. So is a complaint the place draws around any fragment — its own,
+   measured once per place against a name nothing knows (`Place.own`):
+   the dimension-operand place's W0314 for a width it cannot read. With it
+   the probe perturbed its context, and a rewrite beside it says nothing.
+   Reading it as nothing counted `\newenvironment` and `\renewenvironment`,
+   whose only counting witness was that place.
+5. Otherwise a rewrite note is positive whatever subject-carrying complaint
+   stands beside it. The complaint names an operand the probe invented or
+   the construct the rewrite produced — `\setlength{\zzprobe}{y}` draws a
+   W0301 for the placeholder, `\linespread{x}` in a body a W0340 about the
+   `\page` it became — and requiring a complaint-free rewrite dropped five
+   more names (`\fontseries`, `\linespread`, `\parbox`, `\setlength`,
+   `\vspace`) that a natural usage shows the engine implements.
+6. A document with no complaint is clean.
+7. Otherwise a complaint about one of the probe's own operands says the
    construct read its argument, so it decides through its `Loss`.
-7. Anything else: some other part of the document objected, so the probe
+8. Anything else: some other part of the document objected, so the probe
    perturbed its own context and learned nothing. The `length-argument`
    place reports `W0314 {env:minipage-width}` for a width it cannot read,
    which is how `\zzfakecommandzz` came to read as recognised there — the
@@ -409,7 +412,7 @@ codes promise a subject: W0387 ("read and had no effect") is a `config`
 answer about `\ClassError` that carries none, so those two read `unprobed`
 where `skipped` is right. That is routed rather than guessed around — a
 `routedDiag` row in `--selftest` fails once the code gains its subject. -/
-def rungOfProbe (name : String) (ds : Array Diag) : Rung :=
+def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let worstOf (xs : Array Diag) : Rung :=
     xs.foldl (fun acc d => Rung.worse acc (rungOfLoss d.kind.loss)) .verified
   let about := ds.filter (isAbout name)
@@ -419,6 +422,7 @@ def rungOfProbe (name : String) (ds : Array Diag) : Rung :=
   else if !about.isEmpty then worstOf about
   else if ds.any (·.subject == some ("ctrl:nothing:" ++ name)) then .skipped
   else if complaints.any (·.subject.isNone) then .unprobed
+  else if complaints.any (fun d => d.subject.any own.contains) then .unprobed
   else if ds.any (fun d => d.kind.loss == .info) then .rewritten
   else if complaints.isEmpty then .native
   else
@@ -534,25 +538,47 @@ how `\documentclass` came to read `unknown` while every probe document used
 it. -/
 def changesDoc (a b : String) : Bool := (Elab.run "effect" a).1 != (Elab.run "effect" b).1
 
+/-- A place's own complaints: the subjects its document draws, in every
+shape, around a name nothing knows — other than that name's own key and the
+probe's operands. What the place says around any fragment is the place's to
+answer for, and `rungOfProbe` reads it as a probe that perturbed its context.
+Measured, not listed: today it is W0314's `env:minipage-width` in the
+dimension-operand place and nothing anywhere else. -/
+def Place.own (p : Place) : Array String := Id.run do
+  let n := decoy "place"
+  let mut out : Array String := #[]
+  for s in shapes n do
+    for d in (Elab.run "place" (p.doc s)).2 do
+      if d.severity == .note || isAbout n d || isOperandDiag d then continue
+      if let some sub := d.subject then
+        unless out.contains sub do out := out.push sub
+  return out
+
+/-- Places with their own complaints, measured once for a run. -/
+abbrev Measured := Array (Place × Array String)
+
+def measurePlaces (ps : Array Place) : Measured := ps.map fun p => (p, p.own)
+
 /-- Probe one name through the engine's real dispatch, in every shape and
 every place, and keep the best rung. A shape that draws no diagnostic has
 its effect checked on the spot; with no effect the name is recognised and
 consumed and nothing came of it, which is `skipped`. -/
-def probeIn (ps : Array Place) (name : String) : Rung := Id.run do
+def probeIn (ps : Measured) (name : String) : Rung := Id.run do
   let mut best : Rung := .unprobed
   let real := shapes name
   let fake := shapes (decoy name)
   for i in [0:real.size] do
-    for p in ps do
+    for (p, own) in ps do
       let doc := p.doc real[i]!
-      let r := rungOfProbe name (Elab.run "coverage" doc).2
+      let r := rungOfProbe name own (Elab.run "coverage" doc).2
       if r == .native then
         if !isControlWord name || changesDoc doc (p.doc fake[i]!) then return .native
         else best := Rung.best best .skipped
       else best := Rung.best best r
   return best
 
-def probe (name : String) : Rung := probeIn places name
+/-- One name, on its own. A run measures the places once and calls `probeIn`. -/
+def probe (name : String) : Rung := probeIn (measurePlaces places) name
 
 -- ## The package half, from the compat index
 
@@ -632,7 +658,8 @@ Every mode reads this array: probing 679 names in 13 places is the
 expensive part of a run, and the first version of this script paid for it
 three times in `--check` alone. -/
 def measureKernel (rows : Array KRow) : Array (KRow × Rung) :=
-  parMap (rows.filter (·.counted)) fun r => (r, probe r.name)
+  let ps := measurePlaces places
+  parMap (rows.filter (·.counted)) fun r => (r, probeIn ps r.name)
 
 /-- The rows a run computes, under the `pairs counted/rows` encoding: per
 kernel item, `<item>.rows` names in its denominator and `<item>.counted`
@@ -761,7 +788,8 @@ def corpusContradictions (ps : Array Place) (denom : Array KRow) :
         clean := clean.push (name, file)
   let names := notUnknown.map (·.1) ++
     (clean.map (·.1)).filter (fun n => !notUnknown.any (·.1 == n))
-  let rungs := parMap names (probeIn ps)
+  let measured := measurePlaces ps
+  let rungs := parMap names (probeIn measured)
   let mut hits : Array Contradiction := #[]
   for i in [0:names.size] do
     let name := names[i]!
@@ -841,9 +869,16 @@ probe token is a glue value" },
     why := "a TikZ coordinate name, not the ogonek accent" },
   { name := "left", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,
     why := "a delimiter operand: no probe token is a delimiter" },
+  { name := "newenvironment", side := .probe, usage := ⟨true, "\\newenvironment{zzbox}{[}{]}"⟩,
+    why := "a preamble definer of three arguments; no probe shape has three, and its one \
+counting witness was the dimension-operand place, whose own complaint it stood beside" },
   { name := "parskip", side := .probe, usage := ⟨true, "\\setlength{\\parskip}{7pt}"⟩,
     why := "answered through \\setlength with a length; the fixture's sits in a \
 \\newcommand{\\@toptitlebar} body, and no probe token is a length" },
+  { name := "renewenvironment", side := .probe,
+    usage := ⟨true, "\\newenvironment{zzbox}{[}{]}\n\\renewenvironment{zzbox}{(}{)}"⟩,
+    why := "a preamble definer of three arguments; no probe shape has three, and its one \
+counting witness was the dimension-operand place, whose own complaint it stood beside" },
   { name := "right", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,
     why := "a delimiter operand: no probe token is a delimiter" },
   { name := "rule", side := .corpus, usage := ⟨false, "\\rule{1pt}{1pt}"⟩,
@@ -960,6 +995,7 @@ def report : IO UInt32 := do
   let d ← loadKernel
   let pkgs ← readPackages
   let kernel := measureKernel d.rows
+  let pr := probeIn (measurePlaces places)
   let t := totalsOf kernel d.rows pkgs
   IO.println s!"kernel  {t.kCounted} counted of {t.kRows} ({t.kExcluded} excluded)"
   for r in Rung.all do
@@ -1008,7 +1044,7 @@ def report : IO UInt32 := do
   IO.println s!"  known false readings below the cut (the engine answers them; no probe \
 fragment spells them): {known.size}"
   for e in known do
-    IO.println s!"    {e.name}\t{(probe e.name).word}\t{e.why}"
+    IO.println s!"    {e.name}\t{(pr e.name).word}\t{e.why}"
   let blind ← corpusContradictions contextBlindPlaces d.rows
   IO.println s!"  {blind.size} contradiction(s) on the context-blind places"
   IO.println "-- routed: diagnostics the rung rule reads around"
@@ -1039,7 +1075,7 @@ fragment spells them): {known.size}"
         if call.startsWith "\\" && isControlWord (call.drop 1).toString then
           let name := (call.drop 1).toString
           comparable := comparable + 1
-          let rung := probe name
+          let rung := pr name
           -- The vocabularies are lined up before a difference means
           -- anything. `refuse:W0301` *is* unknown (W0301 is the
           -- unknown-command code). Every other annotation — `impl`,
@@ -1271,52 +1307,65 @@ def selftest : IO UInt32 := do
   let expect (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (·.push name)
   -- The rung rule, on diagnostics the engine really produces.
-  expect "a known command is native" (probe "textbf" == .native)
-  expect "an invented name is unknown" (probe "zzfakecommandzz" == .unknown)
+  let measured := measurePlaces places
+  let pr := probeIn measured
+  expect "a known command is native" (pr "textbf" == .native)
+  expect "an invented name is unknown" (pr "zzfakecommandzz" == .unknown)
   expect "the control stays unknown in every place"
-    ((places.all fun p =>
+    ((measured.all fun (p, own) =>
       shapes "zzfakecommandzz" |>.all fun s =>
-        rungOfProbe "zzfakecommandzz" (Elab.run "c" (p.doc s)).2 != .native))
+        rungOfProbe "zzfakecommandzz" own (Elab.run "c" (p.doc s)).2 != .native))
   expect "every place's wrapper draws no diagnostic"
     (places.all fun p => (Elab.run "w" (p.doc "")).2.isEmpty)
   -- The context each of these lives in is the point of the place family.
-  expect "a tabular rule is answered" ((probe "hline").counted)
-  expect "a float's caption is answered" ((probe "caption").counted)
-  expect "a list item is answered" ((probe "item").counted)
-  expect "a math construct is answered" ((probe "frac").counted)
-  expect "a reference is answered after its label" ((probe "ref").counted)
-  expect "a title is answered where one is declared" ((probe "maketitle").counted)
+  expect "a tabular rule is answered" ((pr "hline").counted)
+  expect "a float's caption is answered" ((pr "caption").counted)
+  expect "a list item is answered" ((pr "item").counted)
+  expect "a math construct is answered" ((pr "frac").counted)
+  expect "a reference is answered after its label" ((pr "ref").counted)
+  expect "a title is answered where one is declared" ((pr "maketitle").counted)
   -- Every probe document uses these three, and the first version of this
   -- script read `\begin` as unknown and `\documentclass`/`\end` as refused
   -- because of it. None of the three can be spelled as a fragment — a class
   -- name is a document's identity, `\begin`/`\end` are halves of a delimiter
   -- pair — so `unprobed` is the honest reading, and the point is that none
   -- of them is a gap charged to the engine.
-  expect s!"documentclass is unprobed, not a gap (got {(probe "documentclass").word})"
-    (probe "documentclass" == .unprobed)
-  expect s!"end is unprobed, not a gap (got {(probe "end").word})" (probe "end" == .unprobed)
-  expect s!"begin is unprobed, not a gap (got {(probe "begin").word})"
-    (probe "begin" == .unprobed)
-  expect "a page style is answered through its keyword" ((probe "thispagestyle").counted)
+  expect s!"documentclass is unprobed, not a gap (got {(pr "documentclass").word})"
+    (pr "documentclass" == .unprobed)
+  expect s!"end is unprobed, not a gap (got {(pr "end").word})" (pr "end" == .unprobed)
+  expect s!"begin is unprobed, not a gap (got {(pr "begin").word})"
+    (pr "begin" == .unprobed)
+  expect "a page style is answered through its keyword" ((pr "thispagestyle").counted)
   expect "the registers a length argument answers are counted"
-    ((probe "textwidth").counted && (probe "linewidth").counted)
-  expect "a definer shape survives its own placeholder's warning"
-    ((probe "setlength").counted && (probe "newenvironment").counted)
+    ((pr "textwidth").counted && (pr "linewidth").counted)
+  expect "a definer shape survives its own placeholder's warning" ((pr "setlength").counted)
+  -- A place's own complaint is the place's: a rewrite beside it says nothing.
+  match measured.find? (·.1.label == "length-argument") with
+  | none => expect "the dimension-operand place exists" false
+  | some (p, own) =>
+    expect "the dimension-operand place owns its width complaint"
+      (own.contains "env:minipage-width")
+    let ds := (Elab.run "p" (p.doc "\\newenvironment{x}{y}")).2
+    expect "a rewrite beside the place's own complaint does not count"
+      (rungOfProbe "newenvironment" own ds == .unprobed
+        && rungOfProbe "newenvironment" #[] ds == .rewritten)
+  expect "no other place owns a complaint"
+    (measured.all fun (p, own) => p.label == "length-argument" || own.isEmpty)
   expect "an operand complaint is evidence of dispatch"
-    (rungOfProbe "ref" (Elab.run "p" (wrap "\\ref{x}")).2 == .degraded)
+    (rungOfProbe "ref" #[] (Elab.run "p" (wrap "\\ref{x}")).2 == .degraded)
   expect "a counter name is answered where a text group is not"
-    ((probe "setcounter").counted && (probe "stepcounter").counted
-      && (probe "addtocounter").counted && (probe "refstepcounter").counted)
+    ((pr "setcounter").counted && (pr "stepcounter").counted
+      && (pr "addtocounter").counted && (pr "refstepcounter").counted)
   expect "a rewrite onto nothing is skipped, not translated"
-    (rungOfProbe "noindent" (Elab.run "p" (wrap "\\noindent")).2 == .skipped
-      && probe "noindent" == .skipped && probe "PackageWarning" == .skipped)
+    (rungOfProbe "noindent" #[] (Elab.run "p" (wrap "\\noindent")).2 == .skipped
+      && pr "noindent" == .skipped && pr "PackageWarning" == .skipped)
   expect "a rewrite whose document also errors without a subject does not count"
-    (rungOfProbe "vspace" (Elab.run "p" (wrap "\\vspace")).2 == .unprobed)
+    (rungOfProbe "vspace" #[] (Elab.run "p" (wrap "\\vspace")).2 == .unprobed)
   expect "the bare wrapper draws no diagnostic" ((Elab.run "w" (wrap "")).2.isEmpty)
   expect "a subjectless error is the probe's, not the construct's"
-    (rungOfProbe "textbf" (Elab.run "p" (wrap "\\textbf")).2 == .unprobed)
+    (rungOfProbe "textbf" #[] (Elab.run "p" (wrap "\\textbf")).2 == .unprobed)
   expect "another subject's warning is the probe's, not the construct's"
-    (rungOfProbe "zzfakecommandzz"
+    (rungOfProbe "zzfakecommandzz" #[]
       (Elab.run "p" (wrap "\\begin{minipage}{0.5\\zzfakecommandzz}\nx\n\\end{minipage}")).2
       == .unprobed)
   -- The ladder's arithmetic.
@@ -1441,7 +1490,7 @@ usage is not answered either")
             ref.modify (·.push s!"\\{e.name} is filed as a real gap, and its natural usage \
 is answered")
       for e in falseQueue do
-        let rung := probe e.name
+        let rung := pr e.name
         if rung.counted then
           ref.modify (·.push s!"\\{e.name} is answered by the probe now — drop its row")
         else if !answeredIn e.name rung e.usage then
