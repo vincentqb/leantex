@@ -7,7 +7,7 @@ src-body-key: 7BC14C4EB380DF2D7D0B582624D43F87
 ref-src-key: 9D1AEEDD14BA116BA73B509B4BAD3F95
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 format: LaTeX2e <2025-11-01>
-argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -jobname=prose.ref \pdfvariable trailerid{[<9D1AEEDD14BA116BA73B509B4BAD3F95> <9D1AEEDD14BA116BA73B509B4BAD3F95>]}\input{prose.ref.tex}
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=prose.ref \pdfvariable trailerid{[<9D1AEEDD14BA116BA73B509B4BAD3F95> <9D1AEEDD14BA116BA73B509B4BAD3F95>]}\input{prose.ref.tex}
 inputs: ./prose.ref.tex=9D1AEEDD14BA116BA73B509B4BAD3F95 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D
 pages: 1
 overfull: 0

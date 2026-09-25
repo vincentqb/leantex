@@ -7,7 +7,7 @@ src-body-key: 183835E29DAD844950E9A80D0058D17F
 ref-src-key: DC1DB4EAED7F7A2A9934271A56B54D80
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 format: LaTeX2e <2025-11-01>
-argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -jobname=measure.ref \pdfvariable trailerid{[<DC1DB4EAED7F7A2A9934271A56B54D80> <DC1DB4EAED7F7A2A9934271A56B54D80>]}\input{measure.ref.tex}
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=measure.ref \pdfvariable trailerid{[<DC1DB4EAED7F7A2A9934271A56B54D80> <DC1DB4EAED7F7A2A9934271A56B54D80>]}\input{measure.ref.tex}
 inputs: ./measure.ref.tex=DC1DB4EAED7F7A2A9934271A56B54D80 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D
 pages: 1
 overfull: 0
