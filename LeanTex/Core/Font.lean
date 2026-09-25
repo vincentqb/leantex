@@ -706,8 +706,15 @@ def classify (data : ByteArray) : Except String Class := do
     | none =>
       (lowerSub.splitOn "italic").length > 1 || (lowerSub.splitOn "oblique").length > 1
         || macStyle / 2 % 2 == 1
+  -- `post`: isFixedPitch is at offset 12 — version (4), italicAngle (4),
+  -- underlinePosition (2), underlineThickness (2). Offset 16 is
+  -- minMemType42, which is 0 in every face that ships one, so reading
+  -- there answered "proportional" for Source Code Pro and every other
+  -- monospace design (`t "face pitch: ..."`, Tests/FontMath.lean). The
+  -- PDF descriptor's FixedPitch flag and the HTML `--font-mono` generic
+  -- both read this field.
   let isFixedPitch := match findTable data "post" with
-    | some t => if t.offset + 20 ≤ data.size then u32 data (t.offset + 16) != 0 else false
+    | some t => if t.offset + 16 ≤ data.size then u32 data (t.offset + 12) != 0 else false
     | none => false
   -- OS/2 usWeightClass (100–900). Families ship weights, not a bold flag:
   -- "Demi" at 600 is a family's bold face even when the BOLD bit is clear.
@@ -1183,6 +1190,31 @@ a diagnostic resting on it names the real condition rather than a proxy. -/
 theorem slotCollapsed_exact (fs : FontSet) (slot : Nat) (h : slot != 0) :
     fs.slotCollapsed slot = (fs.lookup slot 400 false == fs.lookup 0 400 false) := by
   simp [slotCollapsed, h]
+
+/-- **Is the face this slot resolved to fixed-pitch?** The face's own
+answer (`post.isFixedPitch`), read through the same `lookup` the setter
+uses, so the question is about the face that sets the run and not about the
+family that was asked for.
+
+A slot index says which face; it does not say what that face is. A document
+whose body family is monospace sets `\texttt` in a fixed-pitch face while
+slot 2 reads as collapsed, and a report resting on the index alone tells
+that reader a loss it cannot see. This is the predicate that separates the
+two, and `HtmlDoc.genericFor` already reads the same field for the CSS
+generic — one source for "is this monospace", not two. -/
+def slotIsFixedPitch (fs : FontSet) (slot : Nat) : Bool :=
+  match fs.fonts[fs.lookup slot 400 false]? with
+  | some f => f.isFixedPitch
+  | none => false
+
+/-- **A slot's fixed-pitch answer is the resolved face's own.** No index
+arithmetic between the question and the face: whichever face `lookup` names
+is the one whose `post` flag answers, so a caller cannot read a pitch off
+the wrong face. -/
+theorem slotIsFixedPitch_exact (fs : FontSet) (slot : Nat)
+    (h : fs.lookup slot 400 false < fs.fonts.size) :
+    fs.slotIsFixedPitch slot = (fs.fonts[fs.lookup slot 400 false]).isFixedPitch := by
+  simp [slotIsFixedPitch, Array.getElem?_eq_getElem h]
 
 /-- The font that sets a glyph the styled face lacks, if any face can. -/
 def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=

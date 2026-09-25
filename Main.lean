@@ -377,22 +377,6 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     index := index
     fallback := fallback
     math := mathIdx }
-  -- **A slot that fell to the body face is named here.** This is the one
-  -- place holding both the document's `\fonts` declaration and the index
-  -- the slots resolved to, which is what the report needs
-  -- (`Cli.SlotLoss.losses`, over `Font.FontSet.slotCollapsed`).
-  --
-  -- Settled assemblies only. A provisional assembly resolves slot 0 and
-  -- skips the others deliberately, so its index has no entry past the body
-  -- and every slot reads as collapsed; a report there would be about the
-  -- driver's own shortcut rather than about the document.
-  -- premise: slotLossChecks — one document over two index shapes: a
-  -- slot-0-only index (the provisional shape) reports every other slot,
-  -- a settled index reports only what the document lost. The gate is
-  -- load-bearing rather than decorative.
-  match purpose with
-    | .settled => diags := diags ++ SlotLoss.diags spec set doc
-    | .provisional _ => pure ()
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
 def since (t0 : Nat) : IO Nat := do
@@ -1087,6 +1071,25 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- and nothing ships. `Doc.fontPolicy` is that rule as a value, and
       -- a declared `fonts =` overrides it (`Pdf.fontPolicy_projects`).
       let shipFonts := doc.fontPolicy == .embedded
+      -- **A slot that fell to the body face is named here**, and not in the
+      -- assembly: the loss is about a face a reader receives, so the
+      -- decision has to see what this run emits. The PDF embeds the
+      -- resolved set; an HTML page does so only under `fontPolicy =
+      -- embedded`. A page declaring `css = own` ships no face and styles
+      -- code from its own monospace stack, and a report there names a file
+      -- nobody receives (`Cli.SlotLoss.carries`). The set here is the
+      -- settled one — `build` holds no other — so no assembly gate is
+      -- needed on top.
+      -- premise: slotLossChecks — one document, one index, two values of
+      -- the gate's own condition: carrying a face reports the lost slot,
+      -- carrying none reports nothing. The gate is load-bearing rather
+      -- than decorative.
+      let slotDiags := SlotLoss.diags doc.fonts fs doc
+        (SlotLoss.carries emit doc.fontPolicy)
+      let rSlot ← ui.resolve doc.allow allowAll slotDiags
+      fired := fired ++ rSlot.fired
+      accepted := accepted ++ rSlot.accepted
+      warnings := warnings + rSlot.warnings
       -- The declared contract, held against each emitted artifact's
       -- realization record: a fact the artifact cannot yet realize is one
       -- W0701 per artifact, per fact — warnings, resolved before the gate

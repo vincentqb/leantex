@@ -139,7 +139,21 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       let faces ← FontDb.scanRoots [testFonts]
       let companion ← FontEnv.resolveMath faces none (some "Fira Sans") true #[] #[] #[]
       let first ← FontEnv.resolveMath faces none (some "Open Sans") true #[] #[] #[]
-      return companion.diags ++ first.diags)]
+      return companion.diags ++ first.diags),
+    -- The slot report: a document setting typewriter runs, a resolved set
+    -- whose slots all land on one proportional face, and an artifact that
+    -- carries it. Every input is a value built here — the faces come from
+    -- the suite's own font directory — so the message is the same on every
+    -- host and no font need be installed.
+    (.W0390, fun _ => do
+      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
+      | .error _ => return #[]
+      | .ok body =>
+        let idx := #[((0, 400, false), 0), ((1, 400, false), 0), ((2, 400, false), 0)]
+        let fs : Font.FontSet := { fonts := #[body], index := idx }
+        let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+          "A \\texttt{fixed pitch} run.\n\\end{document}\n")).1
+        return SlotLoss.diags doc.fonts fs doc (SlotLoss.carries #[.pdf] doc.fontPolicy))]
 
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
@@ -386,6 +400,11 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- in its place: the formula around it parses, so the loss is the
   -- construct's rather than the display's.
   | .W0389 => dvE "$\\cancelto{0}{\\sum_{k} x_k}$"
+  -- The slot report is the driver's own decision, run as a unit: the probe
+  -- hands `Cli.SlotLoss` a document setting typewriter runs, a resolved set
+  -- whose mono slot is the proportional body face, and an artifact that
+  -- carries it — so what the golden records is what a build emits.
+  | .W0390 => probed .W0390
   -- A title whose author declared two lines and whose first does not fit
   -- the measure: the breaker finds a legal break inside the declared line,
   -- so a third line ships and its remainder returns to the flush-left

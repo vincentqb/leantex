@@ -803,6 +803,23 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   let condensed : FontDb.Face := { plain with path := "/x/b.otf", subfamily := "Condensed Bold" }
   t "plain face beats a condensed sibling"
     ((FontDb.resolve #[condensed, plain] "X" { bold := true }).map (·.1.path) == some "/x/a.otf")
+  -- **A face's pitch is the face's own `post.isFixedPitch`.** The field is
+  -- at offset 12 of `post`; offset 16 is minMemType42, zero in every face
+  -- that ships one, so a reader four bytes late answers "proportional" for
+  -- every monospace design there is. Two faces whose declared answers
+  -- differ pin it: the shipped monospace says yes, the shipped serif no.
+  -- The PDF descriptor's FixedPitch flag and the HTML monospace generic
+  -- both read this, as does the slot report's face test. Read through
+  -- `classify` rather than a scan: the scan's answer can come from a disk
+  -- cache keyed by the file alone, and this is a claim about the parser.
+  let pitchOf (name : String) : IO (Option Bool) := do
+    match Font.classify (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok c => pure (some c.isFixedPitch)
+    | .error _ => pure none
+  t "face pitch: a monospace design declares fixed pitch"
+    ((← pitchOf "SourceCodePro-Regular.otf") == some true)
+  t "face pitch: a proportional design does not"
+    ((← pitchOf "SourceSerifPro-Regular.otf") == some false)
 
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -1630,6 +1647,33 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((SlotLoss.slotsUsed (doc "A \\textsf{sans} run.")).contains 1)
   t "slot census: '\\texttt' asks for no sans slot"
     (!(SlotLoss.slotsUsed (doc "A \\texttt{fixed pitch} run.")).contains 1)
+  -- A link whose text carries no typewriter style asks for no mono slot: the
+  -- census reads the style the IR carries, never the construct that made it.
+  -- That is why honouring `\urlstyle{same}` where `\url` elaborates — no
+  -- family style for `same` — is all it takes for a URL in the running face
+  -- to stop counting as a lost mono run, with no change here.
+  t "slot census: a link with no typewriter style asks for no mono slot"
+    (!(SlotLoss.slotsUsed (doc "A link \\href{https://example.org/a}{here}.")).contains 2)
+  -- **Registered debt: the census counts declarations, not shipped runs.**
+  -- A style-s font template is a furniture region, so a `\style` naming
+  -- `\ttfamily` counts as a mono use even in a document with no element of
+  -- that kind, and the report names a loss no page shows (measured: one
+  -- W0390 on such a document). The answer belongs to the layout, which
+  -- resolves each run-s slot as it sets it (`Layout.Out`), and this census
+  -- cannot see provenance: `Ir.furnitureInlines` hands over runs, not the
+  -- elements they came from. The row fails in both directions — when the
+  -- over-count grows past what is registered, and when the fix lands and
+  -- the registered answer stops holding, which is the signal to delete it.
+  let debtDoc := (elabStr ("\\documentclass{article}\n\\style{section}{ font = {\\ttfamily} }\n" ++
+    "\\begin{document}\nPlain body prose here, and no section at all.\n\\end{document}")).1
+  let debtSlots := SlotLoss.slotsUsed debtDoc
+  if debtSlots == #[2] then
+    t "slot census debt: an unused furniture template still counts (owner: Layout per-run slots)"
+      true
+  else
+    failures ref ("slot census debt: the registered answer no longer holds — a furniture " ++
+      s!"template now yields {debtSlots.toList}; if the layout-s per-run slot landed, " ++
+      "delete this row and the PLAN registration")
   -- The descent is the fold's: a construct nested where a hand-rolled walk
   -- would have stopped still counts. An image inside a footnote once
   -- shipped a silent placeholder for exactly this reason.
@@ -1655,71 +1699,78 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let monoSpec : Ir.FontSpec := { mono := some "Source Code Pro" }
   let usesMono := doc "A \\texttt{fixed pitch} run."
   let usesNeither := doc "Plain body prose here."
-  -- The report, and each of its three conditions.
+  -- The report, and each of its conditions.
   t "slot loss: an undeclared mono slot on the body face is reported"
-    ((SlotLoss.diags {} collapsed usesMono).size == 1)
+    ((SlotLoss.diags {} collapsed usesMono true).size == 1)
   t "slot loss: the report is the mono slot"
-    ((SlotLoss.losses {} collapsed #[2]).map (·.key) == #["mono"])
+    ((SlotLoss.losses {} collapsed #[2] true).map (·.key) == #["mono"])
   t "slot loss: a declared mono family is not reported"
-    ((SlotLoss.diags monoSpec declared usesMono).isEmpty)
+    ((SlotLoss.diags monoSpec declared usesMono true).isEmpty)
   t "slot loss: a declared family resolving onto the body face is still the document's own choice"
-    ((SlotLoss.diags monoSpec collapsed usesMono).isEmpty)
+    ((SlotLoss.diags monoSpec collapsed usesMono true).isEmpty)
   t "slot loss: a slot the document never asks for is not reported"
-    ((SlotLoss.diags {} collapsed usesNeither).isEmpty)
+    ((SlotLoss.diags {} collapsed usesNeither true).isEmpty)
   t "slot loss: a slot with its own face is not reported"
-    ((SlotLoss.losses {} declared #[2]).isEmpty)
+    ((SlotLoss.losses {} declared #[2] true).isEmpty)
+  -- **The face, not the index.** A monospace body sets typewriter runs in
+  -- fixed pitch whichever slot they came through, so there is nothing to
+  -- report — the index says otherwise and the face is what the reader has.
+  let monoBody : Font.FontSet := { fonts := #[code], index := slots 0 0 0 }
+  t "slot loss: a fixed-pitch body face loses no mono, though the index collapsed"
+    ((SlotLoss.diags {} monoBody usesMono true).isEmpty)
+  t "slot loss: the mono slot's face answers for its pitch"
+    (monoBody.slotIsFixedPitch 2 && !collapsed.slotIsFixedPitch 2)
+  -- The sans slot claims no pitch: no flag in a face records "is a sans
+  -- design", so the loss reported is the missing contrast, and a
+  -- fixed-pitch body does not exempt it.
+  t "slot loss: the sans slot is reported on a fixed-pitch body too"
+    ((SlotLoss.losses {} monoBody #[1] true).map (·.key) == #["sans"])
+  -- **The carrying gate is load-bearing.** One document, one index, two
+  -- values of the gate's own condition: an artifact carrying a face
+  -- reports the lost slot, one carrying none reports nothing. An HTML-only
+  -- page under a declared `css =` is the second, and it is what the site
+  -- port builds.
+  t "slot loss: an artifact carrying no face reports nothing"
+    ((SlotLoss.diags {} collapsed usesMono false).isEmpty)
+  t "slot loss: a PDF carries a face whatever the font policy"
+    (SlotLoss.carries #[.pdf] .none && SlotLoss.carries #[.pdf] .embedded)
+  t "slot loss: an HTML page carries a face only when it embeds one"
+    (SlotLoss.carries #[.html] .embedded && !SlotLoss.carries #[.html] .none)
+  t "slot loss: a markdown twin carries no face"
+    (!SlotLoss.carries #[.md] .embedded)
   -- The body slot is the reference, never a subject: no report names it,
   -- whatever is asked of it.
   t "slot loss: the body slot is never reported"
-    ((SlotLoss.losses {} collapsed #[0, 1, 2]).all (·.slot != 0))
+    ((SlotLoss.losses {} collapsed #[0, 1, 2] true).all (·.slot != 0))
   -- One loss per slot, not one per run: five mono sites and one sans site
   -- are two diagnostics.
   let manyRuns := doc ("A \\texttt{one} run, a \\texttt{two} run, a \\texttt{three} run, " ++
     "\\url{https://example.org/a}, and \\textsf{sans}.\n" ++
     "\\begin{verbatim}\nliteral\n\\end{verbatim}")
   t "slot loss: one report per collapsed slot, not one per run"
-    ((SlotLoss.diags {} collapsed manyRuns).size == 2)
+    ((SlotLoss.diags {} collapsed manyRuns true).size == 2)
   -- The diagnostic itself: the code, and the subject the census counts on.
-  let monoDiag := (SlotLoss.diags {} collapsed usesMono)[0]?
-  t "slot loss: the report is a degraded face substitution (W0006)"
-    ((monoDiag.map (·.code)) == some "W0006")
+  let monoDiag := (SlotLoss.diags {} collapsed usesMono true)[0]?
+  t "slot loss: the report is its own code, not the variant axis (W0390)"
+    ((monoDiag.map (·.code)) == some "W0390")
   t "slot loss: the report carries its slot as subject, so it is counted"
     ((monoDiag.bind (·.subject)) == some "slot:mono")
-  t "slot loss: a counted loss is what W0006 declares"
-    (DiagCode.W0006.censused && DiagCode.W0006.loss == Loss.degraded)
+  t "slot loss: a counted loss is what W0390 declares"
+    (DiagCode.W0390.censused && DiagCode.W0390.loss == Loss.degraded)
   t "slot loss: the report names no face, so it reads the same on every host"
     ((monoDiag.map fun d => !hasStr d.message "Serif").getD false)
-  -- **The settled/provisional gate is load-bearing.** A provisional
+  t "slot loss: the report names the slot's runs, not constructs the document may not have written"
+    ((monoDiag.map fun d => !hasStr d.message "\\url").getD false)
+
+  -- **A provisional index is not a document's loss.** A provisional
   -- assembly resolves slot 0 and skips the others, so its index has no
-  -- entry past the body and every slot reads as collapsed. Two index
-  -- shapes, one document, different reports: that is what the gate in the
-  -- driver's assembly is for, and why it is not decoration.
+  -- entry past the body and every slot reads as collapsed. The report is
+  -- reached only from `build`, which holds the settled set; this row keeps
+  -- the difference visible, so a caller handing the provisional shape in
+  -- would be handing in an index that answers about the driver's shortcut
+  -- rather than about the document.
   let provisional : Font.FontSet := { fonts := #[body], index := #[((0, 400, false), 0)] }
-  t "slot loss: a slot-0-only index reports every other slot, which the gate exists to suppress"
-    ((SlotLoss.losses {} provisional #[1, 2]).size == 2)
+  t "slot loss: a slot-0-only index would report every other slot, which only the settled set avoids"
+    ((SlotLoss.losses {} provisional #[1, 2] true).size == 2)
   t "slot loss: the same document on a settled index reports only what it lost"
-    ((SlotLoss.losses monoSpec declared #[1, 2]).size == 1)
-  -- The `\urlstyle` satisfaction table. url.sty's selector names a face,
-  -- and whether the engine honoured it depends on where the mono slot
-  -- resolved — so the answer differs between these two environments, which
-  -- is the whole reason the elaboration cannot decide it alone.
-  t "urlstyle: 'same' is satisfied when the mono slot is the body face"
-    (SlotLoss.urlStyleSatisfied collapsed "same")
-  t "urlstyle: 'same' is refused when a distinct mono is declared"
-    (!SlotLoss.urlStyleSatisfied declared "same")
-  t "urlstyle: 'tt' is satisfied when a distinct mono is declared"
-    (SlotLoss.urlStyleSatisfied declared "tt")
-  t "urlstyle: 'tt' is refused when the mono slot is the body face"
-    (!SlotLoss.urlStyleSatisfied collapsed "tt")
-  t "urlstyle: 'rm' is satisfied when the mono slot is the body face"
-    (SlotLoss.urlStyleSatisfied collapsed "rm")
-  t "urlstyle: 'sf' is satisfied in neither environment"
-    (!SlotLoss.urlStyleSatisfied collapsed "sf" && !SlotLoss.urlStyleSatisfied declared "sf")
-  -- The arm that is wrong today, as the engine reports it: `same` with no
-  -- mono declared is satisfied, and still warns.
-  let sameDs := (elabStr ("\\documentclass{article}\n\\usepackage{url}\n\\urlstyle{same}\n" ++
-    "\\begin{document}\nA link \\url{https://example.org/a} here.\n\\end{document}")).2
-  t "urlstyle: the refusal still fires for 'same', which a collapsed slot satisfies"
-    ((sameDs.filter (·.code == "W0104")).any fun d => d.subject == some "ctrl:urlstyle")
-  t "urlstyle: the elaboration carries no value a gate could read"
-    ((sameDs.filter (·.code == "W0104")).all fun d => d.refused.isNone)
+    ((SlotLoss.losses monoSpec declared #[1, 2] true).size == 1)

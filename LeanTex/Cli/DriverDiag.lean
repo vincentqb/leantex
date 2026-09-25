@@ -53,30 +53,23 @@ def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.Face) : 
     (help := "install the named weight, or name the face to use \
 (\\fonts{ sans.upright = \"...\" } and siblings)")
 
-/-- **W0006: a family slot the document declared nothing for, resolved onto
-the body face.** The third axis of the one question W0006 already answers —
-a face was asked for, it was not available, another face substitutes. W0006
-spells the variant axis, W0366 the weight axis; this is the family-slot
-axis, and the loss is identical in kind and in floor: a substituted face,
-`degraded`, the run's text still on the page.
+/-- **W0390: a family slot the document declared nothing for, resolved onto
+the body face.** A distinct axis from W0006 and W0366, which is why it is a
+distinct code. Those two are within a family the document named: a variant
+missing (W0006) or a weight missing (W0366), with "install the face" as the
+remedy. This is the family slot itself never named, and the remedy is a
+declaration — `\fonts{ mono = "..." }` — not an install. One code, one
+meaning, and `\allow{W0390}` accepts this loss without also accepting every
+future bold substitution.
 
-One narrowness, joined rather than created: W0006's registry line reads
-"declared face variant missing", and `resolveVariant`'s undeclared arm
-already emits under it with nothing declared ("'X' has no bold face; 'Y'
-substitutes"). The code as *emitted* already means a requested face was not
-available and another substitutes, which is exactly this loss at the same
-`degraded` class and floor. Widening that registry line to the meaning the
-code already carries is a one-line change in `Core/Diag.lean` and its
-golden, neither of which this change owns.
-
-`key` is the `\fonts` key that would declare the slot, `asks` the
-constructs that reach it. Neither the face nor the family is named: which
-family fills an undeclared slot is the host's answer, and a message that
-varies by host cannot be witnessed. The subject is the slot, so the loss is
-counted once however many runs set it. -/
-def slotCollapsed (key asks : String) : Diag :=
-  Diag.of .W0006
-    s!"nothing declares a '{key}' family; {asks} set in the body face"
+`key` is the `\fonts` key that would declare the slot, `runs` the runs the
+loss is about, and `note` what is honestly known about the substitute. The
+substitute face is not named: which family fills an undeclared slot is the
+host's answer, and a message that varies by host cannot be witnessed. The
+subject is the slot, so the loss is counted once however many runs set it. -/
+def slotCollapsed (key runs note : String) : Diag :=
+  Diag.of .W0390
+    s!"nothing declares a '{key}' family; {runs} set in the body face, {note}"
     (subject := some s!"slot:{key}")
     (help := s!"\\fonts\{ {key} = \"<family>\" } gives the slot its own face; \
 `leantex fonts` lists the installed families")

@@ -14485,185 +14485,124 @@ against a binary built from the merge base, never one live tree against
 another.
 
 
-### 2026-09-25 — a collapsed family slot is named
+### 2026-09-25 — a collapsed family slot is named, and the face answers for its own pitch
 
-The larger half of the mono-slot defect, and the half the reader could see.
-A `\texttt`, `\url` or verbatim run in a document with no
-`\fonts{ mono = ... }` sets in body prose, because slot 2 falls through the
-slot's regular to face 0 — and said nothing. Measured from the bytes on a
-synthetic document carrying all three constructs: **undeclared, one embedded
-face and zero diagnostics; `mono` declared against the shipped corpus fonts,
-two faces and zero diagnostics.** `pdffonts` could see the loss and the
-reader could not. The engine's standing rule is that a construct either
-ships the ink it asked for or names the loss, so this was a `degraded` loss
-running unnamed.
+Supersedes and replaces the two unlanded entries this branch carried earlier
+("a collapsed family slot is named", "the collapsed slot, re-measured, and
+the `\urlstyle` handoff written as a value"). Both argued a code and a
+handoff that an independent review falsified; correcting an unlanded entry in
+place is cheaper than leaving a wrong argument in the record for the next
+reader to follow. What survives from them is the loss and the measurements;
+what is gone is the W0006 reuse, the `\urlstyle` predicate, and the two rows
+that asserted a false positive green.
 
-After: the undeclared build still embeds one face and now emits
-`warning[W0006]`; the declared build still embeds two and stays silent. The
-gate is the artifact, not a golden.
+**The loss.** A `\texttt`, `\url` or verbatim run in a document with no
+`\fonts{ mono = ... }` sets in body prose: slot 2 falls through to face 0,
+correctly — there is nothing else to set it in — and said nothing. Same for
+`\textsf` with no `sans`. `pdffonts` could see it and the reader could not.
+The engine's standing rule is that a construct ships the ink it asked for or
+names the loss, so this was a `degraded` loss running unnamed.
 
-#### The code: W0006, argued from the registry
+#### The code: W0390, not W0006
 
-Three codes were candidates and the axis decides between them. W0006 is the
-variant axis (`FontDb.Substituted.variant`: a family was resolved and the
-requested bold/italic/regular face within it was not there). W0366 is the
-weight axis (weight 500 asked, nearest installed substitutes). W0009 is the
-glyph axis. This loss is on a fourth: the **family slot**, where no family
-was resolved for the slot at all and the engine's own fallback order filled
-it from the body declaration.
+The earlier entry argued the reuse from `resolveVariant`'s undeclared arm.
+The review showed that arm's "nothing declared" is the *per-variant* face
+inside a family the document did name (fontspec's `BoldFont=`), not the
+family slot. Two axes, two remedies: install a face, versus declare a
+family. And `\allow` takes whole codes, so a document accepting the slot
+report would have accepted every future bold substitution with it. W0390 is
+the family-slot axis, `degraded`, subject `slot:<key>`, witnessed through
+`driverProbes` (the decision runs; the golden records what it returned).
 
-W0366 is decisively wrong — 400 was asked and 400 was delivered, no weight
-is involved. Between W0006 and a new constructor, W0006 wins on two
-readings and loses on one, and the deciding fact is that its *registry line
-is already looser than its own emissions*: `resolveVariant`'s undeclared arm
-emits "'X' has no bold face; 'Y' substitutes" under a code whose spec line
-says "**declared** face variant missing". The code as emitted already means
-*a requested face was not available and another face substitutes*, which is
-exactly this loss, at the same `degraded` class and the same `Floor.content`.
-It is also the one door `DriverDiag.substituted` renders every font
-substitution through, and this site is a substitution in the same
-`buildFontSet` loop that already renders W0006 and W0366 — so routing it
-elsewhere would put two accountings at one site.
+#### Three corrections the review forced, each measured on one-construct probes
 
-What W0006 loses on is the word "declared", which is false here. **That is a
-real debt and it is registry-side**: the fix is to reword the `spec` line in
-`LeanTex/Core/Diag.lean` to the meaning the code already carries ("a
-requested face was not available; another face substitutes"), or to split
-the family-slot axis into its own constructor. Both are edits to
-`Core/Diag.lean` and — for a new code — to `Tests/Diag.lean`, which owns
-`diagWitness` and `driverProbes`. Routed, not taken here.
+1. **Report only where the artifact carries a face.** The decision moved out
+   of `buildFontSet` into `build`, after `emit` is known, and takes
+   `SlotLoss.carries emit doc.fontPolicy`. A `webpage`-class probe with
+   `\output{ css = own }` ships zero `@font-face` rules and styles code from
+   its own monospace stack; it now reports nothing, where the earlier draft
+   fired twice. The move also retired the settled/provisional gate — `build`
+   holds no provisional set — and picked up the `LEANTEX_FONT` override path
+   for free: measured, that path now reports its collapsed mono slot where
+   the draft returned before the emission.
 
-One consequence to record: this emission has **no witness in
-tests/golden/diagnostics.txt**. W0006's `diagWitness` arm is a hand-built
-`resolveVariant` pair, so the golden did not move, and the new arm's voice
-is held only by `slotLossChecks`. That is the same per-code-versus-per-arm
-gap the `\urlstyle` arm hit one entry above, now at a second code.
+2. **Judge the face, not the index.** `Font.FontSet.slotIsFixedPitch` reads
+   the resolved face's own `post.isFixedPitch`, and a mono slot is a loss
+   only where the substitute is proportional. A document with
+   `body = "Source Code Pro"` and one `\texttt` embeds one monospace face and
+   is now silent. The sans arm claims no design class — no field in a face
+   records "is a sans" for every face — so its message says what is known:
+   the runs do not contrast with the text around them.
 
-#### Where the values sit, and which side of the IO line
+3. **A parser defect the face test uncovered.** `classify` read
+   `post.isFixedPitch` at offset 16. The field is at offset 12; offset 16 is
+   `minMemType42`, zero in every face that ships one, so *every* monospace
+   design read as proportional. Measured against the table bytes: Source Code
+   Pro declares 1, the engine answered false. The PDF descriptor's FixedPitch
+   flag and the HTML `--font-mono` generic both read this field, so the wrong
+   answer was reaching both artifacts. Two rows pin it, over `classify`
+   rather than a scan — the scan can answer from a disk cache keyed by the
+   file alone, and this is a claim about the parser.
 
-`Font.FontSet.slotCollapsed` (the fact) stays in `Core/`, below the IR,
-where `FontSet` can see it. The decision is `LeanTex/Cli/SlotLoss.lean`, and
-every value crossing into it is data: a resolved `FontSet`, a declared
-`FontSpec`, an `Ir.Doc`. Nothing there opens a file or asks the host
-anything, and the answer leaves as `Diag` values — so the whole policy is
-checkable with no font installed, which is the `Cli/PicCache.lean` and
-`Cli/FontFix.lean` shape. No flag was added and none could help:
-`artifact_flag_free` says the artifact is a function of the document and the
-font environment, and both halves of this decision are already in that pair.
+#### What the `\urlstyle` refusal needed, and why nothing here provides it
 
-It is under `Cli/` rather than inlined in the entry path for the reason the
-`driverProbes` docstring gives: a decision that is a module returning its
-diagnostics is reachable as a unit, so a probe can run the real path instead
-of rebuilding it. A `driverProbes` row for this arm is now a two-line
-addition in a file this slice does not own.
+The draft added `urlStyleSatisfied`, a predicate over the resolved font set,
+and routed it to `Compat.lean`'s `urlstyle` arm. That arm cannot see it:
+Compat is Core, runs before any font exists, and no Core module imports Cli.
+The predicate is deleted, with its theorem and its table. The fix belongs
+where `\url` elaborates — url.sty's four values name the engine's own
+families (`tt`/`rm`/`sf` → `.mono`/`.roman`/`.sans`, `same` → no family
+change) — and it is another owner's file. Once it lands, the census here
+needs no change at all: `slotsUsed` reads the style the IR carries, so a URL
+in the running face stops counting as a lost mono run. The row
+"a link with no typewriter style asks for no mono slot" is that mechanism,
+pinned. Until then the user's `\urlstyle{same}` document draws W0104 *and*
+W0390, both false, and this branch must not land before that fix.
 
-#### Firing once, and only for a slot the document uses
+The two rows that asserted the W0104 false positive green are gone. A green
+check over a defect the user reported is an assertion that the defect is
+wanted.
 
-`slotsUsed` is a `foldBlocks`/`foldInlines` leaf pair — no new walk, so no
-new conservation obligation, and the descent through a footnote body, a
-running head and a style's font template is the fold's rather than
-re-decided. Slot 2 is reached two ways and both are leaves: `Ir.Style.mono`
-on a `.styled` inline, and `Ir.Block.verbatim`, which the layout sets by
-wrapping in `.styled .mono`.
+#### Registered debt: the census counts declarations, not shipped runs
 
-`losses` takes three conditions, each load-bearing: the document asks for
-the slot, declared no family for it, and the index puts it on the body
-face. Drop the first and a document with no code in it is lectured about
-mono; drop the second and a document that declared `mono = <the body
-family>` is told it lost something it chose; drop the third and a slot with
-its own face is reported. `losses_exact` states the conjunction,
-`losses_declared` and `losses_used` the two directions that matter, and
-`words_nonzero` keeps slot 0 out — it is the reference the others are
-compared against, so a report about it would be a vacuous truth.
+`Ir.furnitureInlines` hands over furniture runs without provenance, so a
+`\style{section}{ font = {\ttfamily} }` in a document with no section counts
+as a mono use and draws one W0390 no page justifies (measured on head). The
+answer belongs to the layout, which resolves each run's slot as it sets it.
+One registered row in `slotLossChecks` holds the current answer and fails in
+both directions: if the over-count grows, and if the fix lands and the
+registered answer stops holding, which is the signal to delete the row and
+this paragraph.
 
-The subject is `slot:<key>`, namespaced as `ctrl:<name>` is, so `tallySites`
-counts the loss once per slot however many runs set it. Measured on a
-synthetic document with three `\texttt` runs, a `\url`, a verbatim block and
-a `\textsf`: six sites, two diagnostics. W0006 keeps its `subjectDebt` row,
-because its existing witness still fires without a subject — the ratchet is
-untouched and needs no baseline edit.
+#### Routed
 
-The emission is gated to settled assemblies. A provisional assembly resolves
-slot 0 and skips the rest deliberately, so its index has no entry past the
-body and every slot reads as collapsed; the pin is `slotLossChecks`, which
-runs one document over both index shapes and shows the gate is
-load-bearing rather than decorative.
+- **`\urlstyle` at the `\url`/`\nolinkurl` arm** (`Core/Compat.lean:2756`,
+  `Core/Elab.lean:3353`): honour the selector, drop the W0104 arm, flip the
+  three `refuse:W0104` rows in `tests/compat-index/url.txt` to `impl`.
+- **The font cache does not cover the classifier**
+  (`Core/FontDb.lean`, `faceLine`/`parseLine`, key = path+size+mtime): this
+  branch changed `classify`, and a warm cache kept serving the old pitch
+  until it was bypassed — the suite row was moved to `classify` for exactly
+  that reason. The cache key needs a classifier version, or the file needs a
+  version line that invalidates it wholesale. "Nothing about the cache can
+  make the answer differ from a scan" is true within one binary and false
+  across a change to one.
+- **Per-run slots for the census** (`Core/Layout.lean`, `Layout.Out`), the
+  debt row above.
 
-#### A case this does not yet catch
+#### Evidence
 
-A deck declaring **both** a body and a distinct sans family puts slot 0 on
-the sans face and slot 2 on the body family's own face — different indices,
-so `slotCollapsed 2` is false and nothing fires, although the `\texttt` run
-is still not mono. The predicate compares against slot 0 only. Naming that
-case needs "the slot resolved onto a *text* slot's face" rather than "onto
-face 0", which is a widening of `slotCollapsed` and its two theorems;
-recorded here rather than widened silently.
-
-Measured on the private reference corpus: the deck is unchanged — 36 pages,
-0 errors, 13 × W0104, 7 × W0376, 6 × W0334 and one each of W0389, W0385,
-W0384, W0361, W0345, W0315, W0103, W0009. The zero delta is the used-gate
-working rather than luck: the deck asks for neither the mono nor the sans
-slot anywhere, so there is no loss to name. The thirteen W0104 are beamer
-theme-element and `\directlua` refusals from another arm, correctly
-`config`, and none of them is this defect class.
-
-### 2026-09-25 — the collapsed slot, re-measured, and the `\urlstyle` handoff written as a value
-
-An interrupted slice left the slot-loss emission as an unverified draft. This
-entry is the verification, one correction, and the routing.
-
-**Re-measured from the bytes, four synthetic probes, the two gates and the
-two silences.** Undeclared (`\texttt` + `\url` + a verbatim block, no
-`\fonts`): one embedded face before and after, `pdffonts` naming only the
-host fallback; before, no diagnostic about it, after, one `warning[W0006]`
-carrying subject `slot:mono`. Declared (`dir = "fonts"`, body Source Serif
-Pro, mono Source Code Pro): two faces before and after — `SourceSerifPro-
-Regular` and `SourceCodePro-Regular` — and W0006 silent in both, which is
-the declared-slot direction of `losses_declared`. A `\textsf`-only document
-reports `slot:sans` and not `slot:mono`; a plain-prose document reports
-neither. So the used-gate is load-bearing against the artifact and not only
-against `slotLossChecks`.
-
-**The code question, settled from the code rather than from taste.** The
-earlier reading recorded W0006's registry line ("declared face variant
-missing") as a debt this emission *created*. It does not: `resolveVariant`'s
-`| none =>` arm — nothing declared — already emits `.variant "'X' has no
-<want> face; 'Y' substitutes"` under W0006. The code as emitted already means
-*a requested face was not available and another substitutes*. This emission
-joins that meaning at the same `degraded` class and the same floor rather
-than widening it, so W0006 is confirmed and the registry line is a
-pre-existing narrowness. Minting a fourth axis would have split one loss
-class across two codes and put two accountings in the one `buildFontSet`
-loop that already renders W0006 and W0366.
-
-**`\urlstyle` is a handoff, and a value is the handoff.** The refusal arm
-lives in `Compat.lean`'s `urlstyle` case, which another slice owns, and it
-fires `W0104` for every value but `tt` with no font in scope — so
-`\urlstyle{same}` is refused in the one configuration that satisfies it, and
-that is still true after this change (measured: W0104 fires identically in
-the undeclared and the declared probe). Rather than route it as prose,
-`SlotLoss.urlStyleSatisfied` is the predicate that arm needs, with
-`urlStyleSatisfied_exact` pinning that no environment satisfies both `tt`
-and `same`, and `slotLossChecks` asserting each row against both resolved
-sets. Its last two rows assert *today's wrong answer* — that the refusal
-still fires for `same`, and that the elaboration carries no value a gate
-could read — so they break in both directions the moment the gate lands.
-The `-- premise:` line travels with the gate to its site; it is written in
-`SlotLoss` as the line to move, not as a claim that a gate exists there.
-
-**Deck: zero delta, and the zero is the gate working.** 36 pages, 0 errors,
-13 × W0104, 7 × W0376, 6 × W0334 and one each of W0389, W0385, W0384,
-W0361, W0345, W0315, W0103, W0009 — byte-for-byte the same census before and
-after, because the deck declares its own families and so has no collapsed
-slot to name. Hermetic re-checked the way AGENTS.md describes: the whole
-suite passes inside `unshare -Urm` with a tmpfs over the host font tree,
-so no fixture reads a host font. `scripts/fontcache-check.lean` green.
-
-**Still open, recorded not silently widened.** A document declaring a
-distinct *sans* as its body puts slot 0 and slot 2 on different faces, so
-`slotCollapsed 2` is false and nothing fires although the `\texttt` run is
-still not mono. Naming it needs "resolved onto another text slot's face"
-rather than "onto face 0" — a widening of `slotCollapsed` and its two
-theorems, which belongs with whoever next opens `Core/Font.lean` for the
-text-slot question.
-
+`leantex-evidence/monoemit-fix/`: ten one-construct probes
+× base binary (`efcd27e`) and head, PDF and both HTML kinds
+(`probe-base.txt`, `probe-head.txt`); the `LEANTEX_FONT` pair; the site port
+built read-only under `css = own`, diagnostics identical to base and its tree
+unchanged; the private reference corpus deck censused by subject on both
+binaries — 198 diagnostics, identical, and its 13 W0104 are
+`\setbeamercolor` ×8, `\setbeamerfont` ×3, `\addtobeamertemplate` and
+`\directlua`, so none of them is this defect class (the earlier claim was a
+count with no subjects behind it); and the suite run with every font tree and
+TeX tree masked by tmpfs, `HOME` and the font cache empty, and `PATH` holding
+one directory carrying `lake`/`lean` alone — `lualatex` and `fc-list` absent,
+all checks pass (`hermetic2.log`). With `PATH` fully empty the six checks
+that shell out to `lake` fail for want of `lake`; that is the harness, not
+host data (`hermetic.log`).
