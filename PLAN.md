@@ -13803,3 +13803,131 @@ three strict classes (raw HTML passthrough, lazy continuation, indented
 code blocks as errors with fix-its) are a dialect decision for the user
 now that supporting CommonMark is a stated goal, so the first increment
 builds them as verdict rows — the decision flips data, not code.
+
+
+
+### 2026-09-25 — the scoreboard: one format, five tiers, a computed queue
+
+A fully green suite shipped a document matching its reference on 0 of 41
+pages, and nothing held a number to regress against. This lands the format
+§1 of the autonomy-loop entry fixes, the discovery convention §2 needs, five
+adapters over metrics that already existed but were nowhere committed, and
+the queue §2 asks for.
+
+**The format, as implemented.** `tests/scoreboard/<tier>.tsv`: `#` lines
+(provenance — never gated), then `item<TAB>integer` rows, higher is better,
+sorted and unique. One `#` line is structural rather than prose: `# encoding:`
+says how the value relates to the measurement, and the queue reads it to
+compute a deficit instead of being handed one. Three encodings today —
+`headroom cap=<n>` (value is `cap - count`; deficit is the count),
+`pairs <part>/<whole>` (items pair as `<key>.<part>` and `<key>.<whole>`;
+deficit is the gap), `raw` (deficit is the distance from the tier's best
+item).
+
+A shrink-is-good metric is committed as headroom rather than as the count
+because a ratchet can only point one way. With `higher is better` fixed for
+every tier, one comparison serves all of them and no tier can quietly invert
+its own test — the failure mode a per-tier direction flag invites.
+
+**The ratchet.** A value that drops regresses; a baselined item that
+disappears regresses; a new item enters at its measured value and counts as
+an improvement. Retirement is a line in the *committed* baseline —
+`# retired: <item> — <why>` — because only a human knows why a measurement
+stopped being worth making, and a producer regenerating the file carries the
+line forward untouched. Regeneration writes the measurement and then reports
+the delta against what was there before, exiting non-zero if anything fell:
+accepting a fall is a deliberate act taken with a red exit beside the diff.
+
+**Discovery by convention.** Tier name = tsv basename = `scripts/<tier>.lean`
+root, checked as `lake env lean --run scripts/<tier>.lean --check`. A name in
+`Scoreboard.declaredTiers` with only one of the two files reports `missing`
+rather than being passed over — that is the failure the whole file guards
+against — and `missing` does not fail the gate, so a sibling's tier arriving
+in two commits does not break landing in between. `parity`, `commonmark` and
+`coverage` are declared ahead of their arrival and report `missing` today.
+A malformed or unreadable baseline is `fault`, and does fail.
+
+**The five tiers, with today's values.**
+
+| tier | items | today |
+|---|---|---|
+| `obligations` | 12 | owed debt per owner module, headroom; 29 obligations over 12 modules, worst `Layout` at 8 |
+| `purity` | 2 | both at the ceiling: no non-total definition, no open hole outside the staging area, whole tree |
+| `diagdebt` | 2 | `subjectDebt` 48 of 77 censused codes, `siteAccounting` 2 rows |
+| `compat` | 134 | 67 packages, 613 documented rows, 303 implemented |
+| `htmlreader` | 4 | 9/11 feature cells and 67/72 fixture cells pass in the target reader |
+
+`diagdebt` imports `Tests.Diag` and reads `subjectDebt` and `siteAccounting`
+as Lean values. Counting them by parsing source text would drift from the
+values the suite checks the first time a row is reflowed, and nothing would
+see it.
+
+**Correction to the brief.** It asked `compat` for `impl` and `refuse` counts
+per package. A refuse count cannot be ratcheted upward: the way a refusal
+improves is by becoming an implementation, which lowers it, so the ratchet
+would read every implemented command as a regression. The items are
+`<pkg>.rows` (the coverage claim) and `<pkg>.impl` (the depth claim), both
+monotone the right way; `refuse` is a provenance line. `compat`'s selftest
+pins the correction directly — a refusal becoming an implementation keeps
+`rows`, raises `impl`, and lowers `refuse`.
+
+**Runtime.** The aggregate is 1.18 s (three runs: 1180/1175/1144 ms), every
+tier's `--check` in flight at once, each writing to its own files rather than
+to a pipe so no reader can deadlock. It was 17.4 s serially, and 13.9 s in
+parallel — because one tier dominated: `purity`'s whole-tree scan spent 13.7 s
+of its 13.8 s entering `.git`, and the per-line character-level keyword
+strippers ran on every line whether or not the line could possibly hold the
+keyword. Not entering `.git`/`.lake` and pre-filtering with a substring test
+took it to 1.1 s. The check is unchanged: it is still `bannedWord`, the same
+definition the hook's own gate reads, so the two cannot disagree about what
+counts as an occurrence.
+
+**The queue.** `scoreboard --queue`, 27 ranked lines today. Obligations whose
+blocker names no other open obligation come first — the ones a proof can
+start on today, 17 of the 29 — ordered among themselves by how many *other*
+blockers name them, so discharging one that releases two outranks one that
+releases none. Then each tier's worst three items by its own encoding's
+deficit. What a better ranking needs: the blocker graph as data rather than
+prose (a `blocked-by:` field naming obligations, so readiness stops being a
+substring search over English), a cost per deficit (a compat row is minutes,
+a `_covers` over two private loops is weeks), and the count of documents each
+deficit holds back — the parity ladder's fixtures-held-back number and the
+blocker ranking the `coverage` tier is building. With those three the order
+becomes value over cost; with only these, it is readiness over size.
+
+**Bench is a report.** `scoreboard --bench` prints the medians beside the
+last PLAN.md recorded, and gates nothing: it runs another engine, so it can
+never be hermetic. Today, median of 5: paragraphs 99 ms (lualatex 665),
+lorem 375 (1289), underline 500 (1560), themed 94, themed→html 94, paper 171,
+paper→html 154. Against the last recorded (101/329/498/96/166) every row is
+flat except lorem, +14% — unattributed, and exactly the kind of move a
+tolerance would have to survive. Proposed, not enforced: median of 9, +15%
+per document against a committed value, the lualatex column recorded and
+never compared. Noise control: pin the sample count, drop the first run (cold
+page cache), compare medians not means, and take the whole corpus in one
+batch so a busy host moves every row together — one row moving is then a
+signal, and all rows moving is the host.
+
+**Every case broken once.** `scoreboard --selftest` covers nine
+malformations (unsorted, duplicate, non-integer, three fields, retirement
+with no reason, retirement of a live item, whitespace in an item name, no
+rows, no encoding line), four ratchet verdicts, and retirement both ways —
+the same absence regresses without the line and does not with it. Each was
+proved falsifiable by repairing its fixture and confirming the case fails
+and names itself: 15 of 15, no vacuous case. Each tier's ratchet was broken
+once by raising a committed value one above what is measured; all five
+reported `result=regressed` and exit 1. A baseline with no producer reports
+`missing`, and a baseline with its encoding line removed reports `fault`.
+`--selftest` fans out to every tier's own selftest, so the landing gate is
+one command.
+
+**Routed.** Three spellings now exist in more than one gate, each a
+predicate two gates must agree on, which is what `scripts/Gate.lean` is for:
+`fieldOf` (the `-- <key>: <value>` reader, in `scripts/owed.lean` and
+`scripts/Board.lean`), `kwPartial` (in `scripts/precommit.lean` and
+`scripts/purity.lean`), and the matrix reader (in `scripts/html-oracle.lean`
+and `scripts/htmlreader.lean`). The first two are one-line moves into
+`Gate.lean`; the third wants `html-oracle`'s `parseMatrix` in a library the
+tier can import, which is a larger change and belongs to that file's owner.
+`scripts/land.lean` owes a call to `scoreboard --check` and one to
+`scoreboard --selftest`.
