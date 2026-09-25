@@ -1,0 +1,15 @@
+\ProvidesPackage{beamerthemeplinth}
+\setbeamercolor{normal text}{fg=#1A1A1A,bg=#FDFDFD}
+\providecommand{\plinthvenue}{}
+\renewcommand{\maketitle}{%
+  \begin{minipage}{\textwidth}
+    \hrule height 3pt
+    {\raggedright\Large\bf\inserttitle\par}
+    \hrule height 1pt
+    \bf\rule{\z@}{24\p@}\insertauthor
+    \vskip 0.3in
+    {\plinthvenue\insertdate}
+  \end{minipage}%
+  \null
+}
+\endinput

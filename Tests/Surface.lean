@@ -1249,6 +1249,39 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (inTitleBlock aDoc fun b => match b with
       | .spaced g #[] => g.value == Ir.titleBlockAfter
       | _ => false)
+  -- beamer's spelling of the very same declared data, inside the canvas
+  -- environment a theme writes its title page in. The read-out knew
+  -- latex.ltx's `\@title` alone, so a theme-authored title page read as no
+  -- title page at all: the refusal stood by itself and the appearance the
+  -- body *declared* went out with the arrangement that cannot be expressed.
+  -- One resolving site now answers for both spellings
+  -- (`Elab.barScan_alias_agree`), and an environment is descended into like
+  -- any other grouping.
+  let insertVenue := "\\documentclass{article}\\title{T}\\author{A. Name}" ++
+    "\\renewcommand{\\maketitle}{\\begingroup\\@maketitle\\endgroup}" ++
+    "\\providecommand{\\@maketitle}{}" ++
+    "\\renewcommand{\\@maketitle}{\\begin{minipage}{\\textwidth}" ++
+    "\\hrule height 3pt" ++
+    "{\\raggedright\\Large\\bf\\inserttitle\\par}" ++
+    "\\hrule height 1pt" ++
+    "\\bf\\rule{\\z@}{24\\p@}\\insertauthor" ++
+    "\\vskip 0.3in\\end{minipage}}" ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  let (iDoc, iDs) := elabStr insertVenue
+  t "beamer's inserts refuse like the internals: the built-in still stands"
+    (warnCodes insertVenue == ["W0361"] &&
+     Ir.headingLevels iDoc.body == #[0])
+  t "the refusal says what the declared appearance gave it"
+    (iDs.any fun d => d.code == "W0361" &&
+      (d.message.splitOn "styled by the redefinition's rules and spacing").length == 2)
+  t "an insert-spelled title reads its rules onto the built-in title page"
+    (inTitleBlock iDoc fun b => match b with
+      | .rule _ _ g => g.value.width == Dim.Length.ofSp (Dim.pt 3)
+      | _ => false)
+  t "an insert-spelled author reads its strut and weight, inside the canvas"
+    (inTitleBlock iDoc fun b => match b with
+      | .para #[.strut h, .styled .bold _] => h == Ir.titleAuthorStrut
+      | _ => false)
   -- The native spellings, as rule-above fell out for the bars.
   let (nDoc, nDs) := elabStr ("\\documentclass{article}\\title{T}\\author{A. Name}" ++
     "\\style{titlepage}{ author-font = {\\bfseries}, author-strut = 18pt, after = 30pt }" ++
@@ -4077,8 +4110,21 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dsS.any fun d => d.code == "N0020" &&
       (d.message.splitOn "beamerthememoloch.sty").length == 2 &&
       (d.message.splitOn "moloch bundle").length == 2)
-  -- Partial absorption: a theme whose every construct the engine refuses is
-  -- read and yields no role. It is not an *unknown* theme, so W0319 would be
+  -- **A theme's title page is a refused redefinition, not a dropped one.**
+  -- The whole point of reading a theme file is that what it declares
+  -- arrives; a theme that redefines the title page in beamer's own
+  -- vocabulary had that redefinition refused (rightly — its arrangement is
+  -- absolute placement the engine does not model) and its *declarative*
+  -- appearance refused with it.
+  let (_, dsT, splicedT) ← run "themetitleread"
+  t "a theme's title-page redefinition is refused, never an error"
+    (dsT.all (·.severity != .error) &&
+     splicedT.toList.map (·.1) == ["beamerthemeplinth.sty"] &&
+     dsT.any fun d => d.code == "W0361" && d.span.any (·.file.endsWith ".sty"))
+  t "the refusal names what the theme's declared appearance gave the built-in"
+    (dsT.any fun d => d.code == "W0361" &&
+      (d.message.splitOn "styled by the redefinition's rules and spacing").length == 2)
+  -- Partial absorption: a theme whose every construct the engine refuses is  -- read and yields no role. It is not an *unknown* theme, so W0319 would be
   -- a false statement; what is owed is that the shortfall is measured, and
   -- that the deck is still painted — the slides default bundle is the floor
   -- under a theme the engine could not absorb, so no mix is left half-resolved.
@@ -4390,6 +4436,28 @@ def translationOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (construct, _) in Compat.translationRefused do
     t s!"the refusal row for '\\{construct}' is a live row"
       ((Compat.beamerNative.lookup construct).any fun help => !(named help).isEmpty)
+
+/-- **What the deck's first page shows when its theme redefined the title
+page.** The claim is the artifact's, so it is measured on the shipped
+pages: the title page is still there, and it still carries the metadata the
+*document* declared — which is why a theme's arrangement is a refusable
+loss and not a dropped one. A theme's title-page template restates, in
+absolute placement the engine does not model, a page the engine builds from
+`\title`/`\author` and styles through tokens; refusing the arrangement
+costs the deck its author's layout, never the author's data.
+
+Split from `themeStyChecks` so the palette half still runs on a host with
+no usable font, where a shipped-page claim cannot be made at all. -/
+def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let (docT, _, _) ← runStyParity "themetitleread"
+  let outT := layoutOf oneFace docT
+  let censusT := censusOf (coveredColorsOf docT) outT
+  t "the title page still ships, with the deck's frame behind it"
+    (outT.pages.size == 2)
+  t "the shipped title page carries the document's own declared metadata"
+    (pageHas censusT 0 "A Placeholder Deck" && pageHas censusT 0 "R. Placeholder")
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

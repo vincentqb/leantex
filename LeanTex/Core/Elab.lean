@@ -5058,8 +5058,9 @@ private inductive BarEvent where
   | title (size : Option String) (bold : Bool) (align : Option String)
   /-- `\@author`, with the weight in force and whether a zero-width
   `\rule` strut props its line — the NeurIPS-lineage author `tabular`
-  (`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`). Ink, like
-  `.content`: it closes the bottom bar's trailing skip. -/
+  (`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`), read off the
+  environment that holds it (`authorStrutList`). Ink, like `.content`: it
+  closes the bottom bar's trailing skip. -/
   | author (bold : Bool) (strut : Bool)
   /-- Ink that is not the title — an environment, math, verbatim, a word:
   what closes the bottom bar's trailing skip. -/
@@ -5072,6 +5073,7 @@ private structure BarSt where
   size : Option String := none
   bold : Bool := false
   align : Option String := none
+  strut : Bool := false
 
 private def barSkipSp : List Raw → List Raw
   | [] => []
@@ -5127,28 +5129,59 @@ private def barWordTransparent (w : String) : Bool :=
 
 private def sizeCtrlNames : List String := Ir.sizeScale.map (·.1)
 
-/-- The author `tabular` of a refused `\maketitle` body, folded to
-(bold, strut, author): does it hold `\@author`, under `\bf`, behind a
-zero-width `\rule` strut (`\rule{\z@}{...}`, the lineage's spelling —
-the strut's own height is not taken; the engine's is `Ir.titleAuthorStrut`).
-Groups are looked through; everything else stays the refusal's. -/
-private def authorScanList (found : Bool × Bool × Bool) :
-    List Raw → Bool × Bool × Bool
+/-- **beamer's spelling of the LaTeX internals a refused body's read-out
+already knows.** A theme writes its title page over `\inserttitle` and
+`\insertauthor`; latex.ltx's own title code writes `\@title` and
+`\@author`. They name the same declared datum — beamer defines each insert
+as the document's own metadata (beamerbasetitle.sty, the `\insert...`
+family) — so the read-out must not know one spelling and miss the other.
+
+One table, resolved once (`barCtrlName`), so the scans below match a
+single name: the whole vocabulary difference is here, and a scan cannot
+learn one alias and not another (`barScan_alias_agree`). A datum with no
+event of its own (`\insertdate`, the institute, a frame number) aliases to
+`\@date`, which is what the scan already spells "ink that is not the
+title". -/
+def beamerInsertAlias : List (String × String) :=
+  [("inserttitle", "@title"),
+   ("insertshorttitle", "@title"),
+   ("insertauthor", "@author"),
+   ("insertshortauthor", "@author"),
+   ("insertdate", "@date"),
+   ("insertshortdate", "@date"),
+   ("insertsubtitle", "@date"),
+   ("insertinstitute", "@date"),
+   ("insertshortinstitute", "@date")]
+
+/-- The name a refused body's scans read: beamer's insert resolved to the
+internal it aliases, every other control word itself. -/
+def barCtrlName (n : String) : String := (beamerInsertAlias.lookup n).getD n
+
+/-- The zero-width `\rule` strut that props an author's line — the
+NeurIPS-lineage author `tabular`
+(`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`), read off the
+environment that holds it. The strut's own height is not taken; the
+engine's is `Ir.titleAuthorStrut`. Groups are looked through; everything
+else stays the refusal's.
+
+Only the strut: the weight in force and the author datum itself are the
+scan's own business, threaded and emitted where they stand
+(`barScanList`). Folding the whole shape here instead cost the read-out
+every other datum the same environment held — a theme's title and its
+author share one canvas, and an environment answered for by its author
+alone reported no title. -/
+private def authorStrutList (found : Bool) : List Raw → Bool
   | [] => found
   | .group body _ :: rest =>
-    authorScanList (authorScanList found body.toList) rest
+    authorStrutList (authorStrutList found body.toList) rest
   | .ctrl "rule" _ :: rest =>
     let strut := match barSkipSp rest with
       | .group w _ :: _ => match barSkipSp w.toList with
         | .ctrl "z@" _ :: _ => true
         | _ => false
       | _ => false
-    authorScanList (found.1, found.2.1 || strut, found.2.2) rest
-  | .ctrl n _ :: rest =>
-    if n == "bf" || n == "bfseries" then authorScanList (true, found.2) rest
-    else if n == "@author" then authorScanList (found.1, found.2.1, true) rest
-    else authorScanList found rest
-  | _ :: rest => authorScanList found rest
+    authorStrutList (found || strut) rest
+  | _ :: rest => authorStrutList found rest
 termination_by l => sizeOf l
 decreasing_by
   all_goals simp_wf
@@ -5205,7 +5238,14 @@ visible below `bound` (the definition-order rule that terminates every
 expansion here), descending into groups with a copy of the declarations in
 force so a scoped declaration does not escape. Unrecognised commands are
 transparent — the refusal already counted them; this pass only collects
-what the closed list can honour. -/
+what the closed list can honour.
+
+An environment is a grouping like any other and is descended into on the
+same terms, its author strut read off it first (`authorStrutList`) so a
+propped author line still declares one. A theme writes its title page
+inside one — a `tikzpicture`, a `minipage` — so an environment answered for
+by one opaque event hid every declaration and every datum the body placed,
+and the read-out found no title to style. -/
 private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     (events : Array BarEvent) : List Raw → Array BarEvent
   | [] => events
@@ -5218,14 +5258,14 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
   | .verb _ _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .math _ _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .env _ body _ :: rest =>
-    let (bold, strut, author) := authorScanList (false, false, false) body.toList
-    let events := if author then events.push (.author (bold || st.bold) strut)
-      else events.push .content
+    let st := { st with strut := st.strut || authorStrutList false body.toList }
+    let events := barScanList user bound st events body.toList
     barScanList user bound st events rest
   | .group body _ :: rest =>
     let events := barScanList user bound st events body.toList
     barScanList user bound st events rest
-  | .ctrl n _ :: rest =>
+  | .ctrl n0 _ :: rest =>
+    let n := barCtrlName n0
     if n == "vskip" then
       let events := match barLength rest with
         | .cancel => events
@@ -5244,7 +5284,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     else if n == "@title" then
       barScanList user bound st (events.push (.title st.size st.bold st.align)) rest
     else if n == "@author" then
-      barScanList user bound st (events.push (.author st.bold false)) rest
+      barScanList user bound st (events.push (.author st.bold st.strut)) rest
     else if n == "@date" then
       barScanList user bound st (events.push .content) rest
     else
@@ -5263,6 +5303,36 @@ decreasing_by
   all_goals try omega
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- **The invariant the read-out owed: a theme's spelling of a declared
+datum reads as the engine's own.** A refused redefinition's declarative
+content is read through one closed vocabulary, and a control word reaches
+that vocabulary only after `barCtrlName` has resolved it — so beamer's
+insert and the LaTeX internal it aliases are not merely read to the same
+style, they are the same scan step in the same state. The read-out knew
+`\@title` and not `\inserttitle`, so a theme-authored title page read as no
+title page at all: the refusal stood alone and the declarative appearance
+the body carried went with the layout code that could not be expressed.
+
+Two spellings that resolve alike scan alike, at the head of a run and
+therefore — the scan being a fold that reads no other name — at any
+occurrence. `barCtrlName_alias_resolves` supplies both hypotheses for every
+row of the table, so the property is the table's, not one name's. -/
+theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
+    (events : Array BarEvent) (post : List Raw) (p q : Pos) (b l : String)
+    (hb : barCtrlName b = l) (hl : barCtrlName l = l) :
+    barScanList user bound st events (.ctrl b p :: post)
+      = barScanList user bound st events (.ctrl l q :: post) := by
+  rw [barScanList, barScanList, hb, hl]
+
+/-- Every row of the alias table resolves its beamer spelling to the
+internal, and the internal to itself: the two hypotheses
+`barScan_alias_agree` asks for, discharged for the whole vocabulary at
+once. -/
+theorem barCtrlName_alias_resolves :
+    (beamerInsertAlias.all fun r =>
+      barCtrlName r.1 == r.2 && barCtrlName r.2 == r.2) = true := by
+  decide +kernel
 
 /-- Read the event sequence relative to `\@title` into the style fragment
 the built-in can honour: the last bar before the title and the first after
