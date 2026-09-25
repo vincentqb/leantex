@@ -14102,3 +14102,73 @@ content-only `/ID`: LuaTeX hashes the working directory into it, so
 "byte-identical" holds only within one directory unless the `/ID` is
 computed from content — the parity branch's finding, and the reason a
 two-directory rebuild is the check rather than a rebuild in place.
+
+
+### 2026-09-25 — what the loop was missing: a gate that fails closed, and a floor that cannot lag
+
+Asked, after a reviewer blocked the first version of the scoreboard: how do
+we build a workflow where an agent knows, on its own, whether it has built
+the right long-term implementation — close to LaTeX for PDF, general enough
+for HTML, CommonMark-correct, fast, and using Lean 4 well? The autonomy-loop
+entry above answers the shape: a measurement per goal, a ranking over the
+measurements, a landing that records. What this round establishes is which
+properties of that loop are load-bearing, because each was missing and each
+let a wrong answer through every mechanical gate.
+
+**A tier's contract is the narrowest thing every writer was told.** Four
+tiers were written in parallel from one spec; the aggregate gated on two
+extensions only its own author knew, so three conforming tiers read as
+`fault`. A shared format has one owner and its extensions are optional. The
+test is not "does my tier pass" but "does a tier written from the spec alone
+pass" — which means running the gate against the other branches' real files
+before claiming it works. Doing that here found a ninth thing: a sibling's
+baseline has nine rows out of order, which parses and gates today and would
+only bite the day it ports onto the shared library.
+
+**Every gate fails closed, and the way to know is to break it.** Three states
+passed that should not: an emptied baseline (no floor, so every row read as
+new), a deleted landed tier (reported `missing`, which passed), and a
+non-zero exit under an `ok` porcelain line. None was a subtle bug; each was a
+default that happened to be permissive. The discipline that catches them is
+not review but demonstration: break each case once, in a scratch copy, and
+watch the exit code. A gate nobody has seen fail is a gate nobody has tested.
+
+**A floor that may lag is not a floor.** The first ratchet failed a fall and
+passed a rise, so the committed number could sit below the tree, and a later
+fall back to that stale number passed silently. Tight in both directions is
+the rule the suite already applies to its own frozen registries, and it is
+the one that makes "is this getting better" answerable from committed data:
+an unrecorded rise fails, recorded by regenerating in the commit that earned
+it. The corollary is that weakening needs a written reason in the file — a
+`# lowered:` line naming the old and new values — so the one act a ratchet
+cannot distinguish from a regression is the one act a human signs.
+
+**A measurement must name what it is a measurement of.** Two tiers counted
+"documented commands implemented" over the same index with two definitions,
+303 against 336. A tier over a browser's verdict had nothing tying it to the
+HTML this engine emits, so it could report last week's answer forever. Both
+are the same failure: a number with no stated referent. The fixes are the
+same shape too — one definition in one function both readers call, and a
+content key of the artifact the numbers are about.
+
+**A tool that measures must build what it measures.** `lake env lean --run`
+reads whatever `.olean` the last build left, and this repository's
+`defaultTargets` covers neither the scoreboard library nor its executable —
+so a syntactically broken `Board.lean` passed `lake build` during this very
+work. Any gate that reads compiled values owes an explicit build of them, and
+a failed build is a fault, not a pass and not a crash.
+
+**A ranking says which units it is in, or it is a decision in disguise.** The
+queue grouped obligations first and tiers alphabetically, and read as one
+list. Deficits in different tiers are minutes and weeks; presenting them
+ordered implies a cost model that does not exist. Saying "grouped, not one
+ranking" costs one line and stops the loop from taking a proof obligation
+first because it sorted first.
+
+Together these are what lets the loop run without a human in it for a while:
+the goals are named, each has one number with a stated referent, the number
+cannot drift or be quietly lowered, the gate fails closed, the tool builds
+what it reads, and the ranking admits what it does not know. What remains a
+human's is the same short list as before — weakening a statement, admitting a
+new goal, and accepting a loss — now each with a mechanical form that refuses
+to proceed without it.
