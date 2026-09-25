@@ -9,10 +9,13 @@ The scoreboard: one line per goal, and a queue computed from the deficits.
 
 A tier is discovered by convention: its name is the basename of
 `tests/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
-`--check` is `lake env lean --run scripts/<tier>.lean --check`. A tier
-declared with only one of the two files reports `missing` — visible, and not
-a failure, so a sibling's tier arriving in two commits does not break the
-gate in between.
+`--check` is `lake env lean --run scripts/<tier>.lean --check`.
+
+What the aggregate reads is that `--check`'s **exit status** — the one
+contract PLAN's spec defines, and so the only one every tier's writer was
+told about. A tier may also print the porcelain line (`tierLine`), which
+adds counts; it can never turn a non-zero exit into a pass. A tier that
+exits 0 silently is `ok`.
 
 The gated path is hermetic: every tier's `--check` reads committed
 references and in-repo data only. `--bench` is the one mode that shells out
@@ -73,15 +76,22 @@ def collectTier (tier : String) (spawned : Option (IO.Process.Child { } × Strin
     let stdout ← readFileOr outPath
     let stderr ← readFileOr errPath
     let line := ((stdout.splitOn "\n").find? (·.startsWith "scoreboard: tier=")).getD ""
-    if line.isEmpty then
-      return { tier, items := 0, regressed := 0, improved := 0, result := "fault"
-               detail := s!"exit {code}, no porcelain line; {stderr.trimAscii.toString}" }
+    -- The spec's contract is the exit status of `--check`; a porcelain line,
+    -- when the tier prints one, adds counts and can never turn a non-zero
+    -- exit into a pass.
+    let said := (field line "result").getD ""
+    let result :=
+      if code != 0 then (if said == "regressed" || said == "fault" then said else "fail")
+      else if line.isEmpty then "ok"
+      else if said.isEmpty then "fault" else said
+    let detail := if code != 0 && line.isEmpty
+      then s!"exit {code}; {stderr.trimAscii.toString}" else stderr.trimAscii.toString
     return { tier
              items := natField line "items"
              regressed := natField line "regressed"
              improved := natField line "improved"
-             result := ((field line "result").getD "fault")
-             detail := stderr.trimAscii.toString }
+             result
+             detail }
 
 def aggregate (quiet : Bool) : IO UInt32 := do
   let tiers ← discover
@@ -95,7 +105,7 @@ def aggregate (quiet : Bool) : IO UInt32 := do
     if r.result != "ok" && !r.detail.isEmpty && !quiet then
       for l in r.detail.splitOn "\n" do
         if !l.trimAscii.toString.isEmpty then IO.println s!"scoreboard:   {l}"
-    if r.result == "regressed" || r.result == "fault" then bad := bad + 1
+    if r.result != "ok" && r.result != "missing" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
 -- ## The queue
@@ -134,11 +144,13 @@ blocked-by-open=0 unblocks={unblocks o} blocker={short}"
     match parse text with
     | .error e => lines := lines.push s!"queue: tier {t} unreadable: {e}"
     | .ok tsv =>
+      if tsv.encoding.isNone then
+        lines := lines.push s!"queue: tier {t} not ranked: no `# encoding:` line"
       let ds := deficits tsv
       for i in [0:ds.size] do
         if i < 3 then
           let (item, d) := ds[i]!
-          lines := lines.push s!"queue: {t} {item} deficit={d}"
+          lines := lines.push s!"queue: {t} deficit={d} item={item}"
   let shown := if lines.size < limit then lines.size else limit
   for i in [0:shown] do
     IO.println lines[i]!
@@ -184,9 +196,7 @@ def malformations : List (String × String) :=
    ("threefields", "tab-separated fields"),
    ("retired-no-reason", "gives no reason"),
    ("retired-and-live", "retired and also measured"),
-   ("item-whitespace", "holds whitespace"),
-   ("no-rows", "no rows"),
-   ("no-encoding", "no `# encoding:` line")]
+   ("no-rows", "no rows")]
 
 def readFixture (name : String) : IO (Except String Tsv) := do
   let text ← readFileOr (fixture name)
@@ -205,7 +215,7 @@ def selftest : IO UInt32 := do
     no s!"clean fixture has faults: {String.intercalate "; " (validate t).toList}"
       (validate t).isEmpty
     no "clean fixture has three rows" (t.rows.size == 3)
-    no "clean fixture declares the headroom encoding" (t.encoding == .headroom 1000)
+    no "clean fixture declares the headroom encoding" (t.encoding == some (.headroom 1000))
     let d := ratchet t t
     no "a baseline against itself neither regresses nor improves"
       (d.regressed.isEmpty && d.improved.isEmpty)
@@ -220,6 +230,18 @@ def selftest : IO UInt32 := do
     no s!"malformation {name}: nothing fired" (!msgs.isEmpty)
     no s!"malformation {name}: fired {String.intercalate "; " msgs.toList}, wanted \
 '{want}'" (msgs.any (containsSub · want))
+
+  -- The spec's format, which a tier written without this library also
+  -- speaks: no encoding line is gated and unranked, and an item may hold
+  -- spaces because the row is split on its tab.
+  match ← readFixture "spec-no-encoding" with
+  | .error e => no s!"spec format: a baseline with no encoding line is refused: {e}" false
+  | .ok t =>
+    no "spec format: no encoding line reads as unranked" (t.encoding.isNone && (deficits t).isEmpty)
+  match ← readFixture "spec-spaced-item" with
+  | .error e => no s!"spec format: an item holding a space is refused: {e}" false
+  | .ok t =>
+    no "spec format: the spaced item reads whole" (t.rows.any (·.item == "alpha bravo"))
 
   -- The four ratchet verdicts, each against the clean baseline.
   match ← readFixture "clean" with
@@ -268,15 +290,15 @@ def selftest : IO UInt32 := do
   no "porcelain: result reads back" ((field line "result") == some "regressed")
 
   -- The deficit a queue ranks by comes from the file's own encoding.
-  let hd : Tsv := { provenance := #[], retired := #[], encoding := .headroom 1000
+  let hd : Tsv := { provenance := #[], retired := #[], encoding := some (.headroom 1000)
                     rows := #[{ item := "a", value := 998 }, { item := "b", value := 1000 }] }
   no "deficit: headroom ranks the larger debt first"
     (deficits hd == #[("a", 2)])
-  let pr : Tsv := { provenance := #[], retired := #[], encoding := .pairs "impl" "rows"
+  let pr : Tsv := { provenance := #[], retired := #[], encoding := some (.pairs "impl" "rows")
                     rows := #[{ item := "p.impl", value := 1 }, { item := "p.rows", value := 4 }] }
   no "deficit: pairs ranks the gap between depth and coverage"
     (deficits pr == #[("p", 3)])
-  let rw : Tsv := { provenance := #[], retired := #[], encoding := .raw
+  let rw : Tsv := { provenance := #[], retired := #[], encoding := some .raw
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 

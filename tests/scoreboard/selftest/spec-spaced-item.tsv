@@ -1,0 +1,3 @@
+# hand-written: the spec permits an item holding a space; the row splits on its tab
+# encoding: headroom cap=1000
+alpha bravo	998

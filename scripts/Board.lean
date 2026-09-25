@@ -5,6 +5,19 @@ and `scripts/<tier>.lean` — and the file is the whole claim: `#` lines for
 provenance (tool versions, a date, the encoding; data, never gated), then
 `item<TAB>integer` rows, higher is better, sorted and unique.
 
+The tier contract is the exit status of `--check`, and nothing else. That is
+what PLAN's spec defines, so it is the only thing every tier's writer was
+told about, and four writers built to it in parallel. Two things this
+library likes are therefore optional, never gating:
+
+* the porcelain line (`tierLine`) adds counts when a tier prints one, and
+  can never turn a non-zero exit into a pass;
+* the `# encoding:` line is a ranking hint — a baseline without one is
+  gated like any other and the queue reports it as unranked.
+
+An item may hold spaces: a row is split on its tab, and no consumer splits
+an item on whitespace.
+
 The ratchet, stated once here so every tier obeys the same one:
 
 * a value that drops is a regression;
@@ -62,20 +75,22 @@ structure Tsv where
   provenance : Array String
   rows : Array Row
   retired : Array (String × String)
-  encoding : Encoding
+  /-- `none`: the tier declares no encoding. It is gated like any other tier
+  and the queue does not rank it — a missing hint for a report, not a
+  malformed baseline. -/
+  encoding : Option Encoding
 deriving Inhabited
 
 def tsvPath (tier : String) : String := s!"tests/scoreboard/{tier}.tsv"
 
 def scriptPath (tier : String) : String := s!"scripts/{tier}.lean"
 
-/-- The item's spelling: one token, so a porcelain line stays parseable by
-splitting on whitespace. -/
+/-- The item's spelling. A row is split on its tab, so an item may hold
+spaces — the spec permits them and two sibling tiers use them — and the
+porcelain line never carries an item, so nothing downstream splits one on
+whitespace. Only an empty name is a fault. -/
 def itemFaults (item : String) : Option String :=
-  if item.isEmpty then some "an empty item name"
-  else if item.toList.any (fun c => c == ' ' || c == '\t') then
-    some s!"item '{item}' holds whitespace"
-  else none
+  if item.isEmpty then some "an empty item name" else none
 
 /-- `# retired: <item> — <why>`. The em dash is the separator the repository
 already uses for a reason clause, and requiring it is what makes a
@@ -145,9 +160,7 @@ def parse (text : String) : Except String Tsv := do
       | some v => rows := rows.push { item, value := v }
       | none => throw s!"item '{item}': value '{value.trimAscii.toString}' is not an integer"
     | _ => throw s!"'{l}' is not `item<TAB>integer` ({fields.length} tab-separated fields)"
-  match encoding with
-  | none => throw "no `# encoding:` line"
-  | some enc => return { provenance, rows, retired, encoding := enc }
+  return { provenance, rows, retired, encoding }
 
 /-- Faults about the row set: order, uniqueness, and a retirement that
 contradicts a live row. Reported together so one run names them all. -/
@@ -255,18 +268,19 @@ computed from committed data; nothing here is a list of what to do. -/
 def deficits (t : Tsv) : Array (String × Int) := Id.run do
   let mut out : Array (String × Int) := #[]
   match t.encoding with
-  | .headroom cap =>
+  | none => pure ()
+  | some (.headroom cap) =>
     for r in t.rows do
       let d := cap - r.value
       if d > 0 then out := out.push (r.item, d)
-  | .pairs part whole =>
+  | some (.pairs part whole) =>
     for r in t.rows do
       if r.item.endsWith ("." ++ whole) then
         let key := (r.item.dropEnd (whole.length + 1)).toString
         let got := (t.find? (key ++ "." ++ part)).getD 0
         let d := r.value - got
         if d > 0 then out := out.push (key, d)
-  | .raw =>
+  | some .raw =>
     let mut best : Int := 0
     for r in t.rows do
       if r.value > best then best := r.value
@@ -363,7 +377,7 @@ def tierMain (tier : String) (enc : Encoding)
   let (extra, rows) ← measure
   let fresh : Tsv :=
     { provenance := #[], rows := rows.qsort (fun a b => a.item < b.item)
-      retired := (baseline.map (·.retired)).getD #[], encoding := enc }
+      retired := (baseline.map (·.retired)).getD #[], encoding := some enc }
   let freshFaults := validate fresh
   if !freshFaults.isEmpty then
     IO.eprintln s!"scoreboard: the fresh {tier} measurement is malformed:"
