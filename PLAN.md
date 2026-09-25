@@ -17141,3 +17141,138 @@ entry above loses its open item about running that rebase in the gate tree.
 - Routed, unchanged: CI owes `lake build --wfail land`, `.lake/build/bin/land
   --selftest` and `.lake/build/bin/land --scratch-selftest`, and
   `scripts/cites.lean` `treeRoots` owes an entry for `scripts.land`.
+
+
+### 2026-09-25 — how much of LaTeX: 33.8%, measured, and the support ladder under it
+
+The engine had no answer to "how much of LaTeX does this support?", so
+every claim about breadth was taste. It has one now, and the number is
+**455/1348 = 33.8%** of a documented-command denominator: kernel 119 of
+689, packages 336 of 659. `scripts/coverage.lean` publishes it,
+`tests/scoreboard/coverage.tsv` ratchets it, and no part of it is a list
+someone typed.
+
+**The denominator is external and pinned.** `tests/coverage/latex2e-index.txt`
+holds every command name the LaTeX2e unofficial reference manual indexes —
+`@findex`, `@ftable` items, and `@node` headings that name a command: 922
+distinct names — each confirmed by lualatex to be a control sequence LaTeX
+really defines, and each carrying the meaning lualatex reports for it. The
+file records the manual's sha256 and `$Id` revision, the lualatex version,
+and the two classes the confirmation ran under (`article` and `book`, with
+amsmath and amssymb). 858 of the 922 are defined; the 64 that are not are
+index entries for environments, file extensions, counters, and
+package-provided commands, and they are excluded rather than counted as
+gaps we owe.
+
+The confirmation runs in lualatex's own Lua, not in TeX: `token.is_defined`
+answers whether the name exists and `token.create(n).cmdname` answers what
+it is. That is what makes the one exclusion flashtex states in prose —
+math-mode symbol commands — computable here: the 168 names lualatex reports
+as `math_given` are `\mathchardef`-style font-table entries, and they leave
+the count because implementing them is one table, not 168 dispatch
+decisions. Choosing lualatex over pdflatex for this (the parity ladder's
+choice, extended) also removed the step where a name has to be probed by
+compiling a document per candidate: one run classifies all 922.
+
+The package half is not new data. `tests/compat-index/<pkg>.txt` was
+already one package's documented command list, sourced to a named manual
+section and reviewed row by row. Its 659 rows are the denominator and its
+`impl` and `inert:` rows the numerator, so a package's coverage stays what
+someone read a manual and decided, not what a regex found.
+
+**The verdict is measured, and cannot drift.** Every name is probed through
+`Elab.run` — the engine's real dispatch — in seven argument shapes and both
+places a command can stand. `impl` is the absence of W0301/W0302 and of any
+other loss; `refuse` is recognised-and-named; `unknown` is W0301/W0302. A
+command the dispatch stops recognising becomes `unknown` on the next run,
+with no source scan to keep in sync. The shape family is uniform and
+monotone — adding a shape can only move a name toward recognised — which is
+what keeps it from becoming a signature table by another name. Two shapes
+mattered: the preamble placement (the engine answers `\newcommand` there
+and nowhere else) and the definer shape whose first argument is a control
+sequence rather than a text group.
+
+**The cross-check found nothing, after it stopped finding its own
+vocabulary.** `--report` compares each single-command compat-index row
+against the measured verdict. The first run reported 37 disagreements and
+every one was this script's classifier, not the engine: `refuse:W0301`
+*is* `unknown` (W0301 is the unknown-command code), and a row naming a note
+code records a rewrite, which is implemented. With the two vocabularies
+lined up the count is **0** — the index and the dispatch agree on all 659
+rows. Broken once to be trusted: an invented `impl` row appears as one
+disagreement, and a bumped scoreboard value fails `--check` as a
+regression.
+
+**The support ladder, per construct — L0 to L4.** The parity ladder (T0–T5,
+previous entry) grades a *document* against lualatex. It cannot say what a
+*construct* is worth, and "supported" was doing that job alone. Five rungs,
+each already distinguishable from the diagnostic record:
+
+| rung | means | read from |
+|---|---|---|
+| L0 | nothing answers the name; arguments survive as text | W0301/W0302 |
+| L1 | recognised, and the loss is named with a subject and a declared severity | any `degraded`/`pending` code |
+| L2 | answered by a rewrite onto a native construct, its conservation stated | N0100 and its conservation oracle |
+| L3 | implemented natively; the compat-index row is `impl` and the document changes | no loss code, `compatRowEffect` |
+| L4 | the construct's own fixture holds at T3 or better against lualatex | the parity ladder |
+
+L0–L3 are measurable today and the coverage tier counts L2+L3 — a named
+refusal is better than silence and is still not support, which is the same
+judgement `ink_covered_or_named` makes one level up. L4 is the rung that
+joins the two ladders: it is the only one that needs a rendered page, and
+it is where a construct stops being "dispatched" and starts being
+"correct". A construct claimed at L4 without a fixture is the prose-claim
+failure mode this week's four defects shared.
+
+**The blocker ranking exists and its corpus does not.** `scripts/blockers.lean`
+screens a directory with lualatex `-halt-on-error`, elaborates each
+survivor, reads the W0301/W0302 subjects as the constructs that hold it
+back, and ranks them by `sole` (documents this construct alone blocks) and
+`share` (Σ 1/|blockers|, in thousandths), grouping each by what defines it
+through a declared precedence: primitive → the document's own macro → a
+class it loads → the kernel → a package it loads → unattributed. No corpus
+document is committed; `tests/coverage/blockers.tsv` carries counts only.
+
+The correction the brief needs: **this host has no TeX Live documentation
+tree.** `texmf-dist/doc` holds three entries, none of them LaTeX package
+documentation, so the public corpus available is 111 `.tex` files from the
+tex tree plus the base samples — of which lualatex builds 50, and only 14
+are blocked at all. The ranking that comes out is therefore thin and its
+top entry is one document's `\setRTLmain`. The mechanism is built and
+selftested; what it needs is a corpus, and choosing one is a human decision
+(a doc tree installed here, or a license-clear public set fetched and never
+committed). Until then the number to work from is the kernel `unknown`
+list, which is 532 names long and already grouped by manual chapter in
+`--report`: Math formulas (135), Special insertions (105), Environments
+(79), Fonts (38), Layout (35), Definitions (34).
+
+**What this says about the loop.** Three lessons, each already a check.
+A denominator that is not external and pinned measures our own opinion of
+LaTeX — so the manual's sha256 and `$Id` are in the committed file, and
+regenerating needs lualatex and therefore never gates. A verdict that is
+listed rather than measured drifts silently — so the probe runs the
+dispatch, and the scoreboard's only writer is the script. And the first
+finding of any cross-check is usually the checker's own vocabulary: 37 of
+37 here. Alignment before alarm.
+
+Routed, not mine to change: `--porcelain` emits `code` and `message` but
+not `subject`, so a consumer outside this process has to read the construct
+out of message text — the thing every `_named` claim in this tree exists to
+avoid. The emission site is the diagnostic writer in `LeanTex/Cli`
+(`DriverDiag`), and the fix is one field. `scripts/blockers.lean` sidesteps
+it by calling `Elab.run` in-process, which is why it can read
+`Diag.subject` at all.
+
+Also routed: the coverage tier has no caller yet. `--check` is hermetic and
+takes about 30 s, and the landing procedure this entry's predecessor
+describes is where it belongs (`scripts/land.lean`, "the scoreboard's
+`--check`"), not `lake test`. Until that caller exists the tier ratchets
+only when someone runs it, which is a gated claim with no gate — said here
+rather than left to be discovered, because that is the exact failure this
+week's entry is about.
+
+One measurement worth stating plainly, because it is the shape of the 532:
+`\hspace` is W0301. Not refused, not rewritten — unknown, with its argument
+kept as text. The kernel gaps are not exotic corners; they are Spaces,
+Lengths, Counters and Input/output, the chapters a real document touches on
+its first page.

@@ -1,0 +1,870 @@
+# The kernel command denominator: every command name the LaTeX2e unofficial
+# reference manual indexes (@findex, @ftable items, @node headings), confirmed
+# by lualatex to be a control sequence LaTeX defines, and classified by the
+# meaning lualatex reports. Fields: name, manual chapter, lualatex meaning.
+# A `math_given` row is a math-mode symbol command and is excluded from the
+# count; it is kept here so the exclusion is visible and countable.
+# Regenerate with scripts/coverage.lean --denominator; never hand-edit.
+# manual: latex2e-help-texinfo latex2e.texi, sha256 0202a1fe2b174a3b8e79c901491325cbced80022433d02115cddabf349e23603
+# manual-id: @c $Id: latex2e.texi 1257 2026-06-09 14:53:04Z karl $
+# confirmed-by: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
+# confirmed-under: \documentclass{article} and {book}, amsmath + amssymb
+# candidates: 922 indexed names, 858 confirmed defined
+!	Math formulas	call
+"	Special insertions	call
+#	Special insertions	char_given
+$	Special insertions	call
+%	Special insertions	char_given
+&	Special insertions	char_given
+'	Environments	call
+(	Environments	call
+)	Environments	call
+*	Math formulas	call
+,	Math formulas	call
+-	Environments	discretionary
+.	Special insertions	call
+/	Spaces	ital_corr
+:	Math formulas	call
+;	Math formulas	call
+=	Environments	call
+>	Environments	call
+AA	Special insertions	call
+AE	Special insertions	call
+Alph	Environments	call
+AtBeginDocument	Environments	call
+AtBeginDvi	Definitions	long_call
+AtEndDocument	Environments	call
+AtEndDvi	Definitions	long_call
+AtEndOfClass	Definitions	call
+AtEndOfPackage	Definitions	call
+Box	Math formulas	math_given
+CheckCommand	Definitions	call
+ClassError	Definitions	call
+ClassInfo	Definitions	call
+ClassNote	Definitions	call
+ClassNoteNoLine	Definitions	call
+ClassWarning	Definitions	call
+ClassWarningNoLine	Definitions	call
+CurrentOption	Definitions	call
+DH	Special insertions	call
+DJ	Special insertions	call
+DeclareFontEncoding	Fonts	call
+DeclareOption	Definitions	call
+DeclareRobustCommand	Definitions	call
+DeclareTextAccent	Fonts	call
+DeclareTextAccentDefault	Fonts	call
+DeclareTextCommand	Fonts	call
+DeclareTextCommandDefault	Fonts	call
+DeclareTextComposite	Fonts	call
+DeclareTextCompositeCommand	Fonts	call
+DeclareTextSymbol	Fonts	call
+DeclareTextSymbolDefault	Fonts	call
+Delta	Math formulas	math_given
+Diamond	Math formulas	math_given
+DocumentMetadata	Overview of @LaTeX{}	call
+Downarrow	Math formulas	call
+ExecuteOptions	Definitions	call
+Gamma	Math formulas	math_given
+H	Special insertions	call
+Huge	Fonts	call
+IJ	Special insertions	call
+IfFileExists	Definitions	call
+Im	Math formulas	math_given
+InputIfFileExists	Definitions	call
+Join	Math formulas	call
+L	Special insertions	call
+LARGE	Fonts	call
+LaTeX	Special insertions	call
+LaTeXe	Special insertions	call
+Lambda	Math formulas	math_given
+Large	Fonts	call
+LastDeclaredEncoding	Fonts	call
+Leftarrow	Math formulas	math_given
+Leftrightarrow	Math formulas	math_given
+LoadClass	Definitions	call
+LoadClassWithOptions	Definitions	call
+NG	Special insertions	call
+NeedsTeXFormat	Definitions	call
+O	Special insertions	call
+OE	Special insertions	call
+Omega	Math formulas	math_given
+OptionNotUsed	Definitions	call
+P	Special insertions	call
+PackageError	Definitions	call
+PackageInfo	Definitions	call
+PackageNote	Definitions	call
+PackageNoteNoLine	Definitions	call
+PackageWarning	Definitions	call
+PackageWarningNoLine	Definitions	call
+PassOptionsToClass	Definitions	call
+PassOptionsToPackage	Definitions	call
+Phi	Math formulas	math_given
+Pi	Math formulas	math_given
+Pr	Math formulas	call
+ProcessOptions	Definitions	call
+ProvideTextCommand	Fonts	call
+ProvideTextCommandDefault	Fonts	call
+ProvidesClass	Definitions	call
+ProvidesFile	Definitions	call
+ProvidesPackage	Definitions	call
+Psi	Math formulas	math_given
+Re	Math formulas	math_given
+Ref	Cross references	call
+RequirePackage	Definitions	call
+RequirePackageWithOptions	Definitions	call
+Rightarrow	Math formulas	math_given
+Roman	Counters	call
+S	Special insertions	call
+SS	Special insertions	call
+Sigma	Math formulas	math_given
+TH	Special insertions	call
+TeX	Special insertions	call
+Uparrow	Math formulas	call
+Updownarrow	Math formulas	call
+Upsilon	Math formulas	math_given
+UseTextAccent	Fonts	call
+UseTextSymbol	Fonts	call
+Vert	Math formulas	call
+Xi	Math formulas	math_given
+[	Environments	call
+\	Environments	call
+]	Environments	call
+^	Special insertions	call
+_	Special insertions	call
+`	Environments	call
+a	Environments	call
+aa	Special insertions	call
+accent	Special insertions	accent
+acute	Math formulas	call
+addcontentsline	Front/back matter	call
+addtocontents	Front/back matter	long_call
+addtocounter	Counters	call
+addtolength	Lengths	call
+addvspace	Spaces	call
+ae	Special insertions	call
+aleph	Math formulas	math_given
+alph	Counters	call
+alpha	Math formulas	math_given
+amalg	Math formulas	math_given
+and	Page styles	call
+angle	Math formulas	math_given
+appendix	Sectioning	call
+approx	Math formulas	math_given
+arabic	Counters	call
+arccos	Math formulas	call
+arcsin	Math formulas	call
+arctan	Math formulas	call
+arg	Math formulas	call
+arraycolsep	Environments	assign_dimen
+arrayrulewidth	Environments	assign_dimen
+arraystretch	Environments	call
+ast	Math formulas	math_given
+asymp	Math formulas	math_given
+author	Page styles	call
+b	Special insertions	call
+backmatter	Sectioning	call
+backslash	Math formulas	call
+bar	Math formulas	call
+baselineskip	Fonts	assign_glue
+baselinestretch	Layout	call
+begin	Environments	call
+beta	Math formulas	math_given
+bf	Fonts	call
+bfseries	Fonts	call
+bibdata	Environments	long_call
+bibitem	Environments	call
+bibliography	Environments	call
+bibliographystyle	Environments	call
+bibname	Environments	call
+bibstyle	Environments	long_call
+bigbreak	Spaces	call
+bigcap	Math formulas	call
+bigcirc	Math formulas	math_given
+bigcup	Math formulas	call
+bigl	Math formulas	call
+bigodot	Math formulas	call
+bigoplus	Math formulas	call
+bigotimes	Math formulas	call
+bigr	Math formulas	call
+bigskip	Spaces	call
+bigskipamount	Spaces	assign_glue
+bigsqcup	Math formulas	call
+bigtriangledown	Math formulas	math_given
+bigtriangleup	Math formulas	math_given
+biguplus	Math formulas	call
+bigvee	Math formulas	call
+bigwedge	Math formulas	call
+bmod	Math formulas	call
+boldmath	Math formulas	call
+bot	Math formulas	math_given
+bottomfraction	Layout	call
+bowtie	Math formulas	call
+breve	Math formulas	call
+bullet	Math formulas	math_given
+c	Special insertions	call
+cal	Fonts	call
+cap	Math formulas	math_given
+capitalacute	Special insertions	call
+capitalbreve	Special insertions	call
+capitalcaron	Special insertions	call
+capitalcedilla	Special insertions	call
+capitalcircumflex	Special insertions	call
+capitaldieresis	Special insertions	call
+capitaldotaccent	Special insertions	call
+capitalgrave	Special insertions	call
+capitalhungarumlaut	Special insertions	call
+capitalmacron	Special insertions	call
+capitalnewtie	Special insertions	call
+capitalogonek	Special insertions	call
+capitalring	Special insertions	call
+capitaltie	Special insertions	call
+capitaltilde	Special insertions	call
+caption	Layout	call
+cdot	Math formulas	math_given
+cdots	Math formulas	call
+centering	Environments	call
+chapter	Sectioning	call
+check	Math formulas	call
+chi	Math formulas	math_given
+circ	Math formulas	math_given
+circle	Environments	call
+citation	Environments	long_call
+cite	Environments	call
+cleardoublepage	Page breaking	call
+clearpage	Page breaking	call
+cline	Environments	call
+closein	Input/output	in_stream
+closeout	Input/output	extension
+clubsuit	Math formulas	math_given
+colon	Math formulas	call
+columnsep	Layout	assign_dimen
+columnseprule	Layout	assign_dimen
+columnwidth	Layout	assign_dimen
+complement	Math formulas	math_given
+cong	Math formulas	call
+contentsline	Front/back matter	call
+coprod	Math formulas	call
+copyright	Special insertions	call
+cos	Math formulas	call
+cosh	Math formulas	call
+cot	Math formulas	call
+coth	Math formulas	call
+csc	Math formulas	call
+cup	Math formulas	math_given
+d	Special insertions	call
+dag	Special insertions	call
+dagger	Math formulas	math_given
+dashbox	Environments	call
+dashv	Math formulas	math_given
+date	Page styles	call
+day	Counters	assign_int
+dblfloatpagefraction	Layout	call
+dblfloatsep	Layout	assign_glue
+dbltextfloatsep	Layout	assign_glue
+dbltopfraction	Layout	call
+ddag	Special insertions	call
+ddagger	Math formulas	math_given
+ddot	Math formulas	call
+ddots	Math formulas	call
+deg	Math formulas	call
+delta	Math formulas	math_given
+det	Math formulas	call
+dh	Special insertions	call
+diamond	Math formulas	math_given
+diamondsuit	Math formulas	math_given
+dim	Math formulas	call
+dimexpr	Lengths	last_item
+discretionary	Line breaking	discretionary
+displaystyle	Math formulas	math_style
+div	Math formulas	math_given
+dj	Special insertions	call
+documentclass	Document classes	call
+dot	Math formulas	call
+doteq	Math formulas	call
+dotfill	Spaces	call
+dots	Math formulas	call
+dotsb	Math formulas	call
+dotsc	Math formulas	call
+dotsi	Math formulas	call
+doublerulesep	Environments	assign_dimen
+downarrow	Math formulas	call
+ell	Math formulas	math_given
+emph	Fonts	call
+emptyset	Math formulas	math_given
+end	Environments	call
+endinput	Splitting the input	input
+enlargethispage	Page breaking	call
+enspace	Spaces	call
+ensuremath	Modes	call
+epsilon	Math formulas	math_given
+equiv	Math formulas	math_given
+eta	Math formulas	math_given
+evensidemargin	Document classes	assign_dimen
+exists	Math formulas	math_given
+exp	Math formulas	call
+extracolsep	Environments	call
+fbox	Boxes	call
+fboxrule	Environments	assign_dimen
+fboxsep	Environments	assign_dimen
+fill	Spaces	assign_glue
+flat	Math formulas	math_given
+floatpagefraction	Layout	call
+floatsep	Layout	assign_glue
+flushbottom	Layout	call
+fnsymbol	Footnotes	call
+fontdimen	Spaces	assign_font_dimen
+fontencoding	Fonts	call
+fontfamily	Fonts	call
+fontseries	Fonts	call
+fontshape	Fonts	call
+fontsize	Fonts	call
+footnote	Footnotes	call
+footnotemark	Footnotes	call
+footnoterule	Footnotes	call
+footnotesep	Footnotes	assign_dimen
+footnotesize	Fonts	call
+footnotetext	Footnotes	call
+footskip	Layout	assign_dimen
+forall	Math formulas	math_given
+frac	Math formulas	call
+frame	Environments	call
+framebox	Environments	call
+frenchspacing	Spaces	call
+frontmatter	Sectioning	call
+frown	Math formulas	math_given
+fussy	Line breaking	call
+gamma	Math formulas	math_given
+gcd	Math formulas	call
+ge	Math formulas	math_given
+geq	Math formulas	math_given
+gets	Math formulas	math_given
+gg	Math formulas	math_given
+glueexpr	Lengths	last_item
+grave	Math formulas	call
+guillemetleft	Special insertions	call
+guillemetright	Special insertions	call
+guillemotleft	Special insertions	call
+guillemotright	Special insertions	call
+guilsinglleft	Special insertions	call
+guilsinglright	Special insertions	call
+hat	Math formulas	call
+hbar	Math formulas	math_given
+headheight	Layout	assign_dimen
+headsep	Layout	assign_dimen
+heartsuit	Math formulas	math_given
+hfill	Spaces	hskip
+hline	Environments	call
+hom	Math formulas	call
+hookleftarrow	Math formulas	call
+hookrightarrow	Math formulas	call
+hphantom	Math formulas	call
+hrulefill	Spaces	call
+hsize	Layout	assign_dimen
+hspace	Spaces	call
+hss	Spaces	hskip
+huge	Fonts	call
+hyphenation	Line breaking	hyph_data
+i	Special insertions	call
+iff	Math formulas	call
+ignorespaces	Definitions	ignore_spaces
+ignorespacesafterend	Definitions	call
+ij	Special insertions	call
+imath	Math formulas	math_given
+immediate	Input/output	extension
+in	Math formulas	math_given
+include	Splitting the input	call
+includeonly	Splitting the input	call
+indent	Making paragraphs	start_par
+index	Front/back matter	call
+indexspace	Front/back matter	call
+inf	Math formulas	call
+infty	Math formulas	math_given
+input	Splitting the input	call
+int	Math formulas	call
+intextsep	Layout	assign_glue
+iota	Math formulas	math_given
+it	Fonts	call
+item	Environments	call
+itemindent	Environments	assign_dimen
+itemsep	Environments	assign_glue
+itshape	Fonts	call
+j	Special insertions	call
+jmath	Math formulas	math_given
+jobname	Command line interface	convert
+k	Special insertions	call
+kappa	Math formulas	math_given
+ker	Math formulas	call
+kill	Environments	call
+l	Special insertions	call
+label	Cross references	call
+labelenumi	Environments	call
+labelenumii	Environments	call
+labelenumiii	Environments	call
+labelenumiv	Environments	call
+labelformat	Cross references	call
+labelitemi	Environments	call
+labelitemii	Environments	call
+labelitemiii	Environments	call
+labelitemiv	Environments	call
+labelsep	Environments	assign_dimen
+labelwidth	Environments	assign_dimen
+lambda	Math formulas	math_given
+land	Math formulas	math_given
+langle	Math formulas	call
+large	Fonts	call
+lbrace	Math formulas	call
+lbrack	Math formulas	call
+lceil	Math formulas	call
+ldots	Math formulas	call
+le	Math formulas	math_given
+leadsto	Math formulas	math_given
+left	Math formulas	left_right
+leftarrow	Math formulas	math_given
+lefteqn	Environments	call
+leftharpoondown	Math formulas	math_given
+leftharpoonup	Math formulas	math_given
+leftmargin	Environments	assign_dimen
+leftmargini	Environments	assign_dimen
+leftmarginii	Environments	assign_dimen
+leftmarginiii	Environments	assign_dimen
+leftmarginiv	Environments	assign_dimen
+leftmarginv	Environments	assign_dimen
+leftmarginvi	Environments	assign_dimen
+leftrightarrow	Math formulas	math_given
+leq	Math formulas	math_given
+lfloor	Math formulas	call
+lg	Math formulas	call
+lhd	Math formulas	math_given
+lim	Math formulas	call
+liminf	Math formulas	call
+limsup	Math formulas	call
+line	Environments	call
+linebreak	Line breaking	call
+lineskip	Layout	assign_glue
+lineskiplimit	Layout	assign_dimen
+linespread	Fonts	call
+linethickness	Environments	call
+linewidth	Layout	assign_dimen
+listoffigures	Front/back matter	call
+listoftables	Front/back matter	call
+listparindent	Environments	assign_dimen
+ll	Math formulas	math_given
+ln	Math formulas	call
+lnot	Math formulas	math_given
+log	Math formulas	call
+long	Definitions	prefix
+longleftarrow	Math formulas	call
+longleftrightarrow	Math formulas	call
+longmapsto	Math formulas	call
+longrightarrow	Math formulas	call
+lor	Math formulas	math_given
+lq	Special insertions	call
+mainmatter	Sectioning	call
+makeatletter	Definitions	call
+makeatother	Definitions	call
+makebox	Environments	call
+makeglossary	Front/back matter	call
+makeindex	Front/back matter	call
+makelabel	Environments	call
+maketitle	Page styles	call
+mapsto	Math formulas	call
+marginpar	Making paragraphs	call
+marginparpush	Layout	assign_dimen
+marginparsep	Making paragraphs	assign_dimen
+marginparwidth	Layout	assign_dimen
+markboth	Page styles	call
+markright	Page styles	call
+mathbf	Fonts	call
+mathcal	Fonts	call
+mathdollar	Math formulas	math_given
+mathellipsis	Math formulas	call
+mathnormal	Fonts	call
+mathparagraph	Math formulas	math_given
+mathring	Math formulas	call
+mathrm	Fonts	call
+mathsection	Math formulas	math_given
+mathsf	Fonts	call
+mathsterling	Math formulas	call
+mathstrut	Math formulas	call
+mathtt	Fonts	call
+mathunderscore	Math formulas	call
+mathversion	Fonts	call
+max	Math formulas	call
+mbox	Boxes	call
+mdseries	Fonts	call
+medbreak	Spaces	call
+medskip	Spaces	call
+medskipamount	Spaces	assign_glue
+medspace	Math formulas	call
+message	Input/output	message
+mho	Math formulas	math_given
+mid	Math formulas	math_given
+min	Math formulas	call
+models	Math formulas	call
+month	Counters	assign_int
+mp	Math formulas	math_given
+mu	Math formulas	math_given
+multicolumn	Environments	long_call
+multiput	Environments	call
+nabla	Math formulas	math_given
+natural	Math formulas	math_given
+ne	Math formulas	call
+nearrow	Math formulas	math_given
+neg	Math formulas	math_given
+negmedspace	Math formulas	call
+negthickspace	Math formulas	call
+negthinspace	Math formulas	call
+neq	Math formulas	call
+newcommand	Definitions	call
+newcounter	Definitions	call
+newenvironment	Definitions	call
+newfont	Definitions	call
+newlabel	Cross references	call
+newlength	Definitions	call
+newline	Line breaking	call
+newpage	Page breaking	call
+newsavebox	Definitions	call
+newtheorem	Definitions	call
+newtie	Special insertions	call
+newwrite	Input/output	call
+ng	Special insertions	call
+ni	Math formulas	math_given
+nobreakspace	Spaces	call
+nocite	Environments	call
+nocorr	Fonts	relax
+nocorrlist	Fonts	call
+nofiles	Front/back matter	call
+noindent	Making paragraphs	start_par
+nolinebreak	Line breaking	call
+nonfrenchspacing	Spaces	call
+nonumber	Environments	call
+nopagebreak	Page breaking	call
+normalfont	Fonts	call
+normalmarginpar	Making paragraphs	call
+normalsfcodes	Spaces	call
+normalsize	Fonts	call
+not	Math formulas	math_given
+notin	Math formulas	call
+nu	Math formulas	math_given
+numberline	Front/back matter	call
+numexpr	Lengths	last_item
+nwarrow	Math formulas	math_given
+o	Special insertions	call
+obeycr	Line breaking	call
+oddsidemargin	Document classes	assign_dimen
+odot	Math formulas	math_given
+oe	Special insertions	call
+oint	Math formulas	call
+oldstylenums	Fonts	call
+omega	Math formulas	math_given
+ominus	Math formulas	math_given
+onecolumn	Layout	call
+openin	Input/output	in_stream
+openout	Input/output	extension
+oplus	Math formulas	math_given
+oslash	Math formulas	math_given
+otimes	Math formulas	math_given
+oval	Environments	call
+overbrace	Math formulas	call
+overleftarrow	Math formulas	call
+overline	Math formulas	call
+overrightarrow	Math formulas	call
+owns	Math formulas	math_given
+pagebreak	Page breaking	call
+pagenumbering	Page styles	call
+pageref	Cross references	call
+pagestyle	Page styles	call
+paperheight	Layout	assign_dimen
+paperwidth	Layout	assign_dimen
+par	Making paragraphs	long_call
+paragraph	Sectioning	call
+parallel	Math formulas	math_given
+parbox	Boxes	call
+parindent	Environments	assign_dimen
+parsep	Environments	assign_glue
+parskip	Environments	assign_glue
+part	Sectioning	call
+partial	Math formulas	math_given
+partopsep	Environments	assign_glue
+perp	Math formulas	math_given
+phantom	Math formulas	call
+phi	Math formulas	math_given
+pi	Math formulas	math_given
+pm	Math formulas	math_given
+pmod	Math formulas	call
+poptabs	Environments	call
+pounds	Special insertions	call
+prec	Math formulas	math_given
+preceq	Math formulas	math_given
+prevdepth	Layout	set_aux
+prime	Math formulas	math_given
+prod	Math formulas	call
+propto	Math formulas	math_given
+protect	Definitions	relax
+protected	Input/output	prefix
+providecommand	Definitions	call
+psi	Math formulas	math_given
+pushtabs	Environments	call
+put	Environments	call
+qbezier	Environments	call
+qquad	Math formulas	call
+quad	Math formulas	call
+quotedblbase	Special insertions	call
+quotesinglbase	Special insertions	call
+r	Special insertions	call
+raggedbottom	Layout	call
+raggedleft	Environments	call
+raggedright	Environments	call
+raisebox	Boxes	call
+rangle	Math formulas	call
+rbrace	Math formulas	call
+rbrack	Math formulas	call
+rceil	Math formulas	call
+read	Input/output	read_to_cs
+ref	Cross references	call
+refname	Environments	call
+refstepcounter	Counters	call
+renewcommand	Definitions	call
+renewenvironment	Definitions	call
+restorecr	Line breaking	call
+restriction	Math formulas	math_given
+reversemarginpar	Making paragraphs	call
+rfloor	Math formulas	call
+rhd	Math formulas	math_given
+rho	Math formulas	math_given
+right	Math formulas	left_right
+rightarrow	Math formulas	math_given
+rightharpoondown	Math formulas	math_given
+rightharpoonup	Math formulas	math_given
+rightleftharpoons	Math formulas	math_given
+rightmargin	Environments	assign_dimen
+rm	Fonts	call
+rmfamily	Fonts	call
+roman	Counters	call
+rq	Special insertions	call
+rule	Special insertions	call
+samepage	Page breaking	call
+savebox	Boxes	call
+sbox	Boxes	call
+sc	Fonts	call
+scriptscriptstyle	Math formulas	math_style
+scriptsize	Fonts	call
+scriptstyle	Math formulas	math_style
+scshape	Fonts	call
+searrow	Math formulas	math_given
+sec	Math formulas	call
+section	Sectioning	call
+selectfont	Fonts	call
+setcounter	Counters	call
+setlength	Lengths	call
+setminus	Math formulas	math_given
+settodepth	Lengths	call
+settoheight	Lengths	call
+settowidth	Lengths	call
+sf	Fonts	call
+sfcode	Spaces	def_char_code
+sffamily	Fonts	call
+sharp	Math formulas	math_given
+shipout	Input/output	long_call
+shortstack	Environments	call
+sigma	Math formulas	math_given
+sim	Math formulas	math_given
+simeq	Math formulas	math_given
+sin	Math formulas	call
+sinh	Math formulas	call
+sl	Fonts	call
+slash	Line breaking	call
+sloppy	Line breaking	call
+slshape	Fonts	call
+small	Fonts	call
+smallbreak	Spaces	call
+smallint	Math formulas	math_given
+smallskip	Spaces	call
+smallskipamount	Spaces	assign_glue
+smash	Math formulas	call
+smile	Math formulas	math_given
+space	Splitting the input	call
+spacefactor	Spaces	set_aux
+spadesuit	Math formulas	math_given
+sqcap	Math formulas	math_given
+sqcup	Math formulas	math_given
+sqrt	Math formulas	call
+sqsubset	Math formulas	math_given
+sqsubseteq	Math formulas	math_given
+sqsupset	Math formulas	math_given
+sqsupseteq	Math formulas	math_given
+ss	Special insertions	call
+stackrel	Math formulas	call
+star	Math formulas	math_given
+stepcounter	Counters	call
+stop	Command line interface	call
+stretch	Lengths	call
+strut	Spaces	call
+subitem	Front/back matter	call
+subparagraph	Sectioning	call
+subsection	Sectioning	call
+subset	Math formulas	math_given
+subseteq	Math formulas	math_given
+subsubitem	Front/back matter	call
+subsubsection	Sectioning	call
+succ	Math formulas	math_given
+succeq	Math formulas	math_given
+sum	Math formulas	call
+sup	Math formulas	call
+suppressfloats	Layout	call
+supset	Math formulas	math_given
+supseteq	Math formulas	math_given
+surd	Math formulas	call
+swarrow	Math formulas	math_given
+symbol	Special insertions	call
+t	Special insertions	call
+tabbingsep	Environments	assign_dimen
+tabcolsep	Environments	assign_dimen
+tableofcontents	Front/back matter	call
+tan	Math formulas	call
+tanh	Math formulas	call
+tau	Math formulas	math_given
+textascendercompwordmark	Special insertions	call
+textasciicircum	Special insertions	call
+textasciitilde	Special insertions	call
+textasteriskcentered	Special insertions	call
+textbackslash	Special insertions	call
+textbar	Special insertions	call
+textbardbl	Special insertions	call
+textbf	Fonts	call
+textbigcircle	Special insertions	call
+textbraceleft	Special insertions	call
+textbraceright	Special insertions	call
+textbullet	Special insertions	call
+textcapitalcompwordmark	Special insertions	call
+textcircled	Special insertions	call
+textcompwordmark	Special insertions	call
+textcopyright	Special insertions	call
+textdagger	Special insertions	call
+textdaggerdbl	Special insertions	call
+textdollar	Special insertions	call
+textellipsis	Special insertions	call
+textemdash	Special insertions	call
+textendash	Special insertions	call
+texteuro	Special insertions	call
+textexclamdown	Special insertions	call
+textfiguredash	Special insertions	call
+textfloatsep	Layout	assign_glue
+textfraction	Layout	call
+textgreater	Special insertions	call
+textheight	Layout	assign_dimen
+texthorizontalbar	Special insertions	call
+textit	Fonts	call
+textleftarrow	Special insertions	call
+textless	Special insertions	call
+textmd	Fonts	call
+textnonbreakinghyphen	Special insertions	call
+textnormal	Fonts	call
+textordfeminine	Special insertions	call
+textordmasculine	Special insertions	call
+textparagraph	Special insertions	call
+textperiodcentered	Special insertions	call
+textquestiondown	Special insertions	call
+textquotedblleft	Special insertions	call
+textquotedblright	Special insertions	call
+textquoteleft	Special insertions	call
+textquoteright	Special insertions	call
+textquotesingle	Special insertions	call
+textquotestraightbase	Special insertions	call
+textquotestraightdblbase	Special insertions	call
+textregistered	Special insertions	call
+textrightarrow	Special insertions	call
+textrm	Fonts	call
+textsc	Fonts	call
+textsection	Special insertions	call
+textsf	Fonts	call
+textsl	Fonts	call
+textsterling	Special insertions	call
+textstyle	Math formulas	math_style
+textthreequartersemdash	Special insertions	call
+texttrademark	Special insertions	call
+texttt	Fonts	call
+texttwelveudash	Special insertions	call
+textunderscore	Special insertions	call
+textup	Fonts	call
+textvisiblespace	Special insertions	call
+textwidth	Layout	assign_dimen
+th	Special insertions	call
+thanks	Page styles	call
+thepage	Page styles	call
+theta	Math formulas	math_given
+thicklines	Environments	call
+thickspace	Math formulas	call
+thinlines	Environments	call
+thinspace	Math formulas	call
+thispagestyle	Page styles	call
+tilde	Math formulas	call
+times	Math formulas	math_given
+tiny	Fonts	call
+title	Page styles	call
+to	Math formulas	math_given
+today	Special insertions	call
+top	Math formulas	math_given
+topfraction	Layout	call
+topmargin	Layout	assign_dimen
+topsep	Environments	assign_glue
+topskip	Layout	assign_glue
+triangle	Math formulas	math_given
+triangleleft	Math formulas	math_given
+triangleright	Math formulas	math_given
+tt	Fonts	call
+ttfamily	Fonts	call
+twocolumn	Layout	call
+typein	Input/output	call
+typeout	Input/output	long_call
+u	Special insertions	call
+unboldmath	Math formulas	call
+underbar	Special insertions	call
+underbrace	Math formulas	call
+underline	Math formulas	call
+unitlength	Environments	assign_dimen
+unlhd	Math formulas	math_given
+unrhd	Math formulas	math_given
+uparrow	Math formulas	call
+updownarrow	Math formulas	call
+upharpoonright	Math formulas	math_given
+uplus	Math formulas	math_given
+upshape	Fonts	call
+upsilon	Math formulas	math_given
+usebox	Boxes	call
+usecounter	Counters	call
+usefont	Fonts	call
+usepackage	Document classes	call
+v	Special insertions	call
+value	Counters	call
+varepsilon	Math formulas	math_given
+varphi	Math formulas	math_given
+varpi	Math formulas	math_given
+varrho	Math formulas	math_given
+varsigma	Math formulas	math_given
+vartheta	Math formulas	math_given
+vbox	Environments	make_box
+vdash	Math formulas	math_given
+vdots	Math formulas	call
+vec	Math formulas	call
+vector	Environments	call
+vee	Math formulas	math_given
+verb	Environments	call
+vert	Math formulas	call
+vfill	Spaces	vskip
+vline	Environments	call
+vphantom	Math formulas	call
+vspace	Spaces	call
+vtop	Environments	make_box
+wedge	Math formulas	math_given
+widehat	Math formulas	call
+widetilde	Math formulas	call
+wlog	Input/output	call
+wp	Math formulas	math_given
+wr	Math formulas	math_given
+write	Input/output	extension
+xi	Math formulas	math_given
+year	Counters	assign_int
+zeta	Math formulas	math_given
+|	Math formulas	call
+~	Special insertions	call

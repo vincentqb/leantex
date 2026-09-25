@@ -1,0 +1,98 @@
+# documented-command coverage: the impl count per kernel chapter and per package.
+# kernel denominator: tests/coverage/latex2e-index.txt (its own provenance line).
+# package denominator: tests/compat-index/*.txt rows, unchanged.
+# kernel: 119 impl, 38 refused, 532 unknown, 168 excluded as math-mode symbols.
+# packages: 336 impl of 659 documented.
+# total: 455/1348 = 33.8%
+# date: 2026-09-25
+kernel/Boxes	1
+kernel/Command line interface	0
+kernel/Counters	0
+kernel/Cross references	1
+kernel/Definitions	17
+kernel/Document classes	0
+kernel/Environments	8
+kernel/Fonts	32
+kernel/Footnotes	1
+kernel/Front/back matter	0
+kernel/Input/output	0
+kernel/Layout	0
+kernel/Lengths	0
+kernel/Line breaking	0
+kernel/Making paragraphs	2
+kernel/Math formulas	10
+kernel/Modes	1
+kernel/Overview of @LaTeX{}	0
+kernel/Page breaking	3
+kernel/Page styles	4
+kernel/Sectioning	6
+kernel/Spaces	8
+kernel/Special insertions	25
+kernel/Splitting the input	0
+pkg/algorithm	2
+pkg/algorithm2e	30
+pkg/algorithmicx	14
+pkg/algpseudocode	3
+pkg/amsfonts	3
+pkg/amsmath	15
+pkg/amssymb	3
+pkg/appendix	2
+pkg/appendixnumberbeamer	1
+pkg/array	1
+pkg/babel	4
+pkg/beamer	5
+pkg/beamerposter	7
+pkg/biblatex	8
+pkg/booktabs	3
+pkg/calc	2
+pkg/cancel	0
+pkg/caption	3
+pkg/carlito	2
+pkg/cleveref	7
+pkg/color	4
+pkg/courier	1
+pkg/crop	4
+pkg/csquotes	2
+pkg/enumitem	4
+pkg/etoolbox	3
+pkg/fancyhdr	11
+pkg/float	2
+pkg/fontenc	0
+pkg/fontspec	6
+pkg/genealogytree	3
+pkg/geometry	2
+pkg/graphicx	2
+pkg/helvet	1
+pkg/hyperref	4
+pkg/inputenc	0
+pkg/kvoptions	0
+pkg/libertine	1
+pkg/lineno	10
+pkg/listings	12
+pkg/lmodern	0
+pkg/mathpazo	1
+pkg/mathptmx	1
+pkg/microtype	4
+pkg/minted	3
+pkg/multirow	0
+pkg/natbib	7
+pkg/nicefrac	0
+pkg/palatino	1
+pkg/parskip	0
+pkg/polyglossia	1
+pkg/scrlayer-scrpage	9
+pkg/setspace	4
+pkg/siunitx	15
+pkg/soul	1
+pkg/subcaption	2
+pkg/textcomp	4
+pkg/tikz	77
+pkg/times	1
+pkg/titlesec	0
+pkg/todonotes	0
+pkg/unicode-math	1
+pkg/url	2
+pkg/xcolor	6
+pkg/xparse	7
+pkg/xspace	1
+pkg/xurl	1
