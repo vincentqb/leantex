@@ -500,6 +500,40 @@ structure Diag where
   sites : Nat := 1
   deriving Repr, BEq
 
+/-- **Is this code's loss part of the site census?** A `degraded` or
+`pending` diagnostic says content did not reach the page as declared, so a
+reader sizing the damage counts its sites — which `Diag.tallySites` can only
+do through `subject`. A `config` or `info` loss has no content operand and
+nothing to count.
+
+Declared here, beside `Loss.severity` and `Loss.floor`, and for the same
+reason: it is a function of the loss class and of nothing else, so no call
+site chooses it. `W0341` is why it is written down. It named a fragment of an
+unknown command's arguments with no subject at all, which put it outside the
+census entirely: `tallySites` returns a subjectless diagnostic untouched, so
+the code fired once per site, repeated its help at each, and billed every
+site to `--werror` — while `W0301`, the same loss at the same site, reported
+`(2 sites)` on one line. Neither arm chose that; one reached for `warnOnce`
+and the other for `diag`, and nothing gated the choice. -/
+def Loss.censused : Loss → Bool
+  | .degraded | .pending => true
+  | .dropped | .config | .info => false
+
+/-- The census question, per code — the projection a witness check reads. -/
+def DiagCode.censused (c : DiagCode) : Bool := c.loss.censused
+
+/-- **Exactly the codes that owe ink are the codes that are counted.** The
+census obligation and the recovery obligation do not drift apart: a code
+whose place on the page must carry something is a code whose sites a reader
+can count, and `pending` joins it because a declared absence is still a
+number the reader is owed. Stated against `Floor.ships` rather than against
+the loss list twice, so a future loss class cannot acquire one half of the
+pair by looking similar. -/
+theorem DiagCode.censused_iff_ships (c : DiagCode) :
+    c.censused = c.floor.ships := by
+  cases h : c.loss <;>
+    simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
+
 /-- The rendered code string: the kind's own spelling, derived. -/
 def Diag.code (d : Diag) : String := d.kind.code
 
@@ -627,6 +661,19 @@ theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
   split
   · simp_all
   · rfl
+
+/-- **A diagnostic with no subject is not counted.** `tallySites` returns it
+exactly as given, so its `sites` stays whatever it was — the default 1. This
+is the mechanism behind the census gate in Tests.lean: a `censused` code
+emitted without a subject is invisible to the count, and the reader sees one
+line per site instead of one line carrying the total. Nothing here fixes
+that; it says precisely what is lost, so the gate over `DiagCode.all` has a
+statement to rest on rather than a comment. -/
+theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.size)
+    (hn : (ds[i]).subject.isNone) :
+    (Diag.tallySites ds)[i]? = some ds[i] := by
+  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
+  simp only [Option.map_some, hn, ite_true]
 
 /-- One phase's diagnostics resolved against the document's acceptance,
 with the counts the driver's exit contract reads: errors and warnings are

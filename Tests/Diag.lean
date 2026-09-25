@@ -600,6 +600,147 @@ def diagBlocksOf (s : String) : Array (String × String) := Id.run do
   if !key.isEmpty then out := out.push (key, cur)
   return out
 
+/-- The sources the site audit runs over: the reported shapes plus the
+recovery paths around them. Synthetic throughout — invented command names,
+placeholder content. -/
+def siteAccountingProbes : List (String × String) :=
+  [(dvDoc "" "Alpha \\zztrack[-11]{Bravo} charlie.", "an option run on an unknown command"),
+   (dvDoc "" "Delta \\zztrack[16]{Echo} foxtrot.", "a second option run, another site"),
+   (dvDoc "" "Golf \\footnotemark[3] hotel.", "an option run on a known pending construct"),
+   (dvDoc "" "India \\zzplain{Juliett} kilo.", "an unknown command with no option run"),
+   (dvDoc "" "Lima \\zztrack[1][2]{Mike} november.", "two option runs, one command"),
+   (dvDoc "" "Oscar \\zzwrap[x]{Papa}{Quebec} romeo.", "an option run and two groups")]
+
+/-- Site collisions that stand today, each with the file that owes the
+change and what the pair is. Read in both directions by
+`siteAccountingChecks`: a row whose collision closes fails the suite, so a
+row is a migration step and not a parking space. -/
+def siteAccounting : List (String × String × String) :=
+  [("W0301", "W0341",
+    "LeanTex/Core/Elab.lean — the unknown-command arm names the command \
+through warnOnce (counted, subject ctrl:<name>) and its [...] run through \
+diag (uncounted, no subject) at the same span; the run is part of the \
+command's own recovery and belongs in W0301's message"),
+   ("W0341", "W0370",
+    "LeanTex/Core/Elab.lean — the same arm: warnUnknownCmd routes \
+\\footnotemark to W0370 (pending, a construct the engine knows) while \
+warnOptionRun still calls it an unknown command, which is false")]
+
+/-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
+count — the mechanical first cut the user asked for, needing no judgement
+about any rule: group every diagnostic by its cause site and look at the
+groups larger than one. -/
+def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for d in ds do
+    for e in ds do
+      if d.span.isSome && d.span == e.span && d.code < e.code then
+        let pair := (d.code, e.code)
+        unless out.contains pair do out := out.push pair
+  return out
+
+/-- **One construct, one accounting.** A recovery that accounts for all of a
+construct's arguments leaves no fragment for a second diagnostic to name, so
+two codes never report the same cause site.
+
+This is the mechanical audit: group the diagnostics by cause site, flag any
+group larger than one. It finds the reported defect without reading a single
+rule — `\zztrack[16]{...}` drew `W0301` (the command, counted, subject
+`ctrl:zztrack`) and `W0341` (its `[...]` run, uncounted, no subject) at one
+span, and the same arm drew `W0370` beside a `W0341` that called a *known*
+pending construct "unknown command".
+
+Collisions that stand today are registered in `siteAccounting` with the file
+that owes the change, read in both directions so a closed row cannot linger.
+A collision is not always a defect — two independent losses can meet at one
+span — so each row says which it is. -/
+def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let mut seen : List (String × String) := []
+  for (src, what) in siteAccountingProbes do
+    let (_, ds) := elabStr src
+    for pair in siteCollisions ds do
+      unless seen.contains pair do seen := pair :: seen
+      unless siteAccounting.any (fun r => r.1 == pair.1 && r.2.1 == pair.2) do
+        t s!"site accounting {what}: {pair.1} and {pair.2} name one site, with no row" false
+  for (a, b, _) in siteAccounting do
+    t s!"site accounting {a}/{b}: the row still describes a live collision"
+      (seen.contains (a, b))
+
+/-- **The subject baseline.** Codes whose loss is censused but whose emission
+carries no subject today, frozen as measured on 2026-09-25 — 48 of them.
+
+This is a ratchet, not a defect list, and the distinction matters. The law
+"every censused code carries a subject" was the stated target; measured over
+`DiagCode.all` it fails for all 48 of these, which says the law is wrong
+rather than that the engine has 48 bugs. Many of these losses are about a
+*place* and not a name — an overfull line (W0005), a measure outside the
+readable band (W0201), headings that skip a level (W0320), ink painted off
+the medium (W0388) — and their cause site is already carried by `Diag.span`.
+There is no key for them to be counted under, so demanding one would be
+demanding the wrong thing.
+
+What the baseline buys is the half of the goal that is real: a code
+registered tomorrow cannot arrive outside the census quietly. A new censused
+code either carries a subject or lands a row here deliberately, and a row
+whose code starts carrying one has to be removed. `bangBaseline` in
+scripts/precommit.lean is the precedent — a frozen count that may fall and
+never rise.
+
+The genuine per-site defect is the other gate: `siteAccountingChecks`, where
+two codes name one cause site and disagree about being counted. W0341 is on
+both lists, and it is the one this file can name precisely. -/
+def subjectDebt : List String :=
+  ["W0003", "W0005", "W0006", "W0007", "W0009", "W0010", "W0011", "W0102",
+   "W0201", "W0202", "W0310", "W0311", "W0312", "W0315", "W0319", "W0320",
+   "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
+   "W0333", "W0335", "W0336", "W0338", "W0341", "W0342", "W0345", "W0352",
+   "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
+   "W0376", "W0377", "W0378", "W0379", "W0380", "W0381", "W0386", "W0388"]
+
+/-- **Every counted loss can be counted.** A `degraded` or `pending` code
+says content did not reach the page as declared, and a reader sizing that
+damage reads the site total off one line — which `Diag.tallySites` computes
+from `Diag.subject` and from nothing else. A censused code emitted with no
+subject is therefore outside the census: `Diag.tallySites_subjectless_id`
+says the tally returns it untouched, so it fires once per site, repeats its
+help at each, and bills every site to `--werror`.
+
+`W0341` is the witness that this needed stating. It named a fragment of an
+unknown command's `[...]` run at the same site where `W0301` named the
+command, and the two arms sit in one `else` branch: `W0301` went through
+`warnOnce` with subject `ctrl:<name>` and reported `(2 sites)` on one line,
+`W0341` went through `diag` with no subject at all and printed twice. Nothing
+chose that — one arm reached for one door, the other for the other.
+
+Quantified over `DiagCode.all` rather than over a hand-kept list, so a code
+registered tomorrow cannot arrive outside the census quietly: the moment its
+witness fires without a subject and without a baseline row, this fails.
+`DiagCode.censused_iff_ships` ties the question to the floor, so the two
+obligations — carry ink, be counted — cannot drift apart. `subjectDebt` is
+the frozen baseline, read in both directions: it may fall and never rise. -/
+def subjectCensusChecks (ref : IO.Ref (List String))
+    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag) : IO Unit := do
+  let t := check ref
+  let mut owing : List String := []
+  for c in DiagCode.all do
+    let fired := (diagWitness one mapped withMath probed c).filter (·.code == c.code)
+    -- A code whose witness fires nothing is diagVoiceChecks' failure, not
+    -- this block's: it reports the gap there and would report a vacuous
+    -- pass here.
+    if c.censused && !fired.isEmpty then
+      if (fired.filter (·.subject.isNone)).isEmpty then
+        t s!"subject census {c.code}: a counted loss carries its subject" true
+      else
+        owing := c.code :: owing
+        unless subjectDebt.contains c.code do
+          t s!"subject census {c.code}: a counted loss with no subject, and no baseline row" false
+  -- The other direction: the baseline may only fall. A code that starts
+  -- carrying a subject loses its row here, in the same commit.
+  for code in subjectDebt do
+    t s!"subject census {code}: the baseline row still describes a real gap"
+      (owing.contains code)
+
 /-- **A refusal about a name says so, and the set of them is closed against
 the code list.** `\usetheme{X}` was refusable — W0319, "unknown theme", the
 document left with no palette at all — and never opened `beamerthemeX.sty`
@@ -692,6 +833,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   -- The witness registry is built here and read by two claims: this block's
   -- voice lint, and the name-refusal registry's closure against the code list.
   nameRefusalRegistryChecks ref one mapped withMath probeOf
+  subjectCensusChecks ref one mapped withMath probeOf
   let lossLabel : Loss → String
     | .dropped => "dropped"
     | .pending => "pending"

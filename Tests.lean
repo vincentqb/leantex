@@ -272,6 +272,7 @@ def main (args : List String) : IO UInt32 := do
   pendingChecks ref
   salvageChecks ref
   diagSiteCountChecks ref
+  siteAccountingChecks ref
   structChecks ref
   ctxFoldChecks ref
   pictureElabChecks ref

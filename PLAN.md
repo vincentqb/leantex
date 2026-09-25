@@ -13546,3 +13546,67 @@ healthy record.
 
 29 records today, all well-formed; the gate is green on the tree as it
 stands.
+
+
+### 2026-09-25 — two diagnostics at one site, one of them counted
+
+`\zztrack[16]{body}` draws two warnings at one span. `W0301` names the
+command through `warnOnce` with subject `ctrl:zztrack`, so it is counted and
+reports `(2 sites)` on one line. `W0341` names the `[16]` run through `diag`
+with no subject at all, so `Diag.tallySites` returns it untouched
+(`tallySites_subjectless_id`): it fires once per site, repeats its help at
+each, and bills every site to `--werror`.
+
+Both calls sit in the same `else` branch of the unknown-command arm
+(Elab.lean). Neither chose its census behaviour — one reached for `warnOnce`,
+the other for `diag`, and nothing gated the choice.
+
+The same arm has a worse variant. `warnUnknownCmd` routes `\footnotemark` to
+W0370 — *pending*, a construct the engine knows — while `warnOptionRun`
+still reports "went with unknown command '\footnotemark'", which is false.
+Reproduced synthetically; both shapes are in `siteAccountingProbes`.
+
+**The fix site is `LeanTex/Core/Elab.lean`, which this slice does not own**,
+so what lands here is the gate that makes the class visible and refuses a
+third instance:
+
+`siteAccountingChecks` (Tests/Diag.lean) groups every diagnostic of a probe
+document by cause site and flags any site carrying more than one code — the
+mechanical cut that needs no judgement about any rule. The two live
+collisions are registered in `siteAccounting` with the file that owes the
+change and what the pair is, read in both directions: a new collision with
+no row fails, and a row whose collision closes fails too, so a row is a
+migration step rather than a parking space.
+
+How it was made to fail: renaming the `W0341`/`W0370` row to a code pair
+that does not occur. The forward direction reports
+`W0341 and W0370 name one site, with no row`; the reverse reports
+`the row still describes a live collision`.
+
+#### The subject law as stated is wrong, and the measurement says so
+
+The intended law was "every `degraded` or `pending` code carries a subject",
+expected to fail for eight codes. Quantified over `DiagCode.all` through the
+witness registry it fails for **48**. That is not 48 bugs; it means the law
+is wrong. Many of those losses are about a *place* rather than a name — an
+overfull line (W0005), a measure outside the readable band (W0201), headings
+that skip a level (W0320), ink painted off the medium (W0388) — and their
+cause site is already carried by `Diag.span`. There is no key for them to be
+counted under.
+
+`W0104` is not among the 48 at all: its loss is `config`, so it is not
+censused by class. The lead's "one W0104 arm" item does not exist on the
+law's own terms.
+
+What ships is the half that is real, as a ratchet rather than a law:
+`Loss.censused`/`DiagCode.censused` declared beside `Loss.severity` and
+`Loss.floor` (a function of the loss class, so no call site chooses it),
+`DiagCode.censused_iff_ships` tying the census obligation to the ink
+obligation so the two cannot drift, and `subjectDebt` — the 48 codes frozen
+as measured. A censused code registered tomorrow either carries a subject or
+lands a baseline row deliberately; a code that starts carrying one loses its
+row in the same commit. `bangBaseline` in scripts/precommit.lean is the
+precedent: a frozen count that may fall and never rise.
+
+How it was made to fail: deleting `W0341` from the baseline. The gate
+reports `a counted loss with no subject, and no baseline row`.
