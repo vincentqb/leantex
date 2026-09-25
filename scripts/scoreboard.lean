@@ -70,7 +70,13 @@ def collectTier (tier : String) (spawned : Option (IO.Process.Child { } × Strin
       if !hasTsv && !hasScript then "neither the baseline nor the producer exists"
       else if !hasTsv then s!"{scriptPath tier} exists but {tsvPath tier} does not"
       else s!"{tsvPath tier} exists but {scriptPath tier} does not"
-    return { tier, items := 0, regressed := 0, improved := 0, result := "missing", detail := why }
+    -- Absence is a pass only for a tier that has not landed yet, and only
+    -- while its name is on `pendingTiers`. Anything else missing a half is
+    -- a fault: deleting a landed tier used to leave the gate green.
+    if pendingTiers.contains tier && !hasTsv && !hasScript then
+      return { tier, items := 0, regressed := 0, improved := 0
+               result := "missing", detail := s!"{why} (declared pending)" }
+    return { tier, items := 0, regressed := 0, improved := 0, result := "fault", detail := why }
   | some (child, outPath, errPath) =>
     let code ← child.wait
     let stdout ← readFileOr outPath
@@ -302,14 +308,26 @@ def selftest : IO UInt32 := do
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
-  -- Tier discovery by convention, both halves.
+  -- Tier discovery by convention, both halves. `--check` and the selftest
+  -- agree on every state: absence passes only for a declared-pending tier,
+  -- and a pending name whose tier has landed fails here — which is what
+  -- stops the pending list going stale.
   let tiers ← discover
   for t in tiers do
     let hasTsv ← System.FilePath.pathExists (tsvPath t)
     let hasScript ← System.FilePath.pathExists (scriptPath t)
-    if hasTsv && !hasScript then
-      no s!"discovery: {t} has a baseline and no producer, which must report missing" false
+    if hasTsv != hasScript then
+      no s!"discovery: {t} has one half only ({if hasTsv then "a baseline and no \
+producer" else "a producer and no baseline"}), which --check faults" false
+    if hasTsv && hasScript && pendingTiers.contains t then
+      no s!"discovery: {t} has both halves but is still on pendingTiers — remove \
+its name in the same commit that lands it" false
+    if !hasTsv && !hasScript && !pendingTiers.contains t then
+      no s!"discovery: {t} is declared, absent, and not pending, which --check \
+faults" false
   no "discovery: a fixture directory is not a tier" (!tiers.contains "clean")
+  no "discovery: every pending name is declared"
+    (pendingTiers.all declaredTiers.contains)
 
   let failed := (← fails.get).reverse
   if !failed.isEmpty then
