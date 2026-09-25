@@ -3,15 +3,15 @@
 # greps keep irrelevant commits at ~0.02 s instead of paying lean startup:
 # run the gate for the file kinds it checks, when the staged diff adds a
 # line-start conflict marker in any file (the marker gate covers the tree),
-# when an added path is not plain / is empty (the debris gate; LC_ALL=C
-# so the class is ASCII, and git's own quoting of an odd name adds a `"`),
-# or when an added line may name a home directory (the gate judges it).
+# when the commit adds any path (the debris and case-collision gates read
+# every added path, whatever its extension; renames count as additions), or
+# when an added line may name a home directory (the gate judges it; LC_ALL=C
+# so the classes are ASCII).
 # The compiled gate runs when current; a stale or missing binary is rebuilt
 # first (the gate's own build step keeps it current otherwise).
 git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^tests/golden/|^PLAN\.md$' \
   || git diff --cached --no-color --unified=0 | grep -qE '^\+(<{7}|>{7}|\|{7})([[:space:]]|$)' \
-  || git diff --cached --name-only --diff-filter=A | LC_ALL=C grep -q '[^A-Za-z0-9._/-]' \
-  || git diff --cached --numstat --diff-filter=A | grep -qE '^0[[:space:]]+0[[:space:]]' \
+  || git diff --cached --name-only --no-renames --diff-filter=A | grep -q . \
   || git diff --cached --no-color --unified=0 | LC_ALL=C grep -E '^\+' \
      | LC_ALL=C grep -qE '(^|[^A-Za-z0-9._-])/(local/home|home|Users)/[A-Za-z0-9_]' \
   || exit 0
