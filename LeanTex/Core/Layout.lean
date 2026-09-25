@@ -528,6 +528,43 @@ second copy behind (the shape `VDist.golden` was, and which let the two
 drift). -/
 theorem VDist.golden_projects : VDist.golden = VDist.of .golden := rfl
 
+/-- **The ground a frame declares for its own page.** Only the title page
+has one — `.golden` is the distribution `\maketitle` alone declares — and it
+is the design's resolved `titlepage` pair, read through the one resolving
+site (`Ir.Design.ofPalette`) over the palette epoch in force where the frame
+stands, exactly as the frame-title bar is read. Every other frame answers
+`none` and takes the document's own ground, which is the behaviour before
+this existed.
+
+The palette is the argument rather than the document because a `\palette`
+mid-deck must reach the frames after it; the `Ir.VAlign` is, because the
+title page is identified by its declared distribution and not by a flag a
+second construct could set. -/
+def titleGround (pal : Ir.Palette) (valign : Ir.VAlign) : Option Ir.Color :=
+  if valign matches .golden then (Ir.Design.ofPalette pal).titlepage.map (·.bg)
+  else none
+
+/-- The ink that stands on a declared title-page ground, for the same page:
+the pair's own `fg`, which `ofPalette` defaults by inversion. `none` where
+no ground is declared — the page keeps the ink in force. -/
+def titleInk (pal : Ir.Palette) (valign : Ir.VAlign) : Option Ir.Color :=
+  if valign matches .golden then (Ir.Design.ofPalette pal).titlepage.map (·.fg)
+  else none
+
+/-- **The ground the page is painted is the ground the document declared.**
+A projection of one IR value (`Ir.Design.titleGround_exact`, which says the
+pair's ground is the palette role itself), so the colour the PDF page
+carries cannot be a second resolution of the role — and a frame that is not
+the title page is untouched. The HTML side reads the same role through
+`paletteVars`; `artGroundParityChecks` holds the two artifacts to it. -/
+theorem titleGround_projects (pal : Ir.Palette) (valign : Ir.VAlign) :
+    titleGround pal valign =
+      if valign matches .golden then pal.find? "titlepagebg" else none := by
+  unfold titleGround
+  split
+  · exact Ir.Design.titleGround_exact pal
+  · rfl
+
 /-- Where a run's ink comes from, for the backends' marked content. No
 default: a construction must say. The tagger keys a run by the structure
 leaf it names (`Struct.leaves (Struct.ofDoc (pdfView doc))`, 18a's array);
@@ -6816,7 +6853,15 @@ private def collectBlock (r : Rd) (a : Acc)
       let a := { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
       a.pageBreak
     else
-    let a := { a with ops := a.ops.push (.pageStyle none (VDist.of valign)) }
+    -- The title page's own ground, when the design declares one: the same
+    -- `.pageStyle` door the standout frame paints through, so one page of a
+    -- document can carry a ground the rest does not. `none` for every other
+    -- frame, which is the undeclared page.
+    let pageGround := titleGround a.pal valign
+    let a := { a with ops := a.ops.push (.pageStyle pageGround (VDist.of valign)) }
+    let a := match titleInk a.pal valign with
+      | some ink => { a with fg := ink, ground := pageGround }
+      | none => a
     let a := collectHeadlineBand r a
     let a := collectFrameTitle r a title titleLeaf titleSpan
     -- The title just placed is page-top chrome: the frame's distribution
@@ -6829,6 +6874,12 @@ private def collectBlock (r : Rd) (a : Acc)
         collectBlocks { r with pats := none, geom := { r.geom with justify := false } }
           a body indent
       else collectBlocks r a body indent
+    -- Restore by recomputing from the palette in force, the same reason the
+    -- standout arm does: a `.setPalette` inside the frame must reach what
+    -- follows it, so a saved copy would restore a stale epoch's ink.
+    let a := if pageGround.isSome then
+        { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
+      else a
     a.pageBreak
 
 end
@@ -8110,6 +8161,38 @@ private theorem finishPage_bg (b : B) :
 
 private theorem bgStep_finishPage (b : B) : BgStep b b.finishPage :=
   ⟨rfl, rfl, finishPage_bg b⟩
+
+/-- The full-page fill, *with its colour*: what `bgFilled` deliberately
+leaves out, and the half a declared per-page ground needs. A page whose
+ground the walk declared must ship that ground and not merely some fill —
+the defect this forbids is a page painted the document's colour while the
+frame declared its own. -/
+private def bgFilledWith (g : Geom) (c : Ir.Color) (p : PageOut) : Prop :=
+  ∃ f ∈ p.fills.toList, f.x = 0 ∧ f.y = 0 ∧ f.w = g.pageW ∧ f.h = g.pageH ∧
+    f.color = c
+
+/-- **A page's own declared ground is painted, in the colour that declared
+it.** The shipping door prepends the page's `pageBg` whole, ahead of the
+document's — so a title page carrying a `.pageStyle` ground of its own
+(`titleGround`, the projection of the declared palette role) leaves
+`finishPage` with that exact colour under it. `finishPage_bg` says a fill
+covers the page; this says whose colour it is, which is the claim a
+per-page ground rests on and the one the document-level statement cannot
+make. -/
+private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color)
+    (h : b.pageBg = some c) : ∀ p ∈ b.finishPage.pages,
+      p ∈ b.pages ∨ bgFilledWith b.geom c p := by
+  intro p hp
+  simp only [B.finishPage, Array.mem_push] at hp
+  rcases hp with hp | rfl
+  · exact Or.inl hp
+  · right
+    unfold bgFilledWith
+    dsimp only
+    refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
+              color := c }, ?_, rfl, rfl, rfl, rfl, rfl⟩
+    rw [h]
+    simp
 
 private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
   (bgStep_finishPage b).trans

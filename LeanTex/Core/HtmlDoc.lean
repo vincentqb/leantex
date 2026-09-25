@@ -902,6 +902,18 @@ def themeCss (doc : Doc) : String :=
 "
       else "")
    | none => "") ++
+  -- The title page's own ground, gated on the declared pair exactly as the
+  -- bar's rule is: a design that declares none emits no rule, so a page the
+  -- PDF leaves on the document's ground is not painted here either. The
+  -- role is the one the PDF path reads (`Layout.titleGround`, through
+  -- `Ir.Design.ofPalette`); the reference resolves against the `:root`
+  -- declaration `paletteVars` writes for it.
+  (match d.titlepage with
+   | some _ =>
+     "section.slide.title-page { background: var(--titlepagebg);\n" ++
+     "  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n" ++
+     "section.slide.title-page h1 { color: inherit; }\n"
+   | none => "") ++
   -- A role names a hue; the contract chooses its lightness on each ground
   -- (`Contrast.realize`, the same solver `Contrast.realizeDoc` ships the
   -- PDF's runs through): on the frame-title bar and the standout
@@ -4328,7 +4340,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- empty div has no height and the declaration rides along inert.
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
-    let cls := if standout then "slide standout" else "slide"
+    let cls := if standout then "slide standout"
+      else if valign matches .golden then "slide title-page" else "slide"
     let kids := blockNodesInto cfg.into #[] body.toList
     let kids := if cfg.deck then
         let (above, below) := vdistShares valign

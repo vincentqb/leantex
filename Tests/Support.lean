@@ -140,7 +140,7 @@ def goldenNames : List String :=
    "diagram-tikzset",
    "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "math-text", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
-   "redefine", "titlebars", "daylight", "blocks", "poster", "poster-headline", "listings",
+   "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force

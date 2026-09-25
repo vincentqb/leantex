@@ -2011,6 +2011,79 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a named theme still wins outright"
     ((designOf "\\theme{moloch}").bg == Ir.Color.black.mix 2 Ir.Color.white)
 
+/-- **A title page may declare a ground of its own, and the declaration is
+resolved once.** The palette role half of the dark title page: the
+resolution's three cases, the contrast contract over it, and the contract
+over every shipped bundle.
+
+The ground is never invented (`Ir.Design.titleGround_exact` carries it as a
+theorem); this pins the ink's default, which is inversion — the same rule
+`standout` follows, because a declared ground is usually the page's opposite
+and inverting is what lands light matter on a dark title page with no second
+declaration. -/
+def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- A title page ships only where the metadata is declared: without these
+  -- `\maketitle` sets nothing (W0309) and there is no page to ground.
+  let titleMeta := "\\title{A Placeholder Deck}\\author{P. Placeholder}"
+  let designOf (pre : String) : Ir.Design :=
+    Ir.Design.ofDoc (elabStr (deck169 (titleMeta ++ pre) "\\maketitle")).1
+  let deckOf (pre body : String) : String := deck169 (titleMeta ++ pre) body
+  -- Undeclared: no pair at all, so no page is painted a colour nobody named.
+  t "an undeclared title page resolves to no ground"
+    ((designOf "\\theme{default}").titlepage.isNone)
+  -- Declared ground, declared ink: both the document's own.
+  let both := designOf ("\\theme{default}\\palette{ titlepagebg = #101822, " ++
+    "titlepagefg = #F4F6F8 }")
+  t "a declared title-page pair resolves to exactly the declared colours"
+    (both.titlepage == some { fg := { r := 0xF4, g := 0xF6, b := 0xF8 },
+                              bg := { r := 0x10, g := 0x18, b := 0x22 } })
+  -- Declared ground alone: the ink inverts from the page, as standout's does.
+  let half := designOf "\\palette{ bg = #FFFFFF, titlepagebg = #101822 }"
+  t "a half-declared title page inverts its ink from the page"
+    (half.titlepage == some { fg := Ir.Color.white,
+                              bg := { r := 0x10, g := 0x18, b := 0x22 } })
+  -- A declared ink with no ground is not a ground: the page keeps the
+  -- document's, so the pair stays absent and nothing is painted.
+  t "a title-page ink with no ground declares no ground"
+    ((designOf "\\palette{ titlepagefg = #F4F6F8 }").titlepage.isNone)
+  -- The judge, on the author's own pair. The ground stands and the ink
+  -- moves: a dark-on-dark title page realizes its ink lighter, naming the
+  -- body requirement (4.5:1) because a title page carries body-size matter.
+  let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #2A3038 }"
+  t "an illegible title-page pair realizes its ink at the body threshold"
+    ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
+      d.code == "N0022" && (d.message.splitOn "'titlepagefg'").length == 2 &&
+        (d.message.splitOn "4.50:1").length == 2 &&
+        (d.message.splitOn "the title page").length == 2)
+  t "the realized note names the declared ground, not an invented one"
+    ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
+      d.code == "N0022" && (d.message.splitOn "#101822").length == 2)
+  -- Only where the page ships: a deck with no \maketitle has no title page,
+  -- so an illegible pair is a declaration nothing stands on.
+  t "an illegible title-page pair without a title page is silent"
+    (!(warnCodes (deckOf dim "\\begin{frame}{T}x\\end{frame}")).contains "W0345" &&
+     (elabStr (deckOf dim "\\begin{frame}{T}x\\end{frame}")).2.all
+       fun d => d.code != "N0022")
+  -- Deliberate low contrast is declared, not defaulted.
+  t "declared decorative intent silences the title-page pair"
+    ((elabStr (deckOf (dim ++ "\\palette[decorative]{ titlepagefg = #2A3038 }")
+      "\\maketitle")).2.all fun d => d.code != "W0345" && d.code != "N0022")
+  -- An undeclared title page is judged on the page it really stands on, so
+  -- it must stay silent under a bundle whose own pairs pass.
+  t "an undeclared title page adds no pair to judge"
+    ((elabStr (deckOf "\\theme{moloch}" "\\maketitle")).2.all
+      fun d => d.code != "W0345")
+  -- The contract over shipped bundles: adding a bundle is entering it.
+  -- Vacuous while no bundle declares a title-page ground, and that is the
+  -- point of quantifying over `Theme.builtin` rather than over a list of
+  -- names — the first bundle to declare one is held without an edit here.
+  t "every shipped bundle's title-page pair, where it declares one, is legible"
+    (Theme.builtin.all fun th =>
+      match (Ir.Design.ofPalette (Theme.apply th {}).palette).titlepage with
+      | none => true
+      | some p => Contrast.aaText ≤ Contrast.contrastMilli p.fg p.bg)
+
 /-- Every role a built-in bundle declares is read: either a backend consumes
 its resolved `Design` field (`Ir.Design.consumedRoles`) or documents use it
 as a content colour by name. A declared-but-unread role with a known coming
@@ -2287,6 +2360,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let count (s : String) : Nat := (html.splitOn s).length - 1
   let slideSections := count "<section class=\"slide\""
     + count "<section class=\"slide standout\""
+    + count "<section class=\"slide title-page\""
   let frames := doc.body.foldl (fun n b => match b with
     | Ir.Block.frame _ _ _ _ _ => n + 1
     | _ => n) 0

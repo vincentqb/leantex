@@ -307,6 +307,25 @@ def censusTable :
       (c[0]?.map fun p => p.lines.any fun l =>
         l.furniture && l.text.trimAscii.toString.isEmpty &&
           l.x > geom.pageW / 2).getD false)]),
+  ("titleground", fun geom c => [
+    ("two pages", c.size == 2),
+    ("the title page ships its matter",
+      pageHas c 0 "A Placeholder Deck" && pageHas c 0 "P. Placeholder" &&
+        pageHas c 0 "example.org"),
+    -- The declared ground is a fill the width and height of the page, and
+    -- it is the first thing painted: `finishPage` prepends it, so nothing
+    -- placed on the page can end up under it.
+    ("the title page's ground covers the page and is painted first",
+      (c[0]?.bind fun p => p.fillRects[0]?).map
+        (fun r => decide (r.1 == (0 : Dim.Sp) ∧ r.2.1 == (0 : Dim.Sp) ∧
+          r.2.2.1 == geom.pageW ∧ r.2.2.2 == geom.pageH)) == some true),
+    -- Whether that ground is the page's own or the document's is a claim
+    -- about its colour, which no census carries: `artGroundParityChecks`
+    -- reads the fill's colour off `Layout.Out` and holds the two artifacts
+    -- to it. Here: the page after it is a page like any other.
+    ("the frame after it ships its own page",
+      pageHas c 1 "On the document" &&
+        pageHas c 1 "on the ground every other page carries")]),
   ("titlebars", fun geom c =>
     let bars := pageRuleSegs c 0
     let titleY := (lineYOf c 0 "Bars Probe Title").getD 0

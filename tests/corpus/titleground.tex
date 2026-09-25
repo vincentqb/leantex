@@ -1,0 +1,34 @@
+% Invented deck whose title page declares a ground of its own: the case a
+% theme spells as a full-bleed fill over the page, written in the engine's
+% own vocabulary. The pair is dark ground with light ink, declared — so the
+% contrast judge tests the author's own pair and realizes nothing — and the
+% frames after it keep the document's ground, which is what makes the
+% declaration a page's and not a document's. Colours invented; nothing here
+% derives from any private document.
+\documentclass[aspectratio=169]{slides}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\palette{
+  titlepagebg = #101822,
+  titlepagefg = #F4F6F8,
+}
+
+\title{A Placeholder Deck}
+\subtitle{Invented matter only}
+\author{P. Placeholder}
+\institute{example.org}
+\date{2026-01-01}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{On the document's ground}
+  Plain body text, on the ground every other page carries.
+\end{frame}
+
+\end{document}

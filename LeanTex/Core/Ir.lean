@@ -7227,6 +7227,16 @@ structure Design where
   /-- A `[standout]` frame's pair — total: without the keys it inverts the
   page's own colours. -/
   standout : ColorPair
+  /-- The title page's own ground and the ink that stands on it, when the
+  design declares one — a title page whose ground differs from the rest of
+  the document, which is what a theme spells as a full-bleed fill over the
+  page. `none` is the title page that takes the document's own ground, and
+  is the undeclared default: a ground nobody declared is never invented
+  here (`titleGround_exact`). Declared, the ink defaults by inversion, the
+  same rule `standout` follows — a declared ground is usually the page's
+  opposite, and inverting is what makes light matter land on a dark title
+  page without a second declaration. -/
+  titlepage : Option ColorPair
   /-- The title-page rule's colour; the ink when undeclared. Declared by
   both shipped bundles and consumed by no backend yet — the role check in
   `Tests.lean` names it until the title-page rule lands. -/
@@ -7271,6 +7281,9 @@ def Design.ofPalette (pal : Palette) : Design :=
         bg := (pal.find? "progressbg").getD bg }
     standout := { fg := (pal.find? "standoutfg").getD bg
                   bg := (pal.find? "standoutbg").getD fg }
+    titlepage := (pal.find? "titlepagebg").map fun ground =>
+      { fg := (pal.find? "titlepagefg").getD bg
+        bg := ground }
     separator := (pal.find? "separator").getD fg
     progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := {} }
@@ -7296,6 +7309,26 @@ touched the pair; this says it does not. -/
 theorem frametitle_agree (doc : Doc) :
     (Design.ofDoc doc).frametitle = (Design.ofPalette doc.palette).frametitle := rfl
 
+/-- The title page's pair travels the same one chain, for the same reason:
+the layout resolves the *epoch* palette in force where the title frame
+stands and `ofDoc` the document's, so the two must be the same
+construction and not two copies of it. -/
+theorem titlepage_agree (doc : Doc) :
+    (Design.ofDoc doc).titlepage = (Design.ofPalette doc.palette).titlepage := rfl
+
+/-- **A ground nobody declared is never invented.** The title page's ground
+is the declared role and nothing else: `titlepagebg` unset resolves to no
+pair at all, so no page is painted a colour the document did not name, and a
+declared one reaches the artifacts as itself rather than as something the
+engine chose for it. This is what makes the contrast judge's verdict a
+verdict about the author's pair — the defect it forbids is a ground derived
+from `fg` or from the standout keys, which would report a failure the
+document never wrote. -/
+theorem Design.titleGround_exact (pal : Palette) :
+    (Design.ofPalette pal).titlepage.map (·.bg) = pal.find? "titlepagebg" := by
+  unfold Design.ofPalette
+  cases pal.find? "titlepagebg" <;> rfl
+
 /-- Per-element style, total: the empty style is the default, applied here
 rather than at each consumer. -/
 def Design.style (d : Design) (element : String) : ElementStyle :=
@@ -7315,6 +7348,9 @@ def Design.consumedRoles : List String :=
    "exampletitlefg", "exampletitlebg",--   the one resolving site)
    "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
    "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
+   "titlepagefg", "titlepagebg",      -- Layout.titleGround / collectBlock frame
+                                      -- arm, HtmlDoc.themeCss, Contrast's
+                                      -- titlePageStep
    "separator"]                       -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)

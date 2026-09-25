@@ -1,0 +1,53 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0
+font dir "fonts"
+font body "Open Sans"
+palette fg #292524
+palette bg #FDFCF9
+palette alert #0B66C2
+palette example #0F7A52
+palette muted #696664
+palette progressfg #0B66C2
+palette progressbg #CDDEEE
+palette separator #0B66C2
+palette standoutfg #FDFCF9
+palette standoutbg #0B66C2
+palette titlepagebg #101822
+palette titlepagefg #F4F6F8
+palette covered 38%
+token progressheight 1pt
+token frametitlepadding 840/1000em
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer right framenumber
+meta title "A Placeholder Deck"
+meta author "P. Placeholder"
+frame golden
+  section* 0
+    text "A Placeholder Deck"
+  block before 300/1000em from subtitlegap
+    para
+      styled size:large
+        text "Invented matter only"
+  block before 800/1000em from separatorgap
+    rule separator 0.5pt from separatorheight
+  block before 800/1000em from separatorgap
+    para
+      text "P. Placeholder"
+  block before 500/1000em from authorgap
+    para
+      styled size:small
+        text "example.org"
+  block before 1000/1000em from institutegap
+    para
+      text "2026-01-01"
+frame
+  title
+    text "On the document’s ground"
+  para
+    text "Plain body text, on the ground every other page carries."
+-- diagnostics
+(none)

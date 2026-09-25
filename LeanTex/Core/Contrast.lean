@@ -351,6 +351,9 @@ private structure UseAcc where
   title pair is judged against the palette in force at the block. -/
   blockPals : Array (TitledKind × Palette) := #[]
   standoutPals : Array Palette := #[]
+  /-- Epochs that shipped a title page with a declared ground of its own:
+  the pair `titlePageStep` judges, against the palette in force there. -/
+  titlePagePals : Array Palette := #[]
   pendingPals : Array Palette := #[]
 
 private def pushUnique [BEq α] (xs : Array α) (p : α) : Array α :=
@@ -376,6 +379,15 @@ white instead judged the lighter one and passed titles the HTML page fails —
 #757575 reads 4.61:1 on white and 4.41:1 on the surface it ships on. -/
 private def titledGround (pal : Palette) (kind : TitledKind) : Color :=
   (titledLook pal kind).bar.getD (surfaceOf pal)
+
+/-- The ground a frame's body stands on when the frame declares one of its
+own: the title page's, resolved through the one site the PDF page reads
+(`Ir.Design.ofPalette`, and `Layout.titleGround` over the same value), so
+the surface a pairing is judged against is the surface that is painted.
+`none` is the frame that takes the page's own ground. -/
+private def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
+  if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg)
+  else none
 
 /-- The text-size context of the walk below. `size` follows the layout
 semantics: a size declaration sets a factor over the document base (`base`
@@ -549,7 +561,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- exempts it. A nav's links are page text like any other.
   | .only _ body => usesBlocks cx acc body.toList
   | .nav _ body => usesBlocks cx acc body.toList
-  | .frame title standout _ _ body =>
+  | .frame title standout valign _ body =>
     -- A frame title sets at `\large\bfseries` (the shipped bundles'
     -- template): the scale's own step, never a re-spelled factor. The
     -- frame is a design site of its epoch: the resolved-pair judge tests
@@ -559,6 +571,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       { acc with titledPals := pushUnique acc.titledPals acc.pal }
     let acc := if standout then
       { acc with standoutPals := pushUnique acc.standoutPals acc.pal }
+      else acc
+    let acc := if !standout && valign matches .golden &&
+        (Design.ofPalette acc.pal).titlepage.isSome then
+      { acc with titlePagePals := pushUnique acc.titlePagePals acc.pal }
       else acc
     let titleCx := cx.style (.size "large")
     let titleCx := { titleCx with
@@ -572,7 +588,13 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
         { cx with ground := some ((acc.pal.find? "standoutbg").getD
             ((acc.pal.find? "fg").getD Color.black))
                   groundName := some "the standout frame" }
-      else cx
+      -- And a title page with a declared ground sits on that: the ground
+      -- `Layout.titleGround` paints, so every use on the page is judged
+      -- against the surface it really stands on rather than the document's.
+      else match titleGroundOf acc.pal valign with
+        | some ground =>
+          { cx with ground := some ground, groundName := some "the title page" }
+        | none => cx
     usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
   -- A framefoot note lands as footer text on the page: its own declared
   -- colours are judged; its default colour is the muted key, judged once
@@ -848,6 +870,40 @@ private def standoutStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
           "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}"))) }
   else s
 
+/-- The title page's own pair, per epoch that ships one. Judged at the body
+threshold (`aaText`, 4.5:1) rather than the standout frame's large-text one:
+the matter on a title page is mixed — the title sets large, but the author
+line, the institute and the date set at or below the body size — so the
+stricter bound is the one the page actually needs.
+
+The ground is the author's declaration and nothing else
+(`Ir.Design.titleGround_exact`), so a failure here is a failure of the pair
+the document wrote, never of a ground the engine chose. The realization door
+is the ink's, as everywhere: the declared ground stands and the ink moves to
+meet it, or `decorative` says the low contrast was meant. -/
+private def titlePageStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
+  let d := Design.ofDoc { doc with palette := pal }
+  match d.titlepage with
+  | none => s
+  | some p =>
+    let milli := contrastMilli p.fg p.bg
+    if milli < aaText && !pal.decorative.contains "titlepagefg" then
+      match realize aaText p.bg p.fg with
+      | some c' =>
+        { s with
+          diags := s.diags.push (realizedNote "titlepagefg" p.bg
+            (some "the title page") p.fg c' aaText)
+          palWrites := s.palWrites.push
+            { pal := pal, key := "titlepagefg", value := c' } }
+      | none =>
+        { s with diags := s.diags.push (Diag.of .W0345
+          (s!"the title page pairs {hexOf p.fg} on {hexOf p.bg} at " ++
+            s!"{ratioString milli}, below the {ratioString aaText} " ++
+            "WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"titlepagefg = {hexOf p.fg} " ++ "}"))) }
+    else s
+
 /-- The covering judged, per epoch that ships pending content: SC 1.4.11's
 3:1 between an active and an inactive state, and quieter-than-active —
 `coveredContract`'s own two bounds, read from `Design.cover`. Messages
@@ -891,14 +947,15 @@ private def pendingCoverDiags (doc : Doc) (pending : Array Palette) :
   return out
 
 private def resolvedPairJudged (doc : Doc)
-    (titled standout pending : Array Palette)
+    (titled standout titlePage pending : Array Palette)
     (blocks : Array (TitledKind × Palette)) : Judged :=
   let jB := blocks.foldl blockTitleStep {}
   let jT := titled.foldl (frameTitleStep doc) {}
   let jS := standout.foldl (standoutStep doc) {}
+  let jP := titlePage.foldl (titlePageStep doc) {}
   let coverDiags := pendingCoverDiags doc pending
-  { diags := jB.diags ++ jT.diags ++ jS.diags ++ coverDiags
-    palWrites := jB.palWrites ++ jT.palWrites ++ jS.palWrites }
+  { diags := jB.diags ++ jT.diags ++ jS.diags ++ jP.diags ++ coverDiags
+    palWrites := jB.palWrites ++ jT.palWrites ++ jS.palWrites ++ jP.palWrites }
 
 /-- One pairing: an ink and the ground it stood on. -/
 private structure PairKey where
@@ -1062,7 +1119,7 @@ private def realizePlan (doc : Doc) : Judged :=
   let jP := epochPairJudged doc walk.epochs
   let jU := declaredUseJudged doc walk
   let jR := resolvedPairJudged doc walk.titledPals walk.standoutPals
-    walk.pendingPals walk.blockPals
+    walk.titlePagePals walk.pendingPals walk.blockPals
   { diags := jE.diags ++ jP.diags ++ jU.diags ++ jR.diags
     palWrites := jE.palWrites ++ jP.palWrites ++ jU.palWrites ++ jR.palWrites
     runWrites := jU.runWrites }
@@ -1328,6 +1385,8 @@ def judgedPairs (doc : Doc) : Array (Color × Color) :=
     ++ (walk.standoutPals.map fun pal =>
         ((Design.ofDoc { doc with palette := pal }).standout.fg,
          (Design.ofDoc { doc with palette := pal }).standout.bg))
+    ++ (walk.titlePagePals.filterMap fun pal =>
+        (Design.ofDoc { doc with palette := pal }).titlepage.map fun p => (p.fg, p.bg))
 
 /-- Every (role, ground) pair a shipped bundle's resolved design creates
 realizes to itself: the pairs already meet their WCAG 2.2 requirement, so
@@ -1416,8 +1475,19 @@ private theorem standoutStep_no_pal_writes (doc : Doc) (s : Judged) (pal : Palet
     (h : s.palWrites = #[]) : (standoutStep doc s pal).palWrites = #[] := by
   simpa [standoutStep, Nat.not_lt.mpr hpass] using h
 
+private theorem titlePageStep_no_pal_writes (doc : Doc) (s : Judged) (pal : Palette)
+    (hpass : ∀ p : ColorPair,
+      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
+      aaText ≤ contrastMilli p.fg p.bg)
+    (h : s.palWrites = #[]) : (titlePageStep doc s pal).palWrites = #[] := by
+  unfold titlePageStep
+  rcases htp : (Design.ofDoc { doc with palette := pal }).titlepage with _ | p
+  · simpa [htp] using h
+  · simpa [htp, Nat.not_lt.mpr (hpass p htp)] using h
+
 private theorem resolvedPairJudged_no_pal_writes (doc : Doc)
-    (titled standout pending : Array Palette) (blocks : Array (TitledKind × Palette))
+    (titled standout titlePage pending : Array Palette)
+    (blocks : Array (TitledKind × Palette))
     (hb : ∀ kp ∈ blocks,
       aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1))
     (ht : ∀ pal ∈ titled, ∀ p : ColorPair,
@@ -1425,8 +1495,11 @@ private theorem resolvedPairJudged_no_pal_writes (doc : Doc)
       aaText ≤ contrastMilli p.fg p.bg)
     (hs : ∀ pal ∈ standout, aaLargeText ≤ contrastMilli
       (Design.ofDoc { doc with palette := pal }).standout.fg
-      (Design.ofDoc { doc with palette := pal }).standout.bg) :
-    (resolvedPairJudged doc titled standout pending blocks).palWrites = #[] := by
+      (Design.ofDoc { doc with palette := pal }).standout.bg)
+    (hp : ∀ pal ∈ titlePage, ∀ p : ColorPair,
+      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
+      aaText ≤ contrastMilli p.fg p.bg) :
+    (resolvedPairJudged doc titled standout titlePage pending blocks).palWrites = #[] := by
   have eB : (blocks.foldl blockTitleStep {}).palWrites = #[] := by
     rw [← Array.foldl_toList]
     exact foldlList_invariant (fun j => j.palWrites = #[]) blockTitleStep blocks.toList
@@ -1442,7 +1515,12 @@ private theorem resolvedPairJudged_no_pal_writes (doc : Doc)
     exact foldlList_invariant (fun j => j.palWrites = #[]) (standoutStep doc) standout.toList
       {} rfl fun j pal hmem hj =>
         standoutStep_no_pal_writes doc j pal (hs pal (Array.mem_toList_iff.mp hmem)) hj
-  simp [resolvedPairJudged, eB, eT, eS]
+  have eP : (titlePage.foldl (titlePageStep doc) {}).palWrites = #[] := by
+    rw [← Array.foldl_toList]
+    exact foldlList_invariant (fun j => j.palWrites = #[]) (titlePageStep doc) titlePage.toList
+      {} rfl fun j pal hmem hj =>
+        titlePageStep_no_pal_writes doc j pal (hp pal (Array.mem_toList_iff.mp hmem)) hj
+  simp [resolvedPairJudged, eB, eT, eS, eP]
 
 /-- The large-scale threshold is the weaker of the two: a pair that clears
 the text requirement clears it wherever the judge asks for 3:1. -/
@@ -1501,36 +1579,38 @@ theorem realizeDoc_id (doc : Doc)
     refine h ((effectivePair doc).fg, (effectivePair doc).bg) ?_
     simp only [judgedPairs]
     exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_left _ (Array.mem_append_left _ (by simp)))))
+      (Array.mem_append_left _ (Array.mem_append_left _
+        (Array.mem_append_left _ (by simp))))))
   have hP : ∀ pal ∈ (docWalk doc).epochs,
       aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal) := by
     intro pal hp
     refine h ((pal.find? "fg").getD Color.black, surfaceOf pal) ?_
     simp only [judgedPairs]
     exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_left _ (Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hp, rfl⟩)))))
+      (Array.mem_append_left _ (Array.mem_append_left _
+        (Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hp, rfl⟩))))))
   have hU : ∀ u ∈ (docUses doc (docWalk doc)).uses,
       aaText ≤ contrastMilli u.color u.surface := by
     intro u hu
     refine h (u.color, u.surface) ?_
     simp only [judgedPairs]
     exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_right _ (Array.mem_map.mpr ⟨u, hu, rfl⟩))))
+      (Array.mem_append_left _ (Array.mem_append_right _ (Array.mem_map.mpr ⟨u, hu, rfl⟩)))))
   have hB : ∀ kp ∈ (docWalk doc).blockPals,
       aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1) := by
     intro kp hkp
     refine h ((titledLook kp.2 kp.1).fg, titledGround kp.2 kp.1) ?_
     simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_right _ (Array.mem_map.mpr ⟨kp, hkp, rfl⟩)))
+    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
+      (Array.mem_append_right _ (Array.mem_map.mpr ⟨kp, hkp, rfl⟩))))
   have hT : ∀ pal ∈ (docWalk doc).titledPals, ∀ p : ColorPair,
       (Design.ofDoc { doc with palette := pal }).frametitle = some p →
       aaText ≤ contrastMilli p.fg p.bg := by
     intro pal hpal p hp
     refine h (p.fg, p.bg) ?_
     simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_right _
-      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩))
+    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_right _
+      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩)))
   have hS : ∀ pal ∈ (docWalk doc).standoutPals, aaLargeText ≤ contrastMilli
       (Design.ofDoc { doc with palette := pal }).standout.fg
       (Design.ofDoc { doc with palette := pal }).standout.bg := by
@@ -1539,13 +1619,23 @@ theorem realizeDoc_id (doc : Doc)
       (h ((Design.ofDoc { doc with palette := pal }).standout.fg,
           (Design.ofDoc { doc with palette := pal }).standout.bg) ?_)
     simp only [judgedPairs]
-    exact Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hpal, rfl⟩)
+    exact Array.mem_append_left _ (Array.mem_append_right _
+      (Array.mem_map.mpr ⟨pal, hpal, rfl⟩))
+  have hTP : ∀ pal ∈ (docWalk doc).titlePagePals, ∀ p : ColorPair,
+      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
+      aaText ≤ contrastMilli p.fg p.bg := by
+    intro pal hpal p hp
+    refine h (p.fg, p.bg) ?_
+    simp only [judgedPairs]
+    exact Array.mem_append_right _
+      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩)
   have hu := declaredUseJudged_no_writes doc (docWalk doc) hU
   simp [realizeDoc, realizePlan,
     effectivePairJudged_no_pal_writes doc hE,
     epochPairJudged_no_pal_writes doc (docWalk doc).epochs hP,
     resolvedPairJudged_no_pal_writes doc (docWalk doc).titledPals
-      (docWalk doc).standoutPals (docWalk doc).pendingPals (docWalk doc).blockPals hB hT hS,
+      (docWalk doc).standoutPals (docWalk doc).titlePagePals (docWalk doc).pendingPals
+      (docWalk doc).blockPals hB hT hS hTP,
     hu.1, hu.2]
 
 end LeanTex.Core.Contrast

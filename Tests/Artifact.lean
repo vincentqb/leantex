@@ -1211,14 +1211,18 @@ def artCssBlocks (css : String) : Array (String × String) := Id.run do
       cur := cur.push c
   return out
 
-/-- Does this declaration list paint a background from the band's property?
+/-- Does this declaration list paint a background from this role's property?
 The property is read as a declaration — `background` or `background-color`
 before the colon — so a `var()` reference in a border or a shadow does not
 answer for the ground. Both reference forms count, bare and with a
 fallback: the backend writes `var(--name, fallback)` as often as
 `var(--name)`, and a scan for the bare closing paren alone is what once
-reported a read token as unread (`Tests/HtmlTokens.lean` records it). -/
-def artPaintsBand (decls : String) : Bool :=
+reported a read token as unread (`Tests/HtmlTokens.lean` records it).
+
+The role is the parameter because two grounds are judged by the same
+three-link chain — the frame's furniture band and the title page's own
+ground — and a second copy of this scan is how the two would drift. -/
+def artPaintsFrom (role : String) (decls : String) : Bool :=
   (decls.splitOn ";").any fun d =>
     match d.splitOn ":" with
     | [] => false
@@ -1226,7 +1230,9 @@ def artPaintsBand (decls : String) : Bool :=
       let value := String.intercalate ":" rest
       (prop.trimAscii.toString == "background" ||
           prop.trimAscii.toString == "background-color") &&
-        (hasStr value s!"var(--{artBandRole})" || hasStr value s!"var(--{artBandRole},")
+        (hasStr value s!"var(--{role})" || hasStr value s!"var(--{role},")
+
+def artPaintsBand (decls : String) : Bool := artPaintsFrom artBandRole decls
 
 /-- An element as the tree carries it: its tag and its classes. -/
 abbrev ArtElem := String × Array String
@@ -1356,10 +1362,14 @@ nothing unless the path it is matched along starts where the document
 does. -/
 def artBodyPath : Array ArtElem := #[("html", #[]), ("body", #[])]
 
+/-- The selectors under which a stylesheet paints a background from a role. -/
+def artGroundSelectors (role : String) (css : String) : Array String :=
+  (artCssBlocks css).filterMap fun (sel, decls) =>
+    if artPaintsFrom role decls then some sel else none
+
 /-- The selectors under which a stylesheet paints the band. -/
 def artBandSelectors (css : String) : Array String :=
-  (artCssBlocks css).filterMap fun (sel, decls) =>
-    if artPaintsBand decls then some sel else none
+  artGroundSelectors artBandRole css
 
 /-- Every way a document's two artifacts disagree about its furniture band,
 each named with the end that lost it: the three links of the chain and
@@ -1511,3 +1521,153 @@ artifacts now agree; delete its row" (!offs.isEmpty)
   t s!"band parity: painted bands are reached ({paintedSeen})" (0 < paintedSeen)
   t s!"band parity: declared band pairs are reached ({declaredSeen})" (0 < declaredSeen)
   t s!"band parity: carried bands are reached ({carriedSeen})" (0 < carriedSeen)
+
+/-- The palette role a page's own ground is declared under, and the property
+the HTML backend names after it. Keyed on the role for the same reason the
+band's claim is: the role is the document's declaration, the element is the
+emitter's choice. -/
+def artGroundRole : String := "titlepagebg"
+
+/-- Every way a document's two artifacts disagree about a title page's own
+declared ground — the same three links as the band, over the other ground
+the engine paints. Pure in its four arguments, so the mutants below exercise
+the judge the corpus runs.
+
+The `painted` argument is not "some page has a fill": every themed document
+fills every page from `bg`. It is "some page ships a full-page fill in the
+*declared title-page colour*", which is the only observation that separates a
+page carrying its own ground from a page carrying the document's. -/
+def artGroundOffences (painted declared : Bool) (css : String)
+    (body : Array Html.Node) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let sels := artGroundSelectors artGroundRole css
+  if painted && !declared then
+    out := out.push s!"a page paints a full-page ground while the design \
+declares no title-page pair: --{artGroundRole} is unset"
+  if !sels.isEmpty && !declared then
+    out := out.push s!"the stylesheet paints from --{artGroundRole} with no \
+title-page pair declared: {sels.toList}"
+  if declared then
+    unless painted do
+      out := out.push s!"the design declares a title-page ground and no page \
+ships a full-page fill in it"
+    if sels.isEmpty then
+      out := out.push s!"the design declares a title-page pair and no rule \
+paints a background from --{artGroundRole}"
+    else
+      let readable := sels.filter fun s => !(artSelChains s).isEmpty
+      if readable.isEmpty then
+        out := out.push s!"no selector painting the ground resolves to an \
+element this check can read: {sels.toList}"
+      else unless readable.any fun s =>
+          (artSelChains s).any fun c => artChainInList c artBodyPath body.toList do
+        out := out.push s!"every rule painting the ground selects an element \
+the tree does not ship: {readable.toList}"
+  return out
+
+/-- The judge broken once for each way the ground can go, and each way it
+may legitimately move — the band block's two controls carried over: a
+renamed element with its rule renamed together must pass (the claim is
+parity, not a spelling), and a reference with a fallback is a read. -/
+def artGroundMutants :
+    List (String × Bool × Bool × String × Array Html.Node × Bool) :=
+  let title := Html.elem "h1" #[Html.text "Title"]
+  let page (cls : String) : Array Html.Node :=
+    #[Html.elem "section" #[title] #[("class", cls)]]
+  let live := page "slide title-page"
+  let groundRule (sel : String) : String :=
+    sel ++ " { background: var(--titlepagebg);\n  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n"
+  [ ("the shape the backend writes", true, true,
+      groundRule "section.slide.title-page", live, false),
+    ("the ground declared only inside an at-rule", true, true,
+      "@media screen {\n" ++ groundRule "section.slide.title-page" ++ "}\n", live, false),
+    ("the reference carrying a fallback", true, true,
+      "section.slide.title-page { background: var(--titlepagebg, #101822); }\n",
+      live, false),
+    ("the element and its rule renamed together", true, true,
+      groundRule "section.slide.title-ground",
+      page "slide title-ground", false),
+    ("nothing declared and nothing painted", false, false, "", live, false),
+    ("the rule gone", true, true, "", live, true),
+    ("the class gone from the element", true, true,
+      groundRule "section.slide.title-page", page "slide", true),
+    ("the rule moved and the element left behind", true, true,
+      groundRule "section.slide.title-ground", live, true),
+    ("the PDF page never painted it", false, true,
+      groundRule "section.slide.title-page", live, true),
+    ("the property misspelled", true, true,
+      "section.slide.title-page { background: var(--titlepageground); }\n",
+      live, true),
+    ("the reference off the ground and onto a border", true, true,
+      "section.slide.title-page { border-color: var(--titlepagebg); }\n",
+      live, true),
+    ("a rule painting a ground the design never declared", false, false,
+      groundRule "section.slide.title-page", live, true),
+    ("a page painting a ground the design never declared", true, false, "", live, true),
+    ("the selector unreadable", true, true,
+      groundRule "section.slide.title-page + section", live, true)]
+
+/-- **A page's ground is declared once and both artifacts paint it.** The
+invariant the dark title page rests on, over the corpus and over the judge's
+own mutants: the PDF page carries a full-page fill in the declared colour,
+the stylesheet paints the same role, and the element the rule selects is in
+the tree the same document emits. The PDF half reads `Layout.Out` — the
+fill's own colour, which no IR dump carries — and the HTML half the typed
+tree, so neither end is a golden's word for it.
+
+The negative direction is the corpus's: no fixture but one declares a
+title-page ground, and none of them may paint one or emit a rule for one. -/
+def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  t s!"the ground's key is a declared consumed role"
+    (Ir.Design.consumedRoles.contains artGroundRole)
+  for (label, painted, declared, css, body, wantOffence) in artGroundMutants do
+    let offs := artGroundOffences painted declared css body
+    if wantOffence then
+      t s!"ground parity mutant, {label}: the judge refuses it" (!offs.isEmpty)
+    else
+      t s!"ground parity mutant, {label}: the judge accepts it: {offs.toList}"
+        offs.isEmpty
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  let mut paintedSeen := 0
+  let mut declaredSeen := 0
+  let mut carriedSeen := 0
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let store ← corpusStore doc
+    let out := layoutOf fs doc geom (some pats) store
+    let ground := (Ir.Design.ofDoc doc).titlepage.map (·.bg)
+    -- A full-page fill in the *declared* colour: the observation that
+    -- separates a page's own ground from the document's, which every themed
+    -- fixture also paints full-page.
+    let fullPageIn (c : Ir.Color) (p : Layout.PageOut) : Bool :=
+      p.fills.any fun f =>
+        f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH &&
+          f.color == c
+    let painted := match ground with
+      | some c => out.pages.any (fullPageIn c)
+      | none => false
+    -- And a page's ground does not leak: exactly one page carries it, which
+    -- is what "the title page's" means. Layout restores the ink and the
+    -- ground from the palette in force when the frame closes; this is the
+    -- artifact's word for that restore.
+    if let some c := ground then
+      t s!"ground parity {n}: the declared ground is on one page only"
+        ((out.pages.filter (fullPageIn c)).size == 1)
+    let declared := ground.isSome
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    let css := artTreeCssList (artTreeCssList "" head.toList) body.toList
+    if painted then paintedSeen := paintedSeen + 1
+    if declared then declaredSeen := declaredSeen + 1
+    if declared && !(artGroundSelectors artGroundRole css).isEmpty then
+      carriedSeen := carriedSeen + 1
+    t s!"ground parity {n}: {(artGroundOffences painted declared css body).toList}"
+      (artGroundOffences painted declared css body).isEmpty
+  t s!"ground parity: painted grounds are reached ({paintedSeen})" (0 < paintedSeen)
+  t s!"ground parity: declared grounds are reached ({declaredSeen})" (0 < declaredSeen)
+  t s!"ground parity: carried grounds are reached ({carriedSeen})" (0 < carriedSeen)
