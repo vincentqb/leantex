@@ -247,6 +247,8 @@ warning[W0202]: 'section' sets more space below the heading (10pt) than above it
 ── W0301 (degraded) unknown command; {...} arguments kept as text
 warning[W0301]: unknown command '\mystery'; its {...} arguments were kept as text
   help: \define \name(...) {body} declares it
+warning[W0301]: unknown command '\mystery'; its [...] options were dropped and its {...} arguments were kept as text
+  help: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
 ── W0302 (degraded) unknown environment; body kept
 warning[W0302]: unknown environment '{banner}'; its body is kept
   help: \defineenv{name}(...) {begin} {end} declares one
@@ -346,9 +348,6 @@ warning[W0340]: '\page' is a declaration; in the body it is ignored
   help: declare it in the preamble, before '\begin{document}'
 warning[W0340]: '\usepackage' is a preamble declaration; in the body it is ignored
   help: load the package in the preamble, before '\begin{document}'
-── W0341 (degraded) an unknown command's [...] options went with it, never onto the page
-warning[W0341]: '[16]' went with unknown command '\textls'; an option run is not content
-  help: content, not options? start the '[' on the next line
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
 warning[W0342]: '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it
   help: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, muted, progressfg, progressbg, separator, standoutfg, standoutbg
@@ -431,6 +430,8 @@ warning[W0369]: '\babelfont[french]' binds a font per language; one face serves 
 ── W0370 (pending) \footnotemark and \footnotetext are not paired yet; kept as text
 warning[W0370]: '\footnotemark' is not paired with its partner yet; its text is kept in place
   help: \footnote{...} where the mark should stand sets the note at the page foot
+warning[W0370]: '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place
+  help: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
 ── W0371 (degraded) a paragraph break inside \footnote is set as a space
 warning[W0371]: a paragraph break inside '\footnote' is set as a space
   help: a footnote is one paragraph; split a long note into two \footnote calls

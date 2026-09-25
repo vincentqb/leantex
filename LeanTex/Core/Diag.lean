@@ -167,7 +167,7 @@ inductive DiagCode where
   | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
   | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0336 | W0337 | W0338 | W0358
-  | W0340 | W0341 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
+  | W0340 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
   | W0349 | W0350 | W0356 | W0357
   | W0351 | W0352 | W0353
   | E0347
@@ -328,7 +328,6 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0338 => ("0338", .degraded, "table is wider than the measure")
   | .W0358 => ("0358", .degraded, "a float taller than the text block overruns its page")
   | .W0340 => ("0340", .config, "a declaration in the document body is ignored")
-  | .W0341 => ("0341", .degraded, "an unknown command's [...] options went with it, never onto the page")
   | .W0342 => ("0342", .degraded, "a definition shadows a palette role; the role is frozen where it is used")
   | .W0343 => ("0343", .config, "one setting is given two different values; the later declaration wins")
   | .W0345 => ("0345", .degraded, "a themed element's resolved colour pairing is illegible (WCAG 2.2)")
@@ -508,13 +507,15 @@ nothing to count.
 
 Declared here, beside `Loss.severity` and `Loss.floor`, and for the same
 reason: it is a function of the loss class and of nothing else, so no call
-site chooses it. `W0341` is why it is written down. It named a fragment of an
-unknown command's arguments with no subject at all, which put it outside the
-census entirely: `tallySites` returns a subjectless diagnostic untouched, so
-the code fired once per site, repeated its help at each, and billed every
-site to `--werror` — while `W0301`, the same loss at the same site, reported
-`(2 sites)` on one line. Neither arm chose that; one reached for `warnOnce`
-and the other for `diag`, and nothing gated the choice. -/
+site chooses it. A code since retired is why it is written down: it named a
+fragment of an unknown command's arguments with no subject at all, which put
+it outside the census entirely — `tallySites` returns a subjectless
+diagnostic untouched, so it fired once per site, repeated its help at each,
+and billed every site to `--werror`, while `W0301`, the same loss at the same
+site, reported `(2 sites)` on one line. Neither arm chose that; one reached
+for `warnOnce` and the other for `diag`, and nothing gated the choice. The
+run's fate is a clause of `W0301`'s own message now
+(`Elab.warnUnknownCmd_accounts`), and `subjectCensusChecks` is the gate. -/
 def Loss.censused : Loss → Bool
   | .degraded | .pending => true
   | .dropped | .config | .info => false

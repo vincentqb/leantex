@@ -2578,31 +2578,78 @@ private def footnoteStepNum (override : Option Nat) : EM Nat := do
 private def noteNeedsGroup (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
 
+/-- The clause a dropped option run contributes to the refusing construct's
+own message: the run's fate, named once, inside the accounting of the
+construct whose argument list it was part of. Written as a wrapper around
+the construct's own recovery clause rather than a prefix to it, so one
+spelling reads as one sentence at both refusal doors. -/
+private def optionRunClause (optionRun : Bool) (kept : String) : String :=
+  if optionRun then s!"its [...] options were dropped and {kept}" else kept
+
+/-- The advice a dropped option run carries, appended to the refusing
+construct's own help rather than delivered by a second code: one spelling,
+so the two refusal doors cannot disagree about what a reader should do with
+a bracket run they meant as content. -/
+private def optionRunAdvice (optionRun : Bool) : String :=
+  if optionRun then "; content, not options? start the '[' on the next line" else ""
+
 /-- The help an unknown command's warning points at: the generic
 declaration route, except where the engine knows what the construct is
 usually for and can name the native key instead — `\AddToHook`'s shipout
 hooks are how a LaTeX document draws its own printer's marks, and those
-are a declared key here. -/
-private def unknownCmdHelp (name : String) : String :=
-  if name == "AddToHook" || name == "AddToHookNext" then
-    "a hook body cannot be interpreted; \\page{ marks = cut } declares \
+are a declared key here. A leading `[...]` run adds its own advice here,
+in the command's own help. -/
+private def unknownCmdHelp (name : String) (optionRun : Bool) : String :=
+  let route :=
+    if name == "AddToHook" || name == "AddToHookNext" then
+      "a hook body cannot be interpreted; \\page{ marks = cut } declares \
 printer's cut marks, derived from the trim and bleed"
-  else "\\define \\name(...) {body} declares it"
+    else "\\define \\name(...) {body} declares it"
+  s!"{route}{optionRunAdvice optionRun}"
 
-/-- The unknown-command warning, with the one named exception: the
-`\footnotemark`/`\footnotetext` pair is pending (W0370, cross-command
-state — a minipage's notes too), never "unknown". Outside the knot. -/
-private def warnUnknownCmd (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
+/-- **A refused command's recovery accounts for all of its arguments.** The
+code, message and help a refusal earns, as a value — the pure half of
+`warnUnknownCmd`, split out because the invariant is about *which* diagnostic
+the construct earns and a statement cannot reach that through the emitter's
+state thread (`warnOnce`'s first-site flag is a bound variable no statement
+can name). `unknownCmdDiag_accounts` is the statement.
+
+`optionRun` says the call led with a `[...]` run, which the arm drops: those
+bytes addressed the command, not the sentence, and kept as text they printed
+ink nobody wrote. Its fate is a clause of *this* message because the run is
+part of this construct's own recovery — one construct, one accounting. It was
+a second code (W0341, retired) naming a fragment of the argument list this
+message already covers, and the two doors disagreed about being counted: this
+one goes through `warnOnce` with subject `ctrl:<name>`, that one went through
+the raw door with none, so `tallySites` put `(2 sites)` on one line while the
+other printed at every site.
+
+The one named exception is still the `\footnotemark`/`\footnotetext` pair,
+which is pending (W0370, cross-command state — a minipage's notes too) and
+never "unknown". The retired code called it an unknown command at its own
+span, which was false; with one diagnostic there is nothing left to say it. -/
+private def unknownCmdDiag (name : String) (optionRun : Bool) :
+    DiagCode × String × String :=
   if name == "footnotemark" || name == "footnotetext" then
-    warnOnce ctx ("ctrl:" ++ name) .W0370
-      s!"'\\{name}' is not paired with its partner yet; its text is kept in place" pos
-      (help := "\\footnote{...} where the mark should stand sets the note \
-at the page foot")
+    let kept := optionRunClause optionRun "its text is kept in place"
+    let route := "\\footnote{...} where the mark should stand sets the note \
+at the page foot"
+    let advice := optionRunAdvice optionRun
+    (.W0370, s!"'\\{name}' is not paired with its partner yet; {kept}",
+     s!"{route}{advice}")
   else
-    warnOnce ctx ("ctrl:" ++ name) .W0301
-      s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
-      (help := unknownCmdHelp name)
-      (demote := Compat.styInternal ctx.file name)
+    let kept := optionRunClause optionRun "its {...} arguments were kept as text"
+    (.W0301, s!"unknown command '\\{name}'; {kept}", unknownCmdHelp name optionRun)
+
+/-- The refusal a command earns, through the counted door. Outside the knot:
+the arm calls one sealed action. The demotion is W0301's alone — a spliced
+`.sty`'s TeX internals are refused per line and unactionable
+(`Compat.styInternal`), while the pending pair is neither. -/
+private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
+    (pos : Pos) : EM Unit :=
+  let (code, msg, help) := unknownCmdDiag name optionRun
+  warnOnce ctx ("ctrl:" ++ name) code msg pos (help := help)
+    (demote := code == .W0301 && Compat.styInternal ctx.file name)
 
 /-- Record what a refusal recovered: the code that named the loss, the
 command it stood for, and the source the kept groups carried. Outside the
@@ -2635,13 +2682,6 @@ from where it stands"
 private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
     (pos : Pos) : EM Unit :=
   warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
-
-/-- The option-run-went-with-the-command warning (W0341), outside the knot. -/
-private def warnOptionRun (ctx : Ctx) (run : String) (name : String)
-    (pos : Pos) : EM Unit :=
-  diag ctx .W0341
-    s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
-    (help := "content, not options? start the '[' on the next line")
 
 /-- The one W0304: a palette name that resolves to nothing keeps its
 content uncoloured. Both colour doors — the inline `\textcolor` arm and
@@ -2697,7 +2737,7 @@ def refFormNeedsKind : Ir.RefForm → Bool
 
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
-seal warnMisplacedDecl warnReservedCtrl warnOptionRun
+seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
@@ -3860,7 +3900,6 @@ a side channel, never slide content" pos
     -- never dropped for want of a command. Only the formatting is lost.
     -- (The one named exception, `warnUnknownCmd`: the \footnotemark pair
     -- is pending, W0370, never "unknown".)
-    warnUnknownCmd ctx name pos
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     -- A starred form's `*` belongs to the command, not to the text.
@@ -3868,12 +3907,12 @@ a side channel, never slide content" pos
     have hj1 := skipStar_ge raws j0
     -- A leading [...] run is how the author addressed the command,
     -- never their content: kept, it is ink nobody wrote ('[16]'
-    -- printed in front of a URL). It goes with the command, named.
+    -- printed in front of a URL). It goes with the command, and the
+    -- command's own diagnostic says so — the run is part of this
+    -- construct's recovery, so it is one accounting and not two.
     let jr := skipOptionRuns raws j1 pos
     have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
-    if jr.1 > j1 then
-      let run := (Parse.rawSrc (raws.extract j1 jr.1)).trimAscii.toString
-      warnOptionRun ctx run name pos
+    warnUnknownCmd ctx name (jr.1 > j1) pos
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
     let j2 := skipSpaces raws jr.1
@@ -3902,7 +3941,7 @@ unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
-unseal warnMisplacedDecl warnReservedCtrl warnOptionRun
+unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
@@ -3911,6 +3950,47 @@ unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+
+/-- **A refused command's recovery accounts for all of its arguments, so no
+second diagnostic names a fragment of one.** The code a refusal earns is
+fixed by the construct alone: a construct the engine knows and defers is
+named as pending, everything else as unknown, and the call's argument shape
+does not enter. A leading `[...]` run therefore earns no code of its own —
+its fate is a clause of this diagnostic's message
+(`unknownCmdDiag_optionRun_id` is the independence, read off this).
+
+Both halves of the defect are here. A run was named by a second code at the
+same span, so a command refused twice with a run reported three diagnostics
+for two losses; and that code went through the raw door with no subject while
+this one goes through `warnOnce` with `ctrl:<name>`, so `Diag.tallySites` put
+`(2 sites)` on one line while the other printed at every site. The pending
+half is the same fact, not a second repair: `\footnotemark` is W0370 whatever
+its arguments, and the retired code called it an unknown command at that very
+span.
+
+What this covers is the *choice* of diagnostic. What it does not cover is the
+state thread: how many diagnostics a refusal pushes across a document is
+`warnOnce`'s to say, and `warnOnce`'s first-site flag is a bound variable no
+statement here can name — `warnOnce_sites_exact` carries that half, with its
+reduction wall recorded. Nor does it say the subject is non-empty *by
+type*: `Diag.subject` is an `Option`, so `Diag.tallySites_exact` — the theorem
+that the number on the line is the number of sites — still carries
+`subject.isSome` as a hypothesis, and was vacuous on exactly the class that
+was broken. The one `warnOnce` call below discharges it for this class by
+construction; `Tests/Diag.lean` holds the gates that read the whole surface
+(`subjectCensusChecks`, `siteAccountingChecks`). -/
+theorem unknownCmdDiag_accounts (name : String) (optionRun : Bool) :
+    (unknownCmdDiag name optionRun).1 =
+      (if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
+  unfold unknownCmdDiag
+  split <;> rfl
+
+/-- The option run earns no code: the diagnostic naming a refused command is
+the same whether the call led with a `[...]` run or not, so the run is
+accounted for inside that diagnostic and never beside it. -/
+theorem unknownCmdDiag_optionRun_id (name : String) (optionRun : Bool) :
+    (unknownCmdDiag name optionRun).1 = (unknownCmdDiag name false).1 := by
+  rw [unknownCmdDiag_accounts, unknownCmdDiag_accounts]
 
 /-- Bind declared parameters from the call site — a user command's, or a
 user environment's from the groups after its `\begin`. Returns the bindings
@@ -10505,7 +10585,7 @@ its declared layout" pos
     -- arguments are skipped with them, never elaborated as stray text.
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}' in the preamble; skipped" pos
-      (help := unknownCmdHelp name)
+      (help := unknownCmdHelp name false)
       (demote := Compat.styInternal s.ctx.file name)
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos

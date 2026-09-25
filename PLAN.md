@@ -14172,3 +14172,74 @@ what it reads, and the ranking admits what it does not know. What remains a
 human's is the same short list as before — weakening a statement, admitting a
 new goal, and accepting a loss — now each with a mechanical form that refuses
 to proceed without it.
+
+
+### 2026-09-25 — one construct, one accounting: the option run folds into the command's own refusal
+
+**The defect, as reported.** An unknown command with a leading `[...]` run
+printed three diagnostics for two losses at two sites: `W0301` once, counted,
+reading `(2 sites)`, and `W0341` once per site, uncounted. A worse variant sat
+in the same arm: `\footnotemark[3]` drew `W0370` (pending — a construct the
+engine *knows*) and beside it a `W0341` saying the option run "went with
+unknown command '\footnotemark'", which is false.
+
+**The mechanism, re-established by measurement.** `warnUnknownCmd` and
+`warnOptionRun` sat in one `else` branch of the unknown-command arm and
+reached for different doors: the first for `warnOnce` with subject
+`ctrl:<name>`, the second for raw `diag` with no subject at all. `Diag.sameLoss`
+requires `a.subject.isSome`, so `tallySites` returns a subjectless diagnostic
+untouched — the code was outside the census entirely, which is why it printed
+at every site, repeated its help at each, and billed each to `--werror`.
+Nothing chose that; the two doors were simply not gated.
+
+**The repair.** A refused command's leading option run is part of *that
+command's own recovery* — the same construct, the same span, the same loss — so
+its fate is a clause of the command's own message and help, and the fragment's
+code is retired from the registry rather than left registered and silent. Both
+halves of the defect close together and it is one change, not two: with one
+diagnostic at the span there is nothing left to make the false "unknown
+command" claim about a known pending construct.
+
+Measured, on synthetic fixtures (invented command names):
+
+```
+before:  W0301 …kept as text (2 sites) + W0341 ×2 (uncounted, one per site)
+after:   W0301 unknown command '\zztrack'; its [...] options were dropped
+               and its {...} arguments were kept as text (2 sites)
+before:  W0370 …kept in place + W0341 "went with unknown command
+               '\footnotemark'"   ← false
+after:   W0370 '\footnotemark' is not paired with its partner yet; its [...]
+               options were dropped and its text is kept in place
+```
+
+The page is unchanged: `pdftotext` output is identical before and after for
+both shapes, so this moved the accounting and not the ink.
+
+**What is a theorem and what is not.** `Elab.unknownCmdDiag_accounts` says the
+code a refusal earns is fixed by the construct alone; `unknownCmdDiag_optionRun_id`
+reads off it that the argument shape does not enter, so the run earns no code.
+Both are statable only because the pure half of the emitter was split out of
+the state thread — `warnOnce`'s first-site flag is a bound variable no
+statement can name, which is the factorization the proof needed rather than a
+tactic to find. What they do *not* cover is the state thread itself
+(`warnOnce_sites_exact`, still owed, its source-side census blocker unchanged)
+and the census's own vacuity: `Diag.tallySites_exact` still carries
+`subject.isSome`, so the theorem that counting is honest remains silent on
+exactly the class that miscounted. That is the total-accounting change, not
+done here, and `subjectDebt` (47 rows after this) is still the interim ratchet.
+
+**Two defects in the interrupted draft this continued from,** both invisible to
+`lake build`'s exit code and worth naming because the shape recurs. An invalid
+escape sequence inside an `s!` interpolation made `unknownCmdDiag` ill-formed,
+which in turn made its theorem unprovable — and Lean reported that as
+`declaration uses 'sorry'`, a *warning*, so `lake build` exited 0 with the
+centerpiece theorem unproved. A build that exits 0 is not a build that proved
+anything; the pre-commit hook's warnings-as-failures is the gate that catches
+it, and reading the log is the habit.
+
+**A gate gap, routed.** `cites --check` rejected a docstring naming
+`salvage_named` (a check-block label, not a theorem) but passed one naming
+`Obligations.warnOnce_emits_once`, which does not exist — the *dotted*
+spelling escapes the scan. Both citations are corrected here; the scan itself
+is `scripts/cites.lean`, not this agent's file, and the change is to treat a
+namespace-qualified snake_case tail as a citation.

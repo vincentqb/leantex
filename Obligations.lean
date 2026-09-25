@@ -211,11 +211,14 @@ def themedDoc (name : String) : Ir.Doc :=
 -- source: recover-content (Tests/Layout.lean recoveryChecks, the test that wanted to be this theorem); the de-partial slices, whose point was making it statable
 -- blocker: retried 2026-09-19 with elabBlocks total; the wall stands and budget is not the fix: proved in-module (private equations visible) via simp [elabInlines, elabInlinesFrom], the tactic still fails at maxHeartbeats 16000000 with maxRecDepth 4096 — the WF equation lemmas rewrite into their own results on the symbolic .word w token, so raising limits diverges rather than converges. Needs a staged per-arm rw script over one-step equation lemmas stated once in Elab.lean (public, so this file can drive them), normalizing the ground prefix before the symbolic tail — or the inline spine restated as a small-step function whose one-step equations are cheap.
 -- goldens: no
-/-- The W0341 arm's content claim, as a commutation: an unknown command's
+/-- The option-run arm's content claim, as a commutation: an unknown command's
 leading `[...]` option run is not content, so elaboration with the run and
 with the run deleted return the same inlines — no character of the run
-reaches the elaborated output, whatever the run's text. The shipped-page
-witness is `recoveryChecks` in Tests/Layout.lean. -/
+reaches the elaborated output, whatever the run's text. The *diagnostic* half
+of that arm is closed and no longer owed: the run's fate is a clause of the
+refusing command's own message, held by `Elab.unknownCmdDiag_optionRun_id`.
+What is still owed is this, the content half. The shipped-page witness is
+`recoveryChecks` in Tests/Layout.lean. -/
 theorem elab_inlines_option_run_dropped (w kept : String) (st : Elab.ESt) :
     ((Elab.elabInlines { file := "d" }
         #[.ctrl "zzz" ⟨1, 1⟩, .sym '[' ⟨1, 5⟩, .word w ⟨1, 6⟩, .sym ']' ⟨1, 7⟩,

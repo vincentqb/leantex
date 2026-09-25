@@ -2193,7 +2193,7 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the page declares the token the use references"
     ((qPage.splitOn "--quiet: #123456;").length == 2)
 
-/-- W0341: a definition that shadows a palette role is named, with the cost
+/-- W0342: a definition that shadows a palette role is named, with the cost
 in the reason — the palette (a variant, a host page's override) and the
 contrast judge no longer reach the words the definition styles. Judged
 against the final palette, so declaration order cannot hide it; shadowing

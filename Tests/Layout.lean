@@ -1773,8 +1773,11 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let mail := pageText "\\textls[16]{someone}@example.org"
   t "an option run before an email address ships nothing"
     (!has mail "[" && has mail "someone@example.org")
-  t "the drop is visible, named by its own code"
-    ((warnCodes "\\textls[16]{placeholder}.example.org").contains "W0341")
+  -- The drop is visible, and named inside the command's own accounting:
+  -- one construct, one diagnostic, counted (Elab.warnUnknownCmd_accounts).
+  t "the drop is named by the command's own counted diagnostic"
+    ((dvE "\\textls[16]{placeholder}.example.org").any fun d =>
+      d.code == "W0301" && d.subject == some "ctrl:textls")
   -- Consecutive runs are one parameter train; both groups are content. The
   -- example is a name the engine does not know: `\parbox` stood here once
   -- and is a kernel box now, whose first group is a width rather than
@@ -1786,12 +1789,11 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let open_ := pageText "\\foo[16 oops"
   t "an unclosed bracket run stays on the page"
     (has open_ "[16 oops" &&
-     (warnCodes "\\foo[16 oops").contains "W0310" &&
-     !(warnCodes "\\foo[16 oops").contains "W0341")
+     (warnCodes "\\foo[16 oops").contains "W0310")
   -- A bracket on a later line is content, where LaTeX stops looking too.
   let later := pageText "\\foo\n[note] stays"
   t "a bracket run on the next line is content"
-    (has later "[note] stays" && !(warnCodes "\\foo\n[note] stays").contains "W0341")
+    (has later "[note] stays")
   -- No fabricated space: the give-back happens only when one was written.
   t "no space is fabricated after a kept group"
     (pageText "\\foo{a}.b" == "a.b")
@@ -1930,7 +1932,8 @@ def floorPolicyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- LaTeX reads it, and it is markup whether or not the engine knows the
   -- command. Only `Ir.floorNamedArgs` commands swept one, so `\sqrt[3]{8}`
   -- shipped `[3]` and an unknown command shipped its whole option list —
-  -- the drop the engine already makes in text (W0341) and in a node body,
+  -- the drop the engine already makes in text (inside W0301's own
+  -- accounting) and in a node body,
   -- missing at the first of the three floors to be written.
   t "a known command's index option never reaches the page"
     (pageText "$\\overset{a}{b}\\sqrt[3]{8}$" == "ab8")

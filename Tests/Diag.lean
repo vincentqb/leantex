@@ -242,7 +242,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0369 => dvE (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
   | .E0375 => dvE (dvDoc
       "\\newlength{\\half}\\setlength{\\half}{\\dimexpr\\textwidth/2\\relax}\n" "x")
-  | .W0370 => dvE (dvDoc "" "a claim\\footnotemark stands here")
+  | .W0370 => dvE (dvDoc "" "a claim\\footnotemark stands here") ++
+      dvE (dvDoc "" "a claim\\footnotemark[3] stands here")
   | .W0371 => dvE (dvDoc "" "a\\footnote{first\n\nsecond}")
   | .W0372 => dvL one (dvDoc "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
       ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}"))
@@ -305,7 +306,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       (String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")))
   | .W0202 => dvL one (dvDoc "\\style{section}{ before = 2pt, after = 10pt }\n"
       "\\section{a}\nbody")
-  | .W0301 => dvE "\\mystery{x}"
+  | .W0301 => dvE "\\mystery{x}" ++ dvE "\\mystery[16]{x}"
   | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
   | .W0303 => dvE (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")
@@ -403,7 +404,6 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0340 =>
     dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny") ++
     dvE (dvDoc "" "x\n\n\\usepackage{pgfplots}\n\ny")
-  | .W0341 => dvE "\\textls[16]{spaced}.example.org"
   | .W0342 => dvE (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
       "\\muted{x}")
   | .W0343 =>
@@ -616,15 +616,7 @@ change and what the pair is. Read in both directions by
 `siteAccountingChecks`: a row whose collision closes fails the suite, so a
 row is a migration step and not a parking space. -/
 def siteAccounting : List (String × String × String) :=
-  [("W0301", "W0341",
-    "LeanTex/Core/Elab.lean — the unknown-command arm names the command \
-through warnOnce (counted, subject ctrl:<name>) and its [...] run through \
-diag (uncounted, no subject) at the same span; the run is part of the \
-command's own recovery and belongs in W0301's message"),
-   ("W0341", "W0370",
-    "LeanTex/Core/Elab.lean — the same arm: warnUnknownCmd routes \
-\\footnotemark to W0370 (pending, a construct the engine knows) while \
-warnOptionRun still calls it an unknown command, which is false")]
+  []
 
 /-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
 count — the mechanical first cut the user asked for, needing no judgement
@@ -644,11 +636,13 @@ construct's arguments leaves no fragment for a second diagnostic to name, so
 two codes never report the same cause site.
 
 This is the mechanical audit: group the diagnostics by cause site, flag any
-group larger than one. It finds the reported defect without reading a single
+group larger than one. It found the reported defect without reading a single
 rule — `\zztrack[16]{...}` drew `W0301` (the command, counted, subject
-`ctrl:zztrack`) and `W0341` (its `[...]` run, uncounted, no subject) at one
-span, and the same arm drew `W0370` beside a `W0341` that called a *known*
-pending construct "unknown command".
+`ctrl:zztrack`) and a second code (its `[...]` run, uncounted, no subject) at
+one span, and the same arm drew `W0370` beside that code calling a *known*
+pending construct "unknown command". Both rows closed when the run's fate
+became a clause of the command's own message; the table is empty, which is
+the state it is supposed to reach.
 
 Collisions that stand today are registered in `siteAccounting` with the file
 that owes the change, read in both directions so a closed row cannot linger.
@@ -666,6 +660,94 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (a, b, _) in siteAccounting do
     t s!"site accounting {a}/{b}: the row still describes a live collision"
       (seen.contains (a, b))
+
+/-- **A construct's recovery accounts for all of its arguments.** The
+`_accounts` half of the one-accounting-per-site rule, asserted where
+`siteAccountingChecks` cannot reach: that gate says no two codes name one
+cause site, and this one says *which* code is left and that it can be
+counted.
+
+A refused command's leading `[...]` run is part of that command's own
+recovery — the same construct, the same span, the same loss — so it is
+named by the command's own diagnostic and not by a second code naming a
+fragment of the first's argument list. Two consequences are asserted here
+and neither is about wording:
+
+* The run adds no diagnostic. A refusal is named once per site whether the
+  call carried a run or not, so the site total a reader takes off the
+  visible line is the number of calls and not the number of calls plus the
+  number of bracket runs among them. `Elab.warnUnknownCmd_accounts` is the
+  statement over the emitter; these rows are the shape at the arm.
+* The surviving diagnostic carries a subject, so it is inside the census.
+  This is the sharp edge: `Diag.tallySites_exact` — the theorem that the
+  number on the line is the number of sites of that loss — carries the
+  hypothesis `subject.isSome`, so it was *vacuous* on exactly the class
+  that was broken. A subjectless code is not merely uncounted; it is
+  outside the reach of the theorem that says counting is honest. What
+  these rows buy is the hypothesis, discharged for this class.
+
+The subject spelling is deliberately unchanged (`ctrl:<name>`, whether or
+not a run was present). A per-shape key would count each shape exactly but
+would split one command across two lines, and `Ir.Recovered.subject` is
+that same key — `salvageChecks` reads it to pay for recovered ink, so
+splitting it would make a recovery with a run unattributable.
+
+The pending half is the same fix and not a second repair: a construct the
+engine *knows* and defers (`\footnotemark`, W0370) had a second code at its
+span calling it an unknown command, which is false. With one diagnostic at
+the span there is nothing left to make a false claim, and the claim is
+structural — the code's registered meaning is the claim, so this is read off
+`Diag.kind` and never off the message text. The wording is the golden's to
+witness (`tests/golden/diagnostics.txt`).
+
+Invented command names and placeholder content throughout. -/
+def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let subjOf (ds : Array Diag) (key : String) : Array Diag :=
+    ds.filter (·.subject == some key)
+  let visible (ds : Array Diag) : Array Diag := ds.filter (·.severity != .note)
+  -- Shape one, as reported: an unknown command carrying a bracket run, at
+  -- two sites. Two calls, two diagnostics, one visible line reading 2 —
+  -- the run contributes no diagnostic of its own at either site.
+  let (_, two) := elabStr (dvDoc ""
+    "Alpha \\zztrack[-11]{Bravo} charlie.\n\nDelta \\zztrack[16]{Echo} foxtrot.")
+  t "option run: two calls with runs are two diagnostics, not four"
+    ((subjOf two "ctrl:zztrack").size == 2)
+  t "option run: the command's own code is the only one naming it"
+    ((subjOf two "ctrl:zztrack").all (·.code == "W0301"))
+  t "option run: one visible line carries the site total"
+    ((visible (subjOf two "ctrl:zztrack")).size == 1 &&
+      (visible (subjOf two "ctrl:zztrack")).all (·.sites == 2))
+  t "option run: no span carries two codes"
+    ((siteCollisions two).isEmpty)
+  -- The census hypothesis, discharged: every diagnostic of this loss is
+  -- subjected, which is what `Diag.tallySites_exact` needs to apply at all.
+  t "option run: every diagnostic of the refusal is inside the census"
+    ((two.filter (·.code == "W0301")).all (·.subject.isSome))
+  -- The subject is the unchanged per-command key, with a run and without:
+  -- the key `Ir.Recovered.subject` pays recovered ink against.
+  let (rDoc, runs) := elabStr (dvDoc "" "India \\zzplain{Juliett} kilo.")
+  t "option run: a call with no run keys on the command alone"
+    ((subjOf runs "ctrl:zzplain").size == 1)
+  t "option run: the recovery is still paid for by that key"
+    (rDoc.salvage.all fun s => runs.any fun d => d.subject == some s.subject)
+  -- Consecutive runs are one parameter train, not one diagnostic each.
+  let (_, train) := elabStr (dvDoc "" "Lima \\zztrain[1][2]{Mike} november.")
+  t "option run: two runs on one call are still one diagnostic"
+    ((subjOf train "ctrl:zztrain").size == 1 && (siteCollisions train).isEmpty)
+  -- Shape two: a construct the engine knows and defers. The span carries
+  -- the pending code and nothing else, so nothing there can call it
+  -- unknown — read off the code, never off the words.
+  let (_, pend) := elabStr (dvDoc "" "Golf \\footnotemark[3] hotel.")
+  t "option run: a known pending construct is named only as pending"
+    ((subjOf pend "ctrl:footnotemark").all (·.code == "W0370"))
+  t "option run: nothing at a known construct's span claims it is unknown"
+    (pend.all (·.code != "W0301") && (siteCollisions pend).isEmpty)
+  -- The retirement itself, structurally: the code that named the fragment
+  -- has no emitter left, so it is off the registry rather than registered
+  -- and silent — a registered code with no witness is unreviewable prose.
+  t "option run: the fragment's own code is retired from the registry"
+    ((DiagCode.ofString? "W0341").isNone)
 
 /-- **The mono slot, and what a diagnostic may claim about it.** Two halves
 of one defect, the second the larger.
@@ -747,13 +829,14 @@ scripts/precommit.lean is the precedent — a frozen count that may fall and
 never rise.
 
 The genuine per-site defect is the other gate: `siteAccountingChecks`, where
-two codes name one cause site and disagree about being counted. W0341 is on
-both lists, and it is the one this file can name precisely. -/
+two codes name one cause site and disagree about being counted. The code that
+put this list on both gates is retired: its loss is a clause of `W0301`'s own
+message now, so it no longer owes a row here. -/
 def subjectDebt : List String :=
   ["W0003", "W0005", "W0006", "W0007", "W0009", "W0010", "W0011", "W0102",
    "W0201", "W0202", "W0310", "W0311", "W0312", "W0315", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
-   "W0333", "W0335", "W0336", "W0338", "W0341", "W0342", "W0345", "W0352",
+   "W0333", "W0335", "W0336", "W0338", "W0342", "W0345", "W0352",
    "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
    "W0376", "W0377", "W0378", "W0379", "W0380", "W0381", "W0386", "W0388"]
 
@@ -765,12 +848,12 @@ subject is therefore outside the census: `Diag.tallySites_subjectless_id`
 says the tally returns it untouched, so it fires once per site, repeats its
 help at each, and bills every site to `--werror`.
 
-`W0341` is the witness that this needed stating. It named a fragment of an
-unknown command's `[...]` run at the same site where `W0301` named the
-command, and the two arms sit in one `else` branch: `W0301` went through
-`warnOnce` with subject `ctrl:<name>` and reported `(2 sites)` on one line,
-`W0341` went through `diag` with no subject at all and printed twice. Nothing
-chose that — one arm reached for one door, the other for the other.
+A since-retired code is the witness that this needed stating. It named a
+fragment of an unknown command's `[...]` run at the same site where `W0301`
+named the command, and the two arms sat in one `else` branch: `W0301` went
+through `warnOnce` with subject `ctrl:<name>` and reported `(2 sites)` on one
+line, the other went through `diag` with no subject at all and printed twice.
+Nothing chose that — one arm reached for one door, the other for the other.
 
 Quantified over `DiagCode.all` rather than over a hand-kept list, so a code
 registered tomorrow cannot arrive outside the census quietly: the moment its

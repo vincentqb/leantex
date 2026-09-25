@@ -6973,7 +6973,7 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "a parbox's content is"
     (has (pageText pb) "Label one")
   t "and parbox is not an unknown command"
-    (!(warnCodes pb).contains "W0301" && !(warnCodes pb).contains "W0341")
+    (!(warnCodes pb).contains "W0301")
   -- The option run is beamer's `[t]` baseline choice: a parameter the box
   -- model has nowhere to put, noted where the environment notes its own. The
   -- geometry itself is no longer a loss — `\parbox{w}{t}` and `{minipage}{w}`
@@ -7041,7 +7041,7 @@ def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "the words around it are, still one run"
     (has (pageText v) "Value counted")
   t "and vphantom is not an unknown command"
-    (!(warnCodes v).contains "W0301" && !(warnCodes v).contains "W0341")
+    (!(warnCodes v).contains "W0301")
   t "the height and depth it props are already the line's, so nothing is named"
     ((dvE v).all (·.severity == .note))
   -- The other two axes. Content around them survives; the width does not,

@@ -5643,7 +5643,8 @@ def floorMask (src : String) : Array Bool := Id.run do
         -- LaTeX reads it, whether or not the engine knows the command:
         -- `\sqrt[3]{8}` shipped `[3]` and `\zzz[opt]{x}` shipped `[opt]`
         -- because only a `floorNamedArgs` command ever swept one. The same
-        -- drop is already made in text (W0341) and in a node body, so this
+        -- drop is already made in text (inside W0301's own accounting) and
+        -- in a node body, so this
         -- is one rule at its third site rather than a new judgement. It is
         -- keyed on the control word and not on the bracket: `[0,1]` standing
         -- after no command is an interval, and content.
