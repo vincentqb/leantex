@@ -10,13 +10,28 @@ package, each with the verdict the engine owes it. `lake test` probes every
 row; this tier commits the shape of the index, so a row cannot quietly
 leave it.
 
-Two items per package: `<pkg>.rows`, the commands covered at all, and
-`<pkg>.impl`, those the engine implements. Correction to the brief that
-asked for `impl` and `refuse` counts: a refusal count cannot be ratcheted
-upward, because the way a refusal improves is by becoming an implementation
-— which lowers it. `rows` is the coverage claim and `impl` the depth claim,
-both monotone the right way, and `refuse` stays a provenance line: data,
-never gated.
+Two items per package: `<p>.rows`, the commands covered at all, and
+`<p>.impl`, those the engine implements.
+
+**Implemented** means the verdict is `impl` *or* `inert:…` — one definition,
+the same one `coverage` counts, because an `inert:` row is a recognised
+command that legitimately moves no ink. Two committed numbers for one fact
+with two definitions (303 here against 336 there, over the same 659 rows)
+is the defect `scripts/Gate.lean` exists to prevent; this is the definition
+that survives when the two tiers fuse.
+
+Not done here, deliberately: the review also asks for the `pkg/<p>.` item
+prefix, so these items share `coverage`'s namespace. That renames all 134
+items at once, and a rename is 134 vanishes under the ratchet — the format
+has no rename line, and inventing one to pay for a cosmetic alignment is
+the wrong order. It belongs to the commit that actually fuses the two
+tiers, which is a coordinated landing and pays the migration once.
+
+Correction to the brief that asked for `impl` and `refuse` counts: a refusal
+count cannot be ratcheted upward, because the way a refusal improves is by
+becoming an implementation — which lowers it. `rows` is the coverage claim
+and `impl` the depth claim, both monotone the right way, and `refuse` stays
+a provenance line: data, never gated.
 -/
 import scripts.Board
 
@@ -28,6 +43,13 @@ structure Pkg where
   impl : Nat
   refuse : Nat
 deriving Inhabited
+
+/-- Is this verdict an implementation? `impl`, or `inert:` — a recognised
+command that legitimately moves no ink. The one definition, shared with the
+`coverage` tier; changing it here changes a committed number, so the
+selftest pins both halves. -/
+def isImpl (verdict : String) : Bool :=
+  verdict == "impl" || verdict.startsWith "inert:"
 
 /-- Read one index file. A `#` line is the header prose; every other
 non-blank line is `<where> <verdict> <body…>`. -/
@@ -41,7 +63,7 @@ def readIndex (name text : String) : Pkg := Id.run do
     rows := rows + 1
     let toks := (l.splitOn " ").filter (!·.isEmpty)
     let verdict := (toks[1]?).getD ""
-    if verdict == "impl" then impl := impl + 1
+    if isImpl verdict then impl := impl + 1
     else if verdict.startsWith "refuse:" then refuse := refuse + 1
   return { name, rows, impl, refuse }
 
@@ -68,7 +90,8 @@ def measureTier : IO (Array String × Array Row) := do
     totalRows := totalRows + p.rows
     totalImpl := totalImpl + p.impl
     totalRefuse := totalRefuse + p.refuse
-  return (#[s!"# packages: {pkgs.size}; rows: {totalRows}; impl: {totalImpl}; \
+  return (#[s!"# packages: {pkgs.size}; rows: {totalRows}; impl: {totalImpl} \
+(verdict impl or inert:, the one definition the coverage tier shares); \
 refuse: {totalRefuse}; other verdicts: {totalRows - totalImpl - totalRefuse}"], rows)
 
 def selftest : IO UInt32 := do
@@ -83,9 +106,19 @@ body inert:binds \\zzfour\n\
 \n"
   let p := readIndex "zz" text
   no s!"rows: 4 expected, got {p.rows}" (p.rows == 4)
-  no s!"impl: 2 expected, got {p.impl}" (p.impl == 2)
+  no s!"impl: 3 expected, got {p.impl}" (p.impl == 3)
   no s!"refuse: 1 expected, got {p.refuse}" (p.refuse == 1)
   no "header prose is not a row" ((readIndex "zz" "# only prose\n").rows == 0)
+  -- The one definition of implemented, shared with the coverage tier: a
+  -- recognised command that legitimately moves no ink counts. Two tiers
+  -- counting the same index differently is what this pins shut.
+  no "definition: impl counts" (isImpl "impl")
+  no "definition: inert: counts -- a recognised command that moves no ink"
+    (isImpl "inert:binds")
+  no "definition: a refusal does not count" (!isImpl "refuse:W0301")
+  no "definition: an unknown verdict does not count" (!isImpl "zz")
+  no "the index's inert row is inside the impl count"
+    ((readIndex "zz" "body inert:binds \\zzone\n").impl == 1)
   -- The correction this tier exists to encode: a refusal becoming an
   -- implementation must not read as a loss.
   let before := readIndex "zz" "body refuse:W0301 \\zzone\n"

@@ -13853,14 +13853,18 @@ A malformed or unreadable baseline is `fault`, and does fail.
 |---|---|---|
 | `obligations` | 12 | owed debt per owner module, headroom; 29 obligations over 12 modules, worst `Layout` at 8 |
 | `purity` | 2 | both at the ceiling: no non-total definition, no open hole outside the staging area, whole tree |
-| `diagdebt` | 2 | `subjectDebt` 48 of 77 censused codes, `siteAccounting` 2 rows |
-| `compat` | 134 | 67 packages, 613 documented rows, 303 implemented |
+| `diagdebt` | 1 | `subjectDebt` 48 of 77 censused codes; `siteAccounting`'s 2 rows are provenance, never gated |
+| `compat` | 134 | 67 packages, 659 documented rows, 336 implemented (verdict `impl` or `inert:`) |
 | `htmlreader` | 4 | 9/11 feature cells and 67/72 fixture cells pass in the target reader |
 
-`diagdebt` imports `Tests.Diag` and reads `subjectDebt` and `siteAccounting`
-as Lean values. Counting them by parsing source text would drift from the
-values the suite checks the first time a row is reflowed, and nothing would
-see it.
+`diagdebt` imports `Tests.Diag` and reads `subjectDebt` as a Lean value.
+Counting it by parsing source text would drift from the value the suite
+checks the first time a row is reflowed, and nothing would see it. The
+number means the debt only on a tree where `lake test` passed, because the
+registry equals the real debt only through `subjectCensusChecks` holding in
+both directions. `siteAccounting`'s count is reported and never gated:
+AGENTS.md's obligation table prescribes *adding* a row to route a fix, so a
+gate on it would turn a routed finding into a regression.
 
 **Correction to the brief.** It asked `compat` for `impl` and `refuse` counts
 per package. A refuse count cannot be ratcheted upward: the way a refusal
