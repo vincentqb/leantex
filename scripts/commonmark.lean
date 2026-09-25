@@ -20,10 +20,15 @@ unclassified deviation fails. Four verdicts:
 * `owed` — the engine does not do this yet. Not a pass and not an excuse:
   the ratchet lets this number fall and never rise.
 
-The ratchet is the tier file `tests/scoreboard/commonmark.tsv`: one row per
-spec section, value = cases matching. A value may not drop and a baselined
-section may not disappear (`# retired:` is the only exit). Hermetic —
-`--check` reads the vendored spec and the committed tables, nothing else.
+The ratchet is the tier file `tests/scoreboard/commonmark.tsv`, in the one
+scoreboard format and under the one ratchet every tier obeys
+(`Scoreboard.tierMain`, `Scoreboard.ratchet`): per spec section a
+`<section>.match` and a `<section>.cases` row, encoded `pairs match/cases`
+so the queue ranks sections by their gap. Any change fails `--check` — a
+fall, a vanished section, and an unrecorded rise alike; regenerating records
+a rise, and writes a fall only where the committed file carries a
+human-written `# lowered:` line naming it. Hermetic — `--check` reads the
+vendored spec and the committed tables, nothing else.
 
 Comparison is over *trees*, not strings: the engine's HTML is a typed tree
 already, and the spec's expected HTML is read by the tolerant reader below
@@ -31,6 +36,7 @@ into the same shape, then both are canonicalized by `canon`. A string
 comparison would report the two emitters' indentation as content.
 -/
 import LeanTex
+import scripts.Board
 
 open LeanTex.Core
 
@@ -606,52 +612,27 @@ def parseVerdicts (text : String) : Except String (Array Row) := do
     out := out.push { id, section_ := sec, verdict := v, note := (fs[3]?).getD "" }
   return out
 
-def parseTier (text : String) : Except String (Array (String × Nat) × Array String) := do
-  let mut out : Array (String × Nat) := #[]
-  let mut retired : Array String := #[]
-  for raw in text.splitOn "\n" do
-    let line := raw.trimAsciiEnd.toString
-    if line.isEmpty then continue
-    if line.startsWith "# retired:" then
-      retired := retired.push ((line.toList.drop "# retired:".length |> String.ofList).trimAscii.toString)
-      continue
-    if line.startsWith "#" then continue
-    let fs := fields line
-    let some k := fs[0]? | throw s!"tier row with no item: {line}"
-    let some vS := fs[1]? | throw s!"tier row with no value: {line}"
-    let some v := vS.toNat? | throw s!"tier value is not a number: {line}"
-    out := out.push (k, v)
-  return (out, retired)
-
-/-- Section order as the spec states it, so the tier file and the report
-read in document order rather than alphabetically. -/
+/-- Section order as the spec states it, so the report reads in document
+order rather than alphabetically. The tier file itself is sorted by item,
+as the scoreboard format requires. -/
 def sectionsOf (exs : Array Example) : Array String := Id.run do
   let mut out : Array String := #[]
   for e in exs do
     unless out.contains e.section_ do out := out.push e.section_
   return out
 
-def tierText (exs : Array Example) (rows : Array Row) (sha : String) : String := Id.run do
-  let mut s := "# CommonMark spec cases matching, one row per spec section.\n"
-  s := s ++ "# Higher is better; a value may not drop and a row may not disappear.\n"
-  s := s ++ s!"# spec: 0.31.2 sha256 {sha}\n"
-  s := s ++ s!"# cases: {exs.size}\n"
-  s := s ++ "# 2026-09-25 correction, declared: this baseline is LOWER than the one it\n"
-  s := s ++ "# replaces in six sections, because the measurement was wrong, not because\n"
-  s := s ++ "# the engine regressed. Two rules changed. (1) `rejected` is keyed on the\n"
-  s := s ++ "# three strict subjects, not on the E0390 code, and the raw-HTML test now\n"
-  s := s ++ "# implements the tag grammar: 25 valid cases left `rejected`, 14 of them to\n"
-  s := s ++ "# `match`. (2) A case whose run names a routed loss can no longer be a\n"
-  s := s ++ "# `match` however the trees compare: 11 cases moved to `owed`, 9 of them\n"
-  s := s ++ "# from `match` (Tabs 4; List items 256, 258, 259, 262, 277; Lists 325, 326;\n"
-  s := s ++ "# Block quotes 108), all nine on md:loose-list, which over-reports because\n"
-  s := s ++ "# the HTML backend already wraps a multi-block item in <p>. Each of the\n"
-  s := s ++ "# eleven carries the note `tree-agrees-but-a-loss-is-named`, and --check\n"
-  s := s ++ "# compares notes, so none of them can quietly become a `match` again.\n"
+/-- The tier's rows: one `<section>.match` and one `<section>.cases` per spec
+section, the `pairs match/cases` encoding. The ratchet is the scoreboard's
+own (`Scoreboard.ratchet`), so this tier cannot mean something different by
+"regressed" than every other tier does. -/
+def tierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row := Id.run do
+  let mut out : Array Scoreboard.Row := #[]
   for sec in sectionsOf exs do
-    let n := (rows.filter (fun r => r.section_ == sec && r.verdict == .match_)).size
-    s := s ++ sec ++ "\t" ++ toString n ++ "\n"
-  return s
+    let ss := rows.filter (·.section_ == sec)
+    out := out.push
+      { item := sec ++ ".match", value := Int.ofNat (ss.filter (·.verdict == .match_)).size }
+    out := out.push { item := sec ++ ".cases", value := Int.ofNat ss.size }
+  return out
 
 def verdictText (rows : Array Row) : String := Id.run do
   let mut s := "# One row per CommonMark 0.31.2 spec example: id, section, verdict, note.\n"
@@ -692,6 +673,12 @@ def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
   return code
 
+/-- The tier's provenance lines: data, never gated. -/
+def tierProvenance (exs : Array Example) (rows : Array Row) : Array String :=
+  let (m, r, d, o) := counts rows
+  #[s!"# spec: CommonMark 0.31.2, {exs.size} cases, sha256 {specSha}",
+    s!"# verdicts ({verdictPath}): match {m}, rejected {r}, divergence {d}, owed {o}"]
+
 /-- The three strict classes, and how many spec cases each one touches:
 measured by running every case and reading the subject its refusal carried,
 not asserted. -/
@@ -704,18 +691,6 @@ def strictTouch (exs : Array Example) : Array (String × Nat) := Id.run do
       if diags.any (fun d => d.kind == .E0390 && d.subject == some s) then
         counts := counts.set! k ((counts[k]?).getD 0 + 1)
   return (subjects.zipIdx.map (fun (s, k) => (s, (counts[k]?).getD 0))).toArray
-
-def checkRatchet (old new : Array (String × Nat)) (retired : Array String) :
-    Array String := Id.run do
-  let mut bad : Array String := #[]
-  for (k, v) in old do
-    match new.find? (·.1 == k) with
-    | none =>
-      unless retired.contains k do
-        bad := bad.push s!"section '{k}' disappeared from the tier (baseline {v})"
-    | some (_, v') =>
-      if v' < v then bad := bad.push s!"section '{k}': {v'} matching, baseline {v}"
-  return bad
 
 def selftest : IO UInt32 := do
   let mut bad : Array String := #[]
@@ -764,16 +739,29 @@ def selftest : IO UInt32 := do
        (canonList 1 false "" (hParse "<p>a<br>b</p>").toList) "<p>a<br>b</p>"]
   for c in cs do
     if let some m := c then bad := bad.push m
-  -- The ratchet, broken once in each direction.
-  let old : Array (String × Nat) := #[("A", 3), ("B", 1)]
-  unless (checkRatchet old #[("A", 2), ("B", 1)] #[]).size == 1 do
-    bad := bad.push "ratchet: a drop was not caught"
-  unless (checkRatchet old #[("A", 3)] #[]).size == 1 do
-    bad := bad.push "ratchet: a disappearance was not caught"
-  unless (checkRatchet old #[("A", 3)] #["B"]).isEmpty do
-    bad := bad.push "ratchet: a retired row was still reported"
-  unless (checkRatchet old #[("A", 9), ("B", 1)] #[]).isEmpty do
-    bad := bad.push "ratchet: a rise was reported as a regression"
+  -- The tier rows, in the scoreboard's own format: sorted, unique, two per
+  -- section, and every value an integer the shared ratchet reads. The old
+  -- rows were written in spec order, which the format faults.
+  let fakeEx : Array Example :=
+    #[{ id := 1, section_ := "B sec", md := "", html := "" },
+      { id := 2, section_ := "A sec", md := "", html := "" },
+      { id := 3, section_ := "B sec", md := "", html := "" }]
+  let fakeRows : Array Row :=
+    #[{ id := 1, section_ := "B sec", verdict := .match_, note := "" },
+      { id := 2, section_ := "A sec", verdict := .owed, note := "" },
+      { id := 3, section_ := "B sec", verdict := .rejected, note := "" }]
+  let rendered := Scoreboard.render #["# encoding: pairs match/cases"] (tierRows fakeEx fakeRows)
+  match Scoreboard.parse rendered with
+  | .error e => bad := bad.push s!"tier: the rendered rows do not parse: {e}"
+  | .ok t =>
+    unless (Scoreboard.validate t).isEmpty do
+      bad := bad.push s!"tier: the rendered rows are malformed: {Scoreboard.validate t}"
+    unless t.find? "B sec.match" == some 1 && t.find? "B sec.cases" == some 2
+        && t.find? "A sec.match" == some 0 && t.find? "A sec.cases" == some 1 do
+      bad := bad.push "tier: a section's match/cases pair is wrong"
+    unless (t.rows.map (·.item)).toList ==
+        ["A sec.cases", "A sec.match", "B sec.cases", "B sec.match"] do
+      bad := bad.push "tier: rows are not sorted by item"
   -- A verdict name round-trips, and an unknown one is refused.
   for v in [Verdict.match_, .rejected, .divergence, .owed] do
     unless Verdict.ofName? v.name == some v do
@@ -820,8 +808,6 @@ def selftest : IO UInt32 := do
     unless rs.size == 2 do bad := bad.push s!"verdict table: {rs.size} rows, want 2"
   if (parseVerdicts "1\tSec\tnearly\n").toOption.isSome then
     bad := bad.push "verdict table: an unknown verdict parsed"
-  if (parseTier "A\tnotanumber\n").toOption.isSome then
-    bad := bad.push "tier table: a non-numeric value parsed"
   if bad.isEmpty then
     IO.println "commonmark --selftest: ok"
     return 0
@@ -840,7 +826,11 @@ def report (exs : Array Example) (rows : Array Row) : IO Unit := do
     let (m, r, d, o) := counts ss
     IO.println s!"  {sec}: {ss.size} cases — match {m}, rejected {r}, divergence {d}, owed {o}"
 
-def run (check : Bool) : IO UInt32 := do
+/-- The three tier modes, shared with every other tier through
+`Scoreboard.tierMain`, plus the verdict table this tier owns. Regeneration
+writes the verdict table only after the tier was written: when the tier
+refuses a fall no `# lowered:` line authorises, neither file changes. -/
+def run (args : List String) : IO UInt32 := do
   unless ← System.FilePath.pathExists specPath do
     return ← die 1 s!"commonmark: {specPath} is missing"
   let got ← keyOf specPath
@@ -853,7 +843,10 @@ def run (check : Bool) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   let (rows, _) := classifyAll exs
   let ms := (← IO.monoMsNow) - t0
-  if check then
+  let tier (a : List String) : IO UInt32 :=
+    Scoreboard.tierMain "commonmark" (.pairs "match" "cases")
+      (pure (tierProvenance exs rows, tierRows exs rows)) selftest a
+  if args.contains "--check" then
     unless ← System.FilePath.pathExists verdictPath do
       return ← die 1 s!"commonmark: {verdictPath} is missing; regenerate it"
     let committed ← match parseVerdicts (← IO.FS.readFile verdictPath) with
@@ -877,24 +870,20 @@ def run (check : Bool) : IO UInt32 := do
     for c in committed do
       unless rows.any (·.id == c.id) do
         bad := bad.push s!"committed case {c.id} is not in the spec"
-    unless ← System.FilePath.pathExists tierPath do
-      return ← die 1 s!"commonmark: {tierPath} is missing; regenerate it"
-    let (oldTier, retired) ← match parseTier (← IO.FS.readFile tierPath) with
-      | .ok t => pure t
-      | .error e => return ← die 1 s!"commonmark: {tierPath}: {e}"
-    let newTier := (sectionsOf exs).map fun sec =>
-      (sec, (rows.filter (fun r => r.section_ == sec && r.verdict == .match_)).size)
-    bad := bad ++ checkRatchet oldTier newTier retired
-    unless bad.isEmpty do
-      for b in bad do IO.eprintln s!"commonmark: {b}"
-      return ← die 1 s!"commonmark: {bad.size} findings"
+    for b in bad do IO.eprintln s!"commonmark: {b}"
     report exs rows
     for (s, n) in strictTouch exs do
       IO.println s!"  strict class {s}: {n} cases"
+    let rc ← tier ["--check"]
+    unless bad.isEmpty do
+      return ← die 1 s!"commonmark: {bad.size} verdict findings"
+    if rc != 0 then return rc
     IO.println s!"commonmark --check: ok ({ms} ms)"
     return 0
+  let rc ← tier []
+  if rc != 0 then
+    return ← die rc s!"commonmark: the tier was not written, so neither is {verdictPath}"
   IO.FS.writeFile verdictPath (verdictText rows)
-  IO.FS.writeFile tierPath (tierText exs rows specSha)
   report exs rows
   let touch := strictTouch exs
   for (s, n) in touch do
@@ -961,7 +950,7 @@ def main (argv : List String) : IO UInt32 := do
   match argv with
   | ["--selftest"] => selftest
   | ["--scaling"] => scaling
-  | ["--check"] => run true
+  | ["--check"] => run ["--check"]
   | ["--explain", idS] =>
     -- Why one case earned its verdict: the two canonical forms side by
     -- side. A report mode, not a gate — it writes nothing.
@@ -978,7 +967,7 @@ def main (argv : List String) : IO UInt32 := do
     let (_, ds) := engineFragment ex.md
     for d in ds do IO.println s!"  {d.code} {d.message}"
     return 0
-  | [] => run false
+  | [] => run []
   | _ =>
     IO.eprintln "usage: commonmark [--check | --selftest | --scaling | --explain <case>]"
     return 2
