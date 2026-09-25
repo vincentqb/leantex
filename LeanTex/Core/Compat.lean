@@ -2457,6 +2457,23 @@ the definition is skipped" pos
     if element == "frame footer" then
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
       return some (← synthAt "\\framefoot" pos, j)
+    else if element == "title page" then
+      -- `\setbeamertemplate{title page}` IS beamer's spelling of
+      -- `\renewcommand{\maketitle}`: `\titlepage` expands this template
+      -- (beamerbasetitle.sty). So it routes to the native definer and lands
+      -- under rule (b) — the gate the engine already runs on every
+      -- redefinition of a rendered built-in. A body that elaborates
+      -- non-empty wins and renders; one that loses is refused (W0361), the
+      -- built-in title page stands, and the body is read once more for the
+      -- declarative styling it carries (`applyRefusedTitleStyle`). Nothing
+      -- is dropped, so E0111's `dropped` class is not the honest one here.
+      -- The synthesised head is the *native* spelling: synthesised output
+      -- is not walked again, so a synthesised `\renewcommand` would reach
+      -- elaboration as an unknown command and take the body with it.
+      let (_, j) := takeOpt raws j
+      became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
+      write fun st => { st with bodyNext := 1 }
+      return some (← synthAt "\\define \\maketitle()" pos, j)
     else
       let (_, j) := takeOpt raws j
       let (bodyArgs, k) := takeGroups raws j 1

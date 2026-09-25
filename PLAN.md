@@ -12908,3 +12908,47 @@ clean. `bench.lean` medians of 5: paragraphs 93 ms, lorem 328 ms, underline
 paragraphs on its recorded band, so a three-constructor width on every
 column walk costs nothing measurable. Goldens: none — no fixture declares a
 box width, which is the same corpus gap the ragged entry above found.
+
+
+### 2026-09-24 — the title-page template routes to the definer it already is
+
+The entry above argues the template family and closes the read side: a
+refused title body is now read in beamer's own vocabulary, so a theme's
+declared title styling lands. What it could not do from `Elab.lean` is the
+one line that gets the body there. This is that line, and the acceptance
+result it produces.
+
+`\setbeamertemplate{title page}` **is** beamer's spelling of
+`\renewcommand{\maketitle}` — `\titlepage` expands the template
+(beamerbasetitle.sty) — so the arm routes it to the native definer rather
+than judging it. That puts it under rule (b), the gate the engine already
+runs on every redefinition of a rendered built-in: a body that elaborates
+non-empty wins and renders; one that loses is refused as W0361, the built-in
+title page stands, and the body is read once more for the declarative
+appearance it carries. Nothing is dropped, which is why `E0111`'s `dropped`
+class was the wrong one here while staying right for its own case — literal
+ink in a slot with no built-in behind it.
+
+Two details that are not incidental. The synthesised head is the **native**
+spelling (`\define \maketitle()`): synthesised output is not walked again, so
+a synthesised `\renewcommand` reaches elaboration as an unknown command and
+takes the body with it under a misleading W0301. And `bodyNext := 1` rides
+with it so the following group is announced as a macro body, exactly as the
+`\newcommand` family's own arm does.
+
+**What it cost the user, measured before and after on the private reference
+corpus.** Before this wave the deck failed with **6 errors and no artifact**:
+one `E0111` here and five `E0333` from the picture subset. After it, and the
+three sibling slices landing beside it, the deck **builds: 0 errors, 35
+pages**, against the reference toolchain's 34. The remaining losses are all
+warnings and all named — 14 `W0334` picture-subset keys, 13 `W0104`
+configuration skips, 7 `W0376` the document's own missing `alt=`, and one
+each of `W0385`, `W0361`, `W0345`, `W0315`, `W0103`, `W0012`.
+
+Worth recording as a caution rather than a victory: this error existed only
+because the engine had just been taught to *read* local theme files. Before
+that the deck built with one warning and no theme; reading the theme turned
+a soft failure into a hard one, and three of this wave's four slices exist to
+pay for that reading. A capability that surfaces losses it cannot yet absorb
+is a capability that arrives half-landed, and the honest sequence is to teach
+the absorption in the same wave as the reading.
