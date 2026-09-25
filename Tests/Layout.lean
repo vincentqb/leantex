@@ -1773,11 +1773,17 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let mail := pageText "\\textls[16]{someone}@example.org"
   t "an option run before an email address ships nothing"
     (!has mail "[" && has mail "someone@example.org")
-  -- The drop is visible, and named inside the command's own accounting:
-  -- one construct, one diagnostic, counted (Elab.warnUnknownCmd_accounts).
-  t "the drop is named by the command's own counted diagnostic"
-    ((dvE "\\textls[16]{placeholder}.example.org").any fun d =>
-      d.code == "W0301" && d.subject == some "ctrl:textls")
+  -- The drop is visible, and named inside the command's own accounting: one
+  -- construct, one diagnostic, counted (Elab.warnUnknownCmd_pushes_one). Read
+  -- by code at the construct's span, not by subject — a second code with no
+  -- subject, which is what shipped, is invisible to a subject filter.
+  let lsDiags := dvE "\\textls[16]{placeholder}.example.org"
+  let lsCodes := lsDiags.foldl
+    (fun acc d => if acc.contains d.code then acc else acc.push d.code) (#[] : Array String)
+  t "the command's span carries exactly one code"
+    (lsCodes == #["W0301"] && lsDiags.size == 1)
+  t "and that code is counted, so a reader can size the loss"
+    (lsDiags.all fun d => d.subject == some "ctrl:textls")
   -- Consecutive runs are one parameter train; both groups are content. The
   -- example is a name the engine does not know: `\parbox` stood here once
   -- and is a kernel box now, whose first group is a width rather than

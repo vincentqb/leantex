@@ -306,7 +306,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
       (String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")))
   | .W0202 => dvL one (dvDoc "\\style{section}{ before = 2pt, after = 10pt }\n"
       "\\section{a}\nbody")
-  | .W0301 => dvE "\\mystery{x}" ++ dvE "\\mystery[16]{x}"
+  | .W0301 => dvE "\\mystery{x}" ++ dvE "\\mystery[16]{x}" ++
+      dvE "\\mystery[16 oops" ++ dvE "\\mystery\n[note] stays" ++
+      dvE "\\mystery[16]{x} and \\mystery{y}"
   | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
   | .W0303 => dvE (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")
@@ -676,8 +678,9 @@ and neither is about wording:
 * The run adds no diagnostic. A refusal is named once per site whether the
   call carried a run or not, so the site total a reader takes off the
   visible line is the number of calls and not the number of calls plus the
-  number of bracket runs among them. `Elab.warnUnknownCmd_accounts` is the
-  statement over the emitter; these rows are the shape at the arm.
+  number of bracket runs among them. `Elab.warnUnknownCmd_pushes_one` is the
+  statement over the emitter — one push per call, carrying the construct's
+  code and the subject `ctrl:<name>`; these rows are the shape at the arm.
 * The surviving diagnostic carries a subject, so it is inside the census.
   This is the sharp edge: `Diag.tallySites_exact` — the theorem that the
   number on the line is the number of sites of that loss — carries the
@@ -685,12 +688,25 @@ and neither is about wording:
   that was broken. A subjectless code is not merely uncounted; it is
   outside the reach of the theorem that says counting is honest. What
   these rows buy is the hypothesis, discharged for this class.
+* **The wording on that line is true of every site it counts.** A group whose
+  calls differ in shape says so, and says the same thing in either document
+  order — `Elab.runShape_fold_exact` is the statement (both projections of
+  the accumulated shape are `any`, so the wording is a function of the *set*
+  of the sites' shapes), and the two mixed rows below are the artifact
+  witness. Before this, the first call's shape decided the visible line for
+  all of them: a later dropped run went unmentioned at default verbosity, and
+  `(2 sites)` on a run-shaped line read as runs dropped at both.
 
 The subject spelling is deliberately unchanged (`ctrl:<name>`, whether or
 not a run was present). A per-shape key would count each shape exactly but
 would split one command across two lines, and `Ir.Recovered.subject` is
 that same key — `salvageChecks` reads it to pay for recovered ink, so
-splitting it would make a recovery with a run unattributable.
+splitting it would make a recovery with a run unattributable. The wording,
+not the key, is what carries the shape.
+
+Counts here are read by code and span, never by subject: the defect was a
+second code with *no* subject at the same span, which any subject filter is
+blind to. Rows that must fail on the merge base say so in their label.
 
 The pending half is the same fix and not a second repair: a construct the
 engine *knows* and defers (`\footnotemark`, W0370) had a second code at its
@@ -706,20 +722,53 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let subjOf (ds : Array Diag) (key : String) : Array Diag :=
     ds.filter (·.subject == some key)
   let visible (ds : Array Diag) : Array Diag := ds.filter (·.severity != .note)
+  let codesOf (ds : Array Diag) : Array String := ds.foldl
+    (fun acc d => if acc.contains d.code then acc else acc.push d.code) (#[] : Array String)
   -- Shape one, as reported: an unknown command carrying a bracket run, at
   -- two sites. Two calls, two diagnostics, one visible line reading 2 —
-  -- the run contributes no diagnostic of its own at either site.
+  -- the run contributes no diagnostic of its own at either site. Counted by
+  -- code, not by subject: the code this replaced carried none.
   let (_, two) := elabStr (dvDoc ""
     "Alpha \\zztrack[-11]{Bravo} charlie.\n\nDelta \\zztrack[16]{Echo} foxtrot.")
-  t "option run: two calls with runs are two diagnostics, not four"
-    ((subjOf two "ctrl:zztrack").size == 2)
+  t "option run (fails on base): two calls with runs are two diagnostics, not four"
+    (two.size == 2 && codesOf two == #["W0301"])
   t "option run: the command's own code is the only one naming it"
-    ((subjOf two "ctrl:zztrack").all (·.code == "W0301"))
+    ((subjOf two "ctrl:zztrack").size == 2)
   t "option run: one visible line carries the site total"
     ((visible (subjOf two "ctrl:zztrack")).size == 1 &&
       (visible (subjOf two "ctrl:zztrack")).all (·.sites == 2))
   t "option run: no span carries two codes"
     ((siteCollisions two).isEmpty)
+  -- The clause on the counted line is true of every site it counts, and is
+  -- the same sentence in either document order. Both rows fail on base and
+  -- on the first-site-wording shape this replaced: there, the run-carrying
+  -- order claimed a drop at the plain site and the plain order hid the drop
+  -- from the default log entirely.
+  let mixedMsg (pre post : String) : Option String :=
+    let (_, ds) := elabStr (dvDoc "" (pre ++ "\n\n" ++ post))
+    let vis := visible (ds.filter (·.subject == some "ctrl:zzmix"))
+    (vis[0]?).map (·.message)
+  let runFirst := mixedMsg "Alpha \\zzmix[16]{Bravo} charlie." "Delta \\zzmix{Echo} foxtrot."
+  let plainFirst := mixedMsg "Alpha \\zzmix{Bravo} charlie." "Delta \\zzmix[16]{Echo} foxtrot."
+  t "option run (fails on base): mixed shapes read the same in either order"
+    (runFirst.isSome && runFirst == plainFirst)
+  t "option run (fails on base): the mixed line states the rule, not one site's event"
+    (match runFirst with
+     | some m => (m.splitOn "any [...] options were dropped").length == 2
+     | none => false)
+  -- A group of one shape keeps the single-site sentence: widening the
+  -- wording is what the second shape buys, never the default.
+  let uniformMsg (body : String) : Option String :=
+    let (_, ds) := elabStr (dvDoc "" body)
+    let vis := visible (ds.filter (·.subject == some "ctrl:zzsame"))
+    (vis[0]?).map (·.message)
+  t "option run: a group of one shape keeps its own sentence"
+    (match uniformMsg "Alpha \\zzsame[1]{Bravo}.\n\nDelta \\zzsame[2]{Echo}.",
+           uniformMsg "Alpha \\zzsame{Bravo}.\n\nDelta \\zzsame{Echo}." with
+     | some a, some b =>
+       (a.splitOn "any [...] options were dropped").length == 1 &&
+       (b.splitOn "options were dropped").length == 1
+     | _, _ => false)
   -- The census hypothesis, discharged: every diagnostic of this loss is
   -- subjected, which is what `Diag.tallySites_exact` needs to apply at all.
   t "option run: every diagnostic of the refusal is inside the census"

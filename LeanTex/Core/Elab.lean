@@ -216,12 +216,68 @@ structure Logos where
   right : Option (Array Inline) := none
   deriving Repr, BEq
 
+/-- **The argument shapes a counted refusal has met, as a set.** A
+once-per-construct warning shows the first site's words and the group's
+total, so those words are a claim about every site the number counts. When
+the sites differ in shape — one call of `\x` leading with a `[...]` run,
+another not — the first call's wording either hides a drop the reader needs
+or claims one that never happened. Both were live: a dropped run went
+unmentioned at default verbosity, and `(2 sites)` read as runs dropped at
+both.
+
+Two independent bits rather than a three-valued state, because that is what
+makes the accumulation order-blind: each is an `Array.any` over the sites'
+bits, so permuting the document's calls cannot change the wording
+(`runShape_fold_exact`). `{}` is the empty group — no site yet — and is
+never a wording. -/
+structure RunShape where
+  /-- Some site of this group led with a `[...]` run. -/
+  withRun : Bool := false
+  /-- Some site of this group led with no `[...]` run. -/
+  withoutRun : Bool := false
+  deriving Repr, BEq, DecidableEq
+
+/-- One more site, folded in. -/
+def RunShape.add (s : RunShape) (optionRun : Bool) : RunShape :=
+  if optionRun then { s with withRun := true } else { s with withoutRun := true }
+
+/-- **The accumulated shape is exactly the pair of `any`s over the sites.**
+Both projections are `Array.any`/`List.any`, so the wording a group's
+visible line carries is a function of the *set* of its sites' shapes and
+never of their order: the same document with its two calls swapped reports
+the same sentence. This is the statement behind the mixed-shape test that
+runs both orders. -/
+theorem runShape_fold_exact (bs : List Bool) :
+    bs.foldl RunShape.add {} =
+      { withRun := bs.any id, withoutRun := bs.any (!·) } := by
+  suffices h : ∀ (s : RunShape) (bs : List Bool), bs.foldl RunShape.add s =
+      { withRun := s.withRun || bs.any id, withoutRun := s.withoutRun || bs.any (!·) } by
+    simpa using h {} bs
+  intro s bs
+  induction bs generalizing s with
+  | nil => simp
+  | cons b rest ih =>
+    cases b <;> simp [RunShape.add, ih, List.any_cons, Bool.or_comm]
+
+/-- Folding a site in only ever adds shapes: a group's wording widens and
+never narrows, which is why one rewrite of the visible line per new shape is
+enough (there are two shapes, so at most one rewrite per group). -/
+theorem runShape_add_monotone (s : RunShape) (b : Bool) :
+    (s.withRun → (s.add b).withRun) ∧ (s.withoutRun → (s.add b).withoutRun) := by
+  cases b <;> simp [RunShape.add]
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
   not forty. Keys are namespaced (`env:`, `ctrl:`, `palette:`) so an
   environment and a command sharing a name cannot silence each other. -/
   warnedUnknown : Array String := #[]
+  /-- Per counted-refusal key: the argument shapes its sites have carried,
+  and the index in `diags` of the line the group's total is read off. The
+  index is recorded rather than searched for, so only the diagnostic *this*
+  emitter wrote is ever rewritten — the preamble's own refusal, which shares
+  the key but not the wording, is untouched. -/
+  runShapes : Array (String × RunShape × Nat) := #[]
   /-- `\title` / `\subtitle` / `\author` / `\institute` / `\date`, wherever
   they appear — beamer documents declare them in the body — read back by
   `\maketitle` and, as plain text, by the PDF metadata fallback. -/
@@ -465,15 +521,51 @@ made ten lines stand for fifty losses, two of them node labels dropped with
 no diagnostic at all because an earlier site had spent the key.
 `demote` delivers the first site as a note instead — the spliced-`.sty`
 TeX-internal refusal (`Compat.styInternal`), correct and unactionable per
-line, counted once by N0020 and listed under `-v`. -/
-private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) (demote : Bool := false) : EM Unit := do
-  let first := !(← get).warnedUnknown.contains key
-  if first then
-    modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
+line, counted once by N0020 and listed under `-v`.
+
+The state step is a pure function so that a statement can name it: the
+first-site flag is a term over the state passed in, not a bound variable
+inside a `do` block, which is what `warnUnknownCmd_pushes_one` reads. -/
+private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote first : Bool) : Diag :=
   let d := diagOf ctx code msg (some pos) (if first then help else none) (subject := some key)
-  modify fun st =>
-    { st with diags := st.diags.push (if demote || !first then d.demote else d) }
+  if demote || !first then d.demote else d
+
+/-- **One keyed warning, one diagnostic, carrying its code and its key as
+subject.** The census hypothesis, discharged at the door every counted
+diagnostic goes through: `Diag.tallySites_exact` — the theorem that the
+number on the visible line is the number of sites of that loss — assumes
+`subject.isSome`, and was vacuous on exactly the class that miscounted. -/
+theorem warnOnceDiag_kind (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote first : Bool) :
+    (warnOnceDiag ctx key code msg pos help demote first).kind = code := by
+  unfold warnOnceDiag diagOf Diag.of Diag.demote
+  dsimp only
+  split <;> rfl
+
+theorem warnOnceDiag_subject (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote first : Bool) :
+    (warnOnceDiag ctx key code msg pos help demote first).subject = some key := by
+  unfold warnOnceDiag diagOf Diag.of Diag.demote
+  dsimp only
+  split <;> rfl
+
+private def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) : ESt :=
+  let first := !st.warnedUnknown.contains key
+  { st with
+    warnedUnknown := if first then st.warnedUnknown.push key else st.warnedUnknown
+    diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first) }
+
+theorem warnOnceState_diags (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) :
+    (warnOnceState ctx key code msg pos help demote st).diags =
+      st.diags.push (warnOnceDiag ctx key code msg pos help demote
+        (!st.warnedUnknown.contains key)) := rfl
+
+private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
+    (help : Option String := none) (demote : Bool := false) : EM Unit :=
+  modify (warnOnceState ctx key code msg pos help demote)
 
 /-- Record a citation group's keys with their `\cite`'s span, first
 occurrence per key: the no-bibliography judge's sites (elabDoc). A
@@ -2586,6 +2678,16 @@ spelling reads as one sentence at both refusal doors. -/
 private def optionRunClause (optionRun : Bool) (kept : String) : String :=
   if optionRun then s!"its [...] options were dropped and {kept}" else kept
 
+/-- The same clause for a *group* of sites rather than one call: the wording
+the visible line carries, which must be true of every site the number beside
+it counts. A group whose calls all led with a run, or none of which did, is
+the single-site wording; a group that met both shapes says so, and each site
+still reads its own event as a note under `-v`. -/
+private def RunShape.clause (s : RunShape) (kept : String) : String :=
+  if !s.withRun then kept
+  else if !s.withoutRun then optionRunClause true kept
+  else s!"any [...] options were dropped and {kept}"
+
 /-- The advice a dropped option run carries, appended to the refusing
 construct's own help rather than delivered by a second code: one spelling,
 so the two refusal doors cannot disagree about what a reader should do with
@@ -2610,36 +2712,81 @@ printer's cut marks, derived from the trim and bleed"
 /-- **A refused command's recovery accounts for all of its arguments.** The
 code, message and help a refusal earns, as a value — the pure half of
 `warnUnknownCmd`, split out because the invariant is about *which* diagnostic
-the construct earns and a statement cannot reach that through the emitter's
-state thread (`warnOnce`'s first-site flag is a bound variable no statement
-can name). `unknownCmdDiag_accounts` is the statement.
+the construct earns. `unknownCmdDiag_code_exact` is the statement that the
+code is fixed by the construct's name alone.
 
-`optionRun` says the call led with a `[...]` run, which the arm drops: those
-bytes addressed the command, not the sentence, and kept as text they printed
-ink nobody wrote. Its fate is a clause of *this* message because the run is
-part of this construct's own recovery — one construct, one accounting. It was
-a second code (W0341, retired) naming a fragment of the argument list this
-message already covers, and the two doors disagreed about being counted: this
-one goes through `warnOnce` with subject `ctrl:<name>`, that one went through
-the raw door with none, so `tallySites` put `(2 sites)` on one line while the
+The argument is a `RunShape`, the set of argument shapes the diagnostic
+speaks for: one site's own shape at a per-site note, the whole group's at the
+line that carries the total. A leading `[...]` run earns no code of its own —
+its fate is a clause of *this* message, because the run is part of this
+construct's own recovery: those bytes addressed the command, not the
+sentence, and kept as text they printed ink nobody wrote. It was a second
+code (W0341, retired) naming a fragment of the argument list this message
+already covers, and the two doors disagreed about being counted: this one
+goes through `warnOnce` with subject `ctrl:<name>`, that one went through the
+raw door with none, so `tallySites` put `(2 sites)` on one line while the
 other printed at every site.
 
 The one named exception is still the `\footnotemark`/`\footnotetext` pair,
 which is pending (W0370, cross-command state — a minipage's notes too) and
 never "unknown". The retired code called it an unknown command at its own
 span, which was false; with one diagnostic there is nothing left to say it. -/
-private def unknownCmdDiag (name : String) (optionRun : Bool) :
+private def unknownCmdDiag (name : String) (shape : RunShape) :
     DiagCode × String × String :=
   if name == "footnotemark" || name == "footnotetext" then
-    let kept := optionRunClause optionRun "its text is kept in place"
+    let kept := shape.clause "its text is kept in place"
     let route := "\\footnote{...} where the mark should stand sets the note \
 at the page foot"
-    let advice := optionRunAdvice optionRun
+    let advice := optionRunAdvice shape.withRun
     (.W0370, s!"'\\{name}' is not paired with its partner yet; {kept}",
      s!"{route}{advice}")
   else
-    let kept := optionRunClause optionRun "its {...} arguments were kept as text"
-    (.W0301, s!"unknown command '\\{name}'; {kept}", unknownCmdHelp name optionRun)
+    let kept := shape.clause "its {...} arguments were kept as text"
+    (.W0301, s!"unknown command '\\{name}'; {kept}", unknownCmdHelp name shape.withRun)
+
+/-- One site's own shape. -/
+private def RunShape.one (optionRun : Bool) : RunShape := ({} : RunShape).add optionRun
+
+/-- **The line that carries a group's total says what is true of every site
+it counts.** Fold this site's shape into the group's, and when that widens
+the set — the second shape arriving — reword the line the total is read off
+so its clause covers both. The index is the one this emitter recorded, never
+a search, so only the diagnostic *this* emitter wrote is ever touched: the
+preamble's own refusal shares the key but not the wording, and stays as it
+is. -/
+private def runShapeReword (name : String) (new : RunShape) (idx : Nat)
+    (ds : Array Diag) : Array Diag :=
+  let (_, msg, help) := unknownCmdDiag name new
+  match ds[idx]? with
+  | none => ds
+  | some d => ds.setIfInBounds idx
+      { d with message := msg, help := d.help.map fun _ => help }
+
+/-- Rewording preserves the count: no site is added or removed by making the
+visible line honest. -/
+theorem runShapeReword_length (name : String) (new : RunShape) (idx : Nat)
+    (ds : Array Diag) : (runShapeReword name new idx ds).size = ds.size := by
+  unfold runShapeReword
+  dsimp only
+  split <;> simp
+
+private def bumpRunShape (name key : String) (optionRun : Bool) (st : ESt) : ESt :=
+  match st.runShapes.find? (·.1 == key) with
+  | none =>
+    { st with runShapes := st.runShapes.push (key, RunShape.one optionRun, st.diags.size) }
+  | some (_, old, idx) =>
+    let new := old.add optionRun
+    { st with
+      runShapes := (st.runShapes.filter (·.1 != key)).push (key, new, idx)
+      diags := if new == old then st.diags else runShapeReword name new idx st.diags }
+
+theorem bumpRunShape_length (name key : String) (optionRun : Bool) (st : ESt) :
+    (bumpRunShape name key optionRun st).diags.size = st.diags.size := by
+  unfold bumpRunShape
+  split
+  · rfl
+  · dsimp only
+    split <;> simp [runShapeReword_length]
 
 /-- The refusal a command earns, through the counted door. Outside the knot:
 the arm calls one sealed action. The demotion is W0301's alone — a spliced
@@ -2647,9 +2794,12 @@ the arm calls one sealed action. The demotion is W0301's alone — a spliced
 (`Compat.styInternal`), while the pending pair is neither. -/
 private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) : EM Unit :=
-  let (code, msg, help) := unknownCmdDiag name optionRun
-  warnOnce ctx ("ctrl:" ++ name) code msg pos (help := help)
-    (demote := code == .W0301 && Compat.styInternal ctx.file name)
+  let key := "ctrl:" ++ name
+  let (code, msg, help) := unknownCmdDiag name (RunShape.one optionRun)
+  modify fun st =>
+    warnOnceState ctx key code msg pos help
+      (code == .W0301 && Compat.styInternal ctx.file name)
+      (bumpRunShape name key optionRun st)
 
 /-- Record what a refusal recovered: the code that named the loss, the
 command it stood for, and the source the kept groups carried. Outside the
@@ -3951,46 +4101,76 @@ unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
-/-- **A refused command's recovery accounts for all of its arguments, so no
-second diagnostic names a fragment of one.** The code a refusal earns is
-fixed by the construct alone: a construct the engine knows and defers is
-named as pending, everything else as unknown, and the call's argument shape
-does not enter. A leading `[...]` run therefore earns no code of its own —
-its fate is a clause of this diagnostic's message
-(`unknownCmdDiag_optionRun_id` is the independence, read off this).
+/-- **The code a refusal earns is fixed by the construct's name alone.** A
+construct the engine knows and defers is named as pending, everything else as
+unknown, and the call's argument shape does not enter: a leading `[...]` run
+earns no code of its own. The message and help *do* depend on the shape — the
+run's fate is a clause of them — so this states the code and nothing more.
+The wording is the golden's to witness
+(`tests/golden/diagnostics.txt`), and that the wording on the counted line is
+true of every site it counts is `runShape_fold_exact` plus
+`optionRunAccountingChecks`' mixed-shape rows in both orders.
 
-Both halves of the defect are here. A run was named by a second code at the
-same span, so a command refused twice with a run reported three diagnostics
-for two losses; and that code went through the raw door with no subject while
-this one goes through `warnOnce` with `ctrl:<name>`, so `Diag.tallySites` put
-`(2 sites)` on one line while the other printed at every site. The pending
-half is the same fact, not a second repair: `\footnotemark` is W0370 whatever
-its arguments, and the retired code called it an unknown command at that very
-span.
-
-What this covers is the *choice* of diagnostic. What it does not cover is the
-state thread: how many diagnostics a refusal pushes across a document is
-`warnOnce`'s to say, and `warnOnce`'s first-site flag is a bound variable no
-statement here can name — `warnOnce_sites_exact` carries that half, with its
-reduction wall recorded. Nor does it say the subject is non-empty *by
-type*: `Diag.subject` is an `Option`, so `Diag.tallySites_exact` — the theorem
-that the number on the line is the number of sites — still carries
-`subject.isSome` as a hypothesis, and was vacuous on exactly the class that
-was broken. The one `warnOnce` call below discharges it for this class by
-construction; `Tests/Diag.lean` holds the gates that read the whole surface
-(`subjectCensusChecks`, `siteAccountingChecks`). -/
-theorem unknownCmdDiag_accounts (name : String) (optionRun : Bool) :
-    (unknownCmdDiag name optionRun).1 =
+The retired W0341 is why the code matters on its own: it named a fragment of
+the argument list this diagnostic already covers, at the same span, and for
+the pending pair it called a construct the engine knows an unknown command.
+With one code at the span there is nothing left to make that claim. -/
+theorem unknownCmdDiag_code_exact (name : String) (shape : RunShape) :
+    (unknownCmdDiag name shape).1 =
       (if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
   unfold unknownCmdDiag
   split <;> rfl
 
-/-- The option run earns no code: the diagnostic naming a refused command is
-the same whether the call led with a `[...]` run or not, so the run is
-accounted for inside that diagnostic and never beside it. -/
-theorem unknownCmdDiag_optionRun_id (name : String) (optionRun : Bool) :
-    (unknownCmdDiag name optionRun).1 = (unknownCmdDiag name false).1 := by
-  rw [unknownCmdDiag_accounts, unknownCmdDiag_accounts]
+/-- The option run earns no code: the *code* naming a refused command is the
+same whatever shapes its sites carried, so the run is accounted for inside
+that diagnostic and never beside it. Message and help differ by design —
+the run's fate is a clause of them — and this says only that the choice of
+code is shape-blind. -/
+theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
+    (unknownCmdDiag name shape).1 = (unknownCmdDiag name {}).1 := by
+  rw [unknownCmdDiag_code_exact, unknownCmdDiag_code_exact]
+
+/-- **One refusal, one diagnostic, with a subject.** The emitter fact the
+census needs and the fold cannot state: every call of `warnUnknownCmd` pushes
+exactly one diagnostic, carrying the construct's code and the subject
+`ctrl:<name>`. Rewriting the group's counted line (`bumpRunShape`) happens in
+place and is not a push, which is why this is stated as one more element at
+the end rather than as `st.diags.push d`.
+
+This is the hypothesis `Diag.tallySites_exact` carries and could not get:
+that theorem — the number on the line is the number of sites of that loss —
+assumes `subject.isSome`, so it was *vacuous* on exactly the class that
+miscounted. Here it is discharged by construction for every refused command.
+`subjectCensusChecks` and `siteAccountingChecks` hold the surface-wide
+gates. -/
+theorem warnUnknownCmd_pushes_one (ctx : Ctx) (name : String) (optionRun : Bool)
+    (pos : Pos) (st : ESt) :
+    ∃ d, ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.size
+          = st.diags.size + 1 ∧
+      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.back? = some d ∧
+      d.kind = (unknownCmdDiag name (RunShape.one optionRun)).1 ∧
+      d.subject = some ("ctrl:" ++ name) := by
+  have hrun : ((warnUnknownCmd ctx name optionRun pos).run st).2 =
+      warnOnceState ctx ("ctrl:" ++ name)
+        (unknownCmdDiag name (RunShape.one optionRun)).1
+        (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
+        (unknownCmdDiag name (RunShape.one optionRun)).2.2
+        ((unknownCmdDiag name (RunShape.one optionRun)).1 == .W0301 &&
+          Compat.styInternal ctx.file name)
+        (bumpRunShape name ("ctrl:" ++ name) optionRun st) := rfl
+  refine ⟨warnOnceDiag ctx ("ctrl:" ++ name)
+      (unknownCmdDiag name (RunShape.one optionRun)).1
+      (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
+      (unknownCmdDiag name (RunShape.one optionRun)).2.2
+      ((unknownCmdDiag name (RunShape.one optionRun)).1 == .W0301 &&
+        Compat.styInternal ctx.file name)
+      (!(bumpRunShape name ("ctrl:" ++ name) optionRun st).warnedUnknown.contains
+        ("ctrl:" ++ name)),
+    ?_, ?_, warnOnceDiag_kind .., warnOnceDiag_subject ..⟩
+  · rw [hrun, warnOnceState_diags]
+    simp [bumpRunShape_length]
+  · rw [hrun, warnOnceState_diags]
+    simp
 
 /-- Bind declared parameters from the call site — a user command's, or a
 user environment's from the groups after its `\begin`. Returns the bindings

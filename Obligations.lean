@@ -216,7 +216,9 @@ leading `[...]` option run is not content, so elaboration with the run and
 with the run deleted return the same inlines — no character of the run
 reaches the elaborated output, whatever the run's text. The *diagnostic* half
 of that arm is closed and no longer owed: the run's fate is a clause of the
-refusing command's own message, held by `Elab.unknownCmdDiag_optionRun_id`.
+refusing command's own message. `Elab.unknownCmdDiag_code_exact` says the
+*code* is shape-blind; `Elab.warnUnknownCmd_pushes_one` says one call pushes
+one subjected diagnostic; the clause is the golden's to witness.
 What is still owed is this, the content half. The shipped-page witness is
 `recoveryChecks` in Tests/Layout.lean. -/
 theorem elab_inlines_option_run_dropped (w kept : String) (st : Elab.ESt) :
