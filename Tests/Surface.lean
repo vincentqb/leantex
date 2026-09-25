@@ -5950,6 +5950,103 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the node label sets in the face the body sets in"
     (labelFaces.all fun f => bodyFaces.contains f)
 
+/-- **A document's own macros reach its pictures before the walk reads
+them.** Expansion precedes execution, as in TeX
+(`Picture.expandMacros`): the stream the statement reader and the label
+salvage see has already had the document's definitions taken out of it, so
+a node body that is nothing but a macro sets the macro's words, and a
+one-argument wrapper around `\textcolor` sets its argument in the role it
+names.
+
+The defect this closes made three pages of a real deck carry the declared
+placeholder where a node's label belonged. The boundary standalone already
+carried the document's reachable definitions — that is the macro-closure
+work — and the native walk did not, so a picture the engine drew itself met
+an undefined control word, salvaged nothing, and shipped the placeholder
+`labelFloor` pays a named loss with. The floor was doing its job; it was
+being asked the wrong question.
+
+Read off `Layout.Out` — the placeholder's absence and the label's words are
+census facts, and the colour a macro-supplied `\textcolor` sets is only
+visible on the shipped run. Invented content. -/
+def pictureMacroReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let pre := "\\palette{ accent = #1188CC }\n" ++
+    "\\def\\alphaword{Alpha}\n" ++
+    "\\newcommand{\\muted}[1]{\\textcolor{accent}{#1}}\n" ++
+    "\\newcommand{\\pairword}[2]{#1 and #2}\n" ++
+    "\\def\\innerword{Epsilon}\n" ++
+    "\\newcommand{\\chained}{\\innerword}\n"
+  let src := pre ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node (aa) at (0, 0) {\\alphaword};\n" ++
+    "\\node (bb) at (4, 0) {\\muted{Beta}};\n" ++
+    "\\node (cc) at (0, -2) {\\pairword{Gamma}{Delta}};\n" ++
+    "\\node (dd) at (4, -2) {\\chained};\n" ++
+    "\\draw (aa) -- (bb);\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let (doc, ds) := elabStr src
+  let out := layoutOf oneFace doc
+  let c := censusOf (coveredColorsOf doc) out
+  -- The label ships the macro's words, and never the placeholder a named
+  -- loss would have paid with.
+  t "a node body of one zero-argument macro ships that macro's words"
+    (pageOccurs c 0 "Alpha" == 1)
+  t "a one-argument macro ships its argument"
+    (pageOccurs c 0 "Beta" == 1)
+  t "a two-argument macro ships both arguments in order"
+    (pageOccurs c 0 "Gamma and Delta" == 1)
+  -- A macro whose body spells another is expanded through: the table is
+  -- transitively closed and one pass per entry exhausts the chain.
+  t "a macro whose body spells another reaches the page through it"
+    (pageOccurs c 0 "Epsilon" == 1 && !pageHas c 0 "innerword")
+  t "no node ships the declared placeholder"
+    (!pageHas c 0 Picture.nodeFloorPlaceholder)
+  t "no macro in a node body is named as unknown"
+    (!ds.any fun d => d.code == DiagCode.W0334.code &&
+      hasStr d.message "unknown macro")
+  t "the macro-reach document elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  t "no boundary box stands where the macro picture is"
+    ((c[0]?.map (·.images == 0)).getD false)
+  -- The colour half: a `\textcolor` the document's macro supplied paints
+  -- its argument, which only the shipped run can say.
+  let runColors : Array Ir.Color :=
+    (out.pages[0]?.map fun p =>
+      p.lines.flatMap fun l => l.segs.filterMap fun s =>
+        match s with
+        | .run _ col _ _ glyphs _ _ _ _ _ =>
+          if glyphs.any (·.2 == 'B') then some col else none
+        | _ => none).getD #[]
+  t "a macro-supplied '\\textcolor' paints the run it wraps"
+    (runColors.any (· == { r := 0x11, g := 0x88, b := 0xCC }))
+  -- The two names the walk owns are not the document's to take: expanding a
+  -- redefined `\node` would delete the statement in silence.
+  let (_, ownDs) := elabStr ("\\def\\node{Xyz}\n\\begin{document}\n" ++
+    "\\begin{tikzpicture}\n\\node (aa) at (0, 0) {Zeta};\n" ++
+    "\\end{tikzpicture}\n\\end{document}")
+  let ownC := censusOf (coveredColorsOf (elabStr ("\\def\\node{Xyz}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node (aa) at (0, 0) {Zeta};\n\\end{tikzpicture}\n" ++
+    "\\end{document}")).1) (layoutOf oneFace (elabStr ("\\def\\node{Xyz}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node (aa) at (0, 0) {Zeta};\n\\end{tikzpicture}\n\\end{document}")).1)
+  t "a macro of a name the walk owns leaves the statement standing"
+    (pageOccurs ownC 0 "Zeta" == 1 && !pageHas ownC 0 "Xyz" &&
+     ownDs.all (·.severity == .note))
+  -- A `\foreach` variable is the picture's, whatever the document called
+  -- it: expanding the document's `\xx` would replace the loop's own value.
+  let loopC := censusOf (coveredColorsOf (elabStr ("\\def\\xx{9}\n" ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\foreach \\xx in {1, 2}{\\node at (\\xx, 0) {Eta\\xx};}\n" ++
+    "\\end{tikzpicture}\n\\end{document}")).1)
+    (layoutOf oneFace (elabStr ("\\def\\xx{9}\n\\begin{document}\n" ++
+      "\\begin{tikzpicture}\n" ++
+      "\\foreach \\xx in {1, 2}{\\node at (\\xx, 0) {Eta\\xx};}\n" ++
+      "\\end{tikzpicture}\n\\end{document}")).1)
+  t "a loop variable is the picture's, not the document's macro of that name"
+    (pageHas loopC 0 "Eta1" && pageHas loopC 0 "Eta2" && !pageHas loopC 0 "Eta9")
+
 /-- **A key name the document writes is the key name the walk reads.** The
 invariant over the declared-and-used names of one picture: every name a
 `/.style` or `/.append style` declares resolves at the bracket that uses

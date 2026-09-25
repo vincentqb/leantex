@@ -406,6 +406,81 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-25 — a document's macros reach its picture *before* the walk reads
+it (M8b slice 4, macros in the native walk). The boundary standalone had
+carried the document's reachable definitions since the macro-closure entry
+below; the native walk had not, so the two readers of one picture disagreed
+about what the document's vocabulary was — and the native one is the reader
+that draws.
+
+**The measurement.** Three pages of the private reference corpus carried the
+declared `[…]` placeholder where a node's label belonged, from a node body
+that was one `\def`-defined macro. A one-argument `\newcommand` wrapping
+`\textcolor` shipped unmuted for the same cause. The floor was working
+exactly as designed — `labelFloor_accounts` says a named loss ships ink, and
+it did — so nothing in the suite was red: the engine was answering the
+question honestly and being asked the wrong one.
+
+**Pre-expansion, not expansion at the salvage.** The token stream the
+statement reader and the label salvage see is one the document's
+definitions have already been taken out of. Two arguments decided it. The
+first is TeX's own order — expansion precedes execution — which makes a
+macro work in a node body, an edge label, a coordinate and a conditional's
+test from one rewrite instead of four readers each learning a table. The
+second is the shape of what the alternative would have touched: the salvage
+is a mode machine with no equational theory (its own `nodeLabel_mem` is
+owed for exactly that reason), and threading a shrinking macro table
+through its state would have put that statement further out of reach, while
+a token rewrite is a pure function that has one.
+
+**The bound is the table, never a budget.** One pass resolves one level of
+nesting, so a chain of distinct names is exhausted in as many passes as the
+table has entries, and the loop stops the moment a pass changes nothing. A
+cyclic definition therefore leaves its name standing and is *named* by the
+salvage rather than hanging the run — which is what a fuel parameter would
+have bought at the price of a number nobody can defend.
+
+**Arity 0, 1 and 2, and the reason is the checker.** Each arm of the
+expansion recurses on a strictly shorter token list, which is what makes its
+measure one the checker can see; consuming a *computed* number of argument
+groups is precisely the shape whose measure it cannot. Three arities cover
+the picture idiom — a bare alias, a one-word wrapper, a two-word one —
+and a wider macro is left in place, so the salvage names it and the label
+keeps the words it can read. A named loss, not a body substituted against
+the wrong arguments.
+
+**Two names that are not the document's to take.** A macro of a name the
+walk owns (`\node`, `\draw`, `\foreach`, `\else`, any `\if…`) is left to the
+walk: expanding it would delete the construct in silence, and honouring the
+redefinition needs a picture language this walk does not have. And a name
+the picture *binds* — a `\foreach` variable, a `\pgfmathsetmacro` target —
+is the picture's whatever the document also called it, so it is cut from the
+table before a single expansion happens. Both are read off the one place the
+vocabulary lives, so they cannot drift from `step`.
+
+**The arity is read from the spelling, then from the body.** The four
+definer families share one shape — head, name, arity or parameter text, body
+as the *last* group — so the body is read by that shape rather than by
+recognising which family wrote it. The arity is the first all-digit `[k]`
+run before the body where the spelling carries one (clsguide, xparse) and
+otherwise the body's own highest `#k` (TeXbook chapter 20). Two defects were
+found here by the fixture rather than by inspection: the `[k]` match
+compared a parsed `Pos` and so never fired, and the `#k` scan was flat while
+a wrapper always keeps its parameter one group in — `\textcolor{role}{#1}`
+read as arity zero and shipped a literal `#1` in the palette colour. Both
+are why the fixture asserts the *page* and not the table.
+
+**Read with the real lexer and parser**, because a definition body is a
+tree — braces, control words, math — and the collection carries it as the
+source text of one. The engine's re-emission is source the document could
+have written, so this is a LaTeX reader, not a reader of a private
+spelling.
+
+Evidence: seven rows of `pictureMacroReachChecks` red on the parent commit
+and green here, read off `Layout.Out` — the placeholder's absence and the
+labels' words from the census, and the colour a macro-supplied `\textcolor`
+sets from the shipped run, which is the only place it is visible.
+
 2026-09-25 — a key name is a name, and the reader stopped at its first
 hyphen (M8b slice 4, picture key names). The highest-value defect of the
 four in this slice: one lexing rule, and it retired three separate visual

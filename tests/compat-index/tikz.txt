@@ -10,7 +10,15 @@
 # its components, . introduces a handler, , an entry and = a value — every
 # other character belongs to the name, so a hyphen, a colon and a digit are
 # ordinary key-name characters and a name is read whole), §15.3.1-2 (line
-# width and dash patterns), §14 paths (\draw, \path, the -- line-to,
+# width and dash patterns), and — for a document macro standing in a picture —
+# clsguide's \newcommand{\c}[n][d]{defn}, xparse's
+# \DeclareDocumentCommand{\c}{spec}{defn} and TeXbook chapter 20 for
+# \def\c<param text>{defn} and for #1-#9 being a macro's parameters: a
+# document's own definitions are expanded into the picture's token stream
+# before the walk reads it, as expansion precedes execution in TeX, so a
+# macro works in a node body, an edge label, a coordinate and a
+# conditional's test alike. Arity 0, 1 and 2 are expanded; a wider macro is
+# left standing and named, §14 paths (\draw, \path, the -- line-to,
 # §14.13 to paths with out=/in= and the edge operation whose every edge
 # carries draw; the circle path operation is outside the subset),
 # TeXbook chapter 20 for the conditionals a picture body may hold: every
@@ -82,6 +90,9 @@ body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
+body impl \def\zzw{Q}\begin{tikzpicture}\node (u) at (0,0) {\zzw};\end{tikzpicture}
+body impl \newcommand{\zzx}[1]{#1}\begin{tikzpicture}\node (u) at (0,0) {\zzx{Q}};\end{tikzpicture}
+body impl \newcommand{\zzy}[2]{#1#2}\begin{tikzpicture}\node (u) at (0,0) {\zzy{P}{Q}};\end{tikzpicture}
 pre impl \tikzset{node distance = 1cm and 1cm}
 pre impl \tikzset{zz/.style={}}
 pre impl \tikzset{->}

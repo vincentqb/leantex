@@ -3749,6 +3749,243 @@ def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
     prev := ev
   return prev
 
+/-- A document macro as the picture walk uses it: how many arguments it
+takes, and its body's tokens. -/
+structure Macro where
+  arity : Nat
+  body : List Tok
+  deriving Repr, Inhabited
+
+/-- The control words this walk owns, so a document that redefined one does
+not redefine the picture language out from under itself. `\node`, `\draw`
+and their siblings are the statement heads `step` reads; `\else`/`\fi` close
+a conditional and `condKindOf` opens one. A macro of such a name is left to
+the walk and named where it stands, which is the honest answer: expanding
+it would silently delete the construct, and honouring the redefinition
+would need a picture language this walk does not have. Read off the one
+place the vocabulary lives (`step`), so the two cannot drift. -/
+def walkCtrls : List String :=
+  ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
+   "pgfmathtruncatemacro", "else", "fi"]
+
+/-- Does this walk give the name a meaning of its own? -/
+def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
+
+/-- The names a picture binds for itself: a `\foreach` variable and a
+`\pgfmathsetmacro` target. pgf binds them in the picture's own scope, so
+they are the picture's whatever the document also called them — which is
+why they are cut from the macro table before a single expansion happens.
+A scan over the token stream rather than over the parsed statements,
+because the binding has to be known before the stream is rewritten. -/
+def boundNames (ts : Array Tok) : List String := Id.run do
+  let mut out : List String := []
+  let mut inVars := false
+  for k in [0:ts.size] do
+    match ts[k]? with
+    | some (.ctrl "foreach") => inVars := true
+    | some (.ctrl "pgfmathsetmacro") | some (.ctrl "pgfmathtruncatemacro") =>
+      match ts[k+1]?, ts[k+2]? with
+      | some (.group [.ctrl n]), _ => out := n :: out
+      | some .space, some (.group [.ctrl n]) => out := n :: out
+      | _, _ => pure ()
+    | some (.ctrl v) => if inVars then out := v :: out
+    | some (.ident "in") => inVars := false
+    | _ => pure ()
+  return out
+
+mutual
+
+/-- `#k` replaced by the k-th argument, through the body's own tree. An
+accumulator rather than an append of the recursive call, so the walk costs
+one copy and not one per token. -/
+private def substList (args : Array (List Tok)) (acc : Array Tok) :
+    List Tok → Array Tok
+  | [] => acc
+  | .sym '#' :: .num m :: rest =>
+    substList args (((args[(m / 1000 - 1).toNat]?).getD []).foldl Array.push acc) rest
+  | t :: rest => substList args (acc.push (substTok args t)) rest
+
+private def substTok (args : Array (List Tok)) : Tok → Tok
+  | .group g => .group (substList args #[] g).toList
+  | .ctrl n => .ctrl n
+  | .ident s => .ident s
+  | .num m => .num m
+  | .sym c => .sym c
+  | .space => .space
+  | .math d b => .math d b
+  | .other w => .other w
+
+end
+
+mutual
+
+/-- One expansion level over the whole stream: every name in the table
+replaced by its body with its arguments substituted, and the bodies' own
+groups walked so a macro inside a group expands too.
+
+**Arity 0, 1 and 2, and a name is otherwise left standing.** The bound is
+not a taste: each arm's recursive call has to be on a strictly shorter list
+for the walk to terminate by a measure the checker can see, and consuming a
+*computed* number of argument groups is exactly the shape whose measure it
+cannot. Three arities cover the picture idiom (a bare alias, a one-word
+wrapper, a two-word one); a wider macro is left in place, so `salCtrl`
+names it and the label keeps the words it can read — a named loss rather
+than a body substituted against the wrong arguments. -/
+private def expandList (tbl : List (String × Macro)) (acc : Array Tok) :
+    List Tok → Array Tok
+  | [] => acc
+  -- A space between a name and its argument is the name's, as TeX reads it.
+  | .ctrl n :: .space :: rest => expandList tbl acc (.ctrl n :: rest)
+  | .ctrl n :: .group a :: .group b :: rest =>
+    match tbl.lookup n with
+    | some m =>
+      if m.arity == 2 then
+        expandList tbl ((substList #[a, b] #[] m.body).foldl Array.push acc) rest
+      else if m.arity == 1 then
+        expandList tbl ((substList #[a] #[] m.body).foldl Array.push acc)
+          (.group b :: rest)
+      else if m.arity == 0 then
+        expandList tbl (m.body.foldl Array.push acc) (.group a :: .group b :: rest)
+      else expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest)
+    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest)
+  | .ctrl n :: .group a :: rest =>
+    match tbl.lookup n with
+    | some m =>
+      if m.arity == 1 then
+        expandList tbl ((substList #[a] #[] m.body).foldl Array.push acc) rest
+      else if m.arity == 0 then
+        expandList tbl (m.body.foldl Array.push acc) (.group a :: rest)
+      else expandList tbl (acc.push (.ctrl n)) (.group a :: rest)
+    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: rest)
+  | .ctrl n :: rest =>
+    match tbl.lookup n with
+    | some m =>
+      if m.arity == 0 then expandList tbl (m.body.foldl Array.push acc) rest
+      else expandList tbl (acc.push (.ctrl n)) rest
+    | none => expandList tbl (acc.push (.ctrl n)) rest
+  | t :: rest => expandList tbl (acc.push (expandTok tbl t)) rest
+
+private def expandTok (tbl : List (String × Macro)) : Tok → Tok
+  | .group g => .group (expandList tbl #[] g).toList
+  | .ctrl n => .ctrl n
+  | .ident s => .ident s
+  | .num m => .num m
+  | .sym c => .sym c
+  | .space => .space
+  | .math d b => .math d b
+  | .other w => .other w
+
+end
+
+/-- **A document's macros reach its picture before the walk reads it.**
+Expansion precedes execution, as it does in TeX: the stream the statement
+reader and the label salvage see is one a macro has already been taken out
+of, so a macro works in a node body, an edge label, a coordinate and a
+conditional's test alike, and neither the mode machine nor the salvage has
+to learn a table. That is the argument for pre-expansion over expanding at
+the salvage: the salvage is a mode machine with no equational theory — its
+own `nodeLabel_mem` is owed for that reason — and threading a shrinking
+table through its state would put that statement further out of reach,
+while a token rewrite is a pure function with one.
+
+**The bound is the table, not a budget.** One pass resolves one level of
+nesting, so a chain of distinct names is exhausted in as many passes as the
+table has entries; the loop stops earlier the moment a pass changes
+nothing. A cycle therefore leaves its name standing and is *named* by the
+salvage rather than hanging the run — which is what a fuel parameter would
+have bought, at the cost of a number nobody can justify. -/
+def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array Tok :=
+  Id.run do
+  if tbl.isEmpty then return ts
+  let mut out := ts
+  for _ in [0:tbl.length] do
+    let next := expandList tbl #[] out.toList
+    if next == out then break
+    out := next
+  return out
+
+mutual
+
+/-- The highest `#k` a body references, through the body's own tree, which
+is the macro's arity when the definer's spelling does not carry one
+(TeXbook chapter 20: a macro's parameters are `#1`–`#9` and its body is
+what references them). A tree walk and not a flat scan: `\textcolor{role}
+{#1}` keeps its parameter one group in, which is where a wrapper macro
+always puts it. -/
+private def refArityList (acc : Nat) (prevHash : Bool) : List Tok → Nat
+  | [] => acc
+  | .sym '#' :: rest => refArityList acc true rest
+  | .num m :: rest =>
+    refArityList (if prevHash then max acc (m / 1000).toNat else acc) false rest
+  | t :: rest => refArityList (max acc (refArityTok t)) false rest
+
+private def refArityTok : Tok → Nat
+  | .group g => refArityList 0 false g
+  | .ctrl _ => 0
+  | .ident _ => 0
+  | .num _ => 0
+  | .sym _ => 0
+  | .space => 0
+  | .math _ _ => 0
+  | .other _ => 0
+
+end
+
+/-- The arity a body's own parameter references imply. -/
+private def refArity (body : List Tok) : Nat := refArityList 0 false body
+
+/-- One document macro, read from its definition as the document wrote it.
+
+The four definer families share one shape — a head, the name, the
+arity or parameter text, then the body as the *last* group
+(`\newcommand{\c}[n][d]{defn}` and its siblings, clsguide;
+`\DeclareDocumentCommand{\c}{spec}{defn}`, xparse; `\def\c<param>{defn}`,
+TeXbook chapter 20; the native `\define`) — so the body is read by that
+shape rather than by recognising which family wrote it. The arity is the
+first all-digit `[k]` run before the body where the spelling carries one,
+and otherwise the body's own highest `#k`: a family that states its arity
+is believed, and one that does not is read the way TeX reads it. The cost
+is a macro whose declared parameter its body never uses, which reads as
+arity zero and leaves its argument standing as content — a visible wrong,
+not a silent one.
+
+Read with the real lexer and parser because the body is a *tree* — braces,
+control words, math — and the definition arrives as the source text of one.
+The engine's own re-emission is source the document could have written, so
+this is a LaTeX reader and not a reader of a private spelling. -/
+def readMacro (line : String) : Option Macro := Id.run do
+  let (toks, _) := Lex.lex "" line
+  let (raws, _) := Parse.parse "" toks
+  let mut bodyAt : Option Nat := none
+  for k in [0:raws.size] do
+    if raws[k]? matches some (.group _ _) then bodyAt := some k
+  let some bi := bodyAt | return none
+  let some (.group body _) := raws[bi]? | return none
+  let bodyToks := (ofRaws body).toList
+  -- The declared arity: the first `[k]` run standing before the body.
+  let mut declared : Option Nat := none
+  for k in [0:bi] do
+    match raws[k]?, raws[k+1]?, raws[k+2]? with
+    | some (.sym '[' _), some (.word d _), some (.sym ']' _) =>
+      if declared.isNone && !d.isEmpty && d.toList.all Char.isDigit then
+        declared := d.toNat?
+    | _, _, _ => pure ()
+  return some { arity := declared.getD (refArity bodyToks), body := bodyToks }
+
+/-- The macro table one picture reads: the document's definitions, less
+every name the walk owns and every name the picture binds for itself, and
+less any whose definition this reader cannot read. `names` is the document's
+reachable set as the elaborator collected it (`Elab.Ctx.picMacros`), one
+entry per name, in document order. -/
+def macroTable (names : Array (String × String)) (ts : Array Tok) :
+    List (String × Macro) := Id.run do
+  let bound := boundNames ts
+  let mut out : List (String × Macro) := []
+  for (n, line) in names do
+    unless walkOwns n || bound.contains n do
+      if let some m := readMacro line then out := (n, m) :: out
+  return out
+
 /-- Elaborate one `tikzpicture` body: the leading `[scale=...]` option
 block, the statements, then the unrolled evaluation. Everything the
 subset cannot render is a named diagnostic beside the shapes that did.
@@ -3769,9 +4006,11 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
     (sets : Array (Array Parse.Raw) := #[])
-    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+    (metric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (macros : Array (String × String) := #[]) :
     Ir.Pic.Picture × Array PDiag := Id.run do
-  let toks := ofRaws raws
+  let raw := ofRaws raws
+  let toks := expandMacros (macroTable macros raw) raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map fun keys => ofRaws keys)
   -- `node distance` is a key, not a definition: the document's `\tikzset`
