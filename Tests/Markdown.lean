@@ -319,4 +319,54 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has "![[a](b)](c)\n" "<img" && has "![[a](b)](c)\n" "alt=a")
   t "a link's opener goes inactive across a link inside it"
     (has "[[a](b)](c)\n" "[<a" && has "[[a](b)](c)\n" "</a>](c)")
+  -- Defect: the info string was spliced into `{lstlisting}`'s option head
+  -- and the alternative into `\includegraphics`'s, both re-read by the
+  -- elaborator, so reader text crossed into another grammar: a `]` ended
+  -- the head and leaked into the code, a `,` switched on options, a brace
+  -- shipped `[language={r,]` as the code's first line.
+  let codeInfo (src : String) : Bool :=
+    (dvMd src).any fun d => d.kind == .W0392 && d.subject == some "md:code-info"
+  let noLeak (src : String) : Bool := (dvMd src).all (·.kind != .W0110)
+  t "a bracket in an info string does not leak into the code"
+    (has (fence ++ "a]b\ncode\n" ++ fence ++ "\n") "<pre><code>code</code></pre>"
+      && codeInfo (fence ++ "a]b\ncode\n" ++ fence ++ "\n"))
+  t "text after a bracket in an info string does not reach the page"
+    (!has (fence ++ "x]leaked text\ncode\n" ++ fence ++ "\n") "leaked")
+  t "a comma in an info string switches on no listing option"
+    (!has (fence ++ "python,numbers=left\ncode\n" ++ fence ++ "\n") "numbered"
+      && codeInfo (fence ++ "python,numbers=left\ncode\n" ++ fence ++ "\n"))
+  t "a chunk header's braces do not ship as the code's first line"
+    (!has (fence ++ "{r, echo=FALSE}\nx <- 1\n" ++ fence ++ "\n") "[language"
+      && has (fence ++ "{r, echo=FALSE}\nx <- 1\n" ++ fence ++ "\n") "<code>x <- 1</code>")
+  t "a lone brace for an info string does not ship as code"
+    (!has (fence ++ "{\ncode line\n" ++ fence ++ "\n") "[language")
+  t "the info string's first word ends at a tab"
+    (has (fence ++ "ruby\tx\ncode\n" ++ fence ++ "\n") "<code class=language-ruby>")
+  t "a backslash escape in an info string is resolved"
+    (has (fence ++ "foo\\+bar\nfoo\n" ++ fence ++ "\n") "class=language-foo+bar")
+  t "an info word outside the language grammar is named, not dropped"
+    (codeInfo (fence ++ "f&ouml;&ouml;\nfoo\n" ++ fence ++ "\n"))
+  t "no fenced block raises an unmodelled listing option"
+    ([fence ++ "a]b\nc\n" ++ fence, fence ++ "{r, echo=FALSE}\nc\n" ++ fence,
+      fence ++ "python,numbers=left\nc\n" ++ fence, fence ++ "ruby\tx\nc\n" ++ fence,
+      fence ++ "f&ouml;\nc\n" ++ fence, fence ++ "{\nc\n" ++ fence].all (noLeak ·))
+  t "a bracket and a comma in an alternative reach the page whole"
+    (has "![a\\]b, c=d](u.png)\n" "alt=a]b, c=d>" && noLeak "![a\\]b, c=d](u.png)\n")
+  t "a closing brace in an alternative reaches the page whole"
+    (has "![a}, b](u.png)\n" "alt=a}, b>" && noLeak "![a}, b](u.png)\n")
+  t "balanced double quotes in an alternative reach the page whole"
+    (has "![say \"hi\" now](u.png)\n" "alt=say \"hi\" now>")
+  t "an alternative no option spelling carries is named, and still ships"
+    ((dvMd "![a } , \" b , c](u.png)\n").any
+        (fun d => d.kind == .W0392 && d.subject == some "md:image-alt")
+      && has "![a } , \" b , c](u.png)\n" "alt=a } , \u201d b , c>")
+  t "a double quote an option spelling does carry is not named"
+    ((dvMd "![a } , \" b](u.png)\n").all (fun d => d.subject != some "md:image-alt")
+      && has "![a } , \" b](u.png)\n" "alt=a } , \" b>")
+  let puncts := "!#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".toList
+  let altLost := puncts.filter fun c =>
+    let src := "![x\\" ++ String.singleton c ++ "y, z=w](u.png)\n"
+    !(has src ("alt=x" ++ String.singleton c ++ "y, z=w>") && noLeak src)
+  t s!"every ASCII punctuation character but the quote reaches an alternative whole \
+(lost: {altLost})" altLost.isEmpty
   mdAccountsChecks t

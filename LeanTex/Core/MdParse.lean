@@ -737,6 +737,30 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
     return some (String.singleton (Char.ofNat cp), j + 1)
   | _ => return none
 
+/-- A fenced block's info string with its backslash escapes and character
+references resolved (§4.5, §2.4, §2.5: both are recognized in info
+strings). `foo\+bar` names the language `foo+bar`; read raw, the listing
+lost it. -/
+def decodeInfo (s : String) : String := Id.run do
+  let c : Chars := { cs := s.toList.toArray, ps := #[] }
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:c.size + 1] do
+    if i ≥ c.size then break
+    match escaped? c i with
+    | some d =>
+      out := out.push d
+      i := i + 2
+    | none =>
+      match entityAt c i with
+      | some (v, next) =>
+        out := out ++ v
+        i := next
+      | none =>
+        out := out.push ((c.at? i).getD ' ')
+        i := i + 1
+  return out
+
 end LeanTex.Core.Md
 
 
@@ -1548,7 +1572,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
-      leaf := .fenced fch flen finfo lpos (j - i) #[]
+      leaf := .fenced fch flen (decodeInfo finfo) lpos (j - i) #[]
     else if htmlBlockAt cs j then
       -- The refusal names the construct's own column, not the line's: a
       -- block inside a quote or an item starts after the container prefix,

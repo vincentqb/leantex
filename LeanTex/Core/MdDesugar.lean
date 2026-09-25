@@ -1,5 +1,7 @@
 import LeanTex.Core.MdParse
 import LeanTex.Core.Parse
+import LeanTex.Core.Decl
+import LeanTex.Core.Ir
 
 /-! # Markdown's meaning: the desugaring into the surface AST
 
@@ -19,13 +21,21 @@ is the registry's rule and not a habit:
   One today: `md:thematic-break`, which has no block in this engine.
 * `W0392` (`degraded`, floor `content`) for a construct that ships,
   diminished: `md:heading-depth`, `md:list-start`, `md:loose-list`,
-  `md:link-title`, `md:image-title`. Each of these once took `W0307`, and
-  the census then read four shipping constructs as absent content.
+  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`. Each of
+  the first five once took `W0307`, and the census then read shipping
+  constructs as absent content.
 
-A construct the surface AST *can* express is never routed: a fenced block's
-info string rides `{lstlisting}`'s `language=` key and an image's text
-alternative rides `\includegraphics`'s braced `alt`, both through their one
-existing resolving site. -/
+**No reader text reaches a re-parse.** Two surface constructs are read back
+from option text by the elaborator — a listing's `[language=…]` head and an
+image's `[alt=…]` run — and splicing reader text into either was an
+injection path: an info string `a]b` shipped `b]` as code, and
+`{r, echo=FALSE}` shipped `[language={r,]` as its first line. So what
+crosses is never the author's text. A language crosses as an
+`Ir.ListingLang`, the IR's own value, whose token grammar holds no character
+the option head reads; a spelling outside it is routed (`md:code-info`). An
+alternative crosses in the one spelling the elaborator's own option splitter
+is checked to read back exactly (`altSource`); text no spelling can carry
+has its straight double quotes set curly, and says so (`md:image-alt`). -/
 
 namespace LeanTex.Core.Md
 
@@ -40,15 +50,46 @@ A construct that *does* ship, diminished, takes `routeDegraded` instead. The
 two were one code, and the census then read four shipping constructs as
 absent content. -/
 def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
-  { kind := .W0307, message := what, span := some ⟨file, pos⟩,
-    subject := some ("md:" ++ subject) }
+  Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
 
 /-- A `W0392`: the construct sets, with part of its declaration dropped —
 `degraded`, floor `content`, which is what the census must see for a heading
 that sets one level up or a link that sets without its title. -/
-def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
-  { kind := .W0392, message := what, span := some ⟨file, pos⟩,
-    subject := some ("md:" ++ subject) }
+def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
+    (help : Option String := none) : Diag :=
+  Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
+
+/-- The value the elaborator reads back from one `\includegraphics` option
+source: `Decl.splitEntries`, then `Decl.splitEntry`, then the one layer of
+braces or quotes `readImageOpts` strips, then its trim. `none` when the
+source does not read as exactly one `alt` entry. -/
+def altReadBack (src : String) : Option String :=
+  match Decl.splitEntries src with
+  | [e] =>
+    match Decl.splitEntry e with
+    | some ("alt", v) =>
+      let v :=
+        if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
+          String.ofList (v.toList.drop 1).dropLast
+        else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+          String.ofList (v.toList.drop 1).dropLast
+        else v
+      some v.trimAscii.toString
+    | _ => none
+  | _ => none
+
+/-- An option source for a text alternative that reads back as exactly that
+text, checked with the reader's own splitter rather than argued: quoted,
+where nothing but a `"` ends the value; else braced, where the splitter's
+depth and string tracking must both come back balanced. `none` when neither
+spelling reads back — the text is then not carried as written. -/
+def altSource (t : String) : Option String :=
+  let want := t.trimAscii.toString
+  let quoted := "alt=\"" ++ t ++ "\""
+  let braced := "alt={" ++ t ++ "}"
+  if altReadBack quoted == some want then some quoted
+  else if altReadBack braced == some want then some braced
+  else none
 
 /-- Literal text as surface words and spaces: one `word` per run of
 non-space characters. Going through `word` rather than through generated
@@ -126,20 +167,29 @@ def inlRaws (file : String) : Inl → Array Raw × Array Diag
         "a link's title is not carried: the link sets without it" p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
-    -- The alt text rides `\includegraphics`'s own `alt` key, braced, so a
-    -- value carrying `,`, `]` or `=` survives the option split rather than
-    -- being routed: `Decl.splitEntries` tracks brace depth and
-    -- `readImageOpts` strips the braces.
-    let text := inlText alt
+    -- The alternative rides `\includegraphics`'s own `alt` key in the one
+    -- spelling the option splitter is checked to read back exactly
+    -- (`altSource`). Text no spelling carries sets with its straight double
+    -- quotes curly — still the alternative, and named.
+    let text := String.ofList ((inlText alt).toList.map fun c => if c == '\t' then ' ' else c)
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
         "an image's title is not carried: the image sets without it" p]
     if text.isEmpty then
       (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
-      (#[.ctrl "includegraphics" p, .sym '[' p]
-         ++ textRaws "alt=" p
-         ++ #[.group (textRaws text p) p, .sym ']' p, .group (textRaws dest p) p], ds)
+      let (src, ds) := match altSource text with
+        | some s => (s, ds)
+        | none =>
+          let curly := String.ofList (text.toList.map fun c => if c == '"' then '\u201d' else c)
+          ((altSource curly).getD "alt=\"\"",
+           ds.push (routeDegraded file "image-alt"
+             "an image's text alternative sets with its straight double quotes as curly ones: \
+the image option cannot carry them as written" p
+             (help := some "write the alternative without straight double quotes")))
+      let altRaws := textRaws src p
+      (#[.ctrl "includegraphics" p, .sym '[' p] ++ altRaws
+         ++ #[.sym ']' p, .group (textRaws dest p) p], ds)
 
 /-- A list of inline nodes, accumulating: prepending to the recursive result
 would copy it at every element. -/
@@ -169,17 +219,25 @@ def blkRaws (file : String) : Blk → Array Raw × Array Diag
   | .code info text p =>
     -- The info string's first word is the language, which the IR carries
     -- (`Ir.ListingSpec.language`) and both artifacts project — the HTML
-    -- `code` element's class and the markdown fence's info string. So it
-    -- rides `{lstlisting}`'s own `language=` key through the one resolving
-    -- site rather than being routed: a spelling outside the token grammar
-    -- is the elaborator's W0110 to name, not the reader's to guess. Only
-    -- the first word is the language, which is what the spec's own expected
-    -- HTML carries.
-    let lang := ((info.splitOn " ").headD "").trimAscii.toString
-    if lang.isEmpty then
-      (#[.verb "verbatim" text p], #[])
-    else
-      (#[.verb "lstlisting" ("[language=" ++ lang ++ "]\n" ++ text) p], #[])
+    -- `code` element's class and the markdown fence's info string. What
+    -- crosses into `{lstlisting}`'s option head is an `Ir.ListingLang`, the
+    -- IR's own value, never the author's word: its token grammar holds no
+    -- `]`, `,`, `=` or brace, so the head reads it back unchanged. A word
+    -- outside the grammar is routed, and the code sets as it is. The word is
+    -- split on spaces and tabs, as §4.5's "first word" is.
+    let word := ((info.split (fun c => c == ' ' || c == '\t')).find? (!·.isEmpty)).map
+      (·.toString)
+    match word with
+    | none => (#[.verb "verbatim" text p], #[])
+    | some w =>
+      match Ir.listingLang? w with
+      | some l => (#[.verb "lstlisting" ("[language=" ++ l.val ++ "]\n" ++ text) p], #[])
+      | none =>
+        (#[.verb "verbatim" text p],
+         #[routeDegraded file "code-info"
+            s!"the info word '{w}' is not a language a listing can carry: the code sets \
+without a language" p
+            (help := some "spell it as letters, digits, +, #, - or . (python, c++, c#)")])
   | .rule p =>
     (#[], #[route file "thematic-break"
       "a thematic break has no block in this engine and is not drawn" p])

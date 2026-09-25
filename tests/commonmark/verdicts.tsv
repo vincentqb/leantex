@@ -28,7 +28,7 @@
 21	Backslash escapes	rejected	refused:md:raw-html
 22	Backslash escapes	owed	blocked-by:md:link-title
 23	Backslash escapes	owed
-24	Backslash escapes	owed
+24	Backslash escapes	match
 25	Entity and numeric character references	owed
 26	Entity and numeric character references	match
 27	Entity and numeric character references	owed	pending-decision:smart-punctuation
@@ -38,7 +38,7 @@
 31	Entity and numeric character references	rejected	refused:md:raw-html
 32	Entity and numeric character references	owed
 33	Entity and numeric character references	owed
-34	Entity and numeric character references	owed
+34	Entity and numeric character references	owed	blocked-by:md:code-info
 35	Entity and numeric character references	match
 36	Entity and numeric character references	rejected	refused:md:indented-code
 37	Entity and numeric character references	match
@@ -148,7 +148,7 @@
 141	Fenced code blocks	match
 142	Fenced code blocks	match
 143	Fenced code blocks	match
-144	Fenced code blocks	owed
+144	Fenced code blocks	owed	blocked-by:md:code-info
 145	Fenced code blocks	match
 146	Fenced code blocks	match
 147	Fenced code blocks	match
