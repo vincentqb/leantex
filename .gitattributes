@@ -1,1 +1,2 @@
 tests/golden/diagnostics.txt merge=union
+PLAN.md merge=union

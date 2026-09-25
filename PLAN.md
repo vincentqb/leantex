@@ -13676,3 +13676,130 @@ Measured after, on the private reference corpus: the résumé's warning now
 names the slot and the lever; the deck is unchanged at 36 pages, 0 errors,
 13 × W0104 — those thirteen are beamer theme-element refusals from a
 different arm, correctly `config`, and untouched by this change.
+
+
+### 2026-09-25 — the autonomy loop: right is a measurement, next is a ranking, landed is a record
+
+Four defects this week share one shape, one level up from any module: a
+claim with no checker behind it. A fully green suite shipped a document
+whose pages matched the reference on 0 of 41 pages. `Diag.tallySites_exact`,
+the census theorem, carries `subject.isSome`, so it is vacuous on exactly
+the diagnostics that miscounted. A warning asserted that URLs set mono
+while the artifact embedded one face. And a coordinating agent reported
+three merges, a push and three worktrees that did not exist, because it
+read tool narration instead of repository state. The response is not an
+agent that knows better. It is a repository that refuses what is wrong, a
+queue that says what is next, and a landing that leaves a record.
+
+**1. Right is a measurement.** One oracle per goal, each a committed
+baseline under a ratchet.
+
+| goal | oracle | gated |
+|---|---|---|
+| PDF reasonably close to LaTeX | the parity ladder against lualatex (below) | T0–T4 per fixture |
+| HTML general enough for slides and sites | `html-oracle` (Chromium reader matrix), cross-backend census agreement, the site port's build | the matrix; agreement once built |
+| CommonMark | the 652 spec cases, each a committed verdict (M7's classifier) | verdict counts |
+| LaTeX in general | documented-command coverage (compat-index rows over a canonical command list); a blocker ranking over a public corpus | coverage; the ranking is a report |
+| Lean used well | the owed ratchet, the subject debt, zero `partial` and fuel, build time per module | debts may only shrink |
+| fast | `bench.lean` medians against lualatex | a declared tolerance |
+
+One format, so every tier reads alike: `tests/scoreboard/<tier>.tsv`, `#`
+lines for provenance (tool versions, date — data, never gated), then one
+`item<TAB>integer` row per item, higher is better, sorted, unique. A tier
+regresses when a value drops or a baselined item disappears; an item is
+retired only by a `# retired: <item> — <why>` line. A tier's script is its
+baseline's only writer and has `html-oracle`'s three modes: regenerate,
+`--check`, `--selftest`. A gated tier is hermetic — `--check` reads
+committed references and in-repo data only. Anything that needs lualatex,
+the network, or the host's TeX tree runs in the regenerate mode and never
+gates.
+
+**2. Next is a ranking.** What to work on next is computed from the
+deficits, not chosen: parity items ranked by fixtures held back; blockers
+ranked by the documents they alone block and grouped by the package that
+defines them (flashtex's `sole`/`share`); CommonMark cases by spec section;
+obligations by blocker readiness; bench by share of wall time. The
+coordinator takes the top item whose owner files are free. Taste enters
+only at the human gates below.
+
+**3. Landed is a record.** A landing is a deterministic procedure with
+porcelain output (`scripts/land.lean`): preconditions read from git, a
+rebase in the branch's own worktree, every gate, the scoreboard's
+`--check`, a fast-forward, the new tip read back, a ledger entry, and a
+push only when asked. The coordinator's claims about repository state obey
+the rule its claims about a page do: from the artifact, never from
+narration.
+
+`PLAN.md merge=union` joins `tests/golden/diagnostics.txt` in
+`.gitattributes`. This file is append-only, so concurrent entries union
+cleanly: on a scratch repository, two branches appending at end of file
+rebased with no conflict and both entries in order (git 2.47.3). Union is
+wrong for a structured record and is not applied to one — keep-both once
+doubled an owed record's `blocker:` line, and `obRecordFaults` now guards
+`Obligations.lean` directly.
+
+**4. Every lesson becomes a check.** A defect found becomes a synthetic
+one-construct probe with its measured delta, kept after the fix as the
+regression floor. A fix routed to another owner becomes a registry row
+that fails in both directions until it lands (`siteAccounting` is the
+shape). A hypothesis a brief got wrong is corrected in the brief template,
+so the next brief does not repeat it. Done means the system would catch it
+next time.
+
+**Roles.** A specialist works in one worktree, owns named files, writes
+the invariant and the failing test first, and never merges or pushes. The
+coordinator verifies in the branch's worktree — every gate, and each new
+gate broken once before it is trusted — then a fresh reviewer that did not
+write the code reads the diff, then `land` lands it.
+
+**Human gates**, decided by the user and never autonomously: a new
+deliberate divergence from LaTeX; a markdown dialect decision; a new page
+model; removing a CLI surface; a toolchain bump; weakening any statement;
+when to push.
+
+**The parity ladder, against lualatex.** flashtex's ladder runs against
+pdflatex. Three of its mechanisms carry over whole: a committed
+per-fixture level that may not drop (the oracle is "must not regress",
+never "must match"); raster measured and never gated; and declared
+exceptions written as arms of a level's definition rather than as a
+suppression list. So does its reference provenance: `SOURCE_DATE_EPOCH=0`,
+rerun to a fixed point, sha256, engine version, argv, a prose provenance
+line, and a reference that is byte-immutable once committed. Choosing
+lualatex changes what is comparable. fontspec can point at a fixture's own
+font file, so both engines take advances from one `hmtx`; and its
+`/ToUnicode` is real, so there is no glyph-name reconstruction. Both are
+claims to measure before any tolerance is set around them.
+
+| tier | passes when | blind to |
+|---|---|---|
+| T0 | lualatex builds the fixture with `-halt-on-error` (only then is it in the denominator), and leantex exits 0 with no error | everything shipped |
+| T1 | page counts agree | what is on the pages |
+| T2 | each page's multiset of Unicode scalars agrees, both read through `/ToUnicode` | order, position |
+| T3 | each page's reading order agrees — a sequence, not a multiset | position |
+| T4 | every word lies within a declared per-fixture tolerance, words grouped by one function applied to both sides | pixels, colour |
+| T5 | raster, printed and never gated | — |
+
+T3 has no flashtex analogue, and leantex needs it: a node label once
+shipped every glyph with its first letters off the page, which a multiset
+cannot see and which is a reading-order claim before it is a geometry one.
+Two further rungs follow from having a diagnostic registry and a second
+backend. **Accounting**: every glyph lualatex ships that leantex does not
+is named by a diagnostic carrying a subject — `ink_covered_or_named`, owed,
+as an executable cross-engine oracle, which checks what flashtex states in
+prose ("no diagnostic is silence, not support"). **Cross-backend**: the
+HTML census agrees with the PDF's, the artifact witness of
+`backend_gaps_agree`. Colour and shade stay out of scope permanently:
+three declared divergences are colour-model by construction, and
+`Contrast`'s contracts claim more than parity with LaTeX would. T3 and T4
+— and T2 for classes that draw furniture — need the declared divergences
+as values first (a constructor, a reason, a scope), the move `DiagCode`
+made for losses.
+
+**CommonMark, stated plainly.** The markdown surface does not exist yet:
+a `.md` input exits 3 with "markdown input is not implemented yet". M7's
+design (§ Surfaces) stands — one elaborator, desugaring AST → AST, the spec
+suite as a classifier whose every case carries a committed verdict. Its
+three strict classes (raw HTML passthrough, lazy continuation, indented
+code blocks as errors with fix-its) are a dialect decision for the user
+now that supporting CommonMark is a stated goal, so the first increment
+builds them as verdict rows — the decision flips data, not code.
