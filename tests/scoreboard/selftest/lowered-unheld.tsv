@@ -1,0 +1,4 @@
+# hand-written: a lowering claiming a floor the rows do not hold
+# encoding: headroom cap=1000
+# lowered: alpha 998→997 — an invented reason
+alpha	996

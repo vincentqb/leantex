@@ -1,0 +1,4 @@
+# hand-written: a lowering with no reason clause at all
+# encoding: headroom cap=1000
+# lowered: alpha 998→997
+alpha	997

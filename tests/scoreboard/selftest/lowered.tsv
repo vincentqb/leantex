@@ -1,0 +1,6 @@
+# hand-written: clean's rows with alpha lowered, and the line authorising it
+# encoding: headroom cap=1000
+# lowered: alpha 998→995 — an invented reason, so the fixture is self-contained
+alpha	995
+bravo	1000
+charlie	7

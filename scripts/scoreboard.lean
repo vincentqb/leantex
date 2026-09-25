@@ -202,6 +202,9 @@ def malformations : List (String × String) :=
    ("threefields", "tab-separated fields"),
    ("retired-no-reason", "gives no reason"),
    ("retired-and-live", "retired and also measured"),
+   ("lowered-no-reason", "gives no reason"),
+   ("lowered-malformed", "malformed lowering"),
+   ("lowered-unheld", "but the row says"),
    ("no-rows", "no rows")]
 
 def readFixture (name : String) : IO (Except String Tsv) := do
@@ -223,8 +226,8 @@ def selftest : IO UInt32 := do
     no "clean fixture has three rows" (t.rows.size == 3)
     no "clean fixture declares the headroom encoding" (t.encoding == some (.headroom 1000))
     let d := ratchet t t
-    no "a baseline against itself neither regresses nor improves"
-      (d.regressed.isEmpty && d.improved.isEmpty)
+    no "a baseline against itself neither loses nor gains"
+      d.changes.isEmpty
 
   -- Every malformation fires its own fault, and none of them is the
   -- catch-all: the message must name the kind.
@@ -249,7 +252,8 @@ def selftest : IO UInt32 := do
   | .ok t =>
     no "spec format: the spaced item reads whole" (t.rows.any (·.item == "alpha bravo"))
 
-  -- The four ratchet verdicts, each against the clean baseline.
+  -- The four ratchet verdicts, each against the clean baseline, read off
+  -- the structured changes rather than a rendered sentence.
   match ← readFixture "clean" with
   | .error _ => no "clean fixture unavailable for the ratchet cases" false
   | .ok base =>
@@ -258,16 +262,21 @@ def selftest : IO UInt32 := do
        ("disappeared", true, false),
        ("added", false, true),
        ("raised", false, true)]
-    for (name, wantReg, wantImp) in verdicts do
+    for (name, wantLoss, wantGain) in verdicts do
       match ← readFixture name with
       | .error e => no s!"ratchet fixture {name}: {e}" false
       | .ok now =>
         let d := ratchet base now
-        no s!"ratchet {name}: regression expected {wantReg}, got \
-{d.regressed.size} ({String.intercalate "; " d.regressed.toList})"
-          (d.regressed.isEmpty == !wantReg)
-        no s!"ratchet {name}: improvement expected {wantImp}, got \
-{d.improved.size}" (d.improved.isEmpty == !wantImp)
+        no s!"ratchet {name}: loss expected {wantLoss}, got \
+{d.losses.size} ({String.intercalate "; " (d.losses.map (·.describe)).toList})"
+          (d.losses.isEmpty == !wantLoss)
+        no s!"ratchet {name}: gain expected {wantGain}, got {d.gains.size}"
+          (d.gains.isEmpty == !wantGain)
+        -- The tight rule: every one of the four fails `--check`, a rise
+        -- included. Before this, a rise passed and left the floor stale.
+        no s!"ratchet {name}: --check must fail on any change" (!d.checkPasses)
+    no "ratchet: an unchanged measurement is the only state --check passes"
+      (ratchet base base).checkPasses
     -- Retirement is read off the *committed baseline*: the same rows as
     -- `clean`, plus the retirement line, against a measurement that no
     -- longer produces the item. Without the line this is `disappeared`,
@@ -281,11 +290,37 @@ def selftest : IO UInt32 := do
         (b.rows.any (·.item == "alpha"))
       no "retirement: the measurement no longer holds it" (!r.rows.any (·.item == "alpha"))
       let d := ratchet b r
-      no s!"ratchet retired: a retired item's absence is not a regression \
-({String.intercalate "; " d.regressed.toList})" d.regressed.isEmpty
+      no s!"ratchet retired: a retired item's absence is not a loss \
+({String.intercalate "; " (d.losses.map (·.describe)).toList})" d.losses.isEmpty
       let d2 := ratchet base r
-      no "ratchet retired: without the retirement line the same absence regresses"
-        (!d2.regressed.isEmpty)
+      no "ratchet retired: without the retirement line the same absence is a loss"
+        (!d2.losses.isEmpty)
+
+    -- A fall is written only against a line that authorises exactly it.
+    match ← readFixture "lowered" with
+    | .error e => no s!"ratchet fixture lowered: {e}" false
+    | .ok low =>
+      no "lowering: the fixture carries exactly one lowering line" (low.lowered.size == 1)
+      no s!"lowering: the fixture is clean ({String.intercalate "; " (validate low).toList})"
+        (validate low).isEmpty
+      let d := ratchet base low
+      no "lowering: the fall is still a loss the ratchet reports" (d.losses.size == 1)
+      no "lowering: --check fails on it whatever the file says"
+        (!d.checkPasses)
+      match d.losses[0]? with
+      | none => no "lowering: no loss to authorise" false
+      | some c =>
+        no "lowering: the committed line authorises exactly this fall"
+          (low.lowered.any (·.authorises c))
+        no "lowering: without the line nothing authorises it"
+          (!base.lowered.any (·.authorises c))
+        let wrong : Lowered := { item := "alpha", old := 998, new := 996
+                                 why := "a different fall" }
+        no "lowering: a line naming other values does not authorise it"
+          (!wrong.authorises c)
+        let other : Lowered := { low.lowered[0]! with item := "bravo" }
+        no "lowering: a line naming another item does not authorise it"
+          (!other.authorises c)
 
   -- The porcelain line the aggregate reads back is the one a tier prints.
   let line := tierLine "zz" 7 1 2 "regressed"
@@ -296,15 +331,15 @@ def selftest : IO UInt32 := do
   no "porcelain: result reads back" ((field line "result") == some "regressed")
 
   -- The deficit a queue ranks by comes from the file's own encoding.
-  let hd : Tsv := { provenance := #[], retired := #[], encoding := some (.headroom 1000)
+  let hd : Tsv := { provenance := #[], retired := #[], lowered := #[], encoding := some (.headroom 1000)
                     rows := #[{ item := "a", value := 998 }, { item := "b", value := 1000 }] }
   no "deficit: headroom ranks the larger debt first"
     (deficits hd == #[("a", 2)])
-  let pr : Tsv := { provenance := #[], retired := #[], encoding := some (.pairs "impl" "rows")
+  let pr : Tsv := { provenance := #[], retired := #[], lowered := #[], encoding := some (.pairs "impl" "rows")
                     rows := #[{ item := "p.impl", value := 1 }, { item := "p.rows", value := 4 }] }
   no "deficit: pairs ranks the gap between depth and coverage"
     (deficits pr == #[("p", 3)])
-  let rw : Tsv := { provenance := #[], retired := #[], encoding := some .raw
+  let rw : Tsv := { provenance := #[], retired := #[], lowered := #[], encoding := some .raw
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
@@ -334,7 +369,8 @@ faults" false
     for f in failed do IO.eprintln s!"FAIL {f}"
     return 1
   IO.println s!"scoreboard selftest: format passed ({malformations.length} malformations, \
-4 ratchet verdicts and retirement both ways)"
+4 ratchet verdicts each failing --check, retirement both ways, and a lowering \
+authorising exactly its own fall)"
   -- Then every tier's own selftest, in parallel: one command is what a
   -- landing runs, so the fan-out lives here rather than in a procedure
   -- someone has to remember.
