@@ -191,6 +191,98 @@ def caseCollisions (paths : Array String) : Array (String × String) := Id.run d
     if k == k' && p != p' then out := out.push (p', p)
   return out
 
+/-- The three spellings a home directory takes, composed so this file's own
+text never carries one: the gate below scans every tracked text file, this
+one included. -/
+def dirHome : String := "/ho" ++ "me/"
+def dirLocalHome : String := "/lo" ++ "cal" ++ dirHome
+def dirUsers : String := "/Us" ++ "ers/"
+
+/-- The one home directory the tree may name: the toolchain prefix the setup
+instructions export (`LEAN_CC`), which belongs to no person. -/
+def homeAllowed : List String := ["linuxbrew"]
+
+/-- A character that can continue a path or host segment. -/
+def segChar (c : Char) : Bool := c.isAlphanum || c == '_' || c == '.' || c == '-'
+
+/-- Does `lit` occur in `cs` at index `i`? -/
+def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
+  let mut k := i
+  for c in lit.toList do
+    if cs[k]? != some c then return false
+    k := k + 1
+  return true
+
+/-- The segment starting at index `j`: the run of segment characters. -/
+def segAt (cs : Array Char) (j : Nat) : String := Id.run do
+  let mut out := ""
+  for k in [j:cs.size] do
+    match cs[k]? with
+    | some c => if segChar c then out := out.push c else return out
+    | none => return out
+  return out
+
+/-- The home-directory paths one line names: a local home, a home other than
+the toolchain's, or a macOS home, each followed by a segment that could be a
+login. A path must *start* there — preceded by nothing, or by a character that
+cannot continue a segment — so a URL whose path has a `home` segment is not a
+person's directory, while the `file://` and `host:` forms still are. A PLAN
+entry once carried a specialist's own home path through every gate; this is
+that spelling, refused. -/
+def homePaths (l : String) : Array String := Id.run do
+  let cs := l.toList.toArray
+  let mut out : Array String := #[]
+  for i in [0:cs.size] do
+    if cs[i]? == some '/' then
+      let atStart := i == 0 || !segChar (cs[i - 1]?.getD ' ')
+      if atStart then
+        let hit (pre : String) (allowed : List String) : Option String :=
+          if litAt cs i pre then
+            let x := segAt cs (i + pre.length)
+            match x.toList.head? with
+            | some c => if (c.isAlphanum || c == '_') && !allowed.contains x
+                then some (pre ++ x) else none
+            | none => none
+          else none
+        match hit dirLocalHome [] with
+        | some h => out := out.push h
+        | none =>
+          match hit dirHome homeAllowed with
+          | some h => out := out.push h
+          | none =>
+            if let some h := hit dirUsers [] then out := out.push h
+  return out
+
+/-- Added lines of a unified=0 diff, with file and new-file line number. -/
+def addedLines (diff : String) : Array (String × Nat × String) := Id.run do
+  let mut out : Array (String × Nat × String) := #[]
+  let mut file := ""
+  let mut line := 0
+  for l in diff.splitOn "\n" do
+    if l.startsWith "+++ " then
+      file := if l.startsWith "+++ b/" then (l.drop "+++ b/".length).toString else ""
+    else if l.startsWith "@@" then
+      let plus := ((l.splitOn "+").getD 1 "").takeWhile Char.isDigit
+      line := (plus.toString.toNat?).getD 0
+    else if l.startsWith "+" then
+      if !file.isEmpty then out := out.push (file, line, (l.drop 1).toString)
+      line := line + 1
+  return out
+
+/-- Records of `git grep -n -z`: `path NUL line NUL content`, one per line. -/
+def grepRecords (out : String) : Array (String × Nat × String) := Id.run do
+  let mut recs : Array (String × Nat × String) := #[]
+  for r in out.splitOn "\n" do
+    match r.splitOn "\x00" with
+    | p :: n :: rest => recs := recs.push (p, n.toNat?.getD 0, String.intercalate "\x00" rest)
+    | _ => pure ()
+  return recs
+
+/-- Every home-directory path among the given lines, located. -/
+def homePathHits (lines : Array (String × Nat × String)) : Array (String × Nat × String) :=
+  lines.foldl (init := #[]) fun acc (f, n, l) =>
+    (homePaths l).foldl (init := acc) fun acc h => acc.push (f, n, h)
+
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
 
@@ -1454,6 +1546,35 @@ def selftest : IO UInt32 := do
   if !(caseCollisions #["scripts/land.lean", "scripts/LandCore.lean", "scripts/lands.lean"]).isEmpty then
     fails.modify ("caseCollisions: fired on distinct names" :: ·)
 
+  -- The home-directory rule. Each positive is a spelling a leak takes; each
+  -- negative is a line this tree carries or a URL that merely has a `home`
+  -- segment. The strings are composed from the same pieces the rule reads.
+  expect "homePaths" (fun l => !(homePaths l).isEmpty) [
+    (dirLocalHome ++ "alice/notes.md", true),
+    ("see `" ++ dirLocalHome ++ "alice`", true),
+    ("cp x " ++ dirHome ++ "bob/tmp", true),
+    ("file://" ++ dirHome ++ "bob/x.pdf", true),
+    ("host:" ++ dirHome ++ "bob", true),
+    ("\"" ++ dirUsers ++ "carol/Library\"", true),
+    (dirLocalHome ++ "linuxbrew/bin", true),
+    (dirHome ++ "linuxbrew2/bin", true),
+    ("export LEAN_CC=" ++ dirHome ++ "linuxbrew/.linuxbrew/bin/clang", false),
+    ("https://example.org" ++ dirHome ++ "index.html", false),
+    ("see https://example.org/docs" ++ dirUsers ++ "guide", false),
+    (dirHome ++ "<user>/x and " ++ dirHome ++ "$USER/x", false),
+    ("a path relative to the repository: tests/corpus/fonts", false)]
+  if homePaths (dirLocalHome ++ "alice/x " ++ dirHome ++ "linuxbrew " ++ dirUsers ++ "bob")
+      != #[dirLocalHome ++ "alice", dirUsers ++ "bob"] then
+    fails.modify ("homePaths: wrong hits on a mixed line" :: ·)
+  let hd := "diff --git a/PLAN.md b/PLAN.md\n+++ b/PLAN.md\n@@ -9,0 +10,2 @@\n+ok\n+in "
+    ++ dirLocalHome ++ "alice/w\n"
+  if homePathHits (addedLines hd) != #[("PLAN.md", 11, dirLocalHome ++ "alice")] then
+    fails.modify ("homePathHits: wrong hit from a staged diff" :: ·)
+  let gr := "notes.md\x003\x00" ++ dirHome ++ "dave/x\n" ++ "AGENTS.md\x0017\x00export LEAN_CC="
+    ++ dirHome ++ "linuxbrew/.linuxbrew/bin/clang\n"
+  if homePathHits (grepRecords gr) != #[("notes.md", 3, dirHome ++ "dave")] then
+    fails.modify ("homePathHits: wrong hit from a tree grep" :: ·)
+
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
     ("+" ++ kwPartial ++ " def foo : Nat := 0", true),
@@ -1781,6 +1902,28 @@ def main (args : List String) : IO UInt32 := do
 {hits}
   Fix: rename one. A case-insensitive checkout keeps one of the two, and for
   a Lean module the compiled .olean names collide as well."
+
+  -- A home directory names a person and a machine, and the tree may carry
+  -- neither (AGENTS.md, opening paragraph). The hook reads the lines this
+  -- commit adds to every staged file, whatever its extension; CI and --tree
+  -- read every tracked text file, so a path that arrived by a route with no
+  -- hook — a machine without core.hooksPath — is still found.
+  let homeLines ← if src == .index then pure (addedLines fullDiff) else do
+    let r ← IO.Process.output
+      { cmd := "git", args := #["grep", "-I", "-n", "-z", "-E", "/(home|Users)/"] }
+    if r.exitCode == 0 then pure (grepRecords r.stdout)
+    else if r.exitCode == 1 then pure #[]
+    else
+      IO.eprintln s!"pre-commit: git grep failed:\n{r.stderr}"
+      IO.Process.exit 1
+  let homeHits := homePathHits homeLines
+  if !homeHits.isEmpty then
+    let hits := String.intercalate "\n" (homeHits.toList.map fun (f, n, h) => s!"  {f}:{n}: {h}")
+    say s!"pre-commit: a home directory path in a tracked text file:
+{hits}
+  A home directory names a person and a machine; neither belongs in this tree.
+  Fix: refer to the private reference corpus abstractly, write a placeholder,
+  or give the path relative to the repository."
 
   if src == .index && !staged.any relevant then
     return (if ← failed.get then 1 else 0)
