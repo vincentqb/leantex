@@ -960,4 +960,27 @@ theorem nameRefusals_asked (file : String) (raws : Array Parse.Raw) :
             (Compat.localStyCandidates raws).contains (p.2 ++ nm) = true := by
   sorry
 
+-- owed: titleStyle_spelling_agree
+-- owner: LeanTex.Core.Elab
+-- source: template-family audit 2026-09-24: `\setbeamertemplate{title page}` failed two real decks outright once `\usetheme{X}` began reading `beamerthemeX.sty`, and the read-out that should have salvaged the body knew latex.ltx's `\@title` and not beamer's `\inserttitle` — a refusal that read nothing because it did not recognise the spelling in front of it
+-- blocker: not the scan. `Elab.barScan_alias_agree` is proved, and it is the whole of the property *at the scan*: a control word reaches the closed vocabulary only through `barCtrlName`, so two spellings that resolve alike are the same scan step in the same state, which is why the alias table cannot learn one name and miss another. What is open is the lift from that step to the elaborated document, and the wall is the one three other rows here describe: `applyRefusedTitleStyle` runs at the end of an imperative preamble fold, over `PreState` — private to Elab, so the premise cannot be spelled from outside the module at all — and the style it declares reaches `Doc.styles` only after that fold, a `Theme.styleMerge` under anything the document declared, and a diagnostic rewrite that walks `diags` backwards to find the W0361 it must amend. `LeanTex.Core.Loop` reads a `forIn` in place, so the fold needs no restating; what it does not give is a name for `PreState` outside Elab. The remaining work is therefore the statement written *inside* Elab over the fold's own state, exported as the corollary over `runRaws` spelled here — and the second clause ("only what cannot be expressed is named") is the harder half: it is an `_accounts` claim over the refusal's message, and the message is prose, so it needs `Diag` to carry the read structurally before it can be stated at all
+-- goldens: no
+/-- **A theme's spelling of a declared datum reads as the engine's own, at
+the document.** Two preambles differing only in which vocabulary a refused
+`\maketitle` body writes its metadata in — beamer's `\inserttitle` and
+`\insertauthor`, or latex.ltx's `\@title` and `\@author` — elaborate to the
+same title-page style. The scan-level half is proved
+(`Elab.barScan_alias_agree`); this is its consequence for the artifact,
+which is what a reader of the deck can see, and the property the defect
+actually broke: the theme-authored spelling styled nothing.
+
+Stated over the alias table, so the claim is the vocabulary's rather than
+one name's, and over `Doc.styles` — the one place a read-out can land. -/
+theorem titleStyle_spelling_agree (file : String)
+    (pre post : Array Parse.Raw) (p q : Pos) (b l : String)
+    (h : Elab.beamerInsertAlias.lookup b = some l) :
+    ((Elab.runRaws file (pre ++ #[.ctrl b p] ++ post)).1.styles.find? "titlepage")
+      = ((Elab.runRaws file (pre ++ #[.ctrl l q] ++ post)).1.styles.find? "titlepage") := by
+  sorry
+
 end Obligations

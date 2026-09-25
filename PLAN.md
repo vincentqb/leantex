@@ -384,6 +384,23 @@ list.
   refused-name channel on the diagnostic (`Diag.subject` is the dedup key,
   and nothing holds a name-refusal to putting the name there) — which is
   `Diag`'s and `Elab`'s, not `Compat`'s.
+- `titleStyle_spelling_agree` — a theme's spelling of a declared datum reads
+  as the engine's own, lifted from the scan to the document: two preambles
+  differing only in whether a refused `\maketitle` body writes
+  `\inserttitle`/`\insertauthor` or `\@title`/`\@author` elaborate to the
+  same title-page style. The scan-level half is proved
+  (`Elab.barScan_alias_agree`): a control word reaches the read-out's closed
+  vocabulary only through `barCtrlName`, so two spellings that resolve alike
+  are the same scan step in the same state. What is owed is the lift, and the
+  wall is the familiar one — `applyRefusedTitleStyle` runs at the end of an
+  imperative preamble fold over `PreState`, private to Elab, so the premise
+  cannot be spelled from outside the module; `LeanTex.Core.Loop` reads the
+  fold in place but gives no name for its state. The second clause of the
+  invariant this came from ("only what cannot be expressed is named") is the
+  harder half: an `_accounts` claim over a refusal whose read is carried in
+  prose, so `Diag` must hold the read structurally before it can be stated.
+  The witness meanwhile is the insert-spelled rows of the rule-(b) block and
+  `themeTitleShipChecks` over the census.
 
 ### Log
 
@@ -802,6 +819,112 @@ second page's progress-bar ground moves from the slides default bundle's
 value to `#CBC0B6`, which is moloch's own `progressfg!50!black!30` computed
 from `#A55A13` — the bundle's design reaching the page. W0103 falls from 2
 to 1 (the remaining one a genuine CTAN package), total warnings 35 → 34.
+
+2026-09-24 — **a template body is a refused redefinition, not a dropped
+one.** Reading a theme file made two real decks unbuildable. `\usetheme{X}`
+began reading `beamerthemeX.sty` beside the document hours earlier; every
+real beamer theme carries `\setbeamertemplate{title page}{...}`; the compat
+arm called any non-empty template body a `dropped` loss (E0111, therefore an
+error, therefore no PDF). Before the theme was read the same decks built with
+one warning. Teaching the engine to read local themes turned a soft failure
+into a hard one for a construct that is in essentially every theme.
+
+**Which templates carry layout the engine already owns.** Nearly all of
+them, because a beamer template names a furniture slot and the engine has
+its own furniture. `title page` is the clear case: the engine builds a title
+page from `\title`/`\author`/`\date`, distributes it by a declared vertical
+rule, rules it with a separator, and styles it through
+`\style{titlepage}` — so a theme's template restates, in absolute
+placement, a page the engine already expresses as tokens and styles.
+`frame footer` already translates (`\framefoot`). `footline` and `headline`
+name the foot and head bands (`\runningfoot`/`\runninghead`, and
+`\setbeamercolor{headline}` already maps onto the frame-title pair);
+`frametitle` names the frame-title band; the item templates name the list
+markers; `block begin`/`block end` name `\block`; `caption` and its label
+separator name the engine's captions; `background`/`background canvas` name
+the page's `bg` role; the toc and bibliography templates name the engine's
+own. Genuinely inexpressible, and carrying no content either: the
+navigation furniture the engine deliberately does not ship — `navigation
+symbols`, `mini frame`, the sidebar family, `section in head/foot`. Those
+are configuration (W0104) and always were. `title graphic` has its own code
+already. **No template is a dropped-content loss by virtue of being a
+template**; the only drop available is the body's own literal ink in a slot
+with no built-in behind it.
+
+**What "carries content" means.** The arm fired because the body was
+non-empty, and non-empty is not the same question. A `title page` template
+that arranges `\inserttitle` and `\insertauthor` carries no content of its
+own — it carries *references* to data the document declared elsewhere, and
+dropping it loses an arrangement, not a datum. Checked against the private
+reference corpus: the failing bodies have **zero** literal-ink leaves — two
+beamer inserts and one theme-provided metadata macro that is empty at its
+own definition site — so the error's premise was false on exactly the
+documents it was blocking.
+
+The sharper answer is that no bespoke leaf predicate is needed, because
+**rule (b) already is one**. `\setbeamertemplate{title page}` *is* beamer's
+spelling of `\renewcommand{\maketitle}` — beamer's `\titlepage` expands that
+template — so routing it to the native definer puts it under the gate the
+engine already runs on every redefinition of a rendered built-in: a body
+that elaborates to something non-empty wins and renders; a body that loses
+is refused, the built-in stands, and the body is read once more for the
+declarative appearance it still carries. That answers "does this body carry
+renderable content?" by rendering it, needs no insert vocabulary to stay
+current, and correctly lets a theme whose title page really is one word win
+and set that word.
+
+**The severity.** No code changed and no code was added, which is the
+decision, not an omission. Under the route above the loss is not a content
+loss at all: it is a refused redefinition of a rendered built-in — W0361,
+`config`, a warning, floor `inert`, because the built-in stands in the
+construct's place and owes nothing further. E0111 keeps `dropped` for what
+it correctly names: a template body carrying literal ink in a slot with no
+built-in behind it, where nothing stands in its place and `Floor.refuse` is
+the honest floor. A fifth name for a loss already covered by W0361 (refused
+redefinition), N0100 (translated to a native declaration), W0104
+(configuration the engine does not model) and E0111 (content genuinely
+dropped) would be a code with no meaning of its own. Downgrading E0111
+instead was available and rejected: the class is right for its own case, and
+`\allow{E0111}` is already the door for an author who accepts the loss.
+
+**What was fixed here, and what the read-out was missing.** Rule (b)'s
+read-out knew latex.ltx's `\@title` and `\@author` and nothing else, so even
+once the body reached it, a theme-authored title page read as *no* title
+page: the refusal stood alone and the rules, weights and alignment the body
+declared went out with the arrangement that cannot be expressed. Two
+findings, both in the scan:
+
+- One alias table, resolved at one site (`barCtrlName`), so a control word
+  reaches the closed vocabulary only after resolution. That makes the two
+  spellings the same scan step in the same state, which is provable rather
+  than asserted (`barScan_alias_agree`, `barCtrlName_alias_resolves`) and is
+  why the table cannot learn one insert and miss another. The document-level
+  lift is owed (`titleStyle_spelling_agree`).
+- An environment was answered for by one opaque event, which hid every
+  declaration and every datum its body placed. A theme writes its title page
+  *inside* one. It is now descended into like any other grouping, its author
+  strut read off it first, and the strut travels in the scan's own state
+  rather than being folded with the datum it props.
+
+**Measured.** On the private reference corpus, with the routed compat arm
+applied: the E0111 disappears and the deck's error count falls from 6 to 5,
+the remainder being the picture subset's E0333 (another slice's). The
+refusal that replaces it is a warning that names what survived — the
+built-in title page, styled by the theme's declared rules and spacing — and
+the deck ships its pages. In the repo, the three insert-spelled rows of the
+rule-(b) block fail before the scan change and pass after, and
+`themeTitleShipChecks` reads the shipped title page's own ink from the
+census rather than a dump.
+
+**Routed, not applied.** The compat arm that turns
+`\setbeamertemplate{title page}` into the native definer belongs to the
+translation slice and is five lines beside the `frame footer` arm it copies;
+it was verified here and reverted. Two things learned in the verifying are
+worth carrying: the synthesised head must be the *native* spelling
+(`\define \maketitle()`), because synthesised output is not walked again and
+a synthesised `\renewcommand` reaches elaboration as an unknown command; and
+`bodyNext := 1` belongs with it, so the body group is announced as a macro
+body exactly as the `\newcommand` family's own arm announces it.
 
 2026-09-24 — `\usetheme{X}` is `\usepackage{beamerthemeX}`, and a theme
 beside the document is read. A deck reported W0319 ("unknown theme"; the
