@@ -1,12 +1,15 @@
 /-
 Documented-command coverage: how much of LaTeX does this engine answer?
 
-  lake env lean --run scripts/coverage.lean                  regenerate the scoreboard, then check it
-  lake env lean --run scripts/coverage.lean --check [path]    check the checked-in scoreboard only
-  lake env lean --run scripts/coverage.lean --selftest        the checker, the rung rule, and the corpus control
-  lake env lean --run scripts/coverage.lean --report          the per-item detail and the drift audit
+  lake env lean --run scripts/coverage.lean                  regenerate the scoreboard (Scoreboard.tierMain)
+  lake env lean --run scripts/coverage.lean --check          measure and hold it to the committed baseline
+  lake env lean --run scripts/coverage.lean --selftest       the rung rule, the guards, and the corpus control
+  lake env lean --run scripts/coverage.lean --report         the per-item detail and the drift audit
   lake env lean --run scripts/coverage.lean --denominator <latex2e.texi>
                                                              rebuild tests/coverage/latex2e-index.txt
+
+Each mode imports `BoardLib`, which `scoreboard` builds before it fans out;
+run standalone, build it first (`lake build BoardLib`).
 
 The number is a measurement, never a list. Every rung comes from running
 the engine's own dispatch over a probe of the command (`Elab.run`), so the
@@ -56,13 +59,18 @@ control sequence LaTeX actually defines, and each classified by the meaning
 lualatex gives it. `--denominator` rebuilds it from the manual alone: it
 writes its own Lua probe and wrappers into a scratch directory and runs
 lualatex over them, so the only input outside the tree is the manual, whose
-sha256 the file records.
+sha256 the file records. The file carries its own row count and a body
+stamp, which catch an accidental edit; what stops a deliberate prune is the
+scoreboard, whose `<item>.rows` values may not fall without a human-written
+`# lowered:` line.
 
 *Packages.* `tests/compat-index/<pkg>.txt`, unchanged: each file is already
 one package's documented command list sourced to a manual section, one row
 per command with its verdict. The rows are the denominator and the rows
 that count as implemented — `impl` and `inert:` — are the numerator, one
-rule shared with the `compat` scoreboard tier and with this script's audit.
+rule shared with the `compat` scoreboard tier. That tier ratchets both
+numbers per package (`<p>.rows`, `<p>.impl`), so this one states the
+package half in its provenance and does not carry the same numbers twice.
 
 Exclusions, all stated and all derived:
 
@@ -88,19 +96,21 @@ Exclusions, all stated and all derived:
     this extraction keeps `\name` tokens only, so `itemize` never enters the
     command denominator. An environment surface is the compat-index's job.
 
-The scoreboard is `tests/scoreboard/coverage.tsv` in the autonomy loop's
-one format: `#` provenance lines (data, never gated), then `item<TAB>count`
-rows, sorted and unique, higher better. Items are manual chapters, the
-register file, and package names; the value is the count of names at
-`rewritten` or above. A value that drops, or a baselined item that
-disappears, is a regression.
+The scoreboard is `tests/scoreboard/coverage.tsv`, written and checked by
+`Scoreboard.tierMain` like every other tier, under the `pairs counted/rows`
+encoding: per kernel item (a manual chapter, or the register file),
+`<item>.counted` is the count of names at `rewritten` or above and
+`<item>.rows` the count of names in its denominator. Both are higher-better
+under the one ratchet, so a construct falling below the cut and a
+denominator row deleted are both regressions, and the queue ranks each
+item by the names it still owes.
 -/
 import LeanTex
+import scripts.Board
 
 open LeanTex.Core
 
 def denomPath : String := "tests/coverage/latex2e-index.txt"
-def tsvPath : String := "tests/scoreboard/coverage.tsv"
 def compatDir : System.FilePath := "tests/compat-index"
 def corpusDir : System.FilePath := "tests/corpus"
 
@@ -185,18 +195,16 @@ def parseDenom (text : String) : Except String Denom := do
 def denomBody (rows : Array KRow) : String :=
   rows.foldl (fun acc r => acc ++ r.name ++ "\t" ++ r.chapter ++ "\t" ++ r.cls ++ "\n") ""
 
-/-- The committed body's fingerprint: rows, bytes and Adler-32, all three
-recorded in the file's own header and re-derived by `--check`.
+/-- The committed body's fingerprint: rows, bytes and Adler-32, recorded in
+the file's own header and re-derived by `--check`.
 
-This is a change detector, not a cryptographic commitment. The threat it
-answers is the one a ratchet creates: the cheapest way to raise a coverage
-percentage is to delete denominator rows, and a reviewer reading a diff of
-850 rows will not see a hundred gone. Deleting, reordering or editing a row
-moves all three numbers. The cryptographic pin is on the manual — its
-sha256 is in the header and `--denominator` rebuilds the body from it — and
-Adler-32 is used here because it is already in the tree, pure, and callable
-with no process, which `--check` must be (it is the one gate a landing runs
-and it runs with no `PATH`). -/
+A change detector for an *accidental* edit, and no more: the file stamps
+itself, so pruning rows and rewriting the two header lines passes it — a
+review did exactly that and reached 555/1249. What makes a deliberate prune
+a human act is the scoreboard: every item's `.rows` value is ratcheted, so
+a smaller denominator is a fall that regeneration refuses to write without
+a `# lowered:` line. Nothing this check prints hands a caller the value to
+paste. -/
 def bodyStamp (body : String) : String :=
   let b := body.toUTF8
   s!"{b.size} bytes, adler32 {Flate.hex16 (Flate.adler32 b).toUInt64}"
@@ -599,37 +607,6 @@ def readPackages : IO (Array PRow) := do
 
 -- ## The scoreboard file
 
-structure Board where
-  provenance : Array String
-  rows : Array (String × Nat)
-deriving Inhabited
-
-def parseBoard (text : String) : Except String Board := do
-  let mut provenance : Array String := #[]
-  let mut rows : Array (String × Nat) := #[]
-  for line in text.splitOn "\n" do
-    let line := line.trimAscii.toString
-    if line.isEmpty then continue
-    if line.startsWith "#" then
-      provenance := provenance.push line
-      continue
-    let f := tabs line
-    if f.size != 2 then throw s!"scoreboard: want item<TAB>count, got: {line}"
-    match f[1]!.toNat? with
-    | none => throw s!"scoreboard: not an integer: {line}"
-    | some n => rows := rows.push (f[0]!, n)
-  if rows.isEmpty then throw "scoreboard: no rows"
-  let keys := rows.map (·.1)
-  let sorted := keys.qsort (· < ·)
-  if keys != sorted then throw "scoreboard: rows are not sorted"
-  for i in [1:keys.size] do
-    if keys[i]! == keys[i - 1]! then throw s!"scoreboard: duplicate item: {keys[i]!}"
-  return { provenance, rows }
-
-def renderBoard (b : Board) : String :=
-  let head := b.provenance.foldl (fun acc l => acc ++ l ++ "\n") ""
-  b.rows.foldl (fun acc (k, n) => acc ++ k ++ "\t" ++ toString n ++ "\n") head
-
 /-- How many probe tasks stand at once. Each probe is pure, so the only
 contention is the allocator's: one task per name put 690 threads on a
 shared host and spent twice its user time in the kernel. -/
@@ -657,22 +634,23 @@ three times in `--check` alone. -/
 def measureKernel (rows : Array KRow) : Array (KRow × Rung) :=
   parMap (rows.filter (·.counted)) fun r => (r, probe r.name)
 
-/-- The scoreboard a run computes: kernel items and packages, each with its
-count at `rewritten` or above. Every counted item appears, so an item
-falling to zero is a regression and not a retirement. -/
-def computeRows (kernel : Array (KRow × Rung)) (pkgs : Array PRow) :
-    Array (String × Nat) := Id.run do
-  let mut items : Array (String × Nat) := #[]
+/-- The rows a run computes, under the `pairs counted/rows` encoding: per
+kernel item, `<item>.rows` names in its denominator and `<item>.counted`
+names at `rewritten` or above. Every item appears in both, so an item whose
+count falls to zero is a regression and not a retirement. -/
+def computeRows (kernel : Array (KRow × Rung)) : Array Scoreboard.Row := Id.run do
+  let mut items : Array (String × Nat × Nat) := #[]
   for (r, rung) in kernel do
     let key := r.item
     let add := if rung.counted then 1 else 0
     match items.findIdx? (fun p => p.1 == key) with
-    | some i => items := items.set! i (key, items[i]!.2 + add)
-    | none => items := items.push (key, add)
-  let mut out := items
-  for p in pkgs do
-    out := out.push ("pkg/" ++ p.pkg, p.impl)
-  return out.qsort (fun a b => a.1 < b.1)
+    | some i => items := items.set! i (key, items[i]!.2.1 + add, items[i]!.2.2 + 1)
+    | none => items := items.push (key, add, 1)
+  let mut out : Array Scoreboard.Row := #[]
+  for (key, c, n) in items do
+    out := out.push { item := key ++ ".counted", value := Int.ofNat c }
+    out := out.push { item := key ++ ".rows", value := Int.ofNat n }
+  return out.qsort (fun a b => a.item < b.item)
 
 structure Totals where
   buckets : Array (Rung × Nat)
@@ -917,109 +895,64 @@ def loadKernel : IO Denom := do
   | .error e => throw (IO.userError ("coverage: " ++ e))
   | .ok d => return d
 
-/-- The denominator is checked before it is trusted: the row count against
-the figure its own header states, and the body's fingerprint against the
-stamp its header records.
-
-Without this the ratchet rewards pruning. A copy of the file with a hundred
-`unknown` rows deleted raised the published figure from 33.8% to 36.5% and
-passed every other check. Both halves are computed with no process, so
-`--check` stays runnable with an empty `PATH`. -/
+/-- The denominator's own header, checked before the file is trusted: the
+row count against the figure it states, and the body against its stamp.
+This catches an accidental edit and nothing more — the file stamps itself —
+so no message here prints the value a caller could paste back: a
+regeneration from the manual is the only way to a new stamp, and a smaller
+denominator is the ratchet's to refuse, through every item's `.rows`. -/
 def checkDenom (d : Denom) : Array String := Id.run do
   let mut bad : Array String := #[]
   match provValue d.provenance "rows" with
-  | none => bad := bad.push "the header states no row count — regenerate"
+  | none => bad := bad.push "the header states no row count"
   | some want =>
     match want.toNat? with
-    | none => bad := bad.push s!"the header's row count is not a number: {want}"
+    | none => bad := bad.push "the header's row count is not a number"
     | some n =>
       if n != d.rows.size then
         bad := bad.push s!"the header states {n} rows and the file holds {d.rows.size}"
-  let stamp := bodyStamp (denomBody d.rows)
   match provValue d.provenance "body" with
-  | none => bad := bad.push "the header states no body stamp — regenerate"
+  | none => bad := bad.push "the header states no body stamp"
   | some want =>
-    if want != stamp then
-      bad := bad.push s!"the body is not the one the header stamps: {stamp} against {want}"
-  return bad.map ("denominator: " ++ ·)
+    if want != bodyStamp (denomBody d.rows) then
+      bad := bad.push "the body is not the one the header stamps"
+  return bad.map (fun m => s!"{denomPath}: {m} — never hand-edit it; rebuild it from the \
+manual with --denominator <latex2e.texi>")
 
-/-- A retirement the spec allows: `# retired: <item> — <why>`. A baselined
-item named here may disappear without being a regression, and the reason
-travels with it in the file. -/
-def retiredItems (provenance : Array String) : Array String :=
-  provenance.filterMap fun l =>
-    if l.startsWith "# retired: " then
-      let rest := (l.drop "# retired: ".length).toString
-      let item := ((rest.splitOn " — ").headD rest).trimAscii.toString
-      if item.isEmpty then none else some item
-    else none
-
-def checkFile (path : String) : IO UInt32 := do
-  unless (← System.FilePath.pathExists path) do
-    return (← die 3 s!"coverage: {path} is missing — regenerate it")
-  let d ← loadKernel
-  let pkgs ← readPackages
-  match parseBoard (← IO.FS.readFile path) with
-  | .error e => die 3 ("coverage: " ++ e)
-  | .ok board => do
-    let mut bad := checkDenom d
-    let kernel := measureKernel d.rows
-    let want := computeRows kernel pkgs
-    let retired := retiredItems board.provenance
-    for (k, n) in board.rows do
-      match want.find? (fun p => p.1 == k) with
-      | none =>
-        unless retired.contains k do
-          bad := bad.push s!"{k}: baselined item has disappeared"
-      | some (_, m) =>
-        if m < n then bad := bad.push s!"{k}: {n} → {m} is a regression"
-    for (k, m) in want do
-      unless board.rows.any (fun p => p.1 == k) do
-        bad := bad.push s!"{k}: {m} implemented, not in the baseline — regenerate"
-    for r in retired do
-      if want.any (fun p => p.1 == r) then
-        bad := bad.push s!"{r}: retired in the baseline and still computed — drop the retirement"
-    if bad.isEmpty then
-      let t := totalsOf kernel d.rows pkgs
-      IO.println s!"coverage: ok — {t.num}/{t.den} ({pct t.num t.den})"
-      return 0
-    else
-      for b in bad do IO.eprintln ("coverage: " ++ b)
-      return 1
-
-def provenanceLines (t : Totals) : IO (Array String) := do
-  let date := (← IO.Process.output { cmd := "date", args := #["-u", "+%Y-%m-%d"] }).stdout
-  let bucketLine := String.intercalate ", " (Rung.all.filterMap fun r =>
+/-- The tier's provenance: data, never gated. The package half is stated
+here and ratcheted by the compat tier, so the headline can be read in one
+place without either tier carrying the other's numbers. -/
+def provenanceLines (d : Denom) (t : Totals) : Array String :=
+  let bucketLine := String.intercalate ", " (Rung.all.map fun r =>
     let n := t.bucket r
-    if n == 0 && r == .verified then some "0 verified (the parity ladder's to award)"
-    else some s!"{n} {r.word}")
-  return #[
-    "# documented-command coverage: per kernel item and per package, the count of",
-    "# constructs at the `rewritten` rung or above (rewritten | native | verified).",
-    "# kernel denominator: tests/coverage/latex2e-index.txt (its own provenance line).",
-    "# package denominator: tests/compat-index/*.txt rows, unchanged; a row counts as",
-    "# implemented when its annotation is `impl` or `inert:`.",
+    if n == 0 && r == .verified then "0 verified (the parity ladder's to award)"
+    else s!"{n} {r.word}")
+  let mathN := (d.rows.filter (·.cls == mathClass)).size
+  let notBaseN := (d.rows.filter (·.cls == notBaseClass)).size
+  #[s!"# documented-command coverage, kernel half: per manual chapter (and the register \
+file), <item>.counted names at the `rewritten` rung or above (rewritten | native | \
+verified) of <item>.rows names in {denomPath}.",
     s!"# kernel: {bucketLine}.",
-    s!"# kernel excluded: {t.kExcluded} commands: math-mode symbols (math_given) and \
+    s!"# kernel excluded: {mathN} math-mode symbol commands (math_given), {notBaseN} \
 commands latex.ltx defines only as an error (not_base).",
-    s!"# packages: {t.pImpl} implemented of {t.pDoc} documented.",
-    s!"# total: {t.num}/{t.den} = {pct t.num t.den}",
-    "# date: " ++ date.trimAscii.toString]
+    s!"# package half, gated by the compat tier as <p>.impl/<p>.rows: {t.pImpl} implemented \
+of {t.pDoc} documented (tests/compat-index; `impl` or `inert:`).",
+    s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
-def regenerate : IO UInt32 := do
+/-- One measurement for the tier: the denominator's header checked, every
+counted kernel name probed. A header that fails its own check measures
+nothing, which the shared `tierMain` reports as a fault after the reasons
+printed here. -/
+def measureTier : IO (Array String × Array Scoreboard.Row) := do
   let d ← loadKernel
-  let pkgs ← readPackages
   let bad := checkDenom d
   unless bad.isEmpty do
     for b in bad do IO.eprintln ("coverage: " ++ b)
-    return 1
+    return (#[], #[])
+  let pkgs ← readPackages
   let kernel := measureKernel d.rows
   let t := totalsOf kernel d.rows pkgs
-  let board : Board := { provenance := ← provenanceLines t, rows := computeRows kernel pkgs }
-  IO.FS.createDirAll "tests/scoreboard"
-  IO.FS.writeFile tsvPath (renderBoard board)
-  IO.println s!"coverage: wrote {tsvPath}"
-  checkFile tsvPath
+  return (provenanceLines d t, computeRows kernel)
 
 /-- The per-item detail, and the audit the number cannot show: where the
 measured rung and the compat-index's reviewed verdict disagree. -/
@@ -1411,19 +1344,26 @@ def selftest : IO UInt32 := do
       == "kernel/registers")
   expect "a command takes its chapter"
     (KRow.item { name := "textbf", chapter := "Fonts", cls := "call" } == "kernel/Fonts")
-  -- The scoreboard parser refuses what a hand edit produces.
-  expect "unsorted rows are refused" ((parseBoard "b\t1\na\t2\n").toOption.isNone)
-  expect "duplicate items are refused" ((parseBoard "a\t1\na\t2\n").toOption.isNone)
-  expect "a non-integer value is refused" ((parseBoard "a\tmany\n").toOption.isNone)
-  expect "an empty board is refused" ((parseBoard "# only provenance\n").toOption.isNone)
-  expect "a good board parses"
-    (match parseBoard "# p\na\t1\nb\t2\n" with
-     | .ok b => b.rows == #[("a", 1), ("b", 2)] && b.provenance == #["# p"]
-     | .error _ => false)
-  expect "render round-trips"
-    (match parseBoard (renderBoard { provenance := #["# p"], rows := #[("a", 1)] }) with
-     | .ok b => b.rows == #[("a", 1)]
-     | .error _ => false)
+  -- The tier's rows: one counted/rows pair per item, in the shared format.
+  let tiny : Array (KRow × Rung) :=
+    #[({ name := "textbf", chapter := "Fonts", cls := "call" }, .native),
+      ({ name := "zz", chapter := "Fonts", cls := "call" }, .unknown),
+      ({ name := "parindent", chapter := "Lengths", cls := "assign_dimen" }, .skipped)]
+  let rows := computeRows tiny
+  expect "every item carries its counted and its rows"
+    (rows.map (fun r => (r.item, r.value)) ==
+      #[("kernel/Fonts.counted", 1), ("kernel/Fonts.rows", 2),
+        ("kernel/registers.counted", 0), ("kernel/registers.rows", 1)])
+  let asTsv (rs : Array Scoreboard.Row) : Scoreboard.Tsv :=
+    { provenance := #[], rows := rs, retired := #[], lowered := #[],
+      encoding := some (.pairs "counted" "rows") }
+  expect "the rows are a valid baseline" ((Scoreboard.validate (asTsv rows)).isEmpty)
+  -- A pruned denominator is a fall under the one ratchet — a human act, not
+  -- a rewrite of the header.
+  let pruned := computeRows (tiny.filter (·.1.name != "zz"))
+  let d := Scoreboard.ratchet (asTsv rows) (asTsv pruned)
+  expect "a smaller denominator is a fall the ratchet reports"
+    (d.losses.any fun c => c.item == "kernel/Fonts.rows")
   -- The denominator parser, and the row `\#` whose line starts with one.
   expect "the denominator parser wants three fields"
     ((parseDenom "a\tb\n").toOption.isNone)
@@ -1433,7 +1373,7 @@ def selftest : IO UInt32 := do
     (match parseDenom "# h\n#\tSpecial insertions\tchar_given\n" with
      | .ok d => d.rows.size == 1 && d.rows[0]!.name == "#"
      | .error _ => false)
-  -- The denominator guard, broken in both directions.
+  -- The header check, broken in both directions, and never a hint.
   let goodRows : Array KRow :=
     #[{ name := "a", chapter := "Fonts", cls := "call" },
       { name := "b", chapter := "Fonts", cls := "call" }]
@@ -1441,18 +1381,17 @@ def selftest : IO UInt32 := do
     { provenance := #["# rows: 2", "# body: " ++ bodyStamp (denomBody goodRows)],
       rows := goodRows }
   expect "a stamped denominator passes" ((checkDenom stamped).isEmpty)
-  expect "a pruned denominator fails"
-    (!(checkDenom { stamped with rows := goodRows.pop }).isEmpty)
+  let prunedMsgs := checkDenom { stamped with rows := goodRows.pop }
+  expect "a pruned denominator fails" (!prunedMsgs.isEmpty)
+  expect "and its message names no stamp to paste back"
+    (prunedMsgs.all fun m => !containsSub m "adler32"
+      && !containsSub m (bodyStamp (denomBody goodRows.pop)))
   expect "an edited row fails"
     (!(checkDenom { stamped with
         rows := #[{ name := "a", chapter := "Fonts", cls := "call" },
                   { name := "c", chapter := "Fonts", cls := "call" }] }).isEmpty)
   expect "a denominator with no stamp fails"
     (!(checkDenom { provenance := #["# rows: 2"], rows := goodRows }).isEmpty)
-  expect "a retirement is read"
-    (retiredItems #["# retired: kernel/Modes — the manual renamed the chapter"]
-      == #["kernel/Modes"])
-  expect "a provenance line is not a retirement" ((retiredItems #["# rows: 2"]).isEmpty)
   -- One rule for "implemented", shared with the compat tier.
   expect "impl and inert count, a refusal does not"
     (annImplemented "impl" && annImplemented "inert:no ink by design"
@@ -1522,11 +1461,6 @@ gap, not the probe's miss")
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | [] => regenerate
-  | ["--check"] => checkFile tsvPath
-  | ["--check", path] => checkFile path
-  | ["--selftest"] => selftest
   | ["--report"] => report
   | ["--denominator", texi] => denominator texi
-  | _ => die 3 "usage: coverage [--check [path] | --selftest | --report | \
---denominator <latex2e.texi>]"
+  | _ => Scoreboard.tierMain "coverage" (.pairs "counted" "rows") measureTier selftest args

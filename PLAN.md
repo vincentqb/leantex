@@ -17151,9 +17151,13 @@ The engine had no answer to "how much of LaTeX does this support?", so
 every claim about breadth was taste. It has one now, and the number is
 **540/1338 = 40.4%** of a documented-command denominator: kernel 204 of
 679, packages 336 of 659 (`lake env lean --run scripts/coverage.lean
---report`). `scripts/coverage.lean` publishes it,
-`tests/scoreboard/coverage.tsv` ratchets it, and the kernel half is
-measured rather than listed.
+--report`). `scripts/coverage.lean` publishes it and the kernel half is
+measured rather than listed. `tests/scoreboard/coverage.tsv` ratchets the
+kernel half under the shared `Scoreboard.tierMain`, as an
+`<item>.counted`/`<item>.rows` pair per manual chapter; the `compat` tier
+already ratchets the package half as `<p>.impl`/`<p>.rows` under the same
+definition of implemented, so the package half is stated in this tier's
+provenance and gated there alone rather than carried twice.
 
 An independent review blocked the first draft of this entry, narrowly and
 correctly. The plumbing was sound; the verdict was not. Every name was
@@ -17217,12 +17221,18 @@ draft did:
   with no tab in it, which is what distinguishes the two.
 - **`--check` trusted the denominator wholesale.** A copy with 100 rows
   deleted passed at 36.5%: when a ratchet judges an autonomous loop, pruning
-  the denominator is the cheapest improvement available. The header now
-  states its row count and a body stamp (bytes and Adler-32), and `--check`
-  re-derives both with no process call, so it stays runnable with an empty
-  `PATH`. Broken through the path that ships: the same 100-row prune now
-  fails on both halves, and editing one row's class with the count unchanged
-  fails on the stamp.
+  the denominator is the cheapest improvement available. The second draft
+  added a row count and a body stamp (bytes and Adler-32) to the file's own
+  header, and a review then pruned the rows, rewrote those two header lines,
+  and passed at 555/1249 — the file stamped itself, and the failure message
+  printed the value to paste. A check must compare against something it did
+  not produce. The stamp stays, as a detector for an accidental edit whose
+  messages print no stamp; the guard is the ratchet. Every item's `.rows` is
+  a scoreboard value, so a smaller denominator is a fall that regeneration
+  refuses to write without a human-written `# lowered:` line. The review's
+  prune, rerun in a scratch copy: with the header untouched `--check` exits 2
+  (a fault, the header check's reasons, no stamp printed); with the header
+  rewritten it exits 1, with 19 `.rows` regressions.
 
 Regeneration needs only the manual. `--denominator <latex2e.texi>` writes its
 own Lua probe and its own bare wrappers into a scratch directory and runs
@@ -17534,10 +17544,17 @@ Routed, not mine to change:
 - `\fontseries{b}` in the preamble rewrites to the `@series:b` marker
   (`Compat.lean`) and the preamble path, which does not read it, then
   reports W0301 for that internal name.
-- The coverage tier still has no caller. `--check` is hermetic and takes
-  11 s since the probe runs in 24 parallel chunks (72 s serial), and the
-  landing procedure is where it belongs (`scripts/land.lean`), not
-  `lake test`.
+- The `pkg/<p>` prefix on the compat tier's items, which its header already
+  assigns to the commit that fuses the two tiers: this tier no longer
+  carries the package numbers, so the rename is compat's alone
+  (`scripts/compat.lean`, `measureTier`).
+
+The tier has a caller now: `scoreboard --check` runs its `--check` in
+parallel with the other tiers — 11 s, since the probe runs in 24 parallel
+chunks (73 s serial) — and `scoreboard --queue` ranks its items by the names
+each still owes, with the blocker table read in its six fields (a row the
+reader cannot parse stops the queue with exit 2; the reader it replaced
+ranked 0 of the table's 39 rows and said nothing).
 
 One measurement worth stating plainly, because it is the shape of the 434:
 `\hspace` is W0301. Not refused, not rewritten — unknown, with its argument
