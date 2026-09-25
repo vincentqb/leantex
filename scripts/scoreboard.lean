@@ -634,6 +634,27 @@ def selftest : IO UInt32 := do
     (baseArg ["--check", "--base", "abc"] == some (some "abc") && baseArg ["--check"] == none &&
       baseArg ["--base"] == some none)
 
+  -- The HTML freshness key, over a synthetic one-fixture corpus: a function
+  -- of the files, and moved by a sentence.
+  let dir ← IO.FS.createTempDir
+  try
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "OpenSans-Regular.ttf")
+      (← IO.FS.readBinFile "tests/corpus/fonts/OpenSans-Regular.ttf")
+    let src := "\\documentclass{article}\n\\begin{document}\nAn invented sentence.\n\\end{document}\n"
+    IO.FS.writeFile (dir / "probe.tex") src
+    let k1 ← Hermetic.corpusKey dir
+    let k2 ← Hermetic.corpusKey dir
+    IO.FS.writeFile (dir / "probe.tex") (src.replace "invented" "different")
+    let k3 ← Hermetic.corpusKey dir
+    match k1, k2, k3 with
+    | .ok a, .ok b, .ok c =>
+      no "key: the same files give the same key" (a == b)
+      no "key: a changed sentence moves it" (a != c)
+    | _, _, _ => no "key: the synthetic corpus builds to HTML" false
+  finally
+    IO.FS.removeDirAll dir
+
   -- The porcelain line the aggregate reads back is the one a tier prints.
   let line := tierLine "zz" 7 1 2 "regressed"
   no "porcelain: tier reads back" ((field line "tier") == some "zz")

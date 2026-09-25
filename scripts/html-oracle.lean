@@ -503,9 +503,10 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
   out := out ++ s!"target: {String.intercalate " " targetReaders}\n"
   out := out ++ s!"tools: {tools}\n"
   out := out ++ s!"date: {date}\n"
-  -- The freshness key: what the browser actually looked at. A tier over
-  -- these counts recomputes it and faults when it differs, so the matrix
-  -- cannot keep reporting last week's verdict about this week's engine.
+  -- The freshness key of the tree this browser run measured, built
+  -- hermetically so every host computes the same one. A tier over these
+  -- counts recomputes it and faults when it differs, so the matrix cannot
+  -- keep reporting last week's verdict about this week's engine.
   out := out ++ s!"src-key: {srcKey}\n"
   out := out ++ s!"fixtures: {fixtures.size} built"
   out := out ++ (if unbuilt.isEmpty then "\n" else s!", unbuilt: {String.intercalate " " unbuilt.toList}\n")
@@ -537,6 +538,16 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
 def regenerate : IO UInt32 := do
   if !(← System.FilePath.pathExists leantexBin) then
     return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
+  -- The freshness key first, and hermetically: the tier's own function, so
+  -- the number written here and the number `htmlreader --check` recomputes
+  -- cannot differ by how, or on which host, each was built. A matrix whose
+  -- key could not be computed can never be matched, so nothing is written
+  -- and the browser is not started.
+  let srcKey ← match ← Scoreboard.hermeticHtmlKey with
+    | .ok k => pure k
+    | .error e =>
+      return (← die 2 s!"html-oracle: cannot compute the corpus's freshness key ({e}), \
+so the matrix would describe pages nothing ties to this tree; nothing written")
   let date := (← IO.Process.output { cmd := "date", args := #["-u", "+%Y-%m-%d"] }).stdout.trimAscii.toString
   let haveNode ← hasCmd "node"
   let nodeVersion ← if haveNode
@@ -582,12 +593,6 @@ def regenerate : IO UInt32 := do
           let why := ((probe.unavailable.find? (·.1 == r)).map (·.2)).getD "no row from the probe"
           tools := tools ++ s!"  {r} untested ({why})"
     IO.FS.createDirAll "tests/oracles"
-    -- The freshness key comes from the tier's own function, not from these
-    -- pages: one definition, so the number the tier recomputes and the
-    -- number written here cannot differ by how each was built.
-    let srcKey ← match ← Scoreboard.corpusHtmlKey leantexBin with
-      | .ok k => pure k
-      | .error e => pure s!"unavailable ({e})"
     IO.FS.writeFile matrixPath (renderMatrix probe fixtures unbuilt tools date srcKey)
     IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"
   finally

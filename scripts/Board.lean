@@ -70,6 +70,7 @@ because a ratchet can only point one way: with `higher is better` fixed for
 every tier, one comparison serves all of them and no tier can quietly
 invert the test.
 -/
+import LeanTex
 import scripts.Gate
 
 namespace Scoreboard
@@ -752,7 +753,12 @@ The aggregate builds these once before fanning out, and a failed build is a
 `fault` — the honest answer when the thing to measure did not compile.
 `ParityLib` is a sibling's, named ahead of its arrival so it is built the
 moment that tier lands; a name no `lakefile.toml` declares is skipped
-rather than failed, so the list can run ahead of the tree. -/
+rather than failed, so the list can run ahead of the tree.
+
+No tier reads the `leantex` binary: the HTML freshness key is built
+in-process from the library `BoardLib` imports (`hermeticHtmlKey`), so
+building `BoardLib` is what refreshes it. A tier that starts spawning the
+binary owes `leantex` a place here. -/
 def tierImports : List String :=
   ["BoardLib", "GateLib", "TestsModules", "ParityLib"]
 
@@ -1050,44 +1056,194 @@ record it: lake env lean --run scripts/{tier}.lean"
   IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size result)
   return (if result == "ok" then 0 else 1)
 
-/-- Build every corpus fixture to HTML with the committed binary and key the
-bytes. The freshness question a browser matrix cannot answer for itself: the
-pass counts describe pages built at some past commit, and nothing tied them
-to the pages this tree emits.
+end Scoreboard
 
-Hermetic in the sense the scoreboard means: the in-repo binary over in-repo
-sources, no network, no TeX tree, no browser. Measured cost on this host:
-13.2 s, stable across runs — 7.3 s of it the build, the rest reading and
-hashing 126 MB of pages (images arrive inlined). It runs in parallel with
-the other tiers, so that is the aggregate's floor rather than a sum. A
-word-at-a-time hash is the obvious saving if it starts to hurt. -/
-def corpusHtmlKey (leantexBin : String) : IO (Except String String) := do
-  if !(← System.FilePath.pathExists leantexBin) then
-    return .error s!"{leantexBin} not found; run lake build"
-  let dir : System.FilePath := "tests/corpus"
-  if !(← dir.isDir) then return .error "tests/corpus is not a directory"
-  let work ← IO.FS.createTempDir
-  try
-    let mut blobs : Array (String × ByteArray) := #[]
-    let mut unbuilt : Array String := #[]
-    for e in (← dir.readDir).qsort (·.fileName < ·.fileName) do
-      if e.fileName.endsWith ".tex" then
-        let name := (e.fileName.dropEnd ".tex".length).toString
-        let outPath := work / (name ++ ".html")
-        let r ← IO.Process.output
-          { cmd := (← IO.currentDir) / leantexBin |> (·.toString)
-            args := #["-q", "build", e.fileName, "-o", outPath.toString]
-            cwd := some dir }
-        if r.exitCode == 0 && (← outPath.pathExists) then
-          blobs := blobs.push (name, ← IO.FS.readBinFile outPath)
-        else unbuilt := unbuilt.push name
-    if blobs.isEmpty then return .error "no corpus fixture built to HTML"
-    -- An unbuilt fixture is part of the answer: a page that stopped
-    -- building changes what the browser would have seen.
-    let key := contentKey (blobs.push ("unbuilt", (String.intercalate " "
-      unbuilt.toList).toUTF8))
-    return .ok key
-  finally
-    try IO.FS.removeDirAll work catch _ => pure ()
+/-! ## The HTML freshness key, built hermetically
+
+A browser matrix is only as fresh as the pages it was measured on, so the
+`htmlreader` tier compares a key of the HTML this tree emits with the one the
+matrix recorded. The key used to rebuild the corpus through the CLI, which
+reads the host: the TeX tree's fonts through `kpsewhich`, whatever boundary
+tool is on `PATH`, `LEANTEX_FONT`, the user cache. With TeX off `PATH` or
+`LEANTEX_FONT` exported the same tree failed its gate. So the key is built
+in-process from in-repo inputs only — the corpus and its shipped faces — the
+way the suite builds a golden fixture: the one shipped face in every slot,
+the shipped math face where a document reaches math, a shipped fallback face
+per icon scalar, images read beside the fixture, and boundary pictures left
+unfulfilled (no tool runs). It then tracks the engine rather than the host,
+which is what freshness is for.
+
+It mirrors the driver's HTML path (`Main.frontend`, then the emission's
+configuration) over that environment. A change to the driver's own glue is
+therefore not seen by the key — routed: lift that glue into a library
+function both call. -/
+
+namespace Scoreboard.Hermetic
+
+open LeanTex.Core LeanTex.Cli
+
+/-- Every slot and variant on face 0 — the one-face set's index, as the
+suite's `oneFaceOf` and the driver's `singleFaceIndex` spell it. -/
+def oneFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
+  ((List.range 3).flatMap fun slot =>
+    [((slot, 400, false), 0), ((slot, 700, false), 0),
+     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
+
+/-- A face parsed once per run, however many fixtures load it. -/
+def loadFont (cache : IO.Ref (Array (String × Font.Font))) (path : String) :
+    IO (Option Font.Font) := do
+  if let some (_, f) := (← cache.get).find? (·.1 == path) then return some f
+  match Font.parse (← IO.FS.readBinFile path) with
+  | .ok f =>
+    cache.modify (·.push (path, f))
+    return some f
+  | .error _ => return none
+
+def isFaceFile (name : String) : Bool :=
+  name.endsWith ".ttf" || name.endsWith ".otf"
+
+/-- The shipped faces, probed file by file in name order: no scan cache and
+no environment variable, so the answer is a function of the files. -/
+def shippedFaces (dir : System.FilePath) : IO (Array FontDb.Face) := do
+  let mut out : Array FontDb.Face := #[]
+  for e in (← dir.readDir).qsort (·.fileName < ·.fileName) do
+    if isFaceFile e.fileName then
+      if let some f ← FontDb.probe e.path.toString then out := out.push f
+  return out
+
+/-- The font set a fixture's page is keyed under: the suite's shape for a
+golden fixture (`fixtureFontSet`), over the shipped faces only. -/
+def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
+    (faces : Array FontDb.Face) (fontsDir : System.FilePath) (doc : Ir.Doc) :
+    IO Font.FontSet := do
+  let withMath (path : String) : IO Font.FontSet := do
+    match ← loadFont cache path with
+    | some f => pure { oneFace with fonts := oneFace.fonts.push f, math := some oneFace.fonts.size }
+    | none => pure oneFace
+  let fs ← if doc.fonts.math.isSome then withMath (fontsDir / "FiraMath-Regular.otf").toString
+    else if (Layout.docMathScalars doc).isEmpty then pure oneFace
+    else match ← FontDb.pickMathFace faces (doc.fonts.body.getD "") with
+      | some (face, _) => withMath face.path
+      | none => pure oneFace
+  let uncovered := (Layout.docScalars doc).filter fun ch =>
+    0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF && fs.fonts.all fun f => (f.gid ch).isNone
+  if uncovered.isEmpty then return fs
+  let mut fs := fs
+  for (ch, path) in ← FontDb.fallbackPicks faces uncovered do
+    if let some f ← loadFont cache path then
+      let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with
+        | some (_, i) => i
+        | none => fs.fonts.size
+      let fs' := if idx == fs.fonts.size then { fs with fonts := fs.fonts.push f } else fs
+      fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
+  return fs
+
+/-- The document's images, read beside it through graphicx's extension
+resolution, with the bytes read — the page names them, so the key hashes
+them. A boundary picture has no file and stays unfulfilled. -/
+def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
+    IO (Image.Store × Array Diag × Array (String × ByteArray)) := do
+  let mut fetched : Array (String × Image.Fetch) := #[]
+  let mut read : Array (String × ByteArray) := #[]
+  for src in Ir.imageRefs doc do
+    let mut f : Image.Fetch := .missing src
+    for cand in Image.sourceCandidates src do
+      let p := dir / cand
+      if ← p.pathExists then
+        let bytes ← IO.FS.readBinFile p
+        read := read.push (cand, bytes)
+        f := .decoded (if cand == src then "" else cand) (Image.decode bytes)
+        break
+    fetched := fetched.push (src, f)
+  let (store, diags) := Image.fulfil fetched
+  return (store, diags, read)
+
+/-- One fixture's page, or `none` where the driver would refuse to write one
+(an error its `\allow` does not accept). The sequence is `Main.frontend`'s:
+lex, parse, `\input` and `\data` fulfilled beside the file, one preparation,
+a picture label measured against the preamble's set, the bibliography
+fulfilled; then the emission configured as the driver configures it. -/
+def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
+    (faces : Array FontDb.Face) (corpus fontsDir : System.FilePath) (name : String) :
+    IO (Option (String × Array (String × ByteArray))) := do
+  let file := (corpus / s!"{name}.tex").toString
+  let src ← IO.FS.readFile file
+  let (toks, lexDiags) := Lex.lex file src
+  let (raws, parseDiags) := Parse.parse file toks
+  let (raws, inputDiags, _) ← Input.expandInputs file raws
+  let (raws, dataDiags) ← Input.resolveData file raws
+  let prepared := Elab.prepare file raws
+  let pre := Elab.preambleDoc file prepared
+  let preFs ← fontSetFor cache oneFace faces fontsDir pre
+  let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
+  let (doc, elabDiags, spans) := Elab.runPrepared file prepared
+    (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
+  let (doc, bibDiags) ← Input.resolveBibliography file doc spans.bib
+  let fs ← fontSetFor cache oneFace faces fontsDir doc
+  let (store, imgDiags, read) ← storeFor corpus doc
+  if (Diag.resolveAll doc.allow false (elabDiags ++ bibDiags ++ imgDiags)).errors > 0 then
+    return none
+  let css : HtmlDoc.CssMode := match cssFor doc.output.css with
+    | .own => .own
+    | .bulma => .bulma
+    | .none => .none
+  let cfg : HtmlDoc.Config :=
+    { css, imgs := store
+      fonts := if doc.fontPolicy == .embedded then some fs else none
+      fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
+  return some ((HtmlDoc.emit cfg doc).1, read)
+
+/-- The key over a corpus directory holding `<name>.tex` fixtures and a
+`fonts/` directory of shipped faces: every page that builds, the images it
+reads, every shipped face once, and the names of the fixtures that do not
+build — a page that stopped building changes what a browser would see. -/
+def corpusKey (corpus : System.FilePath) : IO (Except String String) := do
+  let fontsDir := corpus / "fonts"
+  if !(← corpus.isDir) then return .error s!"{corpus} is not a directory"
+  if !(← fontsDir.isDir) then return .error s!"{fontsDir} is not a directory"
+  let faces ← shippedFaces fontsDir
+  let cache ← IO.mkRef (#[] : Array (String × Font.Font))
+  let some body ← loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
+    | return .error s!"{fontsDir}/OpenSans-Regular.ttf does not parse"
+  let oneFace : Font.FontSet := { fonts := #[body], index := oneFaceIndex }
+  let mut blobs : Array (String × ByteArray) := #[]
+  let mut unbuilt : Array String := #[]
+  for e in (← corpus.readDir).qsort (·.fileName < ·.fileName) do
+    if e.fileName.endsWith ".tex" then
+      let name := (e.fileName.dropEnd ".tex".length).toString
+      let page ← try pageFor cache oneFace faces corpus fontsDir name catch _ => pure none
+      match page with
+      | some (html, read) =>
+        blobs := blobs.push (s!"{name}.html", html.toUTF8)
+        for (cand, bytes) in read do
+          blobs := blobs.push (s!"{name}.assets/{cand}", bytes)
+      | none => unbuilt := unbuilt.push name
+  if blobs.isEmpty then return .error "no corpus fixture built to HTML"
+  for e in (← fontsDir.readDir).qsort (·.fileName < ·.fileName) do
+    if isFaceFile e.fileName then
+      blobs := blobs.push (s!"fonts/{e.fileName}", ← IO.FS.readBinFile e.path)
+  blobs := blobs.push ("unbuilt", (String.intercalate " " unbuilt.toList).toUTF8)
+  return .ok (Scoreboard.contentKey blobs)
+
+end Scoreboard.Hermetic
+
+namespace Scoreboard
+
+/-- The freshness key of the HTML this tree emits for `tests/corpus`, built
+hermetically (`Hermetic.corpusKey`): the one function `html-oracle` records
+the key through and `htmlreader --check` recomputes it with, so the number
+written and the number checked cannot differ by how each was built, and
+neither can differ by host. Measured on this host: see PLAN. -/
+def hermeticHtmlKey : IO (Except String String) := do
+  try Hermetic.corpusKey "tests/corpus"
+  catch e => return .error (toString e)
+
+/-- The freshness key under the name `scripts/htmlreader.lean` calls. The
+binary argument is no longer read — the key is built in-process, so it
+cannot depend on what the host has installed — and stays only so that
+caller compiles. Routed: call `hermeticHtmlKey` there and drop the
+argument, then delete this. -/
+def corpusHtmlKey (_leantexBin : String) : IO (Except String String) :=
+  hermeticHtmlKey
 
 end Scoreboard
