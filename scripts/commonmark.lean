@@ -24,7 +24,10 @@ unclassified deviation fails. Four verdicts:
   reason. Adding a row here is a dialect decision, never a code change's
   side effect.
 * `owed` — the engine does not do this yet. Not a pass and not an excuse:
-  the ratchet lets this number fall and never rise.
+  the ratchet lets this number fall and never rise. And `owed` never hides
+  silence: a gap construct the expected page carries (a rule, a start
+  number, a title, a language, a fourth-level heading) that the engine's
+  page drops must be named by the run, or every mode fails (`silentGaps`).
 
 The ratchet is the tier file `tests/scoreboard/commonmark.tsv`, in the one
 scoreboard format and under the one ratchet every tier obeys
@@ -481,6 +484,81 @@ def canon (base : Nat) (pre : Bool) (n : Html.Node) : String := canonG [] base p
 def canonList (base : Nat) (pre : Bool) (acc : String) (ns : List Html.Node) : String :=
   canonGList [] base pre false acc ns
 
+-- ## What an IR gap costs, counted
+--
+-- `owed` must not hide silence. A case can be owed on an IR gap only when
+-- its run names the gap; a construct the expected page carries that the
+-- engine's page drops *without* naming it is a reader defect — the shape a
+-- list followed by `* * *` took, which shipped no rule and raised nothing,
+-- so the ledger read it as one more owed case.
+
+/-- One count per gap construct on a tree: thematic breaks, an ordered
+list's start other than 1, a link's title, an image's title, a code
+element's language class, and a heading below the third relative level —
+each beside the count of the element that carries it, so a construct lost
+with its carrier (a reference link the reader does not resolve drops its
+title *and* its link) is read as the carrier's defect, not the gap's. -/
+structure GapInk where
+  rules : Nat := 0
+  starts : Nat := 0
+  ols : Nat := 0
+  linkTitles : Nat := 0
+  links : Nat := 0
+  imageTitles : Nat := 0
+  images : Nat := 0
+  langs : Nat := 0
+  codes : Nat := 0
+  deep : Nat := 0
+  headings : Nat := 0
+  deriving BEq, Repr, Inhabited
+
+mutual
+
+def gapInkOne (base : Nat) (g : GapInk) (n : Html.Node) : GapInk :=
+  match n with
+  | .elem tag attrs kids =>
+    let has (a : String) : Bool := attrs.any (·.1 == a)
+    let g := if tag == "hr" then { g with rules := g.rules + 1 } else g
+    let g := if tag == "ol" then { g with ols := g.ols + 1 } else g
+    let g := if tag == "ol" && attrs.any (fun a => a.1 == "start" && a.2 != "1") then
+      { g with starts := g.starts + 1 } else g
+    let g := if tag == "a" then { g with links := g.links + 1 } else g
+    let g := if tag == "a" && has "title" then { g with linkTitles := g.linkTitles + 1 } else g
+    let g := if tag == "img" then { g with images := g.images + 1 } else g
+    let g := if tag == "img" && has "title" then { g with imageTitles := g.imageTitles + 1 } else g
+    let g := if tag == "code" then { g with codes := g.codes + 1 } else g
+    let g := if (languageClass? attrs).isSome then { g with langs := g.langs + 1 } else g
+    let g := match hLevelTag? tag with
+      | some l =>
+        let g := { g with headings := g.headings + 1 }
+        if l ≥ base && l - base + 1 > 3 then { g with deep := g.deep + 1 } else g
+      | none => g
+    gapInkList base g kids.toList
+  | _ => g
+
+def gapInkList (base : Nat) (g : GapInk) : List Html.Node → GapInk
+  | [] => g
+  | n :: rest => gapInkList base (gapInkOne base g n) rest
+
+end
+
+/-- The gaps whose construct the expected page carries more of than the
+engine's page, where the engine's page does carry the element the construct
+sits on, and with no route in the run naming it: silence, never a verdict.
+A `W0110` names a lost listing language as surely as `md:code-info` does. -/
+def silentGaps (want got : GapInk) (routes : Array String) : Array String := Id.run do
+  let named (g : String) : Bool :=
+    routes.contains g || (g == "md:code-info" && routes.contains "W0110")
+  let mut out : Array String := #[]
+  for (g, w, e, wc, ec) in [("md:thematic-break", want.rules, got.rules, 0, 0),
+      ("md:list-start", want.starts, got.starts, want.ols, got.ols),
+      ("md:link-title", want.linkTitles, got.linkTitles, want.links, got.links),
+      ("md:image-title", want.imageTitles, got.imageTitles, want.images, got.images),
+      ("md:code-info", want.langs, got.langs, want.codes, got.codes),
+      ("md:heading-depth", want.deep, got.deep, want.headings, got.headings)] do
+    if w > e && ec ≥ wc && !named g then out := out.push g
+  return out
+
 -- The engine's page reduced to the fragment a spec example is about: the
 -- content of `<main>`, with the sectioning walk's `<section>` wrappers
 -- unwrapped. Each walk is a one-node function plus its `List` companion
@@ -731,6 +809,10 @@ structure Judged where
   got : String
   refusals : Array (Refusal × Bool)
   routes : Array String
+  /-- Gap constructs the expected page carries and the engine's page drops
+  with nothing in the run naming them (`silentGaps`); empty for a run that
+  raised a strict refusal, which fails the build and names its loss. -/
+  silent : Array String := #[]
   deriving Inhabited
 
 def classify (base : Nat) (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
@@ -748,7 +830,10 @@ def classify (base : Nat) (reviewed : Array (Nat × String)) (ex : Example) : Ju
   let refusals := (refusalsOf diags).map fun r => (r, corroborated reviewed ex r)
   let (v, note) := judge want got wantG gotG refusals routes
     ((divergences.find? (·.1 == ex.id)).map (·.2))
-  { verdict := v, note, want, got, refusals, routes }
+  let silent := if !(diags.any (·.kind == .E0390)) then
+      silentGaps (gapInkList 1 {} wantNs) (gapInkList base {} ns.toList) routes
+    else #[]
+  { verdict := v, note, want, got, refusals, routes, silent }
 
 
 -- ## The committed tables
@@ -925,10 +1010,19 @@ def selftest : IO UInt32 := do
      check "chrome: sections unwrap"
        (canonList 1 false "" (unwrapList #[] (hParse "<section><p>a</p></section>").toList).toList)
        "<p>a</p>",
+     check "chrome: a wrapper that is not a section stays"
+       (canonList 1 false "" (unwrapList #[] (hParse "<div><p>a</p></div>").toList).toList)
+       "<div><p>a</p></div>",
      check "chrome: the fragment is <main>'s content"
        (canonList 1 false ""
          ((mainList? (hParse "<header>h</header><main><p>a</p></main>").toList).getD #[]).toList)
        "<p>a</p>",
+     check "chrome: <main>'s content is still compared"
+       (toString (canonList 1 false ""
+         ((mainList? (hParse "<header>h</header><main><p>a</p></main>").toList).getD #[]).toList
+         == canonList 1 false ""
+         ((mainList? (hParse "<header>h</header><main><p>b</p></main>").toList).getD #[]).toList))
+       "false",
      -- class and id: a language class is content, every other class and id is not
      same "class: a styling class is dropped" "<a class=\"x\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
      same "id: a generated id is dropped" "<h2 id=\"x\">t</h2>" "<h2>t</h2>",
@@ -938,6 +1032,8 @@ def selftest : IO UInt32 := do
        "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>",
      -- style
      same "style: dropped" "<a style=\"color: inherit\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
+     differ "style: the element it sits on is still compared"
+       "<a style=\"color: inherit\" href=\"u\">t</a>" "<a style=\"color: inherit\" href=\"v\">t</a>",
      -- inter-element whitespace: collapsed outside <pre>, compared inside it
      same "whitespace: collapsed outside pre" "<p>a\n  <em>b</em></p>" "<p>a <em>b</em></p>",
      differ "whitespace: kept inside pre" "<pre><code>a  b</code></pre>" "<pre><code>a b</code></pre>",
@@ -975,6 +1071,39 @@ def selftest : IO UInt32 := do
     bad := bad.push "gap link title: it hid the destination too"
   if cg ["md:thematic-break"] "<p>a</p>" == cg ["md:thematic-break"] "<p>b</p>" then
     bad := bad.push "gap hr: it hid a paragraph's text too"
+  -- Silence: a gap construct dropped with no route naming it is a fault,
+  -- and naming it is exactly what clears it — each rule broken once.
+  let ink (base : Nat) (s : String) : GapInk := gapInkList base {} (hParse s).toList
+  let sg (want got : String) (routes : Array String) : Array String :=
+    silentGaps (ink 1 want) (ink 2 got) routes
+  let ss : List (Option String) :=
+    [check "silence: a dropped rule, unnamed"
+       (toString (sg "<p>a</p><hr /><p>b</p>" "<p>a</p><p>b</p>" #[]).toList)
+       "[md:thematic-break]",
+     check "silence: a dropped rule, named"
+       (toString (sg "<p>a</p><hr /><p>b</p>" "<p>a</p><p>b</p>" #["md:thematic-break"]).toList) "[]",
+     check "silence: a start of 1 is not a start"
+       (toString (sg "<ol start=\"1\"><li>a</li></ol>" "<ol><li>a</li></ol>" #[]).toList) "[]",
+     check "silence: a dropped start, unnamed"
+       (toString (sg "<ol start=\"3\"><li>a</li></ol>" "<ol><li>a</li></ol>" #[]).toList)
+       "[md:list-start]",
+     check "silence: a link title and an image title are two gaps"
+       (toString (sg "<a href=\"u\" title=\"t\">x</a><img src=\"s\" title=\"t\">"
+         "<a href=\"u\">x</a><img src=\"s\">" #["md:link-title"]).toList) "[md:image-title]",
+     check "silence: a title lost with its link is the link's defect, not the title's"
+       (toString (sg "<p><a href=\"u\" title=\"t\">x</a></p>" "<p>[x]</p>" #[]).toList) "[]",
+     check "silence: a lost language named by W0110 is named"
+       (toString (sg "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>"
+         #["W0110"]).toList) "[]",
+     check "silence: a lost language, unnamed"
+       (toString (sg "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>"
+         #[]).toList) "[md:code-info]",
+     check "silence: a fourth-level heading set at the third, unnamed"
+       (toString (sg "<h4>x</h4>" "<h4>x</h4>" #[]).toList) "[md:heading-depth]",
+     check "silence: a fourth-level heading the engine sets as its own fourth is not a loss"
+       (toString (sg "<h4>x</h4>" "<h5>x</h5>" #[]).toList) "[]"]
+  for c in ss do
+    if let some m := c then bad := bad.push m
   -- The tier rows, in the scoreboard's own format: sorted, unique, two per
   -- section, and every value an integer the shared ratchet reads. The old
   -- rows were written in spec order, which the format faults.
@@ -1150,9 +1279,17 @@ def run (args : List String) : IO UInt32 := do
   -- The reviewed list in its other direction, in every mode: a stale row is
   -- a fault, never a note.
   let stale := staleReviewed exs js reviewed
-  unless stale.isEmpty do
-    for s in stale do IO.eprintln s!"commonmark: {s}"
-    return ← die 1 s!"commonmark: {stale.size} stale reviewed rows"
+  for s in stale do IO.eprintln s!"commonmark: {s}"
+  -- Silence, in every mode: a gap construct the expected page carries and
+  -- the engine's page drops unnamed is a reader defect, never a verdict.
+  -- Reported beside the stale rows rather than after them, so one run
+  -- names every fault.
+  let silent := (exs.zip js).filter (!·.2.silent.isEmpty)
+  for (e, j) in silent do
+    IO.eprintln s!"commonmark: case {e.id} ({e.section_}) drops {j.silent.toList} and names nothing"
+  unless stale.isEmpty && silent.isEmpty do
+    return ← die 1 s!"commonmark: {stale.size} stale reviewed rows, \
+{silent.size} cases drop a gap construct in silence"
   let tier (a : List String) : IO UInt32 :=
     Scoreboard.tierMain "commonmark" (.pairs "match" "cases")
       (pure (tierProvenance exs rows, tierRows exs rows)) selftest a
