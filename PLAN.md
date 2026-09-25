@@ -14606,3 +14606,126 @@ one directory carrying `lake`/`lean` alone — `lualatex` and `fc-list` absent,
 all checks pass (`hermetic2.log`). With `PATH` fully empty the six checks
 that shell out to `lake` fail for want of `lake`; that is the harness, not
 host data (`hermetic.log`).
+
+
+### 2026-09-25 — a lowering is spent once, retirement goes through the tool, and a floor is held to the base
+
+The re-review of the scoreboard found four ways a sanctioned act or the host
+defeated the gate, each reproduced, each past every gate: the second fall of
+one item wedged its tier (a carried `# lowered:` line was held to the new
+rows and the measurement read as malformed); the tool's printed retirement
+remedy was a baseline `validate` rejected; the HTML freshness key rebuilt
+the corpus through the CLI and so read the TeX tree, `PATH` and
+`LEANTEX_FONT`; and a floor edited down by hand, or a baseline deleted and
+regenerated, passed `--check` because file and tree agreed. The parity
+review added a fifth: a carried line authorised the same fall again after a
+recovery. Every case ran on `e3a5fca` and on this branch's head through
+`leantex-evidence/scoreboard-r3/repro.sh` in scratch clones: cases A–M all
+fail on `e3a5fca` and all pass on `1254b95`; the cases only the head can
+run (the key's refusal, a stale request, a tombstone) pass there.
+
+**A lowering line is a request or a record.** `# lowered: <item> <old>→<new>
+— <why>` is a human's request: it authorises exactly the fall from the
+committed floor `<old>` to `<new>`, and the regeneration that writes that
+fall writes it back as `# lowered (applied): …`, which authorises nothing
+again. A second fall needs a second request, checked against the floor the
+first left; a record is history and is never held to today's rows, which is
+what wedged the second staging under one owner. A request no loss answers
+is refused rather than carried, and a committed file still holding a
+request is `stale` under `--check` — every state is decidable from the file
+alone. `validate` now judges a committed file and `validateFresh` a
+measurement. The ratchet is two `filterMap`s so it can be read:
+`authorises_exact` (a line authorises a change exactly when it is a request
+and the change is the fall it names), `ratchet_monotone` and
+`ratchet_cap_monotone` (whatever regeneration may write either did not fall
+or fell by exactly a requested pair of values, from the committed value or
+from the cap), `ratchet_accounts` (every item it stops writing is retired),
+all stated over `unauthorised`, the one condition regeneration writes
+under. They live in `scripts/Board.lean`, checked by `lake build BoardLib`;
+`cites` loads no scoreboard module yet, so no docstring cites them by name.
+
+**Retirement goes through the tool.** A `# retired:` line beside its row is
+the request — the only committed state the ratchet's retirement arm can
+read, and the state the old `validate` rejected — applied by dropping the
+row; a measurement that still produces a retired item is the fault. A
+lowering never pays for a vanish, so the refusal no longer offers one. A
+whole tier **can** be retired, one way only: a `# retired-tier: <why>`
+tombstone in place of its rows, with its producer deleted; the aggregate
+reports it `retired`, and a tombstone beside a live producer is a fault.
+A baseline present at the base may never disappear, tombstones included.
+
+**`scoreboard --check --base <rev>`** holds every baseline committed at
+`<rev>` (`git show`) to the tree's copy, exit status the contract,
+`scoreboard: base=<sha> tier=<t> result=ok|laundered|fault` per tier. A
+value may rise; it may fall only as far as the lowering lines **new since
+`<rev>`** reach, composed with free rises between them (`reach`), so two
+stagings in one branch are two records and pass, a record carried from the
+base pays for nothing, and `itemAccepted_monotone` says every accepted fall
+is paid for by a new line reaching at or below the tip value; `reach_mem`
+that `reach` returns the start or some line's value. A vanish needs a new
+retirement or a new tombstone; an item new to a headroom tier is a fall
+from the cap; a changed encoding is `laundered`; a rev that names no commit
+faults. Exactness per regeneration does not survive composition, so this is
+the statement the base check can make. What it does not check: a new line
+is a human-written reason, and nothing judges the reason.
+
+**The aggregate faults what no producer can fix.** It reads each baseline
+before spawning its producer: empty, unreadable or rowless is `fault`
+whatever the producer exits (an emptied sibling baseline used to pass), a
+tombstone is `retired`. `stale` passes through instead of reading `fail`
+(`resultOf`), and every failing tier's reasons print under `--check`.
+
+**The freshness key is built in-process.** `hermeticHtmlKey` runs the
+driver's front-end sequence over `tests/corpus` with the suite's font
+shape for a golden fixture over the shipped faces only (`FontDb.probe` on
+`tests/corpus/fonts`, no scan cache), images read beside the fixture and
+hashed with the pages, every shipped face hashed once, boundary pictures
+unfulfilled. Measured with a probe calling it (`lake env lean --run`, on the
+tree committed as `26210f8`, before it was): key `c13e1a74ff3543d9` in the
+ordinary environment twice, with TeX off `PATH` and a cold cache, with
+`LEANTEX_FONT` set, and with `HOME` empty; 4.0 s each, interpreted; and
+`scoreboard --check` at `1254b95` exits 0 with TeX off `PATH` and with
+`LEANTEX_FONT` set to a face the key does not use. Not
+measured: a host with other system fonts — nothing in the key reads a
+system directory, by reading. `scoreboard --check` took 5.4 s on one run
+(the review measured 9.3–9.5 s for the CLI key); one run, not a bench.
+`html-oracle` computes the key before starting the browser and writes no
+matrix without one. The matrix was regenerated by running Chromium
+151.0.7922.34 (Playwright 1.62.0, 54 s): only its `src-key:` line moved,
+and the 7 failing target cells stand. What the key cannot see: the
+driver's own glue in `Main.lean` (its font assembly, the boundary SVGs), so
+a change there moves pages without moving the key.
+
+**Every new check broken once** (`mutate.sh`, ten mutants of `1254b95`):
+records authorising, records held to rows, a retirement request malformed,
+the base check blind to a fall, a vanish or a deleted file, the aggregate
+trusting an emptied baseline, `stale` read as `fail`, a request not
+`stale`, the key reading `LEANTEX_FONT`. The selftest names nine of them;
+the tenth, the key reading the environment, only the gate run with
+`LEANTEX_FONT` set to a face the key does not use can see. The selftest
+now also follows the tool's own remedies to the end through `tierMainAt`,
+the path a tier ships, twice for each kind.
+
+**Corrections to the brief.** `tierImports` does not gain `leantex`: after
+the key moved in-process no tier reads the binary, so the stale-binary
+hazard is closed by not reading it, and building it would link a binary
+nothing measures. The theorem asked for — accepted implies fresh ≥
+committed or a new line authorises exactly committed → fresh — holds per
+regeneration; across a branch's several regenerations the base check can
+only promise the composed form above.
+
+**Routed.** `scripts/htmlreader.lean:108` calls `corpusHtmlKey leantexBin`,
+which now ignores its argument: call `hermeticHtmlKey`, drop `leantexBin`,
+and correct the module docstring and the provenance line, which still say
+the corpus is rebuilt with the binary. `scripts/cites.lean`'s `treeRoots`
+owes a root for the module `scripts.Board` (target `BoardLib`) so Board's
+theorems can be cited; the scoreboard selftest fails once it lands. `scripts/land.lean` owes
+`scoreboard --check --base <main sha>` and, from the review, regenerating
+tiers whose only changes are gains after a rebase; CI owes the base check.
+`Main.lean` owes its HTML assembly as a library function the key can call.
+`Tests/Support.lean`'s `fixtureFontSet`, `elabFixture` and
+`Tests/Backends.lean`'s `corpusStore` are the key's pipeline written a
+second time; Board cannot import them, because `Tests.Support` declares
+names like `check` in the root namespace and every tier imports Board. The
+sibling tiers credit a fall under `--base` only through lowering lines in
+this form, and `commonmark`'s rows still want sorting before it ports.
