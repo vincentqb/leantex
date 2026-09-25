@@ -24,6 +24,11 @@ categories' letter ranges (L*) and the simple lowercase mappings —
 `Char.isAlpha`/`Char.toLower` are ASCII-only, and a word boundary that
 excludes é neither hyphenates an accented word nor keeps it one box.
 
+Every table is fixed-width lowercase hex with no separators, so the loader
+addresses a field by byte offset instead of splitting and re-parsing text:
+each entry's widths are on its own docstring below. A separated form cost
+5 ms of every process that touched a non-ASCII character.
+
 licence: UNICODE LICENSE V3 (Unicode data files); see
 https://www.unicode.org/license.txt
 -/
@@ -80,6 +85,15 @@ def expand (canon : Std.HashMap Nat (List Nat)) (fuel : Nat) (cp : Nat) : List N
     match canon.get? cp with
     | some parts => parts.flatMap (expand canon fuel)
     | none => [cp]
+
+/-- Fixed-width lowercase hex, left-padded. The loader reads a field by
+byte offset, so every field of a table is the same width and no separator
+is emitted; `die` rather than truncate if a value does not fit. -/
+def hexOf (width n : Nat) : IO String := do
+  let ds := String.ofList (Nat.toDigits 16 n)
+  if ds.length > width then
+    die s!"{n} does not fit in {width} hex digits"
+  return String.ofList (List.replicate (width - ds.length) '0') ++ ds
 
 def main (args : List String) : IO UInt32 := do
   let mut source : Option String := none
@@ -145,24 +159,41 @@ def main (args : List String) : IO UInt32 := do
       if !isListedExcluded cp && cccOf a == 0 && cccOf cp == 0 then
         compEntries := compEntries.push (a, b, cp)
     | _ => pure ()
-  let cccStr := " ".intercalate (ccc.toList.map fun (cp, c) => s!"{cp}:{c}")
-  let decompStr := " ".intercalate (decompEntries.toList.map fun (cp, parts) =>
-    s!"{cp}:{",".intercalate (parts.map toString)}")
-  let compStr := " ".intercalate (compEntries.toList.map fun (a, b, cp) =>
-    s!"{a},{b}:{cp}")
-  let lettersStr := " ".intercalate (letters.toList.map fun (a, b) => s!"{a}:{b}")
-  let lowerStr := " ".intercalate (lower.toList.map fun (a, b) => s!"{a}:{b}")
+  let mut cccStr := ""
+  for (cp, c) in ccc do
+    cccStr := cccStr ++ (← hexOf 6 cp) ++ (← hexOf 2 c)
+  let mut decompStr := ""
+  for (cp, parts) in decompEntries.qsort (fun a b => a.1 < b.1) do
+    decompStr := decompStr ++ (← hexOf 6 cp) ++ (← hexOf 1 parts.length)
+    for el in parts do
+      decompStr := decompStr ++ (← hexOf 6 el)
+  let mut compStr := ""
+  for (a, b, cp) in compEntries.qsort
+      (fun x y => x.1 < y.1 || (x.1 == y.1 && x.2.1 < y.2.1)) do
+    compStr := compStr ++ (← hexOf 6 a) ++ (← hexOf 6 b) ++ (← hexOf 6 cp)
+  let mut lettersStr := ""
+  for (a, b) in letters do
+    lettersStr := lettersStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
+  let mut lowerStr := ""
+  for (a, b) in lower do
+    lowerStr := lowerStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
   let content := notice
     ++ "namespace LeanTex.Core.NfcData\n\n"
-    ++ "/-- `cp:ccc` for every character of nonzero canonical combining class. -/\n"
+    ++ "/-- Nonzero canonical combining classes, 8 hex digits per entry:\n"
+    ++ "6 for the codepoint, 2 for the class. Ascending by codepoint. -/\n"
     ++ s!"def ccc : String := \"{cccStr}\"\n\n"
-    ++ "/-- `cp:el,el` — fully expanded canonical decompositions. -/\n"
+    ++ "/-- Fully expanded canonical decompositions: 6 hex digits for the\n"
+    ++ "codepoint, 1 for the element count, then 6 per element. Ascending by\n"
+    ++ "codepoint; the only table whose entries differ in width. -/\n"
     ++ s!"def decomp : String := \"{decompStr}\"\n\n"
-    ++ "/-- `a,b:cp` — the primary composites of canonical composition. -/\n"
+    ++ "/-- The primary composites of canonical composition, 18 hex digits\n"
+    ++ "per entry: the two elements, then the composite. Ascending. -/\n"
     ++ s!"def comp : String := \"{compStr}\"\n\n"
-    ++ "/-- `lo:hi` — the merged codepoint ranges of general category L*. -/\n"
+    ++ "/-- The merged codepoint ranges of general category L*, 12 hex digits\n"
+    ++ "per entry: low then high, inclusive. Ascending. -/\n"
     ++ s!"def letters : String := \"{lettersStr}\"\n\n"
-    ++ "/-- `cp:lower` — the simple lowercase mappings. -/\n"
+    ++ "/-- The simple lowercase mappings, 12 hex digits per entry:\n"
+    ++ "codepoint then its lowercase. Ascending. -/\n"
     ++ s!"def lower : String := \"{lowerStr}\"\n\n"
     ++ "end LeanTex.Core.NfcData\n"
   IO.FS.writeFile output content

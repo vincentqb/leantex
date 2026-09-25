@@ -13,7 +13,8 @@ The algorithm is UAX #15 §9's: canonical decomposition (the generated
 table is fully expanded; Hangul is arithmetic, Unicode §3.12), canonical
 reordering of nonzero-combining-class runs, then canonical composition
 over the primary composites. Tables come from `NfcData` (generated from
-UnicodeData.txt; see `scripts/gen-nfc-data.lean`).
+UnicodeData.txt; see `scripts/gen-nfc-data.lean`), fixed-width hex that
+this module reads by byte offset.
 -/
 
 namespace LeanTex.Core.Nfc
@@ -28,40 +29,62 @@ structure Tables where
   letters : Array (UInt32 × UInt32)
   lower : HashMap UInt32 Char
 
-def load : Tables := Id.run do
+/-- A hex digit's value. The generator emits `[0-9a-f]` only, so the two
+ranges are the whole domain. -/
+private def nib (b : UInt8) : Nat :=
+  let n := b.toNat
+  if n ≤ 0x39 then n - 0x30 else n - 0x57
+
+/-- A fixed-width hex field, read by byte offset. A short read would be a
+malformed generated table, and reads as zero rather than aborting the run;
+the decomposition census in `Tests` is what refuses one. -/
+private def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
+  let mut v := 0
+  for k in [0:width] do
+    v := v * 16 + nib (bs[start + k]?.getD 0)
+  return v
+
+def load (_ : Unit) : Tables := Id.run do
+  let cb := NfcData.ccc.toUTF8
   let mut ccc : HashMap UInt32 Nat := {}
-  for entry in NfcData.ccc.splitOn " " do
-    if let [k, v] := entry.splitOn ":" then
-      ccc := ccc.insert (UInt32.ofNat (k.toNat?.getD 0)) (v.toNat?.getD 0)
+  for i in [0:cb.size / 8] do
+    ccc := ccc.insert (UInt32.ofNat (field cb (i * 8) 6)) (field cb (i * 8 + 6) 2)
+  let db := NfcData.decomp.toUTF8
   let mut decomp : HashMap UInt32 (Array Char) := {}
-  for entry in NfcData.decomp.splitOn " " do
-    if let [k, v] := entry.splitOn ":" then
-      let parts := (v.splitOn ",").foldl
-        (fun a p => a.push (Char.ofNat (p.toNat?.getD 0))) #[]
-      decomp := decomp.insert (UInt32.ofNat (k.toNat?.getD 0)) parts
+  let mut p := 0
+  for _ in [0:db.size + 1] do
+    if p + 7 > db.size then
+      break
+    let k := field db (p + 6) 1
+    let mut parts : Array Char := Array.mkEmpty k
+    for j in [0:k] do
+      parts := parts.push (Char.ofNat (field db (p + 7 + j * 6) 6))
+    decomp := decomp.insert (UInt32.ofNat (field db p 6)) parts
+    p := p + 7 + k * 6
+  let mb := NfcData.comp.toUTF8
   let mut comp : HashMap UInt64 Char := {}
-  for entry in NfcData.comp.splitOn " " do
-    if let [k, v] := entry.splitOn ":" then
-      if let [a, b] := k.splitOn "," then
-        let key := UInt64.ofNat (a.toNat?.getD 0) * 0x100000000
-          + UInt64.ofNat (b.toNat?.getD 0)
-        comp := comp.insert key (Char.ofNat (v.toNat?.getD 0))
-  let mut letters : Array (UInt32 × UInt32) := #[]
-  for entry in NfcData.letters.splitOn " " do
-    if let [a, b] := entry.splitOn ":" then
-      letters := letters.push
-        (UInt32.ofNat (a.toNat?.getD 0), UInt32.ofNat (b.toNat?.getD 0))
+  for i in [0:mb.size / 18] do
+    let key := UInt64.ofNat (field mb (i * 18) 6) * 0x100000000
+      + UInt64.ofNat (field mb (i * 18 + 6) 6)
+    comp := comp.insert key (Char.ofNat (field mb (i * 18 + 12) 6))
+  let lb := NfcData.letters.toUTF8
+  let mut letters : Array (UInt32 × UInt32) := Array.mkEmpty (lb.size / 12)
+  for i in [0:lb.size / 12] do
+    letters := letters.push
+      (UInt32.ofNat (field lb (i * 12) 6), UInt32.ofNat (field lb (i * 12 + 6) 6))
+  let wb := NfcData.lower.toUTF8
   let mut lower : HashMap UInt32 Char := {}
-  for entry in NfcData.lower.splitOn " " do
-    if let [a, b] := entry.splitOn ":" then
-      lower := lower.insert (UInt32.ofNat (a.toNat?.getD 0))
-        (Char.ofNat (b.toNat?.getD 0))
+  for i in [0:wb.size / 12] do
+    lower := lower.insert (UInt32.ofNat (field wb (i * 12) 6))
+      (Char.ofNat (field wb (i * 12 + 6) 6))
   return { ccc, decomp, comp, letters, lower }
 
-/-- The tables, built once per process, on first use (`Thunk`: a
-zero-argument constant would build them at process start, ASCII
-documents included). -/
-def tables : Thunk Tables := Thunk.mk fun _ => load
+/-- The tables, built once per process, on first use. `load` takes a `Unit`
+because a zero-argument definition is a closed term the code generator
+initializes at module load: as one, it cost every process 5 ms — including
+the ASCII documents that never read a table — and the `Thunk` around it
+deferred nothing. -/
+def tables : Thunk Tables := Thunk.mk load
 
 -- Hangul syllable composition is arithmetic (Unicode §3.12).
 private def sBase : Nat := 0xAC00
