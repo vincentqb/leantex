@@ -406,6 +406,75 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-25 — a key name is a name, and the reader stopped at its first
+hyphen (M8b slice 4, picture key names). The highest-value defect of the
+four in this slice: one lexing rule, and it retired three separate visual
+symptoms at once on the private reference corpus.
+
+**The measurement.** A figure declared four bundles whose names carry a
+hyphen and used them nineteen times. The engine reported *one* dropped key,
+named by the text before the hyphen. Every use of every one of the four was
+dropped in the same silence: an edge that should have been muted wasn't, an
+edge that should have been dashed wasn't, and the nodes that should have
+been dimmed weren't. One reader, three readings of the diagram lost.
+
+**The grammar is sourced, not guessed.** pgf manual §87.2, "The Key Tree":
+a key is a path, `/` separates its components, `.` introduces a handler,
+`,` separates entries in a list and `=` starts a value. **Every other
+character belongs to the name.** The engine's reader was `identPath` — a
+run of identifier tokens joined by single spaces — which is not that
+grammar but a guess about it, and the guess was already visibly narrow:
+`every node`, `text width` and `minimum size` hold a space and
+`/.append style` a dot, so the accepted set was wider than identifiers
+before this entry and still not the grammar. Patching in a hyphen case
+would have left `:`, `@` and a digit-bearing name broken, which is why the
+fix is `keyName` over the character classes the manual names rather than
+one more admitted character.
+
+**The two readers had diverged, and that was the second half of the
+defect.** Three functions read a name off the same tokens and no two
+agreed: `readDef` (the declaration) joined identifiers with spaces,
+`expandOpts` (the use) matched a *single* `.ident` token and so could never
+find a two-word name at all, and `keyPath` (the vocabularies the option
+loops match against) filter-mapped identifiers and silently dropped every
+other character — so `scm-lab-node` read as `scm lab node` there and `scm`
+in the diagnostic. All three now call `keyName`. The invariant is
+`styleName_agree`: the name `readDef` keys a definition on is exactly
+`keyName` of the entry's path, whatever characters that path is spelled
+with; the use side is `expandOpts` looking the bundle up under the same
+function, which is one line of its body and a non-occurrence a future
+pattern could not reintroduce without deleting the docstring that says so.
+The composition of the two through a comma split and a space filter is
+checked rather than proved (`pictureHyphenKeyChecks`) — stating it needs an
+invariant carried through two `Id.run` loops that the fact never mentions,
+and the factorization is named there rather than taken.
+
+**A proof that resisted, and what it found.** `splitSym_append` — the split
+is the run before the separator — could not be proved at all while
+`splitSym` branched on `t == .sym c`: `Tok`'s derived `BEq` is compiled by
+well-founded recursion for the recursive `group` constructor, carries no
+lawfulness instance, and reduces for nothing, not even two concrete
+distinct constructors (`decide`, `rfl` and `simp` all stick). Per the
+factorization rule this is a finding and not a tactic problem: the reader
+now branches on `isSym`, a non-recursive structural match that decides
+exactly what the comparison did, and the lemma is two lines. The `==` was
+never the point; being able to say where a run splits is.
+
+**The space is restored, not preserved.** An entry's spaces are filtered
+before it is read, so `keyName` puts one back between two adjacent *word*
+tokens — which is sound because `splitWord` takes letter runs and digit
+runs greedily, so two word tokens can only be adjacent across a space that
+was there. Surrounding space is stripped, as pgfkeys strips it. `every node`
+and `every  node` therefore arrive as one name, and `every-node` as
+another.
+
+Evidence: nine rows in `pictureHyphenKeyChecks` red on the parent commit
+and green here, read off `Layout.Out` — the page claims are equalities
+against a control picture with the bundle's body written out at the use
+site, so nothing restates an arithmetic (and a one-sp rounding in `readDim`
+is not mistaken for a defect). Four compat-index rows cover a hyphen, a
+colon, a digit and `/.append style` on a hyphenated name.
+
 2026-09-24 — a conditional is a statement with two branches, and the
 recovery that skipped one drew both (M8b slice 3, the conditional cascade).
 Three defects in one construct, and the third is the one that made a deck

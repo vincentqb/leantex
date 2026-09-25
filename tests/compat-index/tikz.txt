@@ -6,7 +6,10 @@
 # the rectangle and circle shapes' own \anchor declarations in pgf's
 # pgfmoduleshapes.code.tex, so mid, mid east and mid west are the one
 # family outside the subset: they stand half an ex above the baseline and
-# an ex is the face's), §15.3.1-2 (line
+# an ex is the face's), §87.2 (the key tree: a key is a path, / separates
+# its components, . introduces a handler, , an entry and = a value — every
+# other character belongs to the name, so a hyphen, a colon and a digit are
+# ordinary key-name characters and a name is read whole), §15.3.1-2 (line
 # width and dash patterns), §14 paths (\draw, \path, the -- line-to,
 # §14.13 to paths with out=/in= and the edge operation whose every edge
 # carries draw; the circle path operation is outside the subset),
@@ -85,6 +88,10 @@ pre impl \tikzset{->}
 pre impl \tikzset{-Latex}
 pre impl \tikzset{thick}
 pre impl \tikzset{minimum size=8mm}
+pre impl \tikzset{zz-one/.style={}}
+pre impl \tikzset{zz-one/.append style={}}
+pre impl \tikzset{zz:one/.style={}}
+pre impl \tikzset{zz1/.style={}}
 pre impl \usetikzlibrary{arrows}
 pre inert:default \tikzexternalize
 pre inert:default \pictures{ tool = lualatex }

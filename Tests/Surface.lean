@@ -5950,6 +5950,81 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the node label sets in the face the body sets in"
     (labelFaces.all fun f => bodyFaces.contains f)
 
+/-- **A key name the document writes is the key name the walk reads.** The
+invariant over the declared-and-used names of one picture: every name a
+`/.style` or `/.append style` declares resolves at the bracket that uses
+it, so nothing is keyed under one spelling and looked up under another.
+
+The defect this closes is a name cut at its first hyphen. `-` is an
+ordinary pgf key-name character (manual §87.2, the key path grammar: `/`
+separates a path, `.` introduces a handler, `,` an entry and `=` a value —
+every other character is the name's), and the reader admitted a run of
+identifiers only. A declaration under `edge-muted` was therefore stored
+under nothing and named as a dropped key `edge`, while the bracket that
+used it found no bundle and dropped every option in it. One hyphen cost a
+declaration, its every use, and the truth of the diagnostic at once.
+
+Read off `Layout.Out`: the strokes and spans a hyphenated bundle sets are
+only visible on the page, and the dash is read off the shipped stroke
+rather than the census, which carries no dash. Invented content. -/
+def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let body := "rectangle, draw, minimum width=9mm, minimum height=6mm"
+  let sets := "\\tikzset{edge-muted/.style={draw=green},\n" ++
+    "  node-box/.style={" ++ body ++ "},\n" ++
+    "  edge-muted/.append style={dashed}}\n"
+  let pic (nodeOpts edgeOpts : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++
+    "\\node[" ++ nodeOpts ++ "] (aa) at (0, 0) {One};\n" ++
+    "\\node[" ++ nodeOpts ++ "] (bb) at (4, 0) {Two};\n" ++
+    "\\draw[" ++ edgeOpts ++ "] (aa) -- (bb);\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let (doc, ds) := elabStr (sets ++ pic "node-box" "edge-muted")
+  let out := layoutOf oneFace doc
+  let c := censusOf (coveredColorsOf doc) out
+  -- The control: the same keys written out at the use site, with no bundle
+  -- in play. Every page claim below is an equality against it, so nothing
+  -- here restates an arithmetic the reader would have to trust.
+  let (inlineDoc, _) := elabStr (pic body "draw=green, dashed")
+  let inlineOut := layoutOf oneFace inlineDoc
+  let inlineC := censusOf (coveredColorsOf inlineDoc) inlineOut
+  let keyNames : List String :=
+    ((ds.filter fun d => d.code == DiagCode.W0334.code &&
+      hasStr d.message "picture key").map fun d =>
+        (d.message.splitOn "'").getD 1 "").toList
+  -- The diagnostic half: a name the reader honours is never named as
+  -- dropped, and it is the *truncation* that made the old message false.
+  t "a hyphenated style definition is not named as a dropped key"
+    (keyNames == [])
+  t "no name is reported cut at its hyphen"
+    (!keyNames.contains "edge" && !keyNames.contains "node")
+  t "the hyphenated-key document elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  -- The page half: the two nodes' outlines and the edge, so the bundle
+  -- reached both shapes rather than only parsing.
+  t "the two hyphenated-bundle nodes and the edge ship as page paths"
+    ((c[0]?.map (·.paths == 3)).getD false)
+  t "no boundary box stands where the hyphenated-key picture is"
+    ((c[0]?.map (·.images == 0)).getD false)
+  -- **A hyphenated bundle is its own body.** Applying the name and writing
+  -- the keys out ship the same geometry and the same paint.
+  t "a hyphenated bundle ships the geometry its body declares"
+    ((c[0]?.map (·.pathSpans)) == (inlineC[0]?.map (·.pathSpans)) &&
+     (c[0]?.map (·.pathBoxes)) == (inlineC[0]?.map (·.pathBoxes)))
+  t "a hyphenated bundle ships the paint its body declares"
+    ((c[0]?.map (·.pathStrokes)) == (inlineC[0]?.map (·.pathStrokes)))
+  t "a hyphenated bundle sets a node extent at all"
+    ((c[0]?.bind (·.pathSpans[0]?)).map (fun (w, h) => w > 0 && h > 0) == some true)
+  t "a hyphenated bundle sets the stroke colour it declares"
+    ((c[0]?.bind (·.pathStrokes[2]?)).map (·.1 == { r := 0, g := 255, b := 0 })
+      == some true)
+  -- `/.append style` on the same hyphenated name composes onto it: the
+  -- edge is green *and* dashed, which is two handlers reading one name.
+  t "'/.append style' on a hyphenated name composes onto it"
+    ((out.pages[0]?.bind fun p => (p.paths[2]?).bind (·.stroke)).map
+      (·.dash == .dashed) == some true)
+
 /-- **Whatever drew a picture, the keys that drawing did not read are
 named.** The gate on the key diagnostic is the engine's own drawing, never
 the boundary tool the document nominally configures: a `\tikzset` key the

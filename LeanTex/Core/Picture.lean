@@ -987,20 +987,94 @@ executed inside the X's own scope). -/
 def everyNodeKey : String := "every node"
 def everyPathKey : String := "every path"
 
+/-- Is this token that symbol? A structural match rather than `==`, which
+for a recursive inductive's derived `BEq` is compiled by well-founded
+recursion and reduces for nothing — so a statement about where a run splits
+could not be proved through it. The predicate is the factorization the
+proof asked for, and it decides exactly what the comparison did. -/
+private def isSym (c : Char) : Tok → Bool
+  | .sym d => d == c
+  | _ => false
+
 /-- Split a token list at the first occurrence of a symbol, keeping neither
 side's separator. -/
 private def splitSym (c : Char) : List Tok → Option (List Tok × List Tok)
   | [] => none
   | t :: rest =>
-    if t == .sym c then some ([], rest)
+    if isSym c t then some ([], rest)
     else (splitSym c rest).map fun (pre, post) => (t :: pre, post)
 
-/-- A run of idents read as one key path, joined the way pgf spells it, so
-`every node` is one name and not two keys. -/
+/-- `splitSym` at a separator the run before it does not contain: the split
+is exactly that run and the rest. -/
+private theorem splitSym_append (c : Char) : ∀ (q r : List Tok),
+    (∀ t ∈ q, isSym c t = false) → splitSym c (q ++ (.sym c :: r)) = some (q, r)
+  | [], r, _ => by simp [splitSym, isSym]
+  | t :: q, r, h => by
+    have ht : isSym c t = false := h t (List.mem_cons_self ..)
+    have hq : ∀ u ∈ q, isSym c u = false := fun u hu => h u (List.mem_cons_of_mem _ hu)
+    simp only [List.cons_append, splitSym, ht, Bool.false_eq_true,
+      splitSym_append c q r hq, Option.map_some, ite_false]
+
+/-- A run of idents read as one name, joined the way pgf spells it. An
+*arrow tip*'s name only: a tip is not a key path (`tipKey`), so its
+spelling is deliberately the narrow one — the tip vocabulary pgf's
+`arrows` libraries declare is identifiers, and admitting more would turn a
+malformed spec into a plausible tip name. Key paths read through
+`keyName`. -/
 private def identPath : List Tok → Option String
   | [.ident n] => some n
   | .ident n :: rest => (identPath rest).map fun s => n ++ " " ++ s
   | _ => none
+
+/-- Is this token's text a run of key-name *word* characters? `splitWord`
+takes letter runs and digit runs greedily, so two word tokens can only be
+adjacent across a space the entry filter removed — which is how `keyName`
+puts the space back. -/
+private def wordTok : Tok → Bool
+  | .ident _ => true
+  | .num _ => true
+  | _ => false
+
+/-- One token's own characters as a key name spells them, or `none` where
+the token is not part of a name at all.
+
+pgf's key-name grammar (manual §87.2, "The Key Tree"): a key is a path,
+`/` separates its components, `.` introduces a handler, `,` separates
+entries in a list and `=` starts a value. **Every other character is the
+name's** — which is why `-`, `:`, `@` and digits belong to it, and why a
+grammar written as "a run of identifiers" is not the grammar but a guess
+about it. A group, a math span, a control word and unreadable source are
+not characters and end a name here. -/
+private def keyTokText : Tok → Option String
+  | .ident s => some s
+  | .num m => some (milliString m)
+  | .space => some " "
+  | .sym c => if c == '/' || c == ',' || c == '=' then none else some (String.singleton c)
+  | .ctrl _ | .group _ | .math _ _ | .other _ => none
+
+/-- A key path's name, in pgf's own grammar: every token's characters, with
+the space restored between two adjacent word tokens (an entry's spaces are
+filtered before it is read, so `every node` and `every  node` arrive here
+alike) and the surrounding space stripped, as pgfkeys strips it.
+
+**One reader for both ends.** A name is stored under this and looked up
+under this — `readDef` for the declaration, `expandOpts` for the use,
+`keyPath` for the vocabularies the option loops match against — which is
+what `styleName_agree` pins. The defect that made it one function was a
+name cut at its first hyphen: stored under nothing, named as a dropped key
+under its first component, and unfound at every bracket that used it. -/
+def keyName (ts : List Tok) : Option String := Id.run do
+  let mut out := ""
+  let mut prevWord := false
+  for t in ts do
+    match keyTokText t with
+    | none => return none
+    | some s =>
+      if prevWord && wordTok t then out := out ++ " "
+      out := out ++ s
+      prevWord := wordTok t
+  let name := out.trimAscii.toString
+  return if name.isEmpty then none else some name
 
 /-- A key path this reader can honour: a single word, which an option
 bracket can apply by name, or one of the two `every X` levels the option
@@ -1014,11 +1088,11 @@ private def readableKey (n : String) : Bool :=
 group: `every node/.style={draw}` reads as `every node`, `style`, `draw`. -/
 private def readDef (entry : List Tok) : Option (String × String × List Tok) := do
   let (path, rest) ← splitSym '/' entry
-  let name ← identPath path
+  let name ← keyName path
   match rest with
   | .sym '.' :: hrest =>
     let (hpath, body) ← splitSym '=' hrest
-    let handler ← identPath hpath
+    let handler ← keyName hpath
     match body with
     | [.group g] => some (name, handler, g)
     | _ => none
@@ -1039,6 +1113,48 @@ def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
   | some (n, "tip", g) =>
     if readableKey n then some (declareTip styles n g) else none
   | _ => none
+
+/-- **The name a definition stores is the name a use looks up.** One reader
+answers both ends of a bundle's life, so a key name the document writes is
+the key name the walk reads — for every name pgf's grammar admits, not for
+an enumerated few.
+
+This is the declaration side, stated where it is computable: the name
+`readDef` keys a `/.style` entry on is exactly `keyName` of the entry's
+path, whatever characters that path is spelled with. The use side is
+`expandOpts`, which looks the bundle up under `keyName` of the entry's own
+tokens *by construction* — one line of its body, and a reader that gave it
+a pattern of its own instead would have to delete this docstring to do it.
+That half is checked rather than proved (`pictureHyphenKeyChecks`, read off
+`Layout.Out`): the pipeline between the two runs a comma split and a space
+filter over a token array, and stating their composition needs an invariant
+carried through two `Id.run` loops that the fact itself never mentions —
+the factorization is noted and not taken here.
+
+The hypotheses are pgf's own grammar restated (manual §87.2): a name
+carries no path separator, and a handler's own path no value separator.
+They restrict nothing this reader accepts — `keyName` answers `none` on
+either character regardless — they are what lets the two splits be
+computed. The handler rides as a token run rather than a literal, because
+the conclusion is about the *name* and holds whichever handler follows it —
+whichever handler *reads*, which is the third hypothesis: an entry whose
+handler is not a name is no definition, and this says nothing about it.
+
+The defect it closes: `-` is an ordinary key-name character, the reader
+admitted identifier runs only, and a declaration written `edge-muted` was
+stored under nothing, reported as a dropped key `edge`, and found by no
+bracket that used it. Nineteen uses of four such names in one figure read
+as one dropped key. -/
+theorem styleName_agree (p handler g : List Tok)
+    (hp : ∀ t ∈ p, isSym '/' t = false)
+    (hh : ∀ t ∈ handler, isSym '=' t = false)
+    (hs : (keyName handler).isSome) :
+    (readDef (p ++ (.sym '/' :: .sym '.' :: (handler ++ (.sym '=' :: [.group g]))))).map
+        (fun d => d.1) = keyName p := by
+  cases hk : keyName handler
+  · simp [hk] at hs
+  · cases h : keyName p <;>
+      simp [readDef, splitSym_append '/' p _ hp, splitSym_append '=' handler _ hh, h, hk]
 
 /-- The tip name an arrow spec ends in, where the spec is one this subset
 draws: `-name`, `-{name}`, or `->`. A declared tip draws the engine's own
@@ -1093,13 +1209,12 @@ def documentStyles (sets : Array (Array Tok)) : List (String × Array Tok) := Id
     styles := (readStyleList styles keys).1
   return styles
 
-/-- The ident run before an entry's `=`, joined as pgf spells a key path:
-what `unreadKeys` and the placement reader both name an entry by. -/
+/-- The name before an entry's `=`, in pgf's key-name grammar: what
+`unreadKeys` and the placement reader both name an entry by. The same
+reader the declaration stores under (`keyName`), so a vocabulary match and
+a bundle lookup cannot disagree about what an entry is called. -/
 private def keyPath (toks : List Tok) : String :=
-  String.intercalate " " ((toks.takeWhile (· != .sym '=')).filterMap fun t =>
-    match t with
-    | .ident n => some n
-    | _ => none)
+  (keyName (toks.takeWhile (· != .sym '='))).getD ""
 
 /-- The keys this subset reads outside a style definition, so a `\tikzset`
 line that sets one is read rather than named as dropped. -/
@@ -1111,17 +1226,19 @@ def setsEngineKey (entry : Array Tok) : Bool :=
 
 /-- Split an option bracket into entries and expand a declared bundle's
 name one level into the bundle's own entries. One level is all a use site
-needs: `addStyle` spliced any nested bundle in at the definition. -/
+needs: `addStyle` spliced any nested bundle in at the definition.
+
+The name is read with `keyName`, the one reader a definition is stored
+under, so every name pgf's grammar admits is looked up whole. An entry
+carrying a value is no bundle use — `keyName` stops at the `=` and answers
+`none` — so a key and a bundle of the same name cannot be confused. -/
 def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok) :
     Array (Array Tok) := Id.run do
   let mut opts : Array (Array Tok) := #[]
   for opt in splitTop (inner.filter (· != .space)) ',' do
-    match opt.toList with
-    | [.ident n] =>
-      match styles.lookup n with
-      | some bundle => opts := opts ++ splitTop bundle ','
-      | none => opts := opts.push opt
-    | _ => opts := opts.push opt
+    match (keyName opt.toList).bind fun n => styles.lookup n with
+    | some bundle => opts := opts ++ splitTop bundle ','
+    | none => opts := opts.push opt
   return opts
 
 /-- The key an option entry sets: its tokens up to the `=`, so `draw` and
