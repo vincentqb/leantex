@@ -62,6 +62,12 @@ ratchet would read as a fleet-wide improvement — so it is a constant, not a
 knob. -/
 def debtCap : Int := 1000
 
+/-- The lowest value a `raw` tier's item can hold and still be ranked. A
+negative value is how a tier says "outside the denominator" — `parity`
+writes `refuses -1` for a fixture the reference engine cannot build — and
+such an item is not the tier's worst, it is not in the running. -/
+def rawFloor : Int := 0
+
 structure Row where
   item : String
   value : Int
@@ -435,7 +441,13 @@ def discover : IO (Array String) := do
   return names.qsort (· < ·)
 
 /-- A deficit per item, from the tier's own encoding. The ranking is
-computed from committed data; nothing here is a list of what to do. -/
+computed from committed data; nothing here is a list of what to do.
+
+`raw` measures distance from the tier's best item, and skips values below
+`rawFloor`: a negative value is a tier's way of saying "outside the
+denominator" (`parity`'s `refuses -1` is a fixture the reference engine
+cannot build), and ranking it as the worst item of the tier would put a
+measurement that does not count at the head of the queue. -/
 def deficits (t : Tsv) : Array (String × Int) := Id.run do
   let mut out : Array (String × Int) := #[]
   match t.encoding with
@@ -456,22 +468,21 @@ def deficits (t : Tsv) : Array (String × Int) := Id.run do
     for r in t.rows do
       if r.value > best then best := r.value
     for r in t.rows do
+      if r.value < rawFloor then continue
       let d := best - r.value
       if d > 0 then out := out.push (r.item, d)
   return out.qsort (fun a b => a.2 > b.2)
 
 -- ## Obligations, read as records
 
-/-- The value of `-- <key>: <value>` when the line is one. The same five-field
-form `scripts/owed.lean` reads; this is a second reader of it, because the
-scoreboard is a library and that gate is an executable root. Routed: the
-field reader belongs in `scripts/Gate.lean` beside `bannedWord`, which is
-where the repository already puts a predicate two gates must agree on. -/
-def fieldOf (l key : String) : Option String :=
-  let t := l.trimAscii.toString
-  let pre := "-- " ++ key ++ ":"
-  if t.startsWith pre then some (((t.drop pre.length).toString).trimAscii.toString)
-  else none
+/-- The value of `-- <key>: <value>` when the line is one. The definition
+lives in `scripts/Gate.lean`, which is where the repository puts a predicate
+two gates must agree on; this is the name a tier reads it by. Routed:
+`scripts/owed.lean` still carries an identical copy under the name `fieldOf`
+and should drop it for `recordField` — that file is the owed ratchet and not
+this agent's. The scoreboard selftest fails in both directions until it
+does. -/
+def fieldOf := recordField
 
 structure Ob where
   name : String
@@ -480,8 +491,13 @@ structure Ob where
   file : String
 deriving Inhabited
 
-/-- Every owed record staged under the obligations path. -/
-def obligations : IO (Array Ob) := do
+/-- Every owed record staged under the obligations path. A record is five
+consecutive field lines, and a run of them that is not five is **rejected**,
+exactly as `scripts/owed.lean` rejects it — not counted under owner `?`.
+Counting a malformed record would mean this tier and the owed gate disagree
+about what is staged, and the one that is silent about it is the one you
+would trust by accident. -/
+def obligations : IO (Array Ob × Array String) := do
   let mut files : Array String := #[]
   if ← System.FilePath.pathExists "Obligations.lean" then
     files := files.push "Obligations.lean"
@@ -489,14 +505,21 @@ def obligations : IO (Array Ob) := do
     for p in ← System.FilePath.walkDir "Obligations" do
       if p.toString.endsWith ".lean" then files := files.push p.toString
   let mut out : Array Ob := #[]
+  let mut malformed : Array String := #[]
   for f in files do
     let lines := ((← IO.FS.readFile f).splitOn "\n").toArray
     for i in [0:lines.size] do
       if let some name := (lines[i]?).bind (fieldOf · "owed") then
-        let owner := ((lines[i+1]?).bind (fieldOf · "owner")).getD "?"
-        let blocker := ((lines[i+3]?).bind (fieldOf · "blocker")).getD "?"
-        out := out.push { name, owner, blocker, file := f }
-  return out
+        match (lines[i+1]?).bind (fieldOf · "owner"),
+              (lines[i+2]?).bind (fieldOf · "source"),
+              (lines[i+3]?).bind (fieldOf · "blocker"),
+              (lines[i+4]?).bind (fieldOf · "goldens") with
+        | some owner, some _, some blocker, some _ =>
+          out := out.push { name, owner, blocker, file := f }
+        | _, _, _, _ =>
+          malformed := malformed.push s!"{f}: record '{name}' is not five field \
+lines (owner, source, blocker, goldens)"
+  return (out, malformed)
 
 /-- Obligations whose blocker names no other open obligation: the ones a
 proof attempt can start on today. Computed from the records, not listed. -/

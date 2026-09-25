@@ -148,34 +148,68 @@ measured: {err}"
 
 -- ## The queue
 
-/-- Ranked deficits. Obligations whose blocker names no other open
-obligation come first — they are the ones a proof can start on today — and
-among those, the ones whose own name appears in the most other blockers,
-because discharging one of those releases the most. Then every tier's worst
-items, ranked by the deficit its own encoding defines.
+/-- Grouped deficits, not a single ranking. Obligations whose blocker names
+no other open obligation come first — they are the ones a proof can start on
+today — and among those, the ones whose own name appears in the most other
+blockers, because discharging one of those releases the most. Then the
+blocker ranking a sibling commits, then every tier's worst items, ranked by
+the deficit its own encoding defines.
 
-Nothing here is a list of work: each line is computed from a committed
-baseline or from the staged records. What a better ranking needs, and does
-not have yet: the blocker graph as data rather than as prose (a `blocked-by:`
-field naming obligations, so "names no other open obligation" stops being a
-substring search over English); the per-item cost of a deficit (a compat row
-is minutes, a `_covers` over two private loops is weeks); and the count of
-documents each deficit holds back, which is the parity ladder's
-fixtures-held-back number and the blocker ranking the `coverage` tier is
-building. With those three the order becomes value over cost; with only
-these, it is readiness over size. -/
+**The order between groups is policy, not a ranking**, and the label says
+so. Deficits in different tiers are in different units — a compat row is
+minutes, a `_covers` over two private loops is weeks — so a cross-tier order
+needs a cost model this has no data for. Reading the head as "the next thing
+to do" would take a proof obligation first while any of the ready ones
+remains, which is a decision and not a measurement.
+
+What a real ranking still needs: the blocker graph as data rather than as
+prose (a `blocked-by:` field naming obligations, so "names no other open
+obligation" stops being a substring search over English); the per-item cost
+of a deficit; and the count of documents each deficit holds back, which the
+parity ladder's fixtures-held-back number would give. With those the order
+becomes value over cost; with only these, it is readiness over size, inside
+each group. -/
 def queue (limit : Nat) : IO UInt32 := do
   let mut lines : Array String := #[]
-  let obs ← obligations
+  let (obs, malformed) ← obligations
+  if !malformed.isEmpty then
+    for m in malformed do
+      lines := lines.push s!"queue: malformed owed record — {m}"
   let unblocks := fun (o : Ob) =>
     (obs.filter fun p => p.name != o.name && containsSub p.blocker o.name).size
   let readyObs := (ready obs).qsort fun a b =>
     if unblocks a == unblocks b then a.name < b.name else unblocks a > unblocks b
+  lines := lines.push s!"queue: group 1 of 3 — obligations a proof can start on today \
+({readyObs.size} of {obs.size} open); the order between groups is policy, not a ranking"
   for o in readyObs do
     let b := o.blocker
     let short := if b.length > 90 then ((b.take 90).toString) ++ "…" else b
-    lines := lines.push s!"queue: obligation {o.name} owner={o.owner} \
+    -- The owner file: "whose owner files are free" needs the file, not only
+    -- the module name.
+    lines := lines.push s!"queue: obligation {o.name} owner={o.owner} file={o.file} \
 blocked-by-open=0 unblocks={unblocks o} blocker={short}"
+  -- The blocker ranking a sibling commits: constructs nothing in the engine
+  -- answers, ranked by the documents they alone hold back. Read when
+  -- present, because the ranking data belongs to whoever measured it.
+  let blockers ← readFileOr "tests/coverage/blockers.tsv"
+  if blockers.isEmpty then
+    lines := lines.push "queue: group 2 of 3 — no tests/coverage/blockers.tsv, so no \
+construct ranking (the coverage tier writes it)"
+  else
+    let rows := (blockers.splitOn "\n").filterMap fun l =>
+      if l.startsWith "#" || l.trimAscii.isEmpty then none
+      else match l.splitOn "\t" with
+        | [construct, owner, sole, share, docs] =>
+          if construct == "construct" then none
+          else some (construct, owner, sole, share, docs)
+        | _ => none
+    lines := lines.push s!"queue: group 2 of 3 — constructs nothing answers, by the \
+documents they alone block ({rows.length} ranked)"
+    for (construct, owner, sole, share, docs) in rows.take 5 do
+      lines := lines.push s!"queue: blocker {construct} owner={owner} sole={sole} \
+share={share} docs={docs}"
+  lines := lines.push "queue: group 3 of 3 — each tier's worst items, in its own \
+units; not comparable across tiers"
   for t in ← discover do
     let text ← readFileOr (tsvPath t)
     if text.isEmpty then continue
@@ -192,14 +226,39 @@ blocked-by-open=0 unblocks={unblocks o} blocker={short}"
   let shown := if lines.size < limit then lines.size else limit
   for i in [0:shown] do
     IO.println lines[i]!
-  IO.println s!"queue: {lines.size} ranked items, {shown} shown"
+  IO.println s!"queue: {lines.size} lines, {shown} shown — grouped, not one ranking"
   return 0
 
 -- ## The speed report
 
+/-- The declared bench tolerance. Data, not a gate: `--bench` runs another
+engine, so it can never be part of a hermetic check, and the numbers move
+with the host. Every field is stated so a reader can say what would count as
+a regression, which is the part a report usually leaves out. -/
+structure BenchTolerance where
+  /-- Runs per document. Odd, so the median is a measured value. -/
+  samples : Nat
+  /-- Runs dropped before measuring: the first is a cold page cache. -/
+  discard : Nat
+  /-- Percent a document's median may rise over its committed value. -/
+  slackPercent : Nat
+  /-- Medians, not means: one slow run on a busy host moves a mean. -/
+  statistic : String
+  /-- Which column the tolerance would gate, if it gated. -/
+  gates : String
+  /-- Which column stays a record whatever it does. -/
+  records : String
+deriving Inhabited
+
+def benchTolerance : BenchTolerance :=
+  { samples := 9, discard := 1, slackPercent := 15, statistic := "median"
+    gates := "leantex", records := "lualatex" }
+
 /-- The bench numbers beside the last ones PLAN.md recorded. A report: it
 runs another engine, so it can never be part of a hermetic gate, and no
-tolerance is enforced here. -/
+tolerance is enforced here. The tolerance is declared as a value
+(`benchTolerance`) rather than as prose, so the day it does gate, the number
+it gates at is the one written down and not one someone retypes. -/
 def benchReport : IO UInt32 := do
   let plan ← readFileOr "PLAN.md"
   let recorded := (plan.splitOn "\n").filter (fun l =>
@@ -208,12 +267,14 @@ def benchReport : IO UInt32 := do
   match recorded.reverse.head? with
   | some l => IO.println s!"scoreboard: last recorded — {l.trimAscii.toString}"
   | none => IO.println "scoreboard: PLAN.md records no bench median yet"
-  IO.println "scoreboard: proposed tolerance, not enforced: a tier would gate the \
-median of 9 runs at +15% per document against its committed value, with the \
-lualatex column recorded and never compared. Noise control: pin the sample count, \
-drop the first run (cold page cache), compare medians rather than means, and take \
-the whole corpus in one process-free batch so a busy host moves every row together \
-— a single row moving is then a signal, and all rows moving is the host."
+  let t := benchTolerance
+  IO.println s!"scoreboard: declared tolerance, not enforced: the {t.statistic} of \
+{t.samples} runs per document (first {t.discard} discarded, cold page cache) may rise \
+{t.slackPercent}% over its committed value. It would gate the {t.gates} column only; \
+the {t.records} column is recorded and never compared. Noise control: pin the sample \
+count, compare {t.statistic}s rather than means, and take the whole corpus in one \
+batch so a busy host moves every row together — a single row moving is then a signal, \
+and all rows moving is the host."
   let out ← IO.Process.output
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/bench.lean"] }
   IO.print out.stdout
@@ -396,8 +457,27 @@ def selftest : IO UInt32 := do
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
-  -- Tier discovery by convention, both halves. `--check` and the selftest
-  -- agree on every state: absence passes only for a declared-pending tier,
+  -- Routed, as a row that fails in both directions: scripts/owed.lean is
+  -- the owed ratchet and not this agent's file, so its identical `fieldOf`
+  -- stands for now. This fails if the two readers ever disagree, and again
+  -- once owed.lean drops its copy — at which point delete this block.
+  let owedSrc ← readFileOr "scripts/owed.lean"
+  let owedHasCopy := containsSub owedSrc "def fieldOf"
+  no "routed: scripts/owed.lean no longer declares its own fieldOf — switch it to \
+Gate.recordField and delete this check" owedHasCopy
+  let samples : List (String × Option String) :=
+    [("-- owed: t_one", some "t_one"),
+     -- Leading whitespace is trimmed first, which owed.lean's own test also
+     -- pins ("  -- owed: x" parses). Getting this wrong here was how this
+     -- block first failed.
+     ("  -- owner: M.Two", some "M.Two"),
+     ("-- owner: M.Two", some "M.Two"), ("owed: x", none),
+     ("-- blocker:", some "")]
+  for (line, want) in samples do
+    let key := if containsSub line "owner" then "owner"
+      else if containsSub line "blocker" then "blocker" else "owed"
+    no s!"routed: recordField disagrees with the record form on '{line}'"
+      (recordField line key == want)
   -- and a pending name whose tier has landed fails here — which is what
   -- stops the pending list going stale.
   let tiers ← discover
@@ -416,6 +496,9 @@ faults" false
   no "discovery: a fixture directory is not a tier" (!tiers.contains "clean")
   no "discovery: every pending name is declared"
     (pendingTiers.all declaredTiers.contains)
+
+  -- Tier discovery by convention, both halves. `--check` and the selftest
+  -- agree on every state: absence passes only for a declared-pending tier,
 
   let failed := (← fails.get).reverse
   if !failed.isEmpty then

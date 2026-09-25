@@ -31,7 +31,12 @@ def baselineOwners : IO (Array String) := do
       else none
 
 def measureTier : IO (Array String × Array Row) := do
-  let obs ← obligations
+  let (obs, malformed) ← obligations
+  if !malformed.isEmpty then
+    IO.eprintln s!"scoreboard: {malformed.size} malformed owed record(s); \
+scripts/owed.lean rejects these too, so the count here would disagree with the gate:"
+    for m in malformed do IO.eprintln s!"scoreboard:   {m}"
+    return (#[], #[])
   let mut owners : Array String := ← baselineOwners
   for o in obs do
     if !owners.contains o.owner then owners := owners.push o.owner
