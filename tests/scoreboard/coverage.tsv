@@ -3,33 +3,33 @@
 # kernel denominator: tests/coverage/latex2e-index.txt (its own provenance line).
 # package denominator: tests/compat-index/*.txt rows, unchanged; a row counts as
 # implemented when its annotation is `impl` or `inert:`.
-# kernel: 9 unprobed, 445 unknown, 0 fails, 9 skipped, 8 degraded, 39 rewritten, 180 native, 0 verified (the parity ladder's to award).
-# kernel excluded: 165 math-mode symbol commands.
+# kernel: 9 unprobed, 434 unknown, 0 fails, 25 skipped, 7 degraded, 22 rewritten, 182 native, 0 verified (the parity ladder's to award).
+# kernel excluded: 176 commands: math-mode symbols (math_given) and commands latex.ltx defines only as an error (not_base).
 # packages: 336 implemented of 659 documented.
-# total: 555/1349 = 41.1%
+# total: 540/1338 = 40.4%
 # date: 2026-09-25
 kernel/Boxes	2
 kernel/Command line interface	0
 kernel/Counters	4
-kernel/Cross references	1
-kernel/Definitions	19
+kernel/Cross references	2
+kernel/Definitions	7
 kernel/Document classes	0
 kernel/Environments	14
-kernel/Fonts	40
+kernel/Fonts	39
 kernel/Footnotes	1
 kernel/Front/back matter	0
 kernel/Input/output	0
 kernel/Layout	1
 kernel/Lengths	1
 kernel/Line breaking	0
-kernel/Making paragraphs	2
-kernel/Math formulas	76
+kernel/Making paragraphs	1
+kernel/Math formulas	75
 kernel/Modes	1
 kernel/Overview of LaTeX	0
 kernel/Page breaking	3
-kernel/Page styles	6
+kernel/Page styles	7
 kernel/Sectioning	6
-kernel/Spaces	9
+kernel/Spaces	7
 kernel/Special insertions	30
 kernel/Splitting the input	0
 kernel/registers	3

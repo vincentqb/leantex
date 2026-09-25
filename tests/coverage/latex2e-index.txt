@@ -2,8 +2,10 @@
 # reference manual indexes (@findex, @ftable items, @node headings), confirmed
 # by lualatex to be a control sequence LaTeX defines, and classified by the
 # meaning lualatex reports. Fields: name, manual chapter, lualatex meaning.
-# A `math_given` row is a math-mode symbol command and is excluded from the
-# count; it is kept here so the exclusion is visible and countable. The
+# A `math_given` row is a math-mode symbol command and a `not_base` row a
+# command latex.ltx defines only as its "not provided in base LaTeX2e"
+# error; both are excluded from the count and kept here so the exclusion
+# is visible and countable. The
 # confirmation runs under bare classes with no packages loaded, because under
 # amsmath seven of those symbols are macros and the exclusion would then
 # depend on what the confirmation happened to load.
@@ -19,7 +21,7 @@
 # confirmed-under: bare \documentclass{article} and {book}, no packages
 # candidates: 925
 # rows: 855
-# body: 24939 bytes, adler32 0000000048BDDA65
+# body: 24983 bytes, adler32 00000000951EECEA
 !	Math formulas	call
 "	Special insertions	call
 #	Special insertions	char_given
@@ -48,7 +50,7 @@ AtEndDocument	Environments	call
 AtEndDvi	Definitions	long_call
 AtEndOfClass	Definitions	call
 AtEndOfPackage	Definitions	call
-Box	Math formulas	call
+Box	Math formulas	not_base
 CheckCommand	Definitions	call
 ClassError	Definitions	call
 ClassInfo	Definitions	call
@@ -71,7 +73,7 @@ DeclareTextCompositeCommand	Fonts	call
 DeclareTextSymbol	Fonts	call
 DeclareTextSymbolDefault	Fonts	call
 Delta	Math formulas	math_given
-Diamond	Math formulas	call
+Diamond	Math formulas	not_base
 DocumentMetadata	Overview of LaTeX	call
 Downarrow	Math formulas	call
 ExecuteOptions	Definitions	call
@@ -82,7 +84,7 @@ IJ	Special insertions	call
 IfFileExists	Definitions	call
 Im	Math formulas	math_given
 InputIfFileExists	Definitions	call
-Join	Math formulas	call
+Join	Math formulas	not_base
 L	Special insertions	call
 LARGE	Fonts	call
 LaTeX	Special insertions	call
@@ -424,7 +426,7 @@ lbrack	Math formulas	call
 lceil	Math formulas	call
 ldots	Math formulas	call
 le	Math formulas	math_given
-leadsto	Math formulas	call
+leadsto	Math formulas	not_base
 left	Math formulas	left_right
 leftarrow	Math formulas	math_given
 lefteqn	Environments	call
@@ -441,7 +443,7 @@ leftrightarrow	Math formulas	math_given
 leq	Math formulas	math_given
 lfloor	Math formulas	call
 lg	Math formulas	call
-lhd	Math formulas	call
+lhd	Math formulas	not_base
 lim	Math formulas	call
 liminf	Math formulas	call
 limsup	Math formulas	call
@@ -504,7 +506,7 @@ medskip	Spaces	call
 medskipamount	Spaces	assign_glue
 medspace	Math formulas	call
 message	Input/output	message
-mho	Math formulas	call
+mho	Math formulas	not_base
 mid	Math formulas	math_given
 min	Math formulas	call
 models	Math formulas	call
@@ -636,7 +638,7 @@ renewenvironment	Definitions	call
 restorecr	Line breaking	call
 reversemarginpar	Making paragraphs	call
 rfloor	Math formulas	call
-rhd	Math formulas	call
+rhd	Math formulas	not_base
 rho	Math formulas	math_given
 right	Math formulas	left_right
 rightarrow	Math formulas	math_given
@@ -695,9 +697,9 @@ spadesuit	Math formulas	math_given
 sqcap	Math formulas	math_given
 sqcup	Math formulas	math_given
 sqrt	Math formulas	call
-sqsubset	Math formulas	call
+sqsubset	Math formulas	not_base
 sqsubseteq	Math formulas	math_given
-sqsupset	Math formulas	call
+sqsupset	Math formulas	not_base
 sqsupseteq	Math formulas	math_given
 ss	Special insertions	call
 stackrel	Math formulas	call
@@ -829,8 +831,8 @@ underbar	Special insertions	call
 underbrace	Math formulas	call
 underline	Math formulas	call
 unitlength	Environments	assign_dimen
-unlhd	Math formulas	call
-unrhd	Math formulas	call
+unlhd	Math formulas	not_base
+unrhd	Math formulas	not_base
 uparrow	Math formulas	call
 updownarrow	Math formulas	call
 uplus	Math formulas	math_given
