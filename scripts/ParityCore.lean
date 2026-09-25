@@ -1,9 +1,11 @@
 /-
 The cross-engine parity ladder, shared half: the level vocabulary, the
-declared-divergence registry, the reference sidecar, and the baseline
-ratchet. Two scripts read this module and nothing else shares it —
-`scripts/parity-regen.lean`, which runs `lualatex`, and
-`scripts/parity.lean`, which never does.
+declared-divergence registry, the reference sidecar, and the pins that tie
+a committed reference to its sources. Two scripts read this module and
+nothing else shares it — `scripts/parity-regen.lean`, which runs `lualatex`,
+and `scripts/parity.lean`, which never does. The baseline ratchet is not
+here: the tier is held by `Scoreboard.ratchet`, the one ratchet every tier
+shares.
 
 The split is the hermeticity rule: fixtures and tests never depend on what
 this host has installed, and a parity ladder needs a reference from another
@@ -25,7 +27,12 @@ open LeanTex.Core
 
 namespace Parity
 
-/-! ## The levels -/
+/-! ## The levels
+
+P0–P5 plus R, one vocabulary: P0 build, P1 pages, P2 census, P3 order,
+P4 lines, P5 placement, R raster. P5 and R are not built — placement is
+measured and deferred (`scripts/parity-measure.lean`), and raster would be
+printed and never gated — so `Level` has the five that are. -/
 
 /-- One level of the ladder. Cumulative: a fixture's recorded level is the
 number of levels that hold, counted from the bottom, so a level is only ever
@@ -65,11 +72,11 @@ inductive Level where
 def Level.all : List Level := [.build, .pages, .census, .order, .lines]
 
 def Level.tag : Level → String
-  | .build => "L0"
-  | .pages => "L1"
-  | .census => "L2"
-  | .order => "L3"
-  | .lines => "L4"
+  | .build => "P0"
+  | .pages => "P1"
+  | .census => "P2"
+  | .order => "P3"
+  | .lines => "P4"
 
 def Level.what : Level → String
   | .build => "both engines produce a document"
@@ -77,6 +84,14 @@ def Level.what : Level → String
   | .census => "per-page glyph census agrees"
   | .order => "per-page reading order agrees"
   | .lines => "per-page line partition agrees"
+
+/-- The level's one-word name, as the vocabulary table spells it. -/
+def Level.word : Level → String
+  | .build => "build"
+  | .pages => "pages"
+  | .census => "census"
+  | .order => "order"
+  | .lines => "lines"
 
 /-- The level a fixture whose reference does not compile records. Such a
 fixture is outside the denominator: nothing about the engine is claimed by
@@ -337,11 +352,6 @@ structure Sidecar where
   provenance : String
   deriving Repr, Inhabited
 
-def sidecarKeys : List String :=
-  ["fixture", "compiles", "pdf-key", "pdf-size", "src-key", "ref-src-key",
-   "src-body-key", "engine", "format", "argv", "inputs", "pages", "overfull",
-   "provenance"]
-
 def Sidecar.render (s : Sidecar) : String :=
   String.intercalate "\n"
     [s!"fixture: {s.fixture}",
@@ -389,171 +399,36 @@ def Sidecar.parse (text : String) : Except String Sidecar := do
            overfull := ← nat "overfull"
            provenance := ← need "provenance" }
 
-/-! ## The scoreboard and its ratchet
+/-! ## The pins
 
-One integer per fixture, committed to `tests/scoreboard/parity.tsv` in the
-one format every tier of the autonomy loop uses: `#` lines for provenance
-(data, never gated), then `item<TAB>integer` rows, sorted and unique, higher
-better. A tier regresses when a value drops or a baselined item disappears;
-an item is retired only by a `# retired: <item> — <why>` line, which is a
-decision somebody wrote down rather than a row somebody deleted.
-
-The oracle is never "must match": it is "must not fall, and a rise must be
-recorded". A rise is also a failure — the recorded number is stale — which
-is the same shape the artifact tier's offence rows already have: a fix that
-removes an offence fails until its row goes too. Without that, a level that
-rose once and fell later would look green the whole way down. -/
-structure Row where
-  fixture : String
-  level : Int
-  deriving Repr, Inhabited
-
-/-- Where the scoreboard lives. One directory for every tier of the loop, so
-a sibling tier's file sits beside this one and reads the same way. -/
-def scoreboardPath : System.FilePath := "tests/scoreboard/parity.tsv"
-
-/-- Rows sorted by name and deduplicated, which is the committed order: a
-regeneration that reordered the file would show as a diff that means
-nothing. -/
-def renderBaseline (rows : List Row) (provenance : List String) : String :=
-  let sorted := (rows.toArray.qsort (·.fixture < ·.fixture)).toList
-  let uniq := sorted.foldl (fun acc r =>
-    if acc.any (·.fixture == r.fixture) then acc else acc ++ [r]) []
-  String.join (provenance.map (fun l => s!"# {l}\n"))
-    ++ String.join (uniq.map fun r => s!"{r.fixture}\t{r.level}\n")
-
-/-- The fixtures a scoreboard has retired, by the `# retired:` line that is
-the only way to retire one. A retired fixture's row may be gone without the
-ratchet calling it a fall. -/
-def retiredOf (text : String) : List String :=
-  (text.splitOn "\n").filterMap fun raw =>
-    let l := raw.trimAscii.toString
-    if l.startsWith "# retired: " then
-      some ((((l.drop 11).toString.splitOn " —").head?.getD "").trimAscii.toString)
-    else none
-
-/-- A lowering somebody wrote down: this item's floor was moved from `old`
-to `new`, for a reason in the line. The ratchet's only exception, and it
-names both numbers so it accepts exactly one fall and expires by itself —
-once the board records `new`, no later fall can match `old` again. -/
-structure Lowered where
-  item : String
-  old : Int
-  new : Int
-  deriving Repr, BEq, Inhabited
-
-/-- The `# lowered: <item> <old>→<new> — <why>` lines, parsed. A line whose
-numbers do not read, or that carries no reason after the em dash, is not a
-lowering: it is dropped here, so the fall it was meant to accept still
-fails. Silence is the safe direction — a typo must not be able to launder a
-regression. -/
-def loweredOf (text : String) : List Lowered :=
-  (text.splitOn "\n").filterMap fun raw =>
-    let l := raw.trimAscii.toString
-    if !l.startsWith "# lowered: " then none
-    else
-      let body := (l.drop 11).toString
-      match body.splitOn " — " with
-      | pair :: rest =>
-        let why := String.intercalate " — " rest
-        if why.trimAscii.toString.isEmpty then none
-        else match (pair.trimAscii.toString.splitOn " ") with
-          | [item, nums] =>
-            match nums.splitOn "→" with
-            | [o, n] =>
-              match o.toInt?, n.toInt? with
-              | some o, some n => some { item := item, old := o, new := n }
-              | _, _ => none
-            | _ => none
-          | _ => none
-      | [] => none
-
-/-- The provenance lines a rewrite must carry forward rather than compose:
-every retirement and every lowering, verbatim and in order, without the
-`# `. They are decisions a human wrote, and the header the writer composes
-is derived from code — a writer that rebuilt the whole header from code
-would delete them, which is what this function exists to prevent. -/
-def carriedOf (text : String) : List String :=
-  (text.splitOn "\n").filterMap fun raw =>
-    let l := raw.trimAscii.toString
-    if l.startsWith "# retired: " || l.startsWith "# lowered: " then
-      some (l.drop 2).toString
-    else none
-
-def parseBaseline (text : String) : Except String (List Row) := do
-  let mut out : List Row := []
-  for raw in text.splitOn "\n" do
-    let line := raw.trimAscii.toString
-    if line.isEmpty || line.startsWith "#" then continue
-    match (line.splitOn "\t").filter (!·.isEmpty) with
-    | [n, v] =>
-      match v.trimAscii.toString.toInt? with
-      | some l =>
-        if out.any (·.fixture == n) then
-          throw s!"the scoreboard lists {n} twice"
-        out := out ++ [{ fixture := n, level := l }]
-      | none => throw s!"the scoreboard row for {n} is not a number: {v}"
-    | _ => throw s!"a scoreboard row is not '<fixture><TAB><level>': {repr line}"
-  return out
-
-/-- What `--record` is allowed to do, decided before any byte is written.
-
-The ratchet has exactly one writer, and this is it. Three things refuse the
-write, and each is a reason a floor must not move by itself:
-
-* a **stale pairing** — the measurement is of two halves that are no longer
-  one document, so recording it would pin a number nobody measured. The
-  staleness is an argument rather than something computed here, which is
-  what makes "checked before the write" structural instead of an ordering
-  a later edit can invert;
-* a **fall** no `# lowered:` line accepts — lowering a floor is weakening a
-  statement, which PLAN lists as a human gate;
-* a **vanished fixture** with no `# retired:` line — a row may leave the
-  board only by a decision somebody wrote down.
-
-Retirements and lowerings are carried forward verbatim. -/
-inductive Write where
-  | ok (text : String)
-  | refused (reasons : List String)
-  deriving Repr, Inhabited
-
-def recordDecision (boardText : String) (measured : List Row)
-    (stale : List String) (provenance : List String) : Write :=
-  let recorded := (parseBaseline boardText).toOption.getD []
-  let retired := retiredOf boardText
-  let lowered := loweredOf boardText
-  let falls := recorded.filterMap fun row =>
-    match measured.find? (·.fixture == row.fixture) with
-    | some m =>
-      if m.level < row.level
-          && !(lowered.contains { item := row.fixture, old := row.level, new := m.level })
-      then some s!"{row.fixture}: was level {row.level}, now {m.level} — no \
-'# lowered: {row.fixture} {row.level}→{m.level} — <why>' line accepts it"
-      else none
-    | none =>
-      if retired.contains row.fixture then none
-      else some s!"{row.fixture}: the scoreboard records level {row.level} and the \
-fixture is gone — retire it with a '# retired: {row.fixture} — <why>' line"
-  let staleReasons := stale.map fun s =>
-    s!"the pairing is stale, so the measurement is not of one document — {s}"
-  let reasons := staleReasons ++ falls
-  match reasons with
-  | [] => .ok (renderBaseline measured (provenance ++ carriedOf boardText))
-  | rs => .refused rs
-
+A committed reference is tied to the two sources it was built from by
+content keys, so an edit to either half is a stale pairing and never a
+level result. -/
 
 def srcKeyOf (src : String) : String := Flate.contentKey src.toUTF8
 
-/-- A source with its whole-line comments dropped, which is what
-`src-body-key` pins: the part of a fixture that can change what the engine
-typesets. A trailing comment on a line of content moves this key too, which
-is the conservative direction — such an edit needs a fresh reference rather
-than a repin. -/
+/-- A source with its whole-line comments dropped: the part of a fixture that
+can change what the engine typesets. A trailing comment on a line of content
+moves this key too, which is the conservative direction — such an edit needs
+a fresh reference rather than a repin. -/
 def bodyOf (src : String) : String :=
   String.intercalate "\n"
     ((src.splitOn "\n").filter fun l => !(l.trimAscii.toString.startsWith "%"))
 
-def srcBodyKeyOf (src : String) : String := srcKeyOf (bodyOf src)
+/-- Does the engine's own lexer capture any of this source raw? Inside a
+verbatim or listing body a `%` line is text the engine sets, so dropping it
+would let `--repin` clear an edit to the document itself. Asked of the lexer
+rather than of a copy of its environment list, so the two cannot drift. -/
+def lexesVerbatim (src : String) : Bool :=
+  (Lex.lex "parity" src).1.any fun t =>
+    match t.tok with
+    | .verb _ _ => true
+    | _ => false
+
+/-- What `src-body-key` pins. A source the lexer reads any part of raw is
+pinned whole, so every edit to it needs a fresh reference. -/
+def srcBodyKeyOf (src : String) : String :=
+  if lexesVerbatim src then srcKeyOf src else srcKeyOf (bodyOf src)
 
 /-- What `--repin` may do to one sidecar. -/
 inductive Repin where

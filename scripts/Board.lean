@@ -740,7 +740,7 @@ both halves: landing a tier and removing its name here are one commit. That
 is what makes the permission narrow rather than a hole the size of
 `declaredTiers`. -/
 def pendingTiers : List String :=
-  ["commonmark", "coverage", "parity"]
+  ["commonmark", "coverage"]
 
 /-- The lake targets a tier's `--check` imports. `lake env lean --run` uses
 whatever `.olean` the last build left and builds nothing itself, so without
