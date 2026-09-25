@@ -14406,3 +14406,80 @@ never reworded by a body site. Fixing that pair is the same delivery question
 one layer up, and belongs with the total-accounting change — whose contract
 should carry "the visible line is true of every site it counts" as a stated
 property, with `runShape_fold_exact` as the worked example of what that costs.
+
+
+### 2026-09-25 — three costs that were not where they were inferred to be
+
+A measurement audit ranked six ways to make this engine faster to build,
+start and test. Three landed. Each one's inferred cause was wrong in a way
+worth writing down, because the corrections generalise better than the
+fixes.
+
+**1. A kernel `decide` delays every module downstream of it.**
+`Contrast.lean` elaborated in 24 s and 22 of those were eleven
+`decide +kernel` contracts over constants — the two `ThemeColors` records,
+the unpainted page, the default surface, `Theme.builtin`. `Elab` imports
+`Contrast` for one name, `realizeDoc`, and `Contrast` sat sixth on
+`Diag→Image→Ir→Struct→Layout→Contrast→Elab`, 242 s of a 273 s clean build.
+So the kernel evaluated facts nothing reads while the build's longest job
+waited. The eleven statements moved verbatim to `ContrastContract.lean`,
+imported by `LeanTex.lean` alone: still built by the default target, still
+gating (raising `aaText` to 20000 fails six of them and `lake build` exits
+1), no longer on the chain. Clean build 273 → 249 s; chain 242 → 219 s;
+`Elab` starts 21 s earlier; the leaf's own 24 s runs beside `Elab`'s 83.
+The rule this leaves: a `decide +kernel` over shipped constants belongs in
+a leaf, and the module it was in is on someone's critical path until
+measured otherwise.
+
+**2. A zero-argument definition is not lazy, whatever is wrapped around
+it.** `Nfc.load` was `def load : Tables`, which the code generator
+initializes at module load. The `Thunk` in front of it deferred nothing, so
+every process — `leantex --version` included — parsed five tables of
+separator-delimited decimal text before doing anything: 9.96e9 instructions
+per 200 runs. `load (_ : Unit)` makes the `Thunk` real, and the generator
+now emits fixed-width lowercase hex with no separators, read by byte offset
+out of one `String.toUTF8`. `--version` 11 → 6 ms, 3.86e9 → 1.12e9 cycles,
+9.96e9 → 1.15e9 instructions; a one-page ASCII document 75 → 69 ms; a
+document that forces the table 182M → 173M cycles, its table build falling
+from ~13.7M cycles to ~4.7M. The table is unchanged: regenerated from this
+host's UnicodeData.txt (texlive 20260301, sha256 `2e1efc1d…`) the five
+tables compare entry for entry — 968 ccc, 2081 decompositions, 961
+composites, 684 letter ranges, 1488 lowercase, zero missing, zero extra,
+zero differing — and over all 1,112,064 scalar values the transcript of
+`normalize(c)`, `normalize(cc)`, `normalize(c+acute)`,
+`normalize(acute+c)`, `isLetter` and `toLower` is byte-identical before and
+after (sha256 `6a609022…`, `leantex-evidence/perf/nfc-exhaustive.lean`).
+Every bench and probe fixture renders a byte-identical PDF. The rule: a
+0-ary `def` is an initializer; laziness needs an argument.
+
+**3. Three judges over one corpus, three pipelines.** `pdfContractChecks`,
+`pdfConformanceChecks` and `structTreeChecks` each read, elaborated, laid
+out and wrote all 77 golden fixtures for themselves, the first two writing
+byte-identical files from identical arguments; conformance then parsed its
+file twice and extracted its text twice, contract twice more. `goldenArts`
+runs the pipeline once per fixture and hands over a record: document,
+geometry, store, layout, bytes, text, parsed objects. The structure judge
+still writes its own file, because its file differs by the tree and a
+shared one would not be the file it judges. Suite 47.46 → 37.15 s,
+interleaved medians of 5. 5301 checks before and after; corrupting one byte
+of the shared artifact fails 213 of them, emptying the structure tree fails
+51. The audit had inferred a write-and-reparse per assertion; forced timing
+says reading, elaborating and laying out all 77 fixtures is 81 ms while one
+reference walk is 5.7 s. The cost of a PDF test block is the writing and
+re-reading, never the front of the pipeline.
+
+Two findings are left open rather than fixed. The suite does not notice a
+lost *composite*: dropping the last entry of the composition table keeps
+`lake test` green, because the NFC idempotence check iterates decomposition
+keys and no tested string needed that composite. The check that would
+refuse it is a stride census beside `nfcChecks` in `Tests/FontMath.lean` —
+each table's byte length an exact multiple of its stride, and `load ()`
+returning exactly the five counts the generator reports — and it is routed
+there rather than written here. And `pdfContractChecks` spends part of its
+remaining time on `lake build leantex` plus four driver subprocesses, which
+is real end-to-end coverage and not duplication.
+
+Measurements: 192 cores, load recorded per run in
+`leantex-evidence/perf/load-*.txt`; every wall number an interleaved median
+against a binary built from the merge base, never one live tree against
+another.
