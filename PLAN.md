@@ -17212,9 +17212,9 @@ draft did:
   classifies these `not_base`, excluded like `math_given`: a command a
   package provides is counted in that package's half or not at all.
   Rebuilt from the manual (`--denominator`), the file changed in exactly
-  those eleven rows' class, the header line naming the class, and the body
-  stamp; every other line is byte-identical (`diff` of the file before and
-  after).
+  those eleven rows' class, the header lines that name the class, and the
+  body stamp; every other line is byte-identical (`diff` of the file before
+  and after).
 - **`\#` was read as a comment.** `parseDenom` skipped every line starting
   with `#`, and the row for the documented command `\#` starts with one, so
   the published denominator was 857 of 858. A provenance line is now a `#`
