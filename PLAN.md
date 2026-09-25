@@ -389,6 +389,106 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-24 — a conditional is a statement with two branches, and the
+recovery that skipped one drew both (M8b slice 3, the conditional cascade).
+Three defects in one construct, and the third is the one that made a deck
+read as broken.
+
+**One: wrong ink, not missing ink.** A conditional opener was an unknown
+control word, recovered by the standing rule — name it, skip to the next
+`;`. So it swallowed the first statement of its own first branch, and then
+every statement of **both** branches after that was drawn, superimposed.
+That is not a degradation of the diagram, it is a different diagram. The
+invariant now stated against it is `relTrichotomy_exact`: exactly one of
+`<`, `=`, `>` holds of any two integers, so a conditional ships one branch's
+ink and never both and never neither.
+
+**Two: the cascade.** The statement the skip swallowed declared a node. So
+the node never registered, so every edge naming it was refused — and refused
+as `E0333`, whose declared loss is `dropped` and whose meaning is "the
+document's expression is unreadable or unresolvable". It was neither: the
+name was written, spelled correctly, and swallowed by a construct the
+*engine* could not read. **One gap read as six errors, five of them naming
+nodes the author had written.** That is not a severity question but a
+classification one, and the fix is `unreachedName`: where a named gap
+swallowed the declaration the refusal is `W0334`, whose declared loss is
+`pending` and whose meaning is exactly "outside the rendered subset". The
+gate's premise is structural rather than prose — `Ev.gapped` and
+`Cx.parseGap` are set only where a `W0334` naming that construct was
+raised — and `unreachedName_accounts` is the statement: the quiet answer is
+reachable only when a gap was named, so a reader never gets the softer code
+alone. A row pins the floor under it, that a name nothing declared in a
+picture with no gap anywhere is still `E0333`; without that row the
+classification would pass under a gate that always fires.
+
+**Three: which tests are computable, and what the rest do.** Every `\if…`
+control word opens a conditional — TeX's own convention, what `\newif`
+mints, and keyed on the prefix rather than on a list of primitives for the
+closed-list reason the boundary's macro closure already records. `\ifnum`
+and `\ifdim` carry the ⟨number⟩⟨relation⟩⟨number⟩ form, which this walk
+computes through `evalNum` against the macros `\pgfmathsetmacro` bound —
+that is the `\foreach`-counter idiom the brief named, and it now draws.
+`\iftrue`/`\iffalse` are their own value. Every other test — `\ifx`, a mode
+test, `\ifcase` — is a fact about TeX's own state or about a
+control-sequence table this walk does not have. Their tests are not
+computed, and the branches are still separated, which is where the floor
+comes in.
+
+**The floor, and what the reference corpus taught about it.** An unreadable
+test ships the branch that draws (`condFloor`, `condFloor_accounts`,
+`condFloor_mem`): one coherent reading of the diagram, with the assumption
+named at the test. Drawing *neither* was the first cut and it was wrong
+twice over — the picture then ships no ink, and an all-refused picture is
+what routes whole to the external boundary, where the tool renders an empty
+page and E0382 is the one degradation that tells a reader nothing. Measured:
+that cut cost four pictures their ink and gained four `E0382`. Always taking
+the *first* branch was the second cut, and it cost a diagram a whole overlay
+step — a page that stopped existing — because a guard is as often written
+`\ifnum… \else <content> \fi`, the interesting side in the `\else`. So the
+floor prefers the branch that draws, `condFloor_mem` says it is one of the
+two and never a mixture, and `condFloor_accounts` says it is empty only
+when both branches were.
+
+**An unbalanced conditional may not strand what it read.** The parser
+collects a branch's statements into a frame, and a frame never closed by
+`\fi` would lose them silently. `PSt.drain` closes every open frame at the
+end of the body, innermost first, so an unclosed conditional ships its
+branch and names itself. A row asserts the ink.
+
+**What is not this file's, and is routed.** Two things.
+
+*The macros a test may name.* A document's own `\newcommand` is not bound in
+the picture walk's environment — `Elab.Ctx.picMacros` carries the reachable
+set as name→body strings, and only the boundary standalone reads it. So
+`\ifnum\mycounter=1` over a document macro reaches the floor rather than the
+arithmetic, where it could be computed exactly. Binding `picMacros` into the
+walk's environment is `Elab.lean`'s door (the `elabPicture` call site), one
+parameter wide, and it would turn a named assumption into a computed answer.
+
+*A picture that is empty because the document said so.* The boundary door is
+`ctx.picTool.isSome && !body.isEmpty && pic.shapes.isEmpty` (Elab.lean), and
+`shapes.isEmpty` conflates two states that were the same before this slice
+and are not now: *the subset could not read this*, which is what the
+boundary is for, and *the document asked for nothing here*, for which the
+boundary renders an empty page and reports it as malformed. The floor above
+keeps the reference corpus out of that state, but the state is reachable —
+a conditional whose taken branch is genuinely empty — and closing it needs a
+signal the door can read, which is an `Ir.Pic.Picture` field and Elab's
+condition. Recorded rather than worked around.
+
+**Measured on the private reference corpus.** Errors fall from six to one,
+and the one that remains is a `\setbeamertemplate` body (`E0111`, another
+file's). Accepted-loss census against the parent binary, same source, same
+flags: 42 losses → 35, with `E0333 ×5` and `W0334 ×15` becoming `W0334 ×14`
+and no `E0333` at all. Zero form XObjects in the whole artifact and no tool
+line in the verbose log — no picture reaches the boundary. The page count
+moves from 36 to 35 against the reference build's own 34, so this slice
+moves *toward* the reference rather than away; the remaining two pages are an
+overlay-counting question and not this one. Ten synthetic rows
+(`pictureCondChecks`, read off the shipped lines and paths) fail on the
+parent commit and pass here, and eight compat-index rows cover the computed
+tests against two `refuse:W0334` rows for the floor.
+
 2026-09-24 — a node's prologue is a loop, and the walk read a sequence
 (M8b slice 3, the node prologue). pgf reads `[keys]`, `(name)` and
 `at (coord)` in any order and any number of times up to the `{text}` — the

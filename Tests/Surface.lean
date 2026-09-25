@@ -5256,6 +5256,128 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (!(layoutDiags (frame "\\node (a) {A Wide First Line\\\\A Wide Second Line};\n")).any
       fun d => d.code == "W0336")
 
+/-- **A conditional is a statement with two branches, and one gap costs the
+conditional rather than the diagram** (`Picture.relTrichotomy_exact`,
+`Picture.condFloor_accounts`, `Picture.unreachedName_accounts`).
+
+Three defects in one construct. A conditional opener was an unknown control
+word, recovered by skipping *to the next `;`* — so it swallowed the first
+statement of its own first branch, and then every statement of **both**
+branches after that was drawn. That is wrong ink, not missing ink. The node
+the swallowed statement declared never registered, so every edge naming it
+was refused — and refused as `E0333`, a name nothing declared, which is the
+document's fault and not the engine's: one unreadable construct read as six
+separate errors, five of them naming nodes the author had written.
+
+So: every `\if…` control word opens a conditional (TeX's own convention,
+what `\newif` builds on), its branches are collected separately, the
+arithmetic tests are computed, and the rest ship the branch that draws with
+the assumption named. A name declared inside a branch that did not run is a
+`W0334` naming the mechanism, not an `E0333` naming the node.
+
+Read off the shipped paths and lines: which branch ran is visible only as
+ink. Invented content throughout. -/
+def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let censusSrc (src : String) : Array CensusPage :=
+    let (doc, _) := elabStr src
+    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let pic (body : String) : String :=
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let nodes (a b : String) : String :=
+    "\\node (nn) [draw, minimum size=8mm] at (0,0) {" ++ a ++ "};\n" ++
+    "\\node (mm) [draw, minimum size=8mm] at (3,0) {" ++ b ++ "};\n"
+  -- A computable test: one branch runs and the other's ink is nowhere on
+  -- the page. Both branches hold two statements, which is exactly what the
+  -- old recovery drew from both.
+  let both (k : String) : String :=
+    "\\pgfmathsetmacro{\\kk}{" ++ k ++ "}\n\\ifnum\\kk=1\n" ++
+    nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"
+  let (_, ds) := elabStr (pic (both "1"))
+  t "a picture with a computable conditional elaborates with nothing refused"
+    (ds.all (·.severity == .note))
+  let yes := censusSrc (pic (both "1"))
+  let no := censusSrc (pic (both "2"))
+  t "the taken branch ships its ink"
+    (pageHas yes 0 "Pear" && pageHas yes 0 "Plum")
+  t "the branch not taken ships none of its ink"
+    (!pageHas yes 0 "Fig" && !pageHas yes 0 "Quince")
+  t "a false test takes the other branch, and only it"
+    (pageHas no 0 "Fig" && pageHas no 0 "Quince" &&
+      !pageHas no 0 "Pear" && !pageHas no 0 "Plum")
+  t "exactly one branch's outlines ship, not both"
+    ((yes[0]?.map (·.paths == 2)).getD false &&
+     (no[0]?.map (·.paths == 2)).getD false)
+  t "no boundary box stands where a conditional picture is"
+    ((yes[0]?.map (·.images == 0)).getD false)
+  -- `<` and `>` as well as `=`, so the relation table is not one arm wide.
+  let lt := censusSrc (pic
+    ("\\pgfmathsetmacro{\\kk}{1}\n\\ifnum\\kk<5\n" ++ nodes "Pear" "Plum" ++
+     "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  let gt := censusSrc (pic
+    ("\\pgfmathsetmacro{\\kk}{9}\n\\ifnum\\kk>5\n" ++ nodes "Pear" "Plum" ++
+     "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  t "'<' and '>' read as themselves"
+    (pageHas lt 0 "Pear" && !pageHas lt 0 "Fig" &&
+     pageHas gt 0 "Pear" && !pageHas gt 0 "Fig")
+  -- An uncomputable test: the floor ships the branch that draws, the
+  -- assumption is named, and nothing from the other branch appears. The
+  -- test names a macro this walk has no binding for, which is the state a
+  -- document's own macro is in here.
+  let opaqueSrc :=
+    pic ("\\ifnum\\notamacro=1\n" ++ nodes "Pear" "Plum" ++
+         "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
+  let (_, opaqueDs) := elabStr opaqueSrc
+  t "a test the walk cannot compute is named, and says which branch drew"
+    (opaqueDs.any fun d => d.code == "W0334" && hasStr d.message "notamacro" &&
+      hasStr d.message "draws")
+  let guarded := censusSrc opaqueSrc
+  t "an unreadable test still ships a branch, and only one"
+    (pageHas guarded 0 "Pear" && !pageHas guarded 0 "Fig" &&
+      (guarded[0]?.map (·.paths == 2)).getD false)
+  -- Any `\if…` control word opens a conditional, not just the arithmetic
+  -- ones: TeX's own convention, and what `\newif` mints.
+  let (_, oddDs) := elabStr (pic
+    ("\\ifodd 3\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  t "an opener the subset cannot compute is named by its own spelling"
+    (oddDs.any fun d => d.code == "W0334" && hasStr d.message "ifodd")
+  -- And the branch that draws, not simply the first: a guard is as often
+  -- written with the content in the `\else`.
+  let elseOnly := censusSrc (pic
+    ("\\ifnum\\notamacro=1\n\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  t "where the first branch is empty the floor ships the other"
+    (pageHas elseOnly 0 "Fig" && (elseOnly[0]?.map (·.paths == 2)).getD false)
+  -- The cascade, contained: a name declared only in the branch the floor
+  -- did *not* take is named by the *mechanism*, at warning strength — not
+  -- by the node, as an error, per edge.
+  let cascadeSrc := pic
+    ("\\node (zz) [draw, minimum size=8mm] at (6,0) {Keep};\n" ++
+     "\\ifnum\\notamacro=1\n" ++
+     "\\node (shown) [draw, minimum size=8mm] at (0,0) {Pear};\n\\else\n" ++
+     "\\node (hidden) [draw, minimum size=8mm] at (3,0) {Fig};\n\\fi\n" ++
+     "\\draw (hidden) -- (zz);\n")
+  let (_, cascadeDs) := elabStr cascadeSrc
+  t "a name declared in a branch that did not run is refused at warning strength"
+    (cascadeDs.any fun d => d.code == "W0334" && hasStr d.message "hidden")
+  t "and not as a name nothing declared"
+    (!cascadeDs.any fun d => d.code == "E0333" && hasStr d.message "hidden")
+  -- The floor under it: with no gap anywhere, a name nothing declared is
+  -- still the document's own error. Without this row the demotion above
+  -- would pass under a gate that always fires.
+  let (_, plainDs) := elabStr (pic
+    ("\\node (zz) [draw, minimum size=8mm] at (6,0) {Keep};\n" ++
+     "\\draw (nowhere) -- (zz);\n"))
+  t "with no gap in the picture, a name nothing declared stays an error"
+    (plainDs.any fun d => d.code == "E0333" && hasStr d.message "nowhere")
+  -- An unbalanced conditional may not strand the statements its branch
+  -- collected: they are drained at the end of the body.
+  let unclosed := censusSrc (pic
+    ("\\ifnum\\notamacro=1\n" ++ nodes "Pear" "Plum"))
+  t "a conditional never closed still ships what its branch read"
+    (pageHas unclosed 0 "Pear" && (unclosed[0]?.map (·.paths == 2)).getD false)
+
 /-- **A node's options are its brackets', wherever the brackets stand**
 (`Picture.prologue_swap_agree`, `Picture.prologue_brackets_covers`). pgf
 reads `[keys]`, `(name)` and `at (coord)` in any order and any number of

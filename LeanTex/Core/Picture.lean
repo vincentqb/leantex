@@ -406,8 +406,39 @@ theorem range_unit_size (a b : Int) (hab : a ≤ b) :
 
 -- Statements.
 
-/-- One parsed picture statement. `fill` and `node` keep their token
-slices — coordinates and options are evaluated per loop iteration, where
+/-- How a TeX conditional's test is read. Every control word beginning
+`if` is a conditional opener — TeX's own convention, and what `\newif`
+builds on (TeXbook chapter 20) — but only the arithmetic tests carry a
+shape this walk can compute:
+
+* `num` is `\ifnum`/`\ifdim`, the ⟨number⟩⟨relation⟩⟨number⟩ form, and the
+  `\foreach`-counter idiom;
+* `always` is `\iftrue`/`\iffalse`, whose value is the primitive itself;
+* `opaque` is every other test — `\ifdefined`, `\ifx`, `\ifcase`, a mode
+  test. Their answers are facts about TeX's own state or about a control
+  sequence table this walk does not have, so evaluating them would be
+  *guessing*, and a guessed branch is wrong ink rather than missing ink.
+  They are refused by name, and both branches stay separate so nothing the
+  document did not ask for is drawn.
+-/
+inductive CondKind where
+  | num (name : String)
+  | always (v : Bool)
+  | opaque (name : String)
+  deriving Repr, BEq, Inhabited
+
+/-- The conditional a control word opens, or `none` where it opens none.
+Keyed on the `if` prefix rather than on a list of primitives, because
+`\newif` lets a document mint `\ifmyflag` and a closed list cannot hold
+those — the same closed-list lesson the boundary's macro closure records. -/
+def condKindOf (n : String) : Option CondKind :=
+  if n == "ifnum" || n == "ifdim" then some (.num n)
+  else if n == "iftrue" then some (.always true)
+  else if n == "iffalse" then some (.always false)
+  else if n.startsWith "if" && n.length > 2 then some (.opaque n)
+  else none
+
+/-- One parsed picture statement. `fill` and `node` keep their tokenslices — coordinates and options are evaluated per loop iteration, where
 the bindings live. -/
 inductive Stmt where
   | fill (toks : Array Tok)
@@ -420,6 +451,12 @@ inductive Stmt where
   /-- `\pgfmathsetmacro`, and `\pgfmathtruncatemacro` when `trunc`. -/
   | set (name : String) (expr : Array Tok) (trunc : Bool)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
+  /-- `\ifnum <num><rel><num> ... \else ... \fi` and its siblings — TeX's
+  conditionals. The test's tokens are kept for evaluation, because a macro
+  it names is bound while the statements run and not while they are parsed;
+  `kind` says which test this is, because only the arithmetic ones are
+  computable here. -/
+  | cond (kind : CondKind) (test : Array Tok) (thenS : List Stmt) (elseS : List Stmt)
   deriving Repr, Inhabited
 
 /-- The `;`-terminated statement kinds the machine collects. -/
@@ -454,6 +491,26 @@ private inductive Mode where
   | fbody (vars : Array String) (list : Array Tok)
   /-- Recovering from a construct outside the subset: to the next `;`. -/
   | skip
+  /-- After a conditional opener, collecting the test's tokens. TeX
+  terminates a ⟨number⟩ with one optional space, and the second number of
+  an arithmetic test is the last thing the test contains — so that test
+  ends at the first space standing after a relation and at least one token
+  of its right side. A document must write that space for TeX itself, so
+  this is the rule and not an approximation of one. Every other test ends
+  at its first space, which is what a document writes for the same
+  reason. -/
+  | icond (kind : CondKind) (test : Array Tok) (sawRel : Bool)
+  deriving Repr, Inhabited
+
+/-- One conditional whose branch is being collected: which test it is, the
+test's tokens, the statements the branch has taken so far, the statements
+the `then` branch took once `\else` has been seen, and whether it has. -/
+private structure CondFrame where
+  kind : CondKind
+  test : Array Tok
+  taken : Array Stmt := #[]
+  thenS : Array Stmt := #[]
+  inElse : Bool := false
   deriving Repr, Inhabited
 
 private structure PSt where
@@ -462,6 +519,11 @@ private structure PSt where
   /-- Enclosing `\foreach` headers whose body is the statement being
   built, innermost last. -/
   pending : Array (Array String × Array Tok) := #[]
+  /-- Enclosing `\ifnum`s whose branch is being collected, innermost last.
+  A finished statement goes to the innermost frame's current branch rather
+  than to `out`, which is what makes the two branches separate answers
+  instead of one run of statements the evaluator cannot tell apart. -/
+  conds : Array CondFrame := #[]
   mode : Mode := .top
 
 /-- A `\draw`/`\path` statement's subpaths. A path ends at its last
@@ -544,6 +606,17 @@ def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
     if s.isEmpty then none else some (s.foldl Array.push pre)
   return if out.isEmpty then #[acc] else out
 
+/-- Where a finished statement goes: the innermost `\ifnum` frame's current
+branch if one is open, otherwise the picture's own statement list. One sink,
+so a statement cannot reach `out` from inside a branch — which is the whole
+of what keeps a conditional's two sides apart. -/
+private def PSt.emit (st : PSt) (ss : List Stmt) : PSt :=
+  match st.conds.back? with
+  | none => { st with out := ss.foldl Array.push st.out }
+  | some f =>
+    let f2 : CondFrame := { f with taken := ss.foldl Array.push f.taken }
+    { st with conds := st.conds.pop.push f2 }
+
 /-- Close one finished statement: wrap it in every pending `\foreach`
 header (an unbraced body is one statement), emit, reset. -/
 private def PSt.finishMany (st : PSt) (ss : List Stmt) : PSt := Id.run do
@@ -555,7 +628,7 @@ private def PSt.finishMany (st : PSt) (ss : List Stmt) : PSt := Id.run do
       ss := [.foreach vars list ss]
       pending := pending.pop
     | none => break
-  return { st with out := ss.foldl Array.push st.out, pending := #[], mode := .top }
+  return { (st.emit ss) with pending := #[], mode := .top }
 
 private def PSt.finish (st : PSt) (s : Stmt) : PSt := st.finishMany [s]
 
@@ -565,6 +638,43 @@ private def PSt.diag (st : PSt) (code : DiagCode) (msg : String) : PSt :=
 
 private def PSt.outside (st : PSt) (what : String) : PSt :=
   st.diag .W0334 s!"{what} is outside the rendered picture subset; not drawn"
+
+/-- `\else` on the open frame: the statements collected so far are the
+`then` branch's, and what follows is the `else` branch's. A second `\else`
+is the document's error and is named. -/
+private def PSt.elseHere (st : PSt) : PSt :=
+  match st.conds.back? with
+  | none => (st.outside "an '\\else' with no conditional open")
+  | some f =>
+    if f.inElse then st.diag .E0333 "a second '\\else' in one conditional; the \
+conditional is not drawn"
+    else
+      let f2 : CondFrame := { f with thenS := f.taken, taken := #[], inElse := true }
+      { st with conds := st.conds.pop.push f2 }
+
+/-- `\fi`: close the innermost frame and emit the conditional as one
+statement into whatever sink encloses it. -/
+private def PSt.fiHere (st : PSt) : PSt :=
+  match st.conds.back? with
+  | none => (st.outside "a '\\fi' with no conditional open")
+  | some f =>
+    let thenS := if f.inElse then f.thenS else f.taken
+    let elseS := if f.inElse then f.taken else #[]
+    let st := { st with conds := st.conds.pop }
+    st.finishMany [.cond f.kind f.test thenS.toList elseS.toList]
+
+/-- Close every conditional still open at the end of the body: an
+unbalanced `\fi` is the document's error, and the statements its branches
+collected may not simply vanish. Each open frame becomes its conditional,
+innermost first, so nothing a branch read is stranded in the parser. -/
+private def PSt.drain (st : PSt) : PSt := Id.run do
+  let mut st := st
+  for _ in [0:st.conds.size] do
+    if st.conds.isEmpty then break
+    st := { st.fiHere with mode := .top }
+  if st.conds.isEmpty then return st
+  return st.diag .E0333 "a conditional in this picture is never closed by \
+'\\fi'; its statements are not drawn"
 
 /-- One non-recursive machine step: every case except a `\foreach` body
 group, which `parseToks` handles so the recursion into the group subtree
@@ -580,7 +690,12 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "foreach" => { st with mode := .fvars #[] }
     | .ctrl "pgfmathsetmacro" => { st with mode := .sname false }
     | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname true }
-    | .ctrl name => { (st.outside s!"'\\{name}'") with mode := .skip }
+    | .ctrl "else" => st.elseHere
+    | .ctrl "fi" => st.fiHere
+    | .ctrl name =>
+      match condKindOf name with
+      | some k => { st with mode := .icond k #[] false }
+      | none => { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
     | .math _ _ => { (st.outside "math") with mode := .skip }
@@ -640,6 +755,13 @@ private def step (t : Tok) (st : PSt) : PSt :=
       { st with pending := st.pending.push (vars, list), mode := .stmt .draw #[] }
     | .ctrl "path" =>
       { st with pending := st.pending.push (vars, list), mode := .stmt .path #[] }
+    | .ctrl name =>
+      match condKindOf name with
+      | some k =>
+        { st with pending := st.pending.push (vars, list), mode := .icond k #[] false }
+      | none =>
+        { (st.outside "this '\\foreach' body")
+          with mode := .skip, pending := #[] }
     -- `.group` never reaches here: `parseToks` owns that arm.
     | _ =>
       { (st.outside "this '\\foreach' body")
@@ -648,6 +770,28 @@ private def step (t : Tok) (st : PSt) : PSt :=
     match t with
     | .sym ';' => { st with mode := .top }
     | _ => st
+  | .icond kind test sawRel =>
+    let close (st : PSt) : PSt :=
+      { st with conds := st.conds.push { kind := kind, test := test }, mode := .top }
+    -- An arithmetic test ends at the space TeX's own ⟨number⟩ scan needs;
+    -- every other test ends at its first space, which is what a document
+    -- writes for the same reason.
+    let ready : Bool :=
+      match kind with
+      | .num _ =>
+        sawRel && !test.isEmpty && test.back? != some (.sym '<') &&
+          test.back? != some (.sym '>') && test.back? != some (.sym '=')
+      | _ => true
+    match t with
+    | .sym c =>
+      if c == '<' || c == '>' || c == '=' then
+        { st with mode := .icond kind (test.push t) true }
+      else { st with mode := .icond kind (test.push t) sawRel }
+    | .space => if ready then close st else st
+    -- `\else` or `\fi` immediately: a test with no branch at all.
+    | .ctrl "else" => (close st).elseHere
+    | .ctrl "fi" => (close st).fiHere
+    | _ => { st with mode := .icond kind (test.push t) sawRel }
 
 mutual
 
@@ -714,6 +858,11 @@ structure Cx where
   separation it can define — a stated approximation, exact where the two
   nodes carry the same declared extent. Default 1 cm, pgf's own. -/
   dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
+  /-- Did the *parse* name a construct outside the subset? A declaration
+  the parse skipped is gone before evaluation begins, so a name that then
+  resolves to nothing traces to that gap rather than to the document. Read
+  at the one place a name is resolved, beside `Ev.gapped`. -/
+  parseGap : Bool := false
   /-- How a math span in a node body elaborates: provided by the
   elaborator, so `{$X$}` renders through the same math layer a
   paragraph's does — the picture walk owns no math parser. The result is
@@ -1589,6 +1738,12 @@ structure Ev where
   them: `\fill`'s bracket is a colour spelling, not a key list, so a
   picture of nothing but fills reads no keys at all. -/
   readOpts : Bool := false
+  /-- Did some construct the subset could not reach swallow declarations?
+  A node inside an `\ifnum` whose test the walk cannot compute is a
+  different refusal from a node nothing declared: the first traces to a
+  named gap, the second to the document. Set only where that gap was
+  named, so the demotion below can never be the whole story. -/
+  gapped : Bool := false
   /-- How many nodes this run refused because the node they are placed
   relative to was not in scope yet. The walk is re-run with what it
   learned (`evalFixed`), so a node placed relative to one declared later
@@ -2581,7 +2736,11 @@ outside the rendered picture subset; the label is not drawn")
           let (ox, oy) := dir.offset (sep.1 + g.b + ownB, sep.2 + g.a + ownA)
           .ok (g.x + ox, g.y + oy)
         | none =>
-          .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
+          if ev.gapped || cx.parseGap then
+            .error (.W0334, s!"'{target}' is declared inside a construct outside \
+the rendered picture subset, so no node carries it; the node is not drawn")
+          else
+            .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
 this one against; the node is not drawn")
   -- The body: its own `{...}` group, or what a `node contents=` key
   -- supplied — a style that carries the body is how pgf lets a bundle
@@ -2670,6 +2829,38 @@ private def sinDeg (d : Int) : Int :=
   sign * ((sinTable[d.toNat]?).getD 0)
 
 private def cosDeg (d : Int) : Int := sinDeg (d + 90)
+
+/-- A name that resolved to nothing. Which refusal it is depends on *why*
+there is no such node: a declaration the walk could not reach is a gap in
+the rendered subset (`W0334`, `pending`), and a name nothing declared is the
+document's (`E0333`, `dropped`). Reporting both as the second is what made
+one unreadable conditional read as five separate errors, each naming a node
+the author had written.
+
+This is not a demotion of a loss but a correction of the code: the loss was
+always `pending` where the cause is a construct outside the subset, and the
+walk was classifying by the symptom — a missing name — rather than by the
+cause. The gate's premise is structural: `Ev.gapped` and `Cx.parseGap` are
+set only where a `W0334` naming that construct was raised, so the quiet
+answer can never be the whole story a reader gets.
+-- premise: unreachedName_accounts — the gate reads a flag set only beside a
+-- named gap, so a picture with no gap cannot take this path. -/
+private def unreachedName (gapped : Bool) (what : String) : PDiag :=
+  if gapped then
+    (.W0334, s!"{what} is declared inside a construct outside the rendered \
+picture subset, so no node carries it; the edge is not drawn")
+  else (.E0333, s!"in '\\draw', no node is named '{what}'; the edge is not drawn")
+
+/-- **A quiet refusal is paid for by a named gap.** The registered
+`_accounts` shape: the pending answer is reachable only when a construct
+outside the subset was named, so the two codes stay one code one meaning and
+the reader is never left with the softer of the two alone. -/
+theorem unreachedName_accounts (gapped : Bool) (what : String)
+    (h : (unreachedName gapped what).1 = .W0334) : gapped = true := by
+  cases gapped
+  · simp only [unreachedName, Bool.false_eq_true] at h
+    exact absurd h (by simp)
+  · rfl
 
 /-- An endpoint of a `\draw` path: a named node, whose border anchors the
 segment, or a bare coordinate. -/
@@ -2881,8 +3072,7 @@ is not drawn")
       | some (base, an) =>
         match ev.nodes.lookup base with
         | none =>
-          return .error (.E0333, s!"in '\\draw', no node is named '{base}'; the \
-edge is not drawn")
+          return .error (unreachedName (ev.gapped || cx.parseGap) base)
         | some g =>
           match nodeAnchorOf an with
           | some a =>
@@ -2892,8 +3082,7 @@ edge is not drawn")
             return .error (.W0334, s!"node anchor '{an}' is outside the rendered \
 picture subset; the edge is not drawn")
       | none =>
-        return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
-is not drawn")
+        return .error (unreachedName (ev.gapped || cx.parseGap) nm)
   let mut pts : Array Anchor := #[]
   let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat × Ir.Pic.LabelAlign)) := #[]
   match readAnchor i with
@@ -3191,6 +3380,91 @@ private def bindVars (vars : Array String) (item : Array Val)
       out := (vars[k], (item[k]?).getD last) :: out
   return out
 
+/-- An `\ifnum` test split into its two sides and its relation, at paren
+depth zero. TeX's ⟨relation⟩ is one of `<`, `=`, `>` (TeXbook chapter 20),
+and the first one at depth zero is it — a pgfmath expression holds no
+relation of its own, so there is nothing to disambiguate. -/
+def splitRel (toks : Array Tok) : Option (Array Tok × Char × Array Tok) := Id.run do
+  let mut depth := 0
+  for k in [0:toks.size] do
+    if let some t := toks[k]? then
+      match t with
+      | .sym '(' => depth := depth + 1
+      | .sym ')' => depth := depth - 1
+      | .sym c =>
+        if depth == 0 && (c == '<' || c == '>' || c == '=') then
+          return some (toks.extract 0 k, c, toks.extract (k + 1) toks.size)
+      | _ => pure ()
+  return none
+
+/-- Which branch a test takes, given both sides evaluated: TeX's three
+integer relations and nothing else. -/
+def relHolds (rel : Char) (a b : Int) : Bool :=
+  if rel == '<' then a < b else if rel == '>' then a > b else a == b
+
+/-- **A test takes exactly one branch, and the three relations are the
+trichotomy.** Exactly one of `<`, `=`, `>` holds of any two integers, so a
+conditional can never ship both sides' ink and can never ship neither — a
+picture's ink is a function of the test's value alone. The defect this
+states away is the recovery it replaced: an `\ifnum` was named and skipped
+to the next `;`, so every statement of *both* branches after the first was
+drawn, which is wrong ink rather than missing ink. The registered `_exact`
+shape. -/
+theorem relTrichotomy_exact (a b : Int) :
+    (relHolds '<' a b = true) = !(relHolds '>' a b || relHolds '=' a b) ∧
+    (relHolds '>' a b = true) = !(relHolds '<' a b || relHolds '=' a b) ∧
+    (relHolds '=' a b = true) = !(relHolds '<' a b || relHolds '>' a b) := by
+  simp only [relHolds]
+  refine ⟨?_, ?_, ?_⟩ <;> (by_cases h1 : a < b <;> by_cases h2 : b < a <;> simp_all <;> omega)
+
+/-- Which branch a conditional whose test this walk cannot compute ships:
+the one that draws, preferring the first where both do. A reader shown one
+coherent reading of a diagram has lost almost nothing, and a reader shown an
+empty box has lost the diagram — the recorded ordering the math and
+node-label floors already follow ("native first; imperfectly-but-visibly
+beats not at all"). Drawing *neither* is the worse recovery twice over: the
+picture ships no ink at all, and an all-refused picture is what routes whole
+to the external boundary, where an empty page is the one degradation that
+tells a reader nothing.
+
+Preferring the drawing branch rather than always the first is what the
+reference corpus taught: a guard is as often written
+`\ifdefined\x \else <content> \fi` — the interesting side in the `\else`
+— as the other way round, and always taking `then` cost that diagram a
+whole overlay step, measured as a page that stopped existing.
+
+The recovery this replaced drew statement-for-statement from *both*
+branches, which is not a reading of the diagram at all. So the floor is one
+branch, and the assumption is named where the test was written. -/
+def condFloorTakesThen (thenS : List Stmt) : Bool := !thenS.isEmpty
+
+/-- The branch the floor ships, as a value the statements below range over.
+The evaluator reads `condFloorTakesThen` at its branch point, so this is the
+same decision applied and not a second description of it. -/
+def condFloor (thenS elseS : List Stmt) : List Stmt :=
+  if condFloorTakesThen thenS then thenS else elseS
+
+/-- **An unreadable test still ships a branch.** The registered `_accounts`
+shape and a sibling of `labelFloor_accounts`: where either branch holds a
+statement, the floor ships statements — so a conditional the walk could not
+compute never silently empties a picture. Both branches empty is the one
+case that ships nothing, and then there was nothing to ship. -/
+theorem condFloor_accounts (thenS elseS : List Stmt)
+    (h : ¬ (thenS.isEmpty ∧ elseS.isEmpty)) : (condFloor thenS elseS) ≠ [] := by
+  simp only [condFloor, condFloorTakesThen, List.isEmpty_iff, not_and] at *
+  cases thenS with
+  | nil => exact h rfl
+  | cons a as => simp
+
+/-- The floor is one of the two branches, never a mixture: the shape of the
+defect it replaced, which shipped statements from both. -/
+theorem condFloor_mem (thenS elseS : List Stmt) :
+    condFloor thenS elseS = thenS ∨ condFloor thenS elseS = elseS := by
+  simp only [condFloor]
+  split
+  · exact Or.inl rfl
+  · exact Or.inr rfl
+
 mutual
 
 /-- Evaluate statements in order, threading the macro environment: a
@@ -3245,6 +3519,62 @@ is not set"))
         -- The loop's bindings are scoped to its body: the environment
         -- given back is the caller's own.
         (env, evalForeach cx vars body expanded.toList env ev)
+  -- A conditional: one branch runs, the other is not evaluated at all — so
+  -- a node it declared never registers, which is a *named* gap and not a
+  -- name the document forgot (`Ev.gapped`). Only the arithmetic tests are
+  -- computable here; every other one is a fact about TeX's own state or its
+  -- control-sequence table, so its answer is not known and the floor stands
+  -- instead (`condFloor`): one coherent reading of the diagram,
+  -- named where the test was written.
+  | .cond kind test thenS elseS, env, ev =>
+    match kind with
+    | .always v =>
+      if v then
+        let (_, ev2) := evalList cx thenS env ev
+        (env, ev2)
+      else
+        let (_, ev2) := evalList cx elseS env ev
+        (env, ev2)
+    | .opaque n =>
+      let ev := { ev with gapped := true }.diag
+        (.W0334, s!"'\\{n}' is outside the rendered picture subset; the branch \
+that draws is drawn")
+      if condFloorTakesThen thenS then
+        let (_, ev2) := evalList cx thenS env ev
+        (env, ev2)
+      else
+        let (_, ev2) := evalList cx elseS env ev
+        (env, ev2)
+    | .num n =>
+      match splitRel (test.filter (· != .space)) with
+      | none =>
+        let ev := { ev with gapped := true }.diag
+          (.W0334, s!"an '\\{n}' without a '<', '=' or '>' test is outside the \
+rendered picture subset; the branch that draws is drawn")
+        if condFloorTakesThen thenS then
+          let (_, ev2) := evalList cx thenS env ev
+          (env, ev2)
+        else
+          let (_, ev2) := evalList cx elseS env ev
+          (env, ev2)
+      | some (lhs, rel, rhs) =>
+        match evalNum env lhs, evalNum env rhs with
+        | .ok a, .ok b =>
+          if relHolds rel a b then
+            let (_, ev2) := evalList cx thenS env ev
+            (env, ev2)
+          else
+            let (_, ev2) := evalList cx elseS env ev
+            (env, ev2)
+        | .error e, _ | _, .error e =>
+          let ev := { ev with gapped := true }.diag
+            (.W0334, s!"in an '\\{n}' test, {e}; the branch that draws is drawn")
+          if condFloorTakesThen thenS then
+            let (_, ev2) := evalList cx thenS env ev
+            (env, ev2)
+          else
+            let (_, ev2) := evalList cx elseS env ev
+            (env, ev2)
 
 /-- One body evaluation per item: the recursion is on the item list, the
 body a fixed subterm of its `\foreach`, so the unrolling is bounded by the
@@ -3399,7 +3729,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
           else diags := diags.push (outsideOpt o)
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
-  let st := parseList (toks.toList.drop i) {}
+  let st := (parseList (toks.toList.drop i) {}).drain
   let everyOf (n : String) : Array (Array Tok) :=
     match styles.lookup n with
     | some bundle => (splitTop bundle ',').filter fun e => !e.isEmpty
@@ -3412,7 +3742,11 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    everyPath := everyOf everyPathKey
                    dist := dist
                    math := math
-                   metric := metric }
+                   metric := metric
+                   -- A declaration the parse skipped is gone before
+                   -- evaluation begins, so a name that then resolves to
+                   -- nothing traces to that gap (`unreachedName`).
+                   parseGap := st.bad.any fun d => d.1 == .W0334 }
   let ev := evalFixed cx st.out.toList
   -- What the inherited entries cost, named at the picture rather than at a
   -- statement, because neither is where they were written. An entry no

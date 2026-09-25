@@ -10,6 +10,12 @@
 # width and dash patterns), §14 paths (\draw, \path, the -- line-to,
 # §14.13 to paths with out=/in= and the edge operation whose every edge
 # carries draw; the circle path operation is outside the subset),
+# TeXbook chapter 20 for the conditionals a picture body may hold: every
+# \if... control word opens one (which is what \newif mints), \ifnum and
+# \ifdim carry the <number><relation><number> form this walk computes,
+# \iftrue and \iffalse are their own value, and every other test is a fact
+# about TeX's own state or its control-sequence table, so it ships the
+# branch that draws with the assumption named,
 # part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
 # tip). tikzpicture renders its subset natively; a picture with a
 # construct outside it routes whole to the graphics boundary (§53's
@@ -62,6 +68,13 @@ body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.southeast) -- (v.northwest);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.center) -- (v.center);\end{tikzpicture}
 body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.base) -- (v.base east);\end{tikzpicture}
+body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{1}\ifnum\k=1 \node (u) at (0,0) {x};\else \node (u) at (0,0) {y};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{2}\ifnum\k<5 \node (u) at (0,0) {x};\else \node (u) at (0,0) {y};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{9}\ifnum\k>5 \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\iftrue \node (u) at (0,0) {x};\else \node (u) at (0,0) {y};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\iffalse \node (u) at (0,0) {y};\else \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\ifodd 3 \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\ifnum\notamacro=1 \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.mid) -- (v.mid west);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
