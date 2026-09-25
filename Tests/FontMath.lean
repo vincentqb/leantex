@@ -693,6 +693,24 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"nfc is idempotent over the decomposition keys ({notIdempotent.size} broke it)"
     notIdempotent.isEmpty
 
+  -- `Nfc.field` reads a byte past a table's end as zero, so a malformed
+  -- generated table loads quietly; these are what refuse one. A
+  -- decomposition record is variable-width (a 7-digit head, then 6 per
+  -- part), and one cut short at the end still loads with its key and part
+  -- count, so its census is byte accounting rather than an entry count.
+  let tb := Nfc.load ()
+  t "nfc: every fixed-width table is a whole number of entries"
+    (NfcData.ccc.toUTF8.size % 8 == 0 && NfcData.comp.toUTF8.size % 18 == 0 &&
+     NfcData.letters.toUTF8.size % 12 == 0 && NfcData.lower.toUTF8.size % 12 == 0)
+  t "nfc: the loader keeps one entry per fixed-width entry the generator wrote"
+    (tb.ccc.size == NfcData.ccc.toUTF8.size / 8 &&
+     tb.comp.size == NfcData.comp.toUTF8.size / 18 &&
+     tb.letters.size == NfcData.letters.toUTF8.size / 12 &&
+     tb.lower.size == NfcData.lower.toUTF8.size / 12)
+  t "nfc: the decomposition records account for every byte of their table"
+    (tb.decomp.fold (init := 0) (fun n _ parts => n + 7 + 6 * parts.size) ==
+      NfcData.decomp.toUTF8.size)
+
   -- A new language touches four hand-maintained sites (gen-hyphen row,
   -- gen-locale list, the Hyphen thunk, the forTag arm) — the Diag-registry
   -- lesson: a miscount must be a test failure, not a silent gap. Every
