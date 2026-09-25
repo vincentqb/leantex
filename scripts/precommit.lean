@@ -2209,7 +2209,8 @@ def main (args : List String) : IO UInt32 := do
     return 1
 
   let build ← IO.Process.output
-    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed", "cites"], env }
+    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed",
+        "cites", "land"], env }
   if build.exitCode != 0 then
     IO.eprintln "pre-commit: lake build --wfail failed (linter warnings fail too):"
     IO.eprint build.stdout

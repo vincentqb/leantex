@@ -184,15 +184,22 @@ structure Gate where
   deriving Repr, Inhabited
 
 /-- `--wfail` is how this project spells "zero warnings": scanning output for
-`warning:` is unsound on a warm cache, where nothing recompiles and nothing
-prints. `gates-build` does *not* take it — `Obligations` is the staging area
-for open proofs and warns once per staged statement by design, which is why
-the pre-commit hook builds it as a separate step without the flag. -/
+`warning:` is unsound, because a warm cache replays a module's logged warning
+without recompiling it and a scan of a quiet build proves nothing about the
+module that did not rebuild. The flag is written out here per gate rather than
+inherited from another gate's internals: `land`'s own theorem and the gate
+scripts are built under it, and `Obligations` — the staging area for open
+proofs, which warns once per staged statement by design — is a separate build
+without it, as the pre-commit hook already does. -/
 def gateList : Array Gate := #[
-  { name := "build", cmd := "lake", args := #["build", "--wfail"], absentIf := none },
+  { name := "build", cmd := "lake",
+    args := #["build", "--wfail", "leantex", "precommit", "owed", "cites", "land"],
+    absentIf := none },
+  { name := "obligations-build", cmd := "lake",
+    args := #["build", "Obligations"], absentIf := none },
   { name := "test", cmd := "lake", args := #["test"], absentIf := none },
-  { name := "gates-build", cmd := "lake",
-    args := #["build", "precommit", "owed", "cites", "Obligations"], absentIf := none },
+  { name := "land-selftest", cmd := ".lake/build/bin/land",
+    args := #["--selftest"], absentIf := none },
   { name := "precommit-selftest", cmd := ".lake/build/bin/precommit",
     args := #["--selftest"], absentIf := none },
   { name := "precommit-tree", cmd := ".lake/build/bin/precommit",
@@ -623,7 +630,7 @@ def cases : List Case :=
         .rebaseConflict #["LeanTex/Core/Ir.lean", "Tests/Diag.lean"]]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "a gate fails", mode := .land, push := false
-    , obs := pre ++ [.gateOk "build", .gateFail "test"]
+    , obs := pre ++ [.gateOk "build", .gateFail "obligations-build"]
     , verdict := .failed, code := 1, noMutation := true }
   , { label := "the last gate fails", mode := .land, push := true
     , obs := pre ++ (gateNames.toList.dropLast.map Obs.gateOk) ++ [.gateFail "scoreboard"]
