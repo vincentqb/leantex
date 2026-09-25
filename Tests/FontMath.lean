@@ -1606,6 +1606,10 @@ descent is the fold's, so a `\texttt` inside a footnote or a running head
 counts. The report: all three conditions are load-bearing, and the
 body slot is the reference rather than a subject of its own.
 
+A third group covers the `\urlstyle` satisfaction table: which values the
+resolved environment honours, which is not the same answer in every
+document — the reason the elaboration cannot decide it alone.
+
 Hermetic and synthetic throughout: the faces are the two the corpus ships,
 every index is built here, and no decision reaches the host. Invented
 content, `example.org` links. -/
@@ -1695,3 +1699,27 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((SlotLoss.losses {} provisional #[1, 2]).size == 2)
   t "slot loss: the same document on a settled index reports only what it lost"
     ((SlotLoss.losses monoSpec declared #[1, 2]).size == 1)
+  -- The `\urlstyle` satisfaction table. url.sty's selector names a face,
+  -- and whether the engine honoured it depends on where the mono slot
+  -- resolved — so the answer differs between these two environments, which
+  -- is the whole reason the elaboration cannot decide it alone.
+  t "urlstyle: 'same' is satisfied when the mono slot is the body face"
+    (SlotLoss.urlStyleSatisfied collapsed "same")
+  t "urlstyle: 'same' is refused when a distinct mono is declared"
+    (!SlotLoss.urlStyleSatisfied declared "same")
+  t "urlstyle: 'tt' is satisfied when a distinct mono is declared"
+    (SlotLoss.urlStyleSatisfied declared "tt")
+  t "urlstyle: 'tt' is refused when the mono slot is the body face"
+    (!SlotLoss.urlStyleSatisfied collapsed "tt")
+  t "urlstyle: 'rm' is satisfied when the mono slot is the body face"
+    (SlotLoss.urlStyleSatisfied collapsed "rm")
+  t "urlstyle: 'sf' is satisfied in neither environment"
+    (!SlotLoss.urlStyleSatisfied collapsed "sf" && !SlotLoss.urlStyleSatisfied declared "sf")
+  -- The arm that is wrong today, as the engine reports it: `same` with no
+  -- mono declared is satisfied, and still warns.
+  let sameDs := (elabStr ("\\documentclass{article}\n\\usepackage{url}\n\\urlstyle{same}\n" ++
+    "\\begin{document}\nA link \\url{https://example.org/a} here.\n\\end{document}")).2
+  t "urlstyle: the refusal still fires for 'same', which a collapsed slot satisfies"
+    ((sameDs.filter (·.code == "W0104")).any fun d => d.subject == some "ctrl:urlstyle")
+  t "urlstyle: the elaboration carries no value a gate could read"
+    ((sameDs.filter (·.code == "W0104")).all fun d => d.refused.isNone)

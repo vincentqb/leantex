@@ -14606,3 +14606,64 @@ working rather than luck: the deck asks for neither the mono nor the sans
 slot anywhere, so there is no loss to name. The thirteen W0104 are beamer
 theme-element and `\directlua` refusals from another arm, correctly
 `config`, and none of them is this defect class.
+
+### 2026-09-25 — the collapsed slot, re-measured, and the `\urlstyle` handoff written as a value
+
+An interrupted slice left the slot-loss emission as an unverified draft. This
+entry is the verification, one correction, and the routing.
+
+**Re-measured from the bytes, four synthetic probes, the two gates and the
+two silences.** Undeclared (`\texttt` + `\url` + a verbatim block, no
+`\fonts`): one embedded face before and after, `pdffonts` naming only the
+host fallback; before, no diagnostic about it, after, one `warning[W0006]`
+carrying subject `slot:mono`. Declared (`dir = "fonts"`, body Source Serif
+Pro, mono Source Code Pro): two faces before and after — `SourceSerifPro-
+Regular` and `SourceCodePro-Regular` — and W0006 silent in both, which is
+the declared-slot direction of `losses_declared`. A `\textsf`-only document
+reports `slot:sans` and not `slot:mono`; a plain-prose document reports
+neither. So the used-gate is load-bearing against the artifact and not only
+against `slotLossChecks`.
+
+**The code question, settled from the code rather than from taste.** The
+earlier reading recorded W0006's registry line ("declared face variant
+missing") as a debt this emission *created*. It does not: `resolveVariant`'s
+`| none =>` arm — nothing declared — already emits `.variant "'X' has no
+<want> face; 'Y' substitutes"` under W0006. The code as emitted already means
+*a requested face was not available and another substitutes*. This emission
+joins that meaning at the same `degraded` class and the same floor rather
+than widening it, so W0006 is confirmed and the registry line is a
+pre-existing narrowness. Minting a fourth axis would have split one loss
+class across two codes and put two accountings in the one `buildFontSet`
+loop that already renders W0006 and W0366.
+
+**`\urlstyle` is a handoff, and a value is the handoff.** The refusal arm
+lives in `Compat.lean`'s `urlstyle` case, which another slice owns, and it
+fires `W0104` for every value but `tt` with no font in scope — so
+`\urlstyle{same}` is refused in the one configuration that satisfies it, and
+that is still true after this change (measured: W0104 fires identically in
+the undeclared and the declared probe). Rather than route it as prose,
+`SlotLoss.urlStyleSatisfied` is the predicate that arm needs, with
+`urlStyleSatisfied_exact` pinning that no environment satisfies both `tt`
+and `same`, and `slotLossChecks` asserting each row against both resolved
+sets. Its last two rows assert *today's wrong answer* — that the refusal
+still fires for `same`, and that the elaboration carries no value a gate
+could read — so they break in both directions the moment the gate lands.
+The `-- premise:` line travels with the gate to its site; it is written in
+`SlotLoss` as the line to move, not as a claim that a gate exists there.
+
+**Deck: zero delta, and the zero is the gate working.** 36 pages, 0 errors,
+13 × W0104, 7 × W0376, 6 × W0334 and one each of W0389, W0385, W0384,
+W0361, W0345, W0315, W0103, W0009 — byte-for-byte the same census before and
+after, because the deck declares its own families and so has no collapsed
+slot to name. Hermetic re-checked the way AGENTS.md describes: the whole
+suite passes inside `unshare -Urm` with a tmpfs over the host font tree,
+so no fixture reads a host font. `scripts/fontcache-check.lean` green.
+
+**Still open, recorded not silently widened.** A document declaring a
+distinct *sans* as its body puts slot 0 and slot 2 on different faces, so
+`slotCollapsed 2` is false and nothing fires although the `\texttt` run is
+still not mono. Naming it needs "resolved onto another text slot's face"
+rather than "onto face 0" — a widening of `slotCollapsed` and its two
+theorems, which belongs with whoever next opens `Core/Font.lean` for the
+text-slot question.
+

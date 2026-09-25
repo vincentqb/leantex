@@ -60,6 +60,15 @@ spells the variant axis, W0366 the weight axis; this is the family-slot
 axis, and the loss is identical in kind and in floor: a substituted face,
 `degraded`, the run's text still on the page.
 
+One narrowness, joined rather than created: W0006's registry line reads
+"declared face variant missing", and `resolveVariant`'s undeclared arm
+already emits under it with nothing declared ("'X' has no bold face; 'Y'
+substitutes"). The code as *emitted* already means a requested face was not
+available and another substitutes, which is exactly this loss at the same
+`degraded` class and floor. Widening that registry line to the meaning the
+code already carries is a one-line change in `Core/Diag.lean` and its
+golden, neither of which this change owns.
+
 `key` is the `\fonts` key that would declare the slot, `asks` the
 constructs that reach it. Neither the face nor the family is named: which
 family fills an undeclared slot is the host's answer, and a message that

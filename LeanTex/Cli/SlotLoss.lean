@@ -137,4 +137,43 @@ def diags (spec : Ir.FontSpec) (fs : Font.FontSet) (doc : Ir.Doc) : Array Diag :
   (losses spec fs (slotsUsed doc)).map fun w =>
     DriverDiag.slotCollapsed w.key w.asks
 
+/-- **Which `\urlstyle` values the resolved environment satisfies.**
+url.sty's selector names the face a `\url` sets in, and the engine sets one
+in the mono slot and does not switch it — so whether the selector was
+*honoured* is a question about where that slot resolved, and the answer is
+not the same in every document. That is why the elaboration cannot decide
+it: `\urlstyle` is read in a pass that runs before a font exists, and the
+arm that reads it was asserting a font fact it had no way to check.
+
+With a distinct mono face declared, `tt` is what the page does. With none,
+the slot is the body face (`Font.FontSet.slotCollapsed`), so a URL sets in
+the running roman face: `same` and `rm` are satisfied there and `tt` is not.
+`sf` asks for the sans family, which neither configuration gives a URL.
+
+This gates nothing yet, and says so rather than implying otherwise. The
+refusal it exists to condition is `Compat.lean`'s `urlstyle` arm, which
+fires `W0104` for every value but `tt` with no font in scope to check
+against — so `\urlstyle{same}` is refused in the one configuration that
+satisfies it. That arm is another owner's; when it reads this predicate the
+`-- premise: slotLossChecks` line moves there with it, and
+`slotLossChecks`'s last two rows — which assert today's wrong answer —
+break in both directions the moment it lands.
+
+The claims above are not prose: every row is asserted against both resolved
+sets it speaks of (`slotLossChecks`), so a wrong one is falsified by an
+environment rather than by a reader. -/
+def urlStyleSatisfied (fs : Font.FontSet) (value : String) : Bool :=
+  match value with
+  | "tt" => !fs.slotCollapsed 2
+  | "same" => fs.slotCollapsed 2
+  | "rm" => fs.slotCollapsed 2
+  | _ => false
+
+/-- **No value is satisfied in both configurations.** The selector is a
+choice between faces, so an environment answering yes to `tt` and to `same`
+would be one where the mono slot both was and was not the body face. -/
+theorem urlStyleSatisfied_exact (fs : Font.FontSet) :
+    urlStyleSatisfied fs "tt" = !urlStyleSatisfied fs "same" := by
+  simp [urlStyleSatisfied]
+
 end LeanTex.Cli.SlotLoss
