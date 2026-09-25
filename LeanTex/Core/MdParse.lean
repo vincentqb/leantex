@@ -398,32 +398,54 @@ private def namedTagAt (cs : Array Char) (i : Nat) (names : List String) : Bool 
        | none => true
        | some c => isMdSpace c || c == '>' || (c == '/' && cs[j + 1]? == some '>'))
 
-/-- Does an HTML block start at `i` (§4.6)? Conditions 1–6 by their own
-tests; condition 7 is a complete tag with nothing but whitespace after it.
-Condition 7 may not interrupt a paragraph, which is `interrupts`' business,
-not this one's. -/
-def htmlBlockAt (cs : Array Char) (i : Nat) : Bool := Id.run do
-  unless cs[i]? == some '<' do return false
-  if litAt cs i "<!--" || litAt cs i "<?" || litAt cs i "<![CDATA[" then return true
-  if cs[i + 1]? == some '!' && ((cs[i + 2]?).map isAsciiAlpha).getD false then return true
-  if namedTagAt cs (i + 1) htmlRawTags then return true
-  if namedTagAt cs (i + 1) htmlBlockTags then return true
-  if cs[i + 1]? == some '/' && namedTagAt cs (i + 2) htmlBlockTags then return true
+/-- How an HTML block ends (§4.6): at the first line holding one of these
+literals, compared case-folded (conditions 1–5), or at a blank line, which
+is not part of the block (conditions 6 and 7). -/
+inductive HtmlEnd where
+  | lit (ends : List String)
+  | blank
+  deriving Repr, Inhabited
+
+/-- The HTML block starting at `i`, by §4.6 condition: how it ends, and
+whether it may interrupt a paragraph — conditions 1–6 may, 7 may not.
+`none` means no block starts here. One definition, read by every question
+about HTML blocks: whether one starts, whether it interrupts, where it ends. -/
+def htmlBlockKind (cs : Array Char) (i : Nat) : Option (HtmlEnd × Bool) := Id.run do
+  unless cs[i]? == some '<' do return none
+  if namedTagAt cs (i + 1) htmlRawTags then
+    return some (.lit ["</pre>", "</script>", "</style>", "</textarea>"], true)
+  if litAt cs i "<!--" then return some (.lit ["-->"], true)
+  if litAt cs i "<?" then return some (.lit ["?>"], true)
+  if litAt cs i "<![CDATA[" then return some (.lit ["]]>"], true)
+  if cs[i + 1]? == some '!' && ((cs[i + 2]?).map isAsciiAlpha).getD false then
+    return some (.lit [">"], true)
+  if namedTagAt cs (i + 1) htmlBlockTags then return some (.blank, true)
+  if cs[i + 1]? == some '/' && namedTagAt cs (i + 2) htmlBlockTags then
+    return some (.blank, true)
   match htmlTagAt cs i with
-  | some j => return isBlankFrom cs j
-  | none => return false
+  | some j => if isBlankFrom cs j then return some (.blank, false) else return none
+  | none => return none
+
+/-- Does a line, from `i`, hold an end literal of its HTML block? A scan of
+one line, so the cost is the line's. -/
+def htmlEndsIn (cs : Array Char) (i : Nat) (e : HtmlEnd) : Bool := Id.run do
+  match e with
+  | .blank => return false
+  | .lit ends =>
+    for k in [i:cs.size] do
+      if ends.any (litAt cs k ·) then return true
+    return false
+
+/-- Does an HTML block start at `i` (§4.6)? -/
+def htmlBlockAt (cs : Array Char) (i : Nat) : Bool := (htmlBlockKind cs i).isSome
 
 /-- Conditions 1–6 only: what may interrupt a paragraph. Condition 7 may
 not, and reading it as an interrupter refused a paragraph line holding a
 bare `<span>`. -/
-def htmlBlockInterruptAt (cs : Array Char) (i : Nat) : Bool := Id.run do
-  unless cs[i]? == some '<' do return false
-  if litAt cs i "<!--" || litAt cs i "<?" || litAt cs i "<![CDATA[" then return true
-  if cs[i + 1]? == some '!' && ((cs[i + 2]?).map isAsciiAlpha).getD false then return true
-  if namedTagAt cs (i + 1) htmlRawTags then return true
-  if namedTagAt cs (i + 1) htmlBlockTags then return true
-  if cs[i + 1]? == some '/' && namedTagAt cs (i + 2) htmlBlockTags then return true
-  return false
+def htmlBlockInterruptAt (cs : Array Char) (i : Nat) : Bool :=
+  match htmlBlockKind cs i with
+  | some (_, interrupts) => interrupts
+  | none => false
 
 end LeanTex.Core.Md
 
@@ -1266,6 +1288,10 @@ private inductive Leaf where
   | para (lines : Array (String × Pos))
   | fenced (ch : Char) (len : Nat) (info : String) (pos : Pos) (indent : Nat)
       (lines : Array String)
+  /-- A refused HTML block still open: its lines are the refused construct,
+  consumed to its §4.6 end, never re-read as markdown. Re-read, an indented
+  line inside a `<table>` was refused a second time as indented code. -/
+  | html (e : HtmlEnd)
   deriving Inhabited
 
 private def Leaf.isPara : Leaf → Bool
@@ -1291,7 +1317,6 @@ predicates were one, and the false positive it produced fired on the second
 item of every ordered list that did not start at 1. -/
 private def startsAnyBlock (cs : Array Char) (i : Nat) : Bool :=
   interrupts cs i || (bulletAt cs i).isSome || (orderedAt cs i).isSome
-    || (setextAt cs i).isSome
 
 /-- Blocks for one markdown document, and the diagnostics the reader raised.
 The only recursion here is the loop's own index. -/
@@ -1376,6 +1401,19 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
           leaf := .fenced fch flen finfo fpos find
             (flines.push (sliceStr rest strip rest.size))
         continue
+    | .html e =>
+      -- The refused block ends with its container, at a blank line for
+      -- conditions 6 and 7 (the blank line is read as usual), or on the
+      -- line that holds its end literal. Every other line is consumed.
+      if !ok then
+        leaf := .none
+      else
+        match e with
+        | .blank =>
+          if isBlankFrom cs i then leaf := .none else continue
+        | .lit _ =>
+          if htmlEndsIn cs i e then leaf := .none
+          continue
     | _ => pure ()
     let blank := isBlankFrom cs i
     -- Closing the open paragraph, wherever a branch below needs it done.
@@ -1386,9 +1424,18 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
           let (inl, ds) := inlines file (charsOf pls)
           (a.push (.para inl ((pls[0]?.map (·.2)).getD fallback)), ds)
         | _ => (a, #[])
-    -- An unmatched container under an open paragraph is a lazy continuation.
-    if !ok && leaf.isPara && !blank && !startsAnyBlock cs (indentAt cs i col).1 then
+    -- An unmatched container under an open paragraph is a lazy continuation
+    -- when the line starts no block. A line indented four columns or more
+    -- starts none — indented code cannot interrupt a paragraph — so it is
+    -- lazy too: read as a block start, `    - bar` under a quoted paragraph
+    -- was refused as indented code with the wrong fix-it. The refused line
+    -- is the construct, consumed: the containers and the paragraph stay
+    -- open, as the spec's lazy line leaves them, so the line is not read a
+    -- second time as a new block and refused again.
+    let (jl, indl) := indentAt cs i col
+    if !ok && leaf.isPara && !blank && !(indl < 4 && startsAnyBlock cs jl) then
       diags := diags.push (refuse file .lazyContinuation lpos)
+      continue
     if !ok then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1524,6 +1571,11 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       continue
     -- The leaf.
     let (j, ind) := indentAt cs i col
+    -- An HTML block, by condition: one that may not interrupt a paragraph
+    -- (condition 7) is paragraph text under an open one.
+    let htmlStart : Option HtmlEnd :=
+      (htmlBlockKind cs j).bind fun (e, interrupts) =>
+        if leaf.isPara && !interrupts then Option.none else some e
     if ind ≥ 4 && !leaf.isPara then
       diags := diags.push (refuse file .indentedCode lpos)
     else if ind ≥ 4 && leaf.isPara then
@@ -1573,7 +1625,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       acc := a
       diags := diags ++ ds
       leaf := .fenced fch flen (decodeInfo finfo) lpos (j - i) #[]
-    else if htmlBlockAt cs j then
+    else if let some e := htmlStart then
       -- The refusal names the construct's own column, not the line's: a
       -- block inside a quote or an item starts after the container prefix,
       -- and a checker reading the refused text back from the source must
@@ -1582,7 +1634,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
-      leaf := .none
+      leaf := if htmlEndsIn cs j e then .none else .html e
     else
       let text := sliceStr cs j cs.size
       match leaf with
@@ -1597,6 +1649,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     diags := diags ++ ds
   | .fenced _ _ finfo fpos _ flines =>
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
+  | .html _ => pure ()
   | .none => pure ()
   for _ in [0:frames.size] do
     let (fs, a) := closeTop frames acc

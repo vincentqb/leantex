@@ -58,6 +58,7 @@
 93	md:lazy-continuation	bar continues the quoted paragraph without its marker
 232	md:lazy-continuation	baz continues the quoted paragraph without its marker
 233	md:lazy-continuation	baz continues the quoted paragraph without its marker
+238	md:lazy-continuation	the indented - bar line continues the quoted paragraph: it is lazy, not a list or code
 247	md:lazy-continuation	baz continues the quoted paragraph without its marker
 250	md:lazy-continuation	bar continues a paragraph three quotes deep without any marker
 251	md:lazy-continuation	a line with fewer quote markers continues the innermost paragraph
@@ -65,3 +66,4 @@
 291	md:lazy-continuation	the second line is indented less than the item's content column
 292	md:lazy-continuation	the inner quote's paragraph continues with no markers
 293	md:lazy-continuation	the inner quote's paragraph continues with only the outer marker
+312	md:lazy-continuation	the four-space - e line cannot start an item and continues the d paragraph

@@ -369,4 +369,30 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     !(has src ("alt=x" ++ String.singleton c ++ "y, z=w>") && noLeak src)
   t s!"every ASCII punctuation character but the quote reaches an alternative whole \
 (lost: {altLost})" altLost.isEmpty
+  -- Defect: a strict refusal named the wrong class, or a second class the
+  -- case never exercised. Each refusal is a claim the reviewed list is
+  -- checked against, so a wrong subject is a wrong verdict.
+  let subjects (src : String) : List String :=
+    ((dvMd src).filter (·.kind == .E0390)).toList.filterMap (·.subject) |>.eraseDups
+  t "a line indented four columns under a quoted paragraph is lazy, not indented code"
+    (subjects "> foo\n    - bar\n" == ["md:lazy-continuation"])
+  t "a marker indented past the item's column is lazy, not indented code"
+    (subjects "- a\n - b\n  - c\n   - d\n    - e\n" == ["md:lazy-continuation"])
+  t "a lazy line is refused once, not again as a block of its own"
+    (subjects "  1.  A paragraph\n    with two lines.\n" == ["md:lazy-continuation"])
+  t "a lazy line leaves its container open"
+    (((tree "> a\nlazy\n> b\n").splitOn "<blockquote>").length == 2)
+  t "an HTML block's lines are not read again as markdown"
+    (subjects "<table>\n  <tr>\n    <td>\n           hi\n    </td>\n  </tr>\n</table>\n\nokay.\n"
+      == ["md:raw-html"]
+      && has "<table>\n  <tr>\n    <td>\n           hi\n    </td>\n  </tr>\n</table>\n\nokay.\n"
+        "<p>okay.</p>")
+  t "a CDATA block runs to its end marker"
+    (subjects "<![CDATA[\nf(a,b)\n{\n    return 1;\n}\n]]>\nokay\n" == ["md:raw-html"]
+      && !has "<![CDATA[\nf(a,b)\n{\n    return 1;\n}\n]]>\nokay\n" "return"
+      && has "<![CDATA[\nf(a,b)\n{\n    return 1;\n}\n]]>\nokay\n" "<p>okay</p>")
+  t "an HTML block is refused once, not once per line"
+    (((dvMd "<div>\n<div>\n</div>\n</div>\n").filter (·.kind == .E0390)).size == 1)
+  t "a tag that may not interrupt a paragraph stays inside it"
+    (!has "para\n<custom-tag>\nmore text\n" "</p><p>more")
   mdAccountsChecks t
