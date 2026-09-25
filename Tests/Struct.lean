@@ -117,7 +117,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "center/ragged/spaced/role/step/only/columns are transparent"
     (structKinds (Struct.ofBlocks
       #[.center #[para], .ragged .left #[para], .spaced (Ir.Sourced.bare {}) #[para], .role "r" #[para],
-        .step 1 none #[para], .only #["html"] #[para], .columns #[(none, #[para])]])
+        .step 1 none #[para], .only #["html"] #[para], .columns #[(.share, #[para])]])
       == #[.paragraph, .paragraph, .paragraph, .paragraph, .paragraph, .paragraph, .paragraph])
   t "rule, pagebreak, setPalette, setTokens produce no node"
     ((Struct.ofBlocks #[.rule default none (Ir.Sourced.bare {}), .pagebreak, .setPalette {}, .setTokens {}]).isEmpty)

@@ -3751,16 +3751,15 @@ private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) 
     Html.elem "span" (inlines cfg group) #[("class", "group")])
     #[("class", rowClass)]
 
-/-- Grid tracks from the declared widths: a per-mille width is a percentage
-track, a widthless column an `fr` share of the leftover. With every width
-declared the leftover spreads between the tracks, which is the PDF path's
-gutter rule. -/
-private def gridTracks (cols : Array (Option Nat × Array Block)) : String :=
-  String.intercalate " " (cols.toList.map fun (w, _) =>
-    match w with
-    | some f =>
-      if f % 10 == 0 then s!"{f / 10}%" else s!"{f / 10}.{f % 10}%"
-    | none => "1fr")
+/-- Grid tracks from the declared widths, through the IR's own reading
+(`Ir.BoxWidth.trackOf`, spelled by `Ir.Track.css`): a fraction is a
+percentage track, an absolute length a length track, and a widthless box an
+`fr` share of the leftover. With every width declared the leftover spreads
+between the tracks, which is the PDF path's gutter rule.
+`Ir.boxWidth_tracks_agree` is why this and the page's arithmetic cannot
+disagree about which boxes declared a width. -/
+private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
+  String.intercalate " " (cols.toList.map fun (w, _) => Ir.Track.css w.trackOf)
 
 /-- Children start their own sibling walk: the parent's accumulated epoch
 style already stands on an ancestor element and inherits into it, so it is
@@ -4544,7 +4543,7 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
     blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
-    List (Option Nat × Array Block) → Array Node
+    List (BoxWidth × Array Block) → Array Node
   | [] => acc
   | (_, body) :: rest =>
     columnNodesInto cfg

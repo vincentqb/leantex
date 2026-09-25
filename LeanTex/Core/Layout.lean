@@ -1995,7 +1995,7 @@ private def scalarTextTableCells (out : ScalarAcc) :
   | cell :: rest => scalarTextTableCells (textAndMath out cell) rest
 
 private def scalarTextCols (out : ScalarAcc) (itemD enumD : Nat) :
-    List (Option Nat × Array Block) → ScalarAcc
+    List (BoxWidth × Array Block) → ScalarAcc
   | [] => out
   | (_, body) :: rest =>
     scalarTextCols (scalarTextList out itemD enumD body.toList) itemD enumD rest
@@ -2180,7 +2180,7 @@ private def weightKeysBlockItems (acc : Array (Nat × Nat × Bool)) :
   | item :: rest => weightKeysBlockItems (weightKeysBlockList acc item.toList) rest
 
 private def weightKeysBlockCols (acc : Array (Nat × Nat × Bool)) :
-    List (Option Nat × Array Ir.Block) → Array (Nat × Nat × Bool)
+    List (Ir.BoxWidth × Array Ir.Block) → Array (Nat × Nat × Bool)
   | [] => acc
   | (_, body) :: rest => weightKeysBlockCols (weightKeysBlockList acc body.toList) rest
 
@@ -6538,13 +6538,11 @@ own offset, a `colNext` marker between two so placement rewinds the
 vertical position. The hyphenation cache threads through; the outer
 measure and gap state are restored per column. -/
 private def collectColumns (r : Rd) (a : Acc)
-    (cols : List (Option Nat × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
+    (cols : List (BoxWidth × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
   match cols with
   | [] => a
   | (w, body) :: rest =>
-    let wi := match w with
-      | some f => total * f / 1000
-      | none => shareW
+    let wi := (w.resolve total).getD shareW
     let sub := { a with
       measure := some (x0 + wi)
       ops := #[]
@@ -6674,15 +6672,17 @@ private def collectBlock (r : Rd) (a : Acc)
       sub body (indent + r.geom.listIndent)
     { sub with measure := saved }
   | .columns cols =>
-    -- Declared widths are per mille of the full measure. The leftover goes
-    -- to the widthless columns in equal shares when there are any, and into
-    -- equal gutters between the columns otherwise.
+    -- Each declared width resolves against the measure the boxes stand in
+    -- (`Ir.BoxWidth.resolve`, the one resolving site) — a fraction of it, or
+    -- an absolute length clamped to it. The leftover goes to the widthless
+    -- boxes in equal shares when there are any, and into equal gutters
+    -- between the boxes otherwise.
     let a := a.flushGap r
     let total := (a.measure.getD r.geom.textWidth) - indent
-    let declared := cols.foldl (fun s (c : Option Nat × Array Block) =>
-      s + ((c.1.map fun f => total * f / 1000).getD 0)) 0
-    let unspecified := cols.foldl (fun c (col : Option Nat × Array Block) =>
-      if col.1.isNone then c + 1 else c) 0
+    let declared := cols.foldl (fun s (c : BoxWidth × Array Block) =>
+      s + ((c.1.resolve total).getD 0)) 0
+    let unspecified := cols.foldl (fun c (col : BoxWidth × Array Block) =>
+      if col.1.declared then c else c + 1) 0
     let rem := max 0 (total - declared)
     let shareW := if unspecified > 0 then rem / unspecified else 0
     let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0

@@ -1036,7 +1036,7 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Only the first site is actionable prose: the help is advice about the
   -- construct, not about the occurrence, so it is never repeated.
   let helped := (elabStr (dvDoc ""
-    "\\parbox{3cm}{One.}\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
+    "\\makebox[3cm]{One.}\n\n\\makebox[3cm]{Two.}\n\n\\makebox[3cm]{Three.}")).2
   t "the help is given once, at the first site"
     (((of "W0104" helped).filter (·.help.isSome)).size == 1 &&
       ((of "W0104" helped)[0]?.map (·.help.isSome)).getD false &&
@@ -1049,7 +1049,7 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Two distinct losses under one code do not merge: the census is keyed by
   -- the loss, not by the code, so a count never borrows another's sites.
   let two := (elabStr (dvDoc ""
-    "\\sloppy One.\n\n\\parbox{3cm}{Two.}\n\n\\parbox{3cm}{Three.}")).2
+    "\\sloppy One.\n\n\\makebox[3cm]{Two.}\n\n\\makebox[3cm]{Three.}")).2
   t "two losses sharing a code keep their own counts"
     ((visible (of "W0104" two)).size == 2 &&
       ((visible (of "W0104" two)).map (·.sites)).toList == [1, 2])

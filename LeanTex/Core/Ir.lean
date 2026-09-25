@@ -2992,6 +2992,99 @@ inductive ColWidth where
   | abs (w : Sp)
   deriving Repr, BEq, Inhabited
 
+/-- A box's declared width: `{minipage}`/`\parbox`/`{column}`'s mandatory
+argument. `frac` is a factor of the enclosing measure in per mille
+(`.45\textwidth`, and a token or document command that spells one), `abs` an
+absolute length (`60pt`), and `share` the width a `{column}` leaves
+undeclared — an equal part of whatever the declared boxes leave over.
+
+Its own type rather than `ColWidth`, on meaning. A table's `natural` column
+sizes *down* to its widest cell; a box's undeclared width grows *up* to fill
+the leftover measure. One constructor answering both would make one of the
+two readings false at every site, which is the `role`-versus-salvage
+argument (PLAN 2026-09-24) in a second place.
+
+`abs` is a length and stays one until layout, rather than being divided into
+per mille against the page's measure where it is parsed. A per-mille value
+is *relative*, so fixing its reference at elaboration is only right for a
+box at the top level: a 60pt box inside a `.45\textwidth` column, converted
+against the page and re-applied to the column, comes out at 45% of 60pt. The
+reference a width is relative to is known at placement and nowhere earlier —
+the `Sourced` entry's finding (PLAN 2026-09-24) one layer over, where
+resolving in the wrong layer forced an operator to invent an answer it could
+not have. -/
+inductive BoxWidth where
+  | share
+  | frac (permille : Nat)
+  | abs (w : Sp)
+  deriving Repr, BEq, Inhabited
+
+/-- The declared width against a known measure: the width the box is set at.
+One resolving site, read by the page's column arithmetic, so a box's measure
+is a function of its declaration and the measure it stands in and of nothing
+else. A declared width past the enclosing measure is clamped to it: a box
+cannot be wider than what contains it, and a document that asks is answered
+by the measure rather than by ink off the page. `share` resolves to nothing
+here — the leftover is not a function of one column — and the caller divides
+it (`Layout`'s `shareW`). -/
+def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
+  match w with
+  | .share => none
+  | .frac p => some (min measure (measure * p / 1000))
+  | .abs l => some (min measure (max 0 l))
+
+/-- The declared width as a CSS grid track, structured: the same three
+readings the page resolves, before they are spelled
+(`boxWidth_tracks_agree`). Structured rather than a string, so the
+agreement between the two backends' readings is a statement about values
+and not about formatting. -/
+inductive Track where
+  | free
+  | percent (permille : Nat)
+  | length (l : Sp)
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The track a declared width takes: a fraction is a percentage of the
+grid's own width, which is the enclosing measure; an absolute length is that
+length; a shared column takes a free fraction of the leftover, which is what
+`1fr` means. -/
+def BoxWidth.trackOf : BoxWidth → Track
+  | .share => .free
+  | .frac p => .percent p
+  | .abs l => .length l
+
+/-- One track, spelled. The only site a grid track's units are written, read
+by the HTML backend. -/
+def Track.css : Track → String
+  | .free => "1fr"
+  | .percent p => (if p % 10 == 0 then s!"{p / 10}" else s!"{p / 10}.{p % 10}") ++ "%"
+  | .length l => l.toPtString ++ "pt"
+
+/-- Does this declaration name a width at all? The question the census and
+the diagnostics ask, so `share` is named once rather than tested as a
+constructor at each site. -/
+def BoxWidth.declared : BoxWidth → Bool
+  | .share => false
+  | .frac _ | .abs _ => true
+
+/-- Is this the leftover's track — the one whose width is not the box's own
+declaration but what the declared boxes leave? -/
+def Track.isFree : Track → Bool
+  | .free => true
+  | .percent _ | .length _ => false
+
+/-- The page's resolution and the stylesheet's track are two readings of one
+declared width, and they agree on which declarations name a width: a
+fraction and a length resolve against any measure and take a sized track, a
+shared column resolves to nothing and takes the free track. The
+`backend_gaps_agree` shape — stated on the IR because both artifacts must
+honour it, with `HtmlDoc.gridTracks` and `Layout`'s column arithmetic as its
+two projections. -/
+theorem boxWidth_tracks_agree (w : BoxWidth) (measure : Sp) :
+    (w.resolve measure).isSome = w.declared ∧
+      w.trackOf.isFree = !w.declared := by
+  cases w <;> exact ⟨rfl, rfl⟩
+
 /-- One column of a table, from the `tabular` column spec. A `p` column
 wraps its cells at the declared width; `l`/`c`/`r` set each cell as one
 unbreakable line. -/
@@ -3580,11 +3673,13 @@ inductive Block where
   `.float` of kind `.algorithm`, which carries the caption and the
   number; a bare `{algorithmic}` stands alone, uncaptioned. -/
   | algorithm (numbered : Bool) (semis : Bool) (lines : Array AlgLine)
-  /-- Side-by-side columns (`{columns}`/`{column}`): each column carries its
-  declared width as per mille of the text width, or `none` to share the
-  leftover equally. Columns are top-aligned; the alignment options and
-  absolute widths are not modelled (PLAN, M5). -/
-  | columns (cols : Array (Option Nat × Array Block))
+  /-- Side-by-side boxes (`{columns}`/`{column}`, and the one-box forms
+  `{minipage}` and `\parbox`): each carries its declared width as a
+  `BoxWidth` — a fraction of the enclosing measure, an absolute length, or
+  `share` for a `{column}` that declares none and takes an equal part of the
+  leftover. Boxes are top-aligned; the alignment options are not modelled
+  (PLAN, M5). -/
+  | columns (cols : Array (BoxWidth × Array Block))
   /-- Overlay blocks crisp on steps `n` through `last` (`\item<2->`,
   `\pause`): the block form of `Inline.step`, with the same dim-not-hide
   semantics. -/
@@ -4015,8 +4110,8 @@ def numberFloatItems (c : FloatCtr) (out : Array (Array Block)) :
     let (c2, item2) := numberFloatList c #[] item.toList
     numberFloatItems c2 (out.push item2) rest
 
-def numberFloatCols (c : FloatCtr) (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → FloatCtr × Array (Option Nat × Array Block)
+def numberFloatCols (c : FloatCtr) (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → FloatCtr × Array (BoxWidth × Array Block)
   | [] => (c, out)
   | (w, body) :: rest =>
     let (c2, body2) := numberFloatList c #[] body.toList
@@ -4083,7 +4178,7 @@ def floatNumsItems (k : FloatKind) (out : List Nat) :
   | item :: rest => floatNumsItems k (floatNumsList k out item.toList) rest
 
 def floatNumsCols (k : FloatKind) (out : List Nat) :
-    List (Option Nat × Array Block) → List Nat
+    List (BoxWidth × Array Block) → List Nat
   | [] => out
   | (_, body) :: rest => floatNumsCols k (floatNumsList k out body.toList) rest
 
@@ -4409,8 +4504,8 @@ theorem numberFloatItems_exact (k : FloatKind) (c : FloatCtr)
         show c.get k + m + 1 = (c.get k + 1) + m by omega, range'_glue]
 
 theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
-    (acc : Array (Option Nat × Array Block)) (out : List Nat)
-    (cols : List (Option Nat × Array Block)) :
+    (acc : Array (BoxWidth × Array Block)) (out : List Nat)
+    (cols : List (BoxWidth × Array Block)) :
     ∃ n, ((numberFloatCols c acc cols).1).get k = c.get k + n ∧
       floatNumsCols k out ((numberFloatCols c acc cols).2).toList
         = floatNumsCols k out acc.toList ++ List.range' (c.get k + 1) n := by
@@ -4429,8 +4524,8 @@ theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
     · show floatNumsCols k out ((numberFloatCols (numberFloatList c #[] body.toList).1
         (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).2).toList = _
       rw [hnn, Array.toList_push]
-      have happ : ∀ (l1 : List (Option Nat × Array Block)) (o : List Nat)
-          (x : Option Nat × Array Block),
+      have happ : ∀ (l1 : List (BoxWidth × Array Block)) (o : List Nat)
+          (x : BoxWidth × Array Block),
           floatNumsCols k o (l1 ++ [x])
             = floatNumsList k (floatNumsCols k o l1) x.2.toList := by
         intro l1 o x
@@ -5961,7 +6056,7 @@ def foldBlockItems (fb : α → Block → α) (fi : α → Inline → α) (acc :
   | item :: rest => foldBlockItems fb fi (foldBlockList fb fi acc item.toList) rest
 
 def foldBlockCols (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
-    List (Option Nat × Array Block) → α
+    List (BoxWidth × Array Block) → α
   | [] => acc
   | (_, body) :: rest => foldBlockCols fb fi (foldBlockList fb fi acc body.toList) rest
 
@@ -6159,7 +6254,7 @@ def foldCtxBlockItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List (Array Bl
   | item :: rest => foldCtxBlockItems w ctx (foldCtxBlockList w ctx acc item.toList) rest
 
 def foldCtxBlockCols (w : CtxFold γ α) (ctx : γ) (acc : α) :
-    List (Option Nat × Array Block) → α
+    List (BoxWidth × Array Block) → α
   | [] => acc
   | (_, body) :: rest => foldCtxBlockCols w ctx (foldCtxBlockList w ctx acc body.toList) rest
 
@@ -6406,7 +6501,7 @@ theorem foldCtxBlockItems_covers (fb : α → Block → α) (fi : α → Inline 
       foldCtxBlockItems_covers fb fi _ rest]
 
 theorem foldCtxBlockCols_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
-    (cols : List (Option Nat × Array Block)) :
+    (cols : List (BoxWidth × Array Block)) :
     foldCtxBlockCols (CtxFold.ofFold fb fi) () acc cols = foldBlockCols fb fi acc cols := by
   match cols with
   | [] => rfl
@@ -6594,7 +6689,7 @@ def navLinkItems (out : Array (String × String)) :
   | item :: rest => navLinkItems (navLinkList out item.toList) rest
 
 def navLinkColumns (out : Array (String × String)) :
-    List (Option Nat × Array Block) → Array (String × String)
+    List (BoxWidth × Array Block) → Array (String × String)
   | [] => out
   | (_, body) :: rest => navLinkColumns (navLinkList out body.toList) rest
 
@@ -6863,13 +6958,14 @@ def dumpItems (ind : String) (items : List (Array Block)) : String :=
   | item :: rest =>
     s!"{ind}item\n" ++ dumpBlocks (ind ++ "  ") item ++ dumpItems ind rest
 
-def dumpColumns (ind : String) (cols : List (Option Nat × Array Block)) : String :=
+def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String :=
   match cols with
   | [] => ""
   | (w, body) :: rest =>
     let self := (match w with
-      | some f => s!"{ind}column {f}/1000\n"
-      | none => s!"{ind}column\n") ++ dumpBlocks (ind ++ "  ") body
+      | .frac f => s!"{ind}column {f}/1000\n"
+      | .abs l => s!"{ind}column {l.toPtString}pt\n"
+      | .share => s!"{ind}column\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
     self ++ tail
 
@@ -7392,7 +7488,7 @@ def maxStepItems : List (Array Block) → Nat
   | [] => 1
   | item :: rest => max (maxStepBlockList item.toList) (maxStepItems rest)
 
-def maxStepColumns : List (Option Nat × Array Block) → Nat
+def maxStepColumns : List (BoxWidth × Array Block) → Nat
   | [] => 1
   | (_, body) :: rest => max (maxStepBlockList body.toList) (maxStepColumns rest)
 
@@ -7584,8 +7680,8 @@ def dimItems (cover : Cover) (k : Nat) (pending : Bool) (out : Array (Array Bloc
     dimItems cover k pending (out.push (dimBlockList cover k pending #[] item.toList)) rest
 
 def dimColumns (cover : Cover) (k : Nat) (pending : Bool)
-    (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+    (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
   | [] => out
   | (w, body) :: rest =>
     dimColumns cover k pending (out.push (w, dimBlockList cover k pending #[] body.toList)) rest
@@ -7729,8 +7825,8 @@ def unwrapItemStepItems (out : Array (Array Block)) :
     unwrapItemStepItems
       (out.push (flattenLeadStep (unwrapItemStepList #[] item.toList))) rest
 
-def unwrapItemStepCols (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+def unwrapItemStepCols (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
   | [] => out
   | (w, body) :: rest =>
     unwrapItemStepCols (out.push (w, unwrapItemStepList #[] body.toList)) rest
@@ -7889,7 +7985,7 @@ def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
   | item :: rest => blockTextItems (blockTextList acc item.toList) rest
 
-def blockTextColumns (acc : String) : List (Option Nat × Array Block) → String
+def blockTextColumns (acc : String) : List (BoxWidth × Array Block) → String
   | [] => acc
   | (_, body) :: rest => blockTextColumns (blockTextList acc body.toList) rest
 
@@ -8058,7 +8154,7 @@ def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
   | [] => out
   | item :: rest => headingLevelItems (headingLevelList out item.toList) rest
 
-def headingLevelColumns (out : Array Nat) : List (Option Nat × Array Block) → Array Nat
+def headingLevelColumns (out : Array Nat) : List (BoxWidth × Array Block) → Array Nat
   | [] => out
   | (_, body) :: rest => headingLevelColumns (headingLevelList out body.toList) rest
 
@@ -8135,7 +8231,7 @@ def footnoteItems (out : Array (Option Nat × Array Inline)) :
   | item :: rest => footnoteItems (footnoteBlockList out item.toList) rest
 
 def footnoteColumns (out : Array (Option Nat × Array Inline)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Inline)
+    List (BoxWidth × Array Block) → Array (Option Nat × Array Inline)
   | [] => out
   | (_, body) :: rest => footnoteColumns (footnoteBlockList out body.toList) rest
 
@@ -8406,7 +8502,7 @@ private theorem blockTextItems_chain (l1 l2 : List (Array Block)) (acc : String)
   | nil => simp [blockTextItems]
   | cons item rest ih => simp [blockTextItems, ih]
 
-private theorem blockTextColumns_chain (l1 l2 : List (Option Nat × Array Block))
+private theorem blockTextColumns_chain (l1 l2 : List (BoxWidth × Array Block))
     (acc : String) :
     blockTextColumns acc (l1 ++ l2)
       = blockTextColumns (blockTextColumns acc l1) l2 := by
@@ -8696,8 +8792,8 @@ theorem dimItems_text (cover : Cover) (k : Nat) (pending : Bool)
       dimBlockList_text cover k pending item.toList #[], blockTextList]
 
 theorem dimColumns_text (cover : Cover) (k : Nat) (pending : Bool)
-    (cols : List (Option Nat × Array Block))
-    (out : Array (Option Nat × Array Block)) (acc : String) :
+    (cols : List (BoxWidth × Array Block))
+    (out : Array (BoxWidth × Array Block)) (acc : String) :
     blockTextColumns acc (dimColumns cover k pending out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
@@ -8843,8 +8939,8 @@ theorem unwrapItemStepItems_text (items : List (Array Block))
     simp [blockTextItems, blockTextItems_chain, flattenLeadStep_text,
       unwrapItemStepList_text item.toList #[], blockTextList]
 
-theorem unwrapItemStepCols_text (cols : List (Option Nat × Array Block))
-    (out : Array (Option Nat × Array Block)) (acc : String) :
+theorem unwrapItemStepCols_text (cols : List (BoxWidth × Array Block))
+    (out : Array (BoxWidth × Array Block)) (acc : String) :
     blockTextColumns acc (unwrapItemStepCols out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
@@ -8957,8 +9053,8 @@ theorem numberFloatItems_text (c : FloatCtr) (acc : Array (Array Block))
     simp [blockTextItems, numberFloatList_text c #[] item.toList, blockTextList]
 
 theorem numberFloatCols_text (c : FloatCtr)
-    (acc : Array (Option Nat × Array Block))
-    (cols : List (Option Nat × Array Block)) (s : String) :
+    (acc : Array (BoxWidth × Array Block))
+    (cols : List (BoxWidth × Array Block)) (s : String) :
     blockTextColumns s ((numberFloatCols c acc cols).2).toList
       = blockTextColumns (blockTextColumns s acc.toList) cols := by
   match cols with
@@ -9112,8 +9208,8 @@ def recolorRolesItems (repal : Palette → Palette) (recolor : RoleRecolor)
 
 def recolorRolesColumns (repal : Palette → Palette) (recolor : RoleRecolor)
     (pal : Palette) (ground : Option Color)
-    (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block) × Palette
+    (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block) × Palette
   | [] => (out, pal)
   | (w, body) :: rest =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
@@ -9458,8 +9554,8 @@ theorem recolorRolesItems_text (repal : Palette → Palette) (recolor : RoleReco
 
 theorem recolorRolesColumns_text (repal : Palette → Palette) (recolor : RoleRecolor)
     (pal : Palette) (ground : Option Color)
-    (cols : List (Option Nat × Array Block))
-    (out : Array (Option Nat × Array Block)) (acc : String) :
+    (cols : List (BoxWidth × Array Block))
+    (out : Array (BoxWidth × Array Block)) (acc : String) :
     blockTextColumns acc (recolorRolesColumns repal recolor pal ground out cols).1.toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
@@ -9562,7 +9658,7 @@ def keepForItems (t : String) : List (Array Block) → List (Array Block)
   | item :: rest => (keepForList t item.toList).toArray :: keepForItems t rest
 
 def keepForColumns (t : String) :
-    List (Option Nat × Array Block) → List (Option Nat × Array Block)
+    List (BoxWidth × Array Block) → List (BoxWidth × Array Block)
   | [] => []
   | (w, body) :: rest => (w, (keepForList t body.toList).toArray) :: keepForColumns t rest
 
@@ -9657,7 +9753,7 @@ def textLeavesItems (acc : List String) : List (Array Block) → List String
   | item :: rest => textLeavesItems (textLeavesList acc item.toList) rest
 
 def textLeavesColumns (acc : List String) :
-    List (Option Nat × Array Block) → List String
+    List (BoxWidth × Array Block) → List String
   | [] => acc
   | (_, body) :: rest => textLeavesColumns (textLeavesList acc body.toList) rest
 
@@ -9709,7 +9805,7 @@ def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | item :: rest => orphanFreeList avail item.toList && orphanFreeItems avail rest
 
 def orphanFreeColumns (avail : List String) :
-    List (Option Nat × Array Block) → Bool
+    List (BoxWidth × Array Block) → Bool
   | [] => true
   | (_, body) :: rest =>
     orphanFreeList avail body.toList && orphanFreeColumns avail rest
@@ -9877,7 +9973,7 @@ private theorem textLeavesItems_acc (acc : List String) (items : List (Array Blo
     simp [List.append_assoc]
 
 private theorem textLeavesColumns_acc (acc : List String)
-    (cols : List (Option Nat × Array Block)) :
+    (cols : List (BoxWidth × Array Block)) :
     textLeavesColumns acc cols = textLeavesColumns [] cols ++ acc := by
   match cols with
   | [] => simp [textLeavesColumns]
@@ -10154,7 +10250,7 @@ theorem keepForItems_covers (avail : List String) (t0 : String) (h0 : t0 ∈ ava
       exact List.mem_append.mpr (.inl hmem)
 
 theorem keepForColumns_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
-    (cols : List (Option Nat × Array Block))
+    (cols : List (BoxWidth × Array Block))
     (h : orphanFreeColumns avail cols = true) :
     ∀ s ∈ textLeavesColumns [] cols,
       ∃ t ∈ avail, s ∈ textLeavesColumns [] (keepForColumns t cols) := by
@@ -10242,7 +10338,7 @@ def onlyFreeItems : List (Array Block) → Bool
   | [] => true
   | item :: rest => onlyFreeList item.toList && onlyFreeItems rest
 
-def onlyFreeColumns : List (Option Nat × Array Block) → Bool
+def onlyFreeColumns : List (BoxWidth × Array Block) → Bool
   | [] => true
   | (_, body) :: rest => onlyFreeList body.toList && onlyFreeColumns rest
 
@@ -10339,7 +10435,7 @@ theorem keepForItems_id (t : String) (items : List (Array Block))
     rw [keepForItems, keepForList_id t item.toList h.1,
       keepForItems_id t rest h.2]
 
-theorem keepForColumns_id (t : String) (cols : List (Option Nat × Array Block))
+theorem keepForColumns_id (t : String) (cols : List (BoxWidth × Array Block))
     (h : onlyFreeColumns cols = true) : keepForColumns t cols = cols := by
   match cols with
   | [] => rfl
@@ -10492,7 +10588,7 @@ theorem foldBlockItems_append (fb : α → Block → α) (fi : α → Inline →
   | cons b rest ih => rw [List.cons_append, foldBlockItems, foldBlockItems, ih]
 
 theorem foldBlockCols_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
-    (l₁ l₂ : List (Option Nat × Array Block)) :
+    (l₁ l₂ : List (BoxWidth × Array Block)) :
     foldBlockCols fb fi acc (l₁ ++ l₂) = foldBlockCols fb fi (foldBlockCols fb fi acc l₁) l₂ := by
   induction l₁ generalizing acc with
   | nil => rfl
@@ -11202,8 +11298,8 @@ def mapBlockItems (f : Inline → Inline) (out : Array (Array Block)) :
   | [] => out
   | item :: rest => mapBlockItems f (out.push (mapBlockList f #[] item.toList)) rest
 
-def mapBlockCols (f : Inline → Inline) (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+def mapBlockCols (f : Inline → Inline) (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
   | [] => out
   | (w, body) :: rest =>
     mapBlockCols f (out.push (w, mapBlockList f #[] body.toList)) rest
@@ -11601,8 +11697,8 @@ theorem mapBlockItems_text (f : Inline → Inline)
 
 theorem mapBlockCols_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
-    (cols : List (Option Nat × Array Block))
-    (out : Array (Option Nat × Array Block)) (acc : String) :
+    (cols : List (BoxWidth × Array Block))
+    (out : Array (BoxWidth × Array Block)) (acc : String) :
     blockTextColumns acc (mapBlockCols f out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with

@@ -551,6 +551,70 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "pdf prose around the quotation keeps the full measure"
     (lines.any fun l => l.x == geom.hmargin)
 
+/-- A declared box width reaches the page as the width it declares: a
+fraction of the enclosing measure as that fraction, an absolute length as
+that length. Asserted over `Layout.Out` — the claim is how wide the lines
+inside the box are set, never an IR dump. Both rows fail while the carrier
+spells a width as `Option Nat` per mille: an absolute length is not a
+fraction of anything, so it had no representation and the box silently took
+the whole measure (W0314). The macro row is the same gap from the surface
+side — a width the document spells through its own command never reached
+the reader that resolves fractions. Invented content and lengths. -/
+def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let filler := "Panel prose long enough to need more than one line inside its box."
+  let boxDoc (pre : String) (w : String) : String :=
+    "\\documentclass{article}" ++ pre ++ "\\begin{document}\\begin{minipage}{" ++ w ++
+    "}" ++ filler ++ "\\end{minipage}\\end{document}"
+  let widest (src : String) : Dim.Sp :=
+    ((allLines (layoutOf oneFace (elabStr src).1 geom)).filter
+      fun l => !l.furniture && !l.segs.isEmpty).foldl
+        (fun m l => max m (l.x + l.setWidth - geom.hmargin)) 0
+  -- A half-measure fraction is the control: it worked before this change and
+  -- must still, so the carrier is not trading one spelling for another.
+  let half := widest (boxDoc "" ".5\\textwidth")
+  t "a fractional box width still sets at its fraction"
+    (decide (half ≤ geom.textWidth / 2) && decide (half > geom.textWidth / 4))
+  -- An absolute length: 90pt of a 345pt measure, so a box that took the whole
+  -- measure would overshoot by nearly four times.
+  let abs90 := widest (boxDoc "" "90pt")
+  t "an absolute box width sets at that length"
+    (decide (abs90 ≤ Dim.pt 90) && decide (abs90 > Dim.pt 30))
+  t "an absolute box width is no longer a named loss"
+    (!(warnCodes (boxDoc "" "90pt")).contains "W0314")
+  -- A width the document spells through its own command resolves to what the
+  -- command expands to, so the fraction reader sees a fraction.
+  let viaMacro := widest (boxDoc "\\newcommand{\\panelw}{.5\\textwidth}" "\\panelw")
+  t "a box width spelled through a document command resolves"
+    (viaMacro == half)
+  t "a box width spelled through a document command is no longer a named loss"
+    (!(warnCodes (boxDoc "\\newcommand{\\panelw}{.5\\textwidth}" "\\panelw")).contains
+      "W0314")
+  -- `\parbox{w}{t}` is `{minipage}{w}` with an inline-only body (latex.ltx
+  -- builds both through `\@iiiparbox`), so its declared width sets the same
+  -- box rather than being dropped.
+  let parbox := widest ("\\documentclass{article}\\begin{document}\\parbox{90pt}{" ++
+    filler ++ "}\\end{document}")
+  t "a parbox sets at its declared width"
+    (decide (parbox ≤ Dim.pt 90) && decide (parbox > Dim.pt 30))
+  t "a parbox width is no longer dropped"
+    (!(warnCodes ("\\documentclass{article}\\begin{document}\\parbox{90pt}{x}" ++
+      "\\end{document}")).contains "W0104")
+  -- A width wider than the measure cannot make the box wider than the page:
+  -- the resolved length is clamped where the measure is known, which is the
+  -- reason an absolute length rides as a length and is not pre-divided into
+  -- per mille at elaboration.
+  t "an absolute width past the measure is clamped to it"
+    (decide (widest (boxDoc "" "900pt") ≤ geom.textWidth))
+  -- The HTML track for each spelling, from the same IR value: a fraction is a
+  -- percentage, an absolute length a length, and a shared column a free
+  -- fraction of the leftover (`Ir.BoxWidth.track`, `boxWidth_tracks_agree`).
+  t "each declared width has its own HTML track"
+    (Ir.Track.css (Ir.BoxWidth.trackOf (.frac 500)) == "50%" &&
+      Ir.Track.css (Ir.BoxWidth.trackOf (.abs (Dim.pt 90))) == "90pt" &&
+      Ir.Track.css (Ir.BoxWidth.trackOf .share) == "1fr")
+
 /-- A declared ragged setting reaches the page on the side it declares:
 `\raggedright`/`{flushleft}` hang their lines from the left edge of the
 measure, `\raggedleft`/`{flushright}` from the right. Asserted over
@@ -725,10 +789,10 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   -- not a parallel box model.
   t "minipage is one column of its declared width"
     ((elabStr (doc "\\begin{minipage}{0.5\\textwidth}x\\end{minipage}")).1.body ==
-      #[.columns #[(some 500, #[.para #[.text "x"]])]])
+      #[.columns #[(.frac 500, #[.para #[.text "x"]])]])
   t "a bare textwidth minipage takes the whole measure"
     ((elabStr (doc "\\begin{minipage}{\\textwidth}x\\end{minipage}")).1.body ==
-      #[.columns #[(some 1000, #[.para #[.text "x"]])]])
+      #[.columns #[(.frac 1000, #[.para #[.text "x"]])]])
   t "minipage alignment options are a note, never an error"
     (let ds := (elabStr (doc "\\begin{minipage}[c][2cm][t]{\\textwidth}x\\end{minipage}")).2
      ds.all (·.severity != .error) && ds.any (·.code == "N0102"))
@@ -2614,8 +2678,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | #[.float .figure (some 1) false inner cap] =>
        Ir.plainText cap == "The parent" &&
        (match inner with
-        | #[.columns #[(some w1, #[.float .sub (some 1) false _ c1]),
-                       (some w2, #[.float .sub (some 2) false _ c2])]] =>
+        | #[.columns #[(.frac w1, #[.float .sub (some 1) false _ c1]),
+                       (.frac w2, #[.float .sub (some 2) false _ c2])]] =>
           w1 == 400 && w2 == 400 &&
           Ir.plainText c1 == "First sub" && Ir.plainText c2 == "Second sub"
         | _ => false)

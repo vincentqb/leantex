@@ -4017,32 +4017,58 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with justify := some false }
   return page
 
-/-- A column width as per mille of the text width: `0.48\textwidth`,
-`.5\linewidth`, a bare factor, or `\textwidth` alone — a factor of one, as
-TeX reads a coefficient-less internal dimen. An absolute length is not
-modelled. -/
-private def columnWidth (ctx : Ctx) (src : String) : Option Nat := Id.run do
+/-- A box's declared width (`{minipage}`, `\parbox`, `{column}`): a fraction
+of the enclosing measure in per mille (`0.48\textwidth`, `.5\linewidth`, a
+bare factor, or `\textwidth` alone — a factor of one, as TeX reads a
+coefficient-less internal dimen), or an absolute length. `none` is
+unreadable.
+
+Three spellings name the width indirectly and all three are resolved here,
+because a width the reader cannot read is a box that takes the whole
+measure. A declared token (`\begin{column}{\colwidth}`, the beamerposter
+idiom) resolves to its length. A document command whose body is one width
+(`\newcommand{\panelw}{.45\textwidth}`) is expanded once and re-read — one
+step, not a fixpoint: a width is a length, and a length that needs two
+expansions to become one is a macro program rather than a declaration. -/
+private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
   let s := src.trimAscii.toString
   if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (s.endsWith ·) then
     return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] s).bind
-      fun p => if 0 ≤ p then some p.toNat else none
-  -- A declared token names the width (`\begin{column}{\colwidth}`, the
-  -- beamerposter idiom): its resolved length against the page's text
-  -- width, the same permille every fraction spelling produces — W0314
-  -- retires exactly where the token resolves.
+      fun p => if 0 ≤ p then some (.frac p.toNat) else none
   if s.startsWith "\\" then
     let name := (s.drop 1).toString.trimAscii.toString
+    -- A declared token names the width: its resolved length. The absolute
+    -- carrier keeps it a length, so a token inside a narrower measure is
+    -- the length it declares rather than a fraction of the page re-applied
+    -- to the box.
     match ctx.tokens.find? name with
-    | some g =>
-      let tw := ctx.page.textWidth
-      let v := g.width.resolve ctx.page.fontSize 0
-      if tw > 0 && 0 ≤ v && v ≤ tw then return some ((v * 1000 / tw).toNat)
-      else return none
-    | none => return none
+    | some g => return some (.abs (g.width.resolve ctx.page.fontSize 0))
+    | none =>
+      -- A document command whose body spells a width: expanded once, then
+      -- read by the same two readings above.
+      match lookupUser ctx name with
+      | some (_, cmd) =>
+        if cmd.params.isEmpty then
+          let body := (rawSrc cmd.body).trimAscii.toString
+          if body != s then
+            if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (body.endsWith ·) then
+              return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] body).bind
+                fun p => if 0 ≤ p then some (.frac p.toNat) else none
+            match Decl.parseLength body with
+            | some l => return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
+            | none => return none
+          else return none
+        else return none
+      | none => return none
   match Decl.parseDecimal s with
   | some (m, sc) =>
-    if m ≥ 0 && sc > 0 then return some ((m * 1000 / sc).toNat) else return none
-  | none => return none
+    if m ≥ 0 && sc > 0 then return some (.frac ((m * 1000 / sc).toNat)) else return none
+  | none =>
+    -- An absolute length rides as a length: the measure it is relative to is
+    -- known at placement and nowhere earlier (`Ir.BoxWidth`).
+    match Decl.parseLength s with
+    | some l => return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
+    | none => return none
 
 mutual
 
@@ -7245,7 +7271,7 @@ accumulated to elaborate in place. The invariant carries what the
 accumulated run weighs; the base case flushes it and ships the float. -/
 private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
     (body : Array Raw) (pos : Pos) (j : Nat) (innerBlocks : Array Block)
-    (cols : Array (Option Nat × Array Block)) (rest : Array Raw)
+    (cols : Array (BoxWidth × Array Block)) (rest : Array Raw)
     (caption : Array Inline) (capAbove : Bool) (blocks : Array Block)
     (hw : rawWeightList rest.toList + sliceWeight body j
       ≤ rawWeightList body.toList)
@@ -7322,7 +7348,7 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
             have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
               slicePars_zero _
             let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
-            pure (innerBlocks ++ rb, (#[] : Array (Option Nat × Array Block)))
+            pure (innerBlocks ++ rb, (#[] : Array (BoxWidth × Array Block)))
           else pure (innerBlocks, cols)
         -- The minipage shape: `[pos]` baseline options are noted and
         -- ignored (the box stands top-aligned in its row), the `{width}`
@@ -7340,12 +7366,13 @@ stands top-aligned in its row" spos
             break
           | .content => break
         m := skipSpaces sbody m
-        let mut width : Option Nat := none
+        let mut width : Ir.BoxWidth := .share
         if let some (.group wRaws _) := sbody[m]? then
           m := m + 1
           let src := rawSrc wRaws
-          width := columnWidth ctx src
-          if width.isNone then
+          let read := columnWidth ctx src
+          width := read.getD .share
+          if read.isNone then
             warnOnce ctx ("env:subfigure-width:" ++ sn ++ ":" ++ src) .W0314
               s!"'\{{sn}}' width '{src}' is not a fraction of the \
 text width; the box shares the leftover" spos
@@ -7422,7 +7449,7 @@ decreasing_by all_goals blocks_dec
 width, consecutive ones one `.columns` row, content standing outside any
 column kept in place as ordinary blocks — never dropped. -/
 private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
-    (cols : Array (Option Nat × Array Block)) (strayRaws : Array Raw)
+    (cols : Array (BoxWidth × Array Block)) (strayRaws : Array Raw)
     (blocks : Array Block)
     (hw : rawWeightList strayRaws.toList + sliceWeight body j
       ≤ rawWeightList body.toList)
@@ -7449,16 +7476,17 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
           have hs1 : slicePars strayRaws 0
               = nestedParsList strayRaws.toList := slicePars_zero _
           let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
-          pure ((#[] : Array (Option Nat × Array Block)), blocks ++ sb)
+          pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
         else pure (cols, blocks)
       let m := skipSpaces cbody 0
-      let mut width : Option Nat := none
+      let mut width : Ir.BoxWidth := .share
       let mut m2 := m
       if let some (.group wRaws _) := cbody[m]? then
         m2 := m + 1
         let src := rawSrc wRaws
-        width := columnWidth ctx src
-        if width.isNone then
+        let read := columnWidth ctx src
+        width := read.getD .share
+        if read.isNone then
           warnOnce ctx "env:column-width" .W0314
             s!"column width '{src}' is not a fraction of the text width; \
 the column shares the leftover" cpos
@@ -7653,17 +7681,18 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
         break
       | .content => break
     let m := skipSpaces body k
-    let mut width : Option Nat := none
+    let mut width : Ir.BoxWidth := .share
     let mut m2 := m
     if let some (.group wRaws _) := body[m]? then
       m2 := m + 1
       let src := rawSrc wRaws
-      width := columnWidth ctx src
-      if width.isNone then
+      let read := columnWidth ctx src
+      width := read.getD .share
+      if read.isNone then
         warnOnce ctx "env:minipage-width" .W0314
-          s!"minipage width '{src}' is not a fraction of the text width; \
-the box takes the whole measure" pos
-          (help := "write a factor like {0.5\\textwidth}")
+          s!"minipage width '{src}' does not read as a length or a fraction of \
+the text width; the box takes the whole measure" pos
+          (help := "write a length like {60pt} or a factor like {0.5\\textwidth}")
     else
       diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
     have hxw : rawWeightList (body.extract m2 body.size).toList

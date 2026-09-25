@@ -851,9 +851,9 @@ private def resolveItems (style : Style) (find : Resolver)
 termination_by structural its
 
 private def resolveCols (style : Style) (find : Resolver)
-    (items : Array Ir.BibItem) (out : Array (Option Nat × Array Ir.Block))
-    (cs : List (Option Nat × Array Ir.Block)) :
-    Array (Option Nat × Array Ir.Block) :=
+    (items : Array Ir.BibItem) (out : Array (Ir.BoxWidth × Array Ir.Block))
+    (cs : List (Ir.BoxWidth × Array Ir.Block)) :
+    Array (Ir.BoxWidth × Array Ir.Block) :=
   match cs with
   | [] => out
   | (w, body) :: rest =>
@@ -1259,8 +1259,8 @@ theorem resolveItems_pending (style : Style) (find : Resolver) (items : Array Ir
     · exact .inr hc
 
 theorem resolveCols_pending (style : Style) (find : Resolver) (items : Array Ir.BibItem)
-    (cs : List (Option Nat × Array Ir.Block)) :
-    ∀ (out : Array (Option Nat × Array Ir.Block)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
+    (cs : List (Ir.BoxWidth × Array Ir.Block)) :
+    ∀ (out : Array (Ir.BoxWidth × Array Ir.Block)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBlockCols (fun a _ => a) Ir.pendingStep acc
         (resolveCols style find items out cs).toList →
       q ∈ Ir.foldBlockCols (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by

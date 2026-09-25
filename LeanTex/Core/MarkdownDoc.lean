@@ -254,7 +254,7 @@ private def blocksInto (loc : Locale) (summary ind acc : String) : List Block �
   | b :: rest => blocksInto loc summary ind (blockInto loc summary ind acc b) rest
 
 private def columnsInto (loc : Locale) (summary ind acc : String) :
-    List (Option Nat × Array Block) → String
+    List (BoxWidth × Array Block) → String
   | [] => acc
   | (_, body) :: rest => columnsInto loc summary ind (blocksInto loc summary ind acc body.toList) rest
 
@@ -476,7 +476,7 @@ private theorem blocksInto_extends (loc : Locale) (summary ind acc : String) :
       (blocksInto_extends loc summary ind (blockInto loc summary ind acc b) rest)
 
 private theorem columnsInto_extends (loc : Locale) (summary ind acc : String) :
-    (cols : List (Option Nat × Array Block)) →
+    (cols : List (BoxWidth × Array Block)) →
       ∃ r, columnsInto loc summary ind acc cols = acc ++ r
   | [] => append_nil acc
   | (_, body) :: rest =>
@@ -713,7 +713,7 @@ private theorem headingLevelItems_mem (x : Nat) :
       (headingLevelList_mem x item.toList out h)
 
 private theorem headingLevelColumns_mem (x : Nat) :
-    (cols : List (Option Nat × Array Block)) → (out : Array Nat) → x ∈ out →
+    (cols : List (BoxWidth × Array Block)) → (out : Array Nat) → x ∈ out →
       x ∈ Ir.headingLevelColumns out cols
   | [], _, h => h
   | (_, body) :: rest, out, h =>

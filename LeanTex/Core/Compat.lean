@@ -2362,11 +2362,11 @@ the definition is skipped" pos
         became s!"\\setbeamercolor\{{element}}" native pos
         return some (← synthAt native pos, k)
     else return none
-  | "mbox" | "makebox" | "parbox" =>
-    -- The box geometry is not modelled and dropping it silently would move
-    -- ink, so the drop is named once; the content stays in the stream.
-    -- `\parbox`'s width is a mandatory brace group, so it is consumed here —
-    -- left in the stream it sets as prose.
+  | "mbox" | "makebox" =>
+    -- An hbox's geometry is not modelled — neither command breaks lines, so
+    -- neither reduces to a box of declared measure — and dropping it
+    -- silently would move ink, so the drop is named once; the content stays
+    -- in the stream.
     let (opts, widths) := match boxShape.lookup name with
       | some (o, w) => (o, w)
       | none => (0, 0)
@@ -2378,6 +2378,27 @@ the definition is skipped" pos
         (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
     became s!"\\{name}" "its content, kept in the line" pos
     return some (#[], k)
+  | "parbox" =>
+    -- `\parbox{w}{t}` and `{minipage}{w}` are the same box: latex.ltx builds
+    -- both through `\@iiiparbox`, and the manual's own difference is what a
+    -- body may contain, not what the box measures. So the width is honoured
+    -- rather than dropped — the environment carries it to `Ir.BoxWidth`
+    -- through the one width reader — and `[pos]` options are noted where the
+    -- environment notes its own (N0102), since a block-level box has no text
+    -- baseline to sit against.
+    let (declared, j) := takeOpts raws start 3
+    let (args, k) := takeGroups raws j 2
+    if declared then
+      sayOnce "ctrl:parbox:pos" .N0102
+        "'\\parbox' [pos] options are ignored: the box stands as a block, top-aligned"
+        pos
+    became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
+    -- The environment node directly, not synthesised source: the width group
+    -- and the body are already parsed raws, and a `\begin` spelled as text
+    -- would have to be re-parsed against its own `\end` to become an
+    -- environment at all.
+    let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
+    return some (#[.env "minipage" (widthGroup ++ (args[1]?.getD #[])) pos], k)
   | "footercontent" =>
     -- The gemini poster lineage's footer declaration
     -- (beamerthemegemini.sty, footline template: one centred line of the

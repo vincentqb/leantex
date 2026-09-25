@@ -519,7 +519,7 @@ as the environment form and land in one `.columns` row. A `\column`
 anywhere else starts no column and is named, never dropped in silence. -/
 def columnFormChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let colsOf (src : String) : Option (Array (Option Nat × Array Ir.Block)) :=
+  let colsOf (src : String) : Option (Array (Ir.BoxWidth × Array Ir.Block)) :=
     (elabStr (deck169Frame src)).1.body.findSome? fun
       | .frame _ _ _ _ body => body.findSome? fun
         | .columns cols => some cols
@@ -6197,7 +6197,7 @@ def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- A silenced frame spends nothing. Its body is never descended into, so a
   -- once-per-document loss is named at the frame that actually ships it —
   -- reported inside the dropped frame, the one visible loss went unnamed.
-  let shared := "\\parbox{2cm}{A label}\n"
+  let shared := "\\makebox[2cm]{A label}\n"
   let twin := deck169Body
     ("\\begin{frame}<presentation:0>{Hidden Heading}\n" ++ shared ++ "\\end{frame}\n" ++
      "\\begin{frame}{Shown Heading}\n" ++ shared ++ "\\end{frame}")
@@ -6253,10 +6253,12 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     (has (pageText pb) "Label one")
   t "and parbox is not an unknown command"
     (!(warnCodes pb).contains "W0301" && !(warnCodes pb).contains "W0341")
-  -- The option run is beamer's `[t]` baseline choice: a parameter, and the
-  -- box geometry it selects is a named drop, never a silent one.
-  t "the box it declares is a named loss, not a silent one"
-    ((warnCodes pb).contains "W0104")
+  -- The option run is beamer's `[t]` baseline choice: a parameter the box
+  -- model has nowhere to put, noted where the environment notes its own. The
+  -- geometry itself is no longer a loss — `\parbox{w}{t}` and `{minipage}{w}`
+  -- are the same box (latex.ltx, `\@iiiparbox`), so the width is carried.
+  t "the box it declares is honoured, its baseline option noted"
+    (!(warnCodes pb).contains "W0104" && (elabStr pb).2.any (·.code == "N0102"))
   -- The full kernel signature: [pos][height][inner-pos]{width}{text}.
   let pb3 := deck169Frame "\\parbox[t][2cm][c]{.25\\textwidth}{Label two}"
   t "a parbox's three option runs all go with it"

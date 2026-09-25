@@ -12492,3 +12492,120 @@ clean. `cites` is what caught `ragged_sides_agree` cited in two docstrings
 before it was written. The rendered page: the reference deck's alternating
 frame now sets its questions from the margin and its answers at the measure's
 right edge, where before all four lines began at the margin.
+
+
+
+### 2026-09-24 — a box's width had only one unit, and it was a relative one
+
+`{minipage}`, `\parbox` and `{column}` all declare a width, and
+`Ir.Block.columns` could hold only one kind: per mille of the enclosing
+measure. So `{60pt}` was refused (W0314, "not a fraction of the text width;
+the box takes the whole measure"), and `\parbox`'s width was not carried at
+all — its geometry was dropped and its content kept in the line (W0104), with
+a PLAN note that a true box "needs an inline fixed-width box, and the IR has
+no inline constructor for one".
+
+**The invariant, written before the fix.** *A declared box width reaches the
+page as the width it declares* — a fraction of the enclosing measure as that
+fraction, an absolute length as that length. The control that shows this is
+about the carrier and not about arithmetic was already in the tree:
+`Ir.ColWidth` has carried `natural | frac | abs` for table columns since
+`p{54pt}` landed, so the engine had already decided this question once, for
+the other kind of box, and box columns never inherited the answer.
+
+**Carrier: a second three-valued width, not the first one reused.**
+`Ir.BoxWidth` — `share | frac (permille) | abs (w : Sp)` — a *type change on
+an existing field*, which is the `Sourced` move: `columns`' width field
+changes type, its arity does not, so every walk arm that destructures
+`(_, body)` compiles untouched and only the four sites that *read* a width
+are forced. 76 type spellings across nine modules move; no arm does.
+
+Not `ColWidth`, on meaning rather than cost. A table's `natural` column sizes
+*down* to its widest cell; a box's undeclared width grows *up* to fill the
+leftover. One constructor answering both would make one of the two readings
+false at every site, which is the `role`-versus-salvage argument (entry
+above) in a second place. `share` is its own name for that reason.
+
+**Why `abs` stays a length.** The cheap alternative was to divide an absolute
+width into per mille at elaboration against the page's measure — the token
+path already did exactly that, and it is wrong in a way no diagnostic can
+see. Per mille is *relative*, so fixing its reference where the width is
+parsed is only right for a box at the top level: a 60pt box inside a
+`.45\textwidth` column, converted against the page and re-applied to the
+column, comes out at 45% of 60pt. The reference a width is relative to is
+known at placement and nowhere earlier. That is the `Sourced` entry's finding
+one layer over — resolving in the wrong layer forces an operator to invent an
+answer it cannot have — and it is why the token branch now yields `.abs` too.
+
+**One value, two readers, one theorem.** `BoxWidth.resolve` is the page's
+single resolving site (a fraction of the measure, or a length clamped to it —
+a box cannot be wider than what contains it), and `BoxWidth.trackOf` the
+stylesheet's. `boxWidth_tracks_agree` ties them: the two readings agree on
+which declarations name a width, so a width honoured in the PDF cannot be an
+`fr` share in the HTML. The `backend_gaps_agree` shape, stated on the IR
+because both artifacts must honour it. `Track` is structured and
+`Track.css` spells it, so the agreement is a statement about values rather
+than about formatting.
+
+**Three indirect spellings, all resolved.** A width the reader cannot read is
+a box that takes the whole measure, so the reader now resolves a declared
+token (`\setlength`), a document command whose body is one width
+(`\newcommand{\panelw}{.45\textwidth}` — expanded once and re-read, not to a
+fixpoint: a width that needs two expansions is a macro program rather than a
+declaration), and an absolute length. The reference corpus's W0314 was the
+second of those, not the first — the brief named the absolute carrier and the
+document was using a macro, and both were real.
+
+**`\parbox` is `{minipage}`, and that is LaTeX's own answer.** latex.ltx
+builds both through `\@iiiparbox`; the manual's difference between them is
+what a body may contain, not what the box measures. So `\parbox` is no longer
+a refusal: it becomes the environment node directly — not synthesised source,
+because a `\begin` spelled as text would have to be re-parsed against its own
+`\end` to become an environment at all, which is the bug the first attempt
+shipped. Its `[pos]` runs are noted where the environment notes its own
+(N0102), a block-level box having no text baseline to sit against. The
+prior diagnosis that this needed a new `Inline` constructor stands as
+*costed and declined*: an `Inline` constructor owes an arm in every walk and
+both backends (81 sites, nine modules, six outside this change's ownership),
+and it is not what `\parbox` means — a parbox breaks lines at a declared
+measure, which is a block box, and the one construct in the IR that already
+is one is `columns`.
+
+**Left undone, named.** Adjacent boxes do not yet share a row. Two
+`{minipage}`s separated by `\hfill` are LaTeX's side-by-side panels and
+elaborate here to two single-box `.columns` blocks, which stack: each is now
+the width it declares, and they sit one above the other with the leftover
+measure empty beside each. The carrier is the prerequisite and the remaining
+work is a *coalescing* decision at elaboration — merge a box row into the
+preceding one when only horizontal material stood between them — whose
+discriminator is the hard part: a `.par` between two boxes must prevent the
+merge, and by the time blocks are pushed the paragraph boundary is no longer
+visible in the block list, so the rule has to read the token stream. That is
+state threaded through the `elabBlocks` knot, whose termination measures are
+hand-proved per call site and whose elaboration ceiling this change already
+hit once; it is Elab's to make, with the invariant decided first. Recorded
+here so the next edit to that arm does it rather than working around it.
+
+**Arms opened in another agent's file.** `Elab.lean`: four, all forced by the
+field's type — `columnWidth`'s return type, and the three width sites
+(`minipage`, `{column}`, `subfigure`) whose accumulator is now the carrier
+and whose W0314 fires when the read fails rather than when the result is
+`none`. The reader's three indirect spellings are inside `columnWidth`, which
+is sealed, so the knot sees an unchanged call. `Compat.lean`: one arm split —
+`mbox`/`makebox` keep the refusal, since neither breaks lines and so neither
+reduces to a box of declared measure, and `parbox` becomes its own arm.
+
+**Two tests inverted rather than moved.** `an absolute column width warns and
+degrades to a share` and `the box it declares is a named loss, not a silent
+one` asserted the gap, which is what those rows were for; both now assert the
+capability. Three diagnostic-machinery rows used `\raggedleft` or `\parbox`
+merely as a W0104 witness at N sites and now use `\sloppy` and
+`\makebox[3cm]`, which still refuse — the rows are about counting, not about
+boxes.
+
+Evidence: `lake build` and `lake test` green; `precommit`, `cites`, `owed`
+clean. `bench.lean` medians of 5: paragraphs 93 ms, lorem 328 ms, underline
+521 ms, themed 88 ms (89 ms to HTML), paper 165 ms (150 ms to HTML) —
+paragraphs on its recorded band, so a three-constructor width on every
+column walk costs nothing measurable. Goldens: none — no fixture declares a
+box width, which is the same corpus gap the ragged entry above found.

@@ -289,7 +289,7 @@ def itemsRaw (out : Array Node) : List (Array Block) → Array Node
     itemsRaw (out.push (.node .item
       #[.node .label #[], .node .body (blocksRaw #[] item.toList)])) rest
 
-def colsRaw (out : Array Node) : List (Option Nat × Array Block) → Array Node
+def colsRaw (out : Array Node) : List (BoxWidth × Array Block) → Array Node
   | [] => out
   | (_, body) :: rest => colsRaw (blocksRaw out body.toList) rest
 
@@ -953,7 +953,7 @@ theorem itemsRaw_text (acc : String) (out : Array Node) (items : List (Array Blo
     rw [blocksRaw_text]
     rfl
 
-theorem colsRaw_text (acc : String) (out : Array Node) (cols : List (Option Nat × Array Block)) :
+theorem colsRaw_text (acc : String) (out : Array Node) (cols : List (BoxWidth × Array Block)) :
     leafTextList acc (colsRaw out cols).toList
       = blockTextColumns (leafTextList acc out.toList) cols := by
   match cols with
@@ -1283,7 +1283,7 @@ theorem itemsRaw_headings (hs : Array Nat) (out : Array Node) (items : List (Arr
     rfl
 
 theorem colsRaw_headings (hs : Array Nat) (out : Array Node)
-    (cols : List (Option Nat × Array Block)) :
+    (cols : List (BoxWidth × Array Block)) :
     headingsList hs (colsRaw out cols).toList
       = headingLevelColumns (headingsList hs out.toList) cols := by
   match cols with
@@ -1596,7 +1596,7 @@ theorem itemsRaw_images (is : Array (String × String)) (out : Array Node)
     rfl
 
 theorem colsRaw_images (is : Array (String × String)) (out : Array Node)
-    (cols : List (Option Nat × Array Block)) :
+    (cols : List (BoxWidth × Array Block)) :
     imagesList is (colsRaw out cols).toList
       = foldBlockCols (fun out _ => out) imageAltPush (imagesList is out.toList) cols := by
   match cols with
@@ -1858,7 +1858,7 @@ theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .bibliography src style items =>
     simp only [blockRaw]; exact bibRaw_acc out items.toList
 
-theorem colsRaw_acc (out : Array Node) (cols : List (Option Nat × Array Block)) :
+theorem colsRaw_acc (out : Array Node) (cols : List (BoxWidth × Array Block)) :
     colsRaw out cols = out ++ colsRaw #[] cols := by
   match cols with
   | [] => simp [colsRaw]

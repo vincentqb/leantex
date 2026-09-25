@@ -620,7 +620,7 @@ private def usesItems (cx : UseCx) (acc : UseAcc) :
   | item :: rest => usesItems cx (usesBlocks cx acc item.toList) rest
 
 private def usesColumns (cx : UseCx) (acc : UseAcc) :
-    List (Option Nat × Array Block) → UseAcc
+    List (BoxWidth × Array Block) → UseAcc
   | [] => acc
   | (_, body) :: rest => usesColumns cx (usesBlocks cx acc body.toList) rest
 

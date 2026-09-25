@@ -84,8 +84,8 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let (doc, ds) := elabStr src
   t "columns elaborate with widths, its option a note" (ds.all (·.severity == .note) &&
     doc.body == #[.frame #[] false .center false #[.columns #[
-      (some 600, #[.para #[.text "left"]]),
-      (some 400, #[.para #[.text "right"]])]]])
+      (.frac 600, #[.para #[.text "left"]]),
+      (.frac 400, #[.para #[.text "right"]])]]])
   -- PDF: the columns' first lines share a baseline, and the second sits
   -- past the first one's measure — visibly two columns, by geometry.
   let out := layoutOf oneFace doc
@@ -106,13 +106,22 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let (html, _) := HtmlDoc.emit {} doc
   t "html columns are a grid with the declared widths"
     ((html.splitOn "grid-template-columns: 60% 40%").length == 2)
-  -- An unreadable width warns and shares the leftover instead.
+  -- An absolute width is a width: it rides as a length (`Ir.BoxWidth.abs`)
+  -- and is resolved against the measure the box stands in, so nothing is
+  -- refused and nothing degrades to a share. The row asserted the opposite
+  -- while the carrier spelled a width as per mille only — a length is not a
+  -- fraction of anything, so the box took the leftover and W0314 said so.
   let (aDoc, aDs) := elabStr (deck169Frame ("\\begin{columns}\\begin{column}{3cm}\na\n\\end{column}" ++
     "\\begin{column}{0.5\\textwidth}\nb\n\\end{column}\\end{columns}"))
-  t "an absolute column width warns and degrades to a share"
-    (aDs.any (·.code == "W0314") &&
+  t "an absolute column width is honoured as a length"
+    (!aDs.any (·.code == "W0314") &&
      (match aDoc.body with
-      | #[.frame _ _ _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
+      | #[.frame _ _ _ _ #[.columns cols]] =>
+        (match cols[0]?.map (·.1), cols[1]?.map (·.1) with
+         | some (Ir.BoxWidth.abs l), some (Ir.BoxWidth.frac 500) =>
+           -- 3cm, within a point of TeX's 28.45276 pt per cm.
+           decide (l > Dim.pt 84) && decide (l < Dim.pt 87)
+         | _, _ => false)
       | _ => false))
   -- `\hfill` between `column`s is the gutter, never a paragraph: beamer's
   -- own row opens with `\hbox{}\hfill` and closes every column with
