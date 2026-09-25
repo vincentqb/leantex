@@ -1046,6 +1046,44 @@ def gates : List Gate := [
   Fix: reshape the proof or the definition; if neither closes, state it in
   Obligations and report the blocker." }]
 
+/-- The five fields an owed record carries, in the order
+`scripts/owed.lean` reads them off consecutive lines. -/
+def obFields : List String := ["owed", "owner", "source", "blocker", "goldens"]
+
+/-- The field key a record line spells, when it spells one: `-- <key>:`
+after trimming, matching `owed.lean`'s own `fieldOf`. A blocker's prose sits
+after the colon on one line, so no interior text can be read as a key. -/
+def obFieldKey (l : String) : Option String :=
+  let t := l.trimAscii.toString
+  obFields.find? fun k => t.startsWith ("-- " ++ k ++ ":")
+
+/-- Each owed record's field faults: a key that appears more or less than
+once between this record's `-- owed:` line and the next one.
+
+`owed.lean` reads a record as five *consecutive* lines, so a sixth field
+line following a complete record is invisible to it — and that is the shape
+a merge produces. Twice now, a rebase onto a shared `PLAN.md` resolved an
+append-only-log conflict with keep-both-sides, which is right for a log and
+wrong for a structured record, and left a record carrying two or three
+`-- blocker:` lines. The ratchet noticed only indirectly, via a record count
+that no longer matched the hole count, which names neither the record nor
+the field. This names both. -/
+def obRecordFaults (lines : Array String) : Array (Nat × String × Nat) := Id.run do
+  let mut out : Array (Nat × String × Nat) := #[]
+  let mut starts : Array Nat := #[]
+  for i in [0:lines.size] do
+    if obFieldKey (lines[i]?.getD "") == some "owed" then starts := starts.push i
+  for s in [0:starts.size] do
+    let from_ := starts[s]?.getD 0
+    let to_ := (starts[s+1]?).getD lines.size
+    let mut counts : Array (String × Nat) := obFields.toArray.map (·, 0)
+    for i in [from_:to_] do
+      if let some k := obFieldKey (lines[i]?.getD "") then
+        counts := counts.map fun (k2, n) => if k2 == k then (k2, n + 1) else (k2, n)
+    for (k, n) in counts do
+      if n != 1 then out := out.push (from_ + 1, k, n)
+  return out
+
 /-- The top-level `def` name a test-file line binds, for the Support-rule
 gate: only unindented `def`/`private def`, so a nested helper or a prose
 mention never counts. -/
@@ -1244,6 +1282,51 @@ def selftest : IO UInt32 := do
   smCase "unsealed but never sealed" ["unseal Foo"] ([], ["Foo"])
   smCase "twice sealed, once unsealed" ["seal Foo", "seal Foo", "unseal Foo"] (["Foo"], [])
   smCase "a comment is data" ["-- seal Foo"] ([], [])
+
+  expect "obFieldKey" (fun l => (obFieldKey l).isSome) [
+    -- the five record lines, indented or not
+    ("-- owed: lines_attributed_covers", true),
+    ("-- owner: LeanTex.Core.Layout", true),
+    ("  -- source: an audit", true),
+    ("-- blocker: two loops stand between the walk and the pages", true),
+    ("-- goldens: no", true),
+    -- prose, a docstring, and a key named after the colon stay unread
+    ("-- a comment about the owner of a walk", false),
+    ("/-- Attribution covers the ink. -/", false),
+    ("-- blocker text naming -- goldens: no mid-line", false)]
+
+  -- obRecordFaults: the merge damage this closes, and the healthy record.
+  -- A record is read to the NEXT `-- owed:`, which is why a sixth field
+  -- line after a complete record — invisible to owed.lean's five-line
+  -- window — is caught here.
+  let obCase (name : String) (src : List String)
+      (want : List (Nat × String × Nat)) : IO Unit := do
+    if (obRecordFaults src.toArray).toList != want then
+      fails.modify (s!"obRecordFaults {name}: got {(obRecordFaults src.toArray).toList}" :: ·)
+  let wellFormed := ["-- owed: t_one", "-- owner: M", "-- source: S",
+    "-- blocker: B", "-- goldens: no", "theorem t_one : True := by " ++ kwSorry]
+  obCase "a well-formed record" wellFormed []
+  -- the shape a keep-both-sides merge resolution leaves: two blockers,
+  -- the second one past the five-line window owed.lean reads
+  obCase "two blocker lines" (["-- owed: t_one", "-- owner: M", "-- source: S",
+    "-- blocker: B1", "-- goldens: no", "-- blocker: B2",
+    "theorem t_one : True := by " ++ kwSorry]) [(1, "blocker", 2)]
+  -- three, the other observed spelling: both inside the window, which
+  -- pushes `goldens` out of it
+  obCase "three blocker lines" (["-- owed: t_one", "-- owner: M",
+    "-- blocker: B1", "-- blocker: B2", "-- blocker: B3", "-- goldens: no",
+    "theorem t_one : True := by " ++ kwSorry])
+    [(1, "source", 0), (1, "blocker", 3)]
+  -- a missing field is the same fault read the other way
+  obCase "a missing field" (["-- owed: t_one", "-- owner: M", "-- source: S",
+    "-- goldens: no", "theorem t_one : True := by " ++ kwSorry])
+    [(1, "blocker", 0)]
+  -- two adjacent records do not bleed into each other's counts
+  obCase "two records" (wellFormed ++ ["-- owed: t_two", "-- owner: M",
+    "-- source: S", "-- blocker: B", "-- goldens: yes",
+    "theorem t_two : True := by " ++ kwSorry]) []
+  -- a file with no records has no faults
+  obCase "no records" ["theorem t : True := trivial"] []
 
   expect "topLevelDefName" (fun l => (topLevelDefName l).isSome) [
     -- the Support-rule gate: only a top-level def counts
@@ -2016,6 +2099,27 @@ def main (args : List String) : IO UInt32 := do
   A helper used by two check blocks moves to Tests/Support.lean the moment
   the second caller appears (AGENTS.md, Conventions).
   Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
+
+  -- The owed record's shape, whole tree and ahead of the ratchet: a record
+  -- carries exactly one of each field. owed.lean reads five consecutive
+  -- lines, so a sixth field line after a complete record is invisible to
+  -- it; that is the shape a rebase produces when an append-only-log
+  -- conflict is resolved keep-both-sides. Checked here rather than there
+  -- because it needs no compiled environment, so it reports before the
+  -- ratchet's indirect count mismatch does.
+  for f in (← System.FilePath.walkDir ".") do
+    let p := f.toString
+    let p := if p.startsWith "./" then (p.drop 2).toString else p
+    if obligationsFile p && p.endsWith ".lean" then
+      let lines := ((← IO.FS.readFile p).splitOn "\n").toArray
+      for (line, key, n) in obRecordFaults lines do
+        say s!"pre-commit: the owed record at {p}:{line} has {n} '-- {key}:' lines, not one.
+  An owed record is a fixed five-field form (owed/owner/source/blocker/goldens),
+  not an append-only log: two agents rebasing onto one PLAN.md have twice
+  produced a duplicated field by keeping both sides of a conflict, which is
+  right for a log and wrong for a record. owed.lean reads five consecutive
+  lines, so a duplicate past the fifth is invisible there.
+  Fix: keep the one field value you mean and delete the others."
 
   -- PLAN.md must leave the debt recorded — one hole per owed record, every
   -- record registered in PLAN, no import of Obligations from the gated

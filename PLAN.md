@@ -13508,3 +13508,41 @@ synthetic fixture: both big operators set as display operators with
 limits below, variables in math italic with real subscripts, minus signs
 rather than hyphens, the superscript raised. One warning naming the one
 construct, where the whole display was named before.
+
+
+### 2026-09-25 — an owed record is a form, not a log, and a merge cannot tell
+
+`scripts/owed.lean` reads an owed record as five *consecutive* comment
+lines: `-- owed:`, then owner, source, blocker, goldens. That window is the
+whole of its shape check, and a sixth field line standing after a complete
+record falls outside it.
+
+That is precisely the shape a rebase produces. Two agents landing on one
+shared `PLAN.md` have twice resolved an append-only-log conflict with a
+keep-both-sides rule — correct for a log, wrong for a structured record —
+and left a record carrying two or three `-- blocker:` lines.
+
+Measured before the gate, on a deliberately damaged tree (one extra
+`-- blocker:` line inserted after a record's `-- goldens:`):
+`.lake/build/bin/owed --check` exits **0**. The ratchet is not
+"indirect" about this shape, as it was believed to be; it is blind. The
+indirect catch only happens when the duplicate lands *inside* the window
+and pushes a real field out of it, so the record reads incomplete — the
+same damage one line earlier reports nothing at all.
+
+`obRecordFaults` (scripts/precommit.lean) counts each of the five keys
+between one `-- owed:` line and the next, and reports any key that does
+not appear exactly once, naming the record's line, the field, and the
+count. Read from the whole tree, ahead of the ratchet, and needing no
+compiled environment — so it reports at commit time rather than after a
+build.
+
+How it was made to fail: the injection above. The gate exits 1 with
+`the owed record at Obligations.lean:99 has 2 '-- blocker:' lines, not one`.
+The selftest carries both observed spellings (two blockers past the window,
+three inside it) plus the mirror fault a missing field gives, the
+two-adjacent-records case that would catch a span that bleeds, and the
+healthy record.
+
+29 records today, all well-formed; the gate is green on the tree as it
+stands.
