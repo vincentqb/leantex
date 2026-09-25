@@ -15062,3 +15062,145 @@ Routed, not mine to edit:
 - `Tests.lean`: the gate is deliberately not in `lake test` — it is a tier
   script with its own three modes, like `html-oracle`. If the suite should
   call it, that is one import and one call in a file this slice does not own.
+
+
+### 2026-09-25 — the parity ladder, corrected: L not T, a ratchet with a writer that refuses, and a reference reproducible anywhere
+
+An independent reviewer blocked the ladder's first two commits on two
+claims that were verified once, each in the place most likely to pass.
+Both are fixed here, and every correction is a check rather than a
+sentence. Corrections to the two entries above are marked as such; the
+autonomy-loop entry on `main` says T0–T5 and this is its dated correction.
+
+**Corrected: the vocabulary is L, not T.** A *tier* is a scoreboard goal's
+baseline file and, in flashtex, a corpus; using it for a ladder step made
+three things share one word. The ladder's steps are **levels** L0 build,
+L1 pages, L2 census, L3 order, L4 lines, with L5 place and R raster not
+built. Renamed in `Level`/`Level.tag`, the fixture headers, the README,
+the scoreboard header and the report. Mapping to flashtex: its L0–L2 are
+L0–L2 here; L3 and L4 have no analogue and exist because `pagebreak`
+passes census and order and differs in lines; its L3 is L5 and its L4 is R.
+
+**Corrected: `--record` launders nothing.** The ratchet was tight (an
+unrecorded rise fails) while its only writer recorded a fall silently with
+exit 0, dropped every `# retired:` line and wrote before the stale check.
+The write is now one pure function, `Parity.recordDecision`, whose
+staleness, measurement and board text are all arguments — so "checked
+before the write" is the shape of the type rather than an ordering a later
+edit can invert. It refuses a fall unless a human wrote
+`# lowered: <item> <old>→<new> — <why>`, which names both numbers and so
+accepts exactly one fall and expires by itself; it refuses a vanished
+fixture with no `# retired:` line; it carries both kinds of line forward
+verbatim; and on refusal the file is untouched. Each of the five arms is
+broken once in `parity --selftest` and again through the shipping binary
+(`leantex-evidence/parity-fix/break-record.txt`).
+
+**Corrected: the reference is a function of its inputs, measured in two
+directories.** The entry above says the reference is byte-reproducible.
+Measured: it was reproducible in the worktree that built it and nowhere
+else, because LuaTeX's trailer `/ID` is MD5(timestamp ‖ cwd ‖ output
+name) — three rebuilds gave three IDs and each committed file carried a
+confirmable fingerprint of a home directory. The regenerator now injects
+`\pdfvariable trailerid{[<K> <K>]}` on the command line with `K` the
+reference source's own content key (`-jobname` supplied, since the
+argument is no longer a file name). What is *measured*, not asserted:
+`prose` rebuilt at `a/tests/parity` and at
+`b/deeper/still/further/tests/parity` and the committed bytes all give
+sha256 `7881423079948d47fca4199f5752479e`, and the committed `/ID` is the
+`ref-src-key`. The check lives in `parity-regen --selftest`, which reports
+itself skipped rather than passed when `lualatex` is absent.
+
+**Corrected: the pin was sha256 in prose and `Flate.contentKey` in code.**
+It is FNV `contentKey` throughout, deliberately: the gate must verify a pin
+with nothing installed.
+
+**The `/W` deref, which is what unblocked placement.** `artFontOf` read
+`/W` without dereferencing it and dropped real-valued entries. lualatex
+writes `/W` as an indirect reference to an object of its own and spells
+advances as reals, so every glyph of every reference took `/DW` — one em
+each — and no placement measurement over a reference meant anything
+(measured: reference `/W` reads 0 glyphs undereferenced and 26 followed;
+the engine's own is a direct array of integers, 27 either way). Metrics are
+now read by `artMille` = `Obj.sp?`, exact for both spellings, in
+thousandths of the em times `Dim.spPerPt`; the advance divides by the same
+factor, so an integer-valued file's reading is unchanged to the sp.
+Measured on all 77 golden fixtures, run count, total advance and total
+widest: **byte-identical before and after**
+(`leantex-evidence/parity-fix/wprobe-{before,after}.txt`, empty diff). The
+whole effect is on the reference side.
+
+**L5 is measured and deferred, not built.** `ArtRun.glyphs` now carries
+each glyph's own origin — a run is not a comparable unit across writers
+(23 runs against 17 for identical text) — and `Parity.placePairs` matches
+line for line by offset in the line's character stream, skipping a glyph
+the other side spells differently rather than pairing it through, which
+would shift every later glyph on the line. On `prose`, whose lines agree
+exactly (474 glyphs paired, 4 ligature skips): |Δx| p50 0.29 bp, p95 1.58
+bp, max 2.34 bp; |Δy| a uniform 0.725 bp offset (`first-baseline`), and
+after removing that page shift p50 0, p95 0, max 2.46 bp — the max being
+the page number, `number-placement`, measured at 3.18 bp raw. So a 0.5 bp
+level is **not** green: the two engines distribute justification stretch
+differently. The level waits for an arm that says which quantity is held,
+not for a tolerance wide enough to pass. `scripts/parity-measure.lean`
+prints the distribution and stays the probe.
+
+**The rest of the review, done.** `parity` is a `lean_exe` (0.10 s against
+7.4 s interpreted) whose gate is still hermetic — no `IO.Process` in its
+call graph, fonts from `tests/corpus/fonts`, references from the tree.
+`compiles: no` now requires the engine to have left a `!` error line, and
+the verdict is computed by `LeanTex.Cli.PicCache.outcome` rather than a
+second copy of that policy: a kill, a failed spawn and a nonzero exit with
+no error line are `.inconclusive`, and abort the regeneration instead of
+being committed. A reference that has not settled after the last pass is
+refused. An unreadable committed reference aborts as a harness fault rather
+than scoring level 0, which would have read as every fixture falling.
+`--repin` clears a comment-only edit hermetically — the sidecar now pins
+`src-body-key`, the source without its comment lines, so a repin is
+possible exactly when nothing that can move a glyph moved; it fired on this
+commit's own `% diverges:` rename. L3 and L4 read geometry, not painting:
+`linesOf` sorts groups by descending baseline and each line by ascending
+pen, with the paint-order premise gone rather than asserted in prose. L4's
+"same words" claim is corrected to "same scalars", with the reason. The
+missing L2 blind-spot pair is in the selftest. A declaration that excuses
+nothing about the stop now fails, while a fixture that declares nothing is
+judged on its measurement.
+
+**Corrected lead: `-recorder` does not pin the shipped font.** The review
+asks for every in-repo input pinned through `lualatex -recorder`. Measured:
+with a cold luaotfload cache the `.fls` lists
+`../corpus/fonts/OpenSans-Regular.ttf`; with a warm one it lists a `.luc`
+under this host's TeX tree, so the file *both* engines read goes unpinned
+exactly when the machine is warm. The sidecar's `inputs:` is therefore the
+union of the `.fls`'s relative inputs and the shipped fonts the reference
+names by file name, and the gate verifies each key. The log's
+`LaTeX2e <date>` line is recorded beside `engine:` as `format:` — empty for
+a fixture whose reference never reaches it, which the refusing probe shows.
+
+**Routed, not done.**
+
+- `.github/workflows/ci.yml`: CI builds `precommit owed cites leantex Tests
+  Obligations` and should build `parity` and run `parity --selftest` and
+  `parity --check`. Not touched here; the coordinator owns CI.
+- `Tests.lean` / `agent/land`'s gate list: the gate is a compiled binary
+  now, so running it is one line in each.
+- `scripts/Board.lean` (`agent/scoreboard`, unlanded): two implementations
+  of one scoreboard format with opposite rise rules cannot both land. This
+  branch is tight (an unrecorded rise fails) and its writer refuses a fall;
+  `Board.lean` says a rise is an improvement. The decision belongs in
+  `Board.lean` once, for every deterministic tier, and parity should then
+  read `Scoreboard.tierMain` for the `scoreboard: tier=` porcelain line and
+  the `# encoding:` header it does not speak today. A per-item-max merge
+  driver for `tests/scoreboard/*.tsv` would let parallel rises compose;
+  `merge=union` would keep both copies of a row, which the parser rejects.
+- `Tests/Support.lean` `oneFaceOf`: the engine side maps every weight and
+  slot to `OpenSans-Regular` and carries an empty image store, while
+  `engineSide`'s docstring claims the driver's own resolution. The first
+  fixture with `\textbf` would measure that stand-in against a reference
+  setting real bold. The fix is to resolve through the driver's font
+  environment (`LeanTex/Cli/FontEnv.lean`) with `tests/corpus/fonts` as the
+  only root, which keeps the gate hermetic; it is a change to a file shared
+  with every other suite slice, so it is routed rather than taken here.
+- `tests/parity/*.tex -text` in `.gitattributes`: the `.tex` halves are
+  byte-pinned too and an `autocrlf` checkout would move their keys. One
+  line, in the same file as the existing `*.ref.pdf binary` row; left for
+  the coordinator to place with the other attribute decisions.
