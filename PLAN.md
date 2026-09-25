@@ -13231,3 +13231,151 @@ a soft failure into a hard one, and three of this wave's four slices exist to
 pay for that reading. A capability that surfaces losses it cannot yet absorb
 is a capability that arrives half-landed, and the honest sequence is to teach
 the absorption in the same wave as the reading.
+
+
+### 2026-09-25 — a full-bleed fill is a page's ground, and the ground is a palette role
+
+A user asked why their new title page is not dark: the theme declares it, the
+deck builds clean, and the page renders as the built-in. They were right, and
+the answer has two halves — one of which lands here and one of which does not.
+
+**The question.** A theme's title page, written the way real beamer themes
+write one, is a `tikzpicture` under `remember picture, overlay` whose first
+operation fills `(current page.south west) rectangle (current page.north
+east)` and whose remaining operations are nodes anchored to `current page.*`.
+The entry above routed `\setbeamertemplate{title page}` to the native definer,
+so the body reaches rule (b) and is judged by elaborating: this body loses, it
+is refused as W0361, and the built-in title page stands. Hence "it looks great
+as moloch", and hence not dark.
+
+**What is expressible, and it is not an approximation.** `\fill[c] (current
+page.south west) rectangle (current page.north east)` under `overlay` *is*
+"paint this page this colour". That is not a picture that happens to be
+page-sized; it is a background declaration written in TikZ's vocabulary, and
+the engine has had the concept since the standout frame: `[standout]` already
+paints one page a colour the rest of the document does not carry, through
+`.pageStyle` → `B.pageBg` → the full-page `Fill` that `finishPage` prepends.
+So this is a translation into an existing mechanism, not a new field — read
+how `standout` does it before designing anything was the right instruction,
+and the answer was that nothing needed designing.
+
+The declaration is therefore **a palette role**, `titlepagebg` with
+`titlepagefg` beside it, resolved at the one site every role resolves at
+(`Ir.Design.ofPalette` → `Design.titlepage : Option ColorPair`), exactly as
+`standoutbg`/`standoutfg` resolve to `Design.standout`. Consequences worth
+naming, because each is a cost not paid:
+
+- No `Ir` constructor and no field on `.frame`, so no walk arm moves, no
+  backend gains a wildcard, and **no golden moves** — the one golden the wave
+  adds is the new fixture's own.
+- `Option`, like `frametitle` and `progress`: an undeclared title page keeps
+  the document's ground. `Design.titleGround_exact` is the statement that the
+  ground is the declared role and nothing else, which is what makes the
+  contrast judge's verdict a verdict about the author's pair.
+- The ink defaults by **inversion** (`titlepagefg` → the page's `bg`), the
+  same rule `standout` follows, because a declared ground is usually the
+  page's opposite and inverting is what lands light matter on a dark title
+  page with no second declaration. A declared ink wins outright.
+- Identified by its declared distribution — `Layout.titleGround` reads
+  `.golden`, which only `\maketitle` declares — not by a flag a second
+  construct could set.
+
+**No beamer door was added, deliberately.** `\setbeamercolor{title page}`
+would be the obvious spelling, and `beamerColorRoles` refuses it: beamer's own
+colour-element list (beamercolorthemedefault.sty) writes `titlelike`, `title`,
+`part title`, `section title`, `frametitle` — the title's *ink* — and never a
+`title page` ground. A key beamer never writes is a row that can never fire,
+which that table's docstring forbids for a reason. The beamer-side door is the
+TikZ recognition below; `background canvas` already names the document-wide
+`bg`.
+
+**Both artifacts, one declaration.** The PDF paints the page through
+`.pageStyle`; the HTML emits `section.slide.title-page` reading
+`var(--titlepagebg)`, gated on the resolved pair exactly as the frame-title
+bar's rule is gated, against the `:root` property `paletteVars` already writes
+for any declared role. A ground honoured in one artifact and dropped in the
+other is the defect class this wave has been closing, so it is the invariant
+the slice owes: **a page's ground is declared once and both artifacts paint
+it** — `artGroundParityChecks`, the band-parity block's three links over the
+other ground the engine paints, judged on the artifacts (the fill's own colour
+off `Layout.Out`, the typed HTML tree) and never on a dump. The judge was
+broken once in each direction before it was trusted: with the HTML rule
+dropped it reports the stylesheet missing, with the PDF ground dropped it
+reports no page shipping the colour, and it carries fourteen mutants so a
+green corpus is a claim that has been seen to refuse. The `_exact` and
+`_projects` statements behind it are `Design.titleGround_exact`,
+`Layout.titleGround_projects`, and `Layout.finishPage_pageBg_exact` — the last
+being the half `finishPage_bg` deliberately left out: not that *a* fill covers
+the page, but that it carries the colour that declared it.
+
+**The contrast contract, on the real pair.** A dark ground with light ink is
+what `Contrast` exists to judge, and the judge now sees the page: the title
+frame's body is walked under the declared ground, so every use on it is judged
+against the surface it stands on, and `titlePageStep` judges the resolved pair
+per epoch that ships one. The threshold is `aaText`, 4.5:1, not the standout
+frame's large-text 3:1 — a standout frame is all `\Large\bfseries`, while a
+title page carries an author line, an institute and a date at or below the
+body size, so the stricter bound is the one the page needs. Measured on a
+synthetic dark-on-dark pair: N0022 fires naming `'titlepagefg'`, the declared
+ground's own hex, and 4.50:1, and the realized ink reaches the artifact. The
+ground is never realized away — the author's declaration stands and the ink
+moves to meet it, or `\palette[decorative]{ titlepagefg = ... }` says the low
+contrast was meant.
+
+**The floor, item by item.** The idiom is roughly four fifths expressible and
+the remainder is named, not silently dropped:
+
+| the template writes | the engine | why |
+|---|---|---|
+| `\fill[c] (current page.south west) rectangle (current page.north east)` | **translated** — the page's ground | the whole of the declaration; exact, not approximate |
+| `overlay`, `remember picture` | **absorbed by the translation** | they are what make the fill mean "the page"; once the ground is a declaration they have nothing left to say |
+| `text=<colour>` on the title node | **translated** — `titlepagefg` | the ink the ground pairs with |
+| `anchor=north` + `yshift` on a node | **named** (W0334) | the engine distributes the title page by `VDist.golden` and aligns by the `titlepage` style; a per-node offset from a page anchor has no declaration behind it |
+| a node's `text width` given as a fraction of the *paper* | **named** (W0334) | the sourced-width work of 2026-09-24 covers widths relative to the measure, not to the medium |
+| `\usebeamerfont{...}` on a node | **named** | a font element with no styleable engine element behind it (`beamerFontElements` says so) |
+
+A template that is four fifths expressible renders four fifths and names the
+rest, which is the containment principle the picture-conditional and
+node-label floors already landed on.
+
+**What the reference corpus does today, measured.** The deck still builds
+clean — 0 errors, 35 pages — and **its title page is still not dark**, because
+the half that recognises the fill is not this slice's. Two findings from the
+acceptance run, both of which change the handover:
+
+1. Nothing declares `titlepagebg`, so `Design.titlepage` is `none` and the
+   engine correctly paints no ground. The mechanism is complete and unreached.
+2. The refusal is not where the brief expected. The W0361 names the body's
+   trailing `\null`, not the picture subset — so the *whole* body loses before
+   the fill is ever judged as a picture. A recognition that lives only inside
+   the rendered picture subset would therefore still not reach this deck.
+
+**The interface owed, stated for the picture slice.** Two callers, not one,
+and the second is the one the reference deck needs:
+
+- From `Picture.lean`, for a picture that renders: when a picture's operation
+  list contains a fill whose rectangle is the two `current page` corners
+  (either order) and the picture is under `overlay`, hand up
+  `some (colour, remainingOps)` — the ground, and the operations with that
+  fill removed — rather than drawing a page-sized rectangle. The engine wants
+  the colour only; it will install it as `titlepagebg` through
+  `Palette.declare`, and the remaining operations keep whatever floor they
+  already have.
+- From the rule-(b) declarative read-out, for a title body that loses: the
+  read-out already re-reads a refused body for the appearance it carries
+  (rules, weights, alignment — `barScan`). A full-bleed fill is appearance of
+  exactly that kind, and it must be recoverable from a body that loses,
+  because that is the state the reference deck is in. The value wanted is the
+  same: one colour, to be declared as `titlepagebg`.
+
+In both cases the engine's side is already written and needs nothing: the
+declaration is a palette entry, and everything downstream of
+`Ir.Design.ofPalette` is in place and tested.
+
+**Not done, and named rather than assumed.** Content roles are not re-realized
+against the title page's ground: `alert` and `example` re-realize on the
+frame-title bar and the standout inversion (`themeCss`'s scoped custom
+properties, with the PDF's runs through the same solver), and adding the title
+page to that list is a second slice because it owes the PDF-side scope beside
+the CSS one. Until then a content colour that fails on a dark title page is a
+named diagnostic rather than a silent repair, which is the honest floor.
