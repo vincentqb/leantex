@@ -2,7 +2,7 @@
 The scoreboard's core: one committed baseline per goal, each under a
 ratchet. A tier is a file plus its only writer — `tests/scoreboard/<tier>.tsv`
 and `scripts/<tier>.lean` — and the file is the whole claim: `#` lines for
-provenance (tool versions, a date, the encoding; data, never gated), then
+provenance (tool versions, the encoding; data, never gated), then
 `item<TAB>integer` rows, higher is better, sorted and unique.
 
 The tier contract is the exit status of `--check`, and nothing else. That is
@@ -20,24 +20,43 @@ an item on whitespace.
 
 The ratchet, stated once here so every tier obeys the same one:
 
-* a value that drops is a regression;
-* a baselined item that disappears is a regression, unless the committed
-  baseline already retires it by a `# retired: <item> — <why>` line;
+* a value that drops is a regression, unless a lowering request authorises
+  exactly that fall (below);
+* a baselined item that disappears is a regression, unless a `# retired:`
+  line retires it;
 * a value that **rises** fails `--check` too, unrecorded: record it by
   regenerating, in the commit that earned it. A floor allowed to lag the
   tree is a floor that admits a silent fall back to it, and the queue,
   which ranks from committed files, ranks on the stale number. It is the
   rule `subjectDebt` and `siteAccounting` already live under — read in both
   directions, so a row is a migration step and not a parking space;
-* a new item enters at its measured value.
+* a new item enters at its measured value — in a `headroom` tier, against
+  the cap.
 
-Regeneration is the only mode that writes, and it refuses to write a fall
-unless the committed file carries a human-written
-`# lowered: <item> <old>→<new> — <why>` line authorising exactly that fall.
-Retirement and lowering both live in the committed file rather than in a
-producer, because only a human knows *why* a measurement stopped being
-worth making or a floor stopped being holdable; a producer carries both
-kinds of line forward untouched.
+Weakening is a human act with a written reason, in the committed file, and
+each line authorises one act, once. The state of every line is decidable
+from the file alone, which is what keeps every mode hermetic:
+
+* `# lowered: <item> <old>→<new> — <why>` is a **request**. It authorises
+  exactly the fall from the committed value `<old>` to the measured `<new>`,
+  and the regeneration that writes that fall writes the line back as
+  `# lowered (applied): <item> <old>→<new> — <why>`, a **record**. A record
+  authorises nothing, ever: a line carried forward cannot let the same item
+  fall a second time, even between the same two values. A second fall needs
+  a second request, checked against the floor the first one left.
+* `# retired: <item> — <why>` beside the item's row is a request; the
+  regeneration that stops writing the row leaves the same line as the
+  record. A measurement that still produces a retired item is malformed:
+  re-admitting one means deleting its line.
+* `# retired-tier: <why>` in place of every row retires a whole tier: the
+  file stays as its tombstone and the producer is deleted.
+
+A committed file still carrying a request is `stale` under `--check`: it is
+not what a regeneration wrote. `scoreboard --check --base <rev>` holds the
+tree's files to the ones committed at `<rev>` (`judgeBase`): a fall or a
+vanish there needs a line that is new since `<rev>`, which is what stops a
+hand-edited value, or a baseline deleted and regenerated from nothing, from
+laundering one.
 
 The encoding line is read by the queue, so a deficit is computed rather
 than declared: `# encoding: headroom cap=<n>` means the value is
@@ -86,29 +105,51 @@ def Encoding.render : Encoding → String
   | .pairs p w => s!"pairs {p}/{w}"
   | .raw => "raw"
 
-/-- `# lowered: <item> <old>→<new> — <why>`. A fall is a human act: this
-line is what lets a producer write one, and it authorises exactly the fall
-it names. The item may hold spaces, so the arrow pair is read as the last
-token before the reason. -/
+/-- A lowering line's standing: a human's request, which authorises one
+fall in the next regeneration, or the record regeneration leaves once it has
+written that fall, which authorises nothing. -/
+inductive LowerState where
+  | pending
+  | applied
+deriving DecidableEq, Inhabited, Repr
+
+def LowerState.tag : LowerState → String
+  | .pending => "# lowered:"
+  | .applied => "# lowered (applied):"
+
+/-- `# lowered: <item> <old>→<new> — <why>`, or its applied record. The item
+may hold spaces, so the arrow pair is read as the last token before the
+reason. A literal built without a `state` is a request. -/
 structure Lowered where
   item : String
   old : Int
   new : Int
   why : String
+  state : LowerState := .pending
 deriving BEq, Inhabited
+
+def Lowered.render (w : Lowered) : String :=
+  s!"{w.state.tag} {w.item} {w.old}→{w.new} — {w.why}"
+
+/-- The same line whatever its standing: a request and the record it became
+are one human act. -/
+def Lowered.sameLine (a b : Lowered) : Bool :=
+  a.item == b.item && a.old == b.old && a.new == b.new && a.why == b.why
 
 structure Tsv where
   provenance : Array String
   rows : Array Row
   retired : Array (String × String)
-  /-- The falls a human authorised, each naming its own old and new value.
-  Carried forward when a producer regenerates, so the file reads as the
-  history of why its floor moved. -/
+  /-- Every lowering line, requests and records, in file order. Carried
+  forward when a producer regenerates, so the file reads as the history of
+  why its floor moved. -/
   lowered : Array Lowered
   /-- `none`: the tier declares no encoding. It is gated like any other tier
   and the queue does not rank it — a missing hint for a report, not a
   malformed baseline. -/
   encoding : Option Encoding
+  /-- `# retired-tier: <why>`: the file is the tombstone of a retired tier. -/
+  tierRetired : Option String := none
 deriving Inhabited
 
 def tsvPath (tier : String) : String := s!"tests/scoreboard/{tier}.tsv"
@@ -141,12 +182,13 @@ def parseRetired (l : String) : Option (Except String (String × String)) :=
       else some (.ok (item, why))
     | _ => some (.error s!"malformed retirement '{rest}' (want `<item> — <why>`)")
 
-/-- Read a `# lowered:` line: see `Lowered`. -/
+/-- Read a lowering line, either standing: see `Lowered`. -/
 def parseLowered (l : String) : Option (Except String Lowered) :=
-  let pre := "# lowered:"
-  if !l.startsWith pre then none
-  else
-    let rest := ((l.drop pre.length).toString).trimAscii.toString
+  match [LowerState.applied, .pending].find? (fun s => l.startsWith s.tag) with
+  | none => none
+  | some state =>
+    let rest := ((l.drop state.tag.length).toString).trimAscii.toString
+    let bad := s!"malformed lowering '{rest}' (want `<item> <old>→<new> — <why>`)"
     match rest.splitOn "—" with
     | [lhs, why] =>
       let why := why.trimAscii.toString
@@ -162,10 +204,19 @@ def parseLowered (l : String) : Option (Except String Lowered) :=
             if item.isEmpty then some (.error "a lowering naming no item")
             else if why.isEmpty then
               some (.error s!"lowering of '{item}' gives no reason")
-            else some (.ok { item, old := o, new := n, why })
+            else some (.ok { item, old := o, new := n, why, state })
           | _, _ => some (.error s!"lowering of '{item}': '{arrow}' is not `<old>→<new>`")
-        | _ => some (.error s!"malformed lowering '{rest}' (want `<item> <old>→<new> — <why>`)")
-    | _ => some (.error s!"malformed lowering '{rest}' (want `<item> <old>→<new> — <why>`)")
+        | _ => some (.error bad)
+    | _ => some (.error bad)
+
+/-- `# retired-tier: <why>`. -/
+def parseTierRetired (l : String) : Option (Except String String) :=
+  let pre := "# retired-tier:"
+  if !l.startsWith pre then none
+  else
+    let why := ((l.drop pre.length).toString).trimAscii.toString
+    if why.isEmpty then some (.error "a tier retirement gives no reason")
+    else some (.ok why)
 
 def parseEncoding (l : String) : Option (Except String Encoding) :=
   let pre := "# encoding:"
@@ -197,6 +248,7 @@ def parse (text : String) : Except String Tsv := do
   let mut retired : Array (String × String) := #[]
   let mut lowered : Array Lowered := #[]
   let mut encoding : Option Encoding := none
+  let mut tierRetired : Option String := none
   for raw in text.splitOn "\n" do
     let l := raw.trimAscii.toString
     if l.isEmpty then continue
@@ -209,6 +261,9 @@ def parse (text : String) : Except String Tsv := do
       if let some e := parseEncoding l then
         if encoding.isSome then throw "two `# encoding:` lines"
         encoding := some (← e)
+      if let some t := parseTierRetired l then
+        if tierRetired.isSome then throw "two `# retired-tier:` lines"
+        tierRetired := some (← t)
       continue
     let fields := raw.splitOn "\t"
     match fields with
@@ -219,14 +274,49 @@ def parse (text : String) : Except String Tsv := do
       | some v => rows := rows.push { item, value := v }
       | none => throw s!"item '{item}': value '{value.trimAscii.toString}' is not an integer"
     | _ => throw s!"'{l}' is not `item<TAB>integer` ({fields.length} tab-separated fields)"
-  return { provenance, rows, retired, lowered, encoding }
+  return { provenance, rows, retired, lowered, encoding, tierRetired }
 
-/-- Faults about the row set: order, uniqueness, a retirement that
-contradicts a live row, and a lowering the rows do not bear out. Reported
-together so one run names them all. -/
+def Tsv.find? (t : Tsv) (item : String) : Option Int :=
+  (t.rows.find? (·.item == item)).map (·.value)
+
+def Tsv.isRetired (t : Tsv) (item : String) : Bool :=
+  t.retired.any (·.1 == item)
+
+/-- The cap an unseen item is compared against: the `headroom` encoding's,
+and none for any other. -/
+def Tsv.cap? (t : Tsv) : Option Int :=
+  match t.encoding with
+  | some (.headroom cap) => some cap
+  | _ => none
+
+/-- The lowering requests no regeneration has applied yet. -/
+def Tsv.pendingLowerings (t : Tsv) : Array Lowered :=
+  t.lowered.filter (·.state == .pending)
+
+/-- The items the file retires while still holding their rows: retirement
+requests no regeneration has applied yet. -/
+def Tsv.pendingRetirements (t : Tsv) : Array String :=
+  t.retired.filterMap fun (i, _) => if t.rows.any (·.item == i) then some i else none
+
+/-- Faults of a **committed** baseline: order and uniqueness of its rows,
+and the human-written lines judged against the rows they sit beside.
+
+A lowering request must name the fall from the floor this file commits — its
+`<old>` is the item's committed value, or the cap for an item a `headroom`
+tier has not baselined — because that is the only fall it can authorise. A
+record is history and is never held to today's rows: a record that had to
+stay true against every later floor is what wedged a second fall of one item
+(the second staging under one owner module). A retirement beside its row is a
+request, which regeneration applies; `validateFresh` is where a retired item
+that is still measured is a fault. -/
 def validate (t : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
-  if t.rows.isEmpty then out := out.push "no rows"
+  match t.tierRetired with
+  | some _ =>
+    if !t.rows.isEmpty then
+      out := out.push "a retired tier still holds rows (`# retired-tier:` beside a measurement)"
+  | none =>
+    if t.rows.isEmpty then out := out.push "no rows"
   for i in [1:t.rows.size] do
     let prev := t.rows[i-1]!.item
     let cur := t.rows[i]!.item
@@ -238,27 +328,42 @@ def validate (t : Tsv) : Array String := Id.run do
     if seenRetired.contains item then
       out := out.push s!"item '{item}' is retired twice"
     seenRetired := seenRetired.push item
-    if t.rows.any (·.item == item) then
-      out := out.push s!"item '{item}' is retired and also measured"
   for w in t.lowered do
-    if w.new > w.old then
-      out := out.push s!"lowering of '{w.item}' names a rise ({w.old}→{w.new})"
-    match (t.rows.find? (·.item == w.item)).map (·.value) with
-    | some v =>
-      -- The line stays true as the item recovers, and false only where the
-      -- file claims a floor its own rows do not hold.
-      if v < w.new then
-        out := out.push s!"lowering of '{w.item}' says {w.new} but the row says {v}"
-    | none =>
-      if !t.retired.any (·.1 == w.item) then
-        out := out.push s!"lowering of '{w.item}' names no measured or retired item"
+    if w.old ≤ w.new then
+      out := out.push s!"lowering of '{w.item}' names no fall ({w.old}→{w.new})"
+    else if w.state == .pending then
+      match t.find? w.item, t.cap? with
+      | some v, _ =>
+        if v != w.old then
+          out := out.push s!"lowering of '{w.item}' says {w.old}→{w.new} but the \
+committed floor is {v}"
+      | none, some cap =>
+        if cap != w.old then
+          out := out.push s!"lowering of '{w.item}' says {w.old}→{w.new}, but the item \
+is not baselined, so it enters from the cap {cap}"
+      | none, none =>
+        out := out.push s!"lowering of '{w.item}' names no baselined item"
   return out
 
-def Tsv.find? (t : Tsv) (item : String) : Option Int :=
-  (t.rows.find? (·.item == item)).map (·.value)
-
-def Tsv.isRetired (t : Tsv) (item : String) : Bool :=
-  t.retired.any (·.1 == item)
+/-- Faults of a **fresh measurement**, sorted by the caller, judged against
+the committed file it will be compared with. A measured item the committed
+file retires is one: the retirement said the measurement stopped, and it did
+not. Re-admitting the item is deleting its line — a human act, like
+retiring it. -/
+def validateFresh (rows : Array Row) (committed : Option Tsv) : Array String := Id.run do
+  let mut out : Array String := #[]
+  if rows.isEmpty then out := out.push "no rows"
+  for r in rows do
+    if let some f := itemFaults r.item then out := out.push f
+  for i in [1:rows.size] do
+    if rows[i-1]!.item == rows[i]!.item then
+      out := out.push s!"duplicate item '{rows[i]!.item}'"
+  if let some t := committed then
+    for (item, _) in t.retired do
+      if rows.any (·.item == item) then
+        out := out.push s!"item '{item}' is retired and also measured; delete its \
+`# retired:` line to measure it again"
+  return out
 
 /-- One change the ratchet saw, as a value: a judge reads these fields, not
 a rendered sentence. -/
@@ -302,12 +407,11 @@ ranks on the stale number. So a gain is recorded by regenerating, in the
 commit that earned it. -/
 def Delta.checkPasses (d : Delta) : Bool := d.changes.isEmpty
 
-/-- Does a committed lowering authorise this change? Exactly the fall it
-names, by both values — a second fall of the same item needs a second
-line. -/
+/-- Does a lowering line authorise this change? A request authorises exactly
+the fall it names, by item and both values; a record authorises nothing; and
+no lowering authorises a vanish, which is retirement's to answer. -/
 def Lowered.authorises (w : Lowered) : Change → Bool
-  | .fell i o n => w.item == i && w.old == o && w.new == n
-  | .vanished i o => w.item == i && w.old == o
+  | .fell i o n => w.state == .pending && w.item == i && w.old == o && w.new == n
   | _ => false
 
 /-- Compare a fresh measurement against the committed baseline. Retirement
@@ -321,29 +425,273 @@ that, staging an obligation under a new owner module read as an
 improvement — "is the debt going down" answered by the owner field's
 spelling, a typo included — while the same obligation under an existing
 owner was a regression. The rule is the encoding's, so it holds for every
-headroom tier at once. -/
-def ratchet (base now : Tsv) : Delta := Id.run do
-  let mut changes : Array Change := #[]
-  let implicit : Option Int := match base.encoding with
-    | some (.headroom cap) => some cap
-    | _ => none
+headroom tier at once.
+
+Spelled as two `filterMap`s rather than a loop so the statements below can
+read it: the monotone statement and its two companions. -/
+def ratchet (base now : Tsv) : Delta :=
+  { changes :=
+      base.rows.filterMap (fun r =>
+        match now.find? r.item with
+        | some v =>
+          if v < r.value then some (.fell r.item r.value v)
+          else if r.value < v then some (.rose r.item r.value v)
+          else none
+        | none => if base.isRetired r.item then none else some (.vanished r.item r.value)) ++
+      now.rows.filterMap (fun r =>
+        if (base.find? r.item).isSome then none
+        else match base.cap? with
+          | some cap =>
+            if r.value < cap then some (.fell r.item cap r.value)
+            else if cap < r.value then some (.rose r.item cap r.value)
+            else some (.entered r.item r.value)
+          | none => some (.entered r.item r.value)) }
+
+/-- The losses no request in the committed file authorises. Regeneration
+writes only when this is empty, and that one condition is what the three
+statements below are about. -/
+def unauthorised (base now : Tsv) : Array Change :=
+  (ratchet base now).losses.filter fun c => !(base.lowered.any (·.authorises c))
+
+/-- The requests no loss of this measurement answers: a request that
+authorises nothing is refused rather than carried, or it would sit in the
+file waiting to authorise some later fall nobody wrote it for. -/
+def unusedLowerings (base now : Tsv) : Array Lowered :=
+  let losses := (ratchet base now).losses
+  base.pendingLowerings.filter fun w => !(losses.any w.authorises)
+
+/-! ### What the ratchet guarantees
+
+Stated over `unauthorised`, the condition regeneration writes under. -/
+
+/-- A lowering line authorises a change exactly when it is a request and the
+change is the fall it names: never a record, never a vanish, never another
+item's fall or another pair of values. -/
+theorem authorises_exact (w : Lowered) (c : Change) :
+    w.authorises c = true ↔ (w.state = .pending ∧ c = .fell w.item w.old w.new) := by
+  cases c with
+  | fell i o n =>
+    simp only [Lowered.authorises, Bool.and_eq_true, beq_iff_eq, Change.fell.injEq]
+    constructor
+    · rintro ⟨⟨⟨hs, hi⟩, ho⟩, hn⟩
+      exact ⟨hs, hi.symm, ho.symm, hn.symm⟩
+    · rintro ⟨hs, hi, ho, hn⟩
+      exact ⟨⟨⟨hs, hi.symm⟩, ho.symm⟩, hn.symm⟩
+  | rose i o n => simp [Lowered.authorises]
+  | vanished i o => simp [Lowered.authorises]
+  | entered i v => simp [Lowered.authorises]
+
+private theorem authorised_of_unauthorised_empty {base now : Tsv}
+    (h : unauthorised base now = #[]) {c : Change}
+    (hc : c ∈ (ratchet base now).changes) (hl : c.isLoss = true) :
+    ∃ w ∈ base.lowered, w.authorises c = true := by
+  have hmem : c ∈ (ratchet base now).losses := Array.mem_filter.mpr ⟨hc, hl⟩
+  have hnot := (Array.filter_eq_empty_iff.mp h) c hmem
+  have hany : base.lowered.any (·.authorises c) = true := by simpa using hnot
+  obtain ⟨i, hi, hp⟩ := Array.any_eq_true.mp hany
+  exact ⟨_, Array.getElem_mem hi, hp⟩
+
+/-- Every baselined item a regeneration may write either did not fall, or
+fell by exactly the pair of values a request in the committed file names. -/
+theorem ratchet_monotone (base now : Tsv) (h : unauthorised base now = #[]) :
+    ∀ r ∈ base.rows, ∀ v, now.find? r.item = some v →
+      r.value ≤ v ∨ ∃ w ∈ base.lowered,
+        w.state = .pending ∧ w.item = r.item ∧ w.old = r.value ∧ w.new = v := by
+  intro r hr v hv
+  by_cases hlt : v < r.value
+  · right
+    have hc : Change.fell r.item r.value v ∈ (ratchet base now).changes := by
+      unfold ratchet
+      refine Array.mem_append.mpr (.inl (Array.mem_filterMap.mpr ⟨r, hr, ?_⟩))
+      simp [hv, hlt]
+    obtain ⟨w, hw, ha⟩ := authorised_of_unauthorised_empty h hc rfl
+    obtain ⟨hs, heq⟩ := (authorises_exact w _).mp ha
+    simp only [Change.fell.injEq] at heq
+    exact ⟨w, hw, hs, heq.1.symm, heq.2.1.symm, heq.2.2.symm⟩
+  · exact .inl (Int.not_lt.mp hlt)
+
+/-- An item a `headroom` tier has never baselined enters at or above the cap,
+or at exactly the value a request names as a fall from the cap. -/
+theorem ratchet_cap_monotone (base now : Tsv) (h : unauthorised base now = #[])
+    {cap : Int} (hcap : base.cap? = some cap) :
+    ∀ r ∈ now.rows, base.find? r.item = none →
+      cap ≤ r.value ∨ ∃ w ∈ base.lowered,
+        w.state = .pending ∧ w.item = r.item ∧ w.old = cap ∧ w.new = r.value := by
+  intro r hr hn
+  by_cases hlt : r.value < cap
+  · right
+    have hc : Change.fell r.item cap r.value ∈ (ratchet base now).changes := by
+      unfold ratchet
+      refine Array.mem_append.mpr (.inr (Array.mem_filterMap.mpr ⟨r, hr, ?_⟩))
+      simp [hn, hcap, hlt]
+    obtain ⟨w, hw, ha⟩ := authorised_of_unauthorised_empty h hc rfl
+    obtain ⟨hs, heq⟩ := (authorises_exact w _).mp ha
+    simp only [Change.fell.injEq] at heq
+    exact ⟨w, hw, hs, heq.1.symm, heq.2.1.symm, heq.2.2.symm⟩
+  · exact .inl (Int.not_lt.mp hlt)
+
+/-- An item a regeneration stops writing is paid for by a retirement line in
+the committed file: no lowering can stand in for one. -/
+theorem ratchet_accounts (base now : Tsv) (h : unauthorised base now = #[]) :
+    ∀ r ∈ base.rows, now.find? r.item = none → base.isRetired r.item = true := by
+  intro r hr hn
+  cases hret : base.isRetired r.item
+  · exfalso
+    have hc : Change.vanished r.item r.value ∈ (ratchet base now).changes := by
+      unfold ratchet
+      refine Array.mem_append.mpr (.inl (Array.mem_filterMap.mpr ⟨r, hr, ?_⟩))
+      simp [hn, hret]
+    obtain ⟨w, _, ha⟩ := authorised_of_unauthorised_empty h hc rfl
+    simp [Lowered.authorises] at ha
+  · rfl
+
+/-! ### The base check: a floor cannot move unless a new line moves it
+
+`--check` compares the committed files with the measurement, so a floor
+edited down by hand, or a baseline deleted and regenerated from nothing,
+passes it: both files agree with the tree. What they cannot agree with is
+the file committed at the base the branch lands onto. So `judgeBase`
+compares the two committed files, and a fall between them needs lowering
+lines that are **new** since the base — a record carried from the base
+cannot pay twice. -/
+
+/-- The lowering lines the tree's file carries that the base's does not, as
+a multiset: one base line cancels one identical tree line, whatever the
+standing of either. -/
+def newLowerings (base tip : Tsv) : Array Lowered :=
+  let step := fun (acc : List Lowered × Array Lowered) (w : Lowered) =>
+    if acc.1.any (·.sameLine w) then (acc.1.eraseP (·.sameLine w), acc.2)
+    else (acc.1, acc.2.push w)
+  (tip.lowered.foldl step (base.lowered.toList, #[])).2
+
+/-- The items the tree's file retires that the base's did not. -/
+def newRetirements (base tip : Tsv) : Array String :=
+  tip.retired.filterMap fun (i, _) => if base.isRetired i then none else some i
+
+/-- One pass: the lowest `new` among the lines usable from `m`. The value may
+rise freely — rises need no line — so a line whose `old` is at or above `m`
+is usable. -/
+def reachStep (lines : List Lowered) (m : Int) : Int :=
+  lines.foldl (fun acc w => if m ≤ w.old ∧ w.new < acc then w.new else acc) m
+
+/-- The lowest value an item can reach from `c` when it may rise freely and
+fall only along one of `lines`: the composition of the regenerations the
+lines record, with any rises between them. One pass per line reaches the
+fixed point, because each productive pass lands on some line's `new`. -/
+def reach (lines : List Lowered) (c : Int) : Int :=
+  (List.replicate lines.length ()).foldl (fun m _ => reachStep lines m) c
+
+private theorem lowerFold_mem (lines : List Lowered) (c m : Int) :
+    ∀ (l : List Lowered) (acc : Int), (∀ w ∈ l, w ∈ lines) →
+      (acc = c ∨ ∃ w ∈ lines, acc = w.new) →
+      (l.foldl (fun acc w => if m ≤ w.old ∧ w.new < acc then w.new else acc) acc = c ∨
+        ∃ w ∈ lines,
+          l.foldl (fun acc w => if m ≤ w.old ∧ w.new < acc then w.new else acc) acc =
+            w.new) := by
+  intro l
+  induction l with
+  | nil => intro acc _ h; simpa using h
+  | cons x xs ih =>
+    intro acc hsub h
+    simp only [List.foldl_cons]
+    apply ih
+    · intro w hw
+      exact hsub w (List.mem_cons_of_mem x hw)
+    · split
+      · exact .inr ⟨x, hsub x (by simp), rfl⟩
+      · exact h
+
+/-- What `reach` returns is drawn from its inputs: the start, or some line's
+`new` — so nothing is reached that no line wrote. -/
+theorem reach_mem (lines : List Lowered) (c : Int) :
+    reach lines c = c ∨ ∃ w ∈ lines, reach lines c = w.new := by
+  unfold reach
+  have key : ∀ (r : List Unit) (acc : Int), (acc = c ∨ ∃ w ∈ lines, acc = w.new) →
+      (r.foldl (fun m _ => reachStep lines m) acc = c ∨
+        ∃ w ∈ lines, r.foldl (fun m _ => reachStep lines m) acc = w.new) := by
+    intro r
+    induction r with
+    | nil => intro acc h; simpa using h
+    | cons u us ih =>
+      intro acc h
+      simp only [List.foldl_cons]
+      apply ih
+      unfold reachStep
+      exact lowerFold_mem lines c acc lines acc (fun _ hw => hw) h
+  exact key _ c (.inl rfl)
+
+/-- One baselined item's verdict under the base check: it held `c` at the
+base; `tip` is its value in the tree. It may rise, fall only as far as the
+new lines reach, and vanish only where `vanishOk` says a new retirement pays
+for it. -/
+def itemAccepted (c : Int) (tip : Option Int) (lines : List Lowered) (vanishOk : Bool) :
+    Bool :=
+  match tip with
+  | some v => decide (c ≤ v) || decide (reach lines c ≤ v)
+  | none => vanishOk
+
+/-- A value the base check accepts either did not fall, or fell no further
+than some new line goes: every accepted fall is paid for by a line written
+since the base. -/
+theorem itemAccepted_monotone (c v : Int) (lines : List Lowered) (b : Bool)
+    (h : itemAccepted c (some v) lines b = true) :
+    c ≤ v ∨ ∃ w ∈ lines, w.new ≤ v := by
+  simp only [itemAccepted, Bool.or_eq_true, decide_eq_true_eq] at h
+  rcases h with h | h
+  · exact .inl h
+  · rcases reach_mem lines c with he | ⟨w, hw, he⟩
+    · exact .inl (he ▸ h)
+    · exact .inr ⟨w, hw, he ▸ h⟩
+
+/-- Every way the tree's committed file moved a floor the base's file held
+without a line written since the base to pay for it. -/
+def baseFaults (base tip : Tsv) : Array String := Id.run do
+  let mut out : Array String := #[]
+  match base.encoding, tip.encoding with
+  | some a, some b =>
+    if a != b then
+      out := out.push s!"the encoding changed from `{a.render}` to `{b.render}`; values \
+under two encodings are not comparable, so no floor can be held"
+  | _, _ => pure ()
+  let lines := newLowerings base tip
+  let retiredNow := newRetirements base tip
+  let tombstoned := tip.tierRetired.isSome && base.tierRetired.isNone
   for r in base.rows do
-    match now.find? r.item with
-    | some v =>
-      if v < r.value then changes := changes.push (.fell r.item r.value v)
-      else if v > r.value then changes := changes.push (.rose r.item r.value v)
-    | none =>
-      if !base.isRetired r.item then
-        changes := changes.push (.vanished r.item r.value)
-  for r in now.rows do
-    if (base.find? r.item).isNone then
-      match implicit with
-      | some cap =>
-        if r.value < cap then changes := changes.push (.fell r.item cap r.value)
-        else if r.value > cap then changes := changes.push (.rose r.item cap r.value)
-        else changes := changes.push (.entered r.item r.value)
-      | none => changes := changes.push (.entered r.item r.value)
-  return { changes }
+    let mine := (lines.filter (·.item == r.item)).toList
+    let vanishOk := retiredNow.contains r.item || tombstoned
+    if !itemAccepted r.value (tip.find? r.item) mine vanishOk then
+      match tip.find? r.item with
+      | some v =>
+        out := out.push s!"{r.item} fell {r.value} → {v} and no lowering line written \
+since the base reaches {v}"
+      | none =>
+        out := out.push s!"{r.item}, baselined at {r.value}, is gone and no `# retired:` \
+line was written for it since the base"
+  if let some cap := base.cap? then
+    for r in tip.rows do
+      if (base.find? r.item).isNone then
+        let mine := (lines.filter (·.item == r.item)).toList
+        if !itemAccepted cap (some r.value) mine false then
+          out := out.push s!"{r.item} entered at {r.value}, below the cap {cap}, and no \
+lowering line written since the base reaches it"
+  return out
+
+/-- The base check for one tier, from the two texts: the result word and its
+reasons. A baseline committed at the base that the tree no longer carries is
+a fault — deleting the file was the other way to discard a floor — and a
+whole tier is retired only by its tombstone. -/
+def judgeBase (baseText : String) (tipExists : Bool) (tipText : String) :
+    String × Array String :=
+  if !tipExists then
+    ("fault", #["the baseline committed at the base is gone from the tree; a tier is \
+retired by a `# retired-tier: <why>` tombstone in its file, never by deleting it"])
+  else
+    match parse baseText, parse tipText with
+    | .error e, _ => ("fault", #[s!"the base's baseline does not read: {e}"])
+    | _, .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
+    | .ok b, .ok t =>
+      let fs := baseFaults b t
+      if fs.isEmpty then ("ok", #[]) else ("laundered", fs)
 
 /-- Render a baseline: provenance first (retirement lines among it, carried
 forward), then the sorted rows. -/
@@ -561,18 +909,21 @@ def contentKey (blobs : Array (String × ByteArray)) : String := Id.run do
 /-- The three modes every tier producer shares, so no tier can differ in
 what its `--check` means:
 
-* no argument — regenerate the baseline from a fresh measurement, carrying
-  the retirement and lowering lines forward. A fall is written only where a
-  committed `# lowered: <item> <old>→<new> — <why>` line authorises exactly
-  that fall; otherwise nothing is written and the exact line to add is
-  printed. Weakening a statement is a human act, so a human writes the
-  reason, in the file.
+* no argument — regenerate the baseline from a fresh measurement. A fall is
+  written only where a request in the committed file authorises exactly
+  that fall, and a vanish only where a `# retired:` line retires the item;
+  otherwise nothing is written and the exact line to add is printed. A
+  request no loss answers is refused too, rather than carried to authorise
+  some later fall. What is written carries every line forward, each request
+  it applied as a record.
 * `--check` — measure, compare against the committed baseline, write
   nothing. The gated mode: hermetic, in-repo data only. An absent or empty
   baseline is a **fault** here: with nothing to compare against every row
   reads as new, so emptying the file used to pass the gate and silently
   discard the floor. Only regeneration may start from nothing. Any change
-  fails, a rise included — record it by regenerating.
+  fails, a rise included — record it by regenerating — and so does a
+  committed file still carrying a request (`stale`: it is not what a
+  regeneration wrote).
 * `--selftest` — the tier's own predicates against hand-written inputs.
 
 `measure` returns the provenance lines specific to this tier (tool versions,
@@ -584,64 +935,78 @@ def tierMain (tier : String) (enc : Encoding)
   let path := tsvPath tier
   let old := (← readFileOr path)
   let checking := args.contains "--check"
-  if old.trimAscii.isEmpty && checking then
-    IO.eprintln s!"scoreboard: {path} is absent or empty, so there is no floor to \
-check against; regenerate: lake env lean --run scripts/{tier}.lean"
+  let fault (why : Array String) : IO UInt32 := do
+    for w in why do IO.eprintln w
     IO.println (tierLine tier 0 0 0 "fault")
     return 2
+  if old.trimAscii.isEmpty && checking then
+    return (← fault #[s!"scoreboard: {path} is absent or empty, so there is no floor \
+to check against; regenerate: lake env lean --run scripts/{tier}.lean"])
   let baseline : Option Tsv ←
-    if old.isEmpty then pure none
+    if old.trimAscii.isEmpty then pure none
     else match parse old with
       | .ok t =>
         let faults := validate t
-        if faults.isEmpty then pure (some t)
-        else
-          IO.eprintln s!"scoreboard: {path} is malformed:"
-          for f in faults do IO.eprintln s!"  {f}"
-          IO.println (tierLine tier 0 0 0 "fault")
-          return 2
-      | .error e =>
-        IO.eprintln s!"scoreboard: {path}: {e}"
-        IO.println (tierLine tier 0 0 0 "fault")
-        return 2
-  let (extra, rows) ← measure
-  let fresh : Tsv :=
-    { provenance := #[], rows := rows.qsort (fun a b => a.item < b.item)
-      retired := (baseline.map (·.retired)).getD #[]
-      lowered := (baseline.map (·.lowered)).getD #[], encoding := some enc }
-  let freshFaults := validate fresh
+        if !faults.isEmpty then
+          return (← fault (#[s!"scoreboard: {path} is malformed:"] ++ faults.map (s!"  {·}")))
+        if t.tierRetired.isSome then
+          return (← fault #[s!"scoreboard: {path} retires this tier (`# retired-tier:`), \
+but {scriptPath tier} still measures it; delete the producer"])
+        pure (some t)
+      | .error e => return (← fault #[s!"scoreboard: {path}: {e}"])
+  let (extra, measured) ← measure
+  let rows := measured.qsort (fun a b => a.item < b.item)
+  let freshFaults := validateFresh rows baseline
   if !freshFaults.isEmpty then
     -- A tier that measured nothing has already said why on stderr — a
     -- missing input, a freshness key that no longer matches. Reporting it
     -- as a malformation would bury that reason under a format complaint.
     if freshFaults == #["no rows"] then
-      IO.eprintln s!"scoreboard: {tier} measured nothing, so there is no \
-comparison to make; the reason is above"
-    else
-      IO.eprintln s!"scoreboard: the fresh {tier} measurement is malformed:"
-      for f in freshFaults do IO.eprintln s!"  {f}"
-    IO.println (tierLine tier 0 0 0 "fault")
-    return 2
+      return (← fault #[s!"scoreboard: {tier} measured nothing, so there is no \
+comparison to make; the reason is above"])
+    return (← fault (#[s!"scoreboard: the fresh {tier} measurement is malformed:"] ++
+      freshFaults.map (s!"  {·}")))
+  let fresh : Tsv :=
+    { provenance := #[], rows, retired := (baseline.map (·.retired)).getD #[]
+      lowered := (baseline.map (·.lowered)).getD #[], encoding := some enc }
   let d : Delta := match baseline with
     | none => { changes := fresh.rows.map (fun r => .entered r.item r.value) }
     | some b => ratchet b fresh
+  let unauth := match baseline with
+    | none => #[]
+    | some b => unauthorised b fresh
+  let unused := match baseline with
+    | none => #[]
+    | some b => unusedLowerings b fresh
+  let pendingL := match baseline with
+    | none => #[]
+    | some b => b.pendingLowerings
+  let pendingR := match baseline with
+    | none => #[]
+    | some b => b.pendingRetirements
+  let authorised := d.losses.filter (!unauth.contains ·)
   if !checking then
-    -- A fall is written only where the committed file already authorises
-    -- exactly that fall. Writing one silently is how a floor gets weakened
-    -- with no reason anyone can read later.
-    let unauthorised := d.losses.filter fun c =>
-      !(fresh.lowered.any (·.authorises c))
-    if !unauthorised.isEmpty then
-      IO.eprintln s!"scoreboard: refusing to write {path}: \
-{unauthorised.size} value(s) would fall with nothing authorising it."
-      for c in unauthorised do
-        IO.eprintln s!"scoreboard:   {c.describe}"
-        match c with
-        | .fell i o n => IO.eprintln s!"scoreboard:   add: # lowered: {i} {o}→{n} — <why>"
-        | .vanished i o =>
-          IO.eprintln s!"scoreboard:   add: # retired: {i} — <why>  \
-(or # lowered: {i} {o}→<new> — <why>)"
-        | _ => pure ()
+    -- A fall is written only where the committed file already requests
+    -- exactly that fall, and the request is spent in the writing: it goes
+    -- back into the file as a record, which authorises nothing again.
+    if !unauth.isEmpty || !unused.isEmpty then
+      if !unauth.isEmpty then
+        IO.eprintln s!"scoreboard: refusing to write {path}: {unauth.size} value(s) \
+would fall with nothing authorising it."
+        for c in unauth do
+          IO.eprintln s!"scoreboard:   {c.describe}"
+          match c with
+          | .fell i o n => IO.eprintln s!"scoreboard:   add: # lowered: {i} {o}→{n} — <why>"
+          | .vanished i _ => IO.eprintln s!"scoreboard:   add: # retired: {i} — <why>"
+          | _ => pure ()
+      if !unused.isEmpty then
+        IO.eprintln s!"scoreboard: refusing to write {path}: {unused.size} `# lowered:` \
+request(s) authorise no fall this measurement makes; correct or delete each:"
+        for w in unused do
+          let now := match fresh.find? w.item with
+            | some v => s!"it measures {v}"
+            | none => "it is not measured"
+          IO.eprintln s!"scoreboard:   {w.render}  ({now})"
       IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size "regressed")
       return 1
     let mut header : Array String := #[
@@ -652,25 +1017,38 @@ lake env lean --run scripts/{tier}.lean",
     for (item, why) in fresh.retired do
       header := header.push s!"# retired: {item} — {why}"
     for w in fresh.lowered do
-      header := header.push s!"# lowered: {w.item} {w.old}→{w.new} — {w.why}"
+      header := header.push { w with state := .applied }.render
     IO.FS.writeFile path (render header fresh.rows)
     IO.println s!"scoreboard: wrote {path} ({fresh.rows.size} items)"
-  for c in d.losses do IO.eprintln s!"scoreboard: {tier} regressed: {c.describe}"
+    for c in authorised do
+      IO.eprintln s!"scoreboard: {tier} lowered, as requested: {c.describe}"
+    for i in pendingR do IO.println s!"scoreboard: {tier} retired: {i}"
+    for c in d.gains do IO.println s!"scoreboard: {tier} improved: {c.describe}"
+    IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size "ok")
+    return 0
+  for c in unauth do IO.eprintln s!"scoreboard: {tier} regressed: {c.describe}"
+  for c in authorised do
+    IO.eprintln s!"scoreboard: {tier}: {c.describe} is requested by a `# lowered:` line \
+no regeneration has applied; regenerate: lake env lean --run scripts/{tier}.lean"
+  for w in unused do
+    IO.eprintln s!"scoreboard: {tier}: {path} carries a request no fall answers: \
+{w.render}; correct or delete it"
+  for i in pendingR do
+    IO.eprintln s!"scoreboard: {tier}: {path} retires '{i}' and still holds its row; \
+regenerate: lake env lean --run scripts/{tier}.lean"
   for c in d.gains do IO.println s!"scoreboard: {tier} improved: {c.describe}"
-  -- `stale`, not `regressed`: the tree is ahead of its own floor. The
-  -- aggregate gates it all the same, because a floor that lags admits a
-  -- silent fall back to it.
+  -- `stale`, not `regressed`: the tree is ahead of its own floor, or the file
+  -- still carries a request. The aggregate gates it all the same, because a
+  -- floor that lags admits a silent fall back to it.
   let result :=
-    if !checking || d.checkPasses then "ok"
-    else if d.losses.isEmpty then "stale" else "regressed"
-  if checking && !d.gains.isEmpty && d.losses.isEmpty then
+    if !unauth.isEmpty then "regressed"
+    else if !d.changes.isEmpty || !pendingL.isEmpty || !pendingR.isEmpty then "stale"
+    else "ok"
+  if result == "stale" && !d.gains.isEmpty then
     IO.eprintln s!"scoreboard: {tier}: the floor is behind the measurement; \
 record it: lake env lean --run scripts/{tier}.lean"
   IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size result)
-  if checking then return (if d.checkPasses then 0 else 1)
-  -- Regenerating with every fall authorised is the intended act, so it is
-  -- a clean exit: the reason is in the file the writer just committed.
-  return 0
+  return (if result == "ok" then 0 else 1)
 
 /-- Build every corpus fixture to HTML with the committed binary and key the
 bytes. The freshness question a browser matrix cannot answer for itself: the

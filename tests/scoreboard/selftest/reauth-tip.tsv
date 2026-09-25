@@ -1,0 +1,6 @@
+# hand-written: alpha fell to 995 again with only the record carried from the base, no new line
+# encoding: headroom cap=1000
+# lowered (applied): alpha 998→995 — an invented reason, so the fixture is self-contained
+alpha	995
+bravo	1000
+charlie	7

@@ -1,0 +1,7 @@
+# hand-written: a second fall of one item requested, the first fall's record beside it
+# encoding: headroom cap=1000
+# lowered (applied): alpha 998→995 — an invented first reason
+# lowered: alpha 995→990 — an invented second reason
+alpha	995
+bravo	1000
+charlie	7

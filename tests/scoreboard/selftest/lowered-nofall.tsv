@@ -1,0 +1,4 @@
+# hand-written: a lowering request that names a rise
+# encoding: headroom cap=1000
+# lowered: alpha 997→998 — an invented reason
+alpha	997

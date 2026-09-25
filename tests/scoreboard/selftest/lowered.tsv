@@ -1,6 +1,6 @@
-# hand-written: clean's rows with alpha lowered, and the line authorising it
+# hand-written: clean's rows with a request to lower alpha, as a human writes it before regenerating
 # encoding: headroom cap=1000
 # lowered: alpha 998→995 — an invented reason, so the fixture is self-contained
-alpha	995
+alpha	998
 bravo	1000
 charlie	7

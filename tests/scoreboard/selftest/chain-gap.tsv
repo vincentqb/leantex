@@ -1,0 +1,7 @@
+# hand-written: two records that leave the fall from 995 to 994 unwritten
+# encoding: headroom cap=1000
+# lowered (applied): alpha 998→995 — an invented first reason
+# lowered (applied): alpha 994→990 — an invented second reason
+alpha	990
+bravo	1000
+charlie	7
