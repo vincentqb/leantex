@@ -2,82 +2,58 @@
 # public corpus, ranked by the documents they hold back. A report, never a
 # gate. sole: documents this construct alone blocks. share: thousandths of
 # a document summed over the documents it blocks, splitting each document
-# between its blockers. docs: documents it appears in. owner: what defines
-# it (primitive | document | class:<c> | kernel | pkg:<p> | unattributed).
-# No corpus document is committed; this table carries no document text.
+# between its blockers. docs: documents it appears in. kind: the subject
+# namespace (ctrl | env | aggregate). owner: what defines it (primitive |
+# kernel | class:<c> | pkg:<p>, or an aggregate row for the rest).
+# A construct is named only when something public defines it; a name the
+# document itself chose, or one the definer scan could not attribute, is
+# folded into an aggregate row carrying counts and no name. No corpus
+# document is committed and this table carries no document text.
+# "Blocked" means "has at least one unknown construct", which is narrower
+# than the parity ladder's T0: a document that elaborates with errors and
+# no unknown name is unblocked here and still fails T0.
 # corpus: 50 lualatex-buildable document(s), 14 with at least one blocker
+# errored but unblocked: 33 document(s) — the T0 gap this table does not rank
+# names folded into aggregate rows: 35
 # screened-by: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 # date: 2026-09-25
-construct	owner	sole	share	docs
-setRTLmain	pkg:luabidi	1	1000	1
-@	kernel	0	999	3
-em	unattributed	0	999	3
-verse	class:article	0	999	3
-description	class:article	0	832	3
-LPPLicense	unattributed	0	666	2
-endinput	primitive	0	666	2
-foreach	unattributed	0	500	1
-n	unattributed	0	500	1
-addtolength	kernel	0	400	2
-newwrite	kernel	0	400	2
-typeout	kernel	0	400	2
-verbatim*	unattributed	0	400	2
-verbatim@out	unattributed	0	400	2
-ProvidesFile	kernel	0	377	4
-LaTeXe	kernel	0	166	1
-M	unattributed	0	166	2
-NeedsTeXFormat	kernel	0	166	1
-PF	document	0	166	2
-^	unattributed	0	166	2
-active	unattributed	0	166	2
-begingroup	primitive	0	166	2
-catcode	primitive	0	166	2
-endgroup	primitive	0	166	2
-endlinechar	primitive	0	166	2
-hspace	unattributed	0	166	1
-let	primitive	0	166	2
-longtable	pkg:longtable	0	166	2
-markright	unattributed	0	166	2
-newline	pkg:hyperref	0	166	1
-hbox	primitive	0	90	2
- 	unattributed	0	45	1
-AddToNoVerbList	pkg:niceverb	0	45	1
-AutoCmdInput	pkg:niceverb	0	45	1
-HeaderLines	pkg:makedoc	0	45	1
-LaTeXresultFile	pkg:makedoc	0	45	1
-MainDocParser	pkg:makedoc	0	45	1
-MakeCloseDoc	pkg:makedoc	0	45	1
-MakeExpandableAllReplacer	unattributed	0	45	1
-MakeOther	unattributed	0	45	1
-PrependExpandableAllReplacer	unattributed	0	45	1
-RaggedRight	pkg:ragged2e	0	45	1
-ResetPatternCodes	unattributed	0	45	1
-SetCorrectHookJobLast	unattributed	0	45	1
-SetPatternCodes	unattributed	0	45	1
-baselineskip	primitive	0	45	1
-colormixin	pkg:xxcolor	0	45	1
-enlargethispage	unattributed	0	45	1
-lq	kernel	0	45	1
-markboth	unattributed	0	45	1
-pgfbox	unattributed	0	45	1
-pgfclip	unattributed	0	45	1
-pgfclosepath	unattributed	0	45	1
-pgfcurveto	unattributed	0	45	1
-pgfdeclarehorizontalshading	unattributed	0	45	1
-pgfdeclareverticalshading	unattributed	0	45	1
-pgflineto	unattributed	0	45	1
-pgfmoveto	unattributed	0	45	1
-pgfpicture	unattributed	0	45	1
-pgfpoint	unattributed	0	45	1
-pgfputat	unattributed	0	45	1
-pgfrotateby	unattributed	0	45	1
-pgfscope	unattributed	0	45	1
-pgfsetlinewidth	unattributed	0	45	1
-pgfsetroundjoin	unattributed	0	45	1
-pgfsetxvec	unattributed	0	45	1
-pgfsetyvec	unattributed	0	45	1
-pgfstroke	unattributed	0	45	1
-pgfuseshading	unattributed	0	45	1
-pgfxy	unattributed	0	45	1
-slash	kernel	0	45	1
-tt	unattributed	0	45	1
+kind	construct	owner	sole	share	docs
+ctrl	setRTLmain	pkg:luabidi	1	1000	1
+aggregate	(unattributed)	unattributed	0	3226	36
+ctrl	@	kernel	0	999	3
+env	em	kernel	0	999	3
+env	verse	class:article	0	999	3
+aggregate	(document)	document	0	832	4
+env	description	class:article	0	832	3
+ctrl	endinput	primitive	0	666	2
+ctrl	addtolength	kernel	0	400	2
+ctrl	newwrite	kernel	0	400	2
+ctrl	typeout	kernel	0	400	2
+ctrl	ProvidesFile	kernel	0	377	4
+ctrl	LaTeXe	kernel	0	166	1
+ctrl	NeedsTeXFormat	kernel	0	166	1
+ctrl	^	kernel	0	166	2
+ctrl	active	kernel	0	166	2
+ctrl	begingroup	primitive	0	166	2
+ctrl	catcode	primitive	0	166	2
+ctrl	endgroup	primitive	0	166	2
+ctrl	endlinechar	primitive	0	166	2
+ctrl	hspace	kernel	0	166	1
+ctrl	let	primitive	0	166	2
+env	longtable	pkg:longtable	0	166	2
+ctrl	markright	kernel	0	166	2
+ctrl	newline	kernel	0	166	1
+ctrl	hbox	primitive	0	90	2
+ctrl	 	pkg:hyperref	0	45	1
+ctrl	AddToNoVerbList	pkg:niceverb	0	45	1
+ctrl	AutoCmdInput	pkg:niceverb	0	45	1
+ctrl	HeaderLines	pkg:makedoc	0	45	1
+ctrl	LaTeXresultFile	pkg:makedoc	0	45	1
+ctrl	MainDocParser	pkg:makedoc	0	45	1
+ctrl	MakeCloseDoc	pkg:makedoc	0	45	1
+ctrl	RaggedRight	pkg:ragged2e	0	45	1
+ctrl	baselineskip	primitive	0	45	1
+env	colormixin	pkg:xxcolor	0	45	1
+ctrl	lq	kernel	0	45	1
+ctrl	markboth	kernel	0	45	1
+ctrl	slash	kernel	0	45	1

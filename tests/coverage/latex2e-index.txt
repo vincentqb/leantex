@@ -3,13 +3,23 @@
 # by lualatex to be a control sequence LaTeX defines, and classified by the
 # meaning lualatex reports. Fields: name, manual chapter, lualatex meaning.
 # A `math_given` row is a math-mode symbol command and is excluded from the
-# count; it is kept here so the exclusion is visible and countable.
-# Regenerate with scripts/coverage.lean --denominator; never hand-edit.
+# count; it is kept here so the exclusion is visible and countable. The
+# confirmation runs under bare classes with no packages loaded, because under
+# amsmath seven of those symbols are macros and the exclusion would then
+# depend on what the confirmation happened to load.
+# The manual is © its authors and permits verbatim and modified copies under
+# its own notice; what is kept here is command names, chapter titles and
+# lualatex meaning classes, and no prose.
+# Regenerate with scripts/coverage.lean --denominator <latex2e.texi>; never
+# hand-edit. The row count and body stamp below are checked by --check.
 # manual: latex2e-help-texinfo latex2e.texi, sha256 0202a1fe2b174a3b8e79c901491325cbced80022433d02115cddabf349e23603
+# manual-source: https://mirrors.ctan.org/info/latex2e-help-texinfo/latex2e.texi
 # manual-id: @c $Id: latex2e.texi 1257 2026-06-09 14:53:04Z karl $
 # confirmed-by: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
-# confirmed-under: \documentclass{article} and {book}, amsmath + amssymb
-# candidates: 922 indexed names, 858 confirmed defined
+# confirmed-under: bare \documentclass{article} and {book}, no packages
+# candidates: 925
+# rows: 855
+# body: 24939 bytes, adler32 0000000048BDDA65
 !	Math formulas	call
 "	Special insertions	call
 #	Special insertions	char_given
@@ -28,6 +38,7 @@ $	Special insertions	call
 ;	Math formulas	call
 =	Environments	call
 >	Environments	call
+@	Sectioning	call
 AA	Special insertions	call
 AE	Special insertions	call
 Alph	Environments	call
@@ -37,7 +48,7 @@ AtEndDocument	Environments	call
 AtEndDvi	Definitions	long_call
 AtEndOfClass	Definitions	call
 AtEndOfPackage	Definitions	call
-Box	Math formulas	math_given
+Box	Math formulas	call
 CheckCommand	Definitions	call
 ClassError	Definitions	call
 ClassInfo	Definitions	call
@@ -60,8 +71,8 @@ DeclareTextCompositeCommand	Fonts	call
 DeclareTextSymbol	Fonts	call
 DeclareTextSymbolDefault	Fonts	call
 Delta	Math formulas	math_given
-Diamond	Math formulas	math_given
-DocumentMetadata	Overview of @LaTeX{}	call
+Diamond	Math formulas	call
+DocumentMetadata	Overview of LaTeX	call
 Downarrow	Math formulas	call
 ExecuteOptions	Definitions	call
 Gamma	Math formulas	math_given
@@ -147,7 +158,7 @@ alph	Counters	call
 alpha	Math formulas	math_given
 amalg	Math formulas	math_given
 and	Page styles	call
-angle	Math formulas	math_given
+angle	Math formulas	call
 appendix	Sectioning	call
 approx	Math formulas	math_given
 arabic	Counters	call
@@ -178,22 +189,22 @@ bibliographystyle	Environments	call
 bibname	Environments	call
 bibstyle	Environments	long_call
 bigbreak	Spaces	call
-bigcap	Math formulas	call
+bigcap	Math formulas	math_given
 bigcirc	Math formulas	math_given
-bigcup	Math formulas	call
+bigcup	Math formulas	math_given
 bigl	Math formulas	call
-bigodot	Math formulas	call
-bigoplus	Math formulas	call
-bigotimes	Math formulas	call
+bigodot	Math formulas	math_given
+bigoplus	Math formulas	math_given
+bigotimes	Math formulas	math_given
 bigr	Math formulas	call
 bigskip	Spaces	call
 bigskipamount	Spaces	assign_glue
-bigsqcup	Math formulas	call
+bigsqcup	Math formulas	math_given
 bigtriangledown	Math formulas	math_given
 bigtriangleup	Math formulas	math_given
-biguplus	Math formulas	call
-bigvee	Math formulas	call
-bigwedge	Math formulas	call
+biguplus	Math formulas	math_given
+bigvee	Math formulas	math_given
+bigwedge	Math formulas	math_given
 bmod	Math formulas	call
 boldmath	Math formulas	call
 bot	Math formulas	math_given
@@ -236,14 +247,13 @@ cline	Environments	call
 closein	Input/output	in_stream
 closeout	Input/output	extension
 clubsuit	Math formulas	math_given
-colon	Math formulas	call
+colon	Math formulas	math_given
 columnsep	Layout	assign_dimen
 columnseprule	Layout	assign_dimen
 columnwidth	Layout	assign_dimen
-complement	Math formulas	math_given
 cong	Math formulas	call
 contentsline	Front/back matter	call
-coprod	Math formulas	call
+coprod	Math formulas	math_given
 copyright	Special insertions	call
 cos	Math formulas	call
 cosh	Math formulas	call
@@ -283,9 +293,6 @@ dot	Math formulas	call
 doteq	Math formulas	call
 dotfill	Spaces	call
 dots	Math formulas	call
-dotsb	Math formulas	call
-dotsc	Math formulas	call
-dotsi	Math formulas	call
 doublerulesep	Environments	assign_dimen
 downarrow	Math formulas	call
 ell	Math formulas	math_given
@@ -348,7 +355,7 @@ guillemotright	Special insertions	call
 guilsinglleft	Special insertions	call
 guilsinglright	Special insertions	call
 hat	Math formulas	call
-hbar	Math formulas	math_given
+hbar	Math formulas	call
 headheight	Layout	assign_dimen
 headsep	Layout	assign_dimen
 heartsuit	Math formulas	math_given
@@ -417,7 +424,7 @@ lbrack	Math formulas	call
 lceil	Math formulas	call
 ldots	Math formulas	call
 le	Math formulas	math_given
-leadsto	Math formulas	math_given
+leadsto	Math formulas	call
 left	Math formulas	left_right
 leftarrow	Math formulas	math_given
 lefteqn	Environments	call
@@ -434,7 +441,7 @@ leftrightarrow	Math formulas	math_given
 leq	Math formulas	math_given
 lfloor	Math formulas	call
 lg	Math formulas	call
-lhd	Math formulas	math_given
+lhd	Math formulas	call
 lim	Math formulas	call
 liminf	Math formulas	call
 limsup	Math formulas	call
@@ -497,7 +504,7 @@ medskip	Spaces	call
 medskipamount	Spaces	assign_glue
 medspace	Math formulas	call
 message	Input/output	message
-mho	Math formulas	math_given
+mho	Math formulas	call
 mid	Math formulas	math_given
 min	Math formulas	call
 models	Math formulas	call
@@ -567,7 +574,7 @@ otimes	Math formulas	math_given
 oval	Environments	call
 overbrace	Math formulas	call
 overleftarrow	Math formulas	call
-overline	Math formulas	call
+overline	Math formulas	math_comp
 overrightarrow	Math formulas	call
 owns	Math formulas	math_given
 pagebreak	Page breaking	call
@@ -598,7 +605,7 @@ prec	Math formulas	math_given
 preceq	Math formulas	math_given
 prevdepth	Layout	set_aux
 prime	Math formulas	math_given
-prod	Math formulas	call
+prod	Math formulas	math_given
 propto	Math formulas	math_given
 protect	Definitions	relax
 protected	Input/output	prefix
@@ -627,16 +634,15 @@ refstepcounter	Counters	call
 renewcommand	Definitions	call
 renewenvironment	Definitions	call
 restorecr	Line breaking	call
-restriction	Math formulas	math_given
 reversemarginpar	Making paragraphs	call
 rfloor	Math formulas	call
-rhd	Math formulas	math_given
+rhd	Math formulas	call
 rho	Math formulas	math_given
 right	Math formulas	left_right
 rightarrow	Math formulas	math_given
 rightharpoondown	Math formulas	math_given
 rightharpoonup	Math formulas	math_given
-rightleftharpoons	Math formulas	math_given
+rightleftharpoons	Math formulas	call
 rightmargin	Environments	assign_dimen
 rm	Fonts	call
 rmfamily	Fonts	call
@@ -689,9 +695,9 @@ spadesuit	Math formulas	math_given
 sqcap	Math formulas	math_given
 sqcup	Math formulas	math_given
 sqrt	Math formulas	call
-sqsubset	Math formulas	math_given
+sqsubset	Math formulas	call
 sqsubseteq	Math formulas	math_given
-sqsupset	Math formulas	math_given
+sqsupset	Math formulas	call
 sqsupseteq	Math formulas	math_given
 ss	Special insertions	call
 stackrel	Math formulas	call
@@ -709,7 +715,7 @@ subsubitem	Front/back matter	call
 subsubsection	Sectioning	call
 succ	Math formulas	math_given
 succeq	Math formulas	math_given
-sum	Math formulas	call
+sum	Math formulas	math_given
 sup	Math formulas	call
 suppressfloats	Layout	call
 supset	Math formulas	math_given
@@ -823,11 +829,10 @@ underbar	Special insertions	call
 underbrace	Math formulas	call
 underline	Math formulas	call
 unitlength	Environments	assign_dimen
-unlhd	Math formulas	math_given
-unrhd	Math formulas	math_given
+unlhd	Math formulas	call
+unrhd	Math formulas	call
 uparrow	Math formulas	call
 updownarrow	Math formulas	call
-upharpoonright	Math formulas	math_given
 uplus	Math formulas	math_given
 upshape	Fonts	call
 upsilon	Math formulas	math_given
@@ -866,5 +871,7 @@ write	Input/output	extension
 xi	Math formulas	math_given
 year	Counters	assign_int
 zeta	Math formulas	math_given
+{	Special insertions	call
 |	Math formulas	call
+}	Special insertions	call
 ~	Special insertions	call

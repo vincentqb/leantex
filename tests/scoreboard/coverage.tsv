@@ -1,34 +1,38 @@
-# documented-command coverage: the impl count per kernel chapter and per package.
+# documented-command coverage: per kernel item and per package, the count of
+# constructs at the `rewritten` rung or above (rewritten | native | verified).
 # kernel denominator: tests/coverage/latex2e-index.txt (its own provenance line).
-# package denominator: tests/compat-index/*.txt rows, unchanged.
-# kernel: 119 impl, 38 refused, 532 unknown, 168 excluded as math-mode symbols.
-# packages: 336 impl of 659 documented.
-# total: 455/1348 = 33.8%
+# package denominator: tests/compat-index/*.txt rows, unchanged; a row counts as
+# implemented when its annotation is `impl` or `inert:`.
+# kernel: 9 unprobed, 445 unknown, 0 fails, 9 skipped, 8 degraded, 39 rewritten, 180 native, 0 verified (the parity ladder's to award).
+# kernel excluded: 165 math-mode symbol commands.
+# packages: 336 implemented of 659 documented.
+# total: 555/1349 = 41.1%
 # date: 2026-09-25
-kernel/Boxes	1
+kernel/Boxes	2
 kernel/Command line interface	0
-kernel/Counters	0
+kernel/Counters	4
 kernel/Cross references	1
-kernel/Definitions	17
+kernel/Definitions	19
 kernel/Document classes	0
-kernel/Environments	8
-kernel/Fonts	32
+kernel/Environments	14
+kernel/Fonts	40
 kernel/Footnotes	1
 kernel/Front/back matter	0
 kernel/Input/output	0
-kernel/Layout	0
-kernel/Lengths	0
+kernel/Layout	1
+kernel/Lengths	1
 kernel/Line breaking	0
 kernel/Making paragraphs	2
-kernel/Math formulas	10
+kernel/Math formulas	76
 kernel/Modes	1
-kernel/Overview of @LaTeX{}	0
+kernel/Overview of LaTeX	0
 kernel/Page breaking	3
-kernel/Page styles	4
+kernel/Page styles	6
 kernel/Sectioning	6
-kernel/Spaces	8
-kernel/Special insertions	25
+kernel/Spaces	9
+kernel/Special insertions	30
 kernel/Splitting the input	0
+kernel/registers	3
 pkg/algorithm	2
 pkg/algorithm2e	30
 pkg/algorithmicx	14
