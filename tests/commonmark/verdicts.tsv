@@ -473,8 +473,8 @@
 466	Emphasis and strong emphasis	match
 467	Emphasis and strong emphasis	match
 468	Emphasis and strong emphasis	match
-469	Emphasis and strong emphasis	owed
-470	Emphasis and strong emphasis	owed
+469	Emphasis and strong emphasis	match
+470	Emphasis and strong emphasis	match
 471	Emphasis and strong emphasis	match
 472	Emphasis and strong emphasis	match
 473	Emphasis and strong emphasis	match
@@ -524,7 +524,7 @@
 517	Links	match
 518	Links	match
 519	Links	match
-520	Links	owed
+520	Links	match
 521	Links	match
 522	Links	match
 523	Links	match
@@ -579,7 +579,7 @@
 572	Images	owed	blocked-by:md:image-title
 573	Images	owed
 574	Images	match
-575	Images	owed
+575	Images	match
 576	Images	owed
 577	Images	owed
 578	Images	match

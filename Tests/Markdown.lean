@@ -287,4 +287,36 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has "-   \n  foo\n" "<ul><li>foo</li></ul>")
   t "a quote marker alone does not open an empty paragraph"
     ((dvMd "> \n> quoted\n").all (·.kind != .E0390))
+  -- Defect: the openers-bottom floor was one per delimiter shape for the
+  -- whole paragraph, while the search skipped openers in another bracket
+  -- region, so a closer inside a link that found no partner raised the
+  -- floor above a valid opener outside it. Each row fails on that reader.
+  t "emphasis around a link pairs across it"
+    (has "*a [b*](c) d*\n" "<em>a <a" && has "*a [b*](c) d*\n" ">b*</a> d</em>")
+  t "underscore emphasis around a link pairs across it"
+    (has "_a [b_](c) d_\n" "<em>a <a" && has "_a [b_](c) d_\n" ">b_</a> d</em>")
+  t "emphasis around an image pairs across it"
+    (has "*a ![b*](c) d*\n" "<em>a <img" && has "*a ![b*](c) d*\n" " d</em>")
+  t "strong emphasis around a link pairs across it"
+    (has "**a [b**](c) d**\n" "<strong>a <a" && has "**a [b**](c) d**\n" ">b**</a> d</strong>")
+  -- Defect: a match left the delimiters between opener and closer on the
+  -- stack, so a later closer paired across the match and built crossing
+  -- emphasis.
+  t "a match removes the delimiters between its pair"
+    (has "*foo _bar* baz_\n" "<em>foo _bar</em> baz_")
+  t "a strong pair inside emphasis keeps the stray delimiter literal"
+    (has "*foo __bar *baz bim__ bam*\n" "<em>foo <strong>bar *baz bim</strong> bam</em>")
+  -- Defect: regions were filled pair by pair, so an image's region
+  -- overwrote the link inside it and a delimiter in the link paired with
+  -- one in the image text around it.
+  t "a delimiter inside a link does not pair with one in the image around it"
+    (has "![*a [b*](c)](d)\n" "alt=*a b*" && !has "![*a [b*](c)](d)\n" "<em>")
+  t "a delimiter inside link text does not pair with one outside it"
+    (has "*[foo*](/url)\n" "*<a" && has "*[foo*](/url)\n" ">foo*</a>")
+  -- Defect: a closed link deactivated every open bracket, images included,
+  -- so an image whose text held a link never formed.
+  t "an image's opener stays active across a link inside it"
+    (has "![[a](b)](c)\n" "<img" && has "![[a](b)](c)\n" "alt=a")
+  t "a link's opener goes inactive across a link inside it"
+    (has "[[a](b)](c)\n" "[<a" && has "[[a](b)](c)\n" "</a>](c)")
   mdAccountsChecks t

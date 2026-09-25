@@ -782,7 +782,10 @@ def scanInlines (file : String) (c : Chars) :
   let mut toks : Array ITok := #[]
   let mut pairs : Array BPair := #[]
   let mut diags : Array Diag := #[]
-  let mut stack : Array (Nat × Bool × Bool) := #[]   -- token index, image, active
+  let mut stack : Array (Nat × Bool) := #[]   -- token index, image
+  -- Link openers below this stack depth are inactive: a link closed while
+  -- they were open (§6.3). Lowered as the stack pops below it.
+  let mut inactiveBelow : Nat := 0
   let mut pending := ""
   let mut pendingPos : Pos := {}
   let mut i := 0
@@ -857,41 +860,43 @@ def scanInlines (file : String) (c : Chars) :
       else if ch == '!' && c.at? (i + 1) == some '[' then
         toks := flush toks pending pendingPos
         pending := ""
-        stack := stack.push (toks.size, true, true)
+        stack := stack.push (toks.size, true)
         toks := toks.push (.bopen true p)
         i := i + 2
       else if ch == '[' then
         toks := flush toks pending pendingPos
         pending := ""
-        stack := stack.push (toks.size, false, true)
+        stack := stack.push (toks.size, false)
         toks := toks.push (.bopen false p)
         i := i + 1
       else if ch == ']' then
-        -- The nearest active opener, and an inline destination after it.
-        match stack.back?, linkTailAt c (i + 1) with
-        | some (openTok, image, active), some (dest, title, next) =>
+        -- The nearest opener, and an inline destination after it.
+        match stack.back? with
+        | none =>
+          pending := pending.push ']'
+          i := i + 1
+        | some (openTok, image) =>
+          let active := image || stack.size - 1 ≥ inactiveBelow
           stack := stack.pop
-          if active then
+          inactiveBelow := min inactiveBelow stack.size
+          match (if active then linkTailAt c (i + 1) else none) with
+          | some (dest, title, next) =>
             toks := flush toks pending pendingPos
             pending := ""
             let closeTok := toks.size
             toks := toks.push (.bclose p)
             pairs := pairs.push
               { openTok, closeTok, image, dest, title }
-            -- A link may not contain a link: earlier openers go inactive.
-            unless image do
-              stack := stack.map (fun (t, im, _) => (t, im, false))
+            -- A link may not contain a link: every link opener still open
+            -- goes inactive (§6.3), which is one number, not a pass over
+            -- the stack — the pass made `[a [b](c)` repeated quadratic.
+            -- An image opener stays active: an image's text may hold a
+            -- link, and deactivating it lost the image around one.
+            unless image do inactiveBelow := stack.size
             i := next
-          else
+          | none =>
             pending := pending.push ']'
             i := i + 1
-        | some (_, _, _), none =>
-          stack := stack.pop
-          pending := pending.push ']'
-          i := i + 1
-        | none, _ =>
-          pending := pending.push ']'
-          i := i + 1
       else if ch == '*' || ch == '_' then
         let mut n := 0
         let mut k := i
@@ -916,97 +921,123 @@ def scanInlines (file : String) (c : Chars) :
   toks := flush toks pending pendingPos
   return (toks, pairs, diags)
 
-/-- The bracket region of each token: two emphasis delimiters may only pair
-inside the same region, which is how the spec's per-link emphasis pass
-shows up in a single match over the whole array. -/
-def regions (toks : Array ITok) (pairs : Array BPair) : Array Nat := Id.run do
-  let mut out : Array Nat := Array.replicate toks.size 0
+/-- The bracket region of each token — the *innermost* resolved link or image
+around it, `0` outside every one — and the number of regions. Two emphasis
+delimiters pair only inside one region, which is how the spec's per-link
+pass (§6.3: process emphasis on the link text when the link closes) shows
+up in one array. Innermost matters: filled pair by pair, an image's region
+overwrote the link inside it, and a delimiter in the link could pair with
+one in the image around it. One pass with a stack, so nesting depth costs
+nothing. -/
+def regions (toks : Array ITok) (pairs : Array BPair) : Array Nat × Nat := Id.run do
+  let mut openAt : Array Nat := Array.replicate toks.size 0
+  let mut closeAt : Array Bool := Array.replicate toks.size false
   for (bp, k) in pairs.zipIdx do
-    for t in [bp.openTok + 1 : bp.closeTok] do
-      if t < out.size then out := out.set! t (k + 1)
-  return out
+    if bp.openTok < openAt.size then openAt := openAt.set! bp.openTok (k + 1)
+    if bp.closeTok < closeAt.size then closeAt := closeAt.set! bp.closeTok true
+  let mut out : Array Nat := Array.replicate toks.size 0
+  let mut stack : Array Nat := #[]
+  for k in [0:toks.size] do
+    if (closeAt[k]?).getD false then stack := stack.pop
+    out := out.set! k ((stack.back?).getD 0)
+    let o := (openAt[k]?).getD 0
+    if o > 0 then stack := stack.push o
+  return (out, pairs.size + 1)
 
-/-- CommonMark's delimiter-run match (§6.2, "process emphasis"), as an
-index loop over closers with the per-closer repeat bounded by the closer's
-own length — each match consumes at least one of its characters, so the
-bound is the algorithm's, not fuel.
+/-- CommonMark's delimiter-run match (§6.2, "process emphasis"), run once
+per bracket region over that region's runs alone, as cmark does.
 
-Two things keep it out of quadratic time, and the spec names both. The
-backward search walks only the *run* tokens (`runIdx`), not every token; and
-it stops at the spec's openers-bottom floor, the index below which a closer of this
-(character, length mod 3, can-also-open) shape has already been proved to
-have no partner. Without the second, one 64 KB paragraph of `*a*` took
-31.8 s, against 0.9 s for the same content as tex. -/
-def matchEmphasis (toks : Array ITok) (reg : Array Nat) : Array EPair × Array Nat :=
-  Id.run do
+Three rules the spec states and a single pass over the whole array got
+wrong, each a reproduced defect:
+
+* **The openers-bottom floor is per region.** It is the position below
+  which a closer of one (character, original length mod 3, can-also-open)
+  shape has been shown to have no partner. Shared across regions, a closer
+  inside a link that found no partner raised the floor above a valid
+  opener outside it, and `*a [b*](c) d*` stopped pairing.
+* **A match removes every delimiter between opener and closer.** The
+  potential openers are a stack; matching one pops everything above it.
+  Left in place, `*foo _bar* baz_` paired the `_` across the `*` pair and
+  built crossing emphasis.
+* **The rule of three reads the original run lengths**, and so does the
+  floor's shape: a run's remaining length changes as it is consumed, the
+  run it came from does not.
+
+Linear: every run is pushed at most once and popped at most once, a search
+that passes a stack entry either pops it or is bounded by a floor that then
+rises past it, and there are twelve floors per region. -/
+def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
+    Array EPair × Array Nat := Id.run do
   let mut len : Array Nat := Array.replicate toks.size 0
+  let mut orig : Array Nat := Array.replicate toks.size 0
   let mut ch : Array Char := Array.replicate toks.size ' '
   let mut op : Array Bool := Array.replicate toks.size false
   let mut cl : Array Bool := Array.replicate toks.size false
-  let mut runIdx : Array Nat := #[]
-  -- Where each run token sits in `runIdx`, so a closer starts its backward
-  -- walk at its own neighbour rather than by searching for itself.
-  let mut runPos : Array Nat := Array.replicate toks.size 0
+  let mut byRegion : Array (Array Nat) := Array.replicate nRegions #[]
   for (t, k) in toks.zipIdx do
     match t with
     | .run c n o e _ =>
       len := len.set! k n
+      orig := orig.set! k n
       ch := ch.set! k c
       op := op.set! k o
       cl := cl.set! k e
-      runPos := runPos.set! k runIdx.size
-      runIdx := runIdx.push k
+      let r := (reg[k]?).getD 0
+      if r < byRegion.size then byRegion := byRegion.modify r (·.push k)
     | _ => pure ()
-  let mut out : Array EPair := #[]
-  let mut born := 0
-  -- One floor per (character, closer length mod 3, closer can also open):
-  -- 2 × 3 × 2 buckets, each holding a position in `runIdx`.
-  let mut bottom : Array Nat := Array.replicate 12 0
   let rd : Array Nat → Nat → Nat := fun a i => (a[i]?).getD 0
   let rb : Array Bool → Nat → Bool := fun a i => (a[i]?).getD false
   let rc : Array Char → Nat → Char := fun a i => (a[i]?).getD ' '
-  for cp in [0:runIdx.size] do
-    let some ci := runIdx[cp]? | continue
-    if rb cl ci && rd len ci > 0 then
-      let cnt := rd len ci
-      for _ in [0:cnt] do
-        if rd len ci == 0 then break
+  let mut out : Array EPair := #[]
+  let mut born := 0
+  for runs in byRegion do
+    -- The potential openers still alive, bottom to top, as token indices.
+    let mut stack : Array Nat := #[]
+    -- One floor per (character, closer can also open, original length mod
+    -- 3): a closer of that shape examines only openers at or above it.
+    let mut bottom : Array Nat := Array.replicate 12 0
+    for ci in runs do
+      if rb cl ci then
         let bkt := (if rc ch ci == '*' then 0 else 6)
-          + 2 * (rd len ci % 3) + (if rb op ci then 1 else 0)
-        let floor := rd bottom bkt
-        -- The nearest opener of the same character in the same region, no
-        -- lower than this shape's floor.
-        let mut found : Option Nat := none
-        let mut oq := cp
-        for _ in [0:cp + 1] do
-          if oq ≤ floor then break
-          oq := oq - 1
-          let some oi := runIdx[oq]? | break
-          if rb op oi && rd len oi > 0 && rc ch oi == rc ch ci
-              && rd reg oi == rd reg ci then
-            -- Rule of three: when either delimiter can both open and
-            -- close, the lengths may not sum to a multiple of three
-            -- unless both are.
-            let both := (rb op ci && rb cl ci) || (rb op oi && rb cl oi)
-            let sum := rd len oi + rd len ci
-            let ok := !both || sum % 3 != 0
-                || (rd len oi % 3 == 0 && rd len ci % 3 == 0)
-            if ok then
-              found := some oi
-              break
-        match found with
-        | none =>
-          -- No partner for this shape at or above `floor`: nothing below
-          -- this closer can ever partner it either (§6.2).
-          bottom := bottom.set! bkt cp
-          break
-        | some oj =>
-          let strong := rd len oj ≥ 2 && rd len ci ≥ 2
-          let use := if strong then 2 else 1
-          len := len.set! oj (rd len oj - use)
-          len := len.set! ci (rd len ci - use)
-          out := out.push { openTok := oj, closeTok := ci, strong, born }
-          born := born + 1
+          + (if rb op ci then 3 else 0) + rd orig ci % 3
+        for _ in [0:rd orig ci] do
+          if rd len ci == 0 then break
+          -- The nearest opener of the same character, no lower than the floor.
+          let mut found : Option Nat := none
+          let mut si := stack.size
+          for _ in [0:stack.size] do
+            if si == 0 then break
+            si := si - 1
+            let oi := rd stack si
+            if oi < rd bottom bkt then break
+            if rc ch oi == rc ch ci then
+              -- Rule of three, on the original lengths: when either run
+              -- can both open and close, the sum may not be a multiple of
+              -- three unless both are.
+              let ok := !(rb op ci || rb cl oi) || rd orig ci % 3 == 0
+                || (rd orig oi + rd orig ci) % 3 != 0
+              if ok then
+                found := some si
+                break
+          match found with
+          | none =>
+            -- No partner for this shape at or above the floor: nothing
+            -- below this closer can ever partner a closer of its shape.
+            bottom := bottom.set! bkt ci
+            break
+          | some s =>
+            let oj := rd stack s
+            -- Everything between the pair is removed.
+            stack := stack.extract 0 (s + 1)
+            let strong := rd len oj ≥ 2 && rd len ci ≥ 2
+            let use := if strong then 2 else 1
+            len := len.set! oj (rd len oj - use)
+            len := len.set! ci (rd len ci - use)
+            out := out.push { openTok := oj, closeTok := ci, strong, born }
+            born := born + 1
+            if rd len oj == 0 then stack := stack.pop
+      -- What is left of a run that can open is a potential opener.
+      if rb op ci && rd len ci > 0 then stack := stack.push ci
   return (out, len)
 
 end LeanTex.Core.Md
@@ -1115,8 +1146,8 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
 /-- Inline structure for one stretch of text, in three passes. -/
 def inlines (file : String) (c : Chars) : Array Inl × Array Diag :=
   let (toks, bpairs, diags) := scanInlines file c
-  let reg := regions toks bpairs
-  let (epairs, leftover) := matchEmphasis toks reg
+  let (reg, nRegions) := regions toks bpairs
+  let (epairs, leftover) := matchEmphasis toks reg nRegions
   (buildInlines toks bpairs epairs leftover, diags)
 
 /-- The characters of a run of paragraph lines, newline-separated, each
