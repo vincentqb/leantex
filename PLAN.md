@@ -18582,7 +18582,7 @@ construct, the construct is *routed* by a keyed diagnostic carrying its
 own subject, never silently dropped, and the code it takes is decided by
 what reaches the page. `W0307` is `pending`, floor `absent`, so it names
 only a construct that ships nothing: `md:thematic-break`, since `Ir` has
-no rule block. `W0391` is `degraded`, floor `content`, for a construct
+no rule block. `W0392` is `degraded`, floor `content`, for a construct
 that ships diminished: `md:heading-depth` (three sectioning levels),
 `md:list-start` and `md:loose-list` (`Ir.Block.list` carries neither a
 start number nor tightness), `md:link-title` and `md:image-title`

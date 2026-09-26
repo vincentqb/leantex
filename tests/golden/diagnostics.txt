@@ -507,8 +507,8 @@ warning[W0390]: nothing declares a 'mono' family; typewriter runs set in the bod
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
 note[W0391]: unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text
   help: \define \name(...) {body} declares it
-── W0391 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
-warning[W0391]: a link's title is not carried: the link sets without it
+── W0392 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
+warning[W0392]: a link's title is not carried: the link sets without it
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added
