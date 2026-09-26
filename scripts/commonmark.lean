@@ -11,8 +11,11 @@ every one of the 652 spec examples. Run from the repository root after
 unclassified deviation fails. Four verdicts:
 
 * `match` — the tree the engine emits equals the tree the spec expects,
-  modulo the normalizations declared in `normalizations` below, and the run
-  names no loss.
+  and the run names no loss. The comparison is blind to exactly the
+  normalizations `normalizations` lists below and nothing else: every
+  attribute is compared unless a row of `droppedAttrs` declares it, and no
+  attribute that decides whether content reaches a reader (`readerAttrs`)
+  can be one. `--selftest` breaks each normalization in both directions.
 * `rejected` — the strict dialect refuses the construct by design, *and*
   something other than the reader says the refused construct is there: a
   raw-HTML refusal's text passes through the spec's own expected HTML
@@ -70,26 +73,58 @@ def specKey : String :=
 -- Each one is a difference the comparison is blind to, with the reason it
 -- is not a difference in what the construct means. A loose normalization
 -- hides a real defect, so the list is short and every entry names what it
--- would hide.
+-- would hide. The attribute drop is one table, `droppedAttrs`: `canonG` and
+-- the chrome walks read it, and the attribute entry below is rendered from
+-- it, so the declaration and what the comparison does cannot drift apart.
+
+/-- The attributes the comparison is blind to, each with what dropping it
+hides. A row's attribute is dropped from both trees and from the chrome the
+comparison unwraps; **every other attribute is compared as content**, so an
+attribute the engine starts to emit is a difference until a row here
+declares it. The filter was once the other way round — six attributes kept
+and every other dropped, declared nowhere — and it certified a page whose
+every paragraph was `hidden` as 323 matches. -/
+def droppedAttrs : List (String × String) :=
+  [("class",
+    "the engine's styling classes (`numbered`, `line`). Its `language-*` \
+tokens are kept and compared on both sides: the one class a spec example \
+states as content, a fenced block's info string. Dropping `class` whole \
+once hid three lost languages the run had named with W0110"),
+   ("id", "the ids the engine generates for headings and their sections"),
+   ("style", "the style=\"color: inherit\" the engine sets on a link from its \
+palette: styling"),
+   ("tabindex",
+    "the tab stop the HTML backend gives every code block, so a keyboard can \
+reach and scroll its <pre>: focus order, not content, and every reader gets \
+the same text with or without it. Every match whose page carries a code \
+block rests on this row")]
+
+/-- Attributes that decide whether content reaches a reader, or how it is
+read, and so are never dropped: `hidden` and `inert` take content from every
+reader, `aria-hidden` from assistive technology; `role` can make a
+construct's content presentational or announce it as another thing; `lang`
+decides the voice and the hyphenation it is read with. No spec example
+states one on a construct, so any the engine adds is a difference the
+comparison must see. `--selftest` holds `droppedAttrs` disjoint from these,
+and each of them a difference on an element and on the chrome. -/
+def readerAttrs : List String := ["hidden", "inert", "aria-hidden", "role", "lang"]
+
+def dropsAttr (a : String) : Bool := droppedAttrs.any (·.1 == a)
 
 def normalizations : List (String × String) :=
   [("document chrome",
     "a spec example is a fragment; the engine emits a document. The \
 comparison reads the content of <main> and unwraps the <section> elements \
-the sectioning walk builds. Hides: nothing about a construct. A construct \
-that failed to reach <main> at all still fails, because the expected tree \
-is not empty wherever the spec expects output."),
-   ("class and id attributes",
-    "the engine generates ids from heading text and classes from its token \
-system. The comparison drops every id and every class token except \
-`language-*`, the one class a spec example states as content (a fenced \
-block's info string), which is compared on both sides. Hides: the engine's \
-styling classes (`numbered`, `line`) and generated heading ids. It once \
-dropped `class` whole, and three cases read as `match` while the run named \
-the lost language with W0110."),
-   ("style attributes",
-    "the engine sets style=\"color: inherit\" on a link from its palette. \
-Styling, not content. Hides: nothing a spec example states."),
+the sectioning walk builds, but only through elements whose every attribute \
+is a declared drop: a <section> or <main> carrying anything else, `hidden` \
+among them, stays in the compared tree. Hides: those wrappers and their \
+declared attributes, nothing about a construct. A construct that failed to \
+reach <main> at all still fails, because the expected tree is not empty \
+wherever the spec expects output."),
+   ("attributes that carry no content",
+    "every attribute is compared as content except these, dropped from both \
+sides. Hides: " ++ "; ".intercalate (droppedAttrs.map fun (a, h) => a ++ " — " ++ h)
+      ++ "."),
    ("inter-element whitespace",
     "outside <pre>, HTML collapses whitespace and the two emitters indent \
 differently; inside <pre> every byte is kept and compared. Hides: a \
@@ -385,10 +420,8 @@ def hParse (src : String) : Array Html.Node := Id.run do
 -- ## Canonicalization
 --
 -- Both trees reduced to one string by the same function, so the comparison
--- is over trees and the failure report is readable. Attributes are kept
--- only where a spec example states them as content.
-
-def keptAttrs : List String := ["href", "src", "alt", "title", "start", "type"]
+-- is over trees and the failure report is readable. Every attribute is kept
+-- except the declared drops (`droppedAttrs`).
 
 /-- The one class token a spec example states as content: a fenced block's
 `language-x`. Every other class token is the engine's styling. -/
@@ -442,8 +475,13 @@ is a list item, where a loose list's `<p>` sits. -/
 def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) : String :=
   match n with
   | .text s => if pre then dropOneTrailingNewline s else squeeze s
-  | .style _ => ""
-  | .script _ _ => ""
+  -- A stylesheet or script node is compared as the element it prints as,
+  -- never dropped: dropping them was a normalization nothing declared.
+  | .style css => "<style>" ++ squeeze css ++ "</style>"
+  | .script attrs js =>
+    let keep := (attrs.filter (fun a => !dropsAttr a.1)).qsort (·.1 < ·.1)
+    "<script" ++ keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) "" ++ ">"
+      ++ squeeze js ++ "</script>"
   | .elem tag attrs kids =>
     if tag == "hr" && gaps.contains "md:thematic-break" then ""
     else if tag == "p" && inLi && gaps.contains "md:loose-list" then
@@ -460,7 +498,7 @@ def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) :
           || (a == "title" && tag == "a" && gaps.contains "md:link-title")
           || (a == "title" && tag == "img" && gaps.contains "md:image-title")
           || (a == "alt" && gaps.contains "md:image-alt")
-      let keep := attrs.filter (fun a => keptAttrs.contains a.1 && !costs a.1)
+      let keep := attrs.filter (fun a => !dropsAttr a.1 && !costs a.1)
       let keep := match languageClass? attrs with
         | some v => if gaps.contains "md:code-info" then keep else keep.push ("class", v)
         | none => keep
@@ -563,13 +601,21 @@ def silentGaps (want got : GapInk) (routes : Array String) : Array String := Id.
 -- content of `<main>`, with the sectioning walk's `<section>` wrappers
 -- unwrapped. Each walk is a one-node function plus its `List` companion
 -- with an accumulator, which is what makes the recursion structural over a
--- tree whose children are an `Array`.
+-- tree whose children are an `Array`. A wrapper is looked through only when
+-- it carries nothing but declared drops: `<section hidden>` unwrapped would
+-- hide from the comparison exactly what it hides from a reader.
+
+/-- Does an element carry nothing but declared drops? Only such a wrapper
+is chrome the comparison may look through. -/
+def onlyDropped (attrs : Array (String × String)) : Bool :=
+  attrs.all (fun a => dropsAttr a.1)
 
 mutual
 
 def unwrapOne (out : Array Html.Node) (n : Html.Node) : Array Html.Node :=
   match n with
-  | .elem "section" _ kids => unwrapList out kids.toList
+  | .elem "section" attrs kids =>
+    if onlyDropped attrs then unwrapList out kids.toList else out.push n
   | _ => out.push n
 
 def unwrapList (out : Array Html.Node) : List Html.Node → Array Html.Node
@@ -580,10 +626,14 @@ end
 
 mutual
 
+/-- `<main>`'s content, found through wrappers that carry only declared
+drops. A `<main>` carrying anything else is its own fragment, so the
+comparison sees it; an element carrying anything else is not looked
+through, so the whole body is compared. -/
 def mainOf? (n : Html.Node) : Option (Array Html.Node) :=
   match n with
-  | .elem "main" _ kids => some kids
-  | .elem _ _ kids => mainList? kids.toList
+  | .elem "main" attrs kids => if onlyDropped attrs then some kids else some #[n]
+  | .elem _ attrs kids => if onlyDropped attrs then mainList? kids.toList else none
   | _ => none
 
 def mainList? : List Html.Node → Option (Array Html.Node)
@@ -616,14 +666,19 @@ end
 
 -- ## The engine under test
 
+/-- The fragment a spec example is compared against: `<main>`'s content with
+the sectioning walk's wrappers unwrapped, each looked through only when it
+carries nothing but declared drops (`mainOf?`, `unwrapOne`). -/
+def fragmentOf (body : Array Html.Node) : Array Html.Node :=
+  unwrapList #[] ((mainList? body.toList).getD body).toList
+
 /-- One markdown source through the reader, the desugaring, the one
 elaborator and the HTML backend: the fragment tree and the diagnostics. -/
 def engineFragment (src : String) : Array Html.Node × Array Diag :=
   let (raws, readDiags) := Md.read "case.md" src
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
-  let content := (mainList? body.toList).getD body
-  (unwrapList #[] content.toList, diags ++ htmlDiags)
+  (fragmentOf body, diags ++ htmlDiags)
 
 /-- The heading level the engine's sectioning starts at, measured from a
 one-heading probe rather than asserted: the offset the comparison
@@ -1034,6 +1089,16 @@ def selftest : IO UInt32 := do
      same "style: dropped" "<a style=\"color: inherit\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
      differ "style: the element it sits on is still compared"
        "<a style=\"color: inherit\" href=\"u\">t</a>" "<a style=\"color: inherit\" href=\"v\">t</a>",
+     -- tabindex: a code block's tab stop is dropped, and nothing beside it
+     same "tabindex: dropped" "<pre tabindex=\"0\"><code>c</code></pre>" "<pre><code>c</code></pre>",
+     differ "tabindex: the code beside it is still compared"
+       "<pre tabindex=\"0\"><code>c</code></pre>" "<pre tabindex=\"0\"><code>d</code></pre>",
+     -- an attribute no row declares is content
+     differ "attributes: hidden is a difference" "<p hidden=\"hidden\">t</p>" "<p>t</p>",
+     differ "attributes: a bare hidden is a difference" "<p hidden>t</p>" "<p>t</p>",
+     differ "attributes: aria-hidden is a difference" "<p aria-hidden=\"true\">t</p>" "<p>t</p>",
+     differ "attributes: an attribute no row declares is a difference"
+       "<p data-x=\"1\">t</p>" "<p>t</p>",
      -- inter-element whitespace: collapsed outside <pre>, compared inside it
      same "whitespace: collapsed outside pre" "<p>a\n  <em>b</em></p>" "<p>a <em>b</em></p>",
      differ "whitespace: kept inside pre" "<pre><code>a  b</code></pre>" "<pre><code>a b</code></pre>",
@@ -1052,6 +1117,39 @@ def selftest : IO UInt32 := do
      differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>"]
   for c in cs do
     if let some m := c then bad := bad.push m
+  -- The attribute table, broken row by row in both directions: each declared
+  -- drop hides its own attribute and neither the text nor a compared
+  -- attribute beside it; each attribute that decides whether content reaches
+  -- a reader is no row's, and is a difference on an element and on the
+  -- chrome the comparison unwraps. The filter once kept six attributes and
+  -- dropped every other in silence, `hidden` among them.
+  for (a, _) in droppedAttrs do
+    let v := if a == "class" then "x" else "0"
+    for r in [same s!"{a}: dropped" s!"<p {a}=\"{v}\">t</p>" "<p>t</p>",
+        differ s!"{a}: the text beside it is still compared"
+          s!"<p {a}=\"{v}\">t</p>" s!"<p {a}=\"{v}\">u</p>",
+        differ s!"{a}: an attribute beside it is still compared"
+          s!"<a {a}=\"{v}\" href=\"u\">t</a>" s!"<a {a}=\"{v}\" href=\"w\">t</a>"] do
+      if let some m := r then bad := bad.push m
+  let frag (s : String) : String := canonList 1 false "" (fragmentOf (hParse s)).toList
+  unless frag "<main><section id=\"s\"><p>t</p></section></main>" == "<p>t</p>" do
+    bad := bad.push "chrome: a section carrying only a declared drop was not unwrapped"
+  for a in readerAttrs do
+    if dropsAttr a then
+      bad := bad.push s!"{a}: decides whether content reaches a reader, and a row drops it"
+    if let some m := differ s!"{a}: compared on an element" s!"<p {a}=\"x\">t</p>" "<p>t</p>" then
+      bad := bad.push m
+    if frag s!"<main><section {a}=\"x\"><p>t</p></section></main>" == frag "<main><p>t</p></main>" then
+      bad := bad.push s!"{a}: a section carrying it was unwrapped"
+    if frag s!"<main {a}=\"x\"><p>t</p></main>" == frag "<main><p>t</p></main>" then
+      bad := bad.push s!"{a}: a main carrying it was looked through"
+    if frag s!"<div {a}=\"x\"><main><p>t</p></main></div>" == frag "<div><main><p>t</p></main></div>" then
+      bad := bad.push s!"{a}: an element above main carrying it was looked through"
+  -- A stylesheet or a script node is compared as what it prints, never dropped.
+  if canonList 1 false "" [Html.Node.style "p { color: red }"] == "" then
+    bad := bad.push "a style node was dropped from the comparison"
+  if canonList 1 false "" [Html.Node.script #[] "go()"] == "" then
+    bad := bad.push "a script node was dropped from the comparison"
   -- The gap normalizations, used only to attribute an owed case: each hides
   -- its own gap's cost and nothing else.
   let cg (gaps : List String) (s : String) : String := canonGList gaps 1 false false "" (hParse s).toList
