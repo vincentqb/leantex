@@ -218,6 +218,12 @@ in this repo; refer to the private reference corpus abstractly.
   only indexes is fine.
   `scripts/bench.lean` is the check; run it when touching any pass over the
   whole document.
+- A kernel `decide` over shipped constants belongs in a leaf module, off
+  the import chain to Elab: the next structure its module declares waits
+  for the pending kernel check, so the check runs in series with every
+  module downstream. A zero-argument `def` is evaluated when its module
+  initializes, in every process; take `Unit` to defer the cost to first
+  use.
 - A cache over an external tool caches the tool's *whole* answer, not
   only the answer that succeeded. A verdict remembered for the drawn case
   and dropped for the refused one means the slow path is the one that
