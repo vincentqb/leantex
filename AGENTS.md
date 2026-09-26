@@ -143,7 +143,11 @@ in this repo; refer to the private reference corpus abstractly.
   *action*, not the value, so no other suffix's reading applies), `_pinned`
   (the landing's run invariant — the gated tip, the gate tree's read-back
   and the landed `main` are one sha — holds initially and is preserved by
-  every transition: `init_pinned`, `step_pinned`, `trace_pinned`). A new
+  every transition: `init_pinned`, `step_pinned`, `trace_pinned`), `_owned`
+  (every write an action declares is one the state it was proposed from
+  owns — a shape of its own because the conclusion is about *where* an
+  output writes, not what it names: `step_writes_owned`,
+  `trace_writes_owned`). A new
   property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
@@ -327,18 +331,25 @@ in this repo; refer to the private reference corpus abstractly.
 - Never push without being asked.
 - Landing a branch onto `main` goes through `land` (`scripts/land.lean`) — never
   a hand rebase or merge. It reads preconditions from
-  `git status --porcelain` and `git rev-parse` *through files*, rebases in the
-  branch's own worktree, runs every gate, re-reads the branch and `main` after
-  them, fast-forwards to the *sha the gates ran on*, reads the new tip back,
-  and writes one ledger row per fact; its pure core cannot propose a
-  fast-forward or a push unless every gate observation was ok, and a verdict
-  claiming a landing implies `main` was read back at that sha. Prose reports of
-  repository state obey the rule claims about a page obey: from the artifact.
-  The landing never resolves a conflict: a conflict outside the union-merged
-  files is a refusal with exit 2, the branch is restored to its pre-rebase tip,
-  and the branch's owner rebases and resolves it in their own worktree, then
-  re-runs `land check` — keep-both once doubled an owed record's `blocker:`
-  line, which is why the tool refuses rather than guesses.
+  `git status --porcelain` and `git rev-parse` *through files*, makes a
+  detached gate tree at the branch tip it read and rebases *there* onto the
+  `main` it read, runs every gate in that tree, re-reads the branch and `main`
+  after them, fast-forwards `refs/heads/main` by name to the *sha the gates
+  ran on*, reads the new tip back, and writes one ledger row per fact. It never
+  writes the branch or its owner's worktree: every action declares what it
+  writes, and `step_writes_owned` holds the core to the run's own tree and
+  ledger, and `main` and the remote only to the gated tip on a proven run; a
+  verdict claiming a landing implies `main` was read back at that sha. Prose
+  reports of repository state obey the rule claims about a page obey: from the
+  artifact. The landing never resolves a conflict: a conflict outside the
+  union-merged files is a refusal with exit 2 that touches nothing of the
+  owner's, and the branch's owner rebases and resolves it in their own
+  worktree, then re-runs `land check` — keep-both once doubled an owed
+  record's `blocker:` line, which is why the tool refuses rather than guesses.
+  A branch landed onto a `main` that had moved keeps its original commits: the
+  ledger records the tip it read, `land retire` reads that, and an owner
+  continuing on the branch first rebases with `git rebase --onto main <that
+  tip>`.
 - Never `git stash`: the stack is per-repository, not per-worktree, and agents
   here work in parallel worktree checkouts — a `pop` can apply, and drop,
   another worktree's entry. Set work aside with file copies instead (the file
