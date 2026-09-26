@@ -455,6 +455,15 @@ private structure St where
   `\usepackage` first among them — is a placement defect (W0340), never
   a support question (W0103). -/
   inDoc : Bool := false
+  /-- Inside a definition body, the group a definition announced through
+  `bodyNext`: what a construct there means is decided where the command is
+  used, never where it is defined. The walk's `inBody` flag, as state, so
+  an arm can read it. -/
+  inDef : Bool := false
+  /-- Replaying a `\begin{document}` hook body, whose content `seamSplit`
+  routes to the body side: a construct there reaches the body although
+  `inDoc` is false for the replay. -/
+  seam : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -643,10 +652,21 @@ a discard from reading as a translation onto a native construct — `became`
 carries no subject by default, so the two were one shape to every consumer
 that reads `Diag.subject`. `key` is the control word, sub-keyed by the
 argument that decided the discard where one did (`usepackage:url`,
-`providecommand:x`), so `Diag.tallySites` counts the sites of one discard and
-never lumps two. -/
+`providecommand:x`), or else by the argument its message names
+(`selectlanguage:french`), so every site of one key reads one message and
+`Diag.tallySites` counts the sites of one discard and never lumps two. -/
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
+
+/-- The preamble proper: outside the document environment, outside a
+definition body (read where the command is used) and outside a
+`\begin{document}` hook's replay (routed to the body). What
+`\begin{document}` resets — the font series and babel's language — reaches
+no text from here (measured against lualatex), so an arm that would declare
+one there discards it instead. -/
+private def preambleProper : M Bool := do
+  let st ← get
+  return !st.inDoc && !st.inDef && !st.seam
 
 /-- The top-level brace groups of a feature value:
 `{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
@@ -2080,6 +2100,11 @@ were dropped: {o}" pos
     let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
+      -- premise: compatMarkerChecks — a discard here leaves the Doc the one without it
+      if ← preambleProper then
+        discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
+          s!"fontseries:{code}" pos
+        return some (#[], k)
       if !width.isEmpty then
         sayOnce ("ctrl:fontseries:" ++ width) .W0104
           s!"'\\fontseries\{{code}}' also asks for the '{width}' width; \
@@ -2102,6 +2127,11 @@ the weight in force stands" pos
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let lname := rawSrc (args.getD 0 #[])
+    -- premise: compatMarkerChecks — a discard here leaves the Doc the one without it
+    if ← preambleProper then
+      discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
+        s!"selectlanguage:{lname}" pos
+      return some (#[], k)
     let tag := Locale.babelTagOf lname
     if (Locale.forTag tag).isNone then
       say .W0368 s!"no locale for language '{lname}'; English captions \
@@ -3965,9 +3995,10 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     -- definition inside the body manages its own following group without
     -- stealing `\newenvironment`'s second half.
     let saved := (← get).bodyNext
-    write fun st => { st with bodyNext := 0 }
+    let savedDef := (← get).inDef
+    write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    write fun st => { st with bodyNext := saved - 1 }
+    write fun st => { st with bodyNext := saved - 1, inDef := savedDef }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
@@ -4122,7 +4153,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let mut preSide : Array Raw := #[]
     let mut bodySide : Array Raw := #[]
     for (pt, file, pos, body) in (← get).deferred do
-      write fun st => { st with file := file }
+      write fun st => { st with file := file, seam := pt == .beginDocument }
       let body ← rewriteList false body #[] body.toList 0 0
       -- A hook declared inside an `\input`'ed file replays inside that
       -- file's wrapper, so what the engine refuses in it is still named at
@@ -4137,7 +4168,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
         let (p, b) := seamSplit body body.toList 0 0 (#[], #[])
         preSide := preSide ++ wrap p
         bodySide := bodySide ++ wrap b
-    write fun st => { st with inDoc := saved, file := savedFile }
+    write fun st => { st with inDoc := saved, file := savedFile, seam := false }
     let isBody : Raw → Bool
       | .env "document" _ _ => true
       | _ => false

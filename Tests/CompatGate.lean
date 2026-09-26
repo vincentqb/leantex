@@ -233,6 +233,8 @@ def discardSites : List (String × String × String) :=
    ("\\providecommand{\\section}{}\n", "", "providecommand:section"),
    ("\\usepackage{babel}\n", "", "usepackage:babel"),
    ("\\pagestyle{fancy}\n", "", "pagestyle:fancy"),
+   ("\\fontseries{b}\n", "", "fontseries:b"),
+   ("\\selectlanguage{french}\n", "", "selectlanguage:french"),
    ("\\usefonttheme{professionalfonts}\n", "", "usefonttheme"),
    ("\\setbeameroption{hide notes}\n", "", "setbeameroption"),
    ("\\KOMAoptions{headsepline=false}\n", "", "KOMAoptions"),
@@ -350,9 +352,25 @@ def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"preamble marker, {what} (fails on base): the known construct is not called unknown"
       (ds.all (·.code != "W0301"))
     -- The premise the preamble reader's silence rests on: the construct's
-    -- accounting is the translation note Compat wrote at the same site.
-    t s!"preamble marker, {what}: the construct's own translation note accounts for it"
+    -- accounting is the one note Compat wrote at the same site.
+    t s!"preamble marker, {what}: the construct's own note accounts for it"
       ((ds.filter (·.code == "N0100")).size == 1)
+  -- What the preamble proper reads to nothing is a discard, keyed as one, and
+  -- the same construct where it reaches text keeps its translation: in the
+  -- body, in a `\begin{document}` hook, and inside a definition.
+  let noteOf (src : String) (key : String) : Array Diag :=
+    (elabStr src).2.filter fun d => d.code == "N0100" &&
+      d.subject == some ("ctrl:nothing:" ++ key)
+  for (what, decl, key) in [("a font series", "\\fontseries{b}", "fontseries:b"),
+      ("a language switch", "\\selectlanguage{french}", "selectlanguage:french")] do
+    t s!"preamble marker, {what} (fails on base): its note is a discard, keyed as one"
+      ((noteOf (dvDoc (decl ++ "\n") "Alpha.") key).size == 1)
+    for (where_, src) in [("in the body", dvDoc "" (decl ++ " Alpha.")),
+        ("in a \\begin{document} hook", dvDoc s!"\\AtBeginDocument\{{decl}}\n" "Alpha."),
+        ("inside a preamble definition",
+          dvDoc s!"\\newcommand\{\\zzdecl}\{{decl}}\n" "\\zzdecl Alpha.")] do
+      t s!"preamble marker, {what} {where_}: its note is a translation, not a discard"
+        (noteOf src key).isEmpty
   -- LaTeX resets these at `\begin{document}`: the document is the one
   -- without them.
   t "preamble marker: a font series reaches no text, as LaTeX's does not"
@@ -392,6 +410,13 @@ when {main} is the main language"
     | _ => n) 0 defDoc.body
   t "preamble marker: a series inside a preamble definition still applies where it is used"
     (series == 1)
+  let (langDoc, _) := elabStr (dvDoc "\\newcommand{\\zzfrench}{\\selectlanguage{french}}\n"
+    "Alpha.\n\n\\zzfrench Bravo.")
+  let tagged := Ir.foldBlocks (fun n _ => n) (fun n i => match i with
+    | .styled (.lang "fr") _ => n + 1
+    | _ => n) 0 langDoc.body
+  t "preamble marker: a language switch inside a preamble definition still applies where it is used"
+    (tagged == 1)
 
 /-- The compat accounting blocks. -/
 def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do

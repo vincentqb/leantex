@@ -10159,11 +10159,11 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           -- Compat's markers for `\fontseries` and `\selectlanguage`, met in
           -- the preamble proper. LaTeX's `\begin{document}` selects the
           -- normal font and babel's main language (measured against
-          -- lualatex), so neither reaches text there, and neither does here:
-          -- Compat's `\selectlanguage` arm leaves `mainLang` outside the
-          -- body, and its note at this site accounts for the construct.
-          -- Never an unknown command: the marker is Compat's own spelling,
-          -- and a warning quoting it named nothing the document wrote.
+          -- lualatex), so neither reaches text there. Compat discards both
+          -- there itself, with a `ctrl:nothing:` note and no marker, so this
+          -- arm drops only what a note already names as nothing. Never an
+          -- unknown command: the marker is Compat's own spelling, and a
+          -- warning quoting it named nothing the document wrote.
           pure ()
         else if name.startsWith "@ink:" then
           -- `\color`'s marker: LaTeX keeps the colour across

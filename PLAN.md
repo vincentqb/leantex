@@ -16118,8 +16118,10 @@ check that fails without it.
 - **A discard is keyed as a discard.** `discard` is the one writer of
   `'\X' → nothing: …`, with the subject `ctrl:nothing:<key>`, sub-keyed by
   what decided it (`usepackage:<pkg>`, `providecommand:<cmd>`,
-  `pagestyle:<v>`), at every call that wrote one; `discardSites` holds one
-  usage per call. Before, only the inert table's rows carried a subject.
+  `pagestyle:<v>`) or by the argument its message names
+  (`fontseries:<code>`, `selectlanguage:<name>`), at every call that wrote
+  one; `discardSites` holds one usage per call. Before, only the inert
+  table's rows carried a subject.
 - **`\multicolumn` names what it drops and walks what it keeps.** The arm
   returned its text group unwalked, so a `#1` inside a definition body stayed
   literal. On e4d22a4, `\newcommand{\hd}[1]{\multicolumn{2}{c}{#1}}` used in
@@ -16147,7 +16149,12 @@ check that fails without it.
   `mainLang`, the language `\enquote` reads its quotes through, only in the
   body. A switch in a `\begin{document}` hook still reaches the body's
   language, and its quotes stay the main language's, as lualatex gives.
-  Compat's N0100 note is the construct's accounting, and a preamble colour
+  Compat reads a series or a language in the preamble proper to nothing
+  itself: a discard note (`ctrl:nothing:fontseries:<code>`,
+  `ctrl:nothing:selectlanguage:<name>`) and no marker, so the preamble
+  reader's silence drops only what a note already names as nothing. The
+  same construct in the body, in a `\begin{document}` hook or inside a
+  definition keeps its translation. A preamble colour
   opens the body, with the same `Doc` an `\AtBeginDocument` hook gives
   (`PDecl.bodyStart`).
 - **The rows and docstrings say what they hold** (items 8–10, 12–13).
