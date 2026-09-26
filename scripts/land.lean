@@ -514,18 +514,30 @@ def midRebase (e : Env) (ctr : IO.Ref Nat) (step wt : String) : IO Bool := do
 
 /-- The tip an earlier landing of `name` read and the commit it landed as,
 when that landing rebased the branch — so the two differ — and the branch
-still carries that tip; two empty strings otherwise. From the ledger's last
-`landed` row for the name, and the ancestry from git. A row written before
-rows carried `branch` answers empty. -/
-def landedFromRow (e : Env) (ctr : IO.Ref Nat) (name tip : String) : IO (String × String) := do
+still carries that tip; two empty strings otherwise. With them, whether
+`mainTip`, `main` as this run read it, holds the landed commit: the core
+counts the row only then (`landedBars`), so a landing undone by putting
+`main` back bars nothing, as `landedTipOf` already required of a retire.
+From the ledger's last `landed` row for the name, and the ancestry from git;
+`none` when git could not say whether `mainTip` holds the commit. A row
+written before rows carried `branch` answers empty. -/
+def landedFromRow (e : Env) (ctr : IO.Ref Nat) (name tip mainTip : String) :
+    IO (Option (String × String × Bool)) := do
   match ← lastVerdict e "landed" (some name) with
-  | none => return ("", "")
+  | none => return some ("", "", false)
   | some row =>
     let b := (jsonField row "branch").getD ""
     let g := (jsonField row "gated").getD ""
-    if !isSha b || !isSha g || b == g then return ("", "")
+    if !isSha b || !isSha g || b == g then return some ("", "", false)
     let r ← git e ctr "pre-branch" #["merge-base", "--is-ancestor", b, tip] (some e.mainWt)
-    return (if r.code == 0 then (b, g) else ("", ""))
+    if r.code != 0 then return some ("", "", false)
+    -- A commit this repository no longer has is on no `main`: the landing
+    -- was undone long enough ago for git to prune it.
+    let v ← git e ctr "pre-branch" #["cat-file", "-e", g ++ "^{commit}"] (some e.mainWt)
+    if v.code != 0 then return some (b, g, false)
+    let m ← git e ctr "pre-branch" #["merge-base", "--is-ancestor", g, mainTip] (some e.mainWt)
+    return (if m.code == 0 then some (b, g, true)
+      else if m.code == 1 then some (b, g, false) else none)
 
 /-- The commit the last `landed` row for `name` landed as, when that row
 read exactly `tip` and the commit it landed is on `main`; empty otherwise.
@@ -665,16 +677,21 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
                 | none => pure (.garbled "git status in the branch worktree")
                 | some clean => do
                   let tip ← revParse e ctr "pre-branch" s!"refs/heads/agent/{name}" (some p)
-                  let (landedFrom, landedAs) ←
-                    if isSha tip then landedFromRow e ctr name tip else pure ("", "")
-                  say "pre-branch" (if ahead > 0 && clean && landedFrom.isEmpty then "ok" else "fail")
-                    ([("worktree", p), ("ahead", toString ahead),
-                     ("behind", toString behind),
-                     ("dirty", if clean then "no" else "yes"),
-                     ("tip", if tip.isEmpty then "?" else tip)]
-                     ++ (if landedFrom.isEmpty then []
-                         else [("landed-from", landedFrom), ("landed-as", landedAs)]))
-                  pure (.branchStatus ahead behind clean tip landedFrom landedAs)
+                  let row ← if isSha tip then landedFromRow e ctr name tip st.prevMainTip
+                    else pure (some ("", "", false))
+                  match row with
+                  | none => pure (.garbled "git merge-base --is-ancestor for the landed commit")
+                  | some (landedFrom, landedAs, onMain) => do
+                    let barred := landedBars landedFrom onMain
+                    say "pre-branch" (if ahead > 0 && clean && !barred then "ok" else "fail")
+                      ([("worktree", p), ("ahead", toString ahead),
+                       ("behind", toString behind),
+                       ("dirty", if clean then "no" else "yes"),
+                       ("tip", if tip.isEmpty then "?" else tip)]
+                       ++ (if landedFrom.isEmpty then []
+                           else [("landed-from", landedFrom), ("landed-as", landedAs),
+                             ("landed-on-main", if onMain then "yes" else "no")]))
+                    pure (.branchStatus ahead behind clean tip landedFrom landedAs onMain)
               | _, _ => pure (.garbled "rev-list counts are not numbers")
             | other => pure (.garbled s!"rev-list counts: {other.length} fields")
       | .rebase tip onto => do
@@ -1165,6 +1182,7 @@ def gatePlan : Array GateSpec := planOf gateList
 def sha1s : Sha := "1111111111111111111111111111111111111111"
 def sha2s : Sha := "2222222222222222222222222222222222222222"
 def sha3s : Sha := "3333333333333333333333333333333333333333"
+def sha4s : Sha := "4444444444444444444444444444444444444444"
 
 def okGates : List Obs := (List.range gatePlan.size).map fun i => Obs.gateOk i sha3s true
 
@@ -1202,7 +1220,7 @@ def oneSkippablePlan : Array GateSpec :=
   #[{ name := "a", mayAbsent := false }, { name := "b", mayAbsent := true }]
 
 def cases : List Case :=
-  let bs (ahead behind : Nat) : Obs := .branchStatus ahead behind true sha2s "" ""
+  let bs (ahead behind : Nat) : Obs := .branchStatus ahead behind true sha2s "" "" false
   let pre := [Obs.mainStatus true true sha1s, bs 1 0, Obs.treeReady sha2s true,
     Obs.rebaseOk sha3s true, netSame]
   let landOk := pre ++ okGates ++ [.branchRecheck sha2s, .mainRecheck true sha1s,
@@ -1283,11 +1301,25 @@ def cases : List Case :=
         .rebaseOk sha3s true, .netDiffs "" netMoved]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "a branch already landed, and not moved since", mode := .land, push := false
-    , obs := [Obs.mainStatus true true sha1s, .branchStatus 1 1 true sha2s sha2s sha3s]
+    , obs := [Obs.mainStatus true true sha1s, .branchStatus 1 1 true sha2s sha2s sha3s true]
     , verdict := .refused, code := 2, noMutation := true }
-  , { label := "a branch still carrying the commits it landed", mode := .land, push := false
-    , obs := [Obs.mainStatus true true sha1s, .branchStatus 2 1 true sha2s sha1s sha3s]
+  , { label := "a landed branch continued after its landing", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, .branchStatus 2 1 true sha2s sha1s sha3s true]
     , verdict := .refused, code := 2, noMutation := true }
+  , { label := "a landing main no longer holds bars nothing: the unmoved branch lands"
+    , mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, .branchStatus 1 1 true sha2s sha2s sha4s false,
+        .treeReady sha2s true, .rebaseOk sha3s true, netSame] ++ okGates
+        ++ [.branchRecheck sha2s, .mainRecheck true sha1s, .ledgerOk, .ffOk, .mainTip sha3s,
+            .ledgerOk]
+    , verdict := .landed, code := 0, noMutation := false }
+  , { label := "a landing main no longer holds bars nothing: the continued branch lands"
+    , mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, .branchStatus 2 1 true sha2s sha1s sha4s false,
+        .treeReady sha2s true, .rebaseOk sha3s true, netSame] ++ okGates
+        ++ [.branchRecheck sha2s, .mainRecheck true sha1s, .ledgerOk, .ffOk, .mainTip sha3s,
+            .ledgerOk]
+    , verdict := .landed, code := 0, noMutation := false }
   , { label := "main moved during the gates", mode := .land, push := false
     , obs := pre ++ okGates ++ [.branchRecheck sha2s, .mainRecheck true sha2s]
     , verdict := .refused, code := 2, noMutation := true }
@@ -1370,7 +1402,7 @@ def cases : List Case :=
     , obs := [.mainStatus true true sha1s, bs 0 4]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "the branch worktree is dirty", mode := .land, push := false
-    , obs := [.mainStatus true true sha1s, .branchStatus 2 0 false sha2s "" ""]
+    , obs := [.mainStatus true true sha1s, .branchStatus 2 0 false sha2s "" "" false]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "an observation out of order", mode := .land, push := false
     , obs := [.mainStatus true true sha1s, .ffOk]
@@ -1496,6 +1528,27 @@ def selftest : IO UInt32 := do
     say "selftest" "fail" [("case", "every write owned"),
       ("why", "a case writes a branch or a worktree the run does not own")]
   else say "selftest" "ok" [("case", "every write owned, and none to the owner's branch")]
+  -- The landed refusal sends the next unit to a new branch from `main` and
+  -- names no command that writes this one: the rebase it named before
+  -- dropped the landed work from a branch whose `main` had been put back.
+  let barredCases : List (String × Obs × Bool) :=
+    [ ("unmoved", .branchStatus 1 1 true sha2s sha2s sha3s true, false)
+    , ("continued", .branchStatus 2 1 true sha2s sha1s sha3s true, true) ]
+  for (label, o, since) in barredCases do
+    let (_, acts) := Land.run (State.init "probe" .land gatePlan false)
+      [.mainStatus true true sha1s, o]
+    let has (w t : String) : Bool := (w.splitOn t).length > 1
+    match acts.back? with
+    | some (.halt v c why) =>
+      if v == .refused && c == 2 && has why "land new <name>" && !has why "rebase"
+          && has why s!"as {sha3s}" && (has why s!"{sha1s}..{sha2s}" == since) then
+        say "selftest" "ok" [("case", s!"the landed refusal names a new branch: {label}")]
+      else
+        bad := bad + 1
+        say "selftest" "fail" [("case", s!"the landed refusal: {label}"), ("why", why)]
+    | _ =>
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"the landed refusal: {label}"), ("why", "no halt")]
   -- The remote read-back reads exactly `refs/heads/main`: a query pattern
   -- also matches a ref ending in it, which sorts first.
   let lsCases : List (String × String × Sha) :=
@@ -2114,6 +2167,59 @@ def scenarioRelandRefused (self root : String) : IO Outcome := do
              && says out2 "already landed"
          , detail := s!"first={c1} second={c2} branch={bTip}->{bAfter} main={main1}->{main2}" }
 
+/-- The review's q12. A landing onto a moved `main` replays the branch as
+rebased copies and leaves the branch where it was; `main` is then put back
+where it stood before that landing — a local undo, before any push. The
+branch's work is then on the branch and not on `main`, so that landing's row
+bars nothing: the unmoved branch lands again, and so, after one more undo,
+does a continued one, with both its units. The build this scenario was
+written against refused the first as "already landed" and told the second
+to `git rebase --onto main <tip>`, which dropped the landed unit from the
+branch. While `main` does hold a landing, the branch takes no further
+landing, and the refusal sends the next unit to a new branch from `main`,
+never through a rebase of this one. -/
+def scenarioMainPutBack (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/putback" "own"
+  IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
+  hgitOk #["add", "m.txt"] s.repo
+  hgitOk #["commit", "-qm", "Main moves"] s.repo
+  let m0 ← revOf s.repo "refs/heads/main"
+  let bTip ← revOf s.repo "refs/heads/agent/own"
+  let onMain (path : String) : IO Bool := do
+    let (c, _) ← hgit #["cat-file", "-e", s!"refs/heads/main:{path}"] s.repo
+    return c == 0
+  let (c1, _) ← landIn self s.repo #["own"] "t=true"
+  let g1 ← revOf s.repo "refs/heads/main"
+  hgitOk #["reset", "-q", "--hard", m0] s.repo
+  -- Put back: the unmoved branch lands again.
+  let (c2, _) ← landIn self s.repo #["own"] "t=true"
+  let own2 ← onMain "own.txt"
+  let g2 ← revOf s.repo "refs/heads/main"
+  -- `main` holds that landing: the unmoved branch, and then the continued
+  -- one, are refused, and pointed at a new branch.
+  let (c3, out3) ← landIn self s.repo #["own"] "t=true"
+  IO.FS.writeFile s!"{s.wt}/next.txt" "next\n"
+  hgitOk #["add", "next.txt"] s.wt
+  hgitOk #["commit", "-qm", "Next unit"] s.wt
+  let nTip ← revOf s.repo "refs/heads/agent/own"
+  let (c4, out4) ← landIn self s.repo #["own"] "t=true"
+  let g4 ← revOf s.repo "refs/heads/main"
+  -- Put back again: the continued branch lands both units.
+  hgitOk #["reset", "-q", "--hard", m0] s.repo
+  let (c5, _) ← landIn self s.repo #["own"] "t=true"
+  let own5 ← onMain "own.txt"
+  let next5 ← onMain "next.txt"
+  let bAfter ← revOf s.repo "refs/heads/agent/own"
+  let pointed (out : String) : Bool := says out "land new <name>" && !says out "git rebase"
+  return { label := "main put back after a rebased landing: the branch lands again, and a \
+continued branch is not told to drop what main lacks"
+         , ok := c1 == 0 && g1 != bTip && c2 == 0 && own2 && c3 == 2 && pointed out3
+             && c4 == 2 && pointed out4 && g4 == g2 && c5 == 0 && own5 && next5
+             && bAfter == nTip
+         , detail := s!"land={c1} put-back-land={c2} own-on-main={own2} again={c3} \
+pointed={pointed out3} continued={c4} pointed={pointed out4} main={g2}->{g4} \
+put-back-continued={c5} own-on-main={own5} next-on-main={next5} branch={nTip}->{bAfter}" }
+
 /-- A branch landed as rebased copies is retired: the ledger, not ancestry,
 says it is merged, and the branch is deleted by compare-and-swap. -/
 def scenarioRetireRebased (self root : String) : IO Outcome := do
@@ -2189,6 +2295,7 @@ def scratchSelftest : IO UInt32 := do
     , ("killed", scenarioKilled), ("ownerbefore", scenarioOwnerCommitsBeforeRebase)
     , ("ownerafter", scenarioOwnerCommitsAfterRebase), ("switchff", scenarioMainSwitchedAtMerge)
     , ("decoy", scenarioLsRemoteDecoy), ("reland", scenarioRelandRefused)
+    , ("putback", scenarioMainPutBack)
     , ("retireb", scenarioRetireRebased), ("pushlater", scenarioPushLater)
     , ("pushungated", scenarioPushUngated) ]
   let mut outcomes : Array Outcome := #[]

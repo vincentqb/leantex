@@ -174,8 +174,12 @@ inductive Obs where
   clean, and what is its tip. `landedFrom` is the tip an earlier landing of
   this branch read, when that landing rebased it and the branch still
   carries that tip — the ledger's `branch` field — and `landedAs` the commit
-  it landed as; both empty otherwise. -/
+  it landed as; both empty otherwise. `landedOnMain` is whether `main`, at
+  the tip this run read, holds `landedAs`: the core counts the row only
+  then (`landedBars`), so a landing undone by putting `main` back is no
+  landing. -/
   | branchStatus (ahead behind : Nat) (clean : Bool) (tip : Sha) (landedFrom landedAs : Sha)
+      (landedOnMain : Bool)
   /-- The gate tree this run made, read back: its `HEAD`, and whether it is
   clean. -/
   | treeReady (head : Sha) (clean : Bool)
@@ -554,6 +558,26 @@ private def nextGate (s : State) : State × Act :=
   | some g => (s, .gate s.gateIdx g.name)
   | none => afterGates s
 
+/-- Does an earlier landing bar this branch from landing again? Only while
+the branch still carries the tip that landing read (`landedFrom`, empty
+otherwise) and `main` as this run read it holds the commit it landed as. A
+landing `main` no longer holds — `main` put back past it, before any push —
+bars nothing: the branch's work is not on `main`, and landing it is how it
+gets there. The ledger row alone once barred it, and the remedy the refusal
+named then dropped that work from the branch. -/
+def landedBars (landedFrom : Sha) (landedOnMain : Bool) : Bool :=
+  !landedFrom.isEmpty && landedOnMain
+
+/-- The refusal of a landed branch. A landed branch is never continued: its
+work reached `main` as rebased copies, so the next unit starts on a new
+branch from `main`. Commits made on the branch since the landing are named
+as a range and left where they are — no command here writes the branch. -/
+def landedWhy (name : String) (landedFrom landedAs tip : Sha) : String :=
+  s!"agent/{name} is already landed, as {landedAs}, which main holds: a landed branch \
+takes no further landing, so start the next unit on a new branch from main (land new <name>)"
+    ++ (if landedFrom == tip then "" else
+      s!"; its commits since, {landedFrom}..{tip}, stay on agent/{name}")
+
 /-- The preconditions, the gate tree, the rebase in it and the net
 comparison: every stage before a gate runs. Split out from `step` so a
 theorem about the merge half unfolds none of it — the whole machine in one
@@ -567,17 +591,15 @@ private def stepPre (s : State) (o : Obs) : State × Act :=
     else if !isSha tip then internal s "main's tip did not read back as a sha"
     else ({ s with stage := .preBranch, prevMainTip := tip }, .probeBranch)
   | .preBranch, .branchAbsent m => refuse s (m.why s.name)
-  | .preBranch, .branchStatus ahead _ clean tip landedFrom landedAs =>
+  | .preBranch, .branchStatus ahead _ clean tip landedFrom landedAs onMain =>
     if ahead == 0 then refuse s s!"agent/{s.name} is not ahead of main"
     else if !clean then refuse s s!"the worktree of agent/{s.name} is dirty"
     else if !isSha tip then internal s "the branch tip did not read back as a sha"
-    -- An earlier landing replayed this tip onto `main` and left the branch
-    -- where it was; landing it again would replay commits `main` already
-    -- holds.
-    else if landedFrom == tip then refuse s s!"agent/{s.name} is already landed, as {landedAs}"
-    else if !landedFrom.isEmpty then
-      refuse s s!"agent/{s.name} still carries the commits it landed as {landedAs}: \
-rebase it in its own worktree with git rebase --onto main {landedFrom}, then land it"
+    -- An earlier landing replayed this branch onto `main` and left it where
+    -- it was. While `main` holds that landing the branch is landed, and a
+    -- landed branch is not continued; once `main` does not, the row bars
+    -- nothing and the branch lands again.
+    else if landedBars landedFrom onMain then refuse s (landedWhy s.name landedFrom landedAs tip)
     else ({ s with stage := .treeing, branchTip := tip }, .makeTree tip)
   | .treeing, .treeReady head clean =>
     -- A tree this run just made, not at the tip it was made from, or not
@@ -879,6 +901,32 @@ private theorem stepMerge_pinned (s : State) (o : Obs) :
       State.atOrPastFF, State.preTree, State.rebased, State.landedVerdict,
       State.landedIsGated]
 
+/-- The branch probe reads an earlier landing only through `landedBars`, so
+a landing `main` does not hold reads as none, at every stage. -/
+private theorem stepPre_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
+    stepPre s (.branchStatus a b c t f g false)
+      = stepPre s (.branchStatus a b c t "" "" false) := by
+  cases hs : s.stage <;> simp [stepPre, hs, landedBars, Obs.tag]
+
+/-- Neither later phase reads a branch probe at all. -/
+private theorem stepGate_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) (m : Bool) :
+    stepGate s (.branchStatus a b c t f g m) = stepGate s (.branchStatus a b c t "" "" m) := by
+  cases hs : s.stage <;> simp [stepGate, hs, Obs.tag]
+
+private theorem stepMerge_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) (m : Bool) :
+    stepMerge s (.branchStatus a b c t f g m) = stepMerge s (.branchStatus a b c t "" "" m) := by
+  cases hs : s.stage <;> simp [stepMerge, hs, Obs.tag]
+
+/-- At the branch probe, past the three facts checked first, the decision is
+`landedBars` and nothing else. -/
+private theorem stepPre_barred (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
+    (hs : s.stage = .preBranch) (ha : a ≠ 0) (ht : isSha t = true) :
+    ((stepPre s (.branchStatus a b true t f g m)).2 = .makeTree t ↔ landedBars f m = false)
+      ∧ (landedBars f m = true →
+          (stepPre s (.branchStatus a b true t f g m)).2
+            = .halt .refused 2 (landedWhy s.name f g t)) := by
+  cases hb : landedBars f m <;> simp [stepPre, hs, ha, ht, hb, refuse]
+
 attribute [irreducible] stepPre stepGate stepMerge
 
 /-- Every stage is owned by one of the three phases. The dispatch lemmas
@@ -1012,6 +1060,40 @@ theorem step_rebase_exact (s : State) (o : Obs) (t b : Sha) :
   split at h
   · simp [internal] at h
   · exact phaseOf_rebase_exact _ _ _ _ _ h
+
+/-- **A landing `main` does not hold is no landing.** Whatever the stage and
+whatever else the branch probe read, an earlier landing whose commit `main`
+— at the tip this run read — does not hold is the same step as no earlier
+landing at all: the row counts only while `main` holds what it landed. A
+landing undone before any push, by putting `main` back past it, once left
+its unmoved branch refused as already landed, and told a continued one to
+rebase away the work `main` no longer had. -/
+theorem step_unheld_exact (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
+    step s (.branchStatus a b c t f g false) = step s (.branchStatus a b c t "" "" false) := by
+  unfold step
+  simp only []
+  rcases phaseOf_cases s.stage with e | e | e <;> rw [e]
+  · exact stepPre_unheld s a b c t f g
+  · exact stepGate_unheld s a b c t f g false
+  · exact stepMerge_unheld s a b c t f g false
+
+/-- **A landed branch takes no further landing, and only a landed one.** At
+the branch probe, a branch ahead of `main`, with a clean worktree and a tip
+that reads as a sha, goes on to a gate tree at that tip exactly when no
+earlier landing bars it (`landedBars`: the branch carries the tip that
+landing read, and `main` holds the commit it landed as). A barred branch is
+refused with exit 2 and the refusal that sends the next unit to a new branch
+from `main`, which names no command that writes this one. -/
+theorem step_barred_exact (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
+    (hs : s.stage = .preBranch) (ha : a ≠ 0) (ht : isSha t = true) :
+    ((step s (.branchStatus a b true t f g m)).2 = .makeTree t ↔ landedBars f m = false)
+      ∧ (landedBars f m = true →
+          (step s (.branchStatus a b true t f g m)).2
+            = .halt .refused 2 (landedWhy s.name f g t)) := by
+  have e : phaseOf s.stage = stepPre := by rw [hs]; rfl
+  unfold step
+  simp only [e]
+  exact stepPre_barred s a b t f g m hs ha ht
 
 /-- **The merge names the gated commit.** Whenever `step` proposes the
 fast-forward, it names the run's gated tip, and the gates' evidence is about

@@ -347,9 +347,12 @@ in this repo; refer to the private reference corpus abstractly.
   worktree, then re-runs `land check` — keep-both once doubled an owed
   record's `blocker:` line, which is why the tool refuses rather than guesses.
   A branch landed onto a `main` that had moved keeps its original commits: the
-  ledger records the tip it read, `land retire` reads that, and an owner
-  continuing on the branch first rebases with `git rebase --onto main <that
-  tip>`.
+  ledger records the tip it read, and `land retire` reads that. A landed
+  branch is never continued: while `main` holds its landing, `land` refuses
+  it and sends the next unit to a new branch from `main` (`land new <name>`);
+  a landing `main` no longer holds — `main` put back before a push — counts
+  for nothing, and the branch lands again (`step_unheld_exact`,
+  `step_barred_exact`).
 - Never `git stash`: the stack is per-repository, not per-worktree, and agents
   here work in parallel worktree checkouts — a `pop` can apply, and drop,
   another worktree's entry. Set work aside with file copies instead (the file

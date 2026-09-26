@@ -16899,9 +16899,11 @@ with a scenario:
 - `land retire` counts a branch merged when the ledger's last `landed` row
   read exactly its tip and landed a commit that is on `main`. It deletes the
   branch with `update-ref -d <ref> <tip>`, a compare-and-swap.
-- A second landing of such a branch refuses. An unmoved branch is "already
-  landed". A branch the owner built on "still carries the commits it
-  landed", and the refusal names `git rebase --onto main <tip>`.
+- A second landing of such a branch refuses while `main` holds the first.
+  A landed branch takes no further landing, unmoved or built on, and the
+  refusal sends the next unit to a new branch from `main` (`land new
+  <name>`). A landing `main` no longer holds bars nothing (the round-3d
+  entry below).
 
 **`main` is pinned by name.** `git merge --ff-only <tip>` moved whatever
 ref the main worktree's `HEAD` named, so a switch just before it
@@ -17007,8 +17009,6 @@ branch, so the option travels in `--receive-pack`.
   - a refused gate set writes no ledger row;
   - no `worktree prune` runs;
   - the old `lock` directory is not honoured.
-- A continuing branch is refused, and the refusal names the rebase. Running
-  that rebase in the gate tree, from the ledger's tip, is the next step.
 - `land check` does not re-read the branch after its gates. Its row
   carries `branch` so that a reader can tell which tip was checked.
 - Routed:
