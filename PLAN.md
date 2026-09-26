@@ -14982,7 +14982,6 @@ none of the three to module initialization.
   says the loss "has never been named", but W0390 names it.
 
 
-### 2026-09-25 — the parity ladder, built: three premises measured, one rung added, one deferred for the reason it is deferred
 ### 2026-09-25 — the parity ladder, built: three premises measured, one level added, one deferred for the reason it is deferred
 
 The ladder's first levels are built and gated
