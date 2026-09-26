@@ -105,7 +105,7 @@ filesystem. Children get a null standard input and `GIT_TERMINAL_PROMPT=0`,
 so a command that would ask a human instead fails. -/
 def sh (e : Env) (ctr : IO.Ref Nat) (step cmd : String) (args : Array String)
     (cwd : Option String := none) : IO Ran := do
-  let n ← ctr.modifyGet (fun k => (k + 1, k))
+  let n ← ctr.modifyGet (fun k => (k, k + 1))
   let outPath := s!"{e.runDir}/{step}.{n}.out"
   let errPath := s!"{e.runDir}/{step}.{n}.err"
   -- Flush before the spawn. Measured on the scratch repository: when an exec
@@ -393,7 +393,8 @@ def defaultGates : List String := [
   "owed=lake env lean --run scripts/owed.lean",
   "scoreboard-build=lake build --wfail scoreboard",
   "scoreboard-check=.lake/build/bin/scoreboard --check",
-  "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}"]
+  "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}",
+  "scoreboard-selftest=.lake/build/bin/scoreboard --selftest"]
 
 /-- The shipped list, parsed. A list that does not parse is empty, and an
 empty plan proves nothing, so no landing gets past it; the selftest names
@@ -1567,7 +1568,8 @@ def selftest : IO UInt32 := do
   | .ok gs =>
     let names := defaultGates.map fun l => trimWs ((l.splitOn "=").headD "")
     if gs.toList.map (·.name) == names && gateList.size == defaultGates.length
-        && gatePlan.all (!·.mayAbsent) && (gateList.any (·.name == "scoreboard-check")) then
+        && gatePlan.all (!·.mayAbsent) && (gateList.any (·.name == "scoreboard-check"))
+        && (gateList.any (·.name == "scoreboard-selftest")) then
       say "selftest" "ok" [("case", "the shipped gate list parses, one gate per line")]
     else
       bad := bad + 1
@@ -1937,15 +1939,22 @@ def scenarioForeignGitDir (self root : String) : IO Outcome := do
          , detail := s!"exit={code} main={after} gated={tip} target={tBefore}->{tAfter} \
 target-land-dir={touched}" }
 
-/-- Retention and listings run while a landing is inside its gates: a
-gate calls this very binary 55 times as `retire` (which prunes run
-directories) and 5 as `status`. The landing's own directory must survive,
-and the landing finish. -/
+/-- Retention and listings run while a landing is inside its gates. Sixty
+directories whose names sort after any run id stand in the run directory
+first, so the landing's own directory is the oldest there and the first a
+pruning pass would take: a gate then calls this very binary three times as
+`retire` (which prunes run directories) and twice as `status`. The
+landing's own directory must survive, and the landing finish. The first
+form of this scenario relied on fifty-five `retire` runs outnumbering the
+landing's directory, and passed against the defective build in two runs of
+five, because run ids within one second did not sort by time. -/
 def scenarioRetention (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/retain" "retain"
+  for i in [0:60] do
+    IO.FS.createDirAll s!"{s.repo}/.git/land/zz-newer-{i}"
   writeExe s!"{s.root}/prune.sh"
-    s!"#!/bin/sh\ni=0\nwhile [ $i -lt 55 ]; do \"{self}\" retire nope >/dev/null 2>&1; i=$((i+1)); done\n\
-i=0\nwhile [ $i -lt 5 ]; do \"{self}\" status >/dev/null 2>&1; i=$((i+1)); done\n"
+    s!"#!/bin/sh\ni=0\nwhile [ $i -lt 3 ]; do \"{self}\" retire nope >/dev/null 2>&1; i=$((i+1)); done\n\
+i=0\nwhile [ $i -lt 2 ]; do \"{self}\" status >/dev/null 2>&1; i=$((i+1)); done\n"
   let tip ← revOf s.repo "refs/heads/agent/retain"
   let (code, out) ← landIn self s.repo #["retain"] s!"prune={s.root}/prune.sh"
   let after ← revOf s.repo "refs/heads/main"
