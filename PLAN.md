@@ -19026,3 +19026,26 @@ an attribute to a markdown page now moves this tier, until a row declares
 the attribute or the change is judged a real difference. That is the
 intended direction: the drop that hid `tabindex` would have hidden
 `hidden` too.
+
+**A fence's rows pin the whole code block.** The commit "Assert a
+fence's code, not its pre's attributes" loosened four fence rows to the
+needle `<code>code</code></pre>`, and its message said the needle still
+required the code "directly inside the pre". It did not. The needle
+anchors only the closing side, so a backend that opened every `<pre>` with
+leaked text passed all four rows and the whole suite. The rows now read
+the typed tree (`mdCodeBlocks`) and require three things:
+
+- the page carries exactly one `<pre>`;
+- the `<pre>` has exactly the attributes the backend gives every code
+  block, named once in `mdCodeBlockPreAttrs`;
+- its only child is a `<code>` with no attribute, holding exactly `code`.
+
+Measured by `lake test` on "Pin a fence's whole code block: one pre, and
+the code its only child", with one mutation per scratch clone:
+
+- the clean tree passes;
+- text before the `<code>` fails the four rows;
+- an attribute on the `<pre>` fails the four rows;
+- an attribute on the `<code>` fails five;
+- a fence line that keeps its container prefixes fails four;
+- an info word that reaches the option head again fails six.
