@@ -12,6 +12,7 @@ import Tests.PdfConformance
 import Tests.Artifact
 import Tests.CompatGate
 import Tests.HtmlTokens
+import Tests.HtmlA11y
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -54,6 +55,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   anchorCostChecks ref
   htmlTokenClosureChecks ref
   htmlSourcedGapChecks ref
+  htmlA11yChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.

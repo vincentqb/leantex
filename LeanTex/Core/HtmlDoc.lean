@@ -4129,6 +4129,163 @@ def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Node) :
 
 end
 
+/-- One piece of a picture label as its SVG `<text>` sets it: math as its
+floor — the formula's content, never its markup, the recovery policy this
+backend applies in prose (native MathML inside SVG is what M6 still owes
+there) — and every other inline its plain text. -/
+def labelPiece : Inline → String
+  | .math _ src => Ir.mathFloor src
+  | .formula _ _ body => Ir.formulaFloor body
+  | inl => Ir.plainTextOne inl
+
+/-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
+py1))` the viewBox declares: the same evaluated shapes the PDF paints,
+through the typed tree so every label passes the escaper. SVG's y grows
+downward, so the transform is the PDF path's: flip against the box's top. -/
+def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp) : Array Node :=
+  pic.shapes.map fun shape =>
+    -- The paint attributes of a stroked/filled shape: fill (or none —
+    -- SVG's default is black, not TikZ's), then stroke colour, width,
+    -- and pgf's dash rhythms (§15.3.2: dashed on 3pt off 3pt, dotted
+    -- on the line width off 1pt).
+    let paint := fun (st : Option Ir.Pic.Stroke) (fl : Option Ir.Color) =>
+      let fillA := #[("fill", (fl.map cssColor).getD "none")]
+      match st with
+      | none => fillA
+      | some k =>
+        let dashA : Array (String × String) := match k.dash with
+          | .solid => #[]
+          | .dashed => #[("stroke-dasharray", "3 3")]
+          | .dotted => #[("stroke-dasharray", s!"{k.width.toPtString} 1")]
+        fillA ++ #[("stroke", cssColor k.color),
+          ("stroke-width", k.width.toPtString)] ++ dashA
+    match shape with
+    | .rect rx ry rw rh color =>
+      Html.elem "rect" #[] #[
+        ("x", (min rx (rx + rw) - px0).toPtString),
+        ("y", (py1 - max ry (ry + rh)).toPtString),
+        ("width", (max rw (-rw)).toPtString),
+        ("height", (max rh (-rh)).toPtString),
+        ("fill", cssColor color)]
+    | .label lx ly content color scale align =>
+      -- The label's inline content inside SVG's <text>: plain text as
+      -- character data, math as an italic <tspan> of its floor
+      -- (`labelPiece`), every string through the escaper by construction.
+      let nodes := content.map fun inl =>
+        match inl with
+        | .math _ _ | .formula _ _ _ =>
+          Html.elem "tspan" #[Html.text (labelPiece inl)] #[("font-style", "italic")]
+        | inl => Html.text (labelPiece inl)
+      let anchor := match align with
+        | .center | .south | .north => "middle"
+        | .west => "start"
+        | .east => "end"
+      let baseline := match align with
+        | .center | .west | .east => "central"
+        | .south => "text-after-edge"
+        | .north => "hanging"
+      Html.elem "text" nodes #[
+        ("x", (lx - px0).toPtString),
+        ("y", (py1 - ly).toPtString),
+        ("fill", cssColor color),
+        ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
+        ("text-anchor", anchor),
+        ("dominant-baseline", baseline)]
+    | .circle sx sy r st fl =>
+      Html.elem "circle" #[] (#[
+        ("cx", (sx - px0).toPtString),
+        ("cy", (py1 - sy).toPtString),
+        ("r", (max r (-r)).toPtString)] ++ paint st fl)
+    | .frame fx fy fw fh st fl =>
+      Html.elem "rect" #[] (#[
+        ("x", (min fx (fx + fw) - px0).toPtString),
+        ("y", (py1 - max fy (fy + fh)).toPtString),
+        ("width", (max fw (-fw)).toPtString),
+        ("height", (max fh (-fh)).toPtString)] ++ paint st fl)
+    | .edge segs st tip =>
+      let px (v : Dim.Sp) : String := (v - px0).toPtString
+      let py (v : Dim.Sp) : String := (py1 - v).toPtString
+      let d := String.join (segs.toList.map fun sg => match sg with
+        | .line x1 y1 x2 y2 =>
+          s!"M {px x1} {py y1} L {px x2} {py y2} "
+        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+          s!"M {px x1} {py y1} C {px c1x} {py c1y}, {px c2x} {py c2y}, \
+{px x2} {py y2} ")
+      let tipNodes : Array Node := match tip with
+        | some t => #[Html.elem "path" #[] #[
+            ("d", s!"M {px t.x1} {py t.y1} L {px t.x2} {py t.y2} \
+L {px t.x3} {py t.y3} Z"),
+            ("fill", cssColor st.color)]]
+        | none => #[]
+      Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
+        ++ paint (some st) none)] ++ tipNodes) #[]
+
+/-- The picture's box as the element's own size. Lengths are pt, the unit
+the viewBox declares — and in flow classes the element's own size too:
+paper is paper. On the paged deck the stage is the viewport, so the box
+ships as its share of the stage instead (`deckStageMilli`, as images do): a
+pt box against CSS's 96 dpi ruler was the same "very small picture" defect.
+Both shares are stated and the viewBox's own ratio letterboxes inside them
+(SVG 2 §8.7, `meet`), so a viewport of another ratio never distorts the
+ink. -/
+def pictureBox (cfg : Config) (w h : Dim.Sp) : Array (String × String) :=
+  #[("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
+    (if cfg.deck then
+      #[("style", s!"width: {decMilli (deckStageMilli w cfg.page.width)}vw; \
+height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
+     else
+      #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")])
+
+/-- Does a string carry anything to read: a character that is not white
+space. The one blankness test for an accessible name, here and in the
+judge (`carriesName`): accname 1.2 does not take a name that is empty once
+trimmed of white space. -/
+def nonBlank (s : String) : Bool := s.toList.any (!·.isWhitespace)
+
+/-- The first of two strings that carries anything to read. -/
+def firstNonBlank (a b : String) : String := if nonBlank a then a else b
+
+theorem firstNonBlank_nonBlank (a b : String) (hb : nonBlank b = true) :
+    nonBlank (firstNonBlank a b) = true := by
+  unfold firstNonBlank
+  split
+  · assumption
+  · exact hb
+
+/-- The words a picture's labels set, as the SVG sets them (`labelPiece`),
+in shape order, joined. -/
+def pictureSaid (pic : Ir.Pic.Picture) : String :=
+  String.intercalate ", " (pic.labelContents.toList.filterMap fun content =>
+    let s := String.join (content.toList.map labelPiece)
+    if nonBlank s then some s.trimAscii.toString else none)
+
+/-- What a picture says in words: its labels (`pictureSaid`) — the text a
+sighted reader sees in the drawing. With none, the picture is named by what
+it is, in the document's language: the locale's figure word, and the
+engine's English word only where a locale carries none, so the name is
+never blank (`pictureName_nonBlank`). -/
+def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=
+  firstNonBlank (pictureSaid pic) (firstNonBlank loc.figure "figure")
+
+theorem pictureName_nonBlank (loc : Locale) (pic : Ir.Pic.Picture) :
+    nonBlank (pictureName loc pic) = true :=
+  firstNonBlank_nonBlank _ _ (firstNonBlank_nonBlank _ _ (by decide))
+
+/-- The picture's role and name. `role="img"` makes the SVG one image to
+assistive technology — its children presentational (WAI-ARIA 1.2 §5.3), so
+the label `<text>` a sighted reader sees is not read out — and the name
+(`pictureName`) hands those words back. A refused picture's placeholder
+carries the code of its loss as its one label (`Picture.placeholder`), so
+its name names the loss: a placeholder is never decorative. -/
+def pictureRole (loc : Locale) (pic : Ir.Pic.Picture) : Array (String × String) :=
+  #[("role", "img"), ("aria-label", pictureName loc pic), ("class", "picture")]
+
+/-- The picture as inline SVG. -/
+def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
+  let ((px0, py0), (px1, py1)) := pic.bbox
+  Html.elem "svg" (pictureKids pic px0 py1)
+    (pictureBox cfg (px1 - px0) (py1 - py0) ++ pictureRole cfg.locale pic)
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -4401,111 +4558,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- skips it, and `emitTree` names the drop in the classes that keep it
     -- paged-media furniture (W0007). This arm only closes the match.
     Html.text ""
-  | .picture pic =>
-    -- The picture as inline SVG: the same evaluated shapes the PDF paints,
-    -- through the typed tree so every label passes the escaper. SVG's y
-    -- grows downward, so the transform is the PDF path's: flip against the
-    -- box's top. Lengths are pt, the unit the viewBox declares — and in
-    -- flow classes the element's own size too: paper is paper. On the
-    -- paged deck the stage is the viewport, so the box ships as its
-    -- share of the stage instead (`deckStageMilli`, as images do): a pt
-    -- box against CSS's 96 dpi ruler was the same "very small picture"
-    -- defect. Both shares are stated and the viewBox's own ratio
-    -- letterboxes inside them (SVG 2 §8.7, `meet`), so a viewport of
-    -- another ratio never distorts the ink.
-    let ((px0, py0), (px1, py1)) := pic.bbox
-    let w := px1 - px0
-    let h := py1 - py0
-    let kids := pic.shapes.map fun shape =>
-      -- The paint attributes of a stroked/filled shape: fill (or none —
-      -- SVG's default is black, not TikZ's), then stroke colour, width,
-      -- and pgf's dash rhythms (§15.3.2: dashed on 3pt off 3pt, dotted
-      -- on the line width off 1pt).
-      let paint := fun (st : Option Ir.Pic.Stroke) (fl : Option Ir.Color) =>
-        let fillA := #[("fill", (fl.map cssColor).getD "none")]
-        match st with
-        | none => fillA
-        | some k =>
-          let dashA : Array (String × String) := match k.dash with
-            | .solid => #[]
-            | .dashed => #[("stroke-dasharray", "3 3")]
-            | .dotted => #[("stroke-dasharray", s!"{k.width.toPtString} 1")]
-          fillA ++ #[("stroke", cssColor k.color),
-            ("stroke-width", k.width.toPtString)] ++ dashA
-      match shape with
-      | .rect rx ry rw rh color =>
-        Html.elem "rect" #[] #[
-          ("x", (min rx (rx + rw) - px0).toPtString),
-          ("y", (py1 - max ry (ry + rh)).toPtString),
-          ("width", (max rw (-rw)).toPtString),
-          ("height", (max rh (-rh)).toPtString),
-          ("fill", cssColor color)]
-      | .label lx ly content color scale align =>
-        -- The label's inline content inside SVG's <text>: plain text as
-        -- character data, math as an italic <tspan> of its floor — the
-        -- formula's content, never its markup, the same recovery policy
-        -- this backend applies in prose (native MathML inside SVG is what
-        -- M6 still owes there), every string through the escaper by
-        -- construction.
-        let nodes := content.map fun inl =>
-          match inl with
-          | .math _ src =>
-            Html.elem "tspan" #[Html.text (Ir.mathFloor src)] #[("font-style", "italic")]
-          | .formula _ _ body =>
-            Html.elem "tspan" #[Html.text (Ir.formulaFloor body)] #[("font-style", "italic")]
-          | inl => Html.text (Ir.plainTextOne inl)
-        let anchor := match align with
-          | .center | .south | .north => "middle"
-          | .west => "start"
-          | .east => "end"
-        let baseline := match align with
-          | .center | .west | .east => "central"
-          | .south => "text-after-edge"
-          | .north => "hanging"
-        Html.elem "text" nodes #[
-          ("x", (lx - px0).toPtString),
-          ("y", (py1 - ly).toPtString),
-          ("fill", cssColor color),
-          ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
-          ("text-anchor", anchor),
-          ("dominant-baseline", baseline)]
-      | .circle sx sy r st fl =>
-        Html.elem "circle" #[] (#[
-          ("cx", (sx - px0).toPtString),
-          ("cy", (py1 - sy).toPtString),
-          ("r", (max r (-r)).toPtString)] ++ paint st fl)
-      | .frame fx fy fw fh st fl =>
-        Html.elem "rect" #[] (#[
-          ("x", (min fx (fx + fw) - px0).toPtString),
-          ("y", (py1 - max fy (fy + fh)).toPtString),
-          ("width", (max fw (-fw)).toPtString),
-          ("height", (max fh (-fh)).toPtString)] ++ paint st fl)
-      | .edge segs st tip =>
-        let px (v : Dim.Sp) : String := (v - px0).toPtString
-        let py (v : Dim.Sp) : String := (py1 - v).toPtString
-        let d := String.join (segs.toList.map fun sg => match sg with
-          | .line x1 y1 x2 y2 =>
-            s!"M {px x1} {py y1} L {px x2} {py y2} "
-          | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-            s!"M {px x1} {py y1} C {px c1x} {py c1y}, {px c2x} {py c2y}, \
-{px x2} {py y2} ")
-        let tipNodes : Array Node := match tip with
-          | some t => #[Html.elem "path" #[] #[
-              ("d", s!"M {px t.x1} {py t.y1} L {px t.x2} {py t.y2} \
-L {px t.x3} {py t.y3} Z"),
-              ("fill", cssColor st.color)]]
-          | none => #[]
-        Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
-          ++ paint (some st) none)] ++ tipNodes) #[]
-    Html.elem "svg" kids (#[
-      ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
-      (if cfg.deck then
-        #[("style", s!"width: {decMilli (deckStageMilli w cfg.page.width)}vw; \
-height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
-       else
-        #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")]) ++ #[
-      ("role", "img"),
-      ("class", "picture")])
+  | .picture pic => pictureSvg cfg pic
   -- booktabs' formal table: `tableNode` above, where the header projection
   -- theorem (`th_iff_header_row`) can read the row builder.
   | .table cols padL padR rows rules => tableNode cfg cols padL padR rows rules
@@ -5236,5 +5289,136 @@ theorem emit_lang_declared (cfg : Config) (doc : Doc) :
       (emit cfg doc).1 = Html.document (doc.info.language.getD "en") head body := by
   rcases h : emitTree cfg doc with ⟨head, body, ds⟩
   exact ⟨head, body, by simp [emit, h]⟩
+
+/-! ## What assistive technology is handed
+
+The static half of the page's accessibility oracle: facts a checker such as
+axe reports from a browser, read here off the typed tree the page
+serializes, so they can gate with no browser. axe over the rendered corpus
+is the cross-check, never the gate. -/
+
+/-- An attribute's value on an element's attribute list. -/
+def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
+  (attrs.find? (·.1 == k)).map (·.2)
+
+/-- Does an element carry an accessible name in its own markup: a
+non-blank `aria-labelledby` or `aria-label` (accname 1.2, steps 2B and 2C),
+or — for SVG — a `<title>` child with text (SVG-AAM 1.0, §8.1)? -/
+def carriesName : Node → Bool
+  | .elem _ attrs kids =>
+    attrs.any (fun kv => (kv.1 == "aria-label" || kv.1 == "aria-labelledby") &&
+        nonBlank kv.2) ||
+      kids.any fun k => match k with
+        | .elem "title" _ ts => ts.any fun t => match t with
+          | .text s => nonBlank s
+          | _ => false
+        | _ => false
+  | .text _ => false
+  | .style _ => false
+  | .script _ _ => false
+
+/-- The page facts assistive technology depends on, as counts over the
+emitted tree. Each `…Unnamed`/`…Unreachable` count is a deficit: a node
+counted in its total that AT cannot name or reach. A subtree under
+`aria-hidden="true"` is not handed to AT at all, so nothing in it counts. -/
+structure A11yFacts where
+  /-- `<h1>` elements: a page's outline has exactly one top (axe's
+  `page-has-heading-one` asks for at least one). -/
+  h1s : Nat := 0
+  imgs : Nat := 0
+  /-- `<img>` with no non-blank `alt` and no declared decorative role
+  (`presentation`/`none`): WCAG 2.2 SC 1.1.1. -/
+  imgsUnnamed : Nat := 0
+  svgs : Nat := 0
+  /-- `<svg>` that carries no accessible name (`carriesName`): axe's
+  `svg-img-alt`, SC 1.1.1. -/
+  svgsUnnamed : Nat := 0
+  /-- Elements the engine's own stylesheet makes scroll containers
+  (`declaresScroll`). -/
+  scrolls : Nat := 0
+  /-- Scroll containers a keyboard cannot reach — no `tabindex="0"` — or, for
+  a deck stage (a named region once focusable), that carry no name: axe's
+  `scrollable-region-focusable`, SC 2.1.1. -/
+  scrollsUnreachable : Nat := 0
+  deriving Repr, BEq, Inhabited
+
+/-- The class tokens of an attribute list. -/
+def classTokens (attrs : Array (String × String)) : List String :=
+  ((attrOf? attrs "class").getD "").splitOn " " |>.filter (!·.isEmpty)
+
+/-- The elements the engine's own stylesheet declares scroll containers
+(`overflow-x`/`overflow-y: auto`): every `pre` (`baseCss`), and on the paged
+deck every stage (`deckStageRule`: `section.slide, section.section-page`).
+Only the `own` stylesheet declares either — under `bulma` or `none` the host
+sheet decides, and the engine claims nothing. -/
+def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
+    Bool :=
+  own && (tag == "pre" ||
+    (deck && tag == "section" &&
+      (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
+
+/-- One element's own contribution to the facts, its children aside. -/
+def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
+    (kids : Array Node) (acc : A11yFacts) : A11yFacts :=
+  let decorative := match attrOf? attrs "role" with
+    | some "presentation" | some "none" => true
+    | _ => false
+  let acc := if tag == "h1" then { acc with h1s := acc.h1s + 1 } else acc
+  let acc := if tag == "img" then
+      let named := nonBlank ((attrOf? attrs "alt").getD "")
+      { acc with imgs := acc.imgs + 1
+                 imgsUnnamed := acc.imgsUnnamed + (if named || decorative then 0 else 1) }
+    else acc
+  let acc := if tag == "svg" then
+      { acc with svgs := acc.svgs + 1
+                 svgsUnnamed := acc.svgsUnnamed +
+                   (if carriesName (.elem tag attrs kids) then 0 else 1) }
+    else acc
+  if declaresScroll own deck tag attrs then
+    let focusable := attrOf? attrs "tabindex" == some "0"
+    let named := tag == "pre" || carriesName (.elem tag attrs kids)
+    { acc with scrolls := acc.scrolls + 1
+               scrollsUnreachable := acc.scrollsUnreachable +
+                 (if focusable && named then 0 else 1) }
+  else acc
+
+mutual
+
+/-- The facts of one node onto `acc`; `hidden` is whether an ancestor took
+the subtree out of the accessibility tree. The list companion keeps the
+recursion structural. -/
+def a11yOne (own deck hidden : Bool) (acc : A11yFacts) : Node → A11yFacts
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    let hid := hidden || attrOf? attrs "aria-hidden" == some "true"
+    let acc := if hid then acc else a11yElem own deck tag attrs kids acc
+    a11yList own deck hid acc kids.toList
+
+def a11yList (own deck hidden : Bool) (acc : A11yFacts) : List Node → A11yFacts
+  | [] => acc
+  | k :: rest => a11yList own deck hidden (a11yOne own deck hidden acc k) rest
+
+end
+
+/-- The facts of a page body, under the stylesheet mode and page model it
+was emitted for. -/
+def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
+  a11yList own deck false {} body.toList
+
+/-- **Every picture the backend emits is named** (`_contract`): the
+`.picture` arm — the one site that builds an `<svg>` — ships an `svg`
+element whose own markup carries a non-empty accessible name, whatever the
+picture and configuration. A fact of the artifact, not the IR: the IR's
+picture carries no text alternative (`Struct.Leaf.picture`), and naming it
+by its own words is this backend's projection of what the drawing shows.
+`htmlA11yChecks` holds the whole-page form over the shipped corpus. -/
+theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
+    (blockNode cfg (.picture pic)).tag? = some "svg" ∧
+      carriesName (blockNode cfg (.picture pic)) = true := by
+  rcases h : pic.bbox with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
+  simp [blockNode, pictureSvg, h, Html.elem, Node.tag?, carriesName, pictureRole,
+    pictureName_nonBlank]
 
 end LeanTex.Core.HtmlDoc

@@ -1,0 +1,96 @@
+import Tests.Backends
+
+open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+
+/-! What assistive technology is handed, asserted over the pages the corpus
+ships: the typed tree `HtmlDoc.emitTree` produces for every golden fixture,
+judged by `HtmlDoc.a11yFacts` — the same judge the `htmla11y` scoreboard
+tier reads, so the suite and the tier cannot disagree about what counts. -/
+
+/-- The stylesheet mode a document's page is emitted under: its own
+`\output{ css = … }` declaration, read as the driver reads it. -/
+def a11yCssOf (doc : Ir.Doc) : HtmlDoc.CssMode :=
+  match cssFor doc.output.css with
+  | .own => .own
+  | .bulma => .bulma
+  | .none => .none
+
+/-- One corpus fixture's page as its typed tree, built in-process the way
+the driver builds it: the document's own stylesheet mode and its images from
+`tests/corpus` (`corpusStore`). No boundary tool runs here, so a boundary
+picture is its placeholder — what a host with no tool ships. -/
+def a11yCorpusPage (n : String) :
+    IO (Ir.Doc × Array Html.Node × Array Html.Node × Array Diag) := do
+  let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+  let (doc, _) ← elabFixture n src
+  let store ← corpusStore doc
+  let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
+  return (doc, head, body, diags)
+
+/-- The judge's reading of one page: the stylesheet mode and the page model
+decide which elements are scroll containers. -/
+def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
+  HtmlDoc.a11yFacts (a11yCssOf doc == .own) (doc.docClass.record.model == .frame) body
+
+mutual
+
+/-- Every `<svg>` element of a tree with its attributes, in document order. -/
+def svgAttrsOne (acc : Array (Array (String × String))) :
+    Html.Node → Array (Array (String × String))
+  | .elem tag attrs kids =>
+    svgAttrsList (if tag == "svg" then acc.push attrs else acc) kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def svgAttrsList (acc : Array (Array (String × String))) :
+    List Html.Node → Array (Array (String × String))
+  | [] => acc
+  | k :: rest => svgAttrsList (svgAttrsOne acc k) rest
+
+end
+
+/-- The `aria-label` of every `<svg>` a body carries. -/
+def svgLabels (body : Array Html.Node) : Array (Option String) :=
+  (svgAttrsList #[] body.toList).map (HtmlDoc.attrOf? · "aria-label")
+
+/-- The HTML accessibility contract over the shipped corpus and the probes
+that break each half once. -/
+def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- W4: every inline <svg> on every shipped page carries an accessible
+  -- name. Non-vacuous only if the corpus ships pictures at all.
+  let mut svgsSeen := 0
+  for n in goldenNames do
+    let (doc, _, body, _) ← a11yCorpusPage n
+    let f := a11yFactsOf doc body
+    svgsSeen := svgsSeen + f.svgs
+    t s!"html a11y {n}: every svg is named ({f.svgsUnnamed} of {f.svgs} unnamed)"
+      (f.svgsUnnamed == 0)
+  t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
+  -- A refused picture's placeholder is never decorative: its name is the
+  -- code that names the loss, the text the box itself shows.
+  let refused := dvDoc "\\pictures{ tool = none }\n"
+    "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"
+  let (rdoc, rds) := elabStr refused
+  let (_, rbody, _) := HtmlDoc.emitTree {} rdoc
+  t "html a11y: the refused picture fires W0362" (rds.any (·.code == "W0362"))
+  t s!"html a11y: the refused placeholder is named by its loss: {svgLabels rbody}"
+    (svgLabels rbody == #[some "W0362"])
+  -- A picture's labels are its name: role="img" makes an SVG's children
+  -- presentational (WAI-ARIA 1.2 §5.3), so the words a sighted reader sees
+  -- reach assistive technology only through the name.
+  let labelled := dvDoc "" ("\\begin{tikzpicture}\n\\node at (0,0) {left};\n" ++
+    "\\node at (2,0) {right};\n\\end{tikzpicture}")
+  let (_, lbody, _) := HtmlDoc.emitTree {} (elabStr labelled).1
+  t s!"html a11y: a picture is named by its labels: {svgLabels lbody}"
+    (svgLabels lbody == #[some "left, right"])
+  -- A picture with no words is named by what it is, in the page's language.
+  let bare := "\\begin{tikzpicture}\n\\draw (0,0) -- (2,0);\n\\end{tikzpicture}"
+  let (_, bbody, _) := HtmlDoc.emitTree {} (elabStr (dvDoc "" bare)).1
+  t s!"html a11y: a wordless picture is named by the locale's figure word: {svgLabels bbody}"
+    (svgLabels bbody == #[some "Figure"])
+  let (_, gbody, _) := HtmlDoc.emitTree {}
+    (elabStr (dvDoc "\\usepackage[ngerman]{babel}\n" bare)).1
+  t s!"html a11y: …in German too: {svgLabels gbody}"
+    (svgLabels gbody == #[some "Abbildung"])
