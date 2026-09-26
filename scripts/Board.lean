@@ -1328,12 +1328,4 @@ def hermeticHtmlKey : IO (Except String String) := do
   try Hermetic.corpusKey "tests/corpus"
   catch e => return .error (toString e)
 
-/-- The freshness key under the name `scripts/htmlreader.lean` calls. The
-binary argument is no longer read — the key is built in-process, so it
-cannot depend on what the host has installed — and stays only so that
-caller compiles. Routed: call `hermeticHtmlKey` there and drop the
-argument, then delete this. -/
-def corpusHtmlKey (_leantexBin : String) : IO (Except String String) :=
-  hermeticHtmlKey
-
 end Scoreboard

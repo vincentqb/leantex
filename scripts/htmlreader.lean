@@ -14,8 +14,10 @@ ratchet can carry, and which survives a matrix that legitimately holds a
 `fail:` cell with its reason beneath.
 
 This tier never launches a browser: it reads the committed matrix. What it
-does do is rebuild the corpus to HTML with the committed binary and compare
-a content key against the `src-key:` line the matrix carries — the
+does do is rebuild the corpus to HTML in-process (`hermeticHtmlKey`: the
+corpus and its shipped faces only — no TeX tree, no `PATH`, no font
+variable) and compare a content key against the `src-key:` line the matrix
+carries — the
 freshness question the matrix cannot answer for itself. Without it the
 engine can change what a page does and this tier keeps reporting the
 browser's verdict on pages nobody emits any more. A differing key is a
@@ -36,7 +38,6 @@ import scripts.Board
 open Scoreboard
 
 def matrixPath : String := "tests/oracles/html-reader-matrix.txt"
-def leantexBin : String := ".lake/build/bin/leantex"
 
 structure Cells where
   section_ : String
@@ -105,7 +106,7 @@ lake env lean --run scripts/html-oracle.lean"
       untested := untested + c.rows
   -- Freshness. An empty row set is how this tier says "do not compare": the
   -- porcelain fault comes from tierMain's own malformed-measurement path.
-  let fresh ← corpusHtmlKey leantexBin
+  let fresh ← hermeticHtmlKey
   match matrixKey text, fresh with
   | none, _ =>
     IO.eprintln s!"scoreboard: {matrixPath} carries no `src-key:` line, so nothing \

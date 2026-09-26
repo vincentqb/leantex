@@ -12,6 +12,9 @@ The scoreboard: one line per goal, and a queue computed from the deficits.
   scoreboard --queue        ranked deficits across every tier
   scoreboard --bench        the speed report, never gated
   scoreboard --selftest     the format, the ratchet, and the malformations
+  scoreboard --key <dir>    the HTML freshness key of a corpus directory (its
+                            `.tex` fixtures and a `fonts/` of shipped faces) —
+                            the selftest runs it under two environments
 
 A tier is discovered by convention: its name is the basename of
 `tests/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
@@ -738,19 +741,26 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
   finally
     IO.FS.removeDirAll dir
 
-/-- Every case, in parallel, against this binary: `IO.appPath` is the scoreboard
-under test, so the cases drive `main`, the listing, the blob reads and the
-count exactly as a landing does. Run interpreted, this process is `lean`, which
-has no `--base`; the selftest then says so rather than test another binary. -/
-def cliFailures : IO (Array String) := do
+/-- This binary, the scoreboard under test, for the selftest to drive through
+its own CLI. Run interpreted, this process is `lean`, which has neither
+`--base` nor `--key`; the selftest then says so rather than test another
+binary. -/
+def selfBinary : IO (Except String String) := do
   let bin ← IO.appPath
-  if bin.fileName != some "scoreboard" then
-    return #[s!"cli: the selftest drives its own binary and this process is {bin}; run \
-the compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest"]
+  if bin.fileName == some "scoreboard" then return .ok bin.toString
+  return .error s!"the selftest drives its own binary and this process is {bin}; run the \
+compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest"
+
+/-- Every case, in parallel, against this binary: the cases drive `main`, the
+listing, the blob reads and the count exactly as a landing does. -/
+def cliFailures : IO (Array String) := do
+  let bin ← match ← selfBinary with
+    | .ok b => pure b
+    | .error e => return #[s!"cli: {e}"]
   let toolchain ← readFileOr "lean-toolchain"
   let mut tasks := #[]
   for c in cliCases do
-    tasks := tasks.push (← IO.asTask (prio := .dedicated) (runCliCase bin.toString toolchain c))
+    tasks := tasks.push (← IO.asTask (prio := .dedicated) (runCliCase bin toolchain c))
   let mut out := #[]
   for t in tasks do
     match ← IO.wait t with
@@ -758,6 +768,33 @@ the compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest
     | .ok (some why) => out := out.push why
     | .error e => out := out.push s!"cli: {e}"
   return out
+
+/-- The HTML key of a corpus directory as this binary's `--key` computes it,
+once under the environment as it stands and once under one that looks nothing
+alike: the font override naming another face, the font path, `HOME` and the
+caches empty, no `PATH`, another zone and locale. The selftest cannot change
+its own environment, so it asks its own binary; a key that read any of these
+would differ between the two. -/
+def keyUnderHosts (dir : System.FilePath) : IO (Except String (String × String)) := do
+  let bin ← match ← selfBinary with
+    | .ok b => pure b
+    | .error e => return .error e
+  let host ← IO.FS.createTempDir
+  try
+    let other := host / "elsewhere.otf"
+    IO.FS.writeBinFile other (← IO.FS.readBinFile "tests/corpus/fonts/SourceSerifPro-Regular.otf")
+    let keyUnder (env : Array (String × Option String)) : IO String := do
+      let o ← IO.Process.output { cmd := bin, args := #["--key", dir.toString], env }
+      return if o.exitCode == 0 then o.stdout.trimAscii.toString
+        else s!"exit {o.exitCode}: {o.stderr.trimAscii.toString}"
+    let ambient ← keyUnder #[]
+    let hostile ← keyUnder #[("LEANTEX_FONT", some other.toString),
+      ("LEANTEX_FONT_PATH", some host.toString), ("HOME", some host.toString),
+      ("XDG_CACHE_HOME", some host.toString), ("PATH", some host.toString),
+      ("TZ", some "Pacific/Kiritimati"), ("LC_ALL", some "C"), ("LANG", some "C")]
+    return .ok (ambient, hostile)
+  finally
+    IO.FS.removeDirAll host
 
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
@@ -1054,12 +1091,18 @@ self-contained"])
     IO.FS.writeFile (dir / "probe.tex") src
     let k1 ← Hermetic.corpusKey dir
     let k2 ← Hermetic.corpusKey dir
+    let keyed ← keyUnderHosts dir
     IO.FS.writeFile (dir / "probe.tex") (src.replace "invented" "different")
     let k3 ← Hermetic.corpusKey dir
     match k1, k2, k3 with
     | .ok a, .ok b, .ok c =>
       no "key: the same files give the same key" (a == b)
       no "key: a changed sentence moves it" (a != c)
+      match keyed with
+      | .error e => no s!"key: {e}" false
+      | .ok (ambient, hostile) =>
+        no s!"key: the binary's --key is the key ({ambient}, wanted {a})" (ambient == a)
+        no s!"key: another host's environment moves it ({hostile}, wanted {a})" (hostile == a)
     | _, _, _ => no "key: the synthetic corpus builds to HTML" false
   finally
     IO.FS.removeDirAll dir
@@ -1208,6 +1251,19 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then return (← selftest)
   if args.contains "--queue" then return (← queue 40)
   if args.contains "--bench" then return (← benchReport)
+  match args.dropWhile (· != "--key") with
+  | _ :: dir :: _ =>
+    match ← Hermetic.corpusKey dir with
+    | .ok k =>
+      IO.println k
+      return 0
+    | .error e =>
+      IO.eprintln s!"scoreboard: {e}"
+      return 1
+  | [_] =>
+    IO.eprintln "scoreboard: --key needs a corpus directory"
+    return 2
+  | [] => pure ()
   match baseArg args with
   | none => aggregate (args.contains "--check")
   | some none =>
