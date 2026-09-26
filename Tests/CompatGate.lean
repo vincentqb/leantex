@@ -208,3 +208,60 @@ def logOnlyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   logOnlySurfaceChecks ref
   logOnlyArtifactChecks ref oneFace pats
+
+
+/-! # A discard is keyed as a discard
+
+`became` is the translation note, `'\X' → <native>`. A construct that reads
+to nothing used the same note with its target spelled "nothing: …" and no
+subject, so to every consumer of `Diag.subject` a discard and a translation
+were one shape: the census could not count a discard's sites, and nothing
+structured told the two apart. `discard` is now the one writer of that
+shape, and its subject is `ctrl:nothing:<key>`, sub-keyed by the argument
+that decided the discard, so two discards are two census keys. -/
+
+/-- The discard arms, one usage each, with the key each owes: preamble,
+body, key. -/
+def discardSites : List (String × String × String) :=
+  [("\\usepackage{hyperref}\n", "", "usepackage:hyperref"),
+   ("\\RequirePackage{url}\n", "", "RequirePackage:url"),
+   ("\\usepackage{crop}\n", "", "usepackage:crop"),
+   ("\\usepackage[left]{lineno}\n", "", "usepackage:lineno"),
+   ("\\newcommand{\\zzkept}{a}\n\\providecommand{\\zzkept}{b}\n", "",
+     "providecommand:zzkept"),
+   ("\\pagestyle{fancy}\n", "", "pagestyle:fancy"),
+   ("\\usefonttheme{professionalfonts}\n", "", "usefonttheme"),
+   ("\\setbeameroption{hide notes}\n", "", "setbeameroption"),
+   ("\\KOMAoptions{headsepline=false}\n", "", "KOMAoptions"),
+   ("\\sectionlinesformat{}\n", "", "sectionlinesformat"),
+   ("", "\\printbibliography", "printbibliography")]
+
+def compatDiscardChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let keyed (ds : Array Diag) (key : String) : Array Diag :=
+    ds.filter fun d => d.code == "N0100" && d.subject == some ("ctrl:nothing:" ++ key)
+  for (pre, body, key) in discardSites do
+    let (_, ds) := elabStr (dvDoc pre body)
+    t s!"discard {key} (fails on base): the note is keyed as a discard"
+      ((keyed ds key).size == 1)
+  -- The inert table's rows were keyed before: the shape the others join.
+  let (_, inert) := elabStr (dvDoc "\\makeatletter\n" "")
+  t "discard makeatletter: the inert table's note is keyed as a discard"
+    ((keyed inert "makeatletter").size == 1)
+  -- A translation onto a native construct is the other shape, and never
+  -- carries the discard key.
+  let (_, plain) := elabStr (dvDoc "\\pagestyle{plain}\n" "")
+  let notes := plain.filter (·.code == "N0100")
+  t "discard: a translation's note carries no discard key"
+    (!notes.isEmpty && notes.all fun d => !(d.subject.any (·.startsWith "ctrl:nothing:")))
+  -- Sub-keyed by the argument that decided it: two packages are two
+  -- discards, each one site, never one discard counted twice.
+  let (_, two) := elabStr (dvDoc "\\usepackage{hyperref}\n\\usepackage{url}\n" "")
+  t "discard (fails on base): two packages are two keys, one site each"
+    ((keyed two "usepackage:hyperref").all (·.sites == 1) &&
+      (keyed two "usepackage:url").all (·.sites == 1) &&
+      (keyed two "usepackage:hyperref").size == 1 && (keyed two "usepackage:url").size == 1)
+
+/-- The compat accounting blocks. -/
+def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  compatDiscardChecks ref

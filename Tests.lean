@@ -211,6 +211,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref
+  compatAccountingChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
 together so each stays a leaf and `main`'s spent elaboration budget stays

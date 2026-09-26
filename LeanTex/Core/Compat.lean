@@ -636,6 +636,17 @@ private def became (what native : String) (pos : Pos)
     (subject : Option String := none) : M Unit :=
   say .N0100 s!"'{what}' → {native}" pos (subject := subject)
 
+/-- A construct that reads to nothing: the translation note, whose target is
+no effect with its reason, keyed `ctrl:nothing:<key>`. The key is what keeps
+a discard from reading as a translation onto a native construct — `became`
+carries no subject by default, so the two were one shape to every consumer
+that reads `Diag.subject`. `key` is the control word, sub-keyed by the
+argument that decided the discard where one did (`usepackage:url`,
+`providecommand:x`), so `Diag.tallySites` counts the sites of one discard and
+never lumps two. -/
+private def discard (what why key : String) (pos : Pos) : M Unit :=
+  became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
+
 /-- The top-level brace groups of a feature value:
 `{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
 dropped; unbalanced closers saturate at depth zero. -/
@@ -1068,8 +1079,8 @@ private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
     else
       say .W0101 s!"lineno option '{o}' selects a numbering mode the \
 engine does not have; continuous numbers in the left margin stand" pos
-  became "\\usepackage{lineno}" "nothing: \\page{ linenumbers = on } turns \
-line numbers on" pos
+  discard "\\usepackage{lineno}" "\\page{ linenumbers = on } turns line numbers on"
+    "usepackage:lineno" pos
   return out
 
 /-- lineno's switch and modulo commands (lineno.sty, the user-commands
@@ -1588,7 +1599,8 @@ medium is trim plus the declared `\page{ bleed }`), and `info`/`noinfo`,
 model. `noaxes` asks for the state the engine is already in and passes
 silently. Option list: crop.dtx v1.10 (Melchior Franz). -/
 private def crop (opts : String) (pos : Pos)
-    (spelling : String := "\\usepackage{crop}") : M (Array Raw) := do
+    (spelling : String := "\\usepackage{crop}") (key : String := "usepackage:crop") :
+    M (Array Raw) := do
   let mut mode : Option Bool := none
   let mut dropped : Array String := #[]
   for e in Decl.splitEntries opts do
@@ -1606,7 +1618,7 @@ private def crop (opts : String) (pos : Pos)
     became spelling native pos
     synthAt native pos
   | none =>
-    became spelling "nothing: crop draws no marks until an option asks for them" pos
+    discard spelling "crop draws no marks until an option asks for them" key pos
     return #[]
 
 /-- The beamerposter size table, read off beamerposter.sty v1.13's own
@@ -1801,7 +1813,8 @@ private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
     if src.trimAscii.toString.isEmpty then
       -- An empty body asks for no decoration: deliberate, and said so —
       -- the silence guard (W0387) takes wordless consumption for a drop.
-      became "\\sectionlinesformat" "nothing: an empty body asks for no decoration" pos
+      discard "\\sectionlinesformat" "an empty body asks for no decoration"
+        "sectionlinesformat" pos
     else
       say .E0113 s!"'\\sectionlinesformat' body is not the rule idiom{why}; it is dropped" pos
         (help := "\\style{section}{ rule = <colour> } declares the section \
@@ -2048,7 +2061,8 @@ were dropped: {o}" pos
       became "\\printbibliography" native pos
       return some (← synthAt native pos, k)
     | none =>
-      became "\\printbibliography" "nothing: no \\addbibresource declared a file" pos
+      discard "\\printbibliography" "no \\addbibresource declared a file"
+        "printbibliography" pos
       return some (#[], k)
   | "crefrange" | "Crefrange" =>
     -- cleveref's range form: desugared by `crefRangeArm` (its docstring
@@ -2688,8 +2702,8 @@ its value is skipped" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if (rawSrc (args.getD 0 #[])).trimAscii.toString == "professionalfonts" then
-      became "\\usefonttheme{professionalfonts}"
-        "nothing: the engine always uses the declared fonts" pos
+      discard "\\usefonttheme{professionalfonts}"
+        "the engine always uses the declared fonts" "usefonttheme" pos
     else
       sayOnce "beamer:usefonttheme" .W0104
         "'\\usefonttheme' is beamer configuration the engine does not have; skipped" pos
@@ -2704,8 +2718,8 @@ its value is skipped" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if (rawSrc (args.getD 0 #[])).trimAscii.toString == "hide notes" then
-      became "\\setbeameroption{hide notes}"
-        "nothing: notes never enter the delivered pages" pos
+      discard "\\setbeameroption{hide notes}"
+        "notes never enter the delivered pages" "setbeameroption" pos
     else
       sayOnce "beamer:setbeameroption" .W0104
         "'\\setbeameroption' is beamer configuration the engine does not have; skipped" pos
@@ -2770,7 +2784,7 @@ and 'transparent=<n>' are understood")
     let dropped := entries.filter (!satisfied ·)
     if dropped.isEmpty then
       unless entries.isEmpty do
-        became "\\KOMAoptions" "nothing: no head or foot separation rule is drawn" pos
+        discard "\\KOMAoptions" "no head or foot separation rule is drawn" "KOMAoptions" pos
     else
       say .W0101 s!"'\\KOMAoptions' entries without a native equivalent were \
 dropped: {String.intercalate ", " dropped}" pos
@@ -2809,8 +2823,7 @@ and \\tokens declare the design directly")
     | some (n, note) =>
       let (_, k) := takeGroups raws start n
       if let some why := note then
-        became s!"\\{name}" s!"nothing: {why}" pos
-          (subject := some ("ctrl:nothing:" ++ name))
+        discard s!"\\{name}" why name pos
       return some (#[], k)
     | none => return none
 
@@ -2935,7 +2948,7 @@ where
 captions and patterns stand in" pos
               (help := "the engine ships locale records for: en, fr, de")
         | none =>
-          became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+          discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if p == "biblatex" then
         -- biblatex's style options (biblatex manual §3.1.1: style defaults
         -- to numeric, sorting to nty — name-title-year) select onto the
@@ -2985,7 +2998,7 @@ dropped: {String.intercalate ", " dropped}" pos
       else if p == "lineno" && opt.isSome then
         out := out ++ (← linenoLoad (opt.getD "") pos)
       else if nativePackages.contains p then
-        became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+        discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then
         -- A picture package's load is the boundary's: `boundaryDecls`
         -- carried it, with its options, into every wrapped standalone,
@@ -3165,7 +3178,7 @@ face serves every language, so the binding is dropped" pos
     -- door for both spellings. A bare `\crop` is `[cam,noaxes]`, the
     -- command's own default argument (crop.sty v1.10, `\newcommand*\crop`).
     let (opt, k) := takeOpt raws start
-    return some (← crop (opt.getD "cam,noaxes") pos "\\crop", k)
+    return some (← crop (opt.getD "cam,noaxes") pos "\\crop" "crop", k)
   | "microtypesetup" =>
     -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
     -- reach the native gates, and `activate` — the manual's shorthand for
@@ -3348,8 +3361,9 @@ leading = {milliStr factor} }"
                 return some (← synthAt native pos, js + 1)
     if name == "providecommand" && (← get).bound.contains cmd then
       let (_, k) := takeGroups raws j 1
-      became s!"\\providecommand\{\\{cmd}}"
-        s!"nothing: '\\{cmd}' is already defined and the existing definition is kept" pos
+      discard s!"\\providecommand\{\\{cmd}}"
+        s!"'\\{cmd}' is already defined and the existing definition is kept"
+        s!"providecommand:{cmd}" pos
       return some (#[], k)
     -- `\providecommand` of a name the engine itself defines: the command
     -- exists, so LaTeX's provide keeps it (usrguide, "Defining commands").
@@ -3358,8 +3372,8 @@ leading = {milliStr factor} }"
     -- construct LaTeX defines to be a no-op.
     if name == "providecommand" && (← get).provideKeeps.contains cmd then
       let (_, k) := takeGroups raws j 1
-      became s!"\\providecommand\{\\{cmd}}"
-        s!"nothing: '\\{cmd}' is built in and the built-in stands" pos
+      discard s!"\\providecommand\{\\{cmd}}"
+        s!"'\\{cmd}' is built in and the built-in stands" s!"providecommand:{cmd}" pos
       return some (#[], k)
     write fun st => { st with
       bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
@@ -3449,7 +3463,8 @@ leading = {milliStr factor} }"
       -- they already do here: gathered fields land as `\runninghead` /
       -- `\runningfoot` by themselves. Agreement, not a missing model (the
       -- old warning said "not modelled" about exactly what is modelled).
-      became s!"\\pagestyle\{{v}}" "nothing: declared running fields apply by themselves" pos
+      discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
+        s!"pagestyle:{v}" pos
       return some (#[], k)
     | "plain" =>
       -- article's own initial style (classes.dtx: article.cls sets
