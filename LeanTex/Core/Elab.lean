@@ -2865,6 +2865,115 @@ theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws
       omega
     · omega
 
+/-- Is the raw at `m` a `{...}` group? -/
+def groupAt (raws : Array Raw) (m : Nat) : Bool :=
+  match raws[m]? with
+  | some (.group _ _) => true
+  | _ => false
+
+/-- Is the raw at `m` a space or a `{...}` group, the two things an argument
+list holds between a command and its last group? -/
+def spaceOrGroupAt (raws : Array Raw) (m : Nat) : Bool :=
+  match raws[m]? with
+  | some .space | some (.group _ _) => true
+  | _ => false
+
+/-- How many `{...}` groups stand among the `len` raws from `j`. -/
+def groupsIn (raws : Array Raw) (j : Nat) : Nat → Nat
+  | 0 => 0
+  | len + 1 => (if groupAt raws j then 1 else 0) + groupsIn raws (j + 1) len
+
+theorem skipSpaces_spaces (raws : Array Raw) (i : Nat) :
+    ∀ m, i ≤ m → m < skipSpaces raws i → raws[m]? = some .space := by
+  fun_induction skipSpaces raws i with
+  | case1 i h hs ih =>
+    intro m h1 h2
+    by_cases hm : m = i
+    · subst hm
+      rw [Array.getElem?_eq_getElem h]
+      revert hs
+      cases raws[m] <;> simp
+    · exact ih m (by omega) h2
+  | case2 => intro m h1 h2; omega
+  | case3 => intro m h1 h2; omega
+
+theorem groupsIn_add (raws : Array Raw) (j a b : Nat) :
+    groupsIn raws j (a + b) = groupsIn raws j a + groupsIn raws (j + a) b := by
+  induction a generalizing j with
+  | zero => simp [groupsIn]
+  | succ a ih =>
+    rw [Nat.succ_add, groupsIn, groupsIn, ih (j + 1)]
+    have : j + 1 + a = j + (a + 1) := by omega
+    rw [this]
+    omega
+
+theorem groupsIn_spaces (raws : Array Raw) (j len : Nat)
+    (h : ∀ m, j ≤ m → m < j + len → raws[m]? = some .space) : groupsIn raws j len = 0 := by
+  induction len generalizing j with
+  | zero => rfl
+  | succ len ih =>
+    have hj : groupAt raws j = false := by
+      unfold groupAt
+      rw [h j (by omega) (by omega)]
+    rw [groupsIn, hj, ih (j + 1) (fun m h1 h2 => h m (by omega) (by omega))]
+    rfl
+
+theorem groupsIn_one (raws : Array Raw) (j : Nat) :
+    groupsIn raws j 1 = if groupAt raws j then 1 else 0 := rfl
+
+/-- **The index covers the argument list, and only it.** What
+`argGroupsEnd` passes over is spaces and `{...}` groups and nothing else, at
+most `n` groups; and it stops short of a further group only at the bound —
+otherwise the next raw after any spaces is no group. So every group that
+could be one of the command's arguments lies behind the index, and nothing
+that could not be is consumed. -/
+theorem argGroupsEnd_covers (raws : Array Raw) (j n : Nat) :
+    (∀ m, j ≤ m → m < argGroupsEnd raws j n → spaceOrGroupAt raws m = true) ∧
+      groupsIn raws j (argGroupsEnd raws j n - j) ≤ n ∧
+      (groupsIn raws j (argGroupsEnd raws j n - j) = n ∨
+        groupAt raws (skipSpaces raws (argGroupsEnd raws j n)) = false) := by
+  induction n generalizing j with
+  | zero =>
+    refine ⟨fun m h1 h2 => ?_, ?_, Or.inl ?_⟩
+    · simp only [argGroupsEnd] at h2; omega
+    · simp [argGroupsEnd, groupsIn]
+    · simp [argGroupsEnd, groupsIn]
+  | succ n ih =>
+    unfold argGroupsEnd
+    dsimp only
+    split
+    · rename_i _ _ hk
+      have hs := skipSpaces_ge raws j
+      have hsp := skipSpaces_spaces raws j
+      obtain ⟨ih1, ih2, ih3⟩ := ih (skipSpaces raws j + 1)
+      have hge := argGroupsEnd_ge raws (skipSpaces raws j + 1) n
+      generalize argGroupsEnd raws (skipSpaces raws j + 1) n = k at ih1 ih2 ih3 hge ⊢
+      generalize skipSpaces raws j = s at hk hsp ih1 ih2 ih3 hge hs ⊢
+      have hgs : groupAt raws s = true := by unfold groupAt; rw [hk]
+      have hcount : groupsIn raws j (k - j) = 1 + groupsIn raws (s + 1) (k - (s + 1)) := by
+        have e : k - j = (s - j) + (1 + (k - (s + 1))) := by omega
+        have e2 : j + (s - j) = s := by omega
+        rw [e, groupsIn_add, groupsIn_add raws (j + (s - j)) 1,
+          groupsIn_spaces raws j (s - j) (fun m h1 h2 => hsp m h1 (by omega)), e2,
+          groupsIn_one, hgs]
+        simp
+      refine ⟨fun m h1 h2 => ?_, ?_, ?_⟩
+      · rcases Nat.lt_trichotomy m s with hm | hm | hm
+        · unfold spaceOrGroupAt; rw [hsp m h1 hm]
+        · subst hm; unfold spaceOrGroupAt; rw [hk]
+        · exact ih1 m (by omega) h2
+      · rw [hcount]; omega
+      · rw [hcount]
+        rcases ih3 with h | h
+        · exact Or.inl (by omega)
+        · exact Or.inr h
+    · rename_i hk
+      refine ⟨fun m h1 h2 => absurd h2 (by omega), by simp [groupsIn], Or.inr ?_⟩
+      unfold groupAt
+      split
+      · rename_i body p hg; exact (hk body p hg).elim
+      · rfl
+
 /-- The key an unknown LaTeX internal in package code is counted under: its
 own, never the document's `ctrl:` one. The two sites have different fates —
 a document's arguments stand as text, package code's go — so a shared key
@@ -4324,25 +4433,37 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
   · rw [hrun, warnOnceState_diags_exact]
     simp
 
-/-- **Package code sets no text: its refusal is paid for by exactly one
-diagnostic, and by nothing on the page.** The empty recovery `_accounts`
-names: a LaTeX internal in a style or class file adds no inline —
-`recoverPackageCmd` returns an index and nothing else, and its arm hands the
-text accumulator on as it came — and records no salvage, so the census can
-attribute no ink to it. What it does push is one diagnostic at the end,
-W0391, under the construct's own key: the loss named once per site, as every
-counted refusal is (`Diag.tallySites_exact` reads that subject). -/
+/-- **Package code sets no text: a LaTeX internal's arguments are consumed,
+and its refusal is paid for by exactly one diagnostic.** The empty recovery
+`_accounts` names. The index the recovery returns stands past a run of
+spaces and `{...}` groups and nothing else — at most nine groups, TeX's
+limit, and at the bound or before a raw that is no group — so every group
+that could be one of the internal's arguments is behind it
+(`argGroupsEnd_covers`), and the arm, which walks on from that index with
+its text accumulator as it came, never walks them as text. It records no
+salvage, so the census can attribute no ink to it. What it does push is one
+diagnostic at the end, W0391, under the construct's own key: the loss named
+once per site, as every counted refusal is (`Diag.tallySites_exact` reads
+that subject). -/
 theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw)
     (j : Nat) (pos : Pos) (st : ESt) :
     ((recoverPackageCmd ctx name raws j pos).run st).2.salvage = st.salvage ∧
-      ∃ d, ((recoverPackageCmd ctx name raws j pos).run st).2.diags = st.diags.push d ∧
-        d.kind = .W0391 ∧ d.subject = some (pkgCodeKey name) := by
-  have hrun : ((recoverPackageCmd ctx name raws j pos).run st).2 =
-      warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name) pos
-        (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name) st := rfl
+      (∃ d, ((recoverPackageCmd ctx name raws j pos).run st).2.diags = st.diags.push d ∧
+        d.kind = .W0391 ∧ d.subject = some (pkgCodeKey name)) ∧
+      (∀ m, j ≤ m → m < ((recoverPackageCmd ctx name raws j pos).run st).1.1 →
+        spaceOrGroupAt raws m = true) ∧
+      groupsIn raws j (((recoverPackageCmd ctx name raws j pos).run st).1.1 - j) ≤ 9 ∧
+      (groupsIn raws j (((recoverPackageCmd ctx name raws j pos).run st).1.1 - j) = 9 ∨
+        groupAt raws (skipSpaces raws ((recoverPackageCmd ctx name raws j pos).run st).1.1) =
+          false) := by
+  have hrun : (recoverPackageCmd ctx name raws j pos).run st =
+      (⟨argGroupsEnd raws j 9, argGroupsEnd_ge raws j 9⟩,
+        warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name) pos
+          (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name) st) := rfl
   rw [hrun]
-  exact ⟨rfl, _, warnOnceState_diags_exact .., warnOnceDiag_kind_exact ..,
-    warnOnceDiag_subject_exact ..⟩
+  obtain ⟨h1, h2, h3⟩ := argGroupsEnd_covers raws j 9
+  exact ⟨rfl, ⟨_, warnOnceState_diags_exact .., warnOnceDiag_kind_exact ..,
+    warnOnceDiag_subject_exact ..⟩, h1, h2, h3⟩
 
 /-- Bind declared parameters from the call site — a user command's, or a
 user environment's from the groups after its `\begin`. Returns the bindings
