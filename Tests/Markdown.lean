@@ -43,6 +43,45 @@ def mdTreeOf (src : String) : String :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   mdFlatten "" body.toList
 
+mutual
+
+/-- Every `<pre>` of a tree, in document order, the accumulator threaded. -/
+def mdPresOne (acc : Array Html.Node) (n : Html.Node) : Array Html.Node :=
+  match n with
+  | .elem "pre" _ _ => acc.push n
+  | .elem _ _ kids => mdPresList acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | n :: rest => mdPresList (mdPresOne acc n) rest
+
+end
+
+/-- The attributes the HTML backend gives every code block's `<pre>`: a tab
+stop, so a keyboard can reach and scroll it, which is the contract for a box
+a stylesheet scrolls (`HtmlDoc.a11yFacts`). Named once, so a backend change
+to them fails the fence rows at this line rather than at four literals. -/
+def mdCodeBlockPreAttrs : Array (String × String) := #[("tabindex", "0")]
+
+/-- The page's code blocks, in order, each as the one text its `<code>`
+holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
+whose only child is a `<code>` with no attribute holding one text node, and
+`none` for any other shape: a node before or after the `<code>`, an
+attribute leaked onto either element, content split or nested. A needle
+anchored at `</code></pre>` passed a page whose every `<pre>` opened with
+leaked text. -/
+def mdCodeBlocks (src : String) : Array (Option String) :=
+  let (doc, _) := elabMd src
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  (mdPresList #[] body.toList).map fun n =>
+    match n with
+    | .elem "pre" attrs #[.elem "code" cattrs #[.text s]] =>
+      if attrs == mdCodeBlockPreAttrs && cattrs.isEmpty then some s else none
+    | _ => none
+
 /-- A generated family of documents that each end a list with a thematic
 break and then carry on: container context × list marker × break spelling ×
 nesting × a blank line or not × the block that follows. -/
@@ -183,23 +222,23 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- fence, the paragraph, the heading — shipped as code, with no
   -- diagnostic, and the content kept its container's prefixes.
   let fence := "```"
+  -- The whole code block, both sides of the `<code>`: exactly one `<pre>`
+  -- on the page, whose only child is a `<code>` holding exactly `code`.
+  let codeIs (src : String) : Bool := mdCodeBlocks src == #[some "code"]
   t "a fence inside a blockquote closes with its quote"
-    (has ("> a\n> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n")
-      "<code>code</code></pre>")
+    (codeIs ("> a\n> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n"))
   t "a block after a quoted fence still ships"
     (has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n")
       "</blockquote><p>after</p><h3>h</h3>")
   t "a quoted fence does not ship its quote marker as code"
     (!has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n") "<code>> code")
   t "a fence inside a nested list item closes"
-    (has ("- a\n  - b\n    " ++ fence ++ "\n    code\n    " ++ fence ++ "\n- c\n\nlast\n")
-      "<code>code</code></pre>")
+    (codeIs ("- a\n  - b\n    " ++ fence ++ "\n    code\n    " ++ fence ++ "\n- c\n\nlast\n"))
   t "a sibling item after a nested fence still ships"
     (has ("- a\n  - b\n    " ++ fence ++ "\n    code\n    " ++ fence ++ "\n- c\n\nlast\n")
       "</li></ul></li><li>c</li></ul><p>last</p>")
   t "a fence in a list item does not ship the item's indent as code"
-    (has ("- item\n\n  " ++ fence ++ "\n  code\n  " ++ fence ++ "\n")
-      "<code>code</code></pre>")
+    (codeIs ("- item\n\n  " ++ fence ++ "\n  code\n  " ++ fence ++ "\n"))
   -- Defect: the raw-HTML test fired on any `<` followed by a letter, so a
   -- valid autolink at the start of a line and text the spec reads literally
   -- failed the build. Only a complete tag (§6.6) is raw HTML.
@@ -328,7 +367,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dvMd src).any fun d => d.kind == .W0392 && d.subject == some "md:code-info"
   let noLeak (src : String) : Bool := (dvMd src).all (·.kind != .W0110)
   t "a bracket in an info string does not leak into the code"
-    (has (fence ++ "a]b\ncode\n" ++ fence ++ "\n") "<code>code</code></pre>"
+    (codeIs (fence ++ "a]b\ncode\n" ++ fence ++ "\n")
       && codeInfo (fence ++ "a]b\ncode\n" ++ fence ++ "\n"))
   t "text after a bracket in an info string does not reach the page"
     (!has (fence ++ "x]leaked text\ncode\n" ++ fence ++ "\n") "leaked")
