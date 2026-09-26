@@ -87,8 +87,10 @@ internal in a hook the document itself registers is document content and
 keeps today's recovery: those two builds differ only in which file
 registers the hook, the pair the premise beside the rule reads. In the one
 style hook, the internal drops and a venue macro and a TeX primitive keep
-their groups, as LaTeX sets them. Both artifacts are read: the laid-out
-pages and the typed HTML tree. -/
+their groups, as LaTeX sets them. A style's size redefinition through the
+kernel's internals holds the arm's third condition: rule (b)'s trial reads
+a definition's body as its use will (`Ctx.atUse`). Both artifacts are read:
+the laid-out pages and the typed HTML tree. -/
 def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds, _) ← runStyParity "codehook"
@@ -126,6 +128,15 @@ def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
      "\\begin{document}\nOpening line.\n\\end{document}")
   t "the same internal in a hook the document registers keeps its arguments"
     (hasStr own "own words" && !hasStr own "mode" && hasStr own "Opening line.")
+  -- A style's own definition is judged by rule (b) where it is defined, and
+  -- its use is document content: the trial reads the body as the use will.
+  let (sDoc, sDs, _) ← runStyParity "sizehook"
+  let sText := " ".intercalate ((bodyLines (layoutOf fonts sDoc)).toList.map (lineText ·))
+  t "a style's size redefinition through kernel internals sets none of them as text"
+    (hasStr sText "Small words." && !hasStr sText "11")
+  t "its trial reads the body as its use will, so the refused size reads as a step"
+    ((sDs.filter fun d => d.code == "N0100" && d.span.any (·.file == "venuesize.sty")).size == 2 &&
+     sDs.all (·.code != "W0391"))
   -- The loaded-test fixture, on the web page too.
   let (gDoc, _, _) ← runStyParity "guardhook"
   let (_, gBody, _) := HtmlDoc.emitTree {} gDoc
