@@ -9,16 +9,17 @@ repository root:
 Every golden fixture is elaborated and emitted to its typed HTML tree
 in-process (`a11yCorpusPage`: the document's own stylesheet mode, its images
 from `tests/corpus`), and `HtmlDoc.a11yFacts` — the judge `htmlA11yChecks`
-reads in the suite — counts five deficits per page (`a11yDeficits`):
+reads in the suite — counts six deficits per page (`a11yDeficits`):
 contrast pairings failed over both colour schemes, a page without exactly
-one `<h1>`, images with no text alternative, scroll containers a keyboard
-cannot reach, and pictures with no accessible name. Each is committed as
+one `<h1>`, tab stops hidden from assistive technology, images with no text
+alternative, scroll containers a keyboard cannot reach, and pictures with no
+accessible name. Each is committed as
 headroom (`debtCap - count`), so a new deficit is a fall.
 
 Hermetic: committed inputs only — no browser, no network, no tool, no font
 from the host. What a browser makes of the same pages is axe's to say, and
-axe is a report, never this gate. The suite already holds `svg` and `scroll`
-at zero on every page; `contrast` and `h1` carry defects whose fix is a
+axe is a report, never this gate. The suite already holds `svg`, `scroll`
+and `hidden-focus` at zero on every page; `contrast` and `h1` carry defects whose fix is a
 human decision (a declared ink in dark mode; which element owns `<h1>`), so
 this tier holds them from getting worse until it is made.
 -/
@@ -78,6 +79,23 @@ def a11ySelftest : IO UInt32 := do
   no "img: under aria-hidden it is not counted"
     (let f := facts #[a11yEl "div" #[("aria-hidden", "true")] #[img #[]]]
      f.imgs == 0 && f.imgsUnnamed == 0)
+  -- hidden-focus: a tab stop under aria-hidden is still a keyboard stop.
+  let link := a11yEl "a" #[("href", "https://example.org")] #[.text "x"]
+  let hide (kids : Array Html.Node) := a11yEl "div" #[("aria-hidden", "true")] kids
+  no "hidden-focus: a link under aria-hidden is a hidden tab stop"
+    ((facts #[hide #[link]]).hiddenTabStops == 1)
+  no "hidden-focus: a link assistive technology sees is not"
+    ((facts #[link]).hiddenTabStops == 0)
+  no "hidden-focus: the hiding element itself is one"
+    ((facts #[a11yEl "a" #[("href", "#x"), ("aria-hidden", "true")]]).hiddenTabStops == 1)
+  no "hidden-focus: tabindex=0 makes any element one"
+    ((facts #[hide #[a11yEl "span" #[("tabindex", "0")]]]).hiddenTabStops == 1)
+  no "hidden-focus: an anchor with no href takes no focus"
+    ((facts #[hide #[a11yEl "a" #[] #[.text "x"]]]).hiddenTabStops == 0)
+  no "hidden-focus: tabindex=-1 takes focus from script only"
+    ((facts #[hide #[a11yEl "a" #[("href", "#x"), ("tabindex", "-1")]]]).hiddenTabStops == 0)
+  no "hidden-focus: a hidden subtree is not rendered, so nothing in it takes focus"
+    ((facts #[hide #[a11yEl "div" #[("hidden", "")] #[link]]]).hiddenTabStops == 0)
   -- svg: aria-label, aria-labelledby, or a <title> child with text.
   no "svg: no name is unnamed" ((facts #[a11yEl "svg" #[("role", "img")]]).svgsUnnamed == 1)
   no "svg: aria-label names it"

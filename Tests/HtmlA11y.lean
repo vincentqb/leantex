@@ -38,6 +38,8 @@ def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
 * `contrast` — the stylesheet's pairings the page fails, over both colour
   schemes (`HtmlDoc.schemeFailures`);
 * `h1` — 1 unless the page carries exactly one `<h1>`;
+* `hidden-focus` — tab stops under `aria-hidden`, a keyboard stop assistive
+  technology cannot see;
 * `img` — `<img>` with no text alternative and no declared decorative role;
 * `scroll` — declared scroll containers a keyboard cannot reach;
 * `svg` — `<svg>` with no accessible name.
@@ -47,6 +49,7 @@ def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) : List (String × Nat) 
   let f := a11yFactsOf doc body
   [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) doc).length),
    ("h1", if f.h1s == 1 then 0 else 1),
+   ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
    ("scroll", f.scrollsUnreachable),
    ("svg", f.svgsUnnamed)]
@@ -82,6 +85,10 @@ end
 /-- The `aria-label` of every `<svg>` a body carries. -/
 def svgLabels (body : Array Html.Node) : Array (Option String) :=
   (elemAttrsList (· == "svg") #[] body.toList).map (HtmlDoc.attrOf? ·.2 "aria-label")
+
+/-- The `alt` of every `<img>` a body carries. -/
+def imgAlts (body : Array Html.Node) : Array (Option String) :=
+  (elemAttrsList (· == "img") #[] body.toList).map (HtmlDoc.attrOf? ·.2 "alt")
 
 /-- The format a file's first bytes declare, for the image formats a browser
 decodes in an `<img>` (WHATWG MIME Sniffing §6.1, the image signatures):
@@ -129,6 +136,11 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (f.svgsUnnamed == 0)
     t s!"html a11y {n}: every scroll container is reachable \
 ({f.scrollsUnreachable} of {f.scrolls} not)" (f.scrollsUnreachable == 0)
+    -- No tab stop stands under `aria-hidden`: a regression floor over the
+    -- shipped pages — the corpus holds no linked logo, so the probes below
+    -- are what fire it.
+    t s!"html a11y {n}: no tab stop is hidden from assistive technology \
+({f.hiddenTabStops})" (f.hiddenTabStops == 0)
     -- W3: every <img src> the page emits is a format a browser decodes, or
     -- a diagnostic names the file (subject `img:<src>`). The format is read
     -- off the file's own bytes, never off the backend's classification;
@@ -272,3 +284,33 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (slots == #[(some "presentation", some "true")])
   t "html a11y: …so the judge counts no unnamed image on it"
     ((a11yFactsOf pdoc2 lgbody).imgsUnnamed == 0)
+  -- A logo that is a link is no decoration: the keyboard lands on the link,
+  -- so its box never leaves the accessibility tree over it, and the image's
+  -- own alternative names the link. One construct per probe: the poster's
+  -- corner slot, then the deck's logo strip.
+  let linkedLogo := "\\href{https://example.org}{\\includegraphics[alt={Example Org}]{rects.png}}"
+  let (lpdoc, _) := elabStr ("\\documentclass{poster}\n\\title{T}\n\\logoright{" ++ linkedLogo ++
+    "}\n\\begin{document}\n\\begin{frame}\nx\n\\end{frame}\n\\end{document}")
+  let (_, lpbody, _) := HtmlDoc.emitTree {} lpdoc
+  let lpf := a11yFactsOf lpdoc lpbody
+  t s!"html a11y: a linked poster logo hides no tab stop ({lpf.hiddenTabStops})"
+    (lpf.hiddenTabStops == 0)
+  t s!"html a11y: …and its image's alternative names the link: {imgAlts lpbody}"
+    (imgAlts lpbody == #[some "Example Org"])
+  let (lddoc, _) := elabStr (deck169 ("\\logo{" ++ linkedLogo ++ "}")
+    "\\begin{frame}{Probe}\nx\n\\end{frame}")
+  let (_, ldbody, _) := HtmlDoc.emitTree {} lddoc
+  let ldf := a11yFactsOf lddoc ldbody
+  t s!"html a11y: a linked deck logo hides no tab stop ({ldf.hiddenTabStops})"
+    (ldf.hiddenTabStops == 0)
+  t s!"html a11y: …and its image's alternative names the link: {imgAlts ldbody}"
+    (imgAlts ldbody == #[some "Example Org"])
+  -- An unlinked deck logo stays decoration, as the poster's does.
+  let (uddoc, _) := elabStr (deck169 "\\logo{\\includegraphics[alt={Example Org}]{rects.png}}"
+    "\\begin{frame}{Probe}\nx\n\\end{frame}")
+  let (_, udbody, _) := HtmlDoc.emitTree {} uddoc
+  let strips := ((elemAttrsList (· == "div") #[] udbody.toList).filter fun (_, a) =>
+      (HtmlDoc.classTokens a).contains "slide-logo").map fun (_, a) =>
+    (HtmlDoc.attrOf? a "role", HtmlDoc.attrOf? a "aria-hidden")
+  t s!"html a11y: an unlinked deck logo strip is declared decorative: {strips} {imgAlts udbody}"
+    (strips == #[(some "presentation", some "true")] && imgAlts udbody == #[some ""])

@@ -4948,15 +4948,95 @@ retitle one section, or link to '#{id}'"))
     | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
   return (close out cur openId, diags)
 
+/-- An attribute's value on an element's attribute list. -/
+def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
+  (attrs.find? (·.1 == k)).map (·.2)
+
+/-- Does an element take keyboard focus in sequential navigation — a tab
+stop (HTML §6.6.3)? A `tabindex` that parses decides: zero or more is a
+stop, a negative one takes focus from script only. With none, the elements
+that take focus by default: a link (`a`/`area` with an `href`), an enabled
+form control, `iframe`, `summary`, and media with `controls`. -/
+def tabbable (tag : String) (attrs : Array (String × String)) : Bool :=
+  match (attrOf? attrs "tabindex").bind String.toInt? with
+  | some i => decide (0 ≤ i)
+  | none =>
+    ((tag == "a" || tag == "area") && (attrOf? attrs "href").isSome) ||
+    (["button", "input", "select", "textarea"].contains tag &&
+      (attrOf? attrs "disabled").isNone && attrOf? attrs "type" != some "hidden") ||
+    tag == "iframe" || tag == "summary" ||
+    ((tag == "audio" || tag == "video") && (attrOf? attrs "controls").isSome)
+
+mutual
+
+/-- Does a subtree hold a tab stop (`tabbable`) outside a `hidden` subtree —
+which is not rendered, so nothing in it takes focus? A hand-rolled walk
+because `Html.Node` has no generic fold; the list companion keeps it
+structural. -/
+def tabbableOne : Node → Bool
+  | .elem tag attrs kids =>
+    (attrOf? attrs "hidden").isNone && (tabbable tag attrs || tabbableList kids.toList)
+  | .text _ => false
+  | .style _ => false
+  | .script _ _ => false
+
+def tabbableList : List Node → Bool
+  | [] => false
+  | k :: rest => tabbableOne k || tabbableList rest
+
+end
+
+/-- Does an element stand `aria-hidden` over a tab stop, itself or below:
+a keyboard lands on a control assistive technology is told is not there,
+and it has no name to announce (WAI-ARIA 1.2, `aria-hidden`; axe
+`aria-hidden-focus`). The judge counts such stops over a page
+(`A11yFacts.hiddenTabStops`). -/
+def hidesTabStop : Node → Bool
+  | .elem tag attrs kids =>
+    attrOf? attrs "aria-hidden" == some "true" && tabbableOne (.elem tag attrs kids)
+  | .text _ => false
+  | .style _ => false
+  | .script _ _ => false
+
+/-- A logo's content as decoration: every image's `alt` blank. -/
+private def logoDecoration (content : Array Inline) : Array Inline :=
+  Ir.mapInlines (fun x => match x with
+    | .image src size _ => .image src size ""
+    | x => x) content
+
+/-- A logo's box. A logo is decorative furniture by role
+(`Ir.logoImageSrcs`), so its images ship `alt=""` (`deco`) and the box
+leaves the accessibility tree (`role="presentation"`, `aria-hidden`) — WCAG
+2.2 SC 1.1.1: pure decoration is implemented so assistive technology can
+ignore it. Unless something in it takes focus — a linked logo: then hiding
+the box would leave a keyboard stop with no name, so it ships as authored
+(`authored`), the image's own `alt` naming its link. The box is hidden only
+when nothing in it is a tab stop (`logoBox_hidden_contract`). -/
+def logoBox (cls : String) (style : Option String) (deco authored : Array Node) : Node :=
+  let styled := match style with
+    | some s => #[("style", s)]
+    | none => #[]
+  if tabbableList deco.toList then
+    Html.elem "div" authored (#[("class", cls)] ++ styled)
+  else
+    Html.elem "div" deco
+      (#[("class", cls), ("role", "presentation"), ("aria-hidden", "true")] ++ styled)
+
+/-- **A logo's box never hides a tab stop** (`_contract`): whatever the
+logo holds, `aria-hidden` never stands over something a keyboard reaches. A
+fact of the artifact: which elements take focus is HTML's, not the IR's. -/
+theorem logoBox_hidden_contract (cls : String) (style : Option String)
+    (deco authored : Array Node) :
+    hidesTabStop (logoBox cls style deco authored) = false := by
+  cases style <;> simp only [logoBox] <;> split <;>
+    simp_all [hidesTabStop, tabbableOne, tabbable, attrOf?, Html.elem]
+
 /-- A frame's (or section page's) logo, attached as the section's own
 furniture: the logo in force at the deck position (`Ir.logoInForce`, the
 same resolving site the PDF's furniture pass reads per page) renders into
-the `.slide-logo` strip `deckLogoRule` pins to the stage's bottom band.
-The logo is decorative furniture by role, so every image inside ships
-`alt=""` and the strip is removed from the accessibility tree
-(`role="presentation"`, `aria-hidden`) — WCAG 2.2 SC 1.1.1: pure
-decoration is implemented so assistive technology can ignore it — the
-same judgement the alt census makes (`Ir.logoImageSrcs`). The declared
+the `.slide-logo` strip `deckLogoRule` pins to the stage's bottom band, as
+decoration unless it holds a tab stop (`logoBox`) — the same judgement the
+alt census makes (`Ir.logoImageSrcs`). The declared
 alignment (`Ir.logoAlign`) rides as the strip's flex distribution, the
 projection of the PDF's x placement from the one declared value. -/
 private def attachLogo (cfg : Config) (node : Node)
@@ -4967,17 +5047,13 @@ private def attachLogo (cfg : Config) (node : Node)
     if content.isEmpty then node else
     match node with
     | .elem tag attrs kids =>
-      let deco := Ir.mapInlines (fun x => match x with
-        | .image src size _ => .image src size ""
-        | x => x) content
       let justify := match Ir.logoAlign cfg.styles with
         | "left" => "flex-start"
         | "center" => "center"
         | _ => "flex-end"
-      Node.elem tag attrs (kids.push (Html.elem "div" (inlines cfg deco)
-        #[("class", "slide-logo"), ("role", "presentation"),
-          ("aria-hidden", "true"),
-          ("style", s!"justify-content: {justify}")]))
+      Node.elem tag attrs (kids.push (logoBox "slide-logo"
+        (some s!"justify-content: {justify}")
+        (inlines cfg (logoDecoration content)) (inlines cfg content)))
     | .text s => .text s
     | .style s => .style s
     | .script attrs s => .script attrs s
@@ -5352,16 +5428,9 @@ first; retitle one frame, or link to '#{id}'"))
       let slot (c : Option (Array Ir.Inline)) : Array Html.Node :=
         match c with
         | some xs =>
-          -- A logo is decorative furniture by role (`Ir.logoImageSrcs`):
-          -- declared so, as the deck's logo strip is (`attachLogo`), so
-          -- assistive technology skips it and an empty `alt` reads as the
-          -- decoration it is, not as a missing alternative.
-          let deco := Ir.mapInlines (fun x => match x with
-            | .image src size _ => .image src size ""
-            | x => x) xs
-          #[Html.elem "div" (inlineNodesInto cfg #[] deco.toList)
-            #[("class", "headline-logo"), ("role", "presentation"),
-              ("aria-hidden", "true")]]
+          -- Decoration unless it holds a tab stop (`logoBox`), as the
+          -- deck's logo strip is (`attachLogo`).
+          #[logoBox "headline-logo" none (inlines cfg (logoDecoration xs)) (inlines cfg xs)]
         | none => #[]
       let line (cls : String) (xs : Array Ir.Inline) : Array Html.Node :=
         if xs.isEmpty then #[] else
@@ -5467,10 +5536,6 @@ axe reports from a browser, read here off the typed tree the page
 serializes, so they can gate with no browser. axe over the rendered corpus
 is the cross-check, never the gate. -/
 
-/-- An attribute's value on an element's attribute list. -/
-def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
-  (attrs.find? (·.1 == k)).map (·.2)
-
 /-- Does an element carry an accessible name in its own markup: a
 non-blank `aria-labelledby` or `aria-label` (accname 1.2, steps 2B and 2C),
 or — for SVG — a `<title>` child with text (SVG-AAM 1.0, §8.1)? -/
@@ -5490,11 +5555,16 @@ def carriesName : Node → Bool
 /-- The page facts assistive technology depends on, as counts over the
 emitted tree. Each `…Unnamed`/`…Unreachable` count is a deficit: a node
 counted in its total that AT cannot name or reach. A subtree under
-`aria-hidden="true"` is not handed to AT at all, so nothing in it counts. -/
+`aria-hidden="true"` is not handed to AT at all, so nothing in it counts —
+except a tab stop, which the keyboard still reaches (`hiddenTabStops`). -/
 structure A11yFacts where
   /-- `<h1>` elements: a page's outline has exactly one top (axe's
   `page-has-heading-one` asks for at least one). -/
   h1s : Nat := 0
+  /-- Tab stops (`tabbable`) under `aria-hidden="true"`, outside a `hidden`
+  subtree: a keyboard stop assistive technology is told is not there —
+  axe's `aria-hidden-focus`, SC 4.1.2. -/
+  hiddenTabStops : Nat := 0
   imgs : Nat := 0
   /-- `<img>` with no non-blank `alt` and no declared decorative role
   (`presentation`/`none`): WCAG 2.2 SC 1.1.1. -/
@@ -5563,27 +5633,32 @@ def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
 mutual
 
 /-- The facts of one node onto `acc`; `hidden` is whether an ancestor took
-the subtree out of the accessibility tree. The list companion keeps the
-recursion structural. -/
-def a11yOne (own deck hidden : Bool) (acc : A11yFacts) : Node → A11yFacts
+the subtree out of the accessibility tree, `inert` whether one took it out
+of rendering (the `hidden` attribute), where nothing takes focus. The list
+companion keeps the recursion structural. -/
+def a11yOne (own deck hidden inert : Bool) (acc : A11yFacts) : Node → A11yFacts
   | .text _ => acc
   | .style _ => acc
   | .script _ _ => acc
   | .elem tag attrs kids =>
     let hid := hidden || attrOf? attrs "aria-hidden" == some "true"
-    let acc := if hid then acc else a11yElem own deck tag attrs kids acc
-    a11yList own deck hid acc kids.toList
+    let inert := inert || (attrOf? attrs "hidden").isSome
+    let acc := if !hid then a11yElem own deck tag attrs kids acc
+      else if !inert && tabbable tag attrs then
+        { acc with hiddenTabStops := acc.hiddenTabStops + 1 }
+      else acc
+    a11yList own deck hid inert acc kids.toList
 
-def a11yList (own deck hidden : Bool) (acc : A11yFacts) : List Node → A11yFacts
+def a11yList (own deck hidden inert : Bool) (acc : A11yFacts) : List Node → A11yFacts
   | [] => acc
-  | k :: rest => a11yList own deck hidden (a11yOne own deck hidden acc k) rest
+  | k :: rest => a11yList own deck hidden inert (a11yOne own deck hidden inert acc k) rest
 
 end
 
 /-- The facts of a page body, under the stylesheet mode and page model it
 was emitted for. -/
 def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
-  a11yList own deck false {} body.toList
+  a11yList own deck false false {} body.toList
 
 /-- The four pairings one variant of the stylesheet creates, as data: body
 text on the page, marker text on the page, code text on its tint, the focus
