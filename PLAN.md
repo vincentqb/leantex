@@ -17830,3 +17830,151 @@ together, never the picture path alone.
   node's base offset, which the picture walk already computes as
   `NodeGeom.base`. That is more than one unit, and it shares code with bug
   3, so it waits for that branch.
+
+
+
+### 2026-09-26 — a conditional reads the state at its own site, and boxes with a fill between them share a row
+
+Two user-reported defects on one deck of the private reference corpus: a
+picture drawn three times under three macro states drew the same branch
+each time, and two panels meant to sit side by side stacked. Both were a
+construct resolved against the wrong state, silently.
+
+**The defect.** A picture's `\ifnum` over a document macro was computed from
+the picture's macro table, which is the whole document's (`Elab.Ctx.picMacros`,
+`Picture.macroTable`): every definition in document order, the last one
+winning. The test evaluated cleanly against the wrong value and said
+nothing. The conditional pass that decides `\ifdefined` had a second flaw of
+the same kind: its record of definitions was flat, so a `\def` made inside
+one environment was still in force in the next frame, and a later frame of
+the same deck drew a state an earlier frame had defined.
+
+**The invariant.** Every TeX conditional the engine meets is decided, with
+its branch named, or refused by name; never resolved in silence.
+`condAccountingChecks` (Tests/Conditionals.lean) ranges over every head TeX
+defines, `Compat.condHeads`: the `if…` entries of the TeX82 table
+(`texPrimitives`) and e-TeX's three. For each, in running text and in a
+picture, wrapping content in the conditional adds at least one diagnostic
+carrying a subject to what the unwrapped content emits, and a head TeX
+decides from the document ships exactly TeX's branch. A missing probe row is
+a failure. `picStateChecks` is the deck's shape, synthetic: three sibling
+environments each define the state one picture's `\ifnum` and `\ifdefined`
+read. It also checks that a definition ends with its environment, that
+`\gdef` outlives it, and that two states of one boundary picture are two
+requests. 18 of these checks fail on `17ac92f`, run through `lake test`
+with only the tests added (evidence directory,
+`test-newtests-on-base.summary`).
+
+**The fix** (`Compat`, the conditional pass). The pass reads the definition
+state in force where a conditional stands. An environment and math are TeX
+groups, so the state they close with is the one they opened with, and only
+global definitions (`\gdef`, `\xdef`, `\global`) are replayed past them.
+A brace group keeps the flat reading of `defined`, because it is as often an
+argument (a definition body, a hook) as a group, and that reading only errs
+toward "defined". But a value set inside a brace group is unread past it,
+since in neither case is that value the one in force afterwards.
+Parameterless definitions are recorded with their bodies. `\ifnum`, `\ifodd`
+and `\ifcase` are decided over literals and over macros whose body is one
+integer, following single-name aliases for at most as many steps as the
+table has entries. `\ifx` is decided for one name or two recorded
+definitions, with `\long` compared. `\iftrue` and `\iffalse` are their own
+answer, and `\unless` reverses a two-way test. Every decision is a keyed
+N0114 note: `cond:<head>:…`, and the `\ifdefined`, `\newif` and setter notes
+now carry keys too. Every other head TeX defines opens an opaque frame whose
+`\else`, `\or` and `\fi` pass through. So the extent check needs only that
+no *unknown* `if…` name stands inside, and a decided conditional around an
+undecided one resolves instead of being left whole. Inside a picture, a
+name the picture binds for itself (a `\foreach` variable, a
+`\pgfmathsetmacro` target) is the picture's own to evaluate. The picture's
+own computed tests are now named (N0114, "computed from the picture's own
+values"). A head that takes no test (`\iftrue`, `\iffalse`, the four mode
+tests) opens its branch at once: it had collected its "test" up to the next
+space and swallowed the branch's first statement. The accounting probe found
+that one.
+
+**Caches.** The native picture is elaborated per site, with nothing memoised
+(`Elab.tikzArm`). The boundary's identity is the picture's bytes
+(`Ir.picHash`), so the decision has to be made before the bytes are taken:
+the pass now resolves the conditional in the body the boundary hashes, and
+two states of one source are two requests, which `picStateChecks` checks.
+The cache key is the hash of the whole request, so it covers what the tool
+reads.
+
+**Remaining, named rather than fixed.** The picture's macro table is still
+the whole document's for everything but conditionals. A node label that
+reads a macro redefined between two pictures shows the last definition in
+both. The fix is the site's own table: `Elab`'s scoped `ctx.user` rather
+than the flat scan, converted to the walk's `Macro` shape, with the
+boundary request carrying the site's definitions in its identity. That is
+this entry's owed follow-up. A value a macro invocation sets
+(`\newcommand\setmode{\def\mode{2}}` … `\setmode`) is not seen by the pass,
+so a later `\ifnum\mode` reads the value in force before the invocation.
+
+**Side-by-side boxes** (`Compat.boxRows`, a pass after the idiom rewrite, so
+a `\parbox` is the box it became). A run of `{minipage}`s whose separators
+are spaces and at least one fill (`\hfill`, `\hfil`), with no paragraph
+break, becomes one `{columns}` row of the declared widths. That is exactly
+the columns model's leftover rule, since `\hfill` is the gutter. The row is
+a named translation (N0100), and a `[pos]` option inside it is noted
+(N0102, `env:minipage-row-options`). `minipageRowChecks`
+(Tests/BoxRow.lean), over `Layout.Out` and the typed HTML tree, checks five
+facts that fail on the parent commit: one baseline; the second box ending
+the measure; one two-track grid; a frame's two titled panels side by side;
+and that frame as one page with no W0384. Against lualatex on a synthetic
+beamer probe, the second box's text starts at 196.724pt here and 196.725pt
+there (`pdftotext -bbox`). Two remainders are inherited from the
+block-box model, not new. In article, the first box has no paragraph
+indent (LaTeX sets `\parindent`, 15pt, before it). And a row's boxes are
+top-aligned where a minipage's default `[c]` centres them, which is the
+same divergence `{columns}` already carries. Boxes separated by a space
+alone still stack. LaTeX sets them side by side with an interword space,
+which the equal-gutter model cannot say.
+
+**The frame that spilled.** On the base, W0384 already named it, with the
+overflow in points and the continuation page. The spill was not silent.
+After both fixes the frame fits and W0384 is gone.
+
+**Measured on the private deck**, built from a scratch copy with the shipped
+CLI. Pages 36 → 35, equal to the reference's 35. N0114 43 → 32: notes for
+`\ifdefined` inside branches TeX never reads are gone, and five `\ifnum`
+decisions are added. W0334 23 → 21. W0384 1 → 0. N0100 +1 (the row). Every
+page other than the three corrected frames is pixel-identical to the base
+(`compare -metric AE` at 50 dpi, all 35 pages, base page n+1 against page n
+past the removed spill). The private paper is unchanged: census identical,
+all 8 pages pixel-identical by the same command.
+
+**What the two W0334 losses cost on this figure** (the report the brief asked
+for; `pdftotext -bbox` against the lualatex reference):
+- `\useasboundingbox` reserves the figure's box so the graph holds its place
+  from frame to frame. Without it, the natural box is centred instead. On the
+  frame of the three-node graph with its extra left node, the labels stand
+  6.8pt right of the reference's. On the frame of the full graph without its leftmost node, they stand 45.8pt
+  left: the reserved box had kept the
+  graph where the previous frame drew it. For scale, a frame with no reserved
+  box agrees with the reference to 1.3pt horizontally. Vertical offsets
+  (6–12pt) are not attributable to the loss, since that same frame already
+  sits 10.8pt higher than the reference.
+- `bend` is dropped, so the two curved edges into the outcome node are drawn
+  straight on the two full-graph frames. The arrows are the same; only the
+  routing differs, and a straight edge runs close under an intermediate
+  node's label.
+- A third loss, newly reached: the three-node branch's
+  `text height`/`text depth` node options (W0334, 3 sites). The branch that
+  carries them now draws. Measured, the labels still share a baseline.
+
+**Routed.** N0114's registered meaning (`Diag.lean`, the `.N0114` arm of
+`DiagCode.spec`) still reads "TeX '\ifdefined' resolved from the document's
+own definitions". It already covered `\newif` flags and now covers
+every decided head. It should read "TeX conditional decided from the
+document's own definitions". That is a spec-text change with a golden
+regeneration, and `Diag.lean` is not this branch's file.
+
+**Tests changed, not only added.** `compat a foreign conditional inside
+keeps the skip-whole warning` asserted the old limitation, that one
+undecidable head leaves the whole extent unresolved. It now asserts the
+invariant: the decidable outer conditional is named, and the undecided inner
+one keeps its skip-whole warning where its branch is reached. A new row
+keeps the unknown-`if…`-name case whole. The picture's "opener the subset
+cannot compute" probe moved from `\ifodd 3`, which the document now decides,
+to `\ifmmode`. `tests/compat-index/tikz.txt` turns its `\ifodd` row to
+`impl` and adds a `\ifmmode` refusal row.
