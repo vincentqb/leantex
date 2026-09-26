@@ -12,7 +12,8 @@
 Output is porcelain and nothing else: one `land: step=… result=…` line per
 step, one `land: result=…` line at the end. A value carrying whitespace or a
 quote is quoted, so a `k=v` reader cannot be walked off the end of a value.
-Exit 0 ok, 1 gate failed, 2 precondition or conflict, 3 internal.
+Exit 0 ok, 1 gate failed, 2 precondition or conflict, 3 internal, 4 landed on
+`main` but not known to be on the remote (`result=landed-unpushed`).
 Composition is left to the caller — this tool never drives a terminal, never
 prompts, and never loops.
 
@@ -23,6 +24,11 @@ the core acts on is *read back from a file* — never from a return value a
 summarizer could have shortened. Standard output and standard error go to
 separate files and only standard output is parsed: a git warning on stderr
 once became part of a "fact" and reported a clean worktree as dirty.
+
+The gates run in the run's own gate tree — a detached worktree at the
+rebased tip, `<run dir>/tree`, seeded with a copy of a `.lake` and removed
+when the run ends — never in the branch's worktree, whose checkout its
+owner may switch while the gates run.
 -/
 import scripts.LandCore
 
@@ -335,15 +341,6 @@ def lakefileDeclares (wt target : String) : IO Bool := do
     return (txt.splitOn s!"name = \"{target}\"").length > 1
   catch _ => return false
 
-def runGate (e : Env) (ctr : IO.Ref Nat) (wt : String) (g : Gate) (idx : Nat) : IO Obs := do
-  if let some tgt := g.needsTarget then
-    if !(← lakefileDeclares wt tgt) then
-      return .gateAbsent idx
-  let cmd := if g.cmd.startsWith "." then s!"{wt}/{g.cmd}" else g.cmd
-  let r ← sh e ctr s!"gate-{g.name}" cmd g.args (some wt)
-  if r.code != 0 then return .gateFail idx
-  return .gateOk idx
-
 -- ## The ledger
 
 def hexDigit (n : Nat) : Char :=
@@ -425,11 +422,83 @@ def midRebase (e : Env) (ctr : IO.Ref Nat) (step wt : String) : IO Bool := do
     System.FilePath.pathExists abs
   return (← ex a) || (← ex b)
 
+-- ## The gate tree
+
+/-- The gate tree: a detached worktree this run makes at the gated tip, in
+its own run directory, which nothing else writes. -/
+def treePath (e : Env) : String := s!"{e.runDir}/tree"
+
+/-- The gate tree, read back: its `HEAD`, and whether it is clean. A
+directory that is not a work tree reads as no sha: inside the git directory
+— where the run directory lives — `rev-parse HEAD` walks up and answers with
+the *main* worktree's `HEAD`, which is a sha, only not this tree's. -/
+def readTree (e : Env) (ctr : IO.Ref Nat) (step : String) : IO (Sha × Bool) := do
+  let tree := treePath e
+  let inside ← git e ctr step #["rev-parse", "--is-inside-work-tree"] (some tree)
+  if inside.code != 0 || trimWs inside.out != "true" then return ("", false)
+  let head ← revParse e ctr step "HEAD" (some tree)
+  let clean ← statusClean e ctr step tree
+  return (head, clean == some true)
+
+/-- Make the gate tree at `tip` and seed its build cache: a copy of the
+branch worktree's `.lake`, else the main worktree's. A copy, never a
+hardlink — lake rewrites files in place. A failed copy is removed rather
+than built on. -/
+def makeTree (e : Env) (ctr : IO.Ref Nat) (wt tip : String) : IO String := do
+  let tree := treePath e
+  let ra ← git e ctr "gate-tree" #["worktree", "add", "--detach", tree, tip] (some e.mainWt)
+  if ra.code != 0 then return "no-tree"
+  let src ← if ← System.FilePath.pathExists s!"{wt}/.lake" then pure (some s!"{wt}/.lake")
+    else if ← System.FilePath.pathExists s!"{e.mainWt}/.lake" then pure (some s!"{e.mainWt}/.lake")
+    else pure none
+  match src with
+  | none => return "none"
+  | some from_ =>
+    let rs ← sh e ctr "seed" "cp" #["-a", "--reflink=auto", from_, s!"{tree}/.lake"]
+    if rs.code == 0 then return from_
+    rmQuiet s!"{tree}/.lake"
+    return "failed"
+
+/-- Remove the gate tree, and read back that it is gone from the disk and
+from the worktree list. Forced, because a tree a gate dirtied must go too:
+it is this run's, and nothing else writes it. -/
+def removeTree (e : Env) (ctr : IO.Ref Nat) : IO Unit := do
+  let tree := treePath e
+  let _ ← git e ctr "tree-remove" #["worktree", "remove", "--force", tree] (some e.mainWt)
+  let gone := !(← System.FilePath.pathExists tree)
+  let wl ← git e ctr "tree-remove" #["worktree", "list", "--porcelain"] (some e.mainWt)
+  let listed := (wl.out.splitOn "\n").any (trimWs · == s!"worktree {tree}")
+  say "tree-remove" (if gone && !listed then "ok" else "fail")
+    [("path", tree), ("gone", if gone then "yes" else "no"),
+     ("listed", if listed then "yes" else "no")]
+
+/-- Run one gate in the gate tree, reading the tree back before and after
+it. -/
+def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) : IO Obs := do
+  let tree := treePath e
+  if let some tgt := g.needsTarget then
+    if !(← lakefileDeclares tree tgt) then
+      return .gateAbsent idx
+  let step := s!"gate-{g.name}"
+  let (hb, cb) ← readTree e ctr step
+  let cmd := if g.cmd.startsWith "." then s!"{tree}/{g.cmd}" else g.cmd
+  let r ← sh e ctr step cmd g.args (some tree)
+  let (ha, ca) ← readTree e ctr step
+  -- The tree as read around the gate: the head both reads agree on, and
+  -- clean only if both were, so a tree moved between two gates and moved
+  -- back inside the next one still reads as moved.
+  let head := if hb == ha then ha else ""
+  let clean := cb && ca
+  if r.code != 0 then return .gateFail idx head clean
+  return .gateOk idx head clean
+
 -- ## The landing run
 
-def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
-    (gates : Array Gate) (gateset : String) : IO UInt32 := do
-  let ctr ← IO.mkRef 0
+/-- The landing loop: feed the core one observation per action until it
+halts. `treeLive` is set once the gate tree was asked for and cleared once
+it is removed, so the caller's `finally` removes a tree an exception left. -/
+def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : String)
+    (mode : Mode) (wantPush : Bool) (gates : Array Gate) (gateset : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   let plan : Array GateSpec :=
     gates.map fun g => { name := g.name, mayAbsent := g.needsTarget.isSome }
@@ -488,11 +557,16 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
                   pure (.branchStatus ahead behind clean tip)
               | _, _ => pure (.garbled "rev-list counts are not numbers")
             | other => pure (.garbled s!"rev-list counts: {other.length} fields")
-      | .rebase => do
-        let r ← git e ctr "rebase" #["rebase", "main"] (some wt)
+      | .rebase onto => do
+        -- Onto the sha this run read, never the name `main`, so the base the
+        -- net comparison reads is the base the commits were replayed onto.
+        -- `--no-update-refs`: a rebase that also moved another branch's ref
+        -- would be a ref change no gate earned.
+        let r ← git e ctr "rebase"
+          #["rebase", "--no-update-refs", "--no-autosquash", "--no-autostash", onto] (some wt)
         if r.code == 0 then
           let tip ← revParse e ctr "rebase" s!"refs/heads/agent/{name}" (some wt)
-          say "rebase" "ok" [("onto", "main"), ("tip", if tip.isEmpty then "?" else tip)]
+          say "rebase" "ok" [("onto", onto), ("tip", if tip.isEmpty then "?" else tip)]
           pure (.rebaseOk tip)
         else
           -- Any non-zero rebase: collect the unmerged paths, abort if a
@@ -518,28 +592,78 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
           say "rebase" "fail"
             [("conflict", if files.isEmpty then "none" else String.intercalate "," files)]
           pure (.rebaseFailed files.toArray headTip onBranch clean)
+      | .netDiff oldTip newBase newTip => do
+        -- The branch's own change runs from its fork point with the base it
+        -- was replayed onto; plumbing, so no `color.diff`, external diff or
+        -- textconv of this host's configuration reaches the listing.
+        let rf ← git e ctr "net" #["merge-base", newBase, oldTip] (some e.mainWt)
+        let fork := trimWs rf.out
+        if rf.code != 0 || !isSha fork then
+          pure (.garbled "git merge-base for the net comparison")
+        else
+          let listing (a b : String) : Array String :=
+            #["diff-tree", "-r", "-p", "--no-color", "--no-ext-diff", "--no-textconv",
+              "--no-renames", "--binary", "-U0", a, b]
+          let rb ← git e ctr "net" (listing fork oldTip) (some e.mainWt)
+          let ra ← git e ctr "net" (listing newBase newTip) (some e.mainWt)
+          if rb.code != 0 || ra.code != 0 then
+            pure (.garbled "git diff-tree for the net comparison")
+          else
+            let drift := netDrift (netOf rb.out) (netOf ra.out)
+            say "net" (if drift.isEmpty then "ok" else "fail")
+              ([("fork", fork), ("base", newBase), ("files", toString (netOf rb.out).size)]
+                ++ (if drift.isEmpty then [] else [("drift", String.intercalate "," drift.toList)]))
+            pure (.netDiffs rb.out ra.out)
+      | .restoreBranch rebased original => do
+        -- Only a branch still at the rebased tip, on its branch and clean, is
+        -- put back: anything else is someone's work, and is left alone.
+        let branchRef := s!"refs/heads/agent/{name}"
+        let h0 ← revParse e ctr "restore" "HEAD" (some wt)
+        let on0 ← headIs e ctr "restore" wt branchRef
+        let c0 ← statusClean e ctr "restore" wt
+        if h0 == rebased && on0 && c0 == some true then
+          let _ ← git e ctr "restore" #["reset", "--keep", original] (some wt)
+          pure ()
+        let headTip ← revParse e ctr "restore" "HEAD" (some wt)
+        let onBranch ← headIs e ctr "restore" wt branchRef
+        let clean := (← statusClean e ctr "restore" wt) == some true
+        say "restore" (if onBranch && clean && headTip == original then "ok" else "fail")
+          [("head", if headTip.isEmpty then "?" else headTip), ("was", original),
+           ("branch", if onBranch then "yes" else "no"),
+           ("dirty", if clean then "no" else "yes")]
+        pure (.branchRestored headTip onBranch clean)
+      | .makeTree tip => do
+        treeLive.set true
+        let seed ← makeTree e ctr wt tip
+        let (head, clean) ← readTree e ctr "gate-tree"
+        say "gate-tree" (if head == tip && clean then "ok" else "fail")
+          [("path", treePath e), ("head", if head.isEmpty then "?" else head),
+           ("dirty", if clean then "no" else "yes"), ("seed", seed)]
+        pure (.treeReady head clean)
       | .gate i g => do
         match gates[i]? with
         | none => pure (.garbled s!"no gate at index {i}")
         | some gd => do
-          let o ← runGate e ctr wt gd i
+          let o ← runGate e ctr gd i
+          let tail (head : Sha) (clean : Bool) : List (String × String) :=
+            [("idx", toString i), ("head", if head.isEmpty then "?" else head),
+             ("dirty", if clean then "no" else "yes")]
           match o with
-          | .gateOk _ => say s!"gate-{g}" "ok" [("idx", toString i)]; pure o
-          | .gateFail _ =>
-            say s!"gate-{g}" "fail" [("idx", toString i), ("log", s!"gate-{g}.log")]; pure o
+          | .gateOk _ head clean => say s!"gate-{g}" "ok" (tail head clean); pure o
+          | .gateFail _ head clean =>
+            say s!"gate-{g}" "fail" (tail head clean ++ [("log", s!"gate-{g}.log")]); pure o
           | .gateAbsent _ =>
             say s!"gate-{g}" "skip"
               [("idx", toString i), ("why", "the lakefile declares no such target")]
             pure o
           | _ => pure o
       | .recheckBranch => do
-        let tip ← revParse e ctr "post-gate" s!"refs/heads/agent/{name}" (some wt)
-        let clean? ← statusClean e ctr "post-gate" wt
-        let clean := clean? == some true
-        say "post-gate" (if tip == st.gatedTip && clean then "ok" else "fail")
-          [("tip", if tip.isEmpty then "?" else tip), ("gated", st.gatedTip),
-           ("dirty", if clean then "no" else "yes")]
-        pure (.branchRecheck tip clean)
+        -- The gates ran in the run's own tree; this asks whether the author
+        -- still names the commit they ran on.
+        let tip ← revParse e ctr "post-gate" s!"refs/heads/agent/{name}" (some e.mainWt)
+        say "post-gate" (if tip == st.gatedTip then "ok" else "fail")
+          [("tip", if tip.isEmpty then "?" else tip), ("gated", st.gatedTip)]
+        pure (.branchRecheck tip)
       | .recheckMain => do
         let onMain ← headIs e ctr "pre-merge" e.mainWt "refs/heads/main"
         let tip ← revParse e ctr "pre-merge" "refs/heads/main" (some e.mainWt)
@@ -578,10 +702,13 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
            ("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
         say "ledger" (if ok then "ok" else "fail") [("file", ledgerPath e)]
         pure (if ok then .ledgerOk else .ledgerFail)
-      | .push => do
-        let r ← git e ctr "push" #["push", "origin", "main"] (some e.mainWt)
-        if r.code == 0 then say "push" "ok"; pure .pushOk
-        else say "push" "fail" [("log", "push.log")]; pure .pushRejected
+      | .push tip => do
+        -- The gated tip, by sha, to the remote's `main`: never the local
+        -- `main`, which another party may have moved since it was read back.
+        -- No force of any kind, so a remote that moved on rejects it.
+        let r ← git e ctr "push" #["push", "origin", s!"{tip}:refs/heads/main"] (some e.mainWt)
+        if r.code == 0 then say "push" "ok" [("tip", tip)]; pure .pushOk
+        else say "push" "fail" [("tip", tip), ("log", "push.log")]; pure .pushRejected
       | .readRemote => do
         -- `git ls-remote`, not the tracking ref: git updates `origin/main`
         -- from its own push result, so comparing against it asks the push
@@ -600,6 +727,10 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
     act := act'
     match act with
     | .halt v code why =>
+      -- The tree goes before the final line, so the line stays last.
+      if ← treeLive.get then
+        removeTree e ctr
+        treeLive.set false
       let t1 ← IO.monoMsNow
       -- One record per distinct fact. The push confirmation is its own
       -- verdict, never a second `landed` row for the same run: a structured
@@ -631,6 +762,16 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
       return code
     | _ => pure ()
   return 3
+
+/-- One landing run. The gate tree is removed on every path out: at the
+halt, before the final line, and here after an exception. -/
+def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
+    (gates : Array Gate) (gateset : String) : IO UInt32 := do
+  let ctr ← IO.mkRef 0
+  let treeLive ← IO.mkRef false
+  try landLoop e ctr treeLive name mode wantPush gates gateset
+  finally
+    if ← treeLive.get then removeTree e ctr
 
 /-- One landing at a time. The lock is a directory, because creating one is
 atomic where a "does it exist" check followed by a write is not; a second
@@ -806,11 +947,35 @@ def planOf (gs : Array Gate) : Array GateSpec :=
 
 def gatePlan : Array GateSpec := planOf gateList
 
-def okGates : List Obs := (List.range gatePlan.size).map Obs.gateOk
-
 def sha1s : Sha := "1111111111111111111111111111111111111111"
 def sha2s : Sha := "2222222222222222222222222222222222222222"
 def sha3s : Sha := "3333333333333333333333333333333333333333"
+
+def okGates : List Obs := (List.range gatePlan.size).map fun i => Obs.gateOk i sha3s true
+
+/-- One file's change, as `git diff-tree -p -U0` prints it: the same change
+at two positions differs only in its `index` line and hunk headers, which
+is the comparison's whole allowance. -/
+def netListing (idx hunk : String) (body : List String) : String :=
+  s!"diff --git a/PLAN.md b/PLAN.md\nindex {idx} 100644\n--- a/PLAN.md\n+++ b/PLAN.md\n{hunk}\n"
+    ++ String.join (body.map (· ++ "\n"))
+
+/-- The branch's change: a new entry under a heading its second commit
+renamed. -/
+def netBranch : String :=
+  netListing "1a2b3c4..5d6e7f8" "@@ -4,0 +5,3 @@ body a" ["+", "+### b-final", "+body b"]
+
+/-- The same change replayed onto a base that appended an entry first. -/
+def netMoved : String :=
+  netListing "9f8e7d6..c5b4a39" "@@ -7,0 +8,3 @@ body m" ["+", "+### b-final", "+body b"]
+
+/-- The union driver's keep-both: the draft heading the branch renamed away
+came back, and git reported no conflict. -/
+def netUnion : String :=
+  netListing "9f8e7d6..d4c3b2a" "@@ -7,0 +8,4 @@ body m"
+    ["+### b-draft", "+", "+### b-final", "+body b"]
+
+def netSame : Obs := .netDiffs netBranch netMoved
 
 /-- A plan every one of whose gates may be absent: the vacuity case. -/
 def allSkippablePlan : Array GateSpec :=
@@ -822,8 +987,8 @@ def skippableIdx : List Nat :=
 
 def cases : List Case :=
   let pre := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
-    Obs.rebaseOk sha3s]
-  let landOk := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha1s,
+    Obs.rebaseOk sha3s, netSame, Obs.treeReady sha3s true]
+  let landOk := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha1s,
     .ledgerOk, .ffOk, .mainTip sha3s, .ledgerOk]
   [ { label := "lands with every gate ok", mode := .land, push := false
     , obs := landOk, verdict := .landed, code := 0, noMutation := false }
@@ -831,29 +996,80 @@ def cases : List Case :=
     , mode := .land, push := true
     , obs := landOk ++ [.pushOk, .remoteTip sha3s]
     , verdict := .landed, code := 0, noMutation := false }
-  , { label := "the remote reads back at another commit", mode := .land, push := true
+  , { label := "the remote reads back at another commit: landed, not pushed"
+    , mode := .land, push := true
     , obs := landOk ++ [.pushOk, .remoteTip sha1s]
-    , verdict := .failed, code := 3, noMutation := false }
-  , { label := "the push is rejected after main moved", mode := .land, push := true
+    , verdict := .landedUnpushed, code := 4, noMutation := false }
+  , { label := "the push is rejected: landed, not pushed", mode := .land, push := true
     , obs := landOk ++ [.pushRejected]
-    , verdict := .landedUnpushed, code := 1, noMutation := false }
+    , verdict := .landedUnpushed, code := 4, noMutation := false }
+  , { label := "the remote's main does not read back: landed, not pushed"
+    , mode := .land, push := true
+    , obs := landOk ++ [.pushOk, .remoteTip ""]
+    , verdict := .landedUnpushed, code := 4, noMutation := false }
   , { label := "check stops before the merge", mode := .check, push := false
     , obs := pre ++ okGates, verdict := .checked, code := 0, noMutation := true }
   , { label := "the branch moved during the gates", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha1s true]
+    , obs := pre ++ okGates ++ [.branchRecheck sha1s]
     , verdict := .refused, code := 2, noMutation := true }
-  , { label := "a gate left the branch worktree dirty", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s false]
+  , { label := "a gate moved the gate tree", mode := .land, push := false
+    , obs := pre ++ [.gateOk 0 sha1s true]
+    , verdict := .failed, code := 1, noMutation := true }
+  , { label := "a gate left the gate tree dirty", mode := .land, push := false
+    , obs := pre ++ [.gateOk 0 sha3s false]
+    , verdict := .failed, code := 1, noMutation := true }
+  , { label := "the tree moved around a gate reads as no sha", mode := .land, push := false
+    , obs := pre ++ [.gateOk 0 "" true]
+    , verdict := .failed, code := 1, noMutation := true }
+  , { label := "a failing gate that also moved the tree", mode := .land, push := false
+    , obs := pre ++ [.gateFail 0 sha1s false]
+    , verdict := .failed, code := 1, noMutation := true }
+  , { label := "the last gate moved the tree", mode := .land, push := true
+    , obs := pre ++ (List.range (gatePlan.size - 1)).map (fun i => Obs.gateOk i sha3s true)
+        ++ [.gateOk (gatePlan.size - 1) sha2s true]
+    , verdict := .failed, code := 1, noMutation := true }
+  , { label := "the gate tree was not made at the gated tip", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
+        Obs.rebaseOk sha3s, netSame, .treeReady sha1s true]
+    , verdict := .failed, code := 3, noMutation := true }
+  , { label := "the gate tree was dirty when made", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
+        Obs.rebaseOk sha3s, netSame, .treeReady sha3s false]
+    , verdict := .failed, code := 3, noMutation := true }
+  , { label := "the gate tree did not read back", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
+        Obs.rebaseOk sha3s, netSame, .treeReady "" false]
+    , verdict := .failed, code := 3, noMutation := true }
+  , { label := "a gate before the gate tree exists", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
+        Obs.rebaseOk sha3s, netSame, .gateOk 0 sha3s true]
+    , verdict := .failed, code := 3, noMutation := true }
+  , { label := "the rebase kept a line the branch deleted: restored, refused"
+    , mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 1 true sha2s,
+        Obs.rebaseOk sha3s, .netDiffs netBranch netUnion, .branchRestored sha2s true true]
+    , verdict := .refused, code := 2, noMutation := true }
+  , { label := "a drifted rebase in check mode is refused too", mode := .check, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 1 true sha2s,
+        Obs.rebaseOk sha3s, .netDiffs netBranch netUnion, .branchRestored sha2s true true]
+    , verdict := .refused, code := 2, noMutation := true }
+  , { label := "a drifted rebase that could not be put back", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 1 true sha2s,
+        Obs.rebaseOk sha3s, .netDiffs netBranch netUnion, .branchRestored sha3s true true]
+    , verdict := .failed, code := 3, noMutation := true }
+  , { label := "a file only the rebase touched is drift", mode := .land, push := false
+    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 1 true sha2s,
+        Obs.rebaseOk sha3s, .netDiffs "" netMoved, .branchRestored sha2s true true]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "main moved during the gates", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha2s]
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha2s]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "the main worktree left main during the gates", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck false sha1s]
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck false sha1s]
     , verdict := .refused, code := 2, noMutation := true }
   , { label := "main reads back at another commit after the merge"
     , mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha1s,
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha1s,
         .ledgerOk, .ffOk, .mainTip sha1s]
     , verdict := .failed, code := 3, noMutation := false }
   , { label := "a truncated sha is not a sha", mode := .land, push := false
@@ -861,7 +1077,7 @@ def cases : List Case :=
         Obs.rebaseOk "33333333"]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "the fast-forward is rejected", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha1s,
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha1s,
         .ledgerOk, .ffRejected]
     , verdict := .refused, code := 2, noMutation := false }
   , { label := "a rebase conflict, the branch restored", mode := .land, push := false
@@ -878,33 +1094,31 @@ def cases : List Case :=
         .rebaseFailed #[] sha1s false false]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "a gate fails", mode := .land, push := false
-    , obs := pre ++ [.gateOk 0, .gateFail 1]
+    , obs := pre ++ [.gateOk 0 sha3s true, .gateFail 1 sha3s true]
     , verdict := .failed, code := 1, noMutation := true }
   , { label := "the last gate fails", mode := .land, push := true
-    , obs := pre ++ (List.range (gatePlan.size - 1)).map Obs.gateOk
-        ++ [.gateFail (gatePlan.size - 1)]
+    , obs := pre ++ (List.range (gatePlan.size - 1)).map (fun i => Obs.gateOk i sha3s true)
+        ++ [.gateFail (gatePlan.size - 1) sha3s true]
     , verdict := .failed, code := 1, noMutation := true }
   , { label := "a gate answering out of turn is an internal failure"
     , mode := .land, push := false
-    , obs := pre ++ [.gateOk 0, .gateOk 0]
+    , obs := pre ++ [.gateOk 0 sha3s true, .gateOk 0 sha3s true]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "a gate claiming an index past the plan", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.gateOk gatePlan.size]
+    , obs := pre ++ okGates ++ [.gateOk gatePlan.size sha3s true]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "an absence the plan does not permit", mode := .land, push := false
     , obs := pre ++ [.gateAbsent 0]
     , verdict := .failed, code := 1, noMutation := true }
   , { label := "every gate absent proves nothing", mode := .land, push := false
-    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
-        Obs.rebaseOk sha3s, .gateAbsent 0, .gateAbsent 1]
+    , obs := pre ++ [.gateAbsent 0, .gateAbsent 1]
     , verdict := .failed, code := 1, noMutation := true
     , plan := some allSkippablePlan }
   , { label := "a permitted absence still lands", mode := .land, push := false
-    , obs := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
-        Obs.rebaseOk sha3s]
+    , obs := pre
         ++ ((List.range gatePlan.size).map fun i =>
-              if skippableIdx.contains i then Obs.gateAbsent i else Obs.gateOk i)
-        ++ [.branchRecheck sha3s true, .mainRecheck true sha1s, .ledgerOk, .ffOk,
+              if skippableIdx.contains i then Obs.gateAbsent i else Obs.gateOk i sha3s true)
+        ++ [.branchRecheck sha3s, .mainRecheck true sha1s, .ledgerOk, .ffOk,
             .mainTip sha3s, .ledgerOk]
     , verdict := .landed, code := 0, noMutation := false }
   , { label := "garbled status at the first probe", mode := .land, push := false
@@ -914,7 +1128,7 @@ def cases : List Case :=
     , obs := [.mainStatus true true sha1s, .garbled "rev-list counts"]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "garbled output mid-gate", mode := .land, push := false
-    , obs := pre ++ [.gateOk 0, .garbled "gate output"]
+    , obs := pre ++ [.gateOk 0 sha3s true, .garbled "gate output"]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "the main worktree is dirty", mode := .land, push := false
     , obs := [.mainStatus true false sha1s], verdict := .refused, code := 2
@@ -938,11 +1152,11 @@ def cases : List Case :=
     , obs := [.mainStatus true true sha1s, .ffOk]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "the write-ahead row was not written", mode := .land, push := false
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha1s,
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha1s,
         .ledgerFail]
     , verdict := .failed, code := 3, noMutation := true }
   , { label := "the landed row was not written", mode := .land, push := true
-    , obs := pre ++ okGates ++ [.branchRecheck sha3s true, .mainRecheck true sha1s,
+    , obs := pre ++ okGates ++ [.branchRecheck sha3s, .mainRecheck true sha1s,
         .ledgerOk, .ffOk, .mainTip sha3s, .ledgerFail]
     , verdict := .failed, code := 3, noMutation := false } ]
 
@@ -977,6 +1191,29 @@ def ffTipOf (acts : Array Act) : Option Sha :=
     | .fastForward t => some t
     | _ => acc
 
+/-- The push a scripted run proposed, if any: its sha, as `ffTipOf`. -/
+def pushTipOf (acts : Array Act) : Option Sha :=
+  acts.foldl (init := none) fun acc a =>
+    match a with
+    | .push t => some t
+    | _ => acc
+
+/-- The net comparison over hand-written listings: the change it must see
+through, and the changes it must not. Each pair is (before, after, the
+files the drift must name). -/
+def netCases : List (String × String × String × Array String) :=
+  let modeLine (m : String) :=
+    s!"diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode {m}\n"
+  [ ("the same change at another position", netBranch, netMoved, #[])
+  , ("a line the union driver kept", netBranch, netUnion, #["PLAN.md"])
+  , ("a file the rebase alone touched", "", netMoved, #["PLAN.md"])
+  , ("a file the rebase dropped", netBranch, "", #["PLAN.md"])
+  , ("a mode the rebase changed", modeLine "100755", modeLine "100644", #["run.sh"])
+  , ("two files, one drifted", netBranch ++ modeLine "100755", netMoved ++ modeLine "100644",
+      #["run.sh"])
+  , ("a missing newline at the end is content",
+      netBranch, netMoved ++ "\\ No newline at end of file\n", #["PLAN.md"]) ]
+
 def selftest : IO UInt32 := do
   let mut bad := 0
   for c in cases do
@@ -1002,7 +1239,24 @@ def selftest : IO UInt32 := do
       if t != r.1.gatedTip || !isSha t then
         bad := bad + 1
         say "selftest" "fail" [("case", c.label), ("why", "the merge does not name the gated tip")]
-  say "selftest" "ok" [("case", "every merge names the gated tip")]
+    match pushTipOf r.2 with
+    | none => pure ()
+    | some t =>
+      if t != r.1.gatedTip || t != r.1.mainAt || !isSha t then
+        bad := bad + 1
+        say "selftest" "fail" [("case", c.label), ("why", "the push does not name the gated tip")]
+  say "selftest" "ok" [("case", "every merge and every push names the gated tip")]
+  if !(runs.any fun (_, r) => (pushTipOf r.2).isSome) then
+    bad := bad + 1
+    say "selftest" "fail" [("case", "coverage"), ("why", "no case reaches a push")]
+  -- The net comparison, which the scenarios reach only through git.
+  for (label, before, after, want) in netCases do
+    let got := netDrift (netOf before) (netOf after)
+    if got != want then
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"net: {label}"),
+        ("why", s!"drift [{String.intercalate "," got.toList}]")]
+    else say "selftest" "ok" [("case", s!"net: {label}")]
   -- The override parser, which no repository state reaches.
   let badSpecs := ["a=true;b", "a=true;a=false", "", "=true"]
   for spec in badSpecs do
@@ -1099,21 +1353,39 @@ structure Outcome where
   detail : String
 
 /-- Run `land` (this binary) in a scratch repository under a gate override. -/
-def landIn (self repo : String) (args : Array String) (gates : String) :
-    IO (Nat × String) :=
-  hrun self args (some repo) #[("LAND_GATES", some gates),
-    ("GIT_TERMINAL_PROMPT", some "0")]
+def landIn (self repo : String) (args : Array String) (gates : String)
+    (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) :=
+  hrun self args (some repo) (#[("LAND_GATES", some gates),
+    ("GIT_TERMINAL_PROMPT", some "0")] ++ extraEnv)
+
+/-- Does `out` carry `s`? -/
+def says (out s : String) : Bool := (out.splitOn s).length > 1
+
+/-- The worktrees a scratch repository has registered, by path. -/
+def worktreePaths (repo : String) : IO (Array String) := do
+  let (_, o) ← hgit #["worktree", "list", "--porcelain"] repo
+  return ((o.splitOn "\n").filter (·.startsWith "worktree ")).toArray.map
+    fun l => (l.drop "worktree ".length).toString
+
+/-- A bare `origin` holding the scratch repository's `main`. -/
+def addRemote (s : Scratch) : IO String := do
+  let remote := s!"{s.root}/remote.git"
+  let _ ← hgit #["init", "-q", "--bare", "-b", "main", remote] s.root
+  let _ ← hgit #["remote", "add", "origin", remote] s.repo
+  let _ ← hgit #["push", "-q", "origin", "main"] s.repo
+  return remote
 
 def scenarioBranchMoves (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/moves" "moves"
+  -- The author commits on the branch, in its own worktree, while the gates
+  -- run: the gated commit is no longer the one the branch names.
   writeExe s!"{s.root}/race.sh"
-    "#!/bin/sh\necho bad > BAD && git add BAD && git commit -qm concurrent\n"
+    s!"#!/bin/sh\necho bad > {s.wt}/BAD && git -C {s.wt} add BAD && git -C {s.wt} commit -qm concurrent\n"
   let before ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["moves"] s!"race={s.root}/race.sh"
   let after ← revOf s.repo "refs/heads/main"
-  let moved := (out.splitOn "moved during the gates").length > 1
-  return { label := "a commit during the gates is refused"
-         , ok := code == 2 && before == after && moved
+  return { label := "a commit on the branch during the gates is refused"
+         , ok := code == 2 && before == after && says out "moved during the gates"
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
 def scenarioMainLeaves (self root : String) : IO Outcome := do
@@ -1125,9 +1397,8 @@ def scenarioMainLeaves (self root : String) : IO Outcome := do
   let (code, out) ← landIn self s.repo #["leaves"] s!"switch={s.root}/switch.sh"
   let after ← revOf s.repo "refs/heads/main"
   let _ ← hgit #["checkout", "-q", "main"] s.repo
-  let left := (out.splitOn "left main during the gates").length > 1
   return { label := "the main worktree leaving main is refused"
-         , ok := code == 2 && before == after && left
+         , ok := code == 2 && before == after && says out "left main during the gates"
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
 def scenarioConflict (self root : String) : IO Outcome := do
@@ -1144,23 +1415,152 @@ def scenarioConflict (self root : String) : IO Outcome := do
   let bAfter ← revOf s.repo "refs/heads/agent/conflict"
   let mAfter ← revOf s.repo "refs/heads/main"
   let (_, st) ← hgit #["status", "--porcelain"] s.wt
-  let named := (out.splitOn "rebase conflict: shared.txt").length > 1
-  let restored := (out.splitOn "step=rebase-abort result=ok").length > 1
   return { label := "a rebase conflict is refused and the branch restored"
          , ok := code == 2 && bBefore == bAfter && mBefore == mAfter && st.isEmpty
-             && named && restored
+             && says out "rebase conflict: shared.txt" && says out "step=rebase-abort result=ok"
          , detail := s!"exit={code} branch={bBefore}->{bAfter} main={mBefore}->{mAfter} \
 status=[{st}]" }
+
+/-- A rebase that stops with nothing unmerged: a commit that cannot be
+signed stops the pick with its change staged. -/
+def scenarioStoppedRebase (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/stopped" "stopped"
+  IO.FS.writeFile s!"{s.repo}/main.txt" "main\n"
+  let _ ← hgit #["add", "main.txt"] s.repo
+  let _ ← hgit #["commit", "-qm", "main moves on"] s.repo
+  let _ ← hgit #["config", "commit.gpgSign", "true"] s.repo
+  let _ ← hgit #["config", "gpg.program", "false"] s.repo
+  let bBefore ← revOf s.repo "refs/heads/agent/stopped"
+  let mBefore ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["stopped"] "t=true"
+  let bAfter ← revOf s.repo "refs/heads/agent/stopped"
+  let mAfter ← revOf s.repo "refs/heads/main"
+  let (_, st) ← hgit #["status", "--porcelain"] s.wt
+  let (_, rm) ← hgit #["rev-parse", "--git-path", "rebase-merge"] s.wt
+  let mid ← System.FilePath.pathExists (if rm.startsWith "/" then rm else s!"{s.wt}/{rm}")
+  return { label := "a rebase stopped with nothing unmerged is refused and the branch restored"
+         , ok := code == 2 && bBefore == bAfter && mBefore == mAfter && st.isEmpty && !mid
+             && says out "the rebase failed and was aborted"
+         , detail := s!"exit={code} branch={bBefore}->{bAfter} main={mBefore}->{mAfter} \
+status=[{st}] mid-rebase={mid}" }
 
 def scenarioLands (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/lands" "lands"
   let tip ← revOf s.repo "refs/heads/agent/lands"
   let (code, out) ← landIn self s.repo #["lands"] "t=true"
   let after ← revOf s.repo "refs/heads/main"
-  let pinned := (out.splitOn s!"gated={tip} tip={tip}").length > 1
-  return { label := "a clean landing moves main to the gated tip"
-         , ok := code == 0 && after == tip && pinned
-         , detail := s!"exit={code} gated={tip} main-after={after}" }
+  let wts ← worktreePaths s.repo
+  return { label := "a clean landing moves main to the gated tip and removes its gate tree"
+         , ok := code == 0 && after == tip && says out s!"gated={tip} tip={tip}"
+             && says out "step=gate-tree result=ok" && says out "step=tree-remove result=ok"
+             && wts.size == 2
+         , detail := s!"exit={code} gated={tip} main-after={after} worktrees={wts.size}" }
+
+/-- The branch's own commit adds `BAD`; a gate that refuses `BAD` must see
+it. The gates once ran in the branch worktree, whose owner switched it to
+another branch mid-landing, and `BAD` landed under a passing gate. -/
+def badBranch (root name : String) : IO Scratch := do
+  let s ← mkScratch root name
+  IO.FS.writeFile s!"{s.wt}/BAD" "bad\n"
+  let _ ← hgit #["add", "BAD"] s.wt
+  let _ ← hgit #["commit", "-qm", "Add BAD"] s.wt
+  writeExe s!"{s.root}/no-bad.sh" "#!/bin/sh\ntest ! -e BAD\n"
+  return s
+
+def scenarioWorktreeSwitched (self root : String) : IO Outcome := do
+  let s ← badBranch s!"{root}/switched" "switched"
+  writeExe s!"{s.root}/switch.sh" s!"#!/bin/sh\ngit -C {s.wt} checkout -q -b elsewhere main\n"
+  let before ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["switched"]
+    s!"switch={s.root}/switch.sh;no-bad={s.root}/no-bad.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let (_, ls) ← hgit #["ls-tree", "--name-only", "main"] s.repo
+  return { label := "a branch worktree switched mid-landing does not change what the gates see"
+         , ok := code == 1 && before == after && !says ls "BAD" && says out "gate no-bad failed"
+         , detail := s!"exit={code} main-before={before} main-after={after}" }
+
+def scenarioTreeMoved (self root : String) : IO Outcome := do
+  let s ← badBranch s!"{root}/treemoved" "treemoved"
+  writeExe s!"{s.root}/switch.sh" "#!/bin/sh\ngit checkout -q -b elsewhere main\n"
+  let before ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["treemoved"]
+    s!"switch={s.root}/switch.sh;no-bad={s.root}/no-bad.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let wts ← worktreePaths s.repo
+  return { label := "a gate that moves the gate tree fails the landing"
+         , ok := code == 1 && before == after && says out "moved the gate tree off the gated tip"
+             && wts.size == 2
+         , detail := s!"exit={code} main-before={before} main-after={after} worktrees={wts.size}" }
+
+/-- A commit lands on `main` the instant `git push` starts — a deterministic
+stand-in for a concurrent commit in the main worktree. The push must send
+the gated tip, and the ungated commit must not reach the remote. -/
+def scenarioPushNamesTip (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/pushtip" "pushtip"
+  let remote ← addRemote s
+  let (_, realGit) ← hrun "sh" #["-c", "command -v git"] none
+  IO.FS.createDirAll s!"{s.root}/wrap"
+  writeExe s!"{s.root}/wrap/git"
+    s!"#!/bin/sh\nif [ \"$1\" = push ]; then\n  \"{realGit}\" -C {s.repo} commit -q --allow-empty -m ungated\nfi\nexec \"{realGit}\" \"$@\"\n"
+  let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
+  let tip ← revOf s.repo "refs/heads/agent/pushtip"
+  let (code, out) ← landIn self s.repo #["pushtip", "--push"] "t=true"
+    #[("PATH", some s!"{s.root}/wrap:{path}")]
+  let onRemote ← revOf remote "refs/heads/main"
+  let (_, ungated) ← hgit #["log", "--format=%s", "-1", "refs/heads/main"] s.repo
+  return { label := "the push sends the gated tip, not whatever main is by then"
+         , ok := code == 0 && onRemote == tip && ungated == "ungated" && says out "result=landed"
+         , detail := s!"exit={code} gated={tip} remote={onRemote} local-main-top={ungated}" }
+
+/-- The remote's `main` moved on where this repository cannot see it: the
+push is not a fast-forward, and must fail loudly, never force. -/
+def scenarioPushNotFastForward (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/pushff" "pushff"
+  let remote ← addRemote s
+  let other := s!"{s.root}/other"
+  let _ ← hgit #["clone", "-q", remote, other] s.root
+  let _ ← hgit #["config", "user.name", "Scratch"] other
+  let _ ← hgit #["config", "user.email", "scratch@example.org"] other
+  let _ ← hgit #["commit", "-q", "--allow-empty", "-m", "elsewhere"] other
+  let _ ← hgit #["push", "-q", "origin", "main"] other
+  let theirs ← revOf remote "refs/heads/main"
+  let tip ← revOf s.repo "refs/heads/agent/pushff"
+  let (code, out) ← landIn self s.repo #["pushff", "--push"] "t=true"
+  let onRemote ← revOf remote "refs/heads/main"
+  let localMain ← revOf s.repo "refs/heads/main"
+  return { label := "a push that is not a fast-forward is landed-unpushed, never forced"
+         , ok := code == 4 && onRemote == theirs && localMain == tip
+             && says out "result=landed-unpushed"
+         , detail := s!"exit={code} remote={theirs}->{onRemote} main={localMain} gated={tip}" }
+
+/-- The shape a landing found by hand: through a `merge=union` file the
+rebase kept a heading the branch had renamed away, git reported no conflict,
+and every gate passed. -/
+def scenarioUnionDrift (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/union" "union"
+  IO.FS.writeFile s!"{s.repo}/.gitattributes" "PLAN.md merge=union\n"
+  IO.FS.writeFile s!"{s.repo}/PLAN.md" "# plan\n\n### a\nbody a\n"
+  let _ ← hgit #["add", ".gitattributes", "PLAN.md"] s.repo
+  let _ ← hgit #["commit", "-qm", "Add the plan"] s.repo
+  let _ ← hgit #["rebase", "-q", "main"] s.wt
+  IO.FS.writeFile s!"{s.wt}/PLAN.md" "# plan\n\n### a\nbody a\n\n### b-draft\nbody b\n"
+  let _ ← hgit #["commit", "-qam", "Draft b"] s.wt
+  IO.FS.writeFile s!"{s.wt}/PLAN.md" "# plan\n\n### a\nbody a\n\n### b-final\nbody b\n"
+  let _ ← hgit #["commit", "-qam", "Final b"] s.wt
+  IO.FS.writeFile s!"{s.repo}/PLAN.md" "# plan\n\n### a\nbody a\n\n### m\nbody m\n"
+  let _ ← hgit #["commit", "-qam", "Main m"] s.repo
+  let bBefore ← revOf s.repo "refs/heads/agent/union"
+  let mBefore ← revOf s.repo "refs/heads/main"
+  let (code, out) ← landIn self s.repo #["union"] "t=true"
+  let bAfter ← revOf s.repo "refs/heads/agent/union"
+  let mAfter ← revOf s.repo "refs/heads/main"
+  let (_, st) ← hgit #["status", "--porcelain"] s.wt
+  return { label := "a rebase that changed a file's net content is refused and the branch restored"
+         , ok := code == 2 && bBefore == bAfter && mBefore == mAfter && st.isEmpty
+             && says out "the rebase changed the net content of: PLAN.md"
+             && says out "step=restore result=ok"
+         , detail := s!"exit={code} branch={bBefore}->{bAfter} main={mBefore}->{mAfter} \
+status=[{st}]" }
 
 def scenarioNoOptIn (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/optin" "optin"
@@ -1184,9 +1584,14 @@ def scenarioReserved (self root : String) : IO Outcome := do
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
-/-- Drive the driver against throwaway repositories. -/
+/-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
+names another build to drive instead of this one — how a scenario is shown
+to fail on the tip before its fix. -/
 def scratchSelftest : IO UInt32 := do
-  let self := (← IO.appPath).toString
+  let self ← do
+    match ← IO.getEnv "LAND_SCENARIO_BINARY" with
+    | some b => pure b
+    | none => pure (← IO.appPath).toString
   let nanos ← IO.monoNanosNow
   let root := ((← IO.getEnv "LAND_SCRATCH_DIR").getD "/tmp") ++ s!"/land-scenarios-{nanos % 1000000}"
   IO.FS.createDirAll root
@@ -1202,7 +1607,13 @@ def scratchSelftest : IO UInt32 := do
     let d ← scenarioConflict self root
     let e ← scenarioNoOptIn self root
     let f ← scenarioReserved self root
-    pure [a, b, c, d, e, f]
+    let g ← scenarioStoppedRebase self root
+    let h ← scenarioWorktreeSwitched self root
+    let i ← scenarioTreeMoved self root
+    let j ← scenarioPushNamesTip self root
+    let k ← scenarioPushNotFastForward self root
+    let l ← scenarioUnionDrift self root
+    pure [a, b, c, d, e, f, g, h, i, j, k, l]
   let mut bad := 0
   for o in outcomes do
     if o.ok then say "scenario" "ok" [("case", o.label)]
