@@ -15903,10 +15903,20 @@ this token model does not reach.
 * **W5 — multi-page output.** One source, one page: no `\output` key names
   a second, so a site stays N invocations and a script.
 
-**Routed.** `Image.Loaded` could carry the code that named an unloaded
-entry's loss, so an `<img>` placeholder could name it the way the refused
-picture's does (`Image.fulfilOne`, `LeanTex/Core/Image.lean`); today such a
-placeholder ships the author's `alt` or none. Two stages with one title get
+**Routed.** On a host with no boundary tool, a picture outside the rendered
+subset ships `<img src="leantex-pic:<key>" alt>`: measured with the tip's
+binary in a namespace with every TeX tree masked (`cont-34-toolless.sh`),
+Chromium draws it 0 × 0 — nothing marks its place on the web page, though
+W0379 says a placeholder box does — and its valueless `alt` makes it
+decoration to assistive technology, the refused-placeholder case W4 says is
+never decorative. The fix needs the loss's code on the store entry:
+`Image.fulfilOne`'s `.refused` arm (`LeanTex/Core/Image.lean`) keeps
+`{ src }` and drops the code, so `HtmlDoc`'s `.image` arm cannot name the
+box the way the refused inline picture's is named (`W0362`). The tier's
+in-process tree carries that same `<img>` (`cont-33-`), so
+`diagram-boundary.img` (999) holds it both ways: the fix is a rise its
+author must record. An unloaded image's placeholder likewise ships the
+author's `alt` or none. Two stages with one title get
 one region name (axe `landmark-unique`, best practice); none in the corpus.
 The deck stage ignoring a declared `bg` belongs to the W1 decision
 (`deckStageRule`, `HtmlDoc.lean`). `tests/scoreboard/htmlreader.tsv` was
