@@ -18569,7 +18569,12 @@ path is one dispatch in `Main.frontend`; there is no second elaborator,
 no generated tex source, and no re-parse of reader text.
 
 This entry is corrected in place after two review rounds. Every count
-below names the command that produced it and the tree it ran on; the
+below names the command that produced it and the tree it ran on, and a
+tree is named by its commit's subject: a rebase rewrites every sha, the
+landing's included, and keeps every subject. Round 1 ends at "Classify
+every CommonMark case, and give each one a committed verdict", round 2 at
+"Give a thematic break precedence, and fix the item content column", and
+round 3 at "Fail every mode on a gap construct dropped in silence". The
 third round's evidence is kept outside the repository, each run named by
 the sha it was about.
 
@@ -18625,12 +18630,13 @@ carries a committed verdict in `tests/commonmark/verdicts.tsv`:
 `match | rejected | divergence | owed`. `scripts/commonmark.lean` has
 `html-oracle`'s three modes plus `--explain <case>`, `--audit` and
 `--scaling`. `lake env lean --run scripts/commonmark.lean --check` at
-62c89d8: **match 323, rejected 127, divergence 0, owed 202**, 994 ms for
-all 652. Of the owed, 22 carry `pending-decision:smart-punctuation`, 58
-`blocked-by:<gap>`, one `uncorroborated:md:raw-html` (case 195), and 121
-no note: reader deficits, ranked by section in the tier. The committed
-tables give 310/154/0/188 at round 1 (e4e9b32) and 321/128/0/203 at the
-end of round 2 (6bb87f4).
+the end of round 3: **match 323, rejected 127, divergence 0, owed 202**,
+994 ms for all 652. Of the owed, 22 carry
+`pending-decision:smart-punctuation`, 58 `blocked-by:<gap>`, one
+`uncorroborated:md:raw-html` (case 195), and 121 no note: reader
+deficits, ranked by section in the tier. The committed
+tables give 310/154/0/188 at the end of round 1 and 321/128/0/203 at the
+end of round 2.
 
 Comparison is over *trees*. The engine's HTML is a typed tree already;
 the spec's expected HTML is read by a tolerant reader in the script into
@@ -18681,7 +18687,7 @@ closes a way the ledger certified itself:
   carries: a rule, a start number, a title, a language, or a fourth-level
   heading. If the engine's page drops it but ships the element it sits on,
   the run must name it, or every mode fails (`silentGaps`). This reader
-  has zero such cases. Run through `--check` on the 6bb87f4 reader, the
+  has zero such cases. Run through `--check` on round 2's reader, the
   rule names exactly 60 and 88, the two breaks round 2 lost unnamed.
 
 An owed case whose trees agree once exactly its named gaps are hidden
@@ -18689,7 +18695,7 @@ carries `blocked-by:<gap>`. That note is the verdict row each IR gap owes,
 listed below.
 
 **The three strict classes, measured**, read off the subject each refusal
-carried (`--check` at 62c89d8):
+carried (`--check` at the end of round 3):
 
 - raw HTML touches 73 cases, 72 of them corroborated;
 - indented code touches 48, all corroborated;
@@ -18717,14 +18723,15 @@ change plus one reader arm. The decision is the user's.
 is written by `Scoreboard.tierMain`: a `<section>.match` and a
 `<section>.cases` row per section, encoded `pairs match/cases`, sorted,
 under the one ratchet. `commonmark` left `Board.pendingTiers` in the same
-commit (10f505d), and the port changed no value (25 sections, 321
+commit ("Put the commonmark tier on the shared scoreboard format"), and
+the port changed no value (25 sections, 321
 matches). The three false matches came off with human-written
 `# lowered:` lines naming the cases. Round 2's header said six sections
 fell; by the committed tables four did (Tabs, Indented code blocks, List
 items, Lists), and the case it filed under Block quotes, 108, is an
 Indented code blocks case. The deficits are the ranking (`--check` at
-62c89d8): Links 35/90, Link reference definitions 3/27, Images 5/22,
-Lists 6/27, Setext headings 11/27, List items 15/48.
+the end of round 3): Links 35/90, Link reference definitions 3/27,
+Images 5/22, Lists 6/27, Setext headings 11/27, List items 15/48.
 
 **Round 2, as a reviewer found it.** The architecture held and the
 hand-checked matches were genuine. The oracle certified itself: `classify`
@@ -18734,10 +18741,11 @@ letter, so
 `<https://example.org>` at the start of a line and text such as
 `x <y for comparison` failed the build. The reader now implements the
 §6.6 tag grammar and §4.6's conditions 1–7 by name. By the committed
-tables, 25 cases left `rejected` in the first fix commit (e55b4e8: 14 to
-`match`, 11 to `owed`). By the end of the round 28 had left (15 to
-`match`, 13 to `owed`), and two had entered: 7 and 278, both genuine
-indented code. Round 2 also fixed these defects:
+tables, 25 cases left `rejected` in the first fix commit ("Refuse only
+raw HTML, and close a fence with its container": 14 to `match`, 11 to
+`owed`). By the end of the round 28 had left (15 to `match`, 13 to
+`owed`), and two had entered: 7 and 278, both genuine indented code.
+Round 2 also fixed these defects:
 
 - a fence outlived its container: it skipped container matching, so a
   fence inside a quote or a nested item swallowed the rest of the
@@ -18779,18 +18787,20 @@ blocked round 2 on regressions that left every verdict in place:
 
   A closed link deactivates open link openers by a watermark, and image
   openers stay active. Spec 469, 470, 520 and 575 now match (`owed` in
-  6bb87f4's table).
+  round 2's table).
 - **Reader text reached a re-parse**, as described above.
 
 Each fix's rows failed on the reader before it. The check: swap in the
 previous commit's reader, keep the head's tests, and run `lake test`:
 
-- on cbcdd84's reader, 24 rows fail: every no-re-parse row (15), every
+- on the reader of "Process emphasis once per bracket region, as the
+  spec does", 24 rows fail: every no-re-parse row (15), every
   strict-subject row (8) and both scan rows (2), except
   `balanced double quotes in an alternative reach the page whole`;
-- on c6b3485's reader, the 8 strict-subject rows and the 2 scan rows
-  fail;
-- on 36ea2f0's reader, the 2 scan rows fail.
+- on the reader of "Let no reader text reach an option re-parse", the 8
+  strict-subject rows and the 2 scan rows fail;
+- on the reader of "Refuse each strict construct once, under its own
+  class", the 2 scan rows fail.
 
 The quotes row passes on every earlier reader. It witnesses no old
 defect; it guards the new spelling choice, and it fails when `altSource`
@@ -18813,10 +18823,12 @@ The fixes:
   strings;
 - each item frame reads only the columns it consumes.
 
-Measured through the binary on the re-review's shapes and sizes, 6bb87f4
-against 84dbe79 (head: the minimum of three runs):
+Measured through the binary on the re-review's shapes and sizes, round
+2's reader against the reader of "Bound every reader scan by its
+construct, and gate the shapes cmark gates" (head: the minimum of three
+runs):
 
-| shape | size | 6bb87f4 | 84dbe79 |
+| shape | size | round 2 | bounded scans |
 |---|---|---|---|
 | unclosed `<!--` | 78 KB | 132,909 ms | 494 ms |
 | `<?` | 46 KB | 61,300 ms | 514 ms |
@@ -18833,8 +18845,8 @@ against 84dbe79 (head: the minimum of three runs):
 whole path. It was broken once, by restoring the unbounded item match,
 and exited 1 at 2.74×.
 
-**Routed, as IR gaps, with the cases each blocks** (`--check` at 62c89d8,
-`blocked-by:`):
+**Routed, as IR gaps, with the cases each blocks** (`--check` at the
+end of round 3, `blocked-by:`):
 
 | gap | cases blocked |
 |---|---|
@@ -18901,17 +18913,14 @@ normalizes that offset.
 
 ### 2026-09-26 — markdown, round 3b: onto the scoreboard that spends a request once
 
-The branch was rebased by sha from `e3a5fca` onto `ae2ddc6` (optfold,
-perf, monoemit, and the scoreboard that spends a lowering request once).
-The entry above names commits on `e3a5fca`; rebased, in order:
-b38a59c→cf641fc, e4e9b32→6512fe2, 7940e8d→7a39ec3, e55b4e8→42af82f,
-7598bc0→1ec13a4, 6bb87f4→f62db9e, 10f505d→7a9733d, 8690857→0865e28,
-ad202f5→d78ec74, cbcdd84→4e971c6, c6b3485→1063907, 36ea2f0→2c67185,
-84dbe79→641c608, 62c89d8→60912d8, 57b13e5→08d649b. For each of the 19
-files the branch touches, `git diff --no-color -U0` over
-`e3a5fca..57b13e5` equals the same over `ae2ddc6..08d649b` once `@@` and
-`index` lines are dropped, with the same hunk layout, and
-`lake exe Tests --update` at `08d649b` changed no golden.
+The branch was rebased from main at "Record what the autonomy loop was
+missing, from the review round" onto main at "Record the ratchet's
+requests and records, and the base check, in the plan" (optfold, perf,
+monoemit, and the scoreboard that spends a lowering request once). For
+each of the 19 files the branch touches, `git diff --no-color -U0` of the
+branch's net change over the old base equals the same over the new base
+once `@@` and `index` lines are dropped, with the same hunk layout, and
+`lake exe Tests --update` on the rebased tip changed no golden.
 
 Every conflict was an addition on both sides. `E0390` and `W0390` stand
 side by side in the constructor list, the `spec` match and `diagWitness`:
@@ -18923,13 +18932,13 @@ changed it.
 
 **The three lowering lines are records.** Under the new ratchet a
 `# lowered:` request must name the committed floor. Two of this tier's
-three did not (10→9 and 25→24, over floors of 9 and 24), so on `08d649b`
-`scoreboard --check` and `--check --base ae2ddc6` exited 1 and
-`commonmark --check` 2; the third (6→5, over a floor of 6) was a live
-request. All three now read `# lowered (applied):`, the record a
-regeneration writes when it spends a request, which closes the routed
-`Lowered.authorises` item above: a record authorises nothing. Checked
-through the shipped path, with one floor raised by hand to its record's
+three did not (10→9 and 25→24, over floors of 9 and 24), so on the
+rebased tip `scoreboard --check` and `--check --base` at the new base
+exited 1 and `commonmark --check` 2; the third (6→5, over a floor of
+6) was a live request. All three now read `# lowered (applied):`, the
+record a regeneration writes when it spends a request, which closes the
+routed `Lowered.authorises` item above: a record authorises nothing.
+Checked through the shipped path, with one floor raised by hand to its record's
 old value (`Entity and numeric character references.match` 9→10): as a
 record, `scoreboard --check` reads `regressed` and
 `lake env lean --run scripts/commonmark.lean` refuses to write; written
@@ -18937,7 +18946,8 @@ back as a request it reads `stale`, and that regeneration spends it and
 writes the committed tier byte for byte.
 
 **Nothing moved under optfold and monoemit.** On the tree committed as
-`01d9398`, `commonmark --check` is `ok`, and one regeneration
+"Mark the three spent lowering requests as the records they became",
+`commonmark --check` is `ok`, and one regeneration
 (`lake env lean --run scripts/commonmark.lean`) leaves the tier and
 `tests/commonmark/verdicts.tsv` byte-identical: all 652 verdicts and
 their notes as committed (323 match, 127 rejected, 0 divergence, 202
@@ -19049,3 +19059,11 @@ the code its only child", with one mutation per scratch clone:
 - an attribute on the `<code>` fails five;
 - a fence line that keeps its container prefixes fails four;
 - an info word that reaches the option head again fails six.
+
+**Commits are cited by subject.** The entries above named 31 of the
+branch's commits by sha. After the round-3b rebase none of them was an
+ancestor of the branch's tip, and every rebase rewrites them again, the
+landing's included. They are cited by subject now, which a rebase keeps.
+The round-3b sha map is gone with the shas it mapped. The two base commits
+that entry named are main's, and their shas are stable, but they are
+cited by subject too, so the entries follow one convention.
