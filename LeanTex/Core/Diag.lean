@@ -554,7 +554,7 @@ and billed every site to `--werror`, while `W0301`, the same loss at the same
 site, reported `(2 sites)` on one line. Neither arm chose that; one reached
 for `warnOnce` and the other for `diag`, and nothing gated the choice. The
 run's fate is a clause of `W0301`'s own message now
-(`Elab.warnUnknownCmd_pushes_one` is the emitter fact: one push per call,
+(`Elab.warnUnknownCmd_push_exact` is the emitter fact: one push per call,
 carrying the construct's code and the subject `ctrl:<name>`), and
 `subjectCensusChecks` is the gate. -/
 def Loss.censused : Loss → Bool

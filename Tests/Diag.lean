@@ -706,7 +706,7 @@ and neither is about wording:
 * The run adds no diagnostic. A refusal is named once per site whether the
   call carried a run or not, so the site total a reader takes off the
   visible line is the number of calls and not the number of calls plus the
-  number of bracket runs among them. `Elab.warnUnknownCmd_pushes_one` is the
+  number of bracket runs among them. `Elab.warnUnknownCmd_push_exact` is the
   statement over the emitter — one push per call, carrying the construct's
   code and the subject `ctrl:<name>`; these rows are the shape at the arm.
 * The surviving diagnostic carries a subject, so it is inside the census.
@@ -761,24 +761,26 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "option run (fails on base): two calls with runs are two diagnostics, not four"
     (two.size == 2 && codesOf two == #["W0301"])
   t "option run: the command's own code is the only one naming it"
-    ((subjOf two "ctrl:zztrack").size == 2)
+    ((subjOf two "ctrl:zztrack").size == 2 &&
+      two.all fun d => d.code == "W0301" && d.subject == some "ctrl:zztrack")
   t "option run: one visible line carries the site total"
     ((visible (subjOf two "ctrl:zztrack")).size == 1 &&
       (visible (subjOf two "ctrl:zztrack")).all (·.sites == 2))
   t "option run: no span carries two codes"
     ((siteCollisions two).isEmpty)
   -- The clause on the counted line is true of every site it counts, and is
-  -- the same sentence in either document order. Both rows fail on base and
-  -- on the first-site-wording shape this replaced: there, the run-carrying
-  -- order claimed a drop at the plain site and the plain order hid the drop
-  -- from the default log entirely.
+  -- the same sentence in either document order. The first row fails on the
+  -- first-site-wording shape this replaced, where the run-carrying order
+  -- claimed a drop at the plain site and the plain order hid the drop from
+  -- the default log. It passes on the merge base, whose wording ignored the
+  -- shape altogether; the second row fails on both.
   let mixedMsg (pre post : String) : Option String :=
     let (_, ds) := elabStr (dvDoc "" (pre ++ "\n\n" ++ post))
     let vis := visible (ds.filter (·.subject == some "ctrl:zzmix"))
     (vis[0]?).map (·.message)
   let runFirst := mixedMsg "Alpha \\zzmix[16]{Bravo} charlie." "Delta \\zzmix{Echo} foxtrot."
   let plainFirst := mixedMsg "Alpha \\zzmix{Bravo} charlie." "Delta \\zzmix[16]{Echo} foxtrot."
-  t "option run (fails on base): mixed shapes read the same in either order"
+  t "option run: mixed shapes read the same in either order"
     (runFirst.isSome && runFirst == plainFirst)
   t "option run (fails on base): the mixed line states the rule, not one site's event"
     (match runFirst with
@@ -797,6 +799,27 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
        (a.splitOn "any [...] options were dropped").length == 1 &&
        (b.splitOn "options were dropped").length == 1
      | _, _ => false)
+  -- The two edges of the run reading, asserted directly: the golden holds
+  -- one copy of each rendered line, so a witness whose line coincides with
+  -- another's pins nothing there. An unclosed `[` is not a run — it is named
+  -- at its own span (W0310) and kept as text — and a `[` on the next line is
+  -- content. Either way the command's line is the plain call's, compared as
+  -- two engine outputs, never against a spelling.
+  let edgeLine (body : String) : Option String :=
+    let (_, ds) := elabStr (dvDoc "" body)
+    ((ds.filter (·.subject == some "ctrl:zzedge"))[0]?).map (·.message)
+  let plain := edgeLine "\\zzedge{x}"
+  let (openDoc, openDs) := elabStr (dvDoc "" "\\zzedge[16 oops")
+  t "option run edge: an unclosed bracket is no run, so the line is the plain call's"
+    (plain.isSome && edgeLine "\\zzedge[16 oops" == plain)
+  t "option run edge: the unclosed bracket is named at its own span and kept as text"
+    ((openDs.filter (·.code == "W0310")).size == 1 && (siteCollisions openDs).isEmpty &&
+      hasStr (Ir.blockTextList "" openDoc.body.toList) "[16 oops")
+  let (nextDoc, nextDs) := elabStr (dvDoc "" "\\zzedge\n[note] stays")
+  t "option run edge: a bracket on the next line is content, so the line is the plain call's"
+    (plain.isSome && edgeLine "\\zzedge\n[note] stays" == plain &&
+      nextDs.all (·.code != "W0310") &&
+      hasStr (Ir.blockTextList "" nextDoc.body.toList) "[note] stays")
   -- The recorded line index belongs to the document's diagnostic array. A
   -- redefinition trial elaborates its body against a fresh one, and an index
   -- carried into it reworded whatever the trial had pushed there — so W0361

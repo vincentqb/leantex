@@ -533,9 +533,12 @@ private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
 same unsupported construct in forty frames is one problem, not forty, but it
 is also not one loss. The first site carries the message, the help, and —
 after `Diag.tallySites` — the total; each later site rides beside it as a
-note with the same code, the same words and the same structured `subject`,
-so it reads under `-v` at its own position and the count on the visible line
-is the number of sites the log holds. Keying on the construct alone is what
+note with the same code and the same structured `subject`, so it reads
+under `-v` at its own position and the count on the visible line is the
+number of sites the log holds. The words match too, except where a refusal
+words its argument shape (`RunShape.clause`): there each note keeps its own
+site's clause, and the first line is reworded to the group's. Keying on the
+construct alone is what
 made ten lines stand for fifty losses, two of them node labels dropped with
 no diagnostic at all because an earlier site had spent the key.
 `demote` delivers the first site as a note instead — the spliced-`.sty`
@@ -544,7 +547,7 @@ line, counted once by N0020 and listed under `-v`.
 
 The state step is a pure function so that a statement can name it: the
 first-site flag is a term over the state passed in, not a bound variable
-inside a `do` block, which is what `warnUnknownCmd_pushes_one` reads. -/
+inside a `do` block, which is what `warnUnknownCmd_push_exact` reads. -/
 private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool) : Diag :=
   let d := diagOf ctx code msg (some pos) (if first then help else none) (subject := some key)
@@ -555,14 +558,14 @@ subject.** The census hypothesis, discharged at the door every counted
 diagnostic goes through: `Diag.tallySites_exact` — the theorem that the
 number on the visible line is the number of sites of that loss — assumes
 `subject.isSome`, and was vacuous on exactly the class that miscounted. -/
-theorem warnOnceDiag_kind (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool) :
     (warnOnceDiag ctx key code msg pos help demote first).kind = code := by
   unfold warnOnceDiag diagOf Diag.of Diag.demote
   dsimp only
   split <;> rfl
 
-theorem warnOnceDiag_subject (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool) :
     (warnOnceDiag ctx key code msg pos help demote first).subject = some key := by
   unfold warnOnceDiag diagOf Diag.of Diag.demote
@@ -576,7 +579,7 @@ private def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : St
     warnedUnknown := if first then st.warnedUnknown.push key else st.warnedUnknown
     diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first) }
 
-theorem warnOnceState_diags (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) :
     (warnOnceState ctx key code msg pos help demote st).diags =
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
@@ -2712,8 +2715,10 @@ private def optionRunClause (optionRun : Bool) (kept : String) : String :=
 /-- The same clause for a *group* of sites rather than one call: the wording
 the visible line carries, which must be true of every site the number beside
 it counts. A group whose calls all led with a run, or none of which did, is
-the single-site wording; a group that met both shapes says so, and each site
-still reads its own event as a note under `-v`. -/
+the single-site wording; a group that met both shapes says so. That line is
+the first site's own diagnostic reworded in place (`bumpRunShape`), so the
+first site reads the group's rule, not its own event, under `-v` and in
+`--porcelain` alike; every later site keeps its own event as a note. -/
 private def RunShape.clause (s : RunShape) (kept : String) : String :=
   if !s.withRun then kept
   else if !s.withoutRun then optionRunClause true kept
@@ -2795,7 +2800,7 @@ private def runShapeReword (name : String) (new : RunShape) (idx : Nat)
 
 /-- Rewording preserves the count: no site is added or removed by making the
 visible line honest. -/
-theorem runShapeReword_length (name : String) (new : RunShape) (idx : Nat)
+theorem runShapeReword_size_exact (name : String) (new : RunShape) (idx : Nat)
     (ds : Array Diag) : (runShapeReword name new idx ds).size = ds.size := by
   unfold runShapeReword
   dsimp only
@@ -2811,13 +2816,13 @@ private def bumpRunShape (name key : String) (optionRun : Bool) (st : ESt) : ESt
       runShapes := (st.runShapes.filter (·.1 != key)).push (key, new, idx)
       diags := if new == old then st.diags else runShapeReword name new idx st.diags }
 
-theorem bumpRunShape_length (name key : String) (optionRun : Bool) (st : ESt) :
+theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (st : ESt) :
     (bumpRunShape name key optionRun st).diags.size = st.diags.size := by
   unfold bumpRunShape
   split
   · rfl
   · dsimp only
-    split <;> simp [runShapeReword_length]
+    split <;> simp [runShapeReword_size_exact]
 
 /-- The refusal a command earns, through the counted door. Outside the knot:
 the arm calls one sealed action. The demotion is W0301's alone — a spliced
@@ -4208,7 +4213,7 @@ assumes `subject.isSome`, so it was *vacuous* on exactly the class that
 miscounted. Here it is discharged by construction for every refused command.
 `subjectCensusChecks` and `siteAccountingChecks` hold the surface-wide
 gates. -/
-theorem warnUnknownCmd_pushes_one (ctx : Ctx) (name : String) (optionRun : Bool)
+theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) (st : ESt) :
     ∃ d, ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.size
           = st.diags.size + 1 ∧
@@ -4231,10 +4236,10 @@ theorem warnUnknownCmd_pushes_one (ctx : Ctx) (name : String) (optionRun : Bool)
         Compat.styInternal ctx.file name)
       (!(bumpRunShape name ("ctrl:" ++ name) optionRun st).warnedUnknown.contains
         ("ctrl:" ++ name)),
-    ?_, ?_, warnOnceDiag_kind .., warnOnceDiag_subject ..⟩
-  · rw [hrun, warnOnceState_diags]
-    simp [bumpRunShape_length]
-  · rw [hrun, warnOnceState_diags]
+    ?_, ?_, warnOnceDiag_kind_exact .., warnOnceDiag_subject_exact ..⟩
+  · rw [hrun, warnOnceState_diags_exact]
+    simp [bumpRunShape_size_exact]
+  · rw [hrun, warnOnceState_diags_exact]
     simp
 
 /-- Bind declared parameters from the call site — a user command's, or a

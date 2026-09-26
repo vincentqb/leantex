@@ -4,6 +4,10 @@
 # all four honoured where \url elaborates. tt is url.sty's own default, so
 # it moves no ink (inert:noop); the other three are probed with the \url
 # whose family they change, which is where their effect lands.
+# Scope: a body \urlstyle follows the engine's flow scope, which has no
+# brace revert, so {\urlstyle{sf}\url{a}}\url{b} also sets b in sans, where
+# url.sty's local definition reverts it at the brace. A preamble \urlstyle
+# is the whole document's, in either order against \author or \title.
 body impl \url{https://example.org}
 pre inert:noop \urlstyle{tt}
 pre refuse:W0301 \urldef\myurl\url{https://example.org}
