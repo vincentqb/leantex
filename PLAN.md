@@ -15784,8 +15784,8 @@ insertion is the same keep-both conflict as before.
 The HTML audit (`leantex-evidence/htmlgen/REPORT.md`, §4–§8) ran axe-core
 4.10.2 in Playwright's Chromium 151.0.7922.34 over the 77 corpus pages. The
 same probe, rerun on `e4d22a4` (`leantex-evidence/htmla11y/axe-probe.cjs`,
-module `~/.npm/_npx/6f48…/node_modules/playwright`, the first that launches,
-as `html-oracle` picks it), reproduced it rule for rule and page for page:
+with the first Playwright module on the host that launches, as
+`html-oracle` picks it), reproduced it rule for rule and page for page:
 `page-has-heading-one` 61 pages, `color-contrast` 9, `svg-img-alt` 6,
 `scrollable-region-focusable` 3, `heading-order` 1, 10 of 77 clean.
 
@@ -15822,38 +15822,54 @@ its box rounded to whole points, and the `<img>` wrote them as CSS px.
 * *Every `<img src>` decodes, or a diagnostic names it* — W0605
   (`degraded`, subject `img:<src>`, `undecodableSrcs` over the emitted
   tree): a decoded PDF page that is not a boundary picture. The suite judges
-  every shipped `src` by the file's own bytes (WHATWG sniffing signatures),
-  never by the backend's classification, in both directions. Converting
-  pages is out of scope; the figure's text alternative is what shows.
+  by the file's own bytes (WHATWG sniffing signatures), never by the
+  backend's classification, in both directions, every shipped `src` whose
+  entry decoded and is not a boundary picture; an entry that did not
+  decode, and a boundary picture, it leaves to their fulfilment, which names
+  each by a diagnostic whose subject is the source (`fulfilOne_named`).
+  Converting pages is out of scope; the page shows a placeholder box,
+  labelled by the figure's text alternative where it has one.
 * *An `<img>` declares CSS pixels* — `intrinsicPx`: a PDF page's box on the
   CSS ruler, `cssPxOfSp` (1pt = 4/3 px, nearest; `cssPxOfSp_between`). The
   boundary picture now declares 76 × 38 and `html-oracle`'s `images` cell
   for it passes.
-* A poster's corner logos are decorative by role (`Ir.logoImageSrcs`) and
-  now say so on the page, as the deck's logo strip does (`role="presentation"`,
-  `aria-hidden`).
+* A logo is decorative by role (`Ir.logoImageSrcs`) and says so on the
+  page, the poster's corner slots as the deck's strip (`role="presentation"`,
+  `aria-hidden`) — unless it holds a tab stop (`logoBox`,
+  `logoBox_hidden_contract`). The first form of this hid a linked logo too;
+  round 3c, below, corrects it.
 
 Every new check was run first against the emitter it replaces and failed
-there (evidence `51-`, `62-`, `74-`, `94-`), and every theorem was broken
-once by deleting what it rests on and watched to fail the build (`57-`,
-`71-`, `85-`).
+there (evidence `51-`, `62-`, `74-`, `94-`). Each of the eight theorems was
+broken once by deleting or weakening what it rests on and watched to fail
+the build: `picture_svg_named_contract` (`57-`),
+`frame_stage_reachable_contract` (`71-`) and `cssPxOfSp_between` (`85-`)
+in this round; `themePairs_contract` and `pictureName_contract` (as
+`pictureName_nonBlank`) by the r3b review (its M6, M7);
+`firstNonBlank_contract`, `frameName_contract` and
+`sectionPageName_contract` in round 3c (below).
 
-**The `htmla11y` tier.** `scripts/htmla11y.lean`, 385 items: five per golden
-fixture, as headroom (`debtCap - count`). The trees are built in-process
+**The `htmla11y` tier.** `scripts/htmla11y.lean`, 462 items: six per golden
+fixture, as headroom (`debtCap - count`) — five until round 3c added
+`hidden-focus`. The trees are built in-process
 (`a11yCorpusPage`: the document's own stylesheet mode, its images from
 `tests/corpus`) and judged by `HtmlDoc.a11yFacts`, the judge
 `htmlA11yChecks` reads, so the suite and the tier cannot disagree about what
-counts. Hermetic, measured at `2e666c4`: `htmla11y --check` exits 0, and
-so does the whole `scoreboard --check`, with every font tree and TeX tree
-masked by tmpfs, `HOME` empty and `PATH` holding `lake`, `lean`, `elan` and
-`sh` alone (`unshare -Urm bash hermetic-tier.sh`,
-`cont-38-hermetic-tip.log`); `--check`
-takes 3 s. The five, with
-today's totals: `contrast` 72 (the stylesheet's four token pairings,
+counts. Hermetic, measured at `2a7fe3b` (round 3c): `htmla11y --check`
+and `--selftest` exit 0, and so does the whole `scoreboard --check`, with
+the host's font directory and its three TeX trees (the system `texlive` and
+`texmf`, and linuxbrew's `share/texmf-dist`) masked by tmpfs, `HOME` empty
+and `PATH` holding `lake`, `lean`, `elan` and `sh` alone (`unshare -Urm bash
+hermetic.sh`, `htmla11y-r3c/64-`); `--check` takes 3 s. The first such run,
+at `2e666c4`, masked a linuxbrew `texlive` directory that does not exist
+and left `texmf-dist` in reach; the r3b review reran `48eac1f` with it
+masked, and it passed. The six, with
+the totals at `2a7fe3b`: `contrast` 72 (the stylesheet's four token pairings,
 `themePairs` — `themePairs_contract` says it is exactly
 `ThemeColors.contractHolds` — over the colours the cascade resolves in each
 scheme, `schemeColors`, whose declared ink and page are `Design.ofDoc`'s),
-`h1` 61, `img` 1, `scroll` 0, `svg` 0. Broken once each way through the
+`h1` 61, `hidden-focus` 0, `img` 0 (1 until round 3c named the faceless
+boundary picture), `scroll` 0, `svg` 0. Broken once each way through the
 shipped path, on the landed Board (`ae2ddc6`): an image with no alternative
 added to one fixture is a fall (`paragraphs.img: 1000 → 999`), and the same
 fixture gaining its one `<h1>` an unrecorded rise (`stale`). Each made
@@ -15871,7 +15887,10 @@ failed the selftest by name.
 so before the fixes the judge counted 75 declared scroll containers, all
 unreachable, where axe saw 3. `img`: the judge wants a non-blank alt or a declared decorative role,
 axe accepts `alt=""` as decoration, so the in-process `diagram-boundary`
-placeholder counts here and not there. `contrast`: axe runs light only, and
+placeholder counted here and not there until round 3c named it; both read 0
+now, over different faces — the in-process tree is the tool-less
+placeholder, the page axe reads is the drawn picture, whose empty `alt`
+W0376 names. `contrast`: axe runs light only, and
 every static failure is dark, so axe was rerun under
 `prefers-color-scheme: dark`: 25 of the model's 26 pages agree; the model
 alone flags `poster-headline` (a code and an accent pairing no element on
@@ -15910,15 +15929,18 @@ binary in a namespace with every TeX tree masked (`cont-34-toolless.sh`),
 Chromium draws it 0 × 0 — nothing marks its place on the web page, though
 W0379 says a placeholder box does — and its valueless `alt` makes it
 decoration to assistive technology, the refused-placeholder case W4 says is
-never decorative. The fix needs the loss's code on the store entry:
-`Image.fulfilOne`'s `.refused` arm (`LeanTex/Core/Image.lean`) keeps
-`{ src }` and drops the code, so `HtmlDoc`'s `.image` arm cannot name the
-box the way the refused inline picture's is named (`W0362`). The tier's
+never decorative. Round 3c names it by what it is (`figureWord`), which the
+`.image` arm can do now; naming it by its loss needs the loss's code on the
+store entry: `Image.fulfilOne`'s `.refused` arm (`LeanTex/Core/Image.lean`)
+keeps `{ src }` and drops the code, so `HtmlDoc`'s `.image` arm cannot name
+the box the way the refused inline picture's is named (`W0362`). The tier's
 in-process tree carries that same `<img>` (`cont-33-`), so
-`diagram-boundary.img` (999) holds it both ways: the fix is a rise its
-author must record. An unloaded image's placeholder likewise ships the
-author's `alt` or none. Two stages with one title get
-one region name (axe `landmark-unique`, best practice); none in the corpus.
+`diagram-boundary.img` held it at 999 until round 3c recorded the rise.
+An unloaded image's placeholder likewise ships the
+author's `alt` or none. Two stages with one title got
+one region name (axe `landmark-unique`, best practice); no corpus fixture
+repeats a title, but the private reference deck does, and gained the rule
+on this branch: round 3c disambiguates.
 The deck stage ignoring a declared `bg` belongs to the W1 decision
 (`deckStageRule`, `HtmlDoc.lean`). `tests/scoreboard/htmlreader.tsv` was
 regenerated by its own writer when this branch's matrix raised a cell
@@ -15938,3 +15960,131 @@ no page: the 77 pages the tip's binary builds are byte-identical (`cmp`) to
 the ones axe was run on before it (`c4/`, `final/`), and axe over the tip's
 pages gives the same verdicts, light and dark (`cont-25-`). Evidence:
 `leantex-evidence/htmla11y/`.
+
+
+### 2026-09-26 — what assistive technology is handed, round 3c: a linked logo is a tab stop, and a hidden one is counted
+
+The r3b review blocked this branch on one regression (B1) and listed
+follow-ups. The branch was rebased onto `95f3579` first, as `71acf8f`: each
+file's net change is identical to `ae2ddc6..48eac1f`'s (`git diff --no-color
+-U0`, hunk and index lines aside), and the gates pass there except
+`html-oracle --check`, whose 6 known target cells fail as before.
+
+**B1 — a linked logo hidden from assistive technology.** 14085a2 wrapped
+every poster corner logo in `role="presentation" aria-hidden="true"` and
+blanked its alts, so a linked logo became a keyboard stop with no name
+that assistive technology is told is not there (axe `aria-hidden-focus`,
+serious); the deck's logo strip (`attachLogo`) did the same on main. No gate
+saw it because the judge dropped every `aria-hidden` subtree, so hiding a
+link scored as an improvement. The invariant whose absence allowed it:
+`aria-hidden` never stands over a tab stop, and the judge counts a tab stop
+wherever the keyboard reaches it.
+
+* `logoBox`, the one site both boxes go through: decoration (blank alts,
+  `presentation`, `aria-hidden`) unless its content holds a tab stop
+  (`tabbableList`), else as authored, the image's own alt naming its link.
+  `logoBox_hidden_contract` states it never hides one (`hidesTabStop`).
+* The judge's `hiddenTabStops`: `tabbable` elements (HTML's sequential-focus
+  set — a nonnegative `tabindex`, else links, enabled form controls,
+  `iframe`, `summary`, media with `controls`) under `aria-hidden`, outside a
+  `hidden` subtree. Held at zero on every shipped page, and the tier's sixth
+  item, `hidden-focus`; the lesson is in AGENTS.md's HTML row.
+* The review's probe (`probes-logo/`, axe 4.10.2, Chromium 151): at
+  `71acf8f`, whose HtmlDoc.lean is blob-identical to `48eac1f`'s,
+  `aria-hidden-focus` on the linked poster logo and the linked deck logo; at
+  `01e9da4` on neither, both links named "Example Org", the unlinked logo
+  still decoration. The suite's two one-construct probes fail 4 checks on
+  the pre-fix emitter and pass after.
+* Broken once through the shipped path, about `01e9da4`: `logoBox` hiding
+  always fails the build at its theorem (m1); a judge blind to hidden tab
+  stops fails the tier's selftest by 3 names while `lake test` passes (m2),
+  so the selftest is that judge's witness; hiding always with the theorem
+  deleted fails `lake test` by 4 (m3).
+
+**Follow-ups taken.**
+
+* F1 — a boundary picture with no face in the store (no tool on the host,
+  or a refusal) ships `alt="Figure"`, the locale's figure word
+  (`figureWord`, the floor a wordless inline picture's name stands on); a
+  caption the author wrote wins. In a tool-less namespace, Chromium: at
+  `01e9da4` alt "", box 0 × 0, accessibility role none; at `dab7c82` alt
+  "Figure", a 62 × 23 box showing it, role image named "Figure"
+  (`toolless/`). `diagram-boundary.img` rose 999 → 1000, recorded; the
+  in-process HTML key moved with it, so the reader matrix and
+  `htmlreader.tsv` were regenerated by their writers (src-key lines only, no
+  cell changed). Naming it by its loss's code stays routed: `Image.Loaded`
+  carries none (`Image.fulfilOne`, Image.lean).
+* F3 — a stage claims its name as its anchor claims its id (`claimName`):
+  "Results", then "Results (2)", across frames and themed section pages.
+  Two one-construct probes fail on `dab7c82` and pass on `4d000d8`, and
+  every shipped page is held to distinct stage names as a floor. The probes
+  are synthetic documents in the suite, not a golden fixture: a fixture
+  owes a `goldenNames` entry and a `censusTable` row (Tests/Support.lean,
+  Tests/Census.lean), which this branch does not own. The private reference
+  deck, counts only: 2 repeated stage names and axe `landmark-unique` at
+  `71acf8f`, none at `2a7fe3b`, its diagnostic tallies unchanged.
+* F5 — W0605's help names the gating that clears it: the PNG export inside
+  `ifbackend{html}` and the PDF include inside `ifbackend{pdf}`. Its message
+  says the page shows a placeholder box, which holds with or without an alt.
+  The suite pins the remedy's premise (W0605 holds with the PDF include
+  shipped to both backends and clears with the help followed); the review's
+  three probes through the CLI read the same at `2a7fe3b`
+  (`probes-w0605/`).
+* F6 — the four `_nonBlank` theorems take the registered `_contract`
+  suffix. With `figureWord_contract`, each was broken once, and the build
+  fails at each (m5–m8); `claimName` keeping a repeat fails `lake test` by
+  2 (m4); removing the faceless name fails it by 2 and the tier by a fall
+  (m9) — all about `2a7fe3b`.
+* F8 — the four overstatements in the entry above are corrected in place:
+  the npx cache path is gone; "judges every shipped src" names the two cases
+  it leaves to `fulfilOne_named`; "every theorem was broken once" names who
+  broke which; the hermetic run, redone at `2a7fe3b` with `texmf-dist`
+  masked too, passes.
+
+**Measured, about `2a7fe3b`.** The corpus through the CLI: all 77 HTML
+pages and 77 PDFs are byte-identical (`cmp`) to `71acf8f`'s. axe over those
+pages, light and dark, gives verdicts and node lines identical to the r3b
+review's run on `48eac1f`: 61 pages with no `h1`, 9 light and 28 dark
+contrast pages, 1 `heading-order`; 11 and 7 pages clean.
+
+**Owed at commonmark's landing.** This branch's code blocks carry
+`tabindex="0"`, so four tests on the unlanded commonmark branch (tip
+`b0a9854`, `Tests/Markdown.lean`) that assert `<pre><code>code</code></pre>`
+fail once both land: "a fence inside a blockquote closes with its quote",
+"a fence inside a nested list item closes", "a fence in a list item does not
+ship the item's indent as code", and "a bracket in an info string does not
+leak into the code". The assertion update belongs to commonmark's landing,
+not to an edit here.
+
+**Open, each with its site.**
+
+* F2 — with the deck script on, a focused stage or code block cannot be
+  scrolled by key: the constant script pages the deck on ArrowDown,
+  PageDown, Space and End (measured by the review; with scripting off the
+  keys scroll it). `stageAttrs`'s docstring and the code block's comment in
+  `blockNode` imply a keyboard scrolls what spills; both owe a correction
+  with the human decision on whether the script yields a key to a scroller
+  that can still move (HtmlDoc.lean, `deckScript`).
+* F4 — an untitled stage is named by all its words (`frameName`), up to
+  173 characters on the private deck; the locale's slide word and the
+  stage's position, or `aria-labelledby` to its first heading, would name
+  it once.
+* F7 — `pictureName`, `pictureSaid` and `labelPiece` read only Ir data yet
+  live in the HTML backend, and the PDF ships no alternative for a picture
+  (`Struct.Leaf.picture`): the name belongs in Ir, the `aria-label` as its
+  projection.
+* F9 — `pre` takes `tabindex="0"` under every stylesheet mode, while only
+  `own` declares it a scroller (`blockNode`'s listing arm).
+* F10 — the refused inline placeholder's name is its bare code, "W0362"
+  (its `Picture.placeholder` label, through `pictureName`).
+* F11 — pre-existing on base: a raster's `scale=0.5` is written
+  `width: 32pt` (42.7 px) against its 64 CSS px unscaled (the `.image`
+  arm's scaled `style`), and a horizontal-line picture ships at height 0
+  (`pictureBox`).
+* New — a linked logo with no alternative ships a link with no name (axe
+  `link-name`). W0377 names it on the deck's `\logo`, but `Ir.linksSansText`
+  reads neither `logoLeft` nor `logoRight`, so a poster's corner logo draws
+  no diagnostic (`probes-logo-noalt/`; LeanTex/Core/Ir.lean). Before
+  `01e9da4` the same logo shipped hidden instead.
+
+Evidence: `leantex-evidence/htmla11y-r3c/`.
