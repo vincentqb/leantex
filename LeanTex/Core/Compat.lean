@@ -702,9 +702,11 @@ before the load, and `\@pushfilename` saves the category code that
 `\@popfilename` restores. A control word holding one is therefore the
 kernel's or a package's own implementation, and the groups after it are its
 operands: names, option lists, definition bodies, tests. The engine does not
-run that code, and set as text it is code on the page. The TeX82 primitives,
-`texInternal`'s other half, are not in it: `\hbox`, `\uppercase` and
-`\discretionary` set their groups. -/
+run that code, and set as text it is code on the page. The one kind of
+internal that sets an operand, the kernel's `\@firstofone` and its kin, is
+the exception, and it is not read yet. The TeX82 primitives, `texInternal`'s
+other half, are not in it: `\hbox`, `\uppercase` and `\discretionary` set
+their groups. -/
 def codeInternal (name : String) : Bool :=
   name.contains '@'
 

@@ -3000,7 +3000,9 @@ the walk. The loss is still accounted for, once per site, under the
 construct's own key, demoted as a TeX internal is in the preamble
 (`Compat.styInternal`). `recoverPackageCmd_accounts` states both halves.
 Any other unknown command in package code keeps the document's recovery:
-`\fbox` or `\hbox` there sets its group in LaTeX. -/
+`\fbox` or `\hbox` there sets its group in LaTeX. The rule's one known cost
+is an internal that sets an operand, the kernel's `\@firstofone`: its
+operand goes too. -/
 private def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
     (pos : Pos) : EM { k : Nat // j ≤ k } := do
   modify (warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name)
