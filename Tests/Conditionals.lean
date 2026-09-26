@@ -267,3 +267,48 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (bdoc.pictureSrcs.size == 2 &&
       bdoc.pictureSrcs.any (fun p => hasStr p.2 "Early") &&
       bdoc.pictureSrcs.any (fun p => hasStr p.2 "Late"))
+
+
+/-- **A definition no use the pass sees reaches is decided where the engine
+reads it.** The elaborator reads a built-in's refused redefinition — and the
+macros it reaches — at the preamble's end, for the appearance it declares;
+no use in the document stands there for the conditional pass to expand. A
+conditional in such a text is therefore decided against the state at the
+preamble's end, named as the definition's, never taken out silently (the
+shape that lost a venue's author styling) and never read from the state
+the definition was made in. The venue shape, synthetic: the author block
+sits in a flag's branch. Read off the title block the built-in ships.
+Invented content throughout. -/
+def settleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let venue (after : String) : String :=
+    "\\documentclass{article}\\title{T}\\author{A. Name}" ++
+    "\\newif\\ifprobeanon\\probeanonfalse" ++
+    "\\renewcommand{\\maketitle}{\\begingroup\\@maketitle\\endgroup}" ++
+    "\\providecommand{\\@maketitle}{}" ++
+    "\\renewcommand{\\@maketitle}{\\vbox{\\centering{\\Large\\bf \\@title\\par}" ++
+    "\\ifprobeanon\\else\\begin{tabular}[t]{c}\\bf\\rule{\\z@}{24\\p@}\\@author" ++
+    "\\end{tabular}\\fi\\vskip 0.3in \\@minus 0.1in}}" ++ after ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  let styled (doc : Ir.Doc) : Bool :=
+    inTitleBlock doc fun b => match b with
+      | .para #[.strut h, .styled .bold _] => h == Ir.titleAuthorStrut
+      | _ => false
+  let (keptDoc, keptDs) := elabStr (venue "")
+  t "a flag's branch in a text the engine reads at the preamble's end is kept, not taken out"
+    (styled keptDoc)
+  t "that decision is a keyed note"
+    (keptDs.any fun d => d.code == "N0114" && d.subject.isSome && hasStr d.message "preamble")
+  let (lateDoc, _) := elabStr (venue "\\probeanontrue")
+  t "it reads the state at the preamble's end, not where the definition was made"
+    (!styled lateDoc)
+  -- Settling reads a text and does not run it: a flag it declares or sets
+  -- is not declared or set by the reading, and no note says it is.
+  let (_, declDs) := elabStr ("\\documentclass{article}" ++
+    "\\newcommand\\probeDecl{\\newif\\ifprobelate}\\newif\\ifprobeon" ++
+    "\\newcommand\\probeSet{\\probeontrue}" ++
+    "\\begin{document}\\ifprobeon On\\else Off\\fi\\end{document}")
+  t "a flag a settled text declares or sets is neither declared nor set by the settling"
+    (declDs.all fun d => !(d.code == "N0114" &&
+      (hasStr d.message "ifprobelate" || hasStr d.message "probeontrue" ||
+        hasStr d.message "is true here")))

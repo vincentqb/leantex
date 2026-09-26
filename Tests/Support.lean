@@ -870,6 +870,13 @@ def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
   let (doc, _) := elabStr src
   censusOf (coveredColorsOf doc) (layoutOf fonts doc)
 
+/-- Does a block of the document's title block satisfy `p`? The block may
+stand inside its alignment wrapper, so the probe looks one level into
+`.center`. -/
+def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
+  doc.body.any fun b => p b ||
+    (match b with | .center xs => xs.any p | _ => false)
+
 /-- Diagnostics after layout too. -/
 def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
   let (doc, ds) := elabStr src

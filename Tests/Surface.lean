@@ -1242,9 +1242,6 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (aDoc, _) := elabStr authorVenue
   -- The title block may stand inside its alignment wrapper; the probe
   -- looks one level into `.center` for the styled author line and the gap.
-  let inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
-    doc.body.any fun b => p b ||
-      (match b with | .center xs => xs.any p | _ => false)
   t "the refused body's author tabular styles the built-in author line"
     (inTitleBlock aDoc fun b => match b with
       | .para #[.strut h, .styled .bold _] => h == Ir.titleAuthorStrut

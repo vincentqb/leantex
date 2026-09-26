@@ -144,6 +144,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   ifxMeaningChecks ref oneFace
   macroUseChecks ref oneFace
   picSiteChecks ref oneFace
+  settleChecks ref
   quoteChecks ref oneFace
   refChecks ref oneFace
   titleChecks ref

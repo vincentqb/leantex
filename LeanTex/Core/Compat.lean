@@ -445,6 +445,17 @@ private inductive CondUndo where
   | bind (n : String) (prev : Option (Option CondVal))
   | flag (n : String) (prev : Option Bool)
 
+/-- A preamble definition of `name` (the one stamped `serial`) whose text,
+the group at `pos` in `file`, went out without what only a use decides. The
+elaborator reads such a text itself where no use the pass sees stands — a
+built-in's redefinition and the macros it reaches, read at the preamble's
+end — so the pass settles it there, against the state in force then. -/
+private structure CondPending where
+  name : String
+  serial : Nat
+  file : String
+  pos : Pos
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -534,6 +545,15 @@ private structure St where
   into the picture rather than leave the walk a table for the whole
   document. -/
   inPicture : Bool := false
+  /-- The document body has begun: a definition made from here on is read
+  by the elaborator where it is made, not at the preamble's end. -/
+  condInDoc : Bool := false
+  /-- Preamble definitions whose texts the pass took its decisions out of,
+  settled against the state at the preamble's end (`condSettle`). -/
+  pending : Array CondPending := #[]
+  /-- The macro whose definition is being settled, when it is: its
+  decisions are named as the definition's, not a use's. -/
+  settling : Option String := none
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand`'s keep-existing policy reads. Separate from
   `binds`, which the conditional pass fills for the whole document
@@ -1984,15 +2004,11 @@ private def condCloseGroup (m : CondMark) : M Unit := do
   for k in [m.globals:made] do
     write fun st => { st with globals := st.globals.modify k fun p => (p.1, none) }
 
-/-- An environment closes. It is a TeX group, so the definition state is the
-one it opened with — the save stack is unwound to its mark, latest change
-first — and only the global definitions made inside it outlive it, in the
-order they were made. -/
-private def condCloseEnv (m : CondMark) : M Unit := do
+/-- Unwind the save stack to `m`, latest change first: the definition state
+the mark was taken in, the picture's own names included. -/
+private def condUnwind (m : CondMark) : M Unit := do
   let st ← get
-  let top := st.undo.size
-  let recs := st.undo.extract m.undo top
-  let made := st.globals.extract m.globals st.globals.size
+  let recs := st.undo.extract m.undo st.undo.size
   write fun st => { st with undo := st.undo.shrink m.undo, picBound := st.picBound.shrink m.picBound }
   for k in [0:recs.size] do
     match recs[recs.size - 1 - k]? with
@@ -2007,6 +2023,14 @@ private def condCloseEnv (m : CondMark) : M Unit := do
           | some b => st.flags.insert x b
           | none => st.flags.erase x }
     | none => pure ()
+
+/-- An environment closes. It is a TeX group, so the definition state is the
+one it opened with — the save stack is unwound to its mark, latest change
+first — and only the global definitions made inside it outlive it, in the
+order they were made. -/
+private def condCloseEnv (m : CondMark) : M Unit := do
+  let made := (← get).globals.extract m.globals (← get).globals.size
+  condUnwind m
   for (n, v) in made do setBind n v
 
 mutual
@@ -2036,9 +2060,12 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      sayOnce ("cond:newif:" ++ n) .N0114
-        s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
-        ((← get).useSite.getD pos)
+      -- premise: settleChecks — a settled text is read, not run: what it
+      -- declares or sets is undone after, so no note may say it holds
+      unless (← get).settling.isSome do
+        sayOnce ("cond:newif:" ++ n) .N0114
+          s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
+          ((← get).useSite.getD pos)
       condList ex raws out stack rest (i + 2) 0
     else
       condList ex raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
@@ -2051,9 +2078,12 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      sayOnce ("cond:newif:" ++ n) .N0114
-        s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
-        ((← get).useSite.getD pos)
+      -- premise: settleChecks — a settled text is read, not run: what it
+      -- declares or sets is undone after, so no note may say it holds
+      unless (← get).settling.isSome do
+        sayOnce ("cond:newif:" ++ n) .N0114
+          s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
+          ((← get).useSite.getD pos)
       condList ex raws out stack rest (i + 3) 0
     else
       condList ex raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
@@ -2099,7 +2129,11 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
         let live := stack.all CondOpen.keeps
         if live then
           if let some (key, msg) := r.note then
-            sayOnce ("cond:" ++ key) .N0114 msg (st.useSite.getD pos)
+            match st.settling with
+            | some d =>
+              sayOnce ("cond:def:" ++ key) .N0114
+                (msg ++ s!", in '\\{d}' as the engine reads it at the end of the preamble") pos
+            | none => sayOnce ("cond:" ++ key) .N0114 msg (st.useSite.getD pos)
         let stack' := r.frame :: stack
         match r.frame, unlessHead with
         | .opaque, some (h, hp) =>
@@ -2119,14 +2153,20 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
     else if n.endsWith "true" && st.flags.contains (n.dropEnd 4).toString then
       let x := (n.dropEnd 4).toString
       setFlag x true
-      sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on"
-        (st.useSite.getD pos)
+      -- premise: settleChecks — a settled text is read, not run: what it
+      -- declares or sets is undone after, so no note may say it holds
+      unless st.settling.isSome do
+        sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on"
+          (st.useSite.getD pos)
       condList ex raws out stack rest (i + 1) 0
     else if n.endsWith "false" && st.flags.contains (n.dropEnd 5).toString then
       let x := (n.dropEnd 5).toString
       setFlag x false
-      sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
-        (st.useSite.getD pos)
+      -- premise: settleChecks — a settled text is read, not run: what it
+      -- declares or sets is undone after, so no note may say it holds
+      unless st.settling.isSome do
+        sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
+          (st.useSite.getD pos)
       condList ex raws out stack rest (i + 1) 0
     else if condDefiners.contains n then
       let bound := if definesNext.contains n then
@@ -2147,14 +2187,20 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
         -- bind are bound from here on, and what the expansion cannot decide
         -- is taken out of the definition the elaborator expands.
         let st ← get
-        let expands := match bound.bind (condValueOf st.binds ·) with
-          | some (some v) => v.live
-          | _ => false
+        let liveVal := match bound.bind (condValueOf st.binds ·) with
+          | some (some v) => if v.live then some v.serial else none
+          | _ => none
+        -- A use of a built-in the pass never expands: the elaborator reads
+        -- the text, at the preamble's end, so there it is settled.
+        let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
+        let settles := liveVal.isSome && !st.condInDoc
         let flags := st.flags
         let site := st.useSite
+        let file := st.file
         let mut ops : Array Raw := #[]
         let mut stripped := false
         let mut inner : Array String := #[]
+        let mut texts : Array Pos := #[]
         for k in [i + 1:sh.stop] do
           if let some r := raws[k]? then
             if sh.bodies.contains k then
@@ -2162,9 +2208,15 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
               let (r', h) := condStripRaw flags r
               ops := ops.push r'
               stripped := stripped || h
+              if let .group _ gp := r then texts := texts.push gp
             else ops := ops.push r
         for m in inner do recordDefined m
-        if stripped && !expands then
+        if stripped && settles then
+          if let (some m, some s) := (bound, liveVal) then
+            for gp in texts do
+              write fun st => { st with
+                pending := st.pending.push { name := m, serial := s, file := file, pos := gp } }
+        if stripped && !(expands || settles) then
           -- premise: macroUseChecks — a definition whose uses the pass does not
           -- expand keeps no conditional for the elaborator to spell as text
           sayOnce ("cond:body:" ++ n ++ ":" ++ (bound.getD "")) .W0104
@@ -2270,6 +2322,85 @@ termination_by bound
 /-- The expander running text uses: every definition made so far is visible. -/
 private def condTopExpand (n : String) (pos : Pos) : M (Option (Array Raw)) := do
   condExpandAt ((← get).serial + 1) n pos
+
+/-- Run `act` and put the definition state back as it was: a definition's
+text settled for the elaborator is read, not run, so nothing it binds, sets
+or defines — globally or not — outlives the reading. -/
+private def condSandbox (act : M (Array Raw)) : M (Array Raw) := do
+  let m ← condMark
+  let r ← act
+  condUnwind m
+  write fun st => { st with globals := st.globals.shrink m.globals }
+  return r
+
+/-- Settle the pending preamble definitions (`CondPending`) against the
+state at the preamble's end, which is where the elaborator reads a text no
+use the pass sees reaches: each one still in force is walked there, its
+decisions named as the definition's, and handed back with where it stands.
+The document body begins here. -/
+private def condSettle : M (Array (String × Pos × Array Raw)) := do
+  let pend := (← get).pending
+  write fun st => { st with pending := #[], condInDoc := true }
+  let mut out : Array (String × Pos × Array Raw) := #[]
+  for p in pend do
+    match condValueOf (← get).binds p.name with
+    | some (some v) =>
+      if v.serial == p.serial then
+        let file := (← get).file
+        write fun st => { st with file := p.file, settling := some p.name }
+        let body ← condSandbox
+          (condList (fun m q => condExpandAt v.serial m q) v.raws #[] [] v.raws.toList 0 0)
+        write fun st => { st with file := file, settling := none }
+        out := out.push (p.file, p.pos, body)
+    | _ => pure ()
+  return out
+
+mutual
+
+-- conserves: none — the walk swaps each settled text in where its
+-- definition stands, by design.
+/-- Put each settled text (`condSettle`) back into the definition it came out
+of, found by its file and position; an `\input` wrapper switches the file,
+as `condOne` does. -/
+private def condPatchList (texts : Array (String × Pos × Array Raw)) (file : String)
+    (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => condPatchList texts file (acc.push (condPatchRaw texts file r)) rest
+
+private def condPatchRaw (texts : Array (String × Pos × Array Raw)) (file : String) :
+    Raw → Raw
+  | .group body p =>
+    match texts.find? (fun t => t.1 == file && t.2.1 == p) with
+    | some (_, _, b) => .group b p
+    | none => .group (condPatchList texts file #[] body.toList) p
+  | .env n body p =>
+    .env n (condPatchList texts ((Parse.inputEnvFile? n).getD file) #[] body.toList) p
+  | .math d body p => .math d (condPatchList texts file #[] body.toList) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb e s p => .verb e s p
+
+end
+
+/-- The conditional pass over a document: its preamble, then the preamble's
+pending definitions settled against the state at its end and put back, then
+its body. A fragment with no `{document}` has no preamble's end, and is one
+walk. -/
+private def condDocument (raws : Array Raw) : M (Array Raw) := do
+  match raws.findIdx? (· matches .env "document" _ _) with
+  | none => condList condTopExpand raws #[] [] raws.toList 0 0
+  | some d =>
+    let pre := raws.extract 0 d
+    let post := raws.extract d raws.size
+    let pre' ← condList condTopExpand pre #[] [] pre.toList 0 0
+    let texts ← condSettle
+    let file := (← get).file
+    let pre' := if texts.isEmpty then pre' else condPatchList texts file #[] pre'.toList
+    let post' ← condList condTopExpand post #[] [] post.toList 0 0
+    return pre' ++ post'
 
 /-- One collected hook: the note naming its replay point, and the body
 stored against that point. Separate from the walk so the walk's recursive
@@ -5137,7 +5268,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     (warned : Array String := #[]) :
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
-    let raws ← condList condTopExpand raws #[] [] raws.toList 0 0
+    let raws ← condDocument raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList
     let raws := (splitColumnsList raws.toList).toArray
