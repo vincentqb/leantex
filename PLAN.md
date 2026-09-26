@@ -16148,10 +16148,12 @@ check that fails without it.
   read as unknown commands, whose warning quoted the marker. Measured
   against lualatex (TeX Live 2026, LuaHBTeX 1.24.0): `\begin{document}`
   selects series `m` and babel's main language, and keeps the colour. So a
-  series or a language in the preamble proper reaches no text: the `Doc` is
-  the one without it, a body `\enquote` included, with either language as
-  the main one (`compatMarkerChecks`, which the premise marker beside Elab's
-  silence names). That holds because Compat's `\selectlanguage` arm moves
+  series or a language in the preamble proper — the preamble's top level,
+  outside every brace group — reaches no text: the `Doc` is the one without
+  it, a body `\enquote` included, with either language as the main one
+  (`compatMarkerChecks`, which the premise marker beside Elab's silence
+  names). There that holds because Compat discards the construct (below).
+  Inside a group it holds because Compat's `\selectlanguage` arm moves
   `mainLang`, the language `\enquote` reads its quotes through, only in the
   body. A switch in a `\begin{document}` hook still reaches the body's
   language, and its quotes stay the main language's, as lualatex gives.
@@ -16159,8 +16161,10 @@ check that fails without it.
   itself: a discard note (`ctrl:nothing:fontseries:<code>`,
   `ctrl:nothing:selectlanguage:<name>`) and no marker, so the preamble
   reader's silence drops only what a note already names as nothing. The
-  same construct in the body, in a `\begin{document}` hook or inside a
-  definition keeps its translation. A preamble colour opens the body, with
+  same construct keeps its translation in the body, in a `\begin{document}`
+  hook, inside a definition, and inside any other preamble group: the
+  argument of `\title`, `\author` or `\date`, or a running-head field, all
+  of which lualatex sets under it. A preamble colour opens the body, with
   the same `Doc` an `\AtBeginDocument` hook gives (`PDecl.bodyStart`).
 - **The rows and docstrings say what they hold** (items 8–10, 12–13).
   "mixed shapes read the same in either order" passes on its merge base and
@@ -16256,6 +16260,12 @@ are e4d22a4's; every new unlabelled row passes there.
   body too, yet reach text where they are read. Compat therefore gains
   `inDef` (the walk's `inBody`, as state) and `seam`. Without the two, the
   predicate fails 8 rows, FontMath's existing definition row among them.
+  That run was on a db3afe9 tree with the fix uncommitted; the review
+  re-ran it on committed 96c209b and got the same 8. The three were not
+  enough either: the argument of `\title`, `\author` or `\date` and a
+  running-head field are outside the body and every definition too, and
+  reach text where they are set. Round 3d (below) makes the preamble proper
+  its top level.
 - **The span line says what holds at every span** (follow-up 1, 901dd70):
   "its text fills one cell in its column's alignment, and any later cells
   move left". The unread count now names the alignment too. The diagnostics
@@ -16275,23 +16285,23 @@ are e4d22a4's; every new unlabelled row passes there.
 - `scripts/precommit.lean:1920`: the loop meant to resolve every premise
   marker tests `containsSub (stripLineComment l) premiseMark`, which is the
   text *before* the comment. So no comment marker is ever read. A marker
-  beside Elab's silence naming `compatMarkerChecksGone` passed `precommit
-  --tree` (exit 0; broken once, then restored). The markers in the tree
-  name real checks, but nothing verifies that until the loop reads the
-  comment half. The hook owns the fix.
+  beside Elab's silence naming `compatMarkerChecksGone` passed
+  `precommit --tree` (exit 0; broken once, then restored). The markers in
+  the tree name real checks, but nothing verifies that until the loop reads
+  the comment half. The hook owns the fix.
 - A command the preamble defines and then uses in the preamble reads
   "unknown command … in the preamble; skipped" (W0301, Elab's `scanDecls`
   at Elab.lean:10330), where the word "unknown" is false.
 
 **Open, each with its site.**
 
-- A body `\selectlanguage` still moves `\enquote`'s quotes (Compat.lean:2146,
+- A body `\selectlanguage` still moves `\enquote`'s quotes (Compat.lean:2157,
   the `inDoc` write), where csquotes' default keeps the main language's.
   Following csquotes' `autostyle` would need its options read, and
   `\usepackage{csquotes}` is discarded whole.
 - Follow-up 3: a `\newcommand` body holding `\multicolumn` warns even when
   the command is never used, and the count is of definitions, not uses. The
-  arm (Compat.lean:2725) is walked at the definition, and `inDef` now names
+  arm (Compat.lean:2736) is walked at the definition, and `inDef` now names
   that case. Compat's definition-time W0104 has the same shape.
 - Follow-up 6: a preamble `\color` colours the body but not the page number,
   which LaTeX colours; `bodyStart` (Elab.lean:10171) reaches the flow only.
@@ -16302,7 +16312,7 @@ are e4d22a4's; every new unlabelled row passes there.
   mono. The pre-fold family (`urlFamily0`, Elab.lean:11457) reads the
   preamble proper, and the hook replays on the body side.
 - Follow-up 8: `\multicolumn{2}{c}x`, whose text is undelimited, still reads
-  "unknown command '\multicolumn'", because the arm (Compat.lean:2725)
+  "unknown command '\multicolumn'", because the arm (Compat.lean:2736)
   takes only a group.
 - Follow-up 9: `cites` (scripts/cites.lean) still has three loose points.
   A second citation in one parked docstring passes, by design, and the
@@ -16323,3 +16333,120 @@ two sites, one W0301 "(2 sites)" and one note print, and `--werror` exits 1.
 The private reference corpus deck gives 36 pages on f2497c5 and on 901dd70,
 with an identical per-code census, identical PDF bytes and identical
 diagnostic streams.
+
+
+
+### 2026-09-26 — round 3d on the accounting follow-ups: the preamble proper is its top level
+
+The round-3c review of `agent/fuelab` blocked one item, N1. `preambleProper`
+(`!inDoc && !inDef && !seam`) also held inside the argument of a content
+declaration (`\title`, `\author`, `\date`) and inside a running-head field,
+which `flushRunning` synthesises and the walk reads after `inDoc` is reset.
+So 04383dc's two discards dropped `\fontseries` and `\selectlanguage` there,
+with a note naming `\begin{document}`'s reset, where lualatex sets both and
+95f3579 did too. The branch was rebased by sha from 95f3579 onto 6095273
+(96c209b → f55b265; `git diff --no-color -U0` per file, `@@` and `index`
+lines ignored: 13 of 13 files unchanged; every common.md gate exits 0 on
+f55b265), and one commit follows.
+
+- **Reproduced.** Through the shipped CLI at f55b265 (binary `28fcf177…`),
+  one construct per probe, PDF and HTML under css default, none, bulma and
+  own: `\author{{\fontseries{b}\selectfont Ada} Example}` sets "Ada" 17.40 pt
+  wide and the HTML reads `<p>Ada Example</p>`; the scrheadings field
+  `\ihead{{\fontseries{b}\selectfont Head} note}` embeds no bold face ("Head"
+  23.75 pt); `\title{{\fontseries{b}\selectfont Bold} title}` reads
+  `<h1>Bold title</h1>`; `\title{\selectlanguage{french}Le titre}` reads
+  `<h1>Le titre</h1>`, and `\date{\selectlanguage{french}Lundi}` reads
+  `<p>Lundi</p>`. lualatex (TeX Live 2026, LuaHBTeX 1.24.0) sets Ada and Bold
+  in LMRomanDemi10 and Head in LMRomanDemi10-Oblique, and `\languagename` is
+  french in the title and in the date.
+- **Fix, a8310d4.** The walk carries `inGroup`, set on every brace-group
+  descent and restored after it as `inDef` is, and `preambleProper` adds
+  `!inGroup`. The preamble proper is its top level: the only place a
+  declaration stays in force until `\begin{document}` with no text set under
+  it. Inside a group the construct keeps its translation, and the elaborator
+  sets it where the group is set. At a8310d4 (binary `aa960b51…`, the same
+  probes): "Ada" is 18.00 pt and `<span style="font-weight: 700">Ada</span>`;
+  SourceSerifPro-Bold is embedded and "Head" is 24.11 pt; the title reads
+  `<h1><span style="font-weight: 700">Bold</span> title</h1>`, or
+  `<h1><span lang="fr">Le titre</span></h1>`, and the date
+  `<span lang="fr">Lundi</span>`, in all four css modes. These are 95f3579's
+  artifacts as the review measured them.
+- **B1 stays fixed.** `mainLang` still moves only in the body. The
+  preamble-proper mirror cases set lualatex's quotes (“bravo” under main
+  English with a preamble `\selectlanguage{french}`, «bravo» for the mirror).
+  So does a switch in a `\title` argument, which lualatex sets inside the
+  title: “bravo” under main English with `\title{\selectlanguage{french}…}`,
+  and « bravo » for the mirror (measured). The French pair's missing inner
+  spaces are the open item below.
+- **Rows.** `compatMarkerChecks` reads the four probes off the artifacts. The
+  author and the running head are read off `Layout.Out`, as the face a run
+  shipped in, under a set whose bold weight has its own index. The author,
+  the title's series and the title's language are read off the emitted HTML
+  tree. The translation note is held at a `\title` argument and at a
+  running-head field, for both constructs. Those nine rows fail on a 96c209b
+  scratch copy (`lake test` there with this branch's `Tests/CompatGate.lean`;
+  that copy's binary hashes `f91f7cae…`, the review's tip) and pass on a
+  6095273 copy. Two rows hold the body's quotes after a `\title` switch, in
+  both mirror cases. They fail on 6095273, whose arm moved `mainLang`
+  wherever it stood, and pass on 96c209b. On the 6095273 copy, 40 rows fail,
+  and all 40 are labelled "(fails on base)". Main's `Tests.lean` does not
+  call `compatAccountingChecks`, so that copy needs the call added; without
+  it, the first run passed every row vacuously.
+- **Broken once each, through `lake test` at a8310d4.** Dropping
+  `!st.inGroup` fails exactly the nine rows. The guard written `if true`
+  fails exactly the two quote rows, so db3afe9's guard is pinned now, which
+  the review's follow-up 1 found it was not. Its definition-time shape is
+  still owed.
+- **Whole branch, measured.** The user's two cases (`\urlstyle{same}` with
+  `\url`, and `\textls[16]` at two sites) read identically through the
+  e4d22a4 binary (M0), f55b265 and a8310d4: default log, `-v`, `--werror`
+  exit, `pdffonts` and the HTML link. The private reference corpus deck,
+  built from its own directory, gives 36 pages at f55b265 and at a8310d4,
+  with identical PDF bytes (`cmp`), identical HTML bytes when written under
+  one output name (the HTML names its own file, so two names differ by that
+  alone), and 198 identical diagnostic events.
+
+**Where the cut stands, measured at a8310d4.** A group nothing sets keeps
+the translation too, as on 6095273. A bare preamble group still draws
+E0313. An unknown command's argument, as in
+`\zzsetup{\fontseries{b}\selectfont Ada}`, reads "→ the b series" beside
+W0301's "skipped", a note that claims more than the page shows. An optional
+argument written without braces stays at the top level:
+`\title[\fontseries{b}\selectfont Short]{…}` under beamer is still a
+discard, and the engine sets no short title, so nothing reaches text there
+either way.
+
+**Open, each with its site** (the round-3c review's follow-ups not taken
+here, numbered as that review numbers them, and one found):
+
+- A series declared ungrouped in one running-head field reaches the fields
+  after it. With `\ihead{\fontseries{b}\selectfont Head}\ohead{Tail}`,
+  "Tail" is 18.04 pt, bold, at a8310d4 and on 6095273, and 17.09 pt at
+  f55b265, where the discard hid it; lualatex sets it in LMRomanSlant10.
+  `flushRunning` joins the three fields into one group (Compat.lean:4085).
+- 3c follow-up 1, its definition-time row: under main French, a
+  `\newcommand{\zzen}{\selectlanguage{english}}` that is never used must
+  keep « bravo » (the guard, Compat.lean:2156).
+- 3c follow-up 2: a preamble-proper `\selectlanguage{klingon}` is read as a
+  discard before the locale check (Compat.lean:2142 runs before :2147). So
+  W0368 no longer prints and `--werror` exits 0, where lualatex stops with a
+  babel error.
+- 3c follow-up 3: the rows "its note is a translation, not a discard"
+  (Tests/CompatGate.lean:462, ten now) hold the note's absence only. At the
+  two new positions the artifact rows hold the construct itself.
+- 3c follow-up 4: the span rows compare `plainText` per cell, so "in its
+  column's alignment" is held by measurement, not by a row.
+- 3c follow-up 5: `\multicolumn{0}{l}{S}` reads "span is not a numeral the
+  engine reads" (Compat.lean:2762), and 0 is a numeral.
+- 3c follow-up 6: `St.mainLang`'s docstring (Compat.lean:449) gives
+  `\begin{document}`'s reset as the reason a switch outside the body leaves
+  it. That reason is wrong for a hook and for an argument; the arm's own
+  comment now names csquotes' default.
+- 3c follow-up 8, pre-existing: an environment whose begin half is
+  `\fontseries{b}\selectfont` sets nothing bold, where lualatex sets Demi.
+  A preamble use of a preamble-defined command reads "unknown command";
+  that one was routed in round 3c.
+- Still open from round 3c: the French locale's guillemets carry no inner
+  space, and the premise-marker resolver (scripts/precommit.lean:1920) is
+  routed to the hook owner.
