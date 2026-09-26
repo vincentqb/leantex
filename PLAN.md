@@ -16791,7 +16791,12 @@ in the syntax a `LAND_GATES` override uses, read by the same parser
 empty, and an empty plan proves nothing. No shipped gate may be absent. The
 scoreboard's skip read the lakefile for a substring, so both scoreboard
 gates are unconditional now, with the build under `--wfail`. An argument
-spelled `{main}` becomes the sha of `main` the run read.
+spelled `{main}` becomes the sha of `main` the run read, and the
+thirteenth gate uses it: `scoreboard --check --base {main}`, so a tier
+that falls or vanishes against the base being landed onto needs a
+lowering or retirement line new since that base. Its fail-open paths (the
+scoreboard review's F1–F3) belong to a sibling, and this gate is only as
+strong as that fix.
 
 **What was measured, and on what.**
 - `land --scratch-selftest` builds each of 15 scenarios as a throwaway
@@ -16802,11 +16807,11 @@ spelled `{main}` becomes the sha of `main` the run read.
   a switched branch worktree, a gate that moves its tree, the push naming
   the tip, a non-fast-forward push, union drift, a foreign `GIT_DIR`,
   retention during a landing, and a landing killed in its gates.
-- The positive control landed this round's tip onto its base through the
-  twelve shipped gates. It ran on a scratch clone whose `origin` was a
-  scratch bare remote. Exit 0 in 104 s; `main`, the remote and the gated
-  tip read back as one sha; the tree was removed; the ledger holds
-  `landing`, `landed` and `pushed`.
+- The positive control landed the round's tip before the rebase onto its
+  base, through the twelve gates then shipped. It ran on a scratch clone
+  whose `origin` was a scratch bare remote. Exit 0 in 104 s; `main`, the
+  remote and the gated tip read back as one sha; the tree was removed; the
+  ledger holds `landing`, `landed` and `pushed`.
 - Four breaks went through the path that ships, on a scratch clone. Pushing
   `prevMainTip` is refused by the pre-commit hook, because
   `stepMerge_push_exact` no longer proves. Dropping the gate's head check is
@@ -16835,7 +16840,5 @@ agent's missing worktree, so a dead run whose directory is already gone
 leaves a registration for git's own gc. The old tool's `lock` directory is
 not honoured by this one, so during the change one binary lands at a time.
 Routed to the coordinator: CI's `lake build --wfail land`, `land
---selftest` and `land --scratch-selftest` steps; `scripts.land` in
-`cites.lean`'s `treeRoots`; and `scoreboard --check --base {main}` as a
-shipped gate. That last is one line in `defaultGates`, and its fail-open
-paths (the scoreboard review's F1–F3) belong to a sibling.
+--selftest` and `land --scratch-selftest` steps, and `scripts.land` in
+`cites.lean`'s `treeRoots`.

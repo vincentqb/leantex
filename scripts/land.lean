@@ -389,7 +389,8 @@ def defaultGates : List String := [
   "cites-check=.lake/build/bin/cites --check",
   "owed=lake env lean --run scripts/owed.lean",
   "scoreboard-build=lake build --wfail scoreboard",
-  "scoreboard-check=.lake/build/bin/scoreboard --check"]
+  "scoreboard-check=.lake/build/bin/scoreboard --check",
+  "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}"]
 
 /-- The shipped list, parsed. A list that does not parse is empty, and an
 empty plan proves nothing, so no landing gets past it; the selftest names
@@ -719,7 +720,13 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
             [("idx", toString i), ("head", if head.isEmpty then "?" else head),
              ("dirty", if clean then "no" else "yes")]
           match o with
-          | .gateOk _ head clean => say s!"gate-{g}" "ok" (tail head clean); pure o
+          | .gateOk _ head clean =>
+            -- The line says what the core will judge: a gate whose command
+            -- passed but whose tree moved or was dirtied is a failed gate.
+            let held := head == st.gatedTip && clean
+            say s!"gate-{g}" (if held then "ok" else "fail")
+              (tail head clean ++ (if held then [] else [("why", "the gate tree moved or was dirtied")]))
+            pure o
           | .gateFail _ head clean =>
             say s!"gate-{g}" "fail" (tail head clean ++ [("log", s!"gate-{g}.log")]); pure o
           | _ => pure o
@@ -1628,7 +1635,7 @@ def scenarioTreeMoved (self root : String) : IO Outcome := do
   let wts ← worktreePaths s.repo
   return { label := "a gate that moves the gate tree fails the landing"
          , ok := code == 1 && before == after && says out "moved the gate tree off the gated tip"
-             && wts.size == 2
+             && says out "step=gate-switch result=fail" && wts.size == 2
          , detail := s!"exit={code} main-before={before} main-after={after} worktrees={wts.size}" }
 
 /-- A commit lands on `main` the instant `git push` starts — a deterministic
