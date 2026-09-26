@@ -18891,3 +18891,48 @@ normalizes that offset.
 - The classifier is not in CI; that is the coordinator's commit.
 - The reader's accounting invariant is a generated test family and a
   ledger rule, not a theorem.
+
+
+### 2026-09-26 — markdown, round 3b: onto the scoreboard that spends a request once
+
+The branch was rebased by sha from `e3a5fca` onto `ae2ddc6` (optfold,
+perf, monoemit, and the scoreboard that spends a lowering request once).
+The entry above names commits on `e3a5fca`; rebased, in order:
+b38a59c→cf641fc, e4e9b32→6512fe2, 7940e8d→7a39ec3, e55b4e8→42af82f,
+7598bc0→1ec13a4, 6bb87f4→f62db9e, 10f505d→7a9733d, 8690857→0865e28,
+ad202f5→d78ec74, cbcdd84→4e971c6, c6b3485→1063907, 36ea2f0→2c67185,
+84dbe79→641c608, 62c89d8→60912d8, 57b13e5→08d649b. For each of the 19
+files the branch touches, `git diff --no-color -U0` over
+`e3a5fca..57b13e5` equals the same over `ae2ddc6..08d649b` once `@@` and
+`index` lines are dropped, with the same hunk layout, and
+`lake exe Tests --update` at `08d649b` changed no golden.
+
+Every conflict was an addition on both sides. `E0390` and `W0390` stand
+side by side in the constructor list, the `spec` match and `diagWitness`:
+numbers are per letter, and `DiagCode.ofString?` matches the whole code,
+letter included. In AGENTS.md main rewrote the measurement row that the
+surface-reader row sits under, so the five commits that add or edit that
+row each conflicted, and each line was taken from the one side that
+changed it.
+
+**The three lowering lines are records.** Under the new ratchet a
+`# lowered:` request must name the committed floor. Two of this tier's
+three did not (10→9 and 25→24, over floors of 9 and 24), so on `08d649b`
+`scoreboard --check` and `--check --base ae2ddc6` exited 1 and
+`commonmark --check` 2; the third (6→5, over a floor of 6) was a live
+request. All three now read `# lowered (applied):`, the record a
+regeneration writes when it spends a request, which closes the routed
+`Lowered.authorises` item above: a record authorises nothing. Checked
+through the shipped path, with one floor raised by hand to its record's
+old value (`Entity and numeric character references.match` 9→10): as a
+record, `scoreboard --check` reads `regressed` and
+`lake env lean --run scripts/commonmark.lean` refuses to write; written
+back as a request it reads `stale`, and that regeneration spends it and
+writes the committed tier byte for byte.
+
+**Nothing moved under optfold and monoemit.** On the tree committed as
+`01d9398`, `commonmark --check` is `ok`, and one regeneration
+(`lake env lean --run scripts/commonmark.lean`) leaves the tier and
+`tests/commonmark/verdicts.tsv` byte-identical: all 652 verdicts and
+their notes as committed (323 match, 127 rejected, 0 divergence, 202
+owed), and no tier row moved.
