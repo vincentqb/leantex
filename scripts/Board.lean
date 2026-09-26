@@ -798,20 +798,48 @@ def buildTargets : IO (Array String) := do
       | [] => pure ()
   return tierImports.toArray.filter declared.contains
 
-/-- Every tier: the declared names, plus any baseline committed under
-`tests/scoreboard/` that no one declared (a sibling's tier, landed before
-its name reached this list). Direct children only — a subdirectory holds
-the selftest fixtures, which are inputs and not tiers. -/
-def discover : IO (Array String) := do
-  let mut names : Array String := declaredTiers.toArray
+/-- A tier's name is `[a-z0-9-]+`. It is a file basename, the root of its
+producer's path, a `tier=` field the porcelain splits on whitespace, and a path
+git lists — and git quotes a name holding any other byte, which is how a
+deleted baseline once went unseen by the base check. -/
+def tierNameOk (name : String) : Bool :=
+  !name.isEmpty && name.all fun c => c.isLower || c.isDigit || c == '-'
+
+/-- A name as the porcelain prints it: every UTF-8 byte outside `[a-z0-9-]` as
+`%XX`, so a name the rule refuses still reads as one token, and one that
+passes reads as itself. -/
+def shownName (name : String) : String := Id.run do
+  if name.isEmpty then return "%"
+  let hex := "0123456789ABCDEF".toList.toArray
+  let mut out := ""
+  for c in name.toList do
+    if c.isLower || c.isDigit || c == '-' then out := out.push c
+    else
+      for b in c.toString.toUTF8 do
+        out := (out.push '%').push hex[(b >>> 4).toNat]! |>.push hex[(b &&& 15).toNat]!
+  return out
+
+/-- Every tier, and apart from them every name that is not one: the declared
+names, plus any baseline committed under `tests/scoreboard/` that no one
+declared (a sibling's tier, landed before its name reached this list). Direct
+children only — a subdirectory holds the selftest fixtures, which are inputs
+and not tiers. A name outside `[a-z0-9-]+` is returned apart rather than
+dropped, so no caller runs it as a tier and none can overlook it: the
+aggregate faults it. -/
+def discover : IO (Array String × Array String) := do
+  let mut names : Array String := #[]
+  let mut misnamed : Array String := #[]
+  let mut found : Array String := declaredTiers.toArray
   let dir : System.FilePath := "tests/scoreboard"
   if ← dir.isDir then
     for e in ← dir.readDir do
       let p := e.fileName
       if p.endsWith ".tsv" then
         let name := (p.dropEnd ".tsv".length).toString
-        if !names.contains name then names := names.push name
-  return names.qsort (· < ·)
+        if !found.contains name then found := found.push name
+  for n in found do
+    if tierNameOk n then names := names.push n else misnamed := misnamed.push n
+  return (names.qsort (· < ·), misnamed.qsort (· < ·))
 
 /-- A deficit per item, from the tier's own encoding. The ranking is
 computed from committed data; nothing here is a list of what to do.

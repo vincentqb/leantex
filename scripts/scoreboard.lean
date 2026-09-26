@@ -174,16 +174,25 @@ not pass — under `--check` too, because the landing agent reads this output
 and a `fault` with its reason withheld is a fault nobody can act on. `quiet`
 withholds only the notes of passing tiers. -/
 def aggregate (quiet : Bool) : IO UInt32 := do
-  let tiers ← discover
+  let (tiers, misnamed) ← discover
+  -- A name the rule refuses is a fault before anything runs: its producer
+  -- path and its porcelain line are the name, and git quotes it.
+  let misnamedResults : Array TierResult := misnamed.map fun m =>
+    { tier := m, items := 0, regressed := 0, improved := 0, result := "fault"
+      detail := s!"tests/scoreboard/{shownName m}.tsv names no tier: a tier's name is \
+[a-z0-9-]+ (the basename of its baseline and the root of its producer), so rename both halves" }
   match ← buildImports with
   | some err =>
     IO.eprintln s!"scoreboard: the tiers' imports do not build, so no tier can be \
 measured: {err}"
     for t in tiers do
       IO.println (tierLine t 0 0 0 "fault")
+    for m in misnamed do
+      IO.println (tierLine (shownName m) 0 0 0 "fault")
     return 1
   | none => pure ()
-  let mut planned : Array (String × Option TierResult × Option Spawn) := #[]
+  let mut planned : Array (String × Option TierResult × Option Spawn) :=
+    misnamedResults.map fun r => (r.tier, some r, none)
   for t in tiers do
     let decided ← do
       if ← System.FilePath.pathExists (tsvPath t) then
@@ -200,7 +209,7 @@ measured: {err}"
     let r ← match decided with
       | some r => pure r
       | none => collectTier t s
-    IO.println (tierLine r.tier r.items r.regressed r.improved r.result)
+    IO.println (tierLine (shownName r.tier) r.items r.regressed r.improved r.result)
     if r.result != "ok" && !r.detail.isEmpty && (!quiet || !passing r.result) then
       for l in r.detail.splitOn "\n" do
         let l := l.trimAscii.toString
@@ -227,6 +236,35 @@ def gitRead (args : Array String) : IO (Except String String) := do
     return .error s!"git {args[0]!} exited {o.exitCode}: {said.trimAscii.toString}"
   catch e => return .error s!"git did not run: {e}"
 
+/-- A direct child of `tests/scoreboard/` named like a baseline, as git lists it
+at the base: a regular file's blob, or anything else under such a name. -/
+inductive Listed where
+  | baseline (path oid : String)
+  | notAFile (path mode kind : String)
+deriving BEq
+
+/-- Read `git ls-tree -z`: NUL-terminated `<mode> <type> <object>\t<path>`
+entries, the path as committed. `-z` is what stops git quoting a name, and
+the quoted name once slipped past the `.tsv` filter below, so its deletion
+went unseen. `none` when an entry does not read: a listing half understood is
+not one to pass on. -/
+def readListing (listing : String) : Option (Array Listed) := Id.run do
+  let mut out : Array Listed := #[]
+  for e in listing.splitOn (Char.ofNat 0).toString do
+    if e.isEmpty then continue
+    match e.splitOn "\t" with
+    | head :: rest@(_ :: _) =>
+      let path := String.intercalate "\t" rest
+      if !path.endsWith ".tsv" then continue
+      match head.splitOn " " with
+      | [mode, kind, oid] =>
+        if kind == "blob" && (mode == "100644" || mode == "100755") then
+          out := out.push (.baseline path oid)
+        else out := out.push (.notAFile path mode kind)
+      | _ => return none
+    | _ => return none
+  return some out
+
 /-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
 tree's copy (`judgeBase`), one porcelain line per baseline,
 `scoreboard: base=<sha> tier=<t> result=ok|laundered|stale|fault`. The
@@ -242,31 +280,43 @@ held to it; failing closed"
       IO.println s!"scoreboard: base={rev} result=fault"
       return 1
   let short := (sha.take 12).toString
-  let some listing ← git #["ls-tree", "--name-only", sha, "tests/scoreboard/"]
+  let some listing ← git #["ls-tree", "-z", sha, "tests/scoreboard/"]
     | IO.eprintln s!"scoreboard: cannot list tests/scoreboard at {short}; failing closed"
       IO.println s!"scoreboard: base={short} result=fault"
       return 1
-  let files := ((listing.splitOn "\n").map (·.trimAscii.toString)).filter (·.endsWith ".tsv")
+  let some entries := readListing listing
+    | IO.eprintln s!"scoreboard: git's listing of tests/scoreboard at {short} does not read; \
+failing closed"
+      IO.println s!"scoreboard: base={short} result=fault"
+      return 1
   let mut bad := 0
-  for p in files do
-    let tier := ((System.FilePath.mk p).fileStem).getD p
-    -- A blob git cannot read is no empty base: an empty base holds no floor,
-    -- so reading one as `""` passed any fall at all. `cat-file` rather than
-    -- `show`: the bytes as committed, with no textconv an attributes file
-    -- could ask for.
-    match ← gitRead #["cat-file", "blob", s!"{sha}:{p}"] with
-    | .error why =>
+  for e in entries do
+    match e with
+    | .notAFile p mode kind =>
+      let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
       IO.println s!"scoreboard: base={short} tier={tier} result=fault"
-      IO.println s!"scoreboard:   git cannot read {p} as committed at {short} ({why}), so no \
+      IO.println s!"scoreboard:   {p} is committed at {short} as a {kind} of mode {mode}, not a \
+regular file, so it holds no floor this check can read; failing closed"
+      bad := bad + 1
+    | .baseline p oid =>
+      let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
+      -- A blob git cannot read is no empty base: an empty base holds no
+      -- floor, so reading one as `""` passed any fall at all. `cat-file` of
+      -- the listed object rather than `show`: the bytes as committed, with no
+      -- textconv an attributes file could ask for.
+      match ← gitRead #["cat-file", "blob", oid] with
+      | .error why =>
+        IO.println s!"scoreboard: base={short} tier={tier} result=fault"
+        IO.println s!"scoreboard:   git cannot read {p} as committed at {short} ({why}), so no \
 floor can be held to it; failing closed — fetch the base's objects, or run the check in a \
 full clone"
-      bad := bad + 1
-    | .ok baseText =>
-      let tipExists ← System.FilePath.pathExists p
-      let (result, reasons) := judgeBase baseText tipExists (← readFileOr p)
-      IO.println s!"scoreboard: base={short} tier={tier} result={result}"
-      for r in reasons do IO.println s!"scoreboard:   {r}"
-      if result != "ok" then bad := bad + 1
+        bad := bad + 1
+      | .ok baseText =>
+        let tipExists ← System.FilePath.pathExists p
+        let (result, reasons) := judgeBase baseText tipExists (← readFileOr p)
+        IO.println s!"scoreboard: base={short} tier={tier} result={result}"
+        for r in reasons do IO.println s!"scoreboard:   {r}"
+        if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
 -- ## The queue
@@ -333,7 +383,11 @@ documents they alone block ({rows.length} ranked)"
 share={share} docs={docs}"
   lines := lines.push "queue: group 3 of 3 — each tier's worst items, in its own \
 units; not comparable across tiers"
-  for t in ← discover do
+  let (tiers, misnamed) ← discover
+  for m in misnamed do
+    lines := lines.push s!"queue: tests/scoreboard/{shownName m}.tsv not ranked: its name is \
+not a tier name ([a-z0-9-]+), which --check faults"
+  for t in tiers do
     let text ← readFileOr (tsvPath t)
     if text.isEmpty then continue
     match parse text with
@@ -498,6 +552,9 @@ def probeTier : String := "zz-probe"
 
 def probeText : String := "# encoding: raw\nalpha\t5\nbravo\t3\n"
 
+/-- A producer whose `--check` passes whatever its baseline says. -/
+def trivialProducer : String := "def main (_ : List String) : IO UInt32 := pure 0\n"
+
 /-- One harness case: files committed at the base beside the harness's own, the
 edit that makes the tree from the base (given the repository and the base's
 sha), the exit status `scoreboard --check --base <base>` must return, and lines
@@ -543,6 +600,7 @@ def cliCases : List CliCase :=
   let says (word : String) := fun (s : String) =>
     [s!"scoreboard: base={s} tier={probeTier} result={word}"]
   let request := "# lowered: alpha 5→4 — an invented reason\n"
+  let trivial := trivialProducer
   let fall := fun d => swapIn d probe "alpha\t5\n" "alpha\t4\n"
   [{ label := "nothing moved", extra := [], edit := fun _ _ => pure (), exit := 0
      says := says "ok" },
@@ -586,7 +644,26 @@ def cliCases : List CliCase :=
        fall d
      exit := 1, says := says "fault" },
    { label := "the base's blob unreadable, nothing moved", extra := []
-     edit := fun d sha => unreadable d sha probe, exit := 1, says := says "fault" }]
+     edit := fun d sha => unreadable d sha probe, exit := 1, says := says "fault" },
+   -- A name git quotes: `ls-tree` without `-z` printed it in quotes, the
+   -- `.tsv` filter dropped it, and its deletion went unseen.
+   { label := "a baseline under a name git quotes, deleted with its producer"
+     extra := [(tsvPath "zzé", "# encoding: raw\nalpha\t3\n"), (scriptPath "zzé", trivial)]
+     edit := fun d _ => do
+       IO.FS.removeFile (d / tsvPath "zzé")
+       IO.FS.removeFile (d / scriptPath "zzé")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz%C3%A9 result=fault"] },
+   { label := "the same deletion under an ASCII name"
+     extra := [(tsvPath "zz-ascii", "# encoding: raw\nalpha\t3\n"), (scriptPath "zz-ascii", trivial)]
+     edit := fun d _ => do
+       IO.FS.removeFile (d / tsvPath "zz-ascii")
+       IO.FS.removeFile (d / scriptPath "zz-ascii")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-ascii result=fault"] },
+   { label := "a live tier under a name outside [a-z0-9-]+", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / tsvPath "zzé") "# encoding: raw\nalpha\t3\n"
+       IO.FS.writeFile (d / scriptPath "zzé") trivial
+     exit := 1, says := fun _ => ["scoreboard: tier=zz%C3%A9 items=0 regressed=0 improved=0 result=fault"] }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
@@ -600,7 +677,7 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
     IO.FS.writeFile (dir / "lean-toolchain") toolchain
     for t in declaredTiers do
       IO.FS.writeFile (dir / tsvPath t) "# retired-tier: a synthetic harness, nothing measured\n"
-    IO.FS.writeFile (dir / scriptPath probeTier) "def main (_ : List String) : IO UInt32 := pure 0\n"
+    IO.FS.writeFile (dir / scriptPath probeTier) trivialProducer
     IO.FS.writeFile (dir / tsvPath probeTier) probeText
     for (p, text) in c.extra do IO.FS.writeFile (dir / p) text
     let _ ← harnessGit dir #["init", "-q", "."]
@@ -987,9 +1064,14 @@ Gate.recordField and delete this check" owedHasCopy
   let citesSrc ← readFileOr "scripts/cites.lean"
   no "routed: scripts/cites.lean now loads scripts.Board — delete this row, and cite \
 Board's theorems by name where the prose relies on them" (!containsSub citesSrc "scripts.Board")
+  -- Tier discovery by convention, both halves. `--check` and the selftest
+  -- agree on every state: absence passes only for a declared-pending tier,
   -- and a pending name whose tier has landed fails here — which is what
   -- stops the pending list going stale.
-  let tiers ← discover
+  let (tiers, misnamed) ← discover
+  for m in misnamed do
+    no s!"discovery: tests/scoreboard/{shownName m}.tsv is not a tier name ([a-z0-9-]+), \
+which --check faults" false
   for t in tiers do
     let hasTsv ← System.FilePath.pathExists (tsvPath t)
     let hasScript ← System.FilePath.pathExists (scriptPath t)
@@ -1009,9 +1091,26 @@ faults" false
   no "discovery: a fixture directory is not a tier" (!tiers.contains "clean")
   no "discovery: every pending name is declared"
     (pendingTiers.all declaredTiers.contains)
-
-  -- Tier discovery by convention, both halves. `--check` and the selftest
-  -- agree on every state: absence passes only for a declared-pending tier,
+  no "discovery: every declared name is a tier name" (declaredTiers.all tierNameOk)
+  -- The name rule, and the listing that no longer lets git quote a name.
+  no "name: the shipped names pass" (["compat", "zz-probe", "p5", "a-b"].all tierNameOk)
+  no "name: anything outside [a-z0-9-]+ does not"
+    (!(["", "zzé", "Compat", "a b", "a.b", "a_b", "a\tb"].any tierNameOk))
+  no "name: a refused name prints as one token"
+    (shownName "zzé" == "zz%C3%A9" && shownName "a b" == "a%20b" && shownName "compat" == "compat")
+  let nul := (Char.ofNat 0).toString
+  let listing := String.intercalate nul
+    ["100644 blob 1111\ttests/scoreboard/compat.tsv", "040000 tree 2222\ttests/scoreboard/selftest",
+     "100644 blob 3333\ttests/scoreboard/zzé.tsv", "120000 blob 4444\ttests/scoreboard/zz-link.tsv",
+     "040000 tree 5555\ttests/scoreboard/zz-dir.tsv", "100644 blob 6666\ttests/scoreboard/notes.md", ""]
+  no s!"listing: -z entries read as committed, and only a regular file is a baseline"
+    (readListing listing == some #[.baseline "tests/scoreboard/compat.tsv" "1111",
+      .baseline "tests/scoreboard/zzé.tsv" "3333",
+      .notAFile "tests/scoreboard/zz-link.tsv" "120000" "blob",
+      .notAFile "tests/scoreboard/zz-dir.tsv" "040000" "tree"])
+  no "listing: an entry that does not read fails the whole listing"
+    ((readListing s!"100644 blob\ttests/scoreboard/compat.tsv{nul}").isNone &&
+      (readListing s!"tests/scoreboard/compat.tsv{nul}").isNone)
 
   let failed := (← fails.get).reverse
   if !failed.isEmpty then
@@ -1026,7 +1125,7 @@ followed to the end, and the key)"
   -- Then every tier's own selftest, in parallel: one command is what a
   -- landing runs, so the fan-out lives here rather than in a procedure
   -- someone has to remember.
-  let tiers ← discover
+  let (tiers, _) ← discover
   let mut spawned : Array (String × Option (IO.Process.Child { } ×
     System.FilePath × String × String)) := #[]
   for t in tiers do
