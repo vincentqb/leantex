@@ -302,6 +302,48 @@ def report (r : Reached) : IO Unit := do
   | .clean => pure ()
   for n in r.notes do IO.println s!"    note: {n}"
 
+/-- A declaration the gate refuses, with the fall behind it when there is
+one: a fixture that fell to a stop its declaration never excused is a
+regression before it is a wrong declaration. -/
+structure Refusal where
+  fixture : String
+  /-- The committed level and the measured one, when the one ratchet reads a
+  fall between them. -/
+  fell : Option (Int × Int)
+  stopped : Option (Level × String)
+  accounting : Accounting
+  declared : List Divergence
+  deriving Inhabited
+
+/-- The falls `Scoreboard.ratchet` reads between a committed baseline and
+this measurement. An unreadable baseline reads none. -/
+def fallsSince (board : String) (m : Measured) : Array Scoreboard.Change :=
+  match Scoreboard.parse board with
+  | .error _ => #[]
+  | .ok base =>
+    let rows := m.reached.map fun r => ({ item := r.fixture, value := r.level } : Scoreboard.Row)
+    let now : Scoreboard.Tsv :=
+      { provenance := #[], rows, retired := #[], lowered := #[], encoding := some .raw }
+    (Scoreboard.ratchet base now).losses.filter fun
+      | .fell .. => true
+      | _ => false
+
+/-- The declarations the gate refuses, the fixtures that fell first. -/
+def refusals (m : Measured) (falls : Array Scoreboard.Change) : Array Refusal := Id.run do
+  let fellOf (f : String) : Option (Int × Int) := falls.findSome? fun
+    | .fell i o n => if i == f then some (o, n) else none
+    | _ => none
+  let mut fell : Array Refusal := #[]
+  let mut rest : Array Refusal := #[]
+  for r in m.reached do
+    let a := accountingOf r
+    unless a == .unexplained || a == .outlived do continue
+    let x : Refusal := { fixture := r.fixture, fell := fellOf r.fixture, stopped := r.stopped
+                         accounting := a, declared := r.declared }
+    if x.fell.isSome then fell := fell.push x else rest := rest.push x
+  for x in rest do fell := fell.push x
+  return fell
+
 /-- A measurement held against the baseline. `main` is `measureAll` then
 this, so the selftest drives exactly the path that ships with measurements
 it wrote by hand. -/
@@ -314,21 +356,33 @@ and nothing is written"
     IO.eprintln "  Regenerate with: lake env lean --run scripts/parity-regen.lean --force <fixture>"
     IO.println (Scoreboard.tierLine "parity" 0 0 0 "fault")
     return 2
-  let wrong := m.reached.filterMap fun r =>
-    let names := String.intercalate ", " (r.declared.map Divergence.name)
-    match accountingOf r, r.stopped with
-    | .unexplained, some (g, _) =>
-      some s!"{r.fixture}: stops at {g.tag} and declares {names}, which excuses no stop at {g.tag}"
-    | .unexplained, none =>
-      some s!"{r.fixture}: declares {names}, and no level is measured for it to excuse"
-    | .outlived, _ => some s!"{r.fixture}: declares {names} and reaches the top anyway"
-    | _, _ => none
-  if !wrong.isEmpty then
-    IO.eprintln "parity: a divergence declaration does not account for where its fixture stops, \
+  let refused := refusals m (fallsSince (← Scoreboard.readFileOr (Scoreboard.tsvPath "parity")) m)
+  if !refused.isEmpty then
+    let anyFell := refused.any (·.fell.isSome)
+    IO.eprintln (if anyFell then
+      "parity: a fixture fell, to a stop its divergence declaration does not excuse either, \
 so nothing is judged and nothing is written"
-    for w in wrong do IO.eprintln s!"    {w}"
-    IO.eprintln "  Correct or remove the '% diverges:' line, then: .lake/build/bin/parity --repin"
-    IO.println (Scoreboard.tierLine "parity" 0 0 0 "fault")
+      else "parity: a divergence declaration does not account for where its fixture stops, \
+so nothing is judged and nothing is written")
+    for r in refused do
+      let names := String.intercalate ", " (r.declared.map Divergence.name)
+      if let some (o, n) := r.fell then
+        let stopAt := match r.stopped with
+          | some (g, why) => s!" — {g.tag} ({g.what}): {why}"
+          | none => ""
+        IO.eprintln s!"    {r.fixture}: fell from {o} to {n}{stopAt}"
+      IO.eprintln <| match r.accounting, r.stopped with
+        | .outlived, _ => s!"    {r.fixture}: declares {names} and reaches the top anyway"
+        | _, some (g, _) =>
+          s!"    {r.fixture}: stops at {g.tag} and declares {names}, which excuses no stop at {g.tag}"
+        | _, none => s!"    {r.fixture}: declares {names}, and no level is measured for it to excuse"
+    if anyFell then
+      IO.eprintln "  A fall is the engine's to fix first: the declaration explains the stop the \
+fixture had. If the new stop is the intended one, correct the '% diverges:' line, run \
+.lake/build/bin/parity --repin, and request the fall with a '# lowered:' line"
+    else
+      IO.eprintln "  Correct or remove the '% diverges:' line, then: .lake/build/bin/parity --repin"
+    IO.println (Scoreboard.tierLine "parity" 0 (refused.filter (·.fell.isSome)).size 0 "fault")
     return 2
   IO.println s!"parity: {m.reached.size} fixture(s), \
 {(m.reached.filter (·.level == refuses)).size} outside the denominator, \
@@ -378,10 +432,10 @@ def repinAll : IO UInt32 := do
   return 0
 
 /-- `gate` over a scratch baseline, in a scratch directory: its exit code,
-the baseline it left, and the `result=` of its porcelain line. The tier's
-paths are relative, so the directory is the whole of the isolation and the
-committed baseline is never touched. -/
-def gateIn (board : String) (m : Measured) (args : List String) :
+the baseline it left, and its porcelain line. The tier's paths are
+relative, so the directory is the whole of the isolation and the committed
+baseline is never touched. -/
+def gateLine (board : String) (m : Measured) (args : List String) :
     IO (UInt32 × String × String) := do
   let home ← IO.currentDir
   let root ← IO.FS.createTempDir
@@ -393,10 +447,16 @@ def gateIn (board : String) (m : Measured) (args : List String) :
     let (out, code) ← IO.FS.withIsolatedStreams (gate m args)
     IO.Process.setCurrentDir home
     let line := ((out.splitOn "\n").find? (·.startsWith "scoreboard: tier=")).getD ""
-    return (code, ← IO.FS.readFile path, (Scoreboard.field line "result").getD "")
+    return (code, ← IO.FS.readFile path, line)
   finally
     IO.Process.setCurrentDir home
     IO.FS.removeDirAll root
+
+/-- `gateLine` with its porcelain line read down to `result=`. -/
+def gateIn (board : String) (m : Measured) (args : List String) :
+    IO (UInt32 × String × String) := do
+  let (code, after, line) ← gateLine board m args
+  return (code, after, (Scoreboard.field line "result").getD "")
 
 /-- `measureWith` over a staged copy of one committed pairing, after `brk`
 has edited the copy: how the selftest reaches each fault arm through the
@@ -688,6 +748,32 @@ of a spent lowering (exit {c3})"
     let expect := if want.isEmpty then 1 else 0
     unless m.reached.size == expect do
       bad := bad.push s!"staged: {what} measured {m.reached.size} fixture(s), not {expect}"
+  -- 11. a fixture that fell to a stop its declaration does not excuse is
+  -- refused as a fall first: the one ratchet reads the fall against the
+  -- committed floor, and the refusal lists it before a declaration that is
+  -- only wrong. `b` falls from 2 to P0 behind `default-measure`, which
+  -- excuses P1 to P4, and `a` declares a divergence while reaching the top.
+  let top : Int := Level.all.length
+  let a : Reached := { reach "a" top with declared := [.defaultMeasure] }
+  let b : Reached := { fixture := "b", level := 0, stopped := some (.build, "an engine error")
+                       declared := [.defaultMeasure], notes := #[] }
+  let ab := measured [a, b]
+  let fellBoard := board ["# encoding: raw", s!"a\t{top}", "b\t2"]
+  let order := (refusals ab (fallsSince fellBoard ab)).toList.map fun r => (r.fixture, r.fell)
+  unless order == [("b", some (2, 0)), ("a", none)] do
+    bad := bad.push s!"refusals: a fall behind a declaration is not named first: {repr order}"
+  let steadyBoard := board ["# encoding: raw", s!"a\t{top}", "b\t0"]
+  let order := (refusals ab (fallsSince steadyBoard ab)).toList.map fun r => (r.fixture, r.fell)
+  unless order == [("a", none), ("b", none)] do
+    bad := bad.push s!"refusals: a stop that did not move read as a fall: {repr order}"
+  for args in [["--check"], []] do
+    let (c, after, line) ← gateLine fellBoard ab args
+    unless c == 2 && Scoreboard.field line "result" == some "fault" && after == fellBoard
+        && Scoreboard.field line "regressed" == some "1" do
+      bad := bad.push s!"gate: a fall behind a declaration exited {c} as {line} under {repr args}"
+  let (c, _, line) ← gateLine steadyBoard ab ["--check"]
+  unless c == 2 && Scoreboard.field line "regressed" == some "0" do
+    bad := bad.push s!"gate: a declaration whose fixture did not move exited {c} as {line}"
   if bad.isEmpty then
     IO.println "parity --selftest: all passed"
     return 0
