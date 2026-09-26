@@ -17652,17 +17652,22 @@ two lines into one, and no code named that. In HTML every coloured label was
 black, because the SVG label arm flattened each inline to its plain text.
 
 **The invariant.** A node's shipped runs are the runs the same source ships
-as a paragraph: face, glyphs and colour per run, line by line. The SVG gives
-each glyph the weight and slant the PDF gives it. `pictureNodeStyleChecks`
-(`Tests/Surface.lean`) reads both off the artifact. The PDF side reads
-`Layout.Out` under a four-file font set, so each run's face is visible. The
-HTML side reads the typed tree's `<text>` runs, and the rendered string with
-its tags stripped. On `17ac92f` 17 rows fail. The plain, coloured and math
-rows pass there and serve as the instrument's controls. The two rendered-text
-rows failed on the fix's first cut, before `text` and `tspan` became
-phrasing. No theorem is stated: the salvage is the mode machine that
-`nodeLabel_mem` (owed) already waits on, and its helper now recurses into
-`.styled`, so the owed statement covers the new wrapper.
+as a paragraph: face, glyphs, colour and interword gaps per run, line by
+line. The SVG gives each glyph the weight and slant the PDF gives it.
+`pictureNodeStyleChecks` (`Tests/Surface.lean`) reads both off the
+artifact. The PDF side reads `Layout.Out` under a four-file font set, so
+each run's face is visible. The HTML side reads the typed tree's `<text>`
+runs, and the rendered string with its tags stripped. Run against the
+`17ac92f` engine in a scratch clone, 22 rows fail. The plain, coloured and
+math rows pass there and serve as the instrument's controls. The
+rendered-text rows, the neighbour row and the per-glyph agreement row also
+hold on the base, which has no `<tspan>` to get wrong, and are named as
+guards: the rendered-text rows failed on the fix's first cut, before `text`
+and `tspan` became phrasing, and the gap-aware rows failed on a cut that
+trimmed a space just inside the braces. No theorem is stated: the salvage
+is the mode machine that `nodeLabel_mem` (owed) already waits on, and its
+helper now recurses into `.styled`, so the owed statement covers the new
+wrapper.
 
 **The fix.** The salvage reads the elaborator's own table. `Elab.argStyles`
 reaches it as `Cx.argStyles`, in the same way `Cx.math` hands over the
@@ -17670,23 +17675,29 @@ elaborator's parser, and `elabPicture` takes the table with no default, so a
 caller cannot forget it. `SalMode.styleBody` sets a group, or one word, as a
 styled run. The coloured and styled bodies share one `Sal.splice`. A `\\`
 inside either body is a real break, and both resulting lines carry the
-wrapper. A size switch inside either body is walked one group deeper, so it
-is named instead of dropped. HTML: `HtmlDoc.labelNodesList` emits a
+wrapper. The body is walked one group deeper and untrimmed (`Sal.inner`),
+so a size switch inside it is named instead of dropped, and a space just
+inside its braces stays, as it does in a paragraph; only the ends a `\\`
+made are trimmed. HTML: `HtmlDoc.labelNodesList` emits a
 `<tspan>` for each style and colour. It carries the presentation that the
 prose carrier gets: `bolder`, italic, the style class, and `fill` through the
 palette role's custom property. `Html.phrasingTags` gains `text` and
 `tspan`. The printer had indented a tspan onto its own line, which put a
 space between two runs the source had joined.
 
-**Measured on the private deck, `17ac92f` against `266090e`, through the
-shipped CLI.** The deck has 36 pages before and after. W0334 falls from 125
+**Measured on the private deck, `17ac92f` against `266090e` and again at
+`786a766` (identical rasters, census and HTML), through the shipped
+CLI.** The deck has 36 pages before and after. W0334 falls from 125
 sites to 100, and the only diagnostic that changed is the node-body
 `\textbf` refusal (25 → 0). Rasterized at 110 dpi, 31 pages are
 byte-identical. Five pages change (engine pages 18 and 21–24), and every one
 holds styled node text. On the reported page, `pdftohtml -xml` puts the
 word in the deck's bold face, which is also where the lualatex reference
 puts it. The paper has 8 pages, and all 8 rasters are byte-identical. Its
-HTML differs only in white space inside `<text>`.
+HTML differs only in white space inside `<text>`. The corpus HTML moved the
+same way, so the reader matrix was re-measured through its writer
+(`scripts/html-oracle.lean`, Chromium): every cell reads as before, and only
+its `src-key` moves.
 
 **Corrections to the brief.** The lost weight was not silent: W0334 named
 it at five sites of the deck. The coordinator's rasters were taken at
