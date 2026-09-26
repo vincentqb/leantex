@@ -909,6 +909,28 @@ def shownName (name : String) : String := Id.run do
         out := (out.push '%').push hex[(b >>> 4).toNat]! |>.push hex[(b &&& 15).toNat]!
   return out
 
+/-- Does a character act on a terminal, or hide, rather than print? The C0
+controls, DEL and the C1 controls — ESC among them, whose cursor-up and
+erase-line sequences once wiped a `moved:` line a passing base check printed
+— and the Unicode format characters that reorder text (the bidirectional
+marks, embeddings, overrides and isolates) or hide it (the zero-width ones,
+the line and paragraph separators, the byte-order mark). -/
+def actsOnTerminal (c : Char) : Bool :=
+  let n := c.toNat
+  n < 0x20 || (0x7F ≤ n && n ≤ 0x9F) || n == 0x061C || (0x200B ≤ n && n ≤ 0x200F) ||
+    (0x2028 ≤ n && n ≤ 0x202E) || (0x2060 ≤ n && n ≤ 0x2069) || n == 0xFEFF
+
+/-- A line as the scoreboard prints it: every character that acts rather than
+prints spelled `\u{<hex>}`, so text a file or a producer supplies reaches a
+terminal as text. Everything else, `→` and `—` included, passes unchanged. -/
+def printable (s : String) : String := Id.run do
+  if !s.any actsOnTerminal then return s
+  let mut out := ""
+  for c in s.toList do
+    if actsOnTerminal c then out := out ++ "\\u{" ++ String.ofList (Nat.toDigits 16 c.toNat) ++ "}"
+    else out := out.push c
+  return out
+
 /-- Every tier, and apart from them every name that is not one: the declared
 names, plus any baseline committed under `tests/scoreboard/` that no one
 declared (a sibling's tier, landed before its name reached this list). Direct

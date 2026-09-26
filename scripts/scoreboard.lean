@@ -172,6 +172,12 @@ def buildImports : IO (Option String) := do
     s!"lake build {String.intercalate " " targets.toList} exited {out.exitCode}"
   return some firstErr.trimAscii.toString
 
+/-- A reason or a credit under a porcelain line, as `printable` spells it: the
+text comes from a baseline, a path or a producer's stderr, none of which this
+tool wrote, and what a pass prints is where a human reads each weakening. -/
+def printReason (l : String) : IO Unit :=
+  IO.println s!"scoreboard:   {printable l}"
+
 /-- Every tier's result line, and under it the reasons of any tier that does
 not pass — under `--check` too, because the landing agent reads this output
 and a `fault` with its reason withheld is a fault nobody can act on. `quiet`
@@ -217,7 +223,7 @@ measured: {err}"
       for l in r.detail.splitOn "\n" do
         let l := l.trimAscii.toString
         let l := if l.startsWith "scoreboard: " then (l.drop "scoreboard: ".length).toString else l
-        if !l.isEmpty then IO.println s!"scoreboard:   {l}"
+        if !l.isEmpty then printReason l
     if !passing r.result then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
@@ -331,7 +337,7 @@ failing closed"
     | .notAFile p mode kind =>
       let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
       IO.println s!"scoreboard: base={short} tier={tier} result=fault"
-      IO.println s!"scoreboard:   {p} is committed at {short} as a {kind} of mode {mode}, not a \
+      printReason s!"{p} is committed at {short} as a {kind} of mode {mode}, not a \
 regular file, so it holds no floor this check can read; failing closed"
       bad := bad + 1
     | .baseline p oid =>
@@ -343,7 +349,7 @@ regular file, so it holds no floor this check can read; failing closed"
       match ← gitRead #["cat-file", "blob", oid] with
       | .error why =>
         IO.println s!"scoreboard: base={short} tier={tier} result=fault"
-        IO.println s!"scoreboard:   git cannot read {p} as committed at {short} ({why}), so no \
+        printReason s!"git cannot read {p} as committed at {short} ({why}), so no \
 floor can be held to it; failing closed — fetch the base's objects, or run the check in a \
 full clone"
         bad := bad + 1
@@ -351,17 +357,17 @@ full clone"
         match ← treeCopy p with
         | .error why =>
           IO.println s!"scoreboard: base={short} tier={tier} result=fault"
-          IO.println s!"scoreboard:   {why}"
+          printReason why
           bad := bad + 1
         | .ok copy =>
           let tipText := copy.getD ""
           let (result, reasons) := judgeBase baseText copy.isSome tipText
           IO.println s!"scoreboard: base={short} tier={tier} result={result}"
-          for r in reasons do IO.println s!"scoreboard:   {r}"
+          for r in reasons do printReason r
           -- A pass prints what it credited: the weakening a human sanctions
           -- at landing, read off the gate's own output rather than a diff.
           if result == "ok" then
-            for c in creditsOf baseText tipText do IO.println s!"scoreboard:   {c}"
+            for c in creditsOf baseText tipText do printReason c
           if result != "ok" then bad := bad + 1
   -- Every tier file the base does not carry, judged alone: it has no floor at
   -- the base, but it is the tree's committed file all the same. Reading the
@@ -377,9 +383,9 @@ full clone"
       | .ok none => ("fault", #[s!"{p} was listed in the tree and could not be read"])
       | .ok (some text) => judgeNew text
     IO.println s!"scoreboard: base={short} tier={tier} result={result}"
-    IO.println "scoreboard:   new since the base: no floor there to hold it to, so it is \
-judged alone — its format, and any request it still holds"
-    for r in reasons do IO.println s!"scoreboard:   {r}"
+    printReason "new since the base: no floor there to hold it to, so it is judged alone — \
+its format, and any request it still holds"
+    for r in reasons do printReason r
     if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
@@ -753,6 +759,23 @@ the base carries)"] },
      exit := 0
      says := credits ["moved: alpha 5 → 4",
        "credited: # lowered (applied): alpha 1000→0 — an invented reason"] },
+   -- What a pass prints is the human's gate on weakening, so text a file
+   -- supplies reaches the screen as text: a reason carrying cursor controls
+   -- once erased the `moved:` line above it on a terminal.
+   { label := "a fall paid by a record whose reason carries terminal controls", extra := []
+     edit := fun d _ => do
+       swapIn d probe enc (enc ++ "# lowered (applied): alpha 5→4 — x\x1b[1A\x1b[2K\x9bforged\n")
+       fall d
+     exit := 0
+     says := credits ["moved: alpha 5 → 4",
+       "credited: # lowered (applied): alpha 5→4 — x\\u{1b}[1A\\u{1b}[2K\\u{9b}forged"]
+     absent := ["\x1b", "\x9b"] },
+   { label := "a producer that fails printing terminal controls", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / scriptPath "zz-noisy")
+         "def main (_ : List String) : IO UInt32 := do\n  IO.eprintln \"x\\x1b[2Ky\"\n  pure 1\n"
+       IO.FS.writeFile (d / tsvPath "zz-noisy") (enc ++ "alpha\t5\n")
+     exit := 1, says := fun _ => ["scoreboard:   exit 1; x\\u{1b}[2Ky"], absent := ["\x1b"] },
    -- A base blob git cannot read — a blobless partial clone whose promisor is
    -- out of reach, simulated by deleting the loose object — once read as an
    -- empty base, and an empty base holds no floor.
@@ -1279,6 +1302,13 @@ the request the base carries)"])
   let own := judgeBase cleanText true (← readFileOr (fixture "lowered"))
   no s!"held: a request new since the base does not ({joined own.2})"
     (own.2.size == 1 && !own.2.any (containsSub · "the base holds it too"))
+  -- What the scoreboard prints of text it did not write.
+  no "printable: a control is spelled out" (printable "a\x1bb\tc" == "a\\u{1b}b\\u{9}c")
+  no "printable: a C1 control and DEL are spelled out" (printable "\x9b\x7f" == "\\u{9b}\\u{7f}")
+  no "printable: a bidirectional override and a zero-width space are spelled out"
+    (printable "a\u202Eb\u200Bc" == "a\\u{202e}b\\u{200b}c")
+  no "printable: everything else passes unchanged"
+    (printable "alpha 5→4 — é, 字" == "alpha 5→4 — é, 字")
   -- The same check through the path that ships: `scoreboard --check --base`
   -- spawned in throwaway repositories. Mutants that made `main` ignore the
   -- base check, or the base check list nothing or count nothing, passed every
