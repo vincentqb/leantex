@@ -408,10 +408,8 @@ a separate question, asked in `probeIn`, because answering it costs a
 second elaboration.
 
 A subjectless diagnostic is assumed to be the probe's, and only censused
-codes promise a subject: W0387 ("read and had no effect") is a `config`
-answer about `\ClassError` that carries none, so those two read `unprobed`
-where `skipped` is right. That is routed rather than guessed around — a
-`routedDiag` row in `--selftest` fails once the code gains its subject. -/
+codes promise a subject, so a construct the engine answers only with a
+subjectless code reads `unprobed` — a probe owed, never a gap. -/
 def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let worstOf (xs : Array Diag) : Rung :=
     xs.foldl (fun acc d => Rung.worse acc (rungOfLoss d.kind.loss)) .verified
@@ -900,27 +898,6 @@ def falseQueue : Array Explanation := #[
 def explained (name : String) : Option Explanation :=
   witnessExplained.find? (·.name == name)
 
-/-- A diagnostic the rung rule reads around because the engine emits it
-without the subject that would let it be read right. Each row fails in both
-directions: the usage must still draw the code without a subject, and once
-the code gains one the row fails, naming itself for deletion. -/
-structure Routed where
-  name : String
-  usage : Usage
-  code : String
-  site : String
-  why : String
-
-def routedDiag : Array Routed := #[
-  { name := "ClassError", usage := ⟨false, "\\ClassError{c}{m}{h}"⟩, code := "W0387",
-    site := "LeanTex/Core/Compat.lean `account` (the silence guard's W0387)",
-    why := "reads unprobed where skipped is right: the rule takes a subjectless warning \
-for the probe's own shape" },
-  { name := "PackageError", usage := ⟨false, "\\PackageError{p}{m}{h}"⟩, code := "W0387",
-    site := "LeanTex/Core/Compat.lean `account` (the silence guard's W0387)",
-    why := "reads unprobed where skipped is right: the rule takes a subjectless warning \
-for the probe's own shape" }]
-
 -- ## Modes
 
 def loadKernel : IO Denom := do
@@ -1047,9 +1024,6 @@ fragment spells them): {known.size}"
     IO.println s!"    {e.name}\t{(pr e.name).word}\t{e.why}"
   let blind ← corpusContradictions contextBlindPlaces d.rows
   IO.println s!"  {blind.size} contradiction(s) on the context-blind places"
-  IO.println "-- routed: diagnostics the rung rule reads around"
-  for r in routedDiag do
-    IO.println s!"    {r.name}\t{r.code}\t{r.site}: {r.why}"
   IO.println ""
   IO.println "-- compat-index audit: recognition disagreements, then counting differences"
   let mut disagree := 0
@@ -1359,6 +1333,11 @@ def selftest : IO UInt32 := do
   expect "a rewrite onto nothing is skipped, not translated"
     (rungOfProbe "noindent" #[] (Elab.run "p" (wrap "\\noindent")).2 == .skipped
       && pr "noindent" == .skipped && pr "PackageWarning" == .skipped)
+  -- The silence guard's W0387 once carried no subject, so its two log
+  -- commands read as the probe's own mistake; with `ctrl:<name>` they are a
+  -- `config` answer about the construct.
+  expect "a construct the silence guard names reads skipped"
+    (pr "ClassError" == .skipped && pr "PackageError" == .skipped)
   expect "a rewrite whose document also errors without a subject does not count"
     (rungOfProbe "vspace" #[] (Elab.run "p" (wrap "\\vspace")).2 == .unprobed)
   expect "the bare wrapper draws no diagnostic" ((Elab.run "w" (wrap "")).2.isEmpty)
@@ -1455,13 +1434,6 @@ def selftest : IO UInt32 := do
   expect "a plain title is unchanged" (plainTitle "Math formulas" == "Math formulas")
   expect "tenths rounds" (tenths 1 3 == 333 && tenths 2 3 == 667 && tenths 1 2 == 500)
   expect "pct renders" (pct 605 1314 == "46.0%")
-  -- Routed engine defects the rule reads around: each still true, or the row
-  -- names itself for deletion.
-  for r in routedDiag do
-    let ds := (Elab.run "routed" r.usage.doc).2
-    expect s!"routed: \\{r.name} still draws {r.code} with no subject — once it carries \
-one, delete this row ({r.site})"
-      (ds.any fun x => x.code == r.code && x.subject.isNone)
   -- The positive control, both directions: the corpus is evidence from the
   -- artifact side, and a context-blind place list must fail it.
   match (← IO.FS.readFile denomPath |>.toBaseIO) with

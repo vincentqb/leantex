@@ -17146,14 +17146,14 @@ entry above loses its open item about running that rebase in the gate tree.
 ### 2026-09-25 — how much of LaTeX: 33.8%, measured, and the support ladder under it
 ### 2026-09-25 — how much of LaTeX: 41.1%, measured in context, and the rungs under it
 ### 2026-09-25 — how much of LaTeX: 40.4%, measured in context, and the rungs under it
-### 2026-09-25 — how much of LaTeX: 40.2%, measured in context, and the rungs under it
 
 The engine had no answer to "how much of LaTeX does this support?", so
 every claim about breadth was taste. It has one now, and the number is
-**538/1338 = 40.2%** of a documented-command denominator: kernel 202 of
-679, packages 336 of 659 (`lake env lean --run scripts/coverage.lean
---report`). `scripts/coverage.lean` publishes it and the kernel half is
-measured rather than listed. `tests/scoreboard/coverage.tsv` ratchets the
+**541/1338 = 40.4%** of a documented-command denominator: kernel 202 of
+679, packages 339 of 659 (`lake env lean --run scripts/coverage.lean
+--report`, on this branch rebased onto `ae2ddc6`). `scripts/coverage.lean`
+publishes it and the kernel half is measured rather than listed.
+`tests/scoreboard/coverage.tsv` ratchets the
 kernel half under the shared `Scoreboard.tierMain`, as an
 `<item>.counted`/`<item>.rows` pair per manual chapter; the `compat` tier
 already ratchets the package half as `<p>.impl`/`<p>.rows` under the same
@@ -17169,7 +17169,10 @@ had put it in the body — while every probe document used all three. That
 list was about to become the autonomy loop's work queue. The corrections are
 below, and each one is now a check. A second review found the second draft's
 headline honest — 555/1349 = 41.1% — and four of its sentences false; the
-corrections it asked for moved the number down, to 40.2%.
+corrections it asked for moved the number down, to 538/1338 = 40.2%. Main
+then moved three `\urlstyle` rows of `tests/compat-index/url.txt` to `impl`,
+which is the package half's 336 → 339 and the headline's 40.2% → 40.4% (the
+same `--report`, before and after the rebase).
 
 **The denominator is external, pinned, and verified.**
 `tests/coverage/latex2e-index.txt` holds every command name the LaTeX2e
@@ -17260,18 +17263,20 @@ That qualification is the whole of the fix. W0301, W0302 and W0012 carry
 `ctrl:<name>`, `env:<name>` and `math:\<name>` subjects; the probe's own
 argument errors (E0304, E0312, E0205) carry none. A subjectless warning or
 error is the probe's mistake, and a name whose every shape produced only
-those is `unprobed` — reported beside the gaps, not counted as one. Eleven
-names land there. Seven are ones a fragment cannot spell: `\begin`, `\end`,
+those is `unprobed` — reported beside the gaps, not counted as one. Nine
+names land there (`coverage --report`, its unprobed list). Seven are ones a
+fragment cannot spell: `\begin`, `\end`,
 `\documentclass`, and the parenthesis and bracket characters. Two need three
 arguments, which no probe shape has: `\newenvironment` and
-`\renewenvironment`, below. And two can be written — `\ClassError` and
-`\PackageError` read `unprobed` only
-because the engine answers them with W0387, "read and had no effect", a
-`config` answer that carries no subject, and the rule takes a subjectless
-warning for the probe's own shape. Only censused codes promise a subject, so
-this is routed rather than guessed around: a `routedDiag` row in
-`--selftest` holds while W0387 is subjectless and fails once it carries
-`ctrl:<name>`, at which point both names read `skipped` with no change here.
+`\renewenvironment`, below. Before the rebase onto `ae2ddc6` there were
+eleven: `\ClassError` and `\PackageError` read `unprobed` because the engine
+answered them with W0387, "read and had no effect", a `config` answer that
+then carried no subject, and the rule takes a subjectless warning for the
+probe's own shape. Two `routedDiag` rows in `--selftest` held while that was
+so, and fired on main, whose silence guard now keys W0387 `ctrl:<name>`: the
+rows are deleted, both names read `skipped` with no change to the rule, and
+`--selftest` asserts that reading — it fails on the `e7dec5a` engine and
+passes on `ae2ddc6`'s.
 
 A construct is probed in the places LaTeX defines it in — inline and display
 math, a math operand slot, a tabular cell, a tabular rule slot, a float, a
@@ -17337,7 +17342,7 @@ the readings are taken:
   probe shape has three arguments, so both now read `unprobed`, and the
   corpus control, which sees fixtures use both cleanly, demanded the
   `probe`-side explanations they carry. The headline lost those two, to
-  538/1338. A stricter rule still — no rewrite beside any complaint at all —
+  538/1338 on the pre-rebase base. A stricter rule still — no rewrite beside any complaint at all —
   was measured too and dropped five more names a natural usage shows are
   implemented (`\fontseries`, `\linespread`, `\parbox`, `\setlength`,
   `\vspace`): the complaint beside those rewrites names an operand the
@@ -17407,8 +17412,9 @@ better than silence and is still not support, the same judgement
 `ink_covered_or_named` makes one level up. `verified` is the rung that joins
 the two ladders, it is the only one that needs a rendered page, and nothing
 here can award it — it reads 0 today and the scoreboard header says whose it
-is to award. Today's kernel buckets: 11 unprobed, 434 unknown, 0 fails, 25
-skipped, 7 degraded, 20 rewritten, 182 native.
+is to award. Today's kernel buckets (`coverage --report`, rebased onto
+`ae2ddc6`): 9 unprobed, 434 unknown, 0 fails, 27 skipped, 7 degraded, 20
+rewritten, 182 native.
 
 `fails` being empty is itself a finding: no construct earns a `dropped` code
 that names it. Errors in this engine are overwhelmingly subjectless, which is
@@ -17539,12 +17545,11 @@ Routed, not mine to change:
 - `Diag.subject`'s docstring says an unknown command's key is `ctrl:\<name>`.
   Measured, it is `ctrl:<name>` with no backslash; `math:` does carry one.
   One of the two is wrong and the code is not.
-- W0387, the silence guard's "read and had no effect", carries no subject
-  (`LeanTex/Core/Compat.lean`, `account`, the `Diag.of .W0387` push), so a
-  construct it answers reads as the probe's own mistake. The key the guard
-  already keeps is `silent:<name>`; the diagnostic wants `ctrl:<name>`.
-  Registered as the two `routedDiag` rows in `coverage --selftest`, which
-  fail once it lands.
+- W0387, the silence guard's "read and had no effect", carried no subject,
+  so a construct it answers read as the probe's own mistake. Landed on main
+  before this branch (`LeanTex/Core/Compat.lean`, `account`, now
+  `ctrl:<name>`); the two `routedDiag` rows that registered it fired there,
+  as built to, and are deleted.
 - A rewrite onto nothing is keyed `ctrl:nothing:<name>` at two sites
   (`Compat.lean`'s meaning-free table, and `Elab.lean`'s line-height
   discard) and unkeyed at the rest: `became` defaults to no subject, so
