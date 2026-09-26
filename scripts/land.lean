@@ -322,70 +322,31 @@ def newWorktreePath (e : Env) (name : String) : IO String := do
 
 -- ## Gates
 
-/-- One gate. `needsTarget` names a lake target whose *absence from the
-branch's lakefile* makes the gate a recorded skip — the only permitted
-absence, and the one a sibling agent's unlanded target needs. A binary that
-is merely unbuilt is not an absence: the gate builds what it runs. -/
+/-- One gate: a name, and the command it runs in the gate tree. -/
 structure Gate where
   name : String
   cmd : String
   args : Array String
-  needsTarget : Option String
   deriving Repr, Inhabited
 
-/-- `--wfail` is how this project spells "zero warnings": scanning output for
-`warning:` is unsound, because a warm cache replays a module's logged warning
-without recompiling it and a scan of a quiet build proves nothing about the
-module that did not rebuild. The flag is written out here per gate rather
-than inherited from another gate's internals: `land`'s own theorem and the
-gate scripts are built under it, and `Obligations` — the staging area for
-open proofs, which warns once per staged statement by design — is a separate
-build without it, as the pre-commit hook already does. -/
-def gateList : Array Gate := #[
-  { name := "build", cmd := "lake",
-    args := #["build", "--wfail", "leantex", "precommit", "owed", "cites", "land"],
-    needsTarget := none },
-  { name := "obligations-build", cmd := "lake",
-    args := #["build", "Obligations"], needsTarget := none },
-  { name := "test", cmd := "lake", args := #["test"], needsTarget := none },
-  { name := "land-selftest", cmd := ".lake/build/bin/land",
-    args := #["--selftest"], needsTarget := none },
-  { name := "land-scenarios", cmd := ".lake/build/bin/land",
-    args := #["--scratch-selftest"], needsTarget := none },
-  { name := "precommit-selftest", cmd := ".lake/build/bin/precommit",
-    args := #["--selftest"], needsTarget := none },
-  { name := "precommit-tree", cmd := ".lake/build/bin/precommit",
-    args := #["--tree"], needsTarget := none },
-  { name := "cites-selftest", cmd := ".lake/build/bin/cites",
-    args := #["--selftest"], needsTarget := none },
-  { name := "cites-check", cmd := ".lake/build/bin/cites",
-    args := #["--check"], needsTarget := none },
-  { name := "owed", cmd := "lake",
-    args := #["env", "lean", "--run", "scripts/owed.lean"], needsTarget := none },
-  { name := "scoreboard-build", cmd := "lake",
-    args := #["build", "scoreboard"], needsTarget := some "scoreboard" },
-  { name := "scoreboard-check", cmd := ".lake/build/bin/scoreboard",
-    args := #["--check"], needsTarget := some "scoreboard" }]
-
-/-- Malformed entries in a `LAND_GATES` override, or the empty array. -/
+/-- Malformed entries in a gate list, or the empty list. -/
 inductive GateSpecError where
   | empty
   | malformed (entry : String)
   | duplicate (name : String)
 
 def GateSpecError.why : GateSpecError → String
-  | .empty => "LAND_GATES is set but declares no gate"
-  | .malformed e => s!"LAND_GATES entry is not name=command: {e}"
-  | .duplicate n => s!"LAND_GATES names {n} twice"
+  | .empty => "the gate list declares no gate"
+  | .malformed e => s!"a gate list entry is not name=command: {e}"
+  | .duplicate n => s!"the gate list names {n} twice"
 
-/-- `LAND_GATES` replaces the gate list: `name=cmd arg arg;name=cmd …`, run
-in the branch worktree. It exists so the whole procedure can be exercised on
-a scratch repository — a landing may not be tested against a real worktree,
-and a scratch clone cannot afford the real gates on every scenario. Parsing
-is strict: an entry without `=` and a repeated name are refusals, because a
-dropped entry once ran one gate under a report of two and a repeated name
-ran the first gate twice while the second never ran at all. -/
-def parseGateOverride (spec : String) : Except GateSpecError (Array Gate) := do
+/-- A gate list: `name=cmd arg arg;name=cmd …`, run in order in the gate
+tree. One syntax and one parser for the shipped list and for a `LAND_GATES`
+override. Parsing is strict: an entry without `=` and a repeated name are
+refusals, because a dropped entry once ran one gate under a report of two
+and a repeated name ran the first gate twice while the second never ran at
+all. -/
+def parseGates (spec : String) : Except GateSpecError (Array Gate) := do
   let entries := (spec.splitOn ";").map trimWs |>.filter (!·.isEmpty)
   let mut out : Array Gate := #[]
   for ent in entries do
@@ -397,10 +358,51 @@ def parseGateOverride (spec : String) : Except GateSpecError (Array Gate) := do
       | c :: as =>
         if nm.isEmpty then throw (.malformed ent)
         if out.any (·.name == nm) then throw (.duplicate nm)
-        out := out.push { name := nm, cmd := c, args := as.toArray, needsTarget := none }
+        out := out.push { name := nm, cmd := c, args := as.toArray }
     | [] => throw (.malformed ent)
   if out.isEmpty then throw .empty
   return out
+
+/-- The gates every landing runs, in order, one per line, in the gate-list
+syntax: a new gate is one line here. An argument spelled `{main}` becomes
+the sha of `main` the run read. None may be absent: the scoreboard is on
+every base a branch can now be rebased onto, and a skip that read the
+lakefile for its name was a substring test a valid lakefile defeated.
+
+`--wfail` is how this project spells "zero warnings": scanning output for
+`warning:` is unsound, because a warm cache replays a module's logged warning
+without recompiling it and a scan of a quiet build proves nothing about the
+module that did not rebuild. The flag is written out per gate rather than
+inherited from another gate's internals: `land`'s own theorem and the gate
+scripts are built under it, and `Obligations` — the staging area for open
+proofs, which warns once per staged statement by design — is a separate build
+without it, as the pre-commit hook already does. -/
+def defaultGates : List String := [
+  "build=lake build --wfail leantex precommit owed cites land",
+  "obligations-build=lake build Obligations",
+  "test=lake test",
+  "land-selftest=.lake/build/bin/land --selftest",
+  "land-scenarios=.lake/build/bin/land --scratch-selftest",
+  "precommit-selftest=.lake/build/bin/precommit --selftest",
+  "precommit-tree=.lake/build/bin/precommit --tree",
+  "cites-selftest=.lake/build/bin/cites --selftest",
+  "cites-check=.lake/build/bin/cites --check",
+  "owed=lake env lean --run scripts/owed.lean",
+  "scoreboard-build=lake build --wfail scoreboard",
+  "scoreboard-check=.lake/build/bin/scoreboard --check"]
+
+/-- The shipped list, parsed. A list that does not parse is empty, and an
+empty plan proves nothing, so no landing gets past it; the selftest names
+the fault. -/
+def gateList : Array Gate :=
+  match parseGates (String.intercalate ";" defaultGates) with
+  | .ok gs => gs
+  | .error _ => #[]
+
+/-- The plan the core is driven against: the gates' names, in order, none
+permitted to be absent. -/
+def planOf (gs : Array Gate) : Array GateSpec :=
+  gs.map fun g => { name := g.name, mayAbsent := false }
 
 /-- Is the gate override permitted here? Only in a repository that opted in
 with `git config --local land.allowGateOverride true`. An exported variable
@@ -410,16 +412,6 @@ on the machine. -/
 def overrideAllowed (e : Env) (ctr : IO.Ref Nat) : IO Bool := do
   let r ← git e ctr "gateset" #["config", "--local", "--get", "land.allowGateOverride"]
   return r.code == 0 && trimWs r.out == "true"
-
-/-- Does the branch's lakefile declare this lake target? The scoreboard's
-gate is skipped only when the answer is no — never because its binary
-happens to be unbuilt, which would have skipped it forever once the
-scoreboard landed. -/
-def lakefileDeclares (wt target : String) : IO Bool := do
-  try
-    let txt ← IO.FS.readFile s!"{wt}/lakefile.toml"
-    return (txt.splitOn s!"name = \"{target}\"").length > 1
-  catch _ => return false
 
 -- ## The ledger
 
@@ -553,16 +545,15 @@ def removeTree (e : Env) (ctr : IO.Ref Nat) : IO Unit := do
      ("listed", if listed then "yes" else "no")]
 
 /-- Run one gate in the gate tree, reading the tree back before and after
-it. -/
-def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) : IO Obs := do
+it. An argument spelled `{main}` becomes `mainTip`, the sha of `main` this
+run read. -/
+def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip : Sha) : IO Obs := do
   let tree := treePath e
-  if let some tgt := g.needsTarget then
-    if !(← lakefileDeclares tree tgt) then
-      return .gateAbsent idx
   let step := s!"gate-{g.name}"
   let (hb, cb) ← readTree e ctr step
   let cmd := if g.cmd.startsWith "." then s!"{tree}/{g.cmd}" else g.cmd
-  let r ← sh e ctr step cmd g.args (some tree)
+  let args := g.args.map fun a => if a == "{main}" then mainTip else a
+  let r ← sh e ctr step cmd args (some tree)
   let (ha, ca) ← readTree e ctr step
   -- The tree as read around the gate: the head both reads agree on, and
   -- clean only if both were, so a tree moved between two gates and moved
@@ -580,8 +571,7 @@ it is removed, so the caller's `finally` removes a tree an exception left. -/
 def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : String)
     (mode : Mode) (wantPush : Bool) (gates : Array Gate) (gateset : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
-  let plan : Array GateSpec :=
-    gates.map fun g => { name := g.name, mayAbsent := g.needsTarget.isSome }
+  let plan : Array GateSpec := planOf gates
   let mut st := State.init name mode plan wantPush
   let mut act : Act := .probeMain
   let mut wt : String := ""
@@ -724,7 +714,7 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         match gates[i]? with
         | none => pure (.garbled s!"no gate at index {i}")
         | some gd => do
-          let o ← runGate e ctr gd i
+          let o ← runGate e ctr gd i st.prevMainTip
           let tail (head : Sha) (clean : Bool) : List (String × String) :=
             [("idx", toString i), ("head", if head.isEmpty then "?" else head),
              ("dirty", if clean then "no" else "yes")]
@@ -732,10 +722,6 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
           | .gateOk _ head clean => say s!"gate-{g}" "ok" (tail head clean); pure o
           | .gateFail _ head clean =>
             say s!"gate-{g}" "fail" (tail head clean ++ [("log", s!"gate-{g}.log")]); pure o
-          | .gateAbsent _ =>
-            say s!"gate-{g}" "skip"
-              [("idx", toString i), ("why", "the lakefile declares no such target")]
-            pure o
           | _ => pure o
       | .recheckBranch => do
         -- The gates ran in the run's own tree; this asks whether the author
@@ -1053,9 +1039,6 @@ structure Case where
   needs a plan of its own. -/
   plan : Option (Array GateSpec) := none
 
-def planOf (gs : Array Gate) : Array GateSpec :=
-  gs.map fun g => { name := g.name, mayAbsent := g.needsTarget.isSome }
-
 def gatePlan : Array GateSpec := planOf gateList
 
 def sha1s : Sha := "1111111111111111111111111111111111111111"
@@ -1092,9 +1075,10 @@ def netSame : Obs := .netDiffs netBranch netMoved
 def allSkippablePlan : Array GateSpec :=
   #[{ name := "a", mayAbsent := true }, { name := "b", mayAbsent := true }]
 
-/-- The indices of the gates the shipped plan permits to be absent. -/
-def skippableIdx : List Nat :=
-  (List.range gatePlan.size).filter fun i => (gatePlan[i]?.map (·.mayAbsent)).getD false
+/-- A plan whose second gate may be absent: the core's permission, which
+the shipped list no longer grants, still holds exactly where a plan does. -/
+def oneSkippablePlan : Array GateSpec :=
+  #[{ name := "a", mayAbsent := false }, { name := "b", mayAbsent := true }]
 
 def cases : List Case :=
   let pre := [Obs.mainStatus true true sha1s, Obs.branchStatus 1 0 true sha2s,
@@ -1226,12 +1210,15 @@ def cases : List Case :=
     , verdict := .failed, code := 1, noMutation := true
     , plan := some allSkippablePlan }
   , { label := "a permitted absence still lands", mode := .land, push := false
-    , obs := pre
-        ++ ((List.range gatePlan.size).map fun i =>
-              if skippableIdx.contains i then Obs.gateAbsent i else Obs.gateOk i sha3s true)
+    , obs := pre ++ [.gateOk 0 sha3s true, .gateAbsent 1]
         ++ [.branchRecheck sha3s, .mainRecheck true sha1s, .ledgerOk, .ffOk,
             .mainTip sha3s, .ledgerOk]
-    , verdict := .landed, code := 0, noMutation := false }
+    , verdict := .landed, code := 0, noMutation := false
+    , plan := some oneSkippablePlan }
+  , { label := "the shipped list permits no absence", mode := .land, push := false
+    , obs := pre ++ (List.range (gatePlan.size - 1)).map (fun i => Obs.gateOk i sha3s true)
+        ++ [.gateAbsent (gatePlan.size - 1)]
+    , verdict := .failed, code := 1, noMutation := true }
   , { label := "garbled status at the first probe", mode := .land, push := false
     , obs := [.garbled "git status --porcelain"]
     , verdict := .failed, code := 3, noMutation := true }
@@ -1368,16 +1355,16 @@ def selftest : IO UInt32 := do
       say "selftest" "fail" [("case", s!"net: {label}"),
         ("why", s!"drift [{String.intercalate "," got.toList}]")]
     else say "selftest" "ok" [("case", s!"net: {label}")]
-  -- The override parser, which no repository state reaches.
+  -- The gate-list parser, which no repository state reaches.
   let badSpecs := ["a=true;b", "a=true;a=false", "", "=true"]
   for spec in badSpecs do
-    match parseGateOverride spec with
+    match parseGates spec with
     | .ok gs =>
       bad := bad + 1
       say "selftest" "fail" [("case", s!"override {spec}"),
         ("why", s!"parsed {gs.size} gates instead of refusing")]
     | .error _ => say "selftest" "ok" [("case", s!"override refuses {spec}")]
-  match parseGateOverride "a=true;b=false arg" with
+  match parseGates "a=true;b=false arg" with
   | .ok gs =>
     if gs.size == 2 && gs[1]!.args == #["arg"] then
       say "selftest" "ok" [("case", "override parses two gates")]
@@ -1387,6 +1374,22 @@ def selftest : IO UInt32 := do
   | .error e =>
     bad := bad + 1
     say "selftest" "fail" [("case", "override parses two gates"), ("why", e.why)]
+  -- The shipped list is read by that parser: every line must come back as
+  -- one gate, in order, or the landing would run a list nobody wrote.
+  match parseGates (String.intercalate ";" defaultGates) with
+  | .ok gs =>
+    let names := defaultGates.map fun l => trimWs ((l.splitOn "=").headD "")
+    if gs.toList.map (·.name) == names && gateList.size == defaultGates.length
+        && gatePlan.all (!·.mayAbsent) && (gateList.any (·.name == "scoreboard-check")) then
+      say "selftest" "ok" [("case", "the shipped gate list parses, one gate per line")]
+    else
+      bad := bad + 1
+      say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
+        ("why", s!"{gs.size} gates from {defaultGates.length} lines")]
+  | .error e =>
+    bad := bad + 1
+    say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
+      ("why", e.why)]
   -- Porcelain quoting: a value with a space must come back as one value.
   if pv "a b" != "\"a b\"" || pv "ab" != "ab" || pv "" != "\"\"" then
     bad := bad + 1
@@ -1852,8 +1855,8 @@ def resolveGates (e : Env) : IO (Except String (Array Gate × String)) := do
     if !(← overrideAllowed e ctr) then
       return .error "LAND_GATES is set, and this repository does not allow \
 gate overrides (git config --local land.allowGateOverride true)"
-    match parseGateOverride spec with
-    | .error err => return .error err.why
+    match parseGates spec with
+    | .error err => return .error s!"LAND_GATES: {err.why}"
     | .ok gs => return .ok (gs, "override")
 
 def main (argv : List String) : IO UInt32 := do
