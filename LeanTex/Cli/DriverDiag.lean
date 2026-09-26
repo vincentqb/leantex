@@ -53,23 +53,30 @@ def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.Face) : 
     (help := "install the named weight, or name the face to use \
 (\\fonts{ sans.upright = \"...\" } and siblings)")
 
-/-- **W0390: a family slot the document declared nothing for, resolved onto
-the body face.** A distinct axis from W0006 and W0366, which is why it is a
-distinct code. Those two are within a family the document named: a variant
-missing (W0006) or a weight missing (W0366), with "install the face" as the
-remedy. This is the family slot itself never named, and the remedy is a
-declaration — `\fonts{ mono = "..." }` — not an install. One code, one
-meaning, and `\allow{W0390}` accepts this loss without also accepting every
-future bold substitution.
+/-- **W0390: a family slot the document declared nothing for, set in a face
+that is not of its kind.** A distinct axis from W0006 and W0366, which is
+why it is a distinct code. Those two are within a family the document
+named: a variant missing (W0006) or a weight missing (W0366), with "install
+the face" as the remedy. This is the family slot itself never named, and
+the remedy is a declaration — `\fonts{ mono = "..." }` — not an install.
+One code, one meaning, and `\allow{W0390}` accepts this loss without also
+accepting every future bold substitution.
 
 `key` is the `\fonts` key that would declare the slot, `runs` the runs the
-loss is about, and `note` what is honestly known about the substitute. The
-substitute face is not named: which family fills an undeclared slot is the
-host's answer, and a message that varies by host cannot be witnessed. The
-subject is the slot, so the loss is counted once however many runs set it. -/
-def slotCollapsed (key runs note : String) : Diag :=
+loss is about, `served` what set them — the body face, or the body family
+where the text is set in another — and `note` what is honestly known about
+the substitute. `only` names the artifact that lost when not every artifact
+the build emits carries the face: a PDF beside a page under its own
+stylesheet. The substitute face is not named: which family fills an
+undeclared slot is the host's answer, and a message that varies by host
+cannot be witnessed. The subject is the slot, so the loss is counted once
+however many runs set it. -/
+def slotCollapsed (key runs served note : String) (only : Option String) : Diag :=
+  let whereLost := match only with
+    | some a => s!"in {a}, "
+    | none => ""
   Diag.of .W0390
-    s!"nothing declares a '{key}' family; {runs} set in the body face, {note}"
+    s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
     (subject := some s!"slot:{key}")
     (help := s!"\\fonts\{ {key} = \"<family>\" } gives the slot its own face; \
 `leantex fonts` lists the installed families")

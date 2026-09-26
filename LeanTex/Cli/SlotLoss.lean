@@ -3,25 +3,33 @@ import LeanTex.Core.Ir
 import LeanTex.Cli.Args
 import LeanTex.Cli.DriverDiag
 
-/-! **A family slot that fell to the body face, named.**
+/-! **A family slot set in a face that is not of its kind, named.**
 
 The engine resolves three family slots — body, sans, mono. A slot the
 document declares no family for is filled by the body family
 (`resolveName` in the driver's assembly), so a `\texttt`, `\url` or
 verbatim run in a document with no `\fonts{ mono = ... }` sets in body
-prose. `Font.FontSet.slotCollapsed` is that fact, stated where `FontSet`
-can see it; this module is the decision built on it, and the diagnostic is
+prose. This module is the decision; the diagnostic is
 `DriverDiag.slotCollapsed` (W0390).
 
-Three things the decision needs beyond the index, each of them a condition
-here rather than an assumption:
+The decision reads the face, never the slot index. An index says which
+face; it does not say what that face is, and the two part company in a
+common setup: the slides class sets its text in the sans family and hands
+an undeclared mono slot to the body family, so the typewriter face is not
+the text face — the index reads "own face" — and it is a proportional
+serif all the same. What the loss is depends on the slot (`SlotKind`): a
+typewriter run wants fixed pitch, which every face declares; a sans run
+wants contrast with the running text, which no face field records, so the
+one fact the engine has is whether the face is the text's own.
+
+Beyond the face, the decision needs two facts, each a condition here
+rather than an assumption:
 
 * what the document *set* — a slot no run reaches is no loss (`slotsUsed`);
-* what the substitute *is* — a monospace body face sets `\texttt` in
-  fixed pitch, index collapse or not (`Font.FontSet.slotIsFixedPitch`);
-* whether the artifact carries a face at all — a page that declares
-  `css =` ships none, and "set in the body face" then describes a file
-  nobody receives (`carries`).
+* which artifacts carry a face at all — a page that declares `css =` ships
+  none, and "set in the body face" then describes a file nobody receives
+  (`carries`). Where a PDF carries the face and a page beside it does not,
+  the report says which artifact lost (`Carry.only`).
 
 It sits under `LeanTex/Cli/` for two reasons. The emission needs the
 document's `\fonts` declaration *and* the resolved index, and the driver's
@@ -40,11 +48,31 @@ namespace LeanTex.Cli.SlotLoss
 
 open LeanTex.Core
 
+/-- What a slot's runs ask of the face that sets them, which is what
+"lost" means for that slot. -/
+inductive SlotKind where
+  /-- Fixed pitch: the typewriter family's defining property, and one
+  every face declares (`post.isFixedPitch`). -/
+  | fixedPitch
+  /-- Contrast with the running text. No face field says "is a sans
+  design" — many faces declare no OS/2 family class — so the fact the
+  engine holds is whether the face is the text's own. -/
+  | contrast
+  deriving Repr, BEq, DecidableEq
+
+/-- Is the face serving `slot` not of this kind? Read off the face through
+the same `lookup` the setter uses: its own pitch flag, or its identity
+with the face the text is set in. -/
+def SlotKind.lost (k : SlotKind) (fs : Font.FontSet) (slot : Nat) : Bool :=
+  match k with
+  | .fixedPitch => !fs.slotIsFixedPitch slot
+  | .contrast => fs.slotCollapsed slot
+
 /-- A family slot, with the words a diagnostic about it needs: the `\fonts`
 key that would declare it, the runs the loss is about, what is honestly
-known about the substitute, and whether the slot's runs want a fixed-pitch
-face. Data rather than a case split at the message site, so the two slots
-cannot drift into saying the loss differently.
+known about the substitute, and what the slot's runs ask of a face. Data
+rather than a case split at the message site, so the two slots cannot drift
+into saying the loss differently.
 
 `runs` names the slot, not the constructs: which spelling reached a slot is
 not a fact this census keeps (`\url` and `\texttt` are one `.styled .mono`
@@ -55,32 +83,27 @@ structure SlotWord where
   key : String
   runs : String
   note : String
-  /-- Do this slot's runs ask for a fixed-pitch face? True for mono, where
-  a proportional substitute is the loss; false for sans, where the loss is
-  the missing contrast and no flag in the face records it. -/
-  wantsFixedPitch : Bool
+  kind : SlotKind
   deriving Repr, BEq
 
 /-- Slot 1: NFSS's sans family. The note claims no more than the engine
-knows: whatever the body face is, a sans run set in it does not contrast
-with the text around it. Whether that face is itself a sans design is a
-question the engine cannot answer for every face — many declare no OS/2
-family class — so it is not claimed. -/
+knows: a sans run set in the text's own face does not contrast with the
+text around it, whatever that face is. -/
 def sansWord : SlotWord :=
   { slot := 1, key := "sans", runs := "sans runs"
     note := "so they do not contrast with the text around them"
-    wantsFixedPitch := false }
+    kind := .contrast }
 
-/-- Slot 2: NFSS's typewriter family. The note is what the fixed-pitch
-condition guarantees, so the message cannot say it of a monospace body. -/
+/-- Slot 2: NFSS's typewriter family. The note is what the kind's test
+established, so the message cannot say it of a fixed-pitch face. -/
 def monoWord : SlotWord :=
   { slot := 2, key := "mono", runs := "typewriter runs"
     note := "which is not fixed-pitch"
-    wantsFixedPitch := true }
+    kind := .fixedPitch }
 
-/-- The slots a collapse can be reported for. Slot 0 is absent by
-construction: it is the face the others are compared *against*, so a report
-about it would be a vacuous truth rather than a loss (`words_mem`,
+/-- The slots a loss can be reported for. Slot 0 is absent by
+construction: it is the text face the others are compared *against*, so a
+report about it would be a vacuous truth rather than a loss (`words_mem`,
 `Font.FontSet.slotCollapsed_body`). -/
 def words : Array SlotWord := #[sansWord, monoWord]
 
@@ -98,21 +121,67 @@ def declared (spec : Ir.FontSpec) : Nat → Option String
   | 2 => spec.mono
   | _ => spec.body
 
-/-- **Does this run's artifact set carry a face at all?** The PDF embeds the
-resolved set; an HTML page does so only where `Doc.fontPolicy` is
-`embedded`, which any declared `css =` turns off — the page then styles code
-from its own stylesheet's monospace stack, and the markdown twin carries no
-face either way. A loss about which face a run set in is a loss only where a
-reader receives that face. -/
-def carries (emit : Array Emit) (policy : Ir.FontPolicy) : Bool :=
-  emit.contains .pdf || (emit.contains .html && policy == .embedded)
+/-- What served a lost slot, in words a reader can check against the
+artifact: the face the running text is set in, or — in a class whose text
+face is another family's, a deck's sans — the body family, which the
+driver's fallback order hands every undeclared slot. -/
+inductive Served where
+  | bodyFace
+  | bodyFamily
+  deriving Repr, BEq, DecidableEq
+
+def Served.words : Served → String
+  | .bodyFace => "the body face"
+  | .bodyFamily => "the body family"
+
+/-- Which of the two served the slot: the text's own face exactly when the
+slot resolves where the text does. -/
+def served (fs : Font.FontSet) (slot : Nat) : Served :=
+  if fs.slotCollapsed slot then .bodyFace else .bodyFamily
+
+/-- What this run's artifacts do with the resolved faces. `faced`: the
+emitted artifacts that set runs in the resolved set — the PDF always, an
+HTML page only where `Doc.fontPolicy` is `embedded`. `unfaced`: the emitted
+artifacts that set runs from a stylesheet of their own instead — an HTML
+page under a declared `css =`, which styles code from its own monospace
+stack. A markdown twin sets runs in no face at all and is in neither. -/
+structure Carry where
+  faced : Array Emit
+  unfaced : Array Emit
+  deriving Repr, BEq
+
+/-- **Which artifacts carry a face.** A loss about the face a run set in is
+a loss only where a reader receives that face. -/
+def carries (emit : Array Emit) (policy : Ir.FontPolicy) : Carry :=
+  { faced := emit.filter fun e => e == .pdf || (e == .html && policy == .embedded)
+    unfaced := emit.filter fun e => e == .html && policy != .embedded }
 
 /-- **An HTML-only page under a declared stylesheet carries nothing.**
 The gate's own condition, stated where the driver reads it: the
 configuration the site port builds in is the one that must stay silent. -/
 theorem carries_exact (policy : Ir.FontPolicy) :
-    carries #[.html, .md] policy = (policy == .embedded) := by
-  cases policy <;> simp [carries, Array.contains] <;> decide
+    (carries #[.html, .md] policy).faced.isEmpty = (policy != .embedded) := by
+  cases policy <;> rfl
+
+/-- **A PDF beside a page under its own stylesheet is the one artifact that
+lost.** The page styles its runs from its own stack, so the loss the report
+names is the PDF's alone. -/
+theorem carries_mixed_exact :
+    carries #[.pdf, .html] .none = { faced := #[.pdf], unfaced := #[.html] } := by
+  rfl
+
+/-- How a report names an artifact. -/
+def artifactWord : Emit → String
+  | .pdf => "the PDF"
+  | .html => "the HTML page"
+  | .md => "the markdown twin"
+
+/-- The artifacts a report names, when not every artifact the run emits
+sets its runs in the resolved faces; `none` when every one does, and the
+report then holds of the whole build. -/
+def Carry.only (c : Carry) : Option String :=
+  if c.unfaced.isEmpty then none
+  else some (" and ".intercalate (c.faced.toList.map artifactWord))
 
 /-- **Which family slots does this document's own content ask for?**
 `foldBlocks`/`foldInlines` leaves, so the descent — a `\texttt` inside a
@@ -137,53 +206,63 @@ def slotsUsed (doc : Ir.Doc) : Array Nat :=
   (Ir.furnitureInlines doc).foldl (fun acc r => Ir.foldInlines fi acc r)
     (Ir.foldBlocks fb fi #[] doc.body)
 
-/-- **The slots this document lost.** Five conditions, all necessary: the
+/-- **The slots this document lost.** Four conditions, all necessary: some
 artifact carries a face, the document asks for the slot, it declared no
-family for it, the resolved index puts it on the body face, and — where the
-slot's runs want fixed pitch — the face they got is not fixed-pitch. Drop
-any one and the diagnostic becomes noise: a page shipping no face has no
-face to lose, a document that never sets mono does not care, a document that
-declared `mono` got what it asked for even if that family *is* the body
-family, a slot resolving to its own face lost nothing, and a monospace body
-sets typewriter runs in monospace whatever the index says. -/
+family for it, and the face serving the slot is not of the slot's kind.
+Drop any one and the diagnostic becomes noise: a build shipping no face has
+no face to lose, a document that never sets mono does not care, a document
+that declared `mono` got what it asked for whatever that family is, and a
+fixed-pitch face sets typewriter runs in fixed pitch whichever slot index
+it came through. -/
 def losses (spec : Ir.FontSpec) (fs : Font.FontSet) (used : Array Nat)
-    (carries : Bool) : Array SlotWord :=
-  if !carries then #[] else
+    (c : Carry) : Array SlotWord :=
+  if c.faced.isEmpty then #[] else
   words.filter fun w =>
-    used.contains w.slot && (declared spec w.slot).isNone && fs.slotCollapsed w.slot
-      && !(w.wantsFixedPitch && fs.slotIsFixedPitch w.slot)
+    used.contains w.slot && (declared spec w.slot).isNone && w.kind.lost fs w.slot
 
 /-- **The report is exactly its conditions.** A diagnostic resting on
 `losses` names the condition it says it names, rather than a proxy that
 could drift — the shape `slotCollapsed_exact` has one layer down. -/
 theorem losses_exact (spec : Ir.FontSpec) (fs : Font.FontSet) (used : Array Nat)
-    (carries : Bool) (w : SlotWord) :
-    w ∈ losses spec fs used carries ↔
-      (carries = true ∧ w ∈ words ∧ used.contains w.slot = true
-        ∧ (declared spec w.slot).isNone = true ∧ fs.slotCollapsed w.slot = true
-        ∧ (w.wantsFixedPitch && fs.slotIsFixedPitch w.slot) = false) := by
-  cases carries with
-  | false => simp [losses]
-  | true =>
-    simp [losses, Array.mem_filter, and_assoc]
-    intro _ _ _ _
-    cases w.wantsFixedPitch <;> simp
+    (c : Carry) (w : SlotWord) :
+    w ∈ losses spec fs used c ↔
+      (c.faced.isEmpty = false ∧ w ∈ words ∧ used.contains w.slot = true
+        ∧ (declared spec w.slot).isNone = true ∧ w.kind.lost fs w.slot = true) := by
+  by_cases h : c.faced.isEmpty
+  · simp [losses, h]
+  · simp [losses, h, Array.mem_filter, and_assoc]
+
+/-- **The mono decision reads the face, never the index.** A typewriter
+slot is reported exactly when the artifact carries a face, the document
+sets the slot, declared no mono family, and the face serving slot 2 is not
+fixed-pitch: `lookup`'s answer enters only through that face's own flag, so
+no index arithmetic — which face the text is in, whether slot 2 shares it —
+can make the answer differ. -/
+theorem losses_mono_exact (spec : Ir.FontSpec) (fs : Font.FontSet) (used : Array Nat)
+    (c : Carry) :
+    monoWord ∈ losses spec fs used c ↔
+      (c.faced.isEmpty = false ∧ used.contains 2 = true ∧ spec.mono.isNone = true
+        ∧ fs.slotIsFixedPitch 2 = false) := by
+  rw [losses_exact]
+  simp [monoWord, words, declared, SlotKind.lost]
 
 /-- A reported slot is drawn from the slots the document set: the loss is
 what a reader sees, and a reader sees nothing where the document set
 nothing. -/
 theorem losses_mem (spec : Ir.FontSpec) (fs : Font.FontSet) (used : Array Nat)
-    (carries : Bool) (w : SlotWord) (h : w ∈ losses spec fs used carries) :
+    (c : Carry) (w : SlotWord) (h : w ∈ losses spec fs used c) :
     used.contains w.slot := by
-  exact ((losses_exact spec fs used carries w).mp h).2.2.1
+  exact ((losses_exact spec fs used c w).mp h).2.2.1
 
-/-- The diagnostics for one resolved environment: one per collapsed slot the
+/-- The diagnostics for one resolved environment: one per lost slot the
 document uses, each carrying `slot:<key>` as its subject so the site census
-counts it. Never one per `\texttt` run — the loss is the slot's, and it is
-the same loss wherever the slot is set. -/
+counts it, saying what served the slot and — in a build where not every
+artifact carries the face — which artifact lost. Never one per `\texttt`
+run: the loss is the slot's, and it is the same loss wherever the slot is
+set. -/
 def diags (spec : Ir.FontSpec) (fs : Font.FontSet) (doc : Ir.Doc)
-    (carries : Bool) : Array Diag :=
-  (losses spec fs (slotsUsed doc) carries).map fun w =>
-    DriverDiag.slotCollapsed w.key w.runs w.note
+    (c : Carry) : Array Diag :=
+  (losses spec fs (slotsUsed doc) c).map fun w =>
+    DriverDiag.slotCollapsed w.key w.runs (served fs w.slot).words w.note c.only
 
 end LeanTex.Cli.SlotLoss

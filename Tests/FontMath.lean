@@ -1,6 +1,8 @@
 import Tests.Support
+import Tests.Artifact
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+open LeanTex.Core.PdfRead (Obj)
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=
@@ -1609,26 +1611,337 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 
 
-/-- **A family slot that fell to the body face, and the report that names
-it.** The larger half of the mono-slot defect: a `\texttt`, `\url` or
-verbatim run in a document with no `\fonts{ mono = ... }` sets in body
-prose, and until now said nothing. Measured from the bytes on a synthetic
-document carrying all three constructs against the shipped corpus fonts —
-with `mono` declared the PDF embeds two faces, without it one — and both
-builds were silent.
+/-! ## The slot matrix: the driver end to end, judged on its artifacts
 
-Two groups, each falsifying one thing this could get wrong. The census:
+`slotLossChecks` pins the decision's conditions over sets built by hand.
+This block runs the path that ships — the `leantex` binary — over
+documents that differ only in the dimension a row names, and judges each
+report against what the artifact itself says about the face a run is set
+in: the PDF's content stream and descriptor, or the page's slot stack and
+the file its `@font-face` names. The expected answer is never the
+engine's rule restated: it is the artifact's face, and whether the
+document declared the slot. -/
+
+/-- Which artifacts one row builds, as its document declares them. -/
+inductive SlotArt where
+  | pdf
+  | htmlEmbedded
+  | htmlOwn
+  | pdfHtmlOwn
+  deriving Repr, BEq, Inhabited
+
+def SlotArt.decl : SlotArt → String
+  | .pdf => "formats = pdf"
+  | .htmlEmbedded => "formats = html"
+  | .htmlOwn => "formats = html, css = own"
+  | .pdfHtmlOwn => "formats = pdf, html, css = own"
+
+def SlotArt.name : SlotArt → String
+  | .pdf => "pdf"
+  | .htmlEmbedded => "html"
+  | .htmlOwn => "html/css=own"
+  | .pdfHtmlOwn => "pdf+html/css=own"
+
+/-- One row: a class, the `\fonts` keys it declares (none: the
+`LEANTEX_FONT` override instead of a declaration), the pitch of every
+family it names, the artifacts it builds, and the one slot its one
+construct sets. -/
+structure SlotRow where
+  cls : String
+  decl : List String
+  fixed : Bool
+  art : SlotArt
+  slot : String
+  deriving Repr, Inhabited
+
+/-- The family a row names for a key: the monospace face for every key of
+a fixed-pitch row, else a proportional design per key — Fira Sans for
+mono, a proportional family a document may declare for its typewriter
+slot, and has then chosen. -/
+def SlotRow.family (r : SlotRow) (key : String) : String :=
+  if r.fixed then "Source Code Pro"
+  else if key == "body" then "Source Serif Pro"
+  else if key == "sans" then "Open Sans"
+  else "Fira Sans"
+
+/-- The face `LEANTEX_FONT` names for a row that declares nothing. -/
+def SlotRow.overrideFile (r : SlotRow) : String :=
+  if r.fixed then "SourceCodePro-Regular.otf" else "SourceSerifPro-Regular.otf"
+
+def SlotRow.label (r : SlotRow) : String :=
+  let d := if r.decl.isEmpty then "LEANTEX_FONT" else ",".intercalate r.decl
+  s!"{r.cls} [{d}] {if r.fixed then "fixed" else "proportional"} {r.art.name} {r.slot}"
+
+/-- A row's document: one paragraph of plain words carrying the row's one
+construct, a `\texttt` or a `\textsf` run spelling `zqx` — a word nothing
+else on the page spells, so the face that sets it can be read back. -/
+def SlotRow.src (r : SlotRow) : String :=
+  let fonts := if r.decl.isEmpty then "" else
+    "\\fonts{ dir = \"fonts\", " ++
+      ", ".intercalate (r.decl.map fun k => s!"{k} = \"{r.family k}\"") ++ " }\n"
+  let run := if r.slot == "mono" then "\\texttt{zqx}" else "\\textsf{zqx}"
+  let para := "Plain words and " ++ run ++ " here."
+  let content := if r.cls == "beamer" then "\\begin{frame}\n" ++ para ++ "\n\\end{frame}"
+    else para
+  "\\documentclass{" ++ r.cls ++ "}\n" ++ fonts ++ "\\output{ " ++ r.art.decl ++ " }\n" ++
+    "\\begin{document}\n" ++ content ++ "\n\\end{document}\n"
+
+/-- The generated matrix: class × declared slots × pitch × artifacts × slot. -/
+def slotRows : Array SlotRow := Id.run do
+  let decls : List (List String) := [[], ["body"], ["sans"], ["mono"], ["body", "sans"],
+    ["body", "mono"], ["sans", "mono"], ["body", "sans", "mono"]]
+  let mut out : Array SlotRow := #[]
+  for cls in ["article", "beamer", "webpage"] do
+    for d in decls do
+      for fixed in [false, true] do
+        for art in [SlotArt.pdf, .htmlEmbedded, .htmlOwn, .pdfHtmlOwn] do
+          for slot in ["mono", "sans"] do
+            out := out.push { cls, decl := d, fixed, art, slot }
+  return out
+
+/-- What a written PDF sets in each face resource: the resource's name,
+the text its runs spell through that face's own `/ToUnicode`, and the
+`/Flags` its descriptor declares. The artifact tier's tokenizer and CMap
+reading, plus the one fact that tier does not keep: which face a run is
+set in. -/
+def pdfFaceRuns (pdf : ByteArray) : Except String (Array (String × String × Int)) := do
+  let es := (← PdfRead.objects pdf).val
+  let deref := PdfCensus.deref es
+  let mut texts : Std.HashMap String String := {}
+  let mut flags : Std.HashMap String Int := {}
+  for e in es do
+    unless e.val.get? "Type" == some (.name "Page") do continue
+    let resources := deref ((e.val.get? "Resources").getD .null)
+    let mut fonts : Std.HashMap String ArtFont := {}
+    if let .dict fs := deref ((resources.get? "Font").getD .null) then
+      for (nm, v) in fs do
+        let fo := deref v
+        fonts := fonts.insert nm (artFontOf es fo)
+        let cid := match deref ((fo.get? "DescendantFonts").getD .null) with
+          | .arr xs => deref (xs[0]?.getD .null)
+          | d => d
+        let fd := deref ((cid.get? "FontDescriptor").getD .null)
+        flags := flags.insert nm (((fd.get? "Flags").bind Obj.int?).getD 0)
+    let data ← match e.val.get? "Contents" with
+      | some (.ref n _) =>
+        match es.find? (·.num == n) with
+        | some c =>
+          match c.decoded with
+          | .ok (some d) => pure d
+          | _ => throw "a page content stream does not decode"
+        | none => throw "a page's /Contents names no object"
+      | _ => throw "a page has no /Contents reference"
+    let mut cur : Option String := none
+    let mut stack : Array CTok := #[]
+    for tok in scanContent data do
+      match tok with
+      | .op "Tf" =>
+        cur := stack.findSome? fun
+          | .name n => some n
+          | _ => none
+        stack := #[]
+      | .op o =>
+        if o == "TJ" || o == "Tj" then
+          if let some nm := cur then
+            let toUni := (fonts[nm]?.map (·.toUni)).getD {}
+            for it in stack do
+              if let .hex d := it then
+                texts := texts.insert nm ((texts[nm]?.getD "") ++
+                  String.join ((artCodes d).toList.map fun g => toUni[g]?.getD artUnmapped))
+        stack := #[]
+      | other => stack := stack.push other
+  return texts.toArray.map fun (nm, s) => (nm, s, flags[nm]?.getD 0)
+
+/-- The face resource whose runs spell `needle`, with its `/Flags`. -/
+def faceSetting (runs : Array (String × String × Int)) (needle : String) :
+    Option (String × Int) :=
+  (runs.find? fun (_, s, _) => hasStr s needle).map fun (nm, _, fl) => (nm, fl)
+
+/-- The file a page sets a slot in: walk the slot's `--font-<slot>` stack
+— the last declaration, which is the one the cascade keeps — to the first
+family that has an `@font-face` rule at the regular weight and upright
+style, as the browser's per-family walk does (CSS Fonts 4 §5.2: a
+synthetic family with no rule names no face, and the walk moves on), and
+return that rule's `src` file. `none`: no family of the stack has a rule,
+so the page ships no face for the slot. -/
+def htmlSlotFile (html slot : String) : Option String := do
+  let parts := html.splitOn ("--font-" ++ slot ++ ": ")
+  if parts.length < 2 then none
+  let decl ← parts.getLast?
+  let stack ← (decl.splitOn ";").head?
+  let unquote (f : String) : Option String :=
+    let cs := f.trimAscii.toString.toList
+    if cs.head? == some '"' && cs.getLast? == some '"' then
+      some (String.ofList (cs.drop 1).dropLast)
+    else none
+  let fams := (stack.splitOn ",").filterMap unquote
+  fams.findSome? fun fam =>
+    let rule := "@font-face { font-family: \"" ++ fam ++
+      "\"; font-weight: 400; font-style: normal; src: url(\""
+    ((html.splitOn rule)[1]?).bind fun rest => (rest.splitOn "\"").head?
+
+/-- One row's outcome: the driver's exit code and log, the W0390 lines it
+printed, and what the artifact says — whether any artifact carrying a
+face sets the slot's run in a face that is not of the slot's kind, and
+whether that face is the running text's own. -/
+structure SlotOutcome where
+  exit : UInt32
+  log : String
+  reports : Array String
+  lost : Bool
+  textFace : Bool
+  oracle : String
+
+/-- Build one row with the driver and read its artifacts back. The driver
+runs in an environment of its own: a private cache, an empty home, and a
+`PATH` holding nothing, so no TeX tree, user font directory or tool on
+this host reaches the scan — every family a row names is in the copied
+corpus directory beside the document. -/
+def slotRunRow (bin : String) (dir : System.FilePath) (cache : String) (i : Nat)
+    (r : SlotRow) : IO SlotOutcome := do
+  let tex := dir / s!"row{i}.tex"
+  IO.FS.writeFile tex r.src
+  let out := dir / s!"out{i}"
+  let env : Array (String × Option String) := #[("XDG_CACHE_HOME", some cache),
+    ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+    ("LEANTEX_FONT_PATH", none),
+    ("LEANTEX_FONT", if r.decl.isEmpty then some (dir / "fonts" / r.overrideFile).toString
+      else none)]
+  let p ← IO.Process.output
+    { cmd := bin, args := #[tex.toString, "-o", out.toString ++ "/", "--porcelain"], env := env }
+  let reports := (p.stdout.splitOn "\n").toArray.filter fun l =>
+    hasStr l "\"event\":\"diagnostic\"" && hasStr l "\"code\":\"W0390\""
+  let mut lost := false
+  let mut textFace := false
+  let mut oracle := ""
+  if r.art == .pdf || r.art == .pdfHtmlOwn then
+    let pdf ← IO.FS.readBinFile (out / s!"row{i}.pdf")
+    match pdfFaceRuns pdf with
+    | .error e => oracle := s!"pdf unreadable: {e}"
+    | .ok runs =>
+      match faceSetting runs "zqx", faceSetting runs "Plain" with
+      | some (runFace, runFlags), some (textRes, _) =>
+        let same := runFace == textRes
+        textFace := same
+        lost := if r.slot == "mono" then runFlags % 2 == 0 else same
+        oracle := s!"pdf: run in {runFace} (flags {runFlags}), text in {textRes}"
+      | _, _ => oracle := s!"pdf: the run or the text is not in the file: {runs.map (·.2.1)}"
+  if r.art == .htmlEmbedded then
+    let html ← IO.FS.readFile (out / s!"row{i}.html")
+    match htmlSlotFile html r.slot, htmlSlotFile html "body" with
+    | some runFile, some textFile =>
+      let same := runFile == textFile
+      textFace := same
+      let pitch ← match Font.classify (← IO.FS.readBinFile (out / runFile)) with
+        | .ok c => pure c.isFixedPitch
+        | .error _ => pure false
+      lost := if r.slot == "mono" then !pitch else same
+      oracle := s!"html: run in {runFile} (fixed {pitch}), text in {textFile}"
+    | _, _ => oracle := "html: the page ships no face for the slot or the text"
+  return { exit := p.exitCode, log := p.stdout ++ p.stderr, reports, lost, textFace, oracle }
+
+/-- **W0390 fires exactly when an artifact sets a slot's runs in a face
+not of the slot's kind, and the document declared no family for the
+slot.** For mono the kind is fixed pitch, read from the artifact: the
+FixedPitch bit of the descriptor the PDF sets the run under, or the
+shipped file's own `post` table for the face the page's stack reaches.
+For sans the kind is contrast with the running text — no face field says
+"is a sans design" — so the loss is the run set in the text's own face.
+An artifact carrying no face (a page under a declared `css =`) sets no
+run in a resolved face and loses nothing. -/
+def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"slot matrix: leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode != 0 then return
+  let bin := ".lake/build/bin/leantex"
+  let dir ← IO.FS.createTempDir
+  IO.FS.createDirAll (dir / "fonts")
+  IO.FS.createDirAll (dir / "home")
+  for e in ← (System.FilePath.mk testFonts).readDir do
+    if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
+      IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
+  let cache := (dir / "cache").toString
+  -- One run first, so every parallel run after it reads a warm probe cache
+  -- instead of each probing the host's font tree for itself.
+  let rows := slotRows
+  let warm ← slotRunRow bin dir cache rows.size (rows[0]?.getD default)
+  t s!"slot matrix: the warm-up run builds: {warm.log}" (warm.exit == 0)
+  let mut outcomes : Array (Option (Except IO.Error SlotOutcome)) := Array.replicate rows.size none
+  -- Sixteen workers: measured on a 192-core host, the matrix took 3.4 s at
+  -- 16, 4.2 s at 32 and 5.7 s at 64 — the spawns contend, so wider is
+  -- slower — and 5.0 s at 4.
+  let width := 16
+  -- Workers over a static partition — worker `j` builds rows `j`,
+  -- `j + width`, … — so no state is shared and a slow row delays only its
+  -- own worker, not a whole batch.
+  let mut tasks := #[]
+  for j in [0:width] do
+    tasks := tasks.push (← IO.asTask (prio := .dedicated) do
+      let mut mine : Array (Nat × Except IO.Error SlotOutcome) := #[]
+      for n in [0:rows.size / width + 1] do
+        let k := j + n * width
+        if rows.size ≤ k then break
+        mine := mine.push (k, ← (slotRunRow bin dir cache k rows[k]!).toBaseIO)
+      return mine)
+  for tk in tasks do
+    match tk.get with
+    | .ok mine => for (k, o) in mine do outcomes := outcomes.set! k (some o)
+    | .error _ => pure ()
+  let mut expectedReports := 0
+  let mut expectedSilent := 0
+  for k in [0:rows.size] do
+    let r := rows[k]!
+    match (outcomes[k]?).bind id with
+    | some (.ok o) =>
+      t s!"slot matrix {r.label}: the build succeeds: {o.log}" (o.exit == 0)
+      let declared := r.decl.contains r.slot
+      let want := !declared && o.lost
+      if want then expectedReports := expectedReports + 1
+      else expectedSilent := expectedSilent + 1
+      t s!"slot matrix {r.label}: {if want then "reported" else "silent"} ({o.oracle}); \
+got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
+      -- What the report says is the artifact's answer too: which face served
+      -- the run, and, where the page beside the PDF carries none, the PDF.
+      if want then
+        let word := if r.slot == "mono" then SlotLoss.monoWord else SlotLoss.sansWord
+        let served := if o.textFace then SlotLoss.Served.bodyFace else .bodyFamily
+        let only := if r.art == .pdfHtmlOwn then some (SlotLoss.artifactWord .pdf) else none
+        let expect := Render.porcelainDiag
+          (DriverDiag.slotCollapsed word.key word.runs served.words word.note only)
+        t s!"slot matrix {r.label}: the report says {served.words}{if only.isSome then " in the PDF" else ""}: \
+{o.reports}" (o.reports.map (·.trimAscii.toString) == #[expect])
+    | some (.error e) => t s!"slot matrix {r.label}: the row runs: {e}" false
+    | none => t s!"slot matrix {r.label}: the row ran" false
+  -- Non-vacuity: the matrix reaches both answers, and the deck setup the
+  -- defect was found in is one of the rows whose artifact says "lost".
+  t s!"slot matrix: some rows are losses ({expectedReports})" (0 < expectedReports)
+  t s!"slot matrix: some rows are not ({expectedSilent})" (0 < expectedSilent)
+  IO.FS.removeDirAll dir
+
+/-- **A family slot set in a face not of its kind, and the report that
+names it.** The mono-slot defect: a `\texttt`, `\url` or verbatim run in a
+document with no `\fonts{ mono = ... }` sets in body prose, and said
+nothing. Measured from the bytes on a synthetic document carrying all three
+constructs against the shipped corpus fonts — with `mono` declared the PDF
+embeds two faces, without it one — and both builds were silent.
+
+Three groups, each falsifying one thing this could get wrong. The census:
 a document that never asks for the slot is never told about it, and the
 descent is the fold's, so a `\texttt` inside a footnote or a running head
-counts. The report: all three conditions are load-bearing, and the
-body slot is the reference rather than a subject of its own.
+counts. The decision, over sets built here: its four conditions (a face
+carried, the slot used, no family declared, the face not of the slot's
+kind) are each load-bearing, the face answers where the index says the
+opposite in both directions — a fixed-pitch body the index calls
+collapsed, and a deck's serif body family the index calls the slot's own —
+the body slot is the reference rather than a subject, and the message says
+what served the slot and, in a build where only the PDF carries the face,
+that the PDF lost. The matrix (`slotMatrixChecks`): the same invariant
+through the driver binary, judged on each artifact's own face.
 
-A third group covers the `\urlstyle` satisfaction table: which values the
-resolved environment honours, which is not the same answer in every
-document — the reason the elaboration cannot decide it alone.
-
-Hermetic and synthetic throughout: the faces are the two the corpus ships,
-every index is built here, and no decision reaches the host. Invented
+Hermetic and synthetic throughout: the faces are ones the corpus ships,
+every index here is built here, and the driver runs read the shipped faces
+from a copy of the corpus directory under a private cache. Invented
 content, `example.org` links. -/
 def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -1699,58 +2012,100 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let monoSpec : Ir.FontSpec := { mono := some "Source Code Pro" }
   let usesMono := doc "A \\texttt{fixed pitch} run."
   let usesNeither := doc "Plain body prose here."
+  -- What the build carries: a PDF always carries its faces; an HTML-only
+  -- page under a declared stylesheet carries none.
+  let pdf := SlotLoss.carries #[.pdf] .embedded
+  let bare := SlotLoss.carries #[.html, .md] .none
   -- The report, and each of its conditions.
   t "slot loss: an undeclared mono slot on the body face is reported"
-    ((SlotLoss.diags {} collapsed usesMono true).size == 1)
+    ((SlotLoss.diags {} collapsed usesMono pdf).size == 1)
   t "slot loss: the report is the mono slot"
-    ((SlotLoss.losses {} collapsed #[2] true).map (·.key) == #["mono"])
+    ((SlotLoss.losses {} collapsed #[2] pdf).map (·.key) == #["mono"])
   t "slot loss: a declared mono family is not reported"
-    ((SlotLoss.diags monoSpec declared usesMono true).isEmpty)
+    ((SlotLoss.diags monoSpec declared usesMono pdf).isEmpty)
   t "slot loss: a declared family resolving onto the body face is still the document's own choice"
-    ((SlotLoss.diags monoSpec collapsed usesMono true).isEmpty)
+    ((SlotLoss.diags monoSpec collapsed usesMono pdf).isEmpty)
   t "slot loss: a slot the document never asks for is not reported"
-    ((SlotLoss.diags {} collapsed usesNeither true).isEmpty)
-  t "slot loss: a slot with its own face is not reported"
-    ((SlotLoss.losses {} declared #[2] true).isEmpty)
-  -- **The face, not the index.** A monospace body sets typewriter runs in
-  -- fixed pitch whichever slot they came through, so there is nothing to
-  -- report — the index says otherwise and the face is what the reader has.
+    ((SlotLoss.diags {} collapsed usesNeither pdf).isEmpty)
+  t "slot loss: a slot on its own fixed-pitch face is not reported"
+    ((SlotLoss.losses {} declared #[2] pdf).isEmpty)
+  -- **The face, not the index — in both directions.** A monospace body
+  -- sets typewriter runs in fixed pitch whichever slot they came through,
+  -- so the index's "collapsed" is no loss. And a deck sets its text in the
+  -- sans family while an undeclared mono slot falls to the body family —
+  -- a face of its own, by the index, and a proportional serif all the
+  -- same: that deck was silent, and the index was why.
   let monoBody : Font.FontSet := { fonts := #[code], index := slots 0 0 0 }
   t "slot loss: a fixed-pitch body face loses no mono, though the index collapsed"
-    ((SlotLoss.diags {} monoBody usesMono true).isEmpty)
+    ((SlotLoss.diags {} monoBody usesMono pdf).isEmpty)
   t "slot loss: the mono slot's face answers for its pitch"
     (monoBody.slotIsFixedPitch 2 && !collapsed.slotIsFixedPitch 2)
+  let some sans ← load "OpenSans-Regular.ttf"
+    | failures ref "slot loss: OpenSans-Regular.ttf missing"; return
+  let deck : Font.FontSet := { fonts := #[sans, body], index := slots 0 0 1 }
+  let deckOnCode : Font.FontSet := { fonts := #[sans, code], index := slots 0 0 1 }
+  let deckSpec : Ir.FontSpec := { body := some "Source Serif Pro", sans := some "Open Sans" }
+  t "slot loss: a deck's mono slot on the proportional body family is reported, though the index is its own"
+    (!deck.slotCollapsed 2 && (SlotLoss.losses deckSpec deck #[2] pdf).map (·.key) == #["mono"])
+  t "slot loss: a deck's mono slot on a fixed-pitch body family is not"
+    ((SlotLoss.losses deckSpec deckOnCode #[2] pdf).isEmpty)
   -- The sans slot claims no pitch: no flag in a face records "is a sans
   -- design", so the loss reported is the missing contrast, and a
   -- fixed-pitch body does not exempt it.
   t "slot loss: the sans slot is reported on a fixed-pitch body too"
-    ((SlotLoss.losses {} monoBody #[1] true).map (·.key) == #["sans"])
+    ((SlotLoss.losses {} monoBody #[1] pdf).map (·.key) == #["sans"])
+  -- **What served the slot, said so.** The body face where the slot sits on
+  -- the text's own face; the body family where the text is set in another.
+  t "slot loss: a slot on the text's own face was served by the body face"
+    (SlotLoss.served collapsed 2 == .bodyFace)
+  t "slot loss: a deck's mono slot was served by the body family"
+    (SlotLoss.served deck 2 == .bodyFamily)
+  t "slot loss: the deck's report says the body family served the slot"
+    (((SlotLoss.diags deckSpec deck usesMono pdf).map (·.message)) ==
+      #["nothing declares a 'mono' family; typewriter runs set in the body family, \
+which is not fixed-pitch"])
   -- **The carrying gate is load-bearing.** One document, one index, two
   -- values of the gate's own condition: an artifact carrying a face
   -- reports the lost slot, one carrying none reports nothing. An HTML-only
   -- page under a declared `css =` is the second, and it is what the site
   -- port builds.
   t "slot loss: an artifact carrying no face reports nothing"
-    ((SlotLoss.diags {} collapsed usesMono false).isEmpty)
+    ((SlotLoss.diags {} collapsed usesMono bare).isEmpty)
   t "slot loss: a PDF carries a face whatever the font policy"
-    (SlotLoss.carries #[.pdf] .none && SlotLoss.carries #[.pdf] .embedded)
+    ((SlotLoss.carries #[.pdf] .none).faced == #[.pdf] &&
+      (SlotLoss.carries #[.pdf] .embedded).faced == #[.pdf])
   t "slot loss: an HTML page carries a face only when it embeds one"
-    (SlotLoss.carries #[.html] .embedded && !SlotLoss.carries #[.html] .none)
-  t "slot loss: a markdown twin carries no face"
-    (!SlotLoss.carries #[.md] .embedded)
+    ((SlotLoss.carries #[.html] .embedded).faced == #[.html] &&
+      (SlotLoss.carries #[.html] .none).faced.isEmpty)
+  t "slot loss: a markdown twin carries no face and sets no run in one"
+    (SlotLoss.carries #[.md] .embedded == { faced := #[], unfaced := #[] })
+  -- **A mixed build names the artifact that lost.** A PDF beside a page
+  -- under its own stylesheet: the page sets code from its own monospace
+  -- stack, so the loss is the PDF's alone and the report says so; where
+  -- every emitted artifact carries the face, the report holds of the build
+  -- and names none.
+  let mixed := SlotLoss.carries #[.pdf, .html] .none
+  t "slot loss: a PDF beside an unfaced page is the one artifact named"
+    (mixed.only == some "the PDF")
+  t "slot loss: a build whose every artifact carries the face names none"
+    ((SlotLoss.carries #[.pdf, .html, .md] .embedded).only == none && pdf.only == none)
+  t "slot loss: the mixed build's report says the PDF lost"
+    (((SlotLoss.diags {} collapsed usesMono mixed).map (·.message)) ==
+      #["nothing declares a 'mono' family; in the PDF, typewriter runs set in the body face, \
+which is not fixed-pitch"])
   -- The body slot is the reference, never a subject: no report names it,
   -- whatever is asked of it.
   t "slot loss: the body slot is never reported"
-    ((SlotLoss.losses {} collapsed #[0, 1, 2] true).all (·.slot != 0))
+    ((SlotLoss.losses {} collapsed #[0, 1, 2] pdf).all (·.slot != 0))
   -- One loss per slot, not one per run: five mono sites and one sans site
   -- are two diagnostics.
   let manyRuns := doc ("A \\texttt{one} run, a \\texttt{two} run, a \\texttt{three} run, " ++
     "\\url{https://example.org/a}, and \\textsf{sans}.\n" ++
     "\\begin{verbatim}\nliteral\n\\end{verbatim}")
-  t "slot loss: one report per collapsed slot, not one per run"
-    ((SlotLoss.diags {} collapsed manyRuns true).size == 2)
+  t "slot loss: one report per lost slot, not one per run"
+    ((SlotLoss.diags {} collapsed manyRuns pdf).size == 2)
   -- The diagnostic itself: the code, and the subject the census counts on.
-  let monoDiag := (SlotLoss.diags {} collapsed usesMono true)[0]?
+  let monoDiag := (SlotLoss.diags {} collapsed usesMono pdf)[0]?
   t "slot loss: the report is its own code, not the variant axis (W0390)"
     ((monoDiag.map (·.code)) == some "W0390")
   t "slot loss: the report carries its slot as subject, so it is counted"
@@ -1771,6 +2126,7 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- rather than about the document.
   let provisional : Font.FontSet := { fonts := #[body], index := #[((0, 400, false), 0)] }
   t "slot loss: a slot-0-only index would report every other slot, which only the settled set avoids"
-    ((SlotLoss.losses {} provisional #[1, 2] true).size == 2)
+    ((SlotLoss.losses {} provisional #[1, 2] pdf).size == 2)
   t "slot loss: the same document on a settled index reports only what it lost"
-    ((SlotLoss.losses monoSpec declared #[1, 2] true).size == 1)
+    ((SlotLoss.losses monoSpec declared #[1, 2] pdf).size == 1)
+  slotMatrixChecks ref
