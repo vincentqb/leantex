@@ -16160,9 +16160,8 @@ check that fails without it.
   `ctrl:nothing:selectlanguage:<name>`) and no marker, so the preamble
   reader's silence drops only what a note already names as nothing. The
   same construct in the body, in a `\begin{document}` hook or inside a
-  definition keeps its translation. A preamble colour
-  opens the body, with the same `Doc` an `\AtBeginDocument` hook gives
-  (`PDecl.bodyStart`).
+  definition keeps its translation. A preamble colour opens the body, with
+  the same `Doc` an `\AtBeginDocument` hook gives (`PDecl.bodyStart`).
 - **The rows and docstrings say what they hold** (items 8–10, 12–13).
   "mixed shapes read the same in either order" passes on its merge base and
   loses the label. "the only one naming it" now tests exclusivity. The two
@@ -16217,3 +16216,110 @@ outside the phantom list. The comment at `Tests/Layout.lean:1777` still
 names `warnUnknownCmd_pushes_one`; `cites` does not read line comments. The
 `&`-from-a-macro defect goes to the table elaborator. The declared-accounting
 change owes the two `visibleRunAccounting` rows.
+
+
+
+### 2026-09-26 — round 3c on the accounting follow-ups: a preamble language reaches no quote, a preamble series or language is a discard, and a span's second line is a registry
+
+The review of `agent/fuelab` blocked one sentence of the entry above: "a
+preamble … language reaches no text", the premise of Elab's preamble silence.
+Compat's `\selectlanguage` arm wrote `mainLang` wherever it stood, and
+`\enquote` reads its quotes through it. The branch was rebased from ae2ddc6
+onto 95f3579 (c4e197f → f2497c5, each file's own diff unchanged; gates green
+there), and four commits follow. The sentences of the entry above that were
+false (the preamble language, the span message, the swap count) are
+corrected in place, since that entry is not on main. A row labelled "(fails
+on base)" here fails on a 95f3579 scratch copy, whose Compat, Elab and Diag
+are e4d22a4's; every new unlabelled row passes there.
+
+- **Reproduced before the fix.** On f2497c5 the reviewer's `markerdoc.lean`
+  finds the `Doc` with a preamble switch unequal to the one without it once
+  the body holds an `\enquote`, in both mirror cases. The shipped binary
+  sets «bravo» for main English with a preamble `\selectlanguage{french}`,
+  and “bravo” for the mirror. lualatex (TeX Live 2026, LuaHBTeX 1.24.0,
+  csquotes with no options) sets the main language's quotes in all four
+  placements: the preamble proper (both mirrors), a `\begin{document}`
+  hook, and the body after a switch. In the last two `\languagename` is the
+  switched language at the paragraph.
+- **Fix (a), db3afe9.** The arm moves `mainLang` only inside the body
+  (`inDoc`). The hook door keeps its reading, which is lualatex's: the body
+  takes the hook's language, and the quotes stay the main language's. On
+  db3afe9 both mirror cases set lualatex's quotes in the PDF (`pdftotext`)
+  and in the HTML, and `markerdoc.lean` finds all four `Doc`s equal.
+  `compatMarkerChecks` compares both mirror cases over an `\enquote` body
+  (fails on f2497c5 and on 95f3579) and holds the hook's two readings.
+- **A series or language in the preamble proper is a discard** (review
+  follow-up 5, 04383dc). Compat reads it to nothing itself, with a
+  `ctrl:nothing:fontseries:<code>` or `ctrl:nothing:selectlanguage:<name>`
+  note and no marker. `inDoc` alone cannot say where that holds: a
+  definition body and a `\begin{document}` hook's replay are outside the
+  body too, yet reach text where they are read. Compat therefore gains
+  `inDef` (the walk's `inBody`, as state) and `seam`. Without the two, the
+  predicate fails 8 rows, FontMath's existing definition row among them.
+- **The span line says what holds at every span** (follow-up 1, 901dd70):
+  "its text fills one cell in its column's alignment, and any later cells
+  move left". The unread count now names the alignment too. The diagnostics
+  golden moved by exactly those two lines, and the line's claims are held
+  over the IR at a leading, a trailing and a full-row span.
+- **One span, two lines, registered** (follow-up 2, 901dd70).
+  `spanAccounting` lists the four shapes that print both the span's W0337
+  and the table's padded-row W0337, each with the change that owes the
+  merge, and it fails in both directions. Dropping a row and adding one for
+  the one-column probe each failed `lake test` once.
+- **The swap count** (follow-up 4). The committed `compose-fuzz` script
+  finds four non-commuting swaps on e4d22a4's engine, not two; the entry
+  above now says so.
+
+**Found, and routed.**
+
+- `scripts/precommit.lean:1920`: the loop meant to resolve every premise
+  marker tests `containsSub (stripLineComment l) premiseMark`, which is the
+  text *before* the comment. So no comment marker is ever read. A marker
+  beside Elab's silence naming `compatMarkerChecksGone` passed `precommit
+  --tree` (exit 0; broken once, then restored). The markers in the tree
+  name real checks, but nothing verifies that until the loop reads the
+  comment half. The hook owns the fix.
+- A command the preamble defines and then uses in the preamble reads
+  "unknown command … in the preamble; skipped" (W0301, Elab's `scanDecls`
+  at Elab.lean:10330), where the word "unknown" is false.
+
+**Open, each with its site.**
+
+- A body `\selectlanguage` still moves `\enquote`'s quotes (Compat.lean:2146,
+  the `inDoc` write), where csquotes' default keeps the main language's.
+  Following csquotes' `autostyle` would need its options read, and
+  `\usepackage{csquotes}` is discarded whole.
+- Follow-up 3: a `\newcommand` body holding `\multicolumn` warns even when
+  the command is never used, and the count is of definitions, not uses. The
+  arm (Compat.lean:2725) is walked at the definition, and `inDef` now names
+  that case. Compat's definition-time W0104 has the same shape.
+- Follow-up 6: a preamble `\color` colours the body but not the page number,
+  which LaTeX colours; `bodyStart` (Elab.lean:10171) reaches the flow only.
+  Under `beamer`, lualatex refuses a preamble `\color` ("Missing {
+  inserted"), while the slides class colours the frame text. So "measured
+  against lualatex" above covers `article` only.
+- Follow-up 7: `\AtBeginDocument{\urlstyle{same}}` leaves an `\author` URL
+  mono. The pre-fold family (`urlFamily0`, Elab.lean:11457) reads the
+  preamble proper, and the hook replays on the body side.
+- Follow-up 8: `\multicolumn{2}{c}x`, whose text is undelimited, still reads
+  "unknown command '\multicolumn'", because the arm (Compat.lean:2725)
+  takes only a group.
+- Follow-up 9: `cites` (scripts/cites.lean) still has three loose points.
+  A second citation in one parked docstring passes, by design, and the
+  selftest says so. Scripts that are not compiled share the anchor "a
+  docstring". The `backtickSpans` blind spot (:82) has no failing selftest
+  row.
+- Follow-up 10: `warnUnknownCmd_pushes_one` still stands in the comment at
+  Tests/Layout.lean:1777 and in the selftest spelling case at
+  scripts/cites.lean:497.
+- Measured, not in scope: babel-french sets « bravo » with a space inside
+  each guillemet, and the French locale's pair carries none.
+
+**Whole branch, measured.** The user's two cases, run through the e4d22a4
+binary (M0) and the 901dd70 binary, are identical. With `\urlstyle{same}`,
+only the body face is embedded (SourceSerifPro-Regular; DejaVuSans without
+`\fonts`), no warning prints, and `--werror` exits 0. With `\textls[16]` at
+two sites, one W0301 "(2 sites)" and one note print, and `--werror` exits 1.
+The private reference corpus deck gives 36 pages on f2497c5 and on 901dd70,
+with an identical per-code census, identical PDF bytes and identical
+diagnostic streams.
