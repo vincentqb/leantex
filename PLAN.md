@@ -17468,8 +17468,8 @@ that hold it back, and ranks them by `sole` and `share`.
     written as a new file in the directory that was checked and renamed
     onto its name. A third review found the refusal resolved the directory
     and never the name: a link at `<out>` or `<out>.neither` wrote into a
-    checkout anyway. Reproduced at `e7dec5a` through both writers
-    (`confine.sh D`): a symlink overwrote the committed table with a private
+    checkout anyway. Reproduced at `e7dec5a` through both writers, run as
+    shipped against a fresh clone: a symlink overwrote the committed table with a private
     list's composition, a symlink to nothing and a symlinked `.neither` each
     created a checkout file of absolute private paths, and a hard link
     overwrote the manifest with them. A rename replaces a link at the name
@@ -17480,25 +17480,59 @@ that hold it back, and ranks them by `sole` and `share`.
     private corpus's composition — which public classes it loads, whose
     commands it reaches for — can reach the tree.
   - *Only a public definer is named.* A class or package is published only
-    when the load argument has no path separator and the file it resolves to
-    lies inside the root, and it is named by that file's stem, never by the
-    argument. A path load, a file found through TEXINPUTS, TEXMFHOME or the
-    working directory, and every name the definer scan cannot attribute fold
-    into aggregate rows whose owners — `document`, `nonpublic`,
-    `unattributed` — are constructors that carry no payload, so there is
-    nothing a document chose that could be written through them.
-  - The root is asked of kpsewhich with every variable that could redirect
-    it unset, so a shell that points TEXMFDIST at a private tree does not
-    make that tree public.
+    when the load argument has no path separator, the file it resolves to
+    lies inside the root, and that file's stem is the argument itself; it is
+    named by that stem. A path load, a file found through TEXINPUTS,
+    TEXMFHOME or the working directory, a symlink to a file of another name,
+    and every name the definer scan cannot attribute fold into aggregate
+    rows whose owners — `document`, `nonpublic`, `unattributed` — are
+    constructors that carry no payload, so there is nothing a document chose
+    that could be written through them.
+  - *The root is asked in an emptied environment, and the corpus is
+    pinned.* An earlier draft said the root was asked "with every variable
+    that could redirect it unset". It was asked with sixteen named variables
+    unset, and kpathsea reads `<VAR>_<progname>` before `<VAR>`: with
+    `TEXMFDIST_kpsewhich` or `TEXMFSYSDIST_kpsewhich` pointing at a planted
+    tree, the tree `--rank` wrote a planted macro name and a planted style
+    name into the committed table, with the manifest unedited (reproduced
+    at `e7dec5a`, run as shipped from a fresh clone). Every kpsewhich query the tree's table
+    depends on — the root, and each class and package the public corpus
+    loads — now runs with only `PATH` set, so no shell setting reaches it,
+    and each manifest line is `<sha256>  <path>`, checked against the bytes
+    the ranking reads (a SHA-256 computed in the script, so no tool on
+    `PATH` answers for it). The brief for this fix said the pin also covers
+    a kpsewhich earlier on `PATH` with a `texmf.cnf` beside it, which moves
+    the root with every variable gone. It covers a substituted document and
+    nothing else: a moved root holding the manifest's own bytes, whose
+    `article.cls` is a symlink to a verbatim copy under a planted name,
+    published that name as `class:<name>` for `description` and `verse` —
+    at `e7dec5a`, and again with the pin in place and the stem rule mutated
+    away. The stem rule above closes it: every published string is now a
+    fixed word or text a pinned public document wrote. The one line the
+    table takes from `PATH` is its `# tex:` provenance, `lualatex
+    --version`'s first line.
 
   `blockers --selftest` plants private-looking names behind each lookup — a
   style by absolute path, a class by path, a style found through TEXINPUTS,
   a document-local macro, a name nothing defines — runs the writer that
-  ships, and reads back every file it wrote. Each of the seven guards (the
-  public-owner test, the root check, the path-separator rule, the unset
-  redirects, the checkout refusal, content keys, and the never-ran verdict
-  below) was broken once by mutating its line, and each break failed that
-  selftest.
+  ships, and reads back every file it wrote. It plants a link at each
+  output's name into a scratch checkout. It runs the shipped tree `--rank`
+  in child processes whose environment really holds `TEXMFDIST_kpsewhich`,
+  `TEXMFSYSDIST_kpsewhich`, `TEXMFDIST` or `TEXMFCNF` — one each, beside a
+  TEXINPUTS that finds the planted style — against a scratch manifest
+  naming a document only the planted tree holds; an honest child must rank
+  a pinned public document, and write the same table under a TEXINPUTS
+  that shadows the class it loads. The two program-suffixed settings fail
+  that check on `e7dec5a`; the two plain ones pass there too. It checks the
+  pin against substituted bytes in a scratch root, and SHA-256 against its
+  standard vectors. Each of the original seven
+  guards (the public-owner test, the root check, the path-separator rule,
+  the unset redirects, the checkout refusal, content keys, and the never-ran
+  verdict below) was broken once by mutating its line, and each break
+  failed that selftest; so were the rename, the emptied root query, the
+  emptied resolver, the pin comparison and the stem rule, each through a
+  scratch checkout whose `scripts/blockers.lean` was the mutant, so the
+  child processes ran it too.
 - **The corpus was counted by path.** The 50 buildable public documents
   were 45 distinct ones — `sample2e` and `small2e` three times each, `lppl`
   twice — and the constructs those share led the ranking on that alone.

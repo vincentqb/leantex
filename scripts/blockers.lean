@@ -32,18 +32,23 @@ around, and `--selftest` breaks both through the path that ships.
    it chose itself.
 2. *Only a public definer is named.* A construct is written by name only
    when a TeX primitive, `latex.ltx`, or a class or package file inside the
-   distribution defines it; a class or package is named by the stem of the
-   file the distribution holds (`PublicFile`), never by the document's load
-   argument. A load by path, a file found through TEXINPUTS, TEXMFHOME or the
+   distribution defines it; a class or package is published only when the
+   file the distribution holds has the very stem the document loaded it by
+   (`PublicFile`), so a symlink to a file of another name publishes nothing.
+   A load by path, a file found through TEXINPUTS, TEXMFHOME or the
    working directory, and every name the definer scan cannot attribute fold
    into aggregate rows whose owners — `document`, `nonpublic`,
    `unattributed` — carry no payload at all: there is nothing a document
    chose that could be written through them.
 
-The distribution's root is asked of kpsewhich with every variable that could
-redirect it unset (`kpseRedirects`), so a shell that points TEXMFDIST at a
-private tree does not make the tree public; when kpsewhich cannot answer,
-nothing is public and everything folds.
+Everything the tree's table depends on is asked of kpsewhich in an
+environment emptied but for `PATH` (`emptiedEnv`) — the root, and every
+class and package the public corpus loads — so no shell setting,
+`TEXMFDIST_kpsewhich` included, makes a tree public or moves an
+attribution; when kpsewhich cannot answer, nothing is public and
+everything folds. Each manifest entry carries the sha256 of its bytes, so a
+kpsewhich that a `texmf.cnf` beside it points elsewhere can substitute no
+document, and by the stem rule it can substitute no name.
 
 *The denominator is what lualatex builds, counted once.* A document lualatex
 cannot compile with `-halt-on-error` says nothing about this engine, so
@@ -85,8 +90,8 @@ open LeanTex.Core
 
 def blockersPath : String := "tests/coverage/blockers.tsv"
 
-/-- The declared public corpus: paths relative to the TeX distribution's
-root, one per line. -/
+/-- The declared public corpus: one `<sha256>  <path>` line per document, the
+path relative to the TeX distribution's root. -/
 def manifestPath : String := "tests/coverage/public-corpus.txt"
 
 /-- The unknown-construct codes: the engine met a name nothing answers. -/
@@ -105,27 +110,29 @@ def realPath? (p : String) : IO (Option String) :=
 
 -- ## The public tree
 
-/-- The kpathsea variables that can move the distribution's root or a lookup.
-Unset for the root query, so the answer is the installation's and not the
-calling shell's. -/
-def kpseRedirects : Array String :=
-  #["TEXMFDIST", "TEXMFSYSDIST", "TEXMFMAIN", "TEXMF", "TEXMFCNF", "TEXMFHOME",
-    "TEXMFLOCAL", "TEXMFDOTDIR", "TEXMFVAR", "TEXMFCONFIG", "TEXMFSYSVAR",
-    "TEXMFSYSCONFIG", "TEXMFAUXTREES", "TEXMFROOT", "TEXINPUTS", "TEXMFOUTPUT"]
+/-- The environment a kpsewhich query runs in whenever its answer decides
+what is public or what the committed table says: empty but for `PATH`.
+kpathsea reads more variables than a list here could name — a
+`TEXMFDIST_kpsewhich` before `TEXMFDIST`, for every variable and every
+program name — so the shell's settings are not unset one by one; none of
+them is passed at all. -/
+def emptiedEnv : IO (Array (String × Option String)) := do
+  return #[("PATH", ← IO.getEnv "PATH")]
 
 /-- The distribution's roots, resolved and each ending in `/`: TEXMFDIST, and
-TEXMFSYSDIST where a host sets one. Empty when kpsewhich cannot answer — and
-then nothing is public, so every construct folds and nothing can be ranked
-into the tree: the rule fails closed. `inherited` stands in for the calling
-shell's settings in the selftest; the redirects are unset after it, so no
-setting of theirs survives into the query. -/
-def publicRootsUnder (inherited : Array (String × Option String)) : IO (Array String) := do
+TEXMFSYSDIST where a host sets one, asked in `emptiedEnv`. Empty when
+kpsewhich cannot answer — and then nothing is public, so every construct
+folds and nothing can be ranked into the tree: the rule fails closed. A
+kpsewhich earlier on `PATH` with a `texmf.cnf` beside it still moves the
+answer; what stands between that and the tree is the manifest's pins and
+`PublicFile.of?`'s name rule, not this query. -/
+def publicRoots : IO (Array String) := do
+  let env ← emptiedEnv
   let mut roots : Array String := #[]
   for v in #["TEXMFDIST", "TEXMFSYSDIST"] do
     let raw ← orElse (do
         let o ← IO.Process.output
-          { cmd := "kpsewhich", args := #["-var-value", v],
-            env := inherited ++ kpseRedirects.map fun k => (k, (none : Option String)) }
+          { cmd := "kpsewhich", args := #["-var-value", v], env, inheritEnv := false }
         pure (if o.exitCode == 0 then o.stdout.trimAscii.toString else "")) ""
     if raw.isEmpty then continue
     if let some p ← realPath? raw then
@@ -133,25 +140,27 @@ def publicRootsUnder (inherited : Array (String × Option String)) : IO (Array S
       unless roots.contains p do roots := roots.push p
   return roots
 
-def publicRoots : IO (Array String) := publicRootsUnder #[]
-
 def underRoots (roots : Array String) (resolved : String) : Bool :=
   roots.any (resolved.startsWith ·)
 
 /-- A file the public tree holds, named by its own stem. `PublicFile.of?` is
 the one constructor, and it runs only after the resolved path is checked
-against the roots: this is the only payload a published owner can carry. -/
+against the roots and its stem against the load argument that reached it:
+this is the only payload a published owner can carry. The stem rule is what
+keeps a file's name out of the table unless a document wrote it first — a
+class a document loads as `article` that resolves, through a symlink, to a
+file of another name is not public, whatever tree it sits in. -/
 structure PublicFile where
   private mk ::
   stem : String
 deriving BEq, Inhabited
 
-def PublicFile.of? (roots : Array String) (resolved : String) : Option PublicFile :=
+def PublicFile.of? (roots : Array String) (resolved load : String) : Option PublicFile :=
   if !underRoots roots resolved then none
   else
     let base := ((resolved.splitOn "/").getLast?).getD ""
     let stem := String.intercalate "." (base.splitOn ".").dropLast
-    if stem.isEmpty then none else some ⟨stem⟩
+    if stem.isEmpty || stem != load then none else some ⟨stem⟩
 
 /-- A load argument that may be looked up by name at all. A load by path is a
 document's own file by construction, whatever it resolves to. -/
@@ -420,16 +429,20 @@ def defines (src name : String) : Bool :=
 /-- A file resolved for the scan: its real path and its text. -/
 abbrev Resolver := String → IO (Option (String × String))
 
-/-- Resolve through kpsewhich, follow symlinks, read, once per name. The
-calling environment is inherited on purpose — it is what lualatex saw when
-the document was screened — because wherever it points, `PublicFile.of?`
-decides whether the answer is the distribution's. `env` exists for the
-selftest, which stands in for a shell that sets TEXINPUTS. -/
+/-- Resolve through kpsewhich, follow symlinks, read, once per name. A list's
+documents are resolved in the calling environment (`inherit`) — it is what
+lualatex saw when they were screened — because wherever it points,
+`PublicFile.of?` decides whether the answer is the distribution's. The
+public corpus is resolved in `emptiedEnv`, so the committed table is a
+function of the manifest and the distribution, not of the shell that ran
+it. `env` also lets the selftest stand in for a shell that sets
+TEXINPUTS. -/
 def kpseResolver (cache : IO.Ref (Array (String × Option (String × String))))
-    (env : Array (String × Option String)) : Resolver := fun file => do
+    (inherit : Bool) (env : Array (String × Option String)) : Resolver := fun file => do
   if let some (_, r) := (← cache.get).find? (·.1 == file) then return r
   let r ← orElse (do
-      let o ← IO.Process.output { cmd := "kpsewhich", args := #[file], env }
+      let o ← IO.Process.output
+        { cmd := "kpsewhich", args := #[file], env, inheritEnv := inherit }
       let p := o.stdout.trimAscii.toString
       if o.exitCode != 0 || p.isEmpty then return none
       match ← realPath? p with
@@ -439,9 +452,10 @@ def kpseResolver (cache : IO.Ref (Array (String × Option (String × String))))
   return r
 
 /-- Where a construct comes from, by the declared precedence. A class or
-package is public only when the load argument is a bare name *and* the file
-it resolved to lies inside the distribution; either failing, the definer is
-`nonpublic`, and nothing about it is kept. -/
+package is public only when the load argument is a bare name, the file it
+resolved to lies inside the distribution, and that file's stem *is* the
+argument; any failing, the definer is `nonpublic`, and nothing about it is
+kept. -/
 def ownerOf (roots : Array String) (resolve : Resolver) (docText name : String) :
     IO Owner := do
   if Compat.texPrimitives.contains name then return .primitive
@@ -450,7 +464,7 @@ def ownerOf (roots : Array String) (resolve : Resolver) (docText name : String) 
   for l in loads do
     if let some (path, src) ← resolve (l ++ ".cls") then
       if defines src name then
-        match (loadName? l).bind fun _ => PublicFile.of? roots path with
+        match (loadName? l).bind (PublicFile.of? roots path) with
         | some f => return .cls f
         | none => return .nonpublic
   if let some (path, src) ← resolve "latex.ltx" then
@@ -459,7 +473,7 @@ def ownerOf (roots : Array String) (resolve : Resolver) (docText name : String) 
   for l in loads do
     if let some (path, src) ← resolve (l ++ ".sty") then
       if defines src name then
-        match (loadName? l).bind fun _ => PublicFile.of? roots path with
+        match (loadName? l).bind (PublicFile.of? roots path) with
         | some f => return .pkg f
         | none => return .nonpublic
   return .unattributed
@@ -550,9 +564,9 @@ structure Ranked where
   erroredClean : Nat
   corpusKey : String
 
-/-- Rank documents. Each is read once and elaborated once, and one keyed by
-bytes already seen is a duplicate, counted as such and not again. -/
-def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array String) :
+/-- Rank documents, each given as its path and the text read from it. One
+keyed by bytes already seen is a duplicate, counted as such and not again. -/
+def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array (String × String)) :
     IO Ranked := do
   let mut acc : Array Rank := #[]
   let mut keys : Array String := #[]
@@ -560,8 +574,7 @@ def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array String) :
   let mut unreadable := 0
   let mut blocked := 0
   let mut erroredClean := 0
-  for path in docs do
-    let text ← orElse (IO.FS.readFile path) ""
+  for (path, text) in docs do
     if text.isEmpty then
       unreadable := unreadable + 1
       continue
@@ -622,32 +635,137 @@ def texLine : IO String := do
       return (← IO.Process.output { cmd := "lualatex", args := #["--version"] }).stdout) ""
   return s!"# tex: {((v.splitOn "\n").headD "").trimAscii.toString}\n"
 
-/-- The manifest's entries, each resolved inside a root. An entry that is
-absolute, or that leaves every root once its symlinks are followed, is
-refused — so the manifest can only ever name the distribution's own
-files. -/
-def resolveManifest (roots : Array String) (entries : Array String) :
-    IO (Except String (Array String)) := do
-  let mut out : Array String := #[]
+-- ## The manifest, pinned
+
+def rotr (x n : UInt32) : UInt32 := (x >>> n) ||| (x <<< (32 - n))
+
+/-- SHA-256's round constants (FIPS 180-4 §4.2.2). -/
+def sha256K : Array UInt32 := #[
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]
+
+/-- SHA-256 (FIPS 180-4), as 64 lowercase hex digits. Computed here over the
+bytes the ranking reads, so what a pin is checked against is what is
+ranked, and no tool on `PATH` answers for it. -/
+def sha256Hex (msg : ByteArray) : String := Id.run do
+  let mut data := msg.push 0x80
+  while data.size % 64 != 56 do
+    data := data.push 0
+  let bits : UInt64 := msg.size.toUInt64 * 8
+  for i in [0:8] do
+    data := data.push (bits >>> ((7 - i).toUInt64 * 8)).toUInt8
+  let mut h : Array UInt32 := #[0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+  let mut w : Array UInt32 := Array.replicate 64 0
+  for blk in [0:data.size / 64] do
+    for t in [0:16] do
+      let o := blk * 64 + 4 * t
+      w := w.set! t ((data[o]!.toUInt32 <<< 24) ||| (data[o + 1]!.toUInt32 <<< 16)
+        ||| (data[o + 2]!.toUInt32 <<< 8) ||| data[o + 3]!.toUInt32)
+    for t in [16:64] do
+      let x := w[t - 15]!
+      let y := w[t - 2]!
+      let s0 := rotr x 7 ^^^ rotr x 18 ^^^ (x >>> 3)
+      let s1 := rotr y 17 ^^^ rotr y 19 ^^^ (y >>> 10)
+      w := w.set! t (w[t - 16]! + s0 + w[t - 7]! + s1)
+    let mut a := h[0]!
+    let mut b := h[1]!
+    let mut c := h[2]!
+    let mut d := h[3]!
+    let mut e := h[4]!
+    let mut f := h[5]!
+    let mut g := h[6]!
+    let mut k := h[7]!
+    for t in [0:64] do
+      let t1 := k + (rotr e 6 ^^^ rotr e 11 ^^^ rotr e 25) + ((e &&& f) ^^^ (~~~e &&& g))
+        + sha256K[t]! + w[t]!
+      let t2 := (rotr a 2 ^^^ rotr a 13 ^^^ rotr a 22) + ((a &&& b) ^^^ (a &&& c) ^^^ (b &&& c))
+      k := g
+      g := f
+      f := e
+      e := d + t1
+      d := c
+      c := b
+      b := a
+      a := t1 + t2
+    h := #[h[0]! + a, h[1]! + b, h[2]! + c, h[3]! + d, h[4]! + e, h[5]! + f, h[6]! + g,
+      h[7]! + k]
+  let digits := "0123456789abcdef".toList.toArray
+  let mut out := ""
+  for x in h do
+    for i in [0:8] do
+      out := out.push digits[((x >>> ((7 - i).toUInt32 * 4)) &&& 0xf).toNat]!
+  return out
+
+/-- One declared public document: a path relative to the distribution's root
+and the sha256 of the bytes it held when it was declared. The line is
+`sha256sum`'s own format, `<64 hex>  <path>`, so a pin is made, and can be
+checked, by that one standard command run from the root. -/
+structure Entry where
+  pin : String
+  path : String
+deriving BEq
+
+def pinnedEntry (pin path : String) : String := pin ++ "  " ++ path
+
+/-- The manifest's entries. A line that is not a pinned entry is a fault, not
+a skip: an unpinned document is what a substituted one looks like. -/
+def parseManifest (text : String) : Except String (Array Entry) := Id.run do
+  let mut out : Array Entry := #[]
+  let mut n := 0
+  for l in text.splitOn "\n" do
+    n := n + 1
+    if l.trimAscii.isEmpty || l.startsWith "#" then continue
+    let pin := (l.take 64).toString
+    let rest := (l.drop 64).toString
+    if pin.length == 64 && pin.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f'))
+        && rest.startsWith "  " && rest.length > 2 then
+      out := out.push { pin, path := (rest.drop 2).toString }
+    else
+      return .error s!"{manifestPath}:{n}: not `<sha256>  <path>`; every entry carries its pin"
+  return .ok out
+
+/-- The manifest's entries, each resolved inside a root and read once. An
+entry that is absolute, that leaves every root once its symlinks are
+followed, or whose bytes are not the ones its pin names, is refused — so the
+manifest can only name the distribution's own files, and only the bytes
+they held when they were declared, whatever tree a kpsewhich moved by its
+surroundings calls the distribution. -/
+def resolveManifest (roots : Array String) (entries : Array Entry) :
+    IO (Except String (Array (String × String))) := do
+  let mut out : Array (String × String) := #[]
   for e in entries do
-    if e.startsWith "/" then return .error s!"{manifestPath}: '{e}' is absolute"
+    if e.path.startsWith "/" then return .error s!"{manifestPath}: '{e.path}' is absolute"
     let mut hit : Option String := none
     for r in roots do
       if hit.isNone then
-        if let some p ← realPath? (r ++ e) then
+        if let some p ← realPath? (r ++ e.path) then
           if underRoots roots p then hit := some p
-    match hit with
-    | some p => out := out.push p
-    | none => return .error s!"{manifestPath}: '{e}' does not resolve inside the TeX \
+    let some p := hit
+      | return .error s!"{manifestPath}: '{e.path}' does not resolve inside the TeX \
 distribution"
+    let bytes ← orElse (IO.FS.readBinFile p) ByteArray.empty
+    if sha256Hex bytes != e.pin then
+      return .error s!"{manifestPath}: '{e.path}' does not hold the bytes its pin names"
+    let some text := String.fromUTF8? bytes
+      | return .error s!"{manifestPath}: '{e.path}' is not UTF-8"
+    out := out.push (p, text)
   return .ok out
 
+/-- A list's entries: one path per line, `#` lines and blank lines skipped. -/
 def manifestEntries (text : String) : Array String :=
   ((text.splitOn "\n").filterMap fun l =>
     let l := l.trimAscii.toString
     if l.isEmpty || l.startsWith "#" then none else some l).toArray
 
-/-- Rank the declared public corpus into the tree. -/
+/-- Rank the declared public corpus into the tree. Everything kpsewhich is
+asked here runs in `emptiedEnv`. -/
 def rankTree : IO UInt32 := do
   let roots ← publicRoots
   if roots.isEmpty then
@@ -655,14 +773,17 @@ def rankTree : IO UInt32 := do
 and nothing may be ranked into the tree")
   unless (← System.FilePath.pathExists manifestPath) do
     return (← die 3 s!"blockers: {manifestPath} is missing")
-  let entries := manifestEntries (← IO.FS.readFile manifestPath)
+  let entries ← match parseManifest (← IO.FS.readFile manifestPath) with
+    | .ok es => pure es
+    | .error e => return (← die 3 ("blockers: " ++ e))
   match ← resolveManifest roots entries with
   | .error e => die 3 ("blockers: " ++ e)
   | .ok docs =>
     let cache ← IO.mkRef #[]
-    let r ← rankDocs roots (kpseResolver cache #[]) docs
+    let r ← rankDocs roots (kpseResolver cache false (← emptiedEnv)) docs
     let corpus := s!"# corpus-manifest: {manifestPath}, {entries.size} entr(ies), each \
-resolved inside `kpsewhich -var-value TEXMFDIST`\n"
+resolved inside `kpsewhich -var-value TEXMFDIST` asked with only PATH set, and each \
+holding the bytes its sha256 pin names\n"
     IO.FS.createDirAll "tests/coverage"
     IO.FS.writeFile blockersPath (renderTable r corpus (← texLine))
     IO.println s!"blockers: wrote {blockersPath} — {r.rows.size} row(s) over {r.distinct} \
@@ -681,7 +802,9 @@ def rankList (resolve : Resolver) (listPath out : String) : IO UInt32 := do
   unless (← System.FilePath.pathExists listPath) do
     return (← die 3 s!"blockers: {listPath} is missing — run --screen first")
   let roots ← publicRoots
-  let docs := manifestEntries (← IO.FS.readFile listPath)
+  let mut docs : Array (String × String) := #[]
+  for p in manifestEntries (← IO.FS.readFile listPath) do
+    docs := docs.push (p, ← orElse (IO.FS.readFile p) "")
   let r ← rankDocs roots resolve docs
   let corpus := "# corpus-manifest: none — a list outside the declared public corpus; \
 this table does not belong in the tree\n"
@@ -749,6 +872,104 @@ def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve
   expect "the checkout holds exactly the files it held"
     (files.qsort (· < ·) == #[checkout ++ "/lakefile.toml", manifest, table].qsort (· < ·))
 
+/-- The pin, against a scratch root that stands in for a tree a kpsewhich
+was moved to — the real distribution is never written: the declared bytes
+resolve, other bytes at the same path are refused, so is a symlink out of
+the root whatever it holds, and an entry with no pin is a fault. -/
+def pinnedManifest (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
+  let root := dir ++ "/proot"
+  let doc := root ++ "/tex/latex/zzpin/doc.tex"
+  IO.FS.createDirAll (root ++ "/tex/latex/zzpin")
+  IO.FS.writeFile doc "declared bytes\n"
+  IO.FS.writeFile (dir ++ "/zzpin-outside.tex") "declared bytes\n"
+  let _ ← IO.Process.output
+    { cmd := "ln", args := #["-s", dir ++ "/zzpin-outside.tex", root ++ "/tex/latex/zzpin/out.tex"] }
+  let roots := #[((← realPath? root).getD root) ++ "/"]
+  let pin := sha256Hex "declared bytes\n".toUTF8
+  let resolvesOne (r : Except String (Array (String × String))) : Bool :=
+    match r with
+    | .ok xs => xs.size == 1
+    | .error _ => false
+  expect "a document holding its pinned bytes resolves"
+    (resolvesOne (← resolveManifest roots #[{ pin, path := "tex/latex/zzpin/doc.tex" }]))
+  IO.FS.writeFile doc "substituted bytes\n"
+  expect "a substituted document is refused"
+    (!resolvesOne (← resolveManifest roots #[{ pin, path := "tex/latex/zzpin/doc.tex" }]))
+  expect "a symlink out of the root is refused, whatever it holds"
+    (!resolvesOne (← resolveManifest roots #[{ pin, path := "tex/latex/zzpin/out.tex" }]))
+  expect "an entry with no pin is a fault"
+    (parseManifest "tex/latex/base/sample2e.tex\n" matches .error _)
+  expect "an entry pinned with one space is a fault"
+    (parseManifest (pin ++ " tex/a.tex\n") matches .error _)
+  expect "a pinned entry parses, beside a comment"
+    (match parseManifest ("# a note\n" ++ pinnedEntry pin "tex/a.tex" ++ "\n") with
+      | .ok es => es == #[{ pin, path := "tex/a.tex" }]
+      | .error _ => false)
+
+/-- A shell that points kpathsea at a planted tree, through the command that
+ships: `--rank` in a child process whose environment really holds the
+setting, run in a scratch directory whose manifest names a document only
+the planted tree holds. Its pin is right, so the pin passes and the root
+alone decides. Each setting alone must leave the planted tree non-public —
+the child refuses and writes nothing — and an honest child ranking a real
+public document must succeed, or the refusals witness nothing; the same
+child under a TEXINPUTS that shadows its class must write the same table. -/
+def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
+  let hroot := dir ++ "/hroot"
+  let pdir := hroot ++ "/tex/latex/zzplanthroot"
+  IO.FS.createDirAll pdir
+  let doc := "\\documentclass{article}\n\\usepackage{zzplanthsty}\n\\begin{document}\n\
+\\zzplanthmacro\\ here.\n\\end{document}\n"
+  IO.FS.writeFile (pdir ++ "/zzplanthdoc.tex") doc
+  IO.FS.writeFile (pdir ++ "/zzplanthsty.sty")
+    "\\ProvidesPackage{zzplanthsty}\n\\newcommand{\\zzplanthmacro}{s}\n"
+  let cnf := dir ++ "/hcnf"
+  IO.FS.createDirAll cnf
+  IO.FS.writeFile (cnf ++ "/texmf.cnf") s!"TEXMFDIST = {hroot}\n"
+  let cwd := dir ++ "/hcwd"
+  IO.FS.createDirAll (cwd ++ "/tests/coverage")
+  let table := cwd ++ "/tests/coverage/blockers.tsv"
+  let manifest := cwd ++ "/tests/coverage/public-corpus.txt"
+  let lean := (← IO.appPath).toString
+  let script := ((← IO.currentDir) / "scripts" / "blockers.lean").toString
+  let child (env : Array (String × Option String)) : IO UInt32 := do
+    let o ← IO.Process.output
+      { cmd := lean, args := #["--run", script, "--rank"], cwd := some cwd, env }
+    return o.exitCode
+  let realDoc := "tex/latex/base/sample2e.tex"
+  match (← publicRoots)[0]? with
+  | none => expect "the host names a TeX distribution for the hostile-shell check" false
+  | some root =>
+    let bytes ← orElse (IO.FS.readBinFile (root ++ realDoc)) ByteArray.empty
+    IO.FS.writeFile manifest (pinnedEntry (sha256Hex bytes) realDoc ++ "\n")
+    let honest ← child #[]
+    let honestTable ← orElse (IO.FS.readFile table) ""
+    expect "an honest child ranks a pinned public document" (honest == 0 && !honestTable.isEmpty)
+    let _ ← orElse (IO.FS.removeFile table) ()
+    -- A shell whose TEXINPUTS shadows the class that document loads, with
+    -- the class's own bytes: the public corpus is resolved in the emptied
+    -- environment, so the table is the honest one byte for byte.
+    let shadow := dir ++ "/hshadow"
+    IO.FS.createDirAll shadow
+    IO.FS.writeFile (shadow ++ "/article.cls")
+      (← orElse (IO.FS.readFile (root ++ "tex/latex/base/article.cls")) "")
+    let shadowed ← child #[("TEXINPUTS", some (shadow ++ "//:"))]
+    expect "a shell's TEXINPUTS moves no attribution in the tree's table"
+      (shadowed == 0 && (← orElse (IO.FS.readFile table) "") == honestTable)
+    let _ ← orElse (IO.FS.removeFile table) ()
+  IO.FS.writeFile manifest
+    (pinnedEntry (sha256Hex doc.toUTF8) "tex/latex/zzplanthroot/zzplanthdoc.tex" ++ "\n")
+  for (var, value) in #[("TEXMFDIST_kpsewhich", hroot), ("TEXMFSYSDIST_kpsewhich", hroot),
+      ("TEXMFDIST", hroot), ("TEXMFCNF", cnf)] do
+    let code ← child #[(var, some value), ("TEXINPUTS", some (hroot ++ "/tex//:"))]
+    let mut leaked := false
+    for f in ← System.FilePath.walkDir cwd do
+      if (← f.isDir) || f.toString == manifest then continue
+      if containsSub (← orElse (IO.FS.readFile f) "") "zzplanth" then leaked := true
+    expect s!"a shell's {var} does not make a planted tree public"
+      (code != 0 && !(← System.FilePath.pathExists table) && !leaked)
+    let _ ← orElse (IO.FS.removeFile table) ()
+
 /-- The confinement rule end to end, through the writer that ships: planted,
 private-looking names behind every lookup a document can use — a style by
 absolute path, a class by path, a style a shell's TEXINPUTS finds, a
@@ -790,7 +1011,7 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
     list := list ++ dir ++ "/own-again.tex\n"
     IO.FS.writeFile (dir ++ "/list.txt") list
     let cache ← IO.mkRef #[]
-    let resolve := kpseResolver cache #[("TEXINPUTS", some (styles ++ "//:"))]
+    let resolve := kpseResolver cache true #[("TEXINPUTS", some (styles ++ "//:"))]
     let out := report ++ "/blockers.tsv"
     let code ← rankList resolve (dir ++ "/list.txt") out
     expect "the planted corpus ranks to an output outside the checkout" (code == 0)
@@ -820,13 +1041,8 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
     expect "an output inside a checkout is refused" (refused != 0)
     expect "and nothing was written there" (!(← System.FilePath.pathExists inside))
     linkedOutputs expect dir resolve (dir ++ "/list.txt") fakeCheckout
-    -- A shell that points the distribution at the private tree does not make
-    -- the private tree public.
-    let honest ← publicRoots
-    let hostile ← publicRootsUnder #[("TEXMFDIST", some styles), ("TEXMFSYSDIST", some styles),
-      ("TEXMFCNF", some styles)]
-    expect "a shell's TEXMFDIST does not move the public root"
-      (hostile == honest && !hostile.any (containsSub · dir))
+    pinnedManifest expect dir
+    hostileShell expect dir
   finally
     let _ ← IO.Process.output { cmd := "rm", args := #["-r", dir] }
 
@@ -855,12 +1071,24 @@ def selftest : IO UInt32 := do
   -- The public tree, and the one way into it.
   let roots := #["/r/dist/"]
   expect "a file inside the root is public"
-    ((PublicFile.of? roots "/r/dist/tex/latex/a/amsmath.sty").map (·.stem) == some "amsmath")
+    ((PublicFile.of? roots "/r/dist/tex/latex/a/amsmath.sty" "amsmath").map (·.stem)
+      == some "amsmath")
   expect "a sibling directory sharing the prefix is not"
-    ((PublicFile.of? roots "/r/dist-evil/tex/zz.sty").isNone)
+    ((PublicFile.of? roots "/r/dist-evil/tex/zz.sty" "zz").isNone)
   expect "the root's own name without its slash is not"
-    ((PublicFile.of? roots "/r/dist").isNone)
-  expect "nothing is public under no root" ((PublicFile.of? #[] "/r/dist/a.sty").isNone)
+    ((PublicFile.of? roots "/r/dist" "dist").isNone)
+  expect "nothing is public under no root" ((PublicFile.of? #[] "/r/dist/a.sty" "a").isNone)
+  expect "a file whose stem is not the name that loaded it is not public"
+    ((PublicFile.of? roots "/r/dist/tex/latex/base/zzrenamed.cls" "article").isNone)
+  expect "SHA-256 of nothing"
+    (sha256Hex ByteArray.empty
+      == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+  expect "SHA-256 of abc"
+    (sha256Hex "abc".toUTF8
+      == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+  expect "SHA-256 of a message that pads into a second block"
+    (sha256Hex "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".toUTF8
+      == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
   expect "a bare load name may be looked up" (loadName? "amsmath" == some "amsmath")
   expect "a load by path may not"
     ((loadName? "/abs/zz").isNone && (loadName? "sub/zz").isNone && (loadName? "").isNone)
@@ -878,6 +1106,8 @@ def selftest : IO UInt32 := do
     else if file == "zzoutside.sty" then some ("/home/x/zzoutside.sty", "\\newcommand{\\zzq}{}")
     else if file == "/r/dist/tex/latex/zzinside.sty" then
       some ("/r/dist/tex/latex/zzinside.sty", "\\newcommand{\\zzq}{}")
+    else if file == "zzalias.cls" then
+      some ("/r/dist/tex/latex/zzrenamedcls.cls", "\\newcommand{\\zzq}{}")
     else none
   let o1 ← ownerOf roots fake "\\usepackage{zzinside}" "zzq"
   expect "a package inside the distribution is named by its file"
@@ -887,6 +1117,8 @@ def selftest : IO UInt32 := do
   let o3 ← ownerOf roots fake "\\usepackage{/r/dist/tex/latex/zzinside}" "zzq"
   expect "a load by path is nonpublic even when the file is the distribution's"
     (o3 == .nonpublic)
+  let o4 ← ownerOf roots fake "\\documentclass{zzalias}" "zzq"
+  expect "a class that resolves to a file of another name is nonpublic" (o4 == .nonpublic)
   let mixed : Array Rank :=
     #[{ kind := "ctrl", construct := "hspace", owner := .kernel, sole := 3,
         share := 3000, docs := 3 },
@@ -948,12 +1180,10 @@ def selftest : IO UInt32 := do
   let realRoots ← publicRoots
   expect "the host names a TeX distribution" (!realRoots.isEmpty)
   if !realRoots.isEmpty then
-    let esc ← resolveManifest realRoots #["../../../../../../../../../../tmp"]
+    let esc ← resolveManifest realRoots #[{ pin := "", path := "../../../../../../../../../../tmp" }]
     expect "a manifest entry that leaves the distribution is refused" (esc matches .error _)
-    let abs ← resolveManifest realRoots #["/tmp"]
+    let abs ← resolveManifest realRoots #[{ pin := "", path := "/tmp" }]
     expect "an absolute manifest entry is refused" (abs matches .error _)
-    let ok ← resolveManifest realRoots #["tex/latex/base/latex.ltx"]
-    expect "an entry inside the distribution resolves" (ok matches .ok _)
   plantedCorpus expect
   let bad ← ref.get
   if bad.isEmpty then
@@ -969,7 +1199,7 @@ def main (args : List String) : IO UInt32 := do
   | ["--rank"] => rankTree
   | ["--rank", list, out] => do
     let cache ← IO.mkRef #[]
-    rankList (kpseResolver cache #[]) list out
+    rankList (kpseResolver cache true #[]) list out
   | ["--selftest"] => selftest
   | _ => die 3 "usage: blockers [--rank | --rank <list> <out> | --screen <dir> <out> | \
 --selftest]"

@@ -1,58 +1,66 @@
-# The declared public corpus the blocker ranking reads: documents the TeX
-# distribution itself ships, as paths relative to its root
-# (`kpsewhich -var-value TEXMFDIST`). `blockers --rank` resolves each entry
-# inside that root, following symlinks, and refuses one that leaves it, so
-# this file can only ever name the distribution's own files. One document
-# per entry: an entry is a content-distinct document, and the ranking keys
-# documents by content, so a second path to the same bytes counts once.
+# The declared public corpus the blocker ranking reads: single-file documents
+# the TeX distribution itself ships, as paths relative to its root. A line is
+# `<sha256>  <path>`, the format `sha256sum` writes, so an entry is made, and
+# checked, by one command run from the root:
+#   cd "$(env -i PATH="$PATH" kpsewhich -var-value TEXMFDIST)" && sha256sum <path>
+# `blockers --rank` asks kpsewhich for that root with only PATH set, resolves
+# each entry inside it following symlinks, and refuses one that leaves it or
+# whose bytes are not the ones its pin names, so this file can only name the
+# distribution's own files as they were when declared, whatever redirects
+# kpsewhich. Single-file: the screen builds a copy of each document alone, so
+# a document that inputs a sibling file reads as one that does not build and
+# is not here. One document per entry: an entry is a content-distinct
+# document, and the ranking keys documents by content, so a second path to
+# the same bytes counts once.
 # Provenance: the 45 content-distinct documents that built with lualatex
 # -halt-on-error -interaction=nonstopmode (TeX Live 2026) out of a screen of
 # 111 candidates taken from the distribution on 2026-09-25; the candidate
 # selection was not recorded. 31 of the 45 are one package's pictures
 # (tex/latex/ghsystem/pictures), so the corpus is narrow and the ranking
-# reads as a smoke test of the method, not as a survey of LaTeX in use.
-tex/latex-dev/tools/verbtest.tex
-tex/latex/base/lppl.tex
-tex/latex/base/sample2e.tex
-tex/latex/base/small2e.tex
-tex/latex/beamer/beamericonbook.tex
-tex/latex/calxxxx-yyyy/calxxxx-yyyy-doc.tex
-tex/latex/custom-bib/geophys.tex
-tex/latex/custom-bib/shorthnd.tex
-tex/latex/ghsystem/pictures/ghsystem_acid-8.tex
-tex/latex/ghsystem/pictures/ghsystem_acid.tex
-tex/latex/ghsystem/pictures/ghsystem_aqpol.tex
-tex/latex/ghsystem/pictures/ghsystem_bottle-2-black.tex
-tex/latex/ghsystem/pictures/ghsystem_bottle-2-white.tex
-tex/latex/ghsystem/pictures/ghsystem_bottle.tex
-tex/latex/ghsystem/pictures/ghsystem_exclam.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-1.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-2.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-3.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-4.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-5.tex
-tex/latex/ghsystem/pictures/ghsystem_explos-6.tex
-tex/latex/ghsystem/pictures/ghsystem_explos.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-2-black.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-2-white.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-3-black.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-3-white.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-4-1.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-4-2.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-4-3-black.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-4-3-white.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-5-2-black.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-5-2-white.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-O-5-1.tex
-tex/latex/ghsystem/pictures/ghsystem_flame-O.tex
-tex/latex/ghsystem/pictures/ghsystem_flame.tex
-tex/latex/ghsystem/pictures/ghsystem_health.tex
-tex/latex/ghsystem/pictures/ghsystem_skull-2.tex
-tex/latex/ghsystem/pictures/ghsystem_skull-6.tex
-tex/latex/ghsystem/pictures/ghsystem_skull.tex
-tex/latex/mwe/example-image-empty.tex
-tex/latex/mwe/example-image-plain.tex
-tex/latex/mwe/example-movie.tex
-tex/latex/nicetext/run/substr.tex
-tex/latex/tools/verbtest.tex
-tex/lualatex/luabidi/luabidi-test-arabmaths.tex
+# reads as a smoke test of the method, not as a survey of LaTeX in use. The
+# pins were taken with the command above on 2026-09-26.
+735032aac2193445967f2f34996f6dec17eb3b78e3f06bc61fc11c0ec3f6d966  tex/latex-dev/tools/verbtest.tex
+c3c7c49085d4c8d722ca98937b2378619b45dd0b5bd1456bcd61be95d8b954f1  tex/latex/base/lppl.tex
+f135855f870c31f1101001bdb75b11e94a23c2605f7ab5dffa1299d53b1977cc  tex/latex/base/sample2e.tex
+6995024e85f537d32eef704a81d7f53b84aa06cb23361559d3fea3b6c5653627  tex/latex/base/small2e.tex
+a06f41a4394ae265bb55e00a26eef7f3a93edfad6f7d91b9d78cf4705a59c793  tex/latex/beamer/beamericonbook.tex
+fb761e69818276e1f32a86368c8e1ec34e790a0c4e37070b04255a0810ce0035  tex/latex/calxxxx-yyyy/calxxxx-yyyy-doc.tex
+0cc3a92b9544419cac5dcd77f28f7602c29a76f238244b3cdd690d391ff550db  tex/latex/custom-bib/geophys.tex
+ab0e9270811049162c7048a9ae59f5ebc7454be0c3da64ada0cfa7ffde04c24a  tex/latex/custom-bib/shorthnd.tex
+97bcac666a1a6e96c2d91ee14188d16354793c85c6fc880daf2ca4bfb6094f04  tex/latex/ghsystem/pictures/ghsystem_acid-8.tex
+997338bb0b7f930ea9e9615b2f689e756c5dc2e3d994f5f9a4607ec064852239  tex/latex/ghsystem/pictures/ghsystem_acid.tex
+9aeee6403afa86d4749053f327556a452a5395c07326e0d22c64af4f747a7c0e  tex/latex/ghsystem/pictures/ghsystem_aqpol.tex
+a24dea0ec9afb9f09a771d00e13476700c2fe5c9225ff5b17f7a2e1a77cd99e1  tex/latex/ghsystem/pictures/ghsystem_bottle-2-black.tex
+1d8e7ee5e1eae4380b90bee1b6e2218d99d5702a479bff9882b5d01a1f548871  tex/latex/ghsystem/pictures/ghsystem_bottle-2-white.tex
+2c1e5ea3e6638f55e3cde61b81559020d3fd28f2afb7ade644212e13d666ee3e  tex/latex/ghsystem/pictures/ghsystem_bottle.tex
+eeb267f49bf43d0829573a98b74c8ead33e94cb073aed375e21ad7c7febf4ad2  tex/latex/ghsystem/pictures/ghsystem_exclam.tex
+a44354ee27a5befca17c2a800f6b731114dd98df22f2d0064922ebf772fc3aa3  tex/latex/ghsystem/pictures/ghsystem_explos-1.tex
+4843e5557e5a52adc6987b9537ebf748c4283c4649f47d85912feaa7610f99b2  tex/latex/ghsystem/pictures/ghsystem_explos-2.tex
+6497665b2c5e8fa5de11464432e55132bc3911070ccd1c58b927ff295b56406b  tex/latex/ghsystem/pictures/ghsystem_explos-3.tex
+0b71a77a227cafce1629a18ef6a2f42a1b5b1e7bc3ee35ffcc0173fc93de85e2  tex/latex/ghsystem/pictures/ghsystem_explos-4.tex
+33c9237c3e380eeb320ea0c688ab084354ea566a51e6d64937920a9b76dd4cbc  tex/latex/ghsystem/pictures/ghsystem_explos-5.tex
+3b991d93875c3d956beeb02158276fc09db239cfd5c598227fa66ad743f76f83  tex/latex/ghsystem/pictures/ghsystem_explos-6.tex
+fe5cb10597c6e28835d44ade8c5fb0356a3df813e529b5a10a6cf5d6d519f638  tex/latex/ghsystem/pictures/ghsystem_explos.tex
+0c210a5e7dfb85e08710e497c335df2dddfb1c8bb74f533b462e734822245a9c  tex/latex/ghsystem/pictures/ghsystem_flame-2-black.tex
+16095bf16ff39f9ae366246f96fa7b7dccf4268413b4758f077b47715e6a7b16  tex/latex/ghsystem/pictures/ghsystem_flame-2-white.tex
+d2756edcc46fad750010c763b2ee733001e8e8a84c391de39ab582c1c930c92f  tex/latex/ghsystem/pictures/ghsystem_flame-3-black.tex
+4140970d419c499a04166a1149403611947c466f091eb13367c758dfd9a55cc8  tex/latex/ghsystem/pictures/ghsystem_flame-3-white.tex
+d5876b813f5f70cb0e329683213b4b4716b758d30dcde69a9e16ab9d42f87a26  tex/latex/ghsystem/pictures/ghsystem_flame-4-1.tex
+c72e259ff68e552d8630b2172712a8bbd9f04beff20f90b624a0f3e966bc3e7b  tex/latex/ghsystem/pictures/ghsystem_flame-4-2.tex
+160a770411fad16ff46d2d44bc64c5912119c0e08eaa862760cb247fd2a0c900  tex/latex/ghsystem/pictures/ghsystem_flame-4-3-black.tex
+dd6af60ee61c4e4b6f788eb014752c85cd22d7e69386ef9864c0fc13e41505c8  tex/latex/ghsystem/pictures/ghsystem_flame-4-3-white.tex
+8eb83012750c9e70630ee6e3f0c83b6d97ad60f6f58f0dfade59721b3feebdf6  tex/latex/ghsystem/pictures/ghsystem_flame-5-2-black.tex
+085de01cf7430417753f217b6bee58f393d2603eb4a71827eddae42cac10fe89  tex/latex/ghsystem/pictures/ghsystem_flame-5-2-white.tex
+f55cbc72b92b261e0c954de73b08db81989314c2b6157117526183319a32a948  tex/latex/ghsystem/pictures/ghsystem_flame-O-5-1.tex
+62d90855b83af19ace6deb5bc66c66adfe5893bbedc0e07ed39c41d5a68822fc  tex/latex/ghsystem/pictures/ghsystem_flame-O.tex
+220151e2902e2630f7b4190636a5999d9a5714f27bd261ed5e15386ba7d5fbb8  tex/latex/ghsystem/pictures/ghsystem_flame.tex
+3c224b81bc67368ea0ee2ba978d184563fc1d45502dbb670db03fe303d2ef6c1  tex/latex/ghsystem/pictures/ghsystem_health.tex
+08ecc13a59be1f87d3d06fe0b2811bc17b52ab8bcca08589152611b02e9d1f0e  tex/latex/ghsystem/pictures/ghsystem_skull-2.tex
+4802f61e53ff286f432c75febc840d6150fcf140027522c5b9f3b9eb2b1e0a56  tex/latex/ghsystem/pictures/ghsystem_skull-6.tex
+2953eb85c066b95682f8446f00dbe735988433c1f8ddde36906886d125b7f999  tex/latex/ghsystem/pictures/ghsystem_skull.tex
+b4e3a0347fe61c27be165e31e77e834529e335a78ff6af5b6b2aedf145c43859  tex/latex/mwe/example-image-empty.tex
+3f9dfbcdb8af49c2516d5585bfa7fd0aa20fa51e52a870e137549caa774fdc76  tex/latex/mwe/example-image-plain.tex
+f7ac618ccbf5067c2198ef74a8fa23fd256f67417a916eaa3ddbe4cde76f4557  tex/latex/mwe/example-movie.tex
+3b729c59cdd9177c9b250ac410bfc378fe6b8b2c6e1e8eb472eaf5bfeb912807  tex/latex/nicetext/run/substr.tex
+f1fbbe0f0deaafed06a717cea093161bd30295fbcc3cc91c99894cc9822062e0  tex/latex/tools/verbtest.tex
+0be5c95e94453311c95bfc59d085e4ac61d181fa88cc92a8f19d919af5fca85e  tex/lualatex/luabidi/luabidi-test-arabmaths.tex
