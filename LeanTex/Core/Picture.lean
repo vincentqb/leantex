@@ -2088,6 +2088,11 @@ structure Sal where
   the top of a line can be honoured — one inside a group is named rather
   than applied to the line or dropped in silence. -/
   depth : Nat := 0
+  /-- Whether closing a line trims its ends. A label's own lines are
+  trimmed at both, as TikZ sets a node's text; a spliced body's are not,
+  because the body's edges stand inside a line, and `splice` trims only
+  the ends a `\\` inside the body made. -/
+  trim : Bool := true
   diags : Array PDiag := #[]
   mode : SalMode := .text
   deriving Inhabited
@@ -2120,45 +2125,55 @@ def refuse (s : Sal) (what : String) : Sal :=
   { s with diags := s.diags.push (.W0334, s!"{what} in a node body is outside \
 the rendered picture subset; the label sets the text it can read") }
 
-/-- Space trimmed off both ends of a line's text, as the braces' inner
-space is in TeX. Only drops characters, so it cannot invent ink. -/
-private def trimLine (xs : Array Ir.Inline) : Array Ir.Inline :=
+/-- Space trimmed off a line's left end, its right end, or both, as the
+braces' inner space is in TeX. Only drops characters, so it cannot invent
+ink. -/
+private def trimEnds (left right : Bool) (xs : Array Ir.Inline) : Array Ir.Inline :=
   let trimL (t : String) : String := String.ofList (t.toList.dropWhile (· == ' '))
   let trimR (t : String) : String :=
     String.ofList ((t.toList.reverse.dropWhile (· == ' ')).reverse)
   let n := xs.size
   let xs := xs.mapIdx fun i inl =>
     if let .text f := inl then
-      .text (if i + 1 == n then trimR (if i == 0 then trimL f else f)
-             else if i == 0 then trimL f else f)
+      let f := if left && i == 0 then trimL f else f
+      .text (if right && i + 1 == n then trimR f else f)
     else inl
   xs.filter (· != .text "")
 
 /-- Close the current line and start the next: what `\\` does. -/
 def newline (s : Sal) : Sal :=
   let s := s.flush
-  { s with lines := s.lines.push (trimLine s.out, s.scale)
+  { s with lines := s.lines.push (trimEnds s.trim s.trim s.out, s.scale)
            out := #[], text := "", scale := 1000, fresh := true, mode := .text }
 
 /-- A nested group's own salvage, sharing the losses named so far and the
 line's size but not its content. -/
 def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
 
+/-- The salvage a styled or coloured body is walked in (`splice`): one
+group deeper, so a size switch inside it is named rather than set, and
+with its lines' ends untrimmed, since the body's edges are inside a line. -/
+def inner (s : Sal) : Sal := { s.sub with depth := s.depth + 1, trim := false }
+
 /-- Splice a nested body's salvage into this label, every line of it
 wrapped (`wrap`, a style or a colour): the body's first line continues the
 current one, and each later line — a `\\` inside the body — closes the
 current line and opens the next, as the break does in TeX. So a break
 inside `\textbf{…}` is a real break whose both lines are bold, where
-merging the lines would have been a loss nothing named. An empty line
-wraps nothing, so no empty wrapper ships; the body's own losses join this
-label's. The body was walked one group deeper (`depth`), so no size switch
+merging the lines would have been a loss nothing named. The body was
+walked untrimmed (`inner`), so a space just inside its braces stays, as it
+does in a paragraph, and only the ends a break made are trimmed here. An
+empty line wraps nothing, so no empty wrapper ships; the body's own losses
+join this label's. The body was walked one group deeper, so no size switch
 inside it set a line's size — a size it asked for was named instead. -/
 def splice (s : Sal) (body : Sal) (wrap : Array Ir.Inline → Ir.Inline) : Sal := Id.run do
   let body := body.newline
+  let n := body.lines.size
   let mut s := s.addDiags (body.diags.extract s.diags.size body.diags.size)
-  for k in [0:body.lines.size] do
+  for k in [0:n] do
     if let some (xs, _) := body.lines[k]? then
       if k > 0 then s := s.newline
+      let xs := trimEnds (0 < k) (k + 1 < n) xs
       unless xs.isEmpty do s := s.inline (wrap xs)
   return { s with mode := .text }
 
@@ -2300,16 +2315,14 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
     | _ => s
   | .colorBody c role =>
     match t with
-    | .group g =>
-      s.splice (salList cx env g { s.sub with depth := s.depth + 1 }) (.colored c role)
+    | .group g => s.splice (salList cx env g s.inner) (.colored c role)
     | _ => s
   -- Only a space, a group or one word reaches here (`Sal.settle`): the
   -- group is the argument, and a word standing where it would be is the
   -- argument too, as the elaborator reads `\textbf x`.
   | .styleBody st =>
     match t with
-    | .group g =>
-      s.splice (salList cx env g { s.sub with depth := s.depth + 1 }) (.styled st)
+    | .group g => s.splice (salList cx env g s.inner) (.styled st)
     | .ident w => { (s.inline (.styled st #[.text w])) with mode := .text }
     | .num m => { (s.inline (.styled st #[.text (milliString m)])) with mode := .text }
     | .sym c => { (s.inline (.styled st #[.text (String.singleton c)])) with mode := .text }

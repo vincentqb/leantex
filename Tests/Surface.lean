@@ -5487,14 +5487,19 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\palette{ rose = #B03060 }\\begin{document}\n" ++ inner ++ "\n\\end{document}"
   let node (body : String) : String :=
     doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
-  -- One shipped line as its runs: face, glyphs and colour, in order.
-  let runsOf (l : Layout.LineOut) : Array (Nat × Array (Nat × Char) × Ir.Color) :=
+  -- One shipped line as its runs: face, glyphs and colour, in order, with
+  -- `none` where an interword space stands — a space is a gap, not a run,
+  -- and a row that read only runs would pass a label that lost one.
+  let runsOf (l : Layout.LineOut) :
+      Array (Option (Nat × Array (Nat × Char) × Ir.Color)) :=
     l.segs.filterMap fun seg => match seg with
-      | .run idx color _ _ glyphs _ _ _ _ _ => some (idx, glyphs, color)
+      | .run idx color _ _ glyphs _ _ _ _ _ => some (some (idx, glyphs, color))
+      | .gap _ true => some none
       | _ => none
-  let shipped (src : String) : Array (Array (Nat × Array (Nat × Char) × Ir.Color)) :=
+  let shipped (src : String) :
+      Array (Array (Option (Nat × Array (Nat × Char) × Ir.Color))) :=
     let (d, _) := elabStr src
-    ((bodyLines (layoutOf fs d)).filter fun l => !(runsOf l).isEmpty).map runsOf
+    ((bodyLines (layoutOf fs d)).filter fun l => (runsOf l).any (·.isSome)).map runsOf
   let diagsOf (src : String) : Array Diag := (elabStr src).2
   -- **The invariant row.** The node's lines are the paragraph's lines.
   let agrees (body : String) : Bool :=
@@ -5502,8 +5507,9 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     !n.isEmpty && n == shipped (doc body)
   -- The faces a source's glyphs ship in, one per non-space glyph.
   let facesOf (src : String) : Array Nat :=
-    (shipped src).flatMap fun rs => rs.flatMap fun (i, gs, _) =>
-      (gs.filter (·.2 != ' ')).map fun _ => i
+    (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
+      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun _ => i
+      | none => #[]
   t "a plain node's runs are the paragraph's (control)" (agrees "Middle")
   t "a bold node's runs are the paragraph's" (agrees "\\textbf{Middle}")
   t "the bold node ships in the bold face, not the regular"
@@ -5517,6 +5523,14 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a small-caps node's runs are the paragraph's" (agrees "\\textsc{Middle}")
   t "a bold word inside a node's line keeps its neighbours regular"
     (agrees "Left \\textbf{Middle} Right")
+  -- A space just inside a styled group is inside the line, so it stays, as
+  -- it does in a paragraph: only a line's own ends are trimmed.
+  t "a space inside a styled group's edge stays, as in a paragraph"
+    (agrees "Left\\textbf{ Middle}Right" && agrees "Left\\textbf{Middle }Right")
+  t "a styled group at a label's ends sets as it does in a paragraph"
+    (agrees "\\textbf{ Middle }")
+  t "a space inside a coloured group's edge stays, as in a paragraph"
+    (agrees "Left\\textcolor{rose}{ Middle}Right")
   t "a nested bold italic node ships in the bold italic face"
     (agrees "\\textbf{\\emph{Middle}}" &&
       (facesOf (node "\\textbf{\\emph{Middle}}")).all (· == 3))
@@ -5529,6 +5543,9 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- two lines, each carrying the body's style.
   t "a line break inside a bold body ships two bold lines"
     (agrees "\\textbf{Pear\\\\Fig}" && (shipped (node "\\textbf{Pear\\\\Fig}")).size == 2)
+  t "the spaces around a break inside a body go with the break"
+    (agrees "\\textbf{Pear \\\\ Fig}" &&
+      (shipped (node "\\textbf{Pear \\\\ Fig}")).size == 2)
   t "a line break inside a coloured body ships two coloured lines"
     (agrees "\\textcolor{rose}{Pear\\\\Fig}" &&
       (shipped (node "\\textcolor{rose}{Pear\\\\Fig}")).size == 2)
@@ -5566,8 +5583,9 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     attrIn env "font-style" == some "italic"
   -- One entry per non-space glyph, bold and italic, from each artifact.
   let pdfFlags (src : String) : Array (Char × Bool × Bool) :=
-    (shipped src).flatMap fun rs => rs.flatMap fun (i, gs, _) =>
-      (gs.filter (·.2 != ' ')).map fun (_, c) => (c, boldIdx i, italIdx i)
+    (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
+      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun (_, c) => (c, boldIdx i, italIdx i)
+      | none => #[]
   let htmlFlags (src : String) : Array (Char × Bool × Bool) :=
     (svgRuns src).flatMap fun (s, env) =>
       (s.toList.filter (· != ' ')).toArray.map fun c => (c, svgBold env, svgItal env)
@@ -5582,9 +5600,11 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the SVG paints a coloured node's word in its palette role"
     ((svgRuns (node "\\textcolor{rose}{Middle}")).any fun (s, env) =>
       s == "Middle" && env.any fun (k, v) => k == "style" && hasStr v "var(--rose")
-  t "the SVG keeps a bold word's neighbours regular"
+  t "the SVG keeps a bold word's neighbours regular (guard)"
     ((svgRuns (node "Left \\textbf{Middle} Right")).all fun (s, env) =>
       svgBold env == (s == "Middle"))
+  -- Agreement, not presence: it held on the base too, where both artifacts
+  -- lost the style alike; the presence rows above are what failed there.
   t "per glyph, the SVG's weight and slant are the PDF's"
     (["\\textbf{Middle}", "\\emph{Middle}", "Left \\textbf{Middle} Right",
       "\\textbf{\\emph{Middle}}", "\\textcolor{rose}{\\textbf{Middle}}"].all fun b =>
@@ -5594,7 +5614,8 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- children onto indented lines put a space between `Left` and a bold
   -- `Middle` that the source never had, because SVG text collapses the
   -- indentation to one. The label's rendered text, tags stripped, is the
-  -- label's text exactly.
+  -- label's text exactly. Guards: they hold on the base, whose labels carry
+  -- no `<tspan>`, and failed on the fix's first cut.
   let stripTags (s : String) : String := Id.run do
     let mut out := ""
     let mut inTag := false
@@ -5610,9 +5631,9 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       let afterOpen : List Char :=
         (((piece.splitOn "<text").getLast?.getD "").toList.dropWhile (· != '>')).drop 1
       stripTags (String.ofList afterOpen)
-  t "a styled label's rendered SVG text adds no whitespace"
+  t "a styled label's rendered SVG text adds no whitespace (guard)"
     (renderedLabel (node "Left\\textbf{Middle}") "Middle" == some "LeftMiddle")
-  t "a label's spaces survive the rendering exactly"
+  t "a label's spaces survive the rendering exactly (guard)"
     (renderedLabel (node "Left \\textbf{Middle} Right") "Middle" == some "Left Middle Right")
 
 /-- **A construct outside the subset costs only itself.** Two halves of one
