@@ -456,6 +456,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- as the driver names them after `Image.fulfil`.
   | .W0603 => #[Image.imageIccDropped "figures/plot.png"]
   | .W0604 => #[Image.imageOrientationDropped "figures/photo.jpg" 6]
+  -- The HTML page's own image face: a decoded PDF page, which the PDF
+  -- artifact embeds as vectors and no browser decodes in an <img>. The
+  -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
+  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""

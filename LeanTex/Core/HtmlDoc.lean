@@ -1272,6 +1272,67 @@ def imageHref (assetsDir : String) (imgs : Image.Store) (src : String) : String 
     | none => src
   | none => src
 
+/-- A length on the CSS ruler, in whole pixels, to nearest: CSS fixes
+1in = 72pt = 96px (CSS Values 4 §6.2), so a point reads as 4/3 px — the
+ruler a browser measures an SVG's `width="56.693pt"` on, and the unit an
+`<img>`'s `width`/`height` attributes are in (HTML §4.8.4.4). Nearest, as
+Chromium reports the natural size of that SVG: 76 × 38. -/
+def cssPxOfSp (l : Int) : Nat := ((4 * l + 3 * spPerPt / 2) / (3 * spPerPt)).toNat
+
+/-- The pixel count is the nearest one (`_between`): for any length, its
+pixel count times the pixel's width in sp lies within half a pixel of it.
+Spelled `Int` so `omega` reads it. -/
+theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
+    3 * spPerPt * (cssPxOfSp l : Int) ≤ 4 * l + 3 * spPerPt / 2 ∧
+      4 * l + 3 * spPerPt / 2 < 3 * spPerPt * ((cssPxOfSp l : Int) + 1) := by
+  unfold cssPxOfSp
+  simp only [spPerPt]
+  omega
+
+/-- The size an `<img>` declares, in the CSS pixels a browser measures the
+image in: a raster's pixel grid, and a PDF page's box — a boundary
+picture's too, whose SVG face carries the same box in pt — on the CSS ruler
+(`cssPxOfSp`). A PDF page's pixel fields are its box rounded to whole
+points (`Image.probe`: only the dump and the placeholder read them); written
+as px they undersized every vector image by a quarter, 56 for a box a
+browser draws 76 wide. -/
+def intrinsicPx (p : Image.Plan) : Nat × Nat :=
+  match p.form with
+  | some f => (cssPxOfSp f.val.w, cssPxOfSp f.val.h)
+  | none => (p.pxW, p.pxH)
+
+/-- Is this entry a page no browser decodes in an `<img>`? A decoded entry
+is a raster (PNG, JPEG — `rasterShips`, which every browser decodes) or a
+PDF page (a form XObject: vector for the PDF artifact, nothing at all to an
+`<img>`). A boundary picture ships its SVG face (`picsToSvg`) and is not
+one. Every other failure — a file that did not load, a boundary picture
+with no SVG face — was named where it failed, by a diagnostic whose subject
+is the source, so it is not named twice. -/
+def pdfPageImg (en : Image.Loaded) : Bool :=
+  !en.src.startsWith Ir.picSrcPrefix &&
+  match en.info with
+  | some p => p.form.isSome
+  | none => false
+
+/-- The files a page's `<img>`s link that no browser decodes, each once, in
+page order: of the `src` values the page emits, those an entry that is a PDF
+page (`pdfPageImg`) links (`imageHref`). -/
+def undecodableSrcs (assetsDir : String) (imgs : Image.Store) (srcs : Array String) :
+    Array String :=
+  (srcs.foldl (fun acc s => if acc.contains s then acc else acc.push s) #[]).filter fun s =>
+    imgs.entries.any fun en => pdfPageImg en && imageHref assetsDir imgs en.src == s
+
+/-- W0605: the page links a file no browser decodes — the image stays a
+dead box showing its text alternative. Keyed `img:<src>` so the site census
+counts it. -/
+def undecodableDiag (src : String) : Diag :=
+  Diag.of .W0605
+    s!"image '{src}' is a PDF page no browser decodes; the web page shows its text \
+alternative instead"
+    (subject := some s!"img:{src}")
+    (help := some "for the web page, \\includegraphics a PNG export inside \
+\\begin{ifbackend}{html} and keep the PDF for print")
+
 /-- No decimal digit is the separator the asset name is split on. -/
 private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by
   intro c hc heq
@@ -3419,7 +3480,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         else none
     let attrs := #[("src", href), ("alt", alt)] ++
       (match info? with
-       | some inf => #[("width", toString inf.pxW), ("height", toString inf.pxH)]
+       | some inf =>
+         let (pw, ph) := intrinsicPx inf
+         #[("width", toString pw), ("height", toString ph)]
        | none => #[]) ++
       (match style with
        | some st => #[("style", st)]
@@ -4919,6 +4982,30 @@ private def attachLogo (cfg : Config) (node : Node)
     | .style s => .style s
     | .script attrs s => .script attrs s
 
+mutual
+
+/-- Every `<img src>` a tree carries, hidden or not — a browser fetches and
+decodes an image under `aria-hidden` all the same — onto `acc`, in order. A
+hand-rolled walk because `Html.Node` has no generic fold; the list
+companion keeps it structural. -/
+def imgSrcsOne (acc : Array String) : Node → Array String
+  | .elem tag attrs kids =>
+    let acc := if tag == "img" then
+        match attrs.find? (·.1 == "src") with
+        | some (_, s) => acc.push s
+        | none => acc
+      else acc
+    imgSrcsList acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def imgSrcsList (acc : Array String) : List Node → Array String
+  | [] => acc
+  | k :: rest => imgSrcsList (imgSrcsOne acc k) rest
+
+end
+
 /-- Emit a document as its typed tree — head and body nodes — plus any
 diagnostics the backend itself raises; `emit` renders it. The tree is the
 page before serialization: what the cross-backend agreement census judges
@@ -5332,6 +5419,11 @@ Regions): give each one a name, \\begin{nav}[label = Site]"))
 one in the article class"
           else s!"anchors on this page: \
 {String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}")))
+  -- Every <img> this page ships is one a browser decodes, or its loss is
+  -- named: judged over the emitted tree, so an image the page never links
+  -- is never named, and one under a hidden strip still is.
+  for s in undecodableSrcs cfg.assetsDir cfg.imgs (imgSrcsList #[] body.toList) do
+    diags := diags.push (undecodableDiag s)
   return (head, body, diags)
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself

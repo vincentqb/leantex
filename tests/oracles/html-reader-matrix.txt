@@ -2,15 +2,14 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)
 date: 2026-09-26
-src-key: dbf06d20e58b9ee7
+src-key: 8dff165e94779320
 fixtures: 77 built, unbuilt: theme-modern
 
 [feature]
 # feature         chromium      firefox
 load              pass          untested
-images            fail:diagram-boundary+1  untested
-#   chromium diagram-boundary: 1/1 images not loaded at their declared natural size: diagram-boundary.assets/b879431b028dc79f5172639f1e493745.svg natural 76x38 declared 56x28
-#   chromium figures: 2/2 images not loaded at their declared natural size: figures/box.pdf natural 0x0 declared 255x153
+images            fail:figures  untested
+#   chromium figures: 2/2 images not loaded at their declared natural size: figures/box.pdf natural 0x0 declared 340x204
 fonts             pass          untested
 mathml            pass          untested
 lang              pass          untested
@@ -38,7 +37,7 @@ daylight          pass          untested      load,fonts,lang,landmarks,snaps,co
 deck              pass          untested      load,fonts,mathml,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 deck1610          pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 declared          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-diagram-boundary  fail:images   untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram-boundary  pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-overflow  pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-refused   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-scm       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script

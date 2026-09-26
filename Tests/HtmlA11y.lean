@@ -55,6 +55,25 @@ end
 def svgLabels (body : Array Html.Node) : Array (Option String) :=
   (elemAttrsList (· == "svg") #[] body.toList).map (HtmlDoc.attrOf? ·.2 "aria-label")
 
+/-- The format a file's first bytes declare, for the image formats a browser
+decodes in an `<img>` (WHATWG MIME Sniffing §6.1, the image signatures):
+PNG, JPEG, GIF, WebP. `none` for anything else — a PDF page included. Read
+off the bytes, so the judge below does not share the backend's own
+classification. -/
+def sniffBrowserImage (b : ByteArray) : Option String :=
+  let at' (i : Nat) (xs : List UInt8) : Bool :=
+    xs.length + i ≤ b.size && (List.range xs.length).all fun k => b[i + k]! == xs[k]!
+  if at' 0 [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] then some "png"
+  else if at' 0 [0xFF, 0xD8, 0xFF] then some "jpeg"
+  else if at' 0 [0x47, 0x49, 0x46, 0x38] then some "gif"
+  else if at' 0 [0x52, 0x49, 0x46, 0x46] && at' 8 [0x57, 0x45, 0x42, 0x50] then some "webp"
+  else none
+
+/-- Every `<img src>` a body emits, hidden or not: a browser fetches and
+decodes an image under `aria-hidden` all the same. -/
+def a11yImgSrcs (body : Array Html.Node) : Array String :=
+  (elemAttrsList (· == "img") #[] body.toList).filterMap (HtmlDoc.attrOf? ·.2 "src")
+
 /-- Every deck stage of a body — a `section` carrying the `slide` or
 `section-page` class — as its `tabindex` and `aria-label`. -/
 def stageMarks (body : Array Html.Node) : Array (Option String × Option String) :=
@@ -72,8 +91,9 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Non-vacuous only if the corpus ships pictures and scrollers at all.
   let mut svgsSeen := 0
   let mut scrollsSeen := 0
+  let mut undecodableSeen := 0
   for n in goldenNames do
-    let (doc, _, body, _) ← a11yCorpusPage n
+    let (doc, _, body, diags) ← a11yCorpusPage n
     let f := a11yFactsOf doc body
     svgsSeen := svgsSeen + f.svgs
     scrollsSeen := scrollsSeen + f.scrolls
@@ -81,8 +101,69 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (f.svgsUnnamed == 0)
     t s!"html a11y {n}: every scroll container is reachable \
 ({f.scrollsUnreachable} of {f.scrolls} not)" (f.scrollsUnreachable == 0)
+    -- W3: every <img src> the page emits is a format a browser decodes, or
+    -- a diagnostic names the file (subject `img:<src>`). The format is read
+    -- off the file's own bytes, never off the backend's classification;
+    -- an image that did not load, or a boundary picture, was named where it
+    -- failed, by the fulfilment's own subject-keyed diagnostic.
+    let store ← corpusStore doc
+    let emitted := a11yImgSrcs body
+    for en in store.entries do
+      if en.info.isNone || en.src.startsWith Ir.picSrcPrefix then continue
+      let href := HtmlDoc.imageHref "assets" store en.src
+      unless emitted.contains href do continue
+      let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
+      if (sniffBrowserImage bytes).isNone then
+        undecodableSeen := undecodableSeen + 1
+        t s!"html a11y {n}: '{href}' no browser decodes, and a diagnostic names it"
+          (diags.any fun d => d.subject == some s!"img:{href}")
+    for d in diags do
+      if let some s := d.subject then
+        if s.startsWith "img:" then
+          let href := (s.drop 4).toString
+          let named := store.entries.find? fun en => HtmlDoc.imageHref "assets" store en.src == href
+          let decodes ← match named with
+            | some en => do
+              let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
+              pure (sniffBrowserImage bytes).isSome
+            | none => pure false
+          t s!"html a11y {n}: '{href}' is named undecodable only when it is" (!decodes)
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
+  t s!"html a11y: the corpus ships an image no browser decodes ({undecodableSeen})"
+    (0 < undecodableSeen)
+  -- W3's size half: `width`/`height` are CSS px, so a vector page's box is
+  -- declared on the CSS ruler (1pt = 4/3 px), not as its point count. The
+  -- boundary picture's SVG face (pdftocairo, `width="56.693pt"`) is what a
+  -- browser draws 76 × 38; the page used to declare 56 × 28.
+  t "html a11y: 56.693pt × 28.346pt reads 76 × 38 CSS px"
+    (HtmlDoc.cssPxOfSp 3715432 == 76 && HtmlDoc.cssPxOfSp 1857684 == 38)
+  match Image.decode (← IO.FS.readBinFile "tests/corpus/figures/box.pdf") with
+  | .error e => t s!"html a11y: the PDF-page probe decodes: {e}" false
+  | .ok plan =>
+    let box := elabStr (dvDoc "" "\\includegraphics[alt=a card]{box.pdf}")
+    let boxStore : Image.Store := { entries := #[{ src := "box.pdf", info := some plan }] }
+    let (_, pbody, pdiags) := HtmlDoc.emitTree { imgs := boxStore } box.1
+    let dims := (elemAttrsList (· == "img") #[] pbody.toList).map fun (_, a) =>
+      (HtmlDoc.attrOf? a "width", HtmlDoc.attrOf? a "height")
+    t s!"html a11y: a PDF page's <img> declares its CSS-pixel box: {dims}"
+      (dims == #[(some "340", some "204")])
+    t "html a11y: a PDF page's <img> is named undecodable"
+      (pdiags.any fun d => d.subject == some "img:box.pdf")
+    let pdoc := (elabStr (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"))).1
+    match (Ir.imageRefs pdoc).find? (·.startsWith Ir.picSrcPrefix) with
+    | none => t "html a11y: the boundary probe states a picture request" false
+    | some src =>
+      let picStore : Image.Store :=
+        { entries := #[{ src, href := "assets/pic.svg", info := some plan }] }
+      let (_, qbody, qdiags) := HtmlDoc.emitTree { imgs := picStore } pdoc
+      let qdims := (elemAttrsList (· == "img") #[] qbody.toList).map fun (_, a) =>
+        (HtmlDoc.attrOf? a "src", HtmlDoc.attrOf? a "width", HtmlDoc.attrOf? a "height")
+      t s!"html a11y: a boundary picture's SVG face declares its CSS-pixel box: {qdims}"
+        (qdims == #[(some "assets/pic.svg", some "340", some "204")])
+      t "html a11y: a boundary picture's SVG face is not named undecodable"
+        (!qdiags.any fun d => (d.subject.getD "").startsWith "img:")
   -- A refused picture's placeholder is never decorative: its name is the
   -- code that names the loss, the text the box itself shows.
   let refused := dvDoc "\\pictures{ tool = none }\n"

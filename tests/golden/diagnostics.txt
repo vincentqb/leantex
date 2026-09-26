@@ -505,6 +505,9 @@ warning[W0603]: image 'figures/plot.png' carries an embedded colour profile; the
 ── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
 warning[W0604]: image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
   help: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
+── W0605 (degraded) an image is a format no browser decodes; the web page shows its text alternative in its place
+warning[W0605]: image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows its text alternative instead
+  help: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html} and keep the PDF for print
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 warning[W0701]: output contract: 'alternatives = required' is declared and this artifact carries no alternative channel
   help: drop 'alternatives = required' from '\output', or build a format that carries it

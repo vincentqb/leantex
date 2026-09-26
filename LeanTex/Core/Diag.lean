@@ -202,6 +202,7 @@ inductive DiagCode where
   | W0701
   | W0603
   | W0604
+  | W0605
   | W0384
   | W0385
   | W0386
@@ -379,6 +380,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0701 => ("0701", .pending, "an output contract fact this artifact does not yet realize")
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
+  | .W0605 => ("0605", .degraded, "an image is a format no browser decodes; the web page shows its text alternative in its place")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
   | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed")
