@@ -3886,6 +3886,13 @@ the definition is skipped" pos
       -- does not model is one named loss, never a fallback.
       let (bodyArgs, k) := takeGroups raws j 1
       match TitleTemplate.read (← get).beamerFonts.toList (bodyArgs.getD 0 #[]) with
+      | some { mixed := some datum, .. } =>
+        -- A datum beside literal text has no slot to stand in, and a
+        -- datum is never dropped: the template is not read, the built-in
+        -- title page sets every datum, and that is the one named loss.
+        let (sfx, msg, help) := TitleTemplate.mixedLoss datum
+        sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
+        return some (#[], k)
       | some rd =>
         let native := TitleTemplate.native rd
         -- The theme's own fonts the template selects are honoured here:
@@ -3899,6 +3906,14 @@ the definition is skipped" pos
           sayOnce "beamer:setbeamertemplate:title page" .W0110
             s!"not read from the title-page template: \
 {String.intercalate ", " rd.unread.toList}; the rest of it stands" pos
+        -- What a node the engine cannot pin sets still ships, unpinned:
+        -- the loss is the pin, named once per node by the data it sets.
+        for (data, several) in rd.unplaced do
+          let (sfx, msg, help) := TitleTemplate.unplacedLoss data several
+          sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
+        for (construct, datum) in rd.skipped do
+          let (sfx, msg) := TitleTemplate.skippedLoss construct datum
+          sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
         return some (← synthAt native pos, k)
       | none =>
       -- `\setbeamertemplate{title page}` IS beamer's spelling of

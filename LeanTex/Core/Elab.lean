@@ -5208,24 +5208,36 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   -- placement is found by. The title stays the document's one level-0
   -- heading wherever its slot stands.
   unless tps.slots.isEmpty do
+    let datumOf : Ir.TitleDatum → Option (Array Inline)
+      | .title => part st.title
+      | .subtitle => part st.subtitle
+      | .author => part st.author
+      | .institute => part st.institute
+      | .date => part st.date
     let mut out : Array Block := #[]
     for (sl, i) in tps.slots.zipIdx do
-      let xs := match sl.datum with
-        | some .title => part st.title
-        | some .subtitle => part st.subtitle
-        | some .author => part st.author
-        | some .institute => part st.institute
-        | some .date => part st.date
+      -- The slot's lines: its first datum (or its own content), then each
+      -- further datum on a line of its own or sharing the line before.
+      let first := match sl.datum with
+        | some d => datumOf d
         | none => part (some sl.content)
-      if let some xs := xs then
-        let xs := match sl.font with
-          | some tpl => Ir.fillTemplate tpl xs
-          | none => xs
-        let blk : Block := if sl.datum == some .title then .section 0 true none xs else .para xs
+      let mut lines : Array (Array Inline) := first.toArray
+      for (own, d) in sl.more do
+        if let some xs := datumOf d then
+          match lines.back?, own with
+          | some prev, false => lines := lines.pop.push (prev ++ #[.text " "] ++ xs)
+          | _, _ => lines := lines.push xs
+      let fill (xs : Array Inline) : Array Inline := match sl.font with
+        | some tpl => Ir.fillTemplate tpl xs
+        | none => xs
+      let blks : Array Block := lines.zipIdx.map fun (xs, k) =>
+        if k == 0 && first.isSome && sl.datum == some .title then .section 0 true none (fill xs)
+        else .para (fill xs)
+      unless blks.isEmpty do
         let blk : Block := match sl.align with
-          | some "center" => .center #[blk]
-          | some "right" => .ragged .right #[blk]
-          | _ => .ragged .left #[blk]
+          | some "center" => .center blks
+          | some "right" => .ragged .right blks
+          | _ => .ragged .left blks
         out := out.push (.role (Ir.titleSlotRole i) #[blk])
     return out
   let push (inner : Array Block) (before : Option (Sourced SymGlue)) (b : Block) : Array Block :=
@@ -9972,9 +9984,15 @@ such as north west, got '{vt}'" pos
                   return none
               match k with
               | "set" =>
-                match Ir.TitleDatum.ofName? vt with
-                | some d => sl := { sl with datum := some d }
-                | none =>
+                -- One datum, or several in order: `\\` between two puts the
+                -- next on a line of its own, a space keeps it on the line.
+                let pieces := (vt.splitOn "\\\\").map fun p =>
+                  (p.splitOn " ").filter (!·.isEmpty)
+                let names : List (Bool × String) := (pieces.zipIdx.map fun (ws, k) =>
+                  ws.zipIdx.map fun (w, j) => (k > 0 && j == 0, w)).flatten
+                match names.mapM fun (own, w) => (Ir.TitleDatum.ofName? w).map (own, ·) with
+                | some ((_, d) :: rest) => sl := { sl with datum := some d, more := rest.toArray }
+                | _ =>
                   ok := false
                   diag ctx .E0323 s!"'set' in a title slot expects title, subtitle, author, \
 institute, or date, got '{vt}'" pos

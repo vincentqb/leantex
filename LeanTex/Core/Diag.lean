@@ -175,6 +175,7 @@ inductive DiagCode where
   | E0359
   | W0361
   | W0362
+  | W0363
   | W0364
   | E0365
   | W0366
@@ -354,6 +355,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0359 => ("0359", .dropped, "a \\note nested inside another note's frame is dropped")
   | .W0361 => ("0361", .config, "a built-in is not replaced by a redefinition the engine cannot run")
   | .W0362 => ("0362", .degraded, "picture entirely outside the rendered subset; a placeholder box marks its place")
+  | .W0363 => ("0363", .degraded, "a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place")
   | .W0364 => ("0364", .degraded, "an unresolved data path; nothing renders in its place")
   | .E0365 => ("0365", .dropped, "\\data file not found; its records are absent")
   | .W0366 => ("0366", .degraded, "a named font weight is not installed; the nearest installed weight substitutes")

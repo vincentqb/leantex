@@ -25,6 +25,9 @@ structure Node where
   /-- The datum the node inserts (`title`, `author`, ...), or `none` for
   literal content. -/
   datum : Option String
+  /-- Further data the node sets after its first, each with whether a line
+  end stands before it. -/
+  more : Array (Bool × String) := #[]
   /-- Literal content, as source (empty for a datum node). -/
   content : String := ""
   font : String := ""
@@ -34,6 +37,11 @@ structure Node where
   ink : Option String := none
   align : Option String := none
   width : Option String := none
+  /-- Whether the node stands pinned to a point of the page. A node the
+  engine cannot pin — no `at (current page.<point>)`, or several data in
+  one node — still sets what it inserts, unpinned: at the title page's
+  default place, in its flow. -/
+  pinned : Bool := true
   anchor : String := "center"
   pagePoint : String := "center"
   xshift : Option String := none
@@ -51,6 +59,17 @@ structure Read where
   /-- The theme's own font elements the template selects: each is honoured
   here, so its skip at the declaration is withdrawn. -/
   fonts : Array String := #[]
+  /-- Nodes the engine cannot pin as the template does: the data each sets
+  (empty for literal content) and whether it is several data in one node.
+  What each sets still ships, unpinned. -/
+  unplaced : Array (Array String × Bool) := #[]
+  /-- Control words met beside a datum and not read, with the datum: the
+  datum ships without them. -/
+  skipped : Array (String × String) := #[]
+  /-- A node sets a datum beside literal text, which no slot holds: the
+  datum named here. The template is then not read, and the built-in title
+  page sets every datum. -/
+  mixed : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- A custom beamer font element, as `\setbeamerfont` declared it: its font
@@ -184,46 +203,107 @@ def pagePointOf (ts : List Tok) : Option (String × Option String × Option Stri
     return (point, xs, ys)
   | _ => none
 
-/-- A control word's effect on a content scan: a datum, a transparent
-declaration, or ink. -/
-def ctrlEffect (acc : Option String × Nat × Bool × Option String) (n : String) :
-    Option String × Nat × Bool × Option String :=
-  let (d, k, ink, al) := acc
-  match insertDatum n with
-  | some dn => (some dn, k + 1, ink, al)
-  | none =>
-    if n == "par" then acc
-    else if n == "raggedright" then (d, k, ink, some "left")
-    else if n == "raggedleft" then (d, k, ink, some "right")
-    else if n == "centering" then (d, k, ink, some "center")
-    else (d, k, true, al)
+/-- The style in force at a point of a node's content: the font commands
+declared so far, the size a selected theme font declares, a `\color`, and
+a ragged declaration. A group scopes each of them, as TeX's does. -/
+structure Style where
+  font : String := ""
+  size : Option String := none
+  ink : Option String := none
+  align : Option String := none
+  deriving Repr, BEq, Inhabited
 
-mutual
+/-- What a node's content group sets: each datum it inserts with the style
+in force where the insert stands and whether a line end stands between it
+and the datum before, whether any other ink stands beside them, the
+control words met and not read, and the theme fonts selected. -/
+structure Scan where
+  data : Array (String × Style × Bool) := #[]
+  words : Bool := false
+  skipped : Array String := #[]
+  used : Array String := #[]
+  /-- A line end met since the last datum. -/
+  broke : Bool := false
+  deriving Repr, Inhabited
 
-/-- What a node's content group sets: `(datum, data count, other ink,
-alignment)` — one datum under transparent configuration (spaces, paragraph
-ends, a ragged declaration, the breaker's integer parameters), or literal
-content. -/
-def contentScanList (acc : Option String × Nat × Bool × Option String) :
-    List Tok → Option String × Nat × Bool × Option String
+/-- NFSS's font-change commands, declaration beside its one-argument form —
+fntguide §2.2's table, the one the elaborator reads (`Elab.fontAxes`; a
+check holds the two equal). In a node's content, either spelling is the
+node's font, as `font=` is. -/
+def fontAxes : List (String × String) :=
+  [("rmfamily", "textrm"), ("sffamily", "textsf"), ("ttfamily", "texttt"),
+   ("mdseries", "textmd"), ("bfseries", "textbf"), ("upshape", "textup"),
+   ("itshape", "textit"), ("slshape", "textsl"), ("scshape", "textsc"),
+   ("normalfont", "textnormal"), ("em", "emph")]
+
+/-- A font declaration in content: an NFSS axis or a size of the scale. -/
+def fontDecl (n : String) : Bool :=
+  fontAxes.any (·.1 == n) || Ir.sizeScale.any (·.1 == n)
+
+/-- Control words that end or break a line and set no ink of their own. -/
+def lineCtrls : List String := ["par", "\\", "newline", "null"]
+
+/-- **What a node's content sets**, one scan in source order. A datum is
+recorded with the style in force where its insert stands; a group scopes
+declarations; a font declaration, `\usebeamerfont`, `\color` and a ragged
+declaration are read; the breaker's integer parameters and line ends are
+transparent; `\usebeamercolor` and any other control word are named and
+not read, an argument group of theirs still scanned for data. Anything
+else is ink beside the data. -/
+def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List Tok → Scan
   | [] => acc
+  | .space :: rest => scanList fonts st acc rest
+  | .group body :: rest => scanList fonts st (scanList fonts st acc body) rest
   | .ctrl n :: .sym '=' :: .num _ :: rest =>
-    if breakParams.contains n then contentScanList acc rest
-    else
-      let (d, k, _, al) := ctrlEffect acc n
-      contentScanList (d, k, true, al) rest
-  | t :: rest => contentScanList (contentScanOne acc t) rest
-
-def contentScanOne (acc : Option String × Nat × Bool × Option String) :
-    Tok → Option String × Nat × Bool × Option String
-  | .space => acc
-  | .group body => contentScanList acc body
-  | .ctrl n => ctrlEffect acc n
-  | _ =>
-    let (d, k, _, al) := acc
-    (d, k, true, al)
-
-end
+    if breakParams.contains n then scanList fonts st acc rest
+    else scanList fonts st { acc with skipped := acc.skipped.push s!"\\{n}" } rest
+  | .ctrl "usebeamerfont" :: .group g :: rest =>
+    let name := srcList (trim g)
+    match fonts.lookup name with
+    | some f =>
+      scanList fonts { st with font := st.font ++ f.cmds, size := f.size <|> st.size }
+        { acc with used := acc.used.push name } rest
+    | none =>
+      scanList fonts st
+        { acc with skipped := acc.skipped.push s!"\\usebeamerfont\{{name}}" } rest
+  | .ctrl "color" :: .group g :: rest =>
+    let c := srcList (trim g)
+    if c.contains '!' then
+      scanList fonts st { acc with skipped := acc.skipped.push s!"\\color\{{c}}" } rest
+    else scanList fonts { st with ink := some c } acc rest
+  | .ctrl "usebeamercolor" :: .sym '[' :: .ident _ :: .sym ']' :: .group _ :: rest
+  | .ctrl "usebeamercolor" :: .group _ :: rest =>
+    scanList fonts st { acc with skipped := acc.skipped.push "\\usebeamercolor" } rest
+  | .ctrl n :: .group body :: rest =>
+    match insertDatum n, fontAxes.find? (·.2 == n) with
+    | some d, _ =>
+      scanList fonts st (scanList fonts st (push acc d st) body) rest
+    | none, some (decl, _) =>
+      scanList fonts st (scanList fonts { st with font := st.font ++ s!"\\{decl} " } acc body)
+        rest
+    | none, none =>
+      let (st', acc') := ctrlStep st acc n
+      scanList fonts st' (scanList fonts st' acc' body) rest
+  | .ctrl n :: rest =>
+    let (st', acc') := ctrlStep st acc n
+    scanList fonts st' acc' rest
+  | _ :: rest => scanList fonts st { acc with words := true } rest
+where
+  /-- Record a datum, with whether a line end stood before it. -/
+  push (acc : Scan) (d : String) (st : Style) : Scan :=
+    { acc with data := acc.data.push (d, st, acc.broke), broke := false }
+  /-- One bare control word: a datum, a line end, a ragged or font
+  declaration, or a construct named and not read. -/
+  ctrlStep (st : Style) (acc : Scan) (n : String) : Style × Scan :=
+    match insertDatum n with
+    | some d => (st, push acc d st)
+    | none =>
+      if lineCtrls.contains n then (st, { acc with broke := true })
+      else if n == "raggedright" then ({ st with align := some "left" }, acc)
+      else if n == "raggedleft" then ({ st with align := some "right" }, acc)
+      else if n == "centering" then ({ st with align := some "center" }, acc)
+      else if fontDecl n then ({ st with font := st.font ++ s!"\\{n} " }, acc)
+      else (st, { acc with skipped := acc.skipped.push s!"\\{n}" })
 
 /-- Two opposite corners of the page: the rectangle between them is the
 whole page. -/
@@ -325,13 +405,16 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
     | _ =>
       bad := true
       break
-  let some c := coord | return { rd with unread := rd.unread.push "a node not pinned to the page" }
-  let some (point, xs, ys) := pagePointOf c
-    | return { rd with unread := rd.unread.push "a node not pinned to the page" }
+  -- The page point the node is pinned to, when it is pinned: `at (current
+  -- page.<point>)`, optionally shifted. A node with no readable pin still
+  -- sets what it inserts, unpinned — never dropped with its data.
+  let pin : Option (String × Option String × Option String) :=
+    if bad then none else
+    (coord.bind pagePointOf).filter fun (point, _, _) => (Ir.BoxPoint.ofName? point).isSome
   let some body := content | return { rd with unread := rd.unread.push "a node with no content" }
-  if bad || (Ir.BoxPoint.ofName? point).isNone then
-    return { rd with unread := rd.unread.push "a node not pinned to the page" }
-  let mut n : Node := { datum := none, pagePoint := point, xshift := xs, yshift := ys }
+  let mut n : Node := match pin with
+    | some (point, xs, ys) => { datum := none, pagePoint := point, xshift := xs, yshift := ys }
+    | none => { datum := none, pinned := false }
   let mut unread := rd.unread
   let mut used := rd.fonts
   for o in opts do
@@ -358,16 +441,84 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
         used := used ++ names
       | none => unread := unread.push s!"font={srcList v}"
     | (k, _) => unless k.isEmpty do unread := unread.push k
-  let (datum, count, ink, al) := contentScanList (none, 0, false, none) body
-  let aligned := { n with align := n.align <|> al }
-  if count == 1 && !ink then
-    return { rd with nodes := rd.nodes.push { aligned with datum := datum }, unread := unread
-                     fonts := used }
-  else if count == 0 then
-    return { rd with nodes := rd.nodes.push { aligned with content := srcList body },
-                     unread := unread, fonts := used }
-  else
-    return { rd with unread := unread.push "a node that sets more than one datum" }
+  let sc := scanList fonts {} {} body
+  used := used ++ sc.used
+  -- Each datum takes the node's options, then what its content declared
+  -- before it: the content's own font follows `font=`, as TeX reads them.
+  let styled (d : String) (s : Style) : Node :=
+    { n with datum := some d
+             font := if s.font.isEmpty then n.font else (n.font ++ " " ++ s.font).trimAscii.toString
+             size := s.size <|> n.size
+             ink := s.ink <|> n.ink
+             align := n.align <|> s.align }
+  if sc.words && !sc.data.isEmpty then
+    return { rd with mixed := rd.mixed <|> sc.data[0]?.map (·.1) }
+  let rd := { rd with unread := unread, fonts := used }
+  match sc.data.toList with
+  | [] =>
+    let node := { n with content := srcList body }
+    return { rd with nodes := rd.nodes.push node
+                     unplaced := if node.pinned then rd.unplaced else rd.unplaced.push (#[], false) }
+  | (d, s, _) :: later =>
+    let data := #[d] ++ later.toArray.map (·.1)
+    let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, d) }
+    if later.all (·.2.1 == s) then
+      -- One style for every datum: one slot sets them all, in the node's
+      -- order and on the node's lines, pinned as the node is.
+      let node := { styled d s with more := later.toArray.map fun (d', _, br) => (br, d') }
+      return { rd with nodes := rd.nodes.push node
+                       unplaced := if node.pinned then rd.unplaced else rd.unplaced.push (data, false) }
+    else
+      -- Data the node styles apart are no one slot: each sets unpinned, in
+      -- its own style, in the order the node inserts them.
+      let nodes := ((d, s, false) :: later).toArray.map fun (d', s', _) =>
+        { styled d' s' with pinned := false }
+      return { rd with nodes := rd.nodes ++ nodes, unplaced := rd.unplaced.push (data, true) }
+
+/-- The data a node sets, as prose: `the author and the institute`. -/
+def dataPhrase (ds : List String) : String :=
+  match ds.reverse with
+  | [] => "literal text"
+  | [a] => s!"the {a}"
+  | last :: init =>
+    String.intercalate ", " (init.reverse.map (s!"the {·}")) ++ s!" and the {last}"
+
+/-- The one loss a node the engine cannot pin is named by (`W0363`): the
+key's suffix (the data it sets), what it sets and where that stands
+instead, and the help. -/
+def unplacedLoss (data : Array String) (several : Bool) : String × String × Option String :=
+  let key := if data.isEmpty then "text" else String.intercalate "+" data.toList
+  let help := data[0]?.map fun d =>
+    (if several then "pin one datum per node: " else "pin the node to a point of the page: ") ++
+      s!"\\node[anchor=west] at (current page.west) \{\\insert{d}}"
+  let msg :=
+    if several then
+      s!"one title-page template node styles {dataPhrase data.toList} apart; each sets \
+unpinned, in the title page's flow"
+    else match data[0]? with
+      | some d =>
+        let verb := if data.size > 1 then "set" else "sets"
+        s!"the title-page template's {d} node is not pinned to the page; \
+{dataPhrase data.toList} {verb} in the title page's flow"
+      | none => "a title-page template node of literal text is not pinned to the page; \
+it sets in the title page's flow"
+  (key, msg, help)
+
+/-- A control word beside a datum that the reader does not read (`W0104`):
+the key's suffix and the message; the datum ships without it. -/
+def skippedLoss (construct datum : String) : String × String :=
+  (construct,
+   s!"'{construct}' in the title-page template's {datum} node is not read; the {datum} \
+sets without it")
+
+/-- A datum beside literal text (`W0363`): no slot holds the two, so the
+template is not read and the built-in title page — the default place of
+every datum — stands. The key's suffix, the message, the help. -/
+def mixedLoss (datum : String) : String × String × Option String :=
+  (datum,
+   s!"the title-page template sets the {datum} beside literal text, which no slot holds; \
+the built-in title page stands",
+   some s!"set the text in a node of its own, and \\insert{datum} alone in another")
 
 /-- **Read a `title page` template of the overlay shape.** `none` when the
 template is not one overlay picture on the page — any other shape is not
@@ -415,14 +566,17 @@ def native (rd : Read) : String :=
     let font := n.font ++ (if n.font.isEmpty || ink.isEmpty then "" else " ") ++ ink
     let parts :=
       (match n.datum with
-       | some d => [s!"set = {d}"]
+       | some d => [s!"set = {d}" ++ String.join (n.more.toList.map fun (own, d') =>
+           (if own then " \\\\ " else " ") ++ d')]
        | none => ["content = {" ++ n.content ++ "}"]) ++
-      [s!"anchor = {n.anchor}", s!"at = {n.pagePoint}"] ++
-      (n.xshift.map (s!"xshift = {·}")).toList ++
-      (n.yshift.map (s!"yshift = {·}")).toList ++
-      (n.width.map (s!"width = {·}")).toList ++
+      (if n.pinned then
+        [s!"anchor = {n.anchor}", s!"at = {n.pagePoint}"] ++
+        (n.xshift.map (s!"xshift = {·}")).toList ++
+        (n.yshift.map (s!"yshift = {·}")).toList ++
+        (n.width.map (s!"width = {·}")).toList
+      else []) ++
       (n.size.map (s!"size = {·}")).toList ++
-      (n.innerSep.map (s!"inner-sep = {·}")).toList ++
+      (if n.pinned then (n.innerSep.map (s!"inner-sep = {·}")).toList else []) ++
       (n.align.map (s!"align = {·}")).toList ++
       (if font.isEmpty then [] else ["font = {" ++ font.trimAscii.toString ++ "}"])
     "slot = { " ++ String.intercalate ", " parts ++ " }"

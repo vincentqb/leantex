@@ -463,6 +463,11 @@ def diagWitness (one mapped withMath : Font.FontSet)
       Image.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0362 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
+  -- An overlay title-page template whose title node is not pinned to the
+  -- page: the title still ships, unpinned, and the pin is the named loss.
+  | .W0363 => dvE (dvDeck ("\\setbeamertemplate{title page}{\\begin{tikzpicture}" ++
+      "[remember picture,overlay]\\node at (0,0) {\\inserttitle};\\end{tikzpicture}}" ++
+      "\\title{T}\n") "\\titlepage")
   | .W0602 => #[Image.imageUndecodable "figures/plot.gif"
       "not a PNG, JPEG, or PDF file"]
   -- The two ledger entries a plan can carry (`Image.plan_losses_accounts`),

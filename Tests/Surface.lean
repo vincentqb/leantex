@@ -4538,6 +4538,118 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      | some a, some b => a > b
      | _, _ => false)
 
+mutual
+
+/-- The text the title slide shows in the typed HTML tree: every text node
+under the `section` whose class names the title page, in tree order. -/
+def titleSlideTextList (inSlide : Bool) (acc : String) : List Html.Node → String
+  | [] => acc
+  | n :: rest => titleSlideTextList inSlide (titleSlideTextOne inSlide acc n) rest
+
+def titleSlideTextOne (inSlide : Bool) (acc : String) : Html.Node → String
+  | .text s => if inSlide then acc.append s else acc
+  | .elem tag attrs kids =>
+    let here := inSlide || (tag == "section" &&
+      attrs.any fun (k, v) => k == "class" && hasStr v "title-page")
+    titleSlideTextList here acc kids.toList
+  | .style _ => acc
+  | .script _ _ => acc
+
+end
+
+/-- **No datum a template node inserts is dropped.** A node the reader
+cannot pin, or cannot wholly read, still ships what it sets: pinned where
+its pin reads, in the title page's flow where it does not, and the loss is
+one diagnostic with a subject. Each probe is one construct in an invented
+overlay template; the page is read off `Layout.Out` (through the census)
+and the title slide off the typed HTML tree, never the IR dump. -/
+def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let overlay (titleNode authorNode : String) : String :=
+    "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeLeaf}{HTML}{9AD1A0}" ++
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\fill[probeNight] (current page.south west) rectangle (current page.north east);" ++
+    titleNode ++ authorNode ++ "\\end{tikzpicture}}" ++
+    "\\title{Probe Heading}\\author{Pat Example}\\institute{example.org}"
+  let pinnedTitle (body : String) : String :=
+    "\\node[anchor=west, text=probeLeaf] at ([xshift=2cm]current page.west) {" ++ body ++ "};"
+  let pinnedAuthor (body : String) : String :=
+    "\\node[anchor=south west, text=probeLeaf] at ([xshift=2cm,yshift=1cm]current page.south west) {" ++
+      body ++ "};"
+  let ship (pre : String) : Ir.Doc × Array Diag × Array CensusPage × String :=
+    let (doc, ds) := elabStr (deck169 pre "\\titlepage")
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    (doc, ds, censusOf (coveredColorsOf doc) (layoutOf oneFace doc),
+     titleSlideTextList false "" body.toList)
+  let slotOf (doc : Ir.Doc) (d : String) : Option Ir.TitleSlot :=
+    ((doc.styles.find? "titlepage").getD {}).slots.find? fun sl =>
+      sl.datum.map (·.name) == some d
+  let key (x : String) : Option String := some ("beamer:setbeamertemplate:title page:" ++ x)
+  let shows (c : Array CensusPage) (html needle : String) : Bool :=
+    pageHas c 0 needle && hasStr html needle
+  -- The control: the reader's own shape, read whole.
+  let (docK, dsK, cK, hK) := ship (overlay (pinnedTitle "\\inserttitle")
+    (pinnedAuthor "\\insertauthor"))
+  t "control: a template read whole ships its title pinned, with no loss named"
+    (shows cK hK "Probe Heading" && (slotOf docK "title").any (·.place.isSome) &&
+     dsK.all fun d => d.code != "W0110" && d.code != "W0363" && d.code != "W0361")
+  -- `{\bfseries\inserttitle}`: a declaration beside the datum is the
+  -- node's font, as `font=` is.
+  let (docB, dsB, cB, hB) := ship (overlay (pinnedTitle "\\bfseries\\inserttitle")
+    (pinnedAuthor "\\insertauthor"))
+  t "a font declaration beside the title is read: the title ships pinned, in bold"
+    (shows cB hB "Probe Heading" && dsB.all (fun d => d.code != "W0110" && d.code != "W0363") &&
+     (slotOf docB "title").any fun sl => sl.place.isSome &&
+       sl.font.any fun f => f.any fun i => i == .styled .bold #[])
+  -- `{\usebeamercolor[fg]{title}\inserttitle}`: the colour selection is
+  -- named and not read; the title ships where it is pinned.
+  let (docC, dsC, cC, hC) := ship (overlay
+    (pinnedTitle "\\usebeamercolor[fg]{title}\\inserttitle") (pinnedAuthor "\\insertauthor"))
+  t "an unread colour selection beside the title: the title ships pinned"
+    (shows cC hC "Probe Heading" && (slotOf docC "title").any (·.place.isSome))
+  t "the unread colour selection is one named loss with its subject"
+    ((dsC.filter fun d => d.code == "W0104" && d.subject == key "\\usebeamercolor").size == 1 &&
+     dsC.all fun d => d.code != "W0110" && d.code != "W0363")
+  -- `at (0,0)`: a node not pinned to the page sets its datum unpinned.
+  let (docU, dsU, cU, hU) := ship (overlay "\\node[anchor=west] at (0,0) {\\inserttitle};"
+    (pinnedAuthor "\\insertauthor"))
+  t "a title node not pinned to the page still ships the title, in the page's flow"
+    (shows cU hU "Probe Heading" && (slotOf docU "title").any (·.place.isNone) &&
+     shows cU hU "Pat Example")
+  t "the unpinned title node is one named loss with its subject"
+    ((dsU.filter (·.code == "W0363")).size == 1 &&
+     dsU.any fun d => d.code == "W0363" && d.subject == key "title")
+  -- `{\insertauthor\\\insertinstitute}`: two data in one node both ship,
+  -- pinned where the node is, each on its own line.
+  let (docT, dsT, cT, hT) := ship (overlay (pinnedTitle "\\inserttitle")
+    (pinnedAuthor "\\insertauthor\\\\\\insertinstitute"))
+  t "a node setting two data ships both, pinned, on the node's two lines"
+    (shows cT hT "Pat Example" && shows cT hT "example.org" && shows cT hT "Probe Heading" &&
+     (slotOf docT "author").any (fun sl => sl.place.isSome && sl.more == #[(true, .institute)]) &&
+     (lineYOf cT 0 "Pat Example").any fun y => (lineYOf cT 0 "example.org").any (y < ·))
+  t "a node setting two data in one style is read whole: no loss is named"
+    (dsT.all fun d => d.code != "W0363" && d.code != "W0110")
+  -- Data the node styles apart are no one slot: each ships unpinned, and
+  -- that is one named loss with its subject.
+  let (_, dsA, cA, hA) := ship (overlay (pinnedTitle "\\inserttitle")
+    (pinnedAuthor "\\insertauthor\\\\\\small\\insertinstitute"))
+  t "two data styled apart in one node both ship"
+    (shows cA hA "Pat Example" && shows cA hA "example.org")
+  t "two data styled apart are one named loss with its subject"
+    ((dsA.filter (·.code == "W0363")).size == 1 &&
+     dsA.any fun d => d.code == "W0363" && d.subject == key "author+institute")
+  -- A datum beside literal text has no slot to stand in: the template is
+  -- not read, the built-in title page sets every datum, and that is one
+  -- named loss with its subject.
+  let (_, dsM, cM, hM) := ship (overlay (pinnedTitle "\\inserttitle")
+    (pinnedAuthor "By \\insertauthor"))
+  t "a datum beside literal text keeps the built-in title page, which sets every datum"
+    (shows cM hM "Pat Example" && shows cM hM "Probe Heading" && shows cM hM "example.org")
+  t "a datum beside literal text is one named loss with its subject"
+    ((dsM.filter (·.code == "W0363")).size == 1 &&
+     dsM.any fun d => d.code == "W0363" && d.subject == key "author")
+
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a

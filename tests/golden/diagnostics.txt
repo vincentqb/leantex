@@ -417,6 +417,9 @@ warning[W0361]: the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), wh
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
 warning[W0362]: no part of this picture is inside the rendered subset; a placeholder box marks its place
   help: the box holds the diagram's place; \allow{W0362} accepts the loss
+── W0363 (degraded) a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place
+warning[W0363]: the title-page template's title node is not pinned to the page; the title sets in the title page's flow
+  help: pin the node to a point of the page: \node[anchor=west] at (current page.west) {\inserttitle}
 ── W0364 (degraded) an unresolved data path; nothing renders in its place
 warning[W0364]: 'end' is absent in job[1]; its entries carry: role, start
   help: '\ifdata{j.end}{…}' renders content only when the field is present

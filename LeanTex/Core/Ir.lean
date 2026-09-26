@@ -4749,6 +4749,10 @@ slots: a declared datum no slot names is not set, as a beamer title-page
 template that never inserts it does not set it. -/
 structure TitleSlot where
   datum : Option TitleDatum
+  /-- The data the slot sets after its first, in the node's order: `true`
+  starts a line of its own (a line end between the two in the node, as
+  `\insertauthor\\\insertinstitute` writes it), `false` shares the line. -/
+  more : Array (Bool × TitleDatum) := #[]
   content : Array Inline := #[]
   font : Option (Array Inline) := none
   align : Option String := none
