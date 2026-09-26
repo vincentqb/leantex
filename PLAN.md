@@ -11217,6 +11217,11 @@ rendered formula would not), `W0301`/`W0341` (unknown commands kept as
 text) and `E0382` (a picture the boundary tool drew nothing for). Each is
 owned elsewhere; the vertical-distribution question is closed.
 
+2026-09-26 correction: the last sentence is false. The list and frame-title
+gaps this entry measured were real deficits, and a picture's own
+boundaries were a third. See "2026-09-26 — the space around a picture is
+TikZ's box, a trivlist's topsep and a baseline".
+
 
 ### 2026-09-24 — a declared break that re-flows now says so, and the face substitution needs no code
 
@@ -19236,3 +19241,151 @@ with the scenario that falsifies it:
 - A `pre-push` hook refusing unapproved pushes, what to do with the stray
   public branches, and whether the empty repository at the home directory
   should exist, are the user's decisions.
+
+
+
+### 2026-09-26 — the space around a picture is TikZ's box, a trivlist's topsep and a baseline
+
+The user found the space around a TikZ graph on two frames of the private
+reference corpus's deck too tight (pages 18 and 20). Measured on 110 dpi
+rasters against the lualatex reference, from ink edge to ink edge, the gap
+from the picture to the paragraph below was 15 px against 36 on page 18,
+and 16 px against 32 on page 20. From the title bar to the picture's top,
+page 20 had 25 px against 41. The loss came from four TeX mechanisms. The
+engine modelled none of them.
+
+**The decomposition.** lualatex (TeX Live 2026) was run on synthetic
+sources: beamer 10pt with moloch, and article at 10, 11 and 12pt.
+Positions come from `\savepos` marks, box sizes from `\sbox`, and
+parameters from `\the`. Numbers are TeX pt unless marked bp (PDF units).
+
+| gap | TeX component | value | source | engine before |
+|---|---|---|---|---|
+| picture size | `\useasboundingbox` | the declared box; ink may stand outside it | pgf manual §15.8 | ignored, W0334 |
+| picture size | a node's shape, drawn or not | its text box plus 2 × `inner sep` (0.3333em) | §17.2.2; a two-node probe measures 89.53 × 16.30 | label ink only |
+| above and below `{center}`, `{flush…}`, `{quote}` | `\topsep`, by `\addvspace` | beamer 10pt: 8pt plus 2 minus 4; article: 8, 9 or 10pt | size10/11/12.clo:218, set by `\@listi` at load; beamer's own `\@listi` (beamerbaselocalstructure.sty:152) runs only inside a list | 0 |
+| | `\partopsep`, in vertical mode only | beamer 0; article 2, 3 or 3pt | beamerbaselocalstructure.sty:164; size1x.clo:215 | 0 |
+| | the next paragraph's `\parskip` | stacks on the topsep | ltlists `\@trivlist`, `\@endparenv` | the peer gap alone |
+| picture bottom to next baseline | interline glue after a box of depth 0 | `\baselineskip` (12pt) | TeXbook ch. 12 | the leaded ascent (9.35 bp) |
+| title bar to content | the title box's `\vskip0.25em` | 2.5pt | beamerbaseframe.sty:126 | 0 |
+| | `[t]` top skip | .2cm | :263 | 0 |
+| | content opens with `\vskip-\parskip\vbox{}` | no parskip; the first line at `\baselineskip` | :115 | the peer gap plus interline from the title's baseline |
+| `[c]` split | moloch's `c` key: 1fil above, 1fil below | 1:1, measured 0.5000 | beamerinnerthememoloch.sty:454-456 (plain beamer's key is 1fill : 1.5fill, beamerbaseframe.sty:257-258) | 1:1 |
+| `[c]` area bottom | the footline's top | 11.3bp above the page bottom | `\footheight` | 26.4bp |
+| inside a list | `\topsep`; `\itemsep` + `\parsep` | beamer 3pt, then 3pt + 0; article 10pt 8pt, then 4 + 4pt | beamerbaselocalstructure.sty:152-154; size10.clo:216-219 | 0, and 0 |
+
+Measured from baseline to baseline across `\end{center}`, the gap is
+`\topsep + \parskip + \baselineskip`: 20.0 in article at 10pt, 22.6 at
+11pt and 24.5 at 12pt. In beamer it is 20.0 with a zero parskip and 25.0
+with a 5pt one. The measurement also shows one beamer accident. A list
+directly after a `{center}` pays both topseps (28.0 = 8 + 8 + 12),
+because beamer's list template puts a colour node on the vertical list,
+which hides `\lastskip` from `\addvspace`. The engine keeps the rule
+itself: where two spaces meet, the larger is paid once.
+
+**What changed.**
+
+1. *A picture occupies TikZ's box.* `Ir.Pic.Picture` carries
+   `declared` (from `\useasboundingbox`, which is now a size declaration
+   and no longer a W0334 loss) and `borders` (each node's text extent
+   plus inner sep). `Picture.box` is the declared box, else
+   `Box.hull (ink ∪ borders)`. The PDF reserves and places by it
+   (`Layout.pictureBox`), and so does the SVG `viewBox`
+   (`HtmlDoc.pictureBoxOf`, under a label metric the driver now hands the
+   HTML config). Before, the SVG spanned the hull of label *anchors*, so
+   labels at the edge overflowed it.
+2. *A trivlist opens its topsep.* The scope of a `{center}` or `{flush…}`
+   environment rides in the engine role `Ir.trivlistRole`, and `{quote}`
+   is a trivlist in its own right. `\centering` and `\raggedright` open
+   no space. `Acc.trivSpace` is an `\addvspace` that the peer gap stacks
+   on. `Ir.trivlistSkip` resolves the value: the `topsep` token (which
+   `\setlength{\topsep}` writes), else one rhythm quantum. The HTML sheet
+   gives the role and `<blockquote>` both of their boundaries through the
+   same token.
+3. *A frame's content opens below its title box, on a baseline.*
+   `B.openBody` (op `bodyOpen`) moves the position to the bar's bottom
+   edge (or the title's depth), leaves the body strut's depth pending,
+   and adds the declared skip (0.25em, plus .2cm on `[t]`). The frame's
+   first block pays no peer gap. `placePicture` leaves the same strut
+   pending under a picture, so the next line stands a leading below the
+   picture's box.
+
+**Theorems.**
+- `Ir.Pic.Picture.box_declared_exact`: when `\useasboundingbox` declared
+  a box, `p.box m` is that box.
+- `Ir.Pic.Picture.box_covers`: when nothing is declared, every shape's
+  ink and every node border lies inside `p.box m`.
+- `HtmlDoc.pictureViewBox_projects`: the SVG's `viewBox` spans
+  `pic.box cfg.labelMetric`.
+- `Pdf.picture_box_agree`: under the driver's metric, the PDF's box and
+  the SVG's box are one value.
+- `Ir.trivlist_between`: one quantum lies inside `\topsep`'s own range at
+  10, 10.95 and 12pt.
+- `Ir.rhythm_table_exact` gains the trivlist row: the gap is the peer gap
+  plus the topsep, two quanta. `backend_gaps_agree` covers the row through
+  `pdfGapSp`, and `blockGap_kinds_covers` includes it.
+- `Layout.VDist.center_split_exact`: in a centred frame the leftover
+  falls evenly above and below the content, to within 1 sp.
+
+Four were broken once and the build failed. Declaring a picture's box as
+its anchor hull broke `pictureViewBox_projects`, and the ink hull broke
+`picture_box_agree`. A two-quantum topsep broke `trivlist_between` and
+`rhythm_table_exact`. A 2:3 centre broke the build at
+`center_is_halving`, which `center_split_exact` reads. The logs are in
+the evidence directory.
+
+**Tests over the artifact.** Sixteen new checks, all through the shipped
+path; each fails without its fix. `pictureBoxChecks` holds a declared box
+grown above, below and to the left against the page (the ink moves by
+exactly the growth, or half of it when the box centres), holds the SVG's
+viewBox to the box, and holds an undrawn node's inner sep. The
+`trivlistChecks` compare `{center}`, `{flushleft}`, `{quote}`, two
+trivlists that meet, and a declared `\topsep` against a peer boundary of
+the same document; they also check the HTML role and the sheet's two
+rules. The guard that `\centering` opens no space holds on the base too.
+`frameBodyChecks` holds a `[t]` frame's first baseline against the bar's
+own fill, a `[c]` frame's two gaps (the floor read off a `[b]` frame of
+the same body), and the line under a centred picture against the line
+under a centred line of text. Two Surface IR-shape tests now expect the
+role. The chrome band mutant in Tests/Artifact.lean lifts by 110pt,
+because the frame's line now stands lower.
+
+**Measured after.** On a synthetic 10pt moloch deck (bp, engine against
+lualatex):
+- a `[t]` frame's first baseline: 204.7 against 205.7 (it was 217.4);
+- the gaps around a centred line: 23.0 against 24.9 (they were 17.0);
+- paragraph, centred picture, paragraph: 24.9 and 29.0 against 26.9 and
+  30.3 (they were 15.5 and 17.0).
+
+On the private deck, at the same measure:
+- page 18: picture to paragraph 34 px against 36 (15 before), and the ink
+  now stands right of centre as its declared box puts it;
+- page 20: picture to paragraph 35 px against 32 (16 before).
+
+The deck ships 35 pages before and after, with W0384 at 0 before and
+after. The census changes only W0334, 54 → 45: the bounding-box sites
+are no longer losses. The paper ships 8 pages with its census identical;
+only its page 2 moved, a trivlist. Page 1 of each document is
+pixel-identical (`compare -metric AE` at 110 dpi, base binary against
+head), and the five user bugs hold (pages 14, 15 and 17 inspected).
+
+**Open, and why.**
+- *The topsep is quantized.* It is one quantum, 6pt at 10pt, where TeX
+  spends 8pt, following the display skip's precedent. Spending the exact
+  size-file value would need a milli-quantum rhythm table for
+  `backend_gaps_agree`. The choice belongs to the human.
+- *`\partopsep` is not spent.* LaTeX adds it only when the environment
+  opens a paragraph, and the IR does not record vertical mode. beamer's
+  value is 0.
+- *Lists spend neither topsep nor itemsep.* beamer spends 3pt of each
+  and article 8pt and 4 + 4pt. The next unit gives `collectItems` and
+  the list arm the same resolver shape; it will move every deck's lists,
+  and W0384 must be re-read then.
+- *The `[c]` area's bottom is 15.1bp above beamer's.* The engine's footer
+  band reserves room for its frame number, so a centred frame's content
+  stands 7.5bp high: page 20 measures 27 px from the bar to the picture
+  against 41. The fix belongs with the frame number's size and position.
+- *Untitled frames* still open at the body top, with no `[t]` skip.
+- *`bend` is not drawn*, so page 18's curved edges are straight.
+- *The HTML deck was not measured under Chromium in this branch.* The
+  rhythm-audit tier measures it; the reader oracle was rerun.
