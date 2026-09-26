@@ -74,7 +74,8 @@ shares: a fall fails, a rise fails until it is recorded, and a bare
 `# lowered: <fixture> <old>→<new> — <why>` line authorises. Before the
 ratchet sees anything, a stale pairing, an unreadable reference or a
 declaration that does not account for its fixture's stop stops the run
-with nothing written.
+with nothing written; a stale pairing is not measured, and a declared
+fixture that fell to such a stop is named as the fall first.
 
 `parity --repin` is the hermetic half of regeneration: when only comment
 lines of `<name>.tex` moved — a `% diverges:` declaration corrected, a

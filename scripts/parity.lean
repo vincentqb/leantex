@@ -31,12 +31,14 @@ with nothing written:
   fault       the measurement is not of the committed pairings: a source or
               an input moved since its reference was built (regenerate, or
               `--repin` when only comments moved), or a sidecar or a
-              reference cannot be read.
+              reference cannot be read. Such a pairing is not measured.
   accounting  a fixture's `% diverges:` declaration does not account for
               where it stops — it excuses a level the fixture does not stop
               on, or the fixture reaches the top anyway. Either would sit in
               the file excusing the next regression. Correct the line, then
-              `--repin`.
+              `--repin`. A fixture that fell to such a stop, read against
+              the committed floor by the one ratchet, is named as a fall
+              first: that is the engine's to fix before the line is.
 
 The oracle is never "must match". Every fixture's number is what the engine
 reaches today; the ladder's whole claim is that it does not go down.

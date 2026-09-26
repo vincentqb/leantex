@@ -15390,7 +15390,8 @@ earlier entries are corrected in place.
   log is `.refused`. A tool killed from outside would leave a partial log.
   Whether the driver ever sees such an exit is inferred, not measured.
 * `scripts/scoreboard.lean:100`, `collectTier`: a tier's
-  `result=stale` under a non-zero exit is reported as `fail`.
+  `result=stale` under a non-zero exit is reported as `fail`. *(Closed in
+  round 3b: on `main`, `resultOf` passes `stale` through.)*
 * `LeanTex/Core/Compat.lean:236`: `\nonfrenchspacing`, LaTeX's default,
   is a `meaningFree` row whose reason reads "inter-sentence space is uniform
   here either way". So the engine answers it with `note[N0100]`, which only
@@ -15453,3 +15454,69 @@ the placement tail too. With `prose`'s reference declaring
 `\frenchspacing`, `prose` stays at 5 and its placement |Δx| goes from p50
 0.288, p95 1.324 and max 1.879 bp to p50 0.199, p95 0.418 and max 0.493 bp
 (`parity-measure`, arms F and E of the same probe).
+
+
+
+### 2026-09-26 — the parity tier, round 3b: `pagebreak`'s stop belongs to the pairing, and every fault arm has a witness
+
+The third review blocked the tier on text only. The entries above, the
+corpus README and `pagebreak.tex` blamed `pagebreak`'s P4 on the engine's
+expansion, routed a line-breaking finding to Layout, and offered the human
+two decisions. They are corrected in place, and the four measured arms are
+in the round-3 entry's "For the human". The review's `spacing-probe.sh` was
+re-run with only its paths changed, at `a76fbb9`, and gave the review's
+keys and levels exactly: A 4, B 2, C 2, D 5
+(`leantex-evidence/parity-r3b/18-spacing-probe.txt`). Under `\frenchspacing`
+lualatex sets "be-/lieved" too, which pdftotext and a 110 dpi raster both
+show (`21-pagebreak-text.txt`). Nothing is decided here: the fixture and
+its reference stay as committed.
+
+**The rebase.** Onto `ae2ddc6`, with no conflict reported. The per-file net
+diff check still found one defect: `merge=union` had kept both the round-1
+entry's old heading and its renamed successor, because the rename's hunk
+sat against a moved end of file. Dropped in `a76fbb9`. Every other file's
+`-U0` diff matches `e3a5fca..04005f6` (`03d-netcontent-fixed.txt`).
+
+**The carried lowering is an assertion.** Selftest case 9: after an applied
+lowering and a recorded rise back, the same fall is refused and the
+baseline is untouched. Built at `04005f6` with only that case added, the
+selftest fails on it (exit 1, `28-fu1-old.txt`), and here it passes. The
+tier still has to land with or after `4502139`, and it is rebased on it.
+
+**Every fault arm of the measurement has a witness.** A fault is now a
+`Fault` value rather than a sentence. Case 10 stages a copy of the
+committed `prose` pairing and the shipped faces in a scratch directory,
+breaks it one way per arm, and runs the loop `main` runs (`measureWith`).
+Each run is judged by the arm it names (`Fault.arm`), never by the words.
+There are nine arms: the engine source, the reference source (which also
+moves its own input pin), a pinned input changed, a pinned input gone, a
+reference that is not the recorded one, a recorded reference the reader
+cannot read, an unreadable sidecar, a missing sidecar, and an unregistered
+divergence. A faulted pairing is no longer measured at all. The loop's own
+comment already said a stale pairing is never a level result, yet the gate
+printed a level for one. Each of the nine pushes, and the skip, was deleted
+once through the shipped binary in a scratch clone, and the selftest named
+each break (`38-mutate-measureall.txt`). The cost, one run each on this
+host: `parity --selftest` compiled takes 0.6 s, and interpreted 5.4 s
+against about 2 s before. The interpreted run is what `scoreboard
+--selftest` fans out to, and its wall time went from 2.3 s to 5.6 s.
+
+**A fall behind a declaration is named as a fall.** A declared fixture can
+stop where its declaration excuses nothing. The refusal now reads the
+committed floor through `Scoreboard.ratchet` (`fallsSince`) and lists the
+fixtures that fell first: "fell from 2 to 0 — P0 …", then the declaration,
+then a remedy that puts the engine before the line. It still fails closed:
+exit 2, nothing written, and the porcelain line counts the falls in
+`regressed=`. The review's scenario was run end to end, with `measure` made
+to raise E0312 and re-pinned through the regenerator. Before, the only
+reason printed was the declaration; after, the fall leads
+(`48-fall-behind.txt`, `48b-fall-behind-final.txt`). Five mutants each fail
+the selftest: the fall lookup, the ordering, the ratchet read, the gate
+ignoring it, and the count (`49-mutate-fallfirst.txt`).
+
+**Routed.** `LeanTex/Core/Compat.lean:236`, as the round-3 entry says, for
+the next Compat owner: `\nonfrenchspacing` is a `meaningFree` row, yet it
+changes an interword space. Re-measured at `a76fbb9`: `note[N0100]` under
+`-v` only, and byte-identical engine PDFs for `\frenchspacing` and
+`\nonfrenchspacing` (`25-nfs-probe.txt`). CI still owes a build of
+`parity` and runs of its `--selftest` and `--check`.
