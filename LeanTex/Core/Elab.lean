@@ -6658,9 +6658,13 @@ in the document's census" pos
 alt text names it for assistive technology")
     return blocks.push (.para #[.image (Ir.picSrcPrefix ++ id) {} ""])
   for (code, msg) in pdiags do
-    warnOnce ctx ("picture:" ++ msg) code msg pos
-      (help := "the rendered subset is \\fill...rectangle, \\node at, \
-\\foreach, and \\pgfmath(truncate)setmacro")
+    -- A note names a decision, not a construct outside the subset, so the
+    -- subset's reach is no help to it.
+    let help : Option String := match code.loss with
+      | .info => none
+      | _ => some "the rendered subset is \\fill...rectangle, \\node at, \
+\\foreach, and \\pgfmath(truncate)setmacro"
+    warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
   -- A refused boundary (`tool = none`) keeps the subset's diagnostics and
   -- no door warning: the declaration is the acceptance. W0379 is the
   -- driver's, for a stated request no available tool can fulfil.

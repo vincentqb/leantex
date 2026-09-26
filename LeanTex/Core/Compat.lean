@@ -422,6 +422,13 @@ lineage already carries the design the options adjust"),
 point inside a template the engine does not model; where such a body carries \
 content the loss is E0111's, which is a dropped body and not a style key")]
 
+/-- A definition the conditional pass can read: its replacement text, and
+whether it is `\long`, which `\ifx` compares beside the text (TeXbook
+chapter 20: a `\long` macro and its short twin are different meanings). -/
+private structure CondVal where
+  raws : Array Raw
+  long : Bool
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -474,13 +481,30 @@ private structure St where
   idiom are one problem, not forty. -/
   warned : Array String := #[]
   /-- Control words the document has defined so far, recorded by the
-  conditional pass: what `\ifdefined` reads. Flat — TeX's group-local
-  scoping is not modelled here. -/
+  conditional pass: what `\ifdefined` reads. An environment is a TeX group,
+  so what it defines ends with it, a global definition excepted; a brace
+  group is read flat — as often as not it is an argument (a definition
+  body, a hook) whose definitions are not scoped to it — which only ever
+  errs toward "defined", the reading that keeps a guarded branch. -/
   defined : Array String := #[]
   /-- `\newif` flags by base name (`\newif\ifshowdetail` records
   `showdetail`, initially false — plain TeX's `\newif` sets `\iffalse`)
-  with the value the last `\Xtrue`/`\Xfalse` gave. Flat, like `defined`. -/
+  with the value the last `\Xtrue`/`\Xfalse` gave. Scoped like `defined`. -/
   flags : Array (String × Bool) := #[]
+  /-- The parameterless definitions the conditional pass has read, latest
+  last: what `\ifnum`, `\ifodd`, `\ifcase` and `\ifx` read, at the site
+  that reads them. `none` is a name bound in a way no value can be read
+  from — a parameter text, an expanding definer over unread names, a
+  `\let` to a name with no readable value, a definition inside a group
+  the pass has left. -/
+  values : Array (String × Option CondVal) := #[]
+  /-- Every global definition, in the order made (`\gdef`, `\xdef`,
+  `\global`): what outlives the environment it was made in. -/
+  globals : Array (String × Option CondVal) := #[]
+  /-- The names the picture being walked binds for itself — a `\foreach`
+  variable, a `\pgfmathsetmacro` target. pgf binds them in the picture's
+  own scope, so a test that reads one is the picture's to evaluate. -/
+  picBound : Array String := #[]
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand`'s keep-existing policy reads. Separate from
   `defined`, which the conditional pass fills for the whole document
@@ -1177,21 +1201,39 @@ def milliStr (m : Nat) : String :=
 
 /-! # Decidable TeX conditionals
 
-`\ifdefined\name` asks whether `\name` is defined, and the document's own
-definitions make that decidable here: a name nothing in the document has
-bound is undefined — which is the honest answer for another engine's
-primitives too (`\directlua`, `\pdfoutput`: this engine is not that
-engine). The pass below resolves each such conditional to its taken
-branch, with a note naming the decision, before the idiom rewrite runs.
-TeX's `\if` family is open-ended and the rest of it (`\ifx`, `\ifcsname`,
-`\ifnum`, …) compares things the parse tree does not carry, so any other
-`\if…` head inside an extent makes it undecidable and the whole construct
-falls back to the skip-whole warning. -/
+A TeX conditional the document's own definitions decide is resolved here,
+to its taken branch, with a keyed note naming the decision (N0114), before
+the idiom rewrite runs. `\ifdefined\name` reads whether the document bound
+the name — a name nothing in the document bound is undefined, the honest
+answer for another engine's primitives too (`\directlua`, `\pdfoutput`:
+this engine is not that engine); a `\newif` flag's test reads its flow
+state; `\ifnum`, `\ifodd` and `\ifcase` read integers, literal or held by a
+macro the document defined as one; `\ifx` compares two macros the document
+defined; `\iftrue` and `\iffalse` are their own answer.
+
+The state is the one in force where the conditional stands. An environment
+is a TeX group, so a definition made inside one ends with it; a macro holds
+the value its latest definition in force gave it. That is what a picture's
+test needs: the whole-document table its walk expands through cannot say
+which of a macro's several definitions is in force at the picture's site,
+and read that way three renderings of one picture under three states drew
+one branch.
+
+Every other head TeX defines (`condHeads`) is tracked too, as an opaque
+frame whose `\else`, `\or` and `\fi` pass through, so a decided conditional
+around or inside it stays matched and the refusal downstream sees the
+undecided one whole. An `\if…` name that is neither — a package's own flag
+the document never declared — cannot be matched, so an extent holding one
+is left whole. -/
+
+/-- The conditional heads TeX defines: every `\if…` primitive of TeX82's
+table (`texPrimitives`) and e-TeX's three. The one list the pass tracks and
+the accounting check ranges over. -/
+def condHeads : List String :=
+  (texPrimitives.toList.filter (·.startsWith "if")) ++ ["ifdefined", "ifcsname", "iffontchar"]
 
 /-- Definers that bind the control word standing after them, directly or
-as `{\name}`. Recording is flat — TeX's group-local scoping is not
-modelled — which only ever errs toward "defined", the reading that keeps
-a guarded branch. -/
+as `{\name}`. -/
 private def definesNext : List String :=
   ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
    "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
@@ -1238,78 +1280,444 @@ private def flagTested (flags : Array (String × Bool)) (n : String) :
     flags.find? (·.1 == (n.drop 2).toString)
   else none
 
-/-- Is the conditional heading `raws[i]` one the pass can resolve? True
-when a matching `\fi` closes it at this level and every conditional inside
-the extent is itself `\ifdefined` naming a control word, or an `\ifX` of a
-recorded `\newif` flag. Any other `\if…` head is undecidable and would
-also desynchronise the `\else`/`\fi` matching, so it invalidates the whole
-extent. -/
+/-- Can the pass match a conditional headed `n`: one TeX defines, or the
+`\ifX` of a flag the document declared? -/
+private def isCondHead (flags : Array (String × Bool)) (n : String) : Bool :=
+  condHeads.contains n || (flagTested flags n).isSome
+
+/-- Is the conditional heading `raws[i]` one the pass can match? True when
+a matching `\fi` closes it at this level and every `\if…` name inside the
+extent is a head the pass tracks (`isCondHead`) — decided or not, every one
+of them opens a frame, so `\else`/`\fi` matching stays in step. An `\if…`
+name the pass does not know might open a conditional or might not, which
+would desynchronise the matching, so it leaves the whole extent alone. The
+name after `\newif` is the flag being declared, not a conditional. -/
 private def condExtent (flags : Array (String × Bool)) (raws : Array Raw)
     (i : Nat) : Bool := Id.run do
   let mut depth := 0
   let mut j := i
   for _ in [i:raws.size] do
     match raws[j]? with
-    | some (.ctrl "ifdefined" _) =>
-      let k := skipSpaces raws (j + 1)
-      match raws[k]? with
-      | some (.ctrl _ _) =>
-        depth := depth + 1
-        j := k + 1
-      | _ => return false
     | some (.ctrl "fi" _) =>
       if depth == 1 then return true
       depth := depth - 1
       j := j + 1
+    | some (.ctrl "newif" _) => j := j + 2
     | some (.ctrl n _) =>
-      if (flagTested flags n).isSome then
+      if isCondHead flags n then
         depth := depth + 1
         j := j + 1
-      else if n == "if" || (n.startsWith "if" && n.length > 2) then return false
+      else if n.startsWith "if" then return false
       else j := j + 1
     | some _ => j := j + 1
     | none => return false
   return false
 
+/-- The value a name holds where the pass stands: `none` when nothing
+recorded one, `some none` when it is bound but unreadable. -/
+private def condValueOf (vals : Array (String × Option CondVal)) (n : String) :
+    Option (Option CondVal) := Id.run do
+  let mut found : Option (Option CondVal) := none
+  for (m, v) in vals do
+    if m == n then found := some v
+  return found
+
+/-- A TeX integer literal: optional sign, decimal digits. -/
+private def condIntLit (w : String) : Option Int :=
+  let (neg, ds) := match w.toList with
+    | '-' :: r => (true, r)
+    | '+' :: r => (false, r)
+    | r => (false, r)
+  if ds.isEmpty || !ds.all Char.isDigit then none
+  else (String.ofList ds).toNat?.map fun v => if neg then -(v : Int) else (v : Int)
+
+/-- The integer a macro holds: its body is one literal, or one control word
+holding an integer in turn. Structural on `k`: the caller passes the table's
+size, and a chain of distinct names cannot be longer than the table holding
+them — a longer one revisits a name, which is a cycle and no value. -/
+private def condIntOf (vals : Array (String × Option CondVal)) : Nat → String → Option Int
+  | 0, _ => none
+  | k + 1, n =>
+    match condValueOf vals n with
+    | some (some v) =>
+      match (v.raws.filter fun r => !(r matches .space)).toList with
+      | [.word w _] => condIntLit w
+      | [.ctrl m _] => condIntOf vals k m
+      | _ => none
+    | _ => none
+
+/-- One element a test is read from: a character of a word (with the raw it
+stands in and its offset there), a space, or a control word. -/
+private inductive CondAtom where
+  | ch (c : Char) (ri : Nat) (ci : Nat)
+  | sp (ri : Nat)
+  | cs (n : String) (ri : Nat)
+
+private def CondAtom.ri : CondAtom → Nat
+  | .ch _ r _ => r
+  | .sp r => r
+  | .cs _ r => r
+
+private def CondAtom.src : CondAtom → String
+  | .ch c _ _ => String.ofList [c]
+  | .sp _ => " "
+  | .cs n _ => "\\" ++ n
+
+/-- The atoms of a test starting at `raws[j]`: at most sixteen raws, the
+widest test the decided shapes hold (two signed operands and a relation,
+spaced), and never past a group, a paragraph or math, none of which a
+number can hold. -/
+private def condAtoms (raws : Array Raw) (j : Nat) : Array CondAtom := Id.run do
+  let mut out : Array CondAtom := #[]
+  for k in [j:min raws.size (j + 16)] do
+    match raws[k]? with
+    | some (.word w _) =>
+      let mut ci := 0
+      for c in w.toList do
+        out := out.push (.ch c k ci)
+        ci := ci + 1
+    | some .space => out := out.push (.sp k)
+    | some (.ctrl n _) => out := out.push (.cs n k)
+    | some (.sym c _) => out := out.push (.ch c k 0)
+    | _ => break
+  return out
+
+/-- A TeX ⟨number⟩ from atom `p0` on (TeXbook chapter 24, the decimal
+case): signs and spaces, then digits or a macro holding an integer, then
+one optional space. A macro the picture being walked binds for itself is
+the picture's, and a digit straight after a macro would continue the
+number past its expansion; both read as no value here. -/
+private def condNumAt (st : St) (atoms : Array CondAtom) (p0 : Nat) :
+    Option (Int × Nat) := Id.run do
+  let mut p := p0
+  let mut neg := false
+  for _ in [p0:atoms.size] do
+    match atoms[p]? with
+    | some (.sp _) => p := p + 1
+    | some (.ch '+' _ _) => p := p + 1
+    | some (.ch '-' _ _) =>
+      neg := !neg
+      p := p + 1
+    | _ => break
+  let sign (v : Int) : Int := if neg then -v else v
+  match atoms[p]? with
+  | some (.ch c _ _) =>
+    if !c.isDigit then return none
+    let mut v : Int := 0
+    for _ in [p:atoms.size] do
+      match atoms[p]? with
+      | some (.ch d _ _) =>
+        if d.isDigit then
+          v := v * 10 + ((d.toNat - '0'.toNat : Nat) : Int)
+          p := p + 1
+        else break
+      | _ => break
+    if atoms[p]? matches some (.sp _) then p := p + 1
+    return some (sign v, p)
+  | some (.cs n _) =>
+    if st.picBound.contains n then return none
+    match condIntOf st.values st.values.size n with
+    | none => return none
+    | some v =>
+      p := p + 1
+      match atoms[p]? with
+      | some (.ch d _ _) => if d.isDigit then return none
+      | some (.sp _) => p := p + 1
+      | _ => pure ()
+      return some (sign v, p)
+  | _ => return none
+
+/-- An `\ifnum` relation from atom `p0` on, spaces first. -/
+private def condRelAt (atoms : Array CondAtom) (p0 : Nat) : Option (Char × Nat) := Id.run do
+  let mut p := p0
+  for _ in [p0:atoms.size] do
+    if atoms[p]? matches some (.sp _) then p := p + 1 else break
+  match atoms[p]? with
+  | some (.ch c _ _) =>
+    if c == '<' || c == '=' || c == '>' then return some (c, p + 1) else return none
+  | _ => return none
+
+/-- TeX's three integer relations. -/
+private def condRelHolds (rel : Char) (a b : Int) : Bool :=
+  if rel == '<' then a < b else if rel == '>' then a > b else a == b
+
+/-- The test as written, from its atoms. -/
+private def condSrc (atoms : Array CondAtom) (p : Nat) : String :=
+  ((atoms.extract 0 p).foldl (fun s a => s ++ a.src) "").trimAscii.toString
+
+/-- How many raws after `raws[j - 1]` a test ending at atom `p` consumed, and
+the unread end of the word it stopped inside — branch content, which the
+branch keeps or drops. -/
+private def condFinish (raws : Array Raw) (j : Nat) (atoms : Array CondAtom) (p : Nat) :
+    Nat × Option Raw :=
+  match atoms[p]? with
+  | none =>
+    match atoms.back? with
+    | some a => (a.ri + 1 - j, none)
+    | none => (0, none)
+  | some (.ch _ k ci) =>
+    if ci == 0 then (k - j, none)
+    else match raws[k]? with
+      | some (.word w pos) => (k + 1 - j, some (.word (w.drop ci).toString pos))
+      | _ => (k - j, none)
+  | some (.sp k) => (k - j, none)
+  | some (.cs _ k) => (k - j, none)
+
+/-- One open conditional: decided (whether the branch now read is kept), an
+`\ifcase` (the case it selects, the case now read, whether its `\else` has
+been read), or opaque — a head the pass cannot decide, whose `\else`, `\or`
+and `\fi` pass through so the refusal downstream reads it whole. -/
+private inductive CondOpen where
+  | decided (keep : Bool)
+  | cased (sel : Int) (cur : Nat) (inElse : Bool)
+  | opaque
+
+/-- Does the frame keep what is read now? An opaque frame keeps both of its
+branches: it is left for what comes after this pass. -/
+private def CondOpen.keeps : CondOpen → Bool
+  | .decided k => k
+  | .cased sel cur inElse => if inElse then sel < 0 || sel > (cur : Int) else sel == (cur : Int)
+  | .opaque => true
+
+/-- What the pass reads a head as: the frame it opens, how many raws after
+the head its test consumed, the unread end of the word the test stopped
+inside, and the keyed note naming the decision. -/
+private structure CondRead where
+  frame : CondOpen
+  used : Nat := 0
+  tail : Option Raw := none
+  note : Option (String × String) := none
+
+/-- Which branch a two-way decision keeps, in words. -/
+private def keptWords (keep : Bool) : String :=
+  if keep then "the branch before '\\else' is kept" else "only the '\\else' branch is kept"
+
+/-- Read the head `h` at `raws[i]` against the state in force there. `neg`:
+an `\unless` stands before it, which reverses a two-way test (e-TeX) and is
+refused before `\ifcase`. -/
+private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : Bool) :
+    CondRead := Id.run do
+  let undecided : CondRead := { frame := .opaque }
+  -- A test that opens with a number reads with a space after the head.
+  let shown (src : String) : String :=
+    if src.isEmpty || src.startsWith "\\" then src else " " ++ src
+  let two (v : Bool) (src what key : String) (used : Nat) (tail : Option Raw) : CondRead :=
+    let keep := if neg then !v else v
+    let msg := if neg then
+        s!"'\\unless\\{h}{shown src}' reverses a test that \
+{if v then "holds" else "fails"}, so {keptWords keep}"
+      else s!"'\\{h}{shown src}' {what}, so {keptWords keep}"
+    { frame := .decided keep, used := used, tail := tail,
+      note := some (s!"{h}:{src}:{key}:{neg}", msg) }
+  if h == "iftrue" || h == "iffalse" then
+    let v := h == "iftrue"
+    return two v "" (if v then "is true by definition" else "is false by definition")
+      (toString v) 0 none
+  if h == "ifdefined" then
+    let k := skipSpaces raws (i + 1)
+    match raws[k]? with
+    | some (.ctrl n _) =>
+      if st.picBound.contains n then return undecided
+      let v := st.defined.contains n
+      if neg then return two v s!"\\{n}" "" (toString v) (k - i) none
+      return { frame := .decided v, used := k - i,
+               note := some (s!"ifdefined:{n}:{v}", condMsg n v) }
+    | _ => return undecided
+  if h == "ifnum" || h == "ifodd" || h == "ifcase" then
+    let atoms := condAtoms raws (i + 1)
+    match condNumAt st atoms 0 with
+    | none => return undecided
+    | some (a, p1) =>
+      if h == "ifcase" then
+        if neg then return undecided
+        let src := condSrc atoms p1
+        let (used, tail) := condFinish raws (i + 1) atoms p1
+        return { frame := .cased a 0 false, used := used, tail := tail,
+                 note := some (s!"ifcase:{src}:{a}",
+                   s!"'\\ifcase{shown src}' reads {a}, so only the case it selects is kept") }
+      if h == "ifodd" then
+        let v := a % 2 != 0
+        let src := condSrc atoms p1
+        let (used, tail) := condFinish raws (i + 1) atoms p1
+        return two v src s!"reads {a}, which is {if v then "odd" else "even"}" (toString a)
+          used tail
+      match condRelAt atoms p1 with
+      | none => return undecided
+      | some (rel, p2) =>
+        match condNumAt st atoms p2 with
+        | none => return undecided
+        | some (b, p3) =>
+          let v := condRelHolds rel a b
+          let src := condSrc atoms p3
+          let (used, tail) := condFinish raws (i + 1) atoms p3
+          return two v src s!"reads {a} {rel} {b}, which {if v then "holds" else "fails"}"
+            s!"{a}{rel}{b}" used tail
+  if h == "ifx" then
+    match raws[i + 1]?, raws[i + 2]? with
+    | some (.ctrl a _), some (.ctrl b _) =>
+      if st.picBound.contains a || st.picBound.contains b then return undecided
+      let src := s!"\\{a}\\{b}"
+      if a == b then return two true src "compares a name with itself" "same" 2 none
+      match condValueOf st.values a, condValueOf st.values b with
+      | some (some va), some (some vb) =>
+        let v := rawSrc va.raws == rawSrc vb.raws && va.long == vb.long
+        return two v src
+          (if v then "compares two equal definitions" else "compares two different definitions")
+          (toString v) 2 none
+      | _, _ => return undecided
+    | _, _ => return undecided
+  if let some (_, v) := flagTested st.flags h then
+    if neg then return two v "" "" (toString v) 0 none
+    return { frame := .decided v, note := some (s!"flag:{h}:{v}", flagMsg h v) }
+  return undecided
+
+/-- Record a definition of `n` whose readable value is `v` (`none`: none
+the pass can read), globally when `global`. -/
+private def recordValue (n : String) (v : Option CondVal) (global : Bool) : M Unit :=
+  write fun st => { st with
+    defined := if st.defined.contains n then st.defined else st.defined.push n
+    values := st.values.push (n, v)
+    globals := if global then st.globals.push (n, v) else st.globals }
+
+/-- The value the definer `d` at `raws[i]` gives the name it binds: the body
+of a parameterless definition, and whether it is `\long`. An expanding
+definer (`\edef`, `\xdef`) reads a body with no control word as itself and
+one standing for a single macro as that macro's value; anything else it
+would expand to is unread here. -/
+private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
+    Option CondVal := Id.run do
+  let longPre := (i ≥ 1 && (raws[i - 1]? matches some (.ctrl "long" _))) ||
+    (i ≥ 2 && (raws[i - 2]? matches some (.ctrl "long" _)))
+  if d == "def" || d == "gdef" || d == "edef" || d == "xdef" then
+    let j := skipSpaces raws (i + 1)
+    match raws[j]?, raws[j + 1]? with
+    | some (.ctrl _ _), some (.group body _) =>
+      if d == "def" || d == "gdef" then return some { raws := body, long := longPre }
+      if body.all fun r => !(r matches .ctrl _ _) then
+        return some { raws := body, long := longPre }
+      match (body.filter fun r => !(r matches .space)).toList with
+      | [.ctrl m _] => return (condValueOf st.values m).bind id
+      | _ => return none
+    | _, _ => return none
+  if d == "let" then
+    let j := skipSpaces raws (i + 1)
+    let k0 := skipSpaces raws (j + 1)
+    let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
+    match raws[j]?, raws[k]? with
+    | some (.ctrl _ _), some (.ctrl m _) => return (condValueOf st.values m).bind id
+    | _, _ => return none
+  if d == "newcommand" || d == "renewcommand" || d == "providecommand" ||
+      d == "DeclareRobustCommand" then
+    let j0 := skipSpaces raws (i + 1)
+    let star := raws[j0]? matches some (.word "*" _)
+    let j := if star then skipSpaces raws (j0 + 1) else j0
+    match raws[skipSpaces raws (j + 1)]? with
+    | some (.group body _) => return some { raws := body, long := !star }
+    | _ => return none
+  return none
+
+/-- Does the definer `d` at `raws[i]` define globally: `\gdef`, `\xdef`, or
+a `\global` prefix, possibly beside `\long`? -/
+private def definesGlobally (raws : Array Raw) (i : Nat) (d : String) : Bool :=
+  d == "gdef" || d == "xdef" ||
+    (i ≥ 1 && (raws[i - 1]? matches some (.ctrl "global" _))) ||
+    (i ≥ 2 && (raws[i - 2]? matches some (.ctrl "global" _)))
+
+/-- The first control word of a group: the name a `\pgfmathsetmacro` sets. -/
+private def condFirstCtrl (g : Array Raw) : Array String :=
+  match g.find? (· matches .ctrl _ _) with
+  | some (.ctrl n _) => #[n]
+  | _ => #[]
+
+/-- A control word's name. -/
+private def condCtrlName : Raw → Option String
+  | .ctrl n _ => some n
+  | _ => none
+
+/-- The control words between a `\foreach` and its `in`: its variables, and
+a `count=` option's counter. -/
+private def condForeachVars (rs : List Raw) : Array String :=
+  let head := rs.takeWhile fun r => !(r matches .word "in" _) && !(r matches .group _ _)
+  (head.filterMap condCtrlName).toArray
+
 mutual
 
-/-- Resolve the decidable conditionals at one level. `stack` is the truth
-of every open `\ifdefined`, innermost first — an element is emitted only
-when all of them hold, `\else` flips the innermost, `\fi` closes it — and
-a bare `\else`/`\fi` with nothing open is not ours and passes through.
-The list drives the recursion; `raws` and `i` give the extent check its
-lookahead, exactly as `rewriteList` pairs them. -/
-private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
-    List Raw → Nat → M (Array Raw)
-  | [], _ => pure out
-  | .ctrl "ifdefined" pos :: .ctrl n np :: rest, i => do
-    if stack.isEmpty && !condExtent (← get).flags raws i then
-      -- Undecidable: leave the construct for the skip-whole warning.
-      condList raws ((out.push (.ctrl "ifdefined" pos)).push (.ctrl n np)) stack rest (i + 2)
-    else
-      let defined := (← get).defined.contains n
-      if stack.all id then
-        say .N0114 (condMsg n defined) pos
-      condList raws out (defined :: stack) rest (i + 2)
-  | .ctrl "ifdefined" pos :: .space :: .ctrl n np :: rest, i => do
-    if stack.isEmpty && !condExtent (← get).flags raws i then
-      condList raws (((out.push (.ctrl "ifdefined" pos)).push .space).push (.ctrl n np))
-        stack rest (i + 3)
-    else
-      let defined := (← get).defined.contains n
-      if stack.all id then
-        say .N0114 (condMsg n defined) pos
-      condList raws out (defined :: stack) rest (i + 3)
-  | .ctrl "ifdefined" pos :: rest, i =>
-    -- Nothing testable follows; pass the head through untouched.
-    condList raws (out.push (.ctrl "ifdefined" pos)) stack rest (i + 1)
-  | .ctrl "newif" pos :: .ctrl n np :: rest, i => do
+-- conserves: none — the scan answers a set of names, not a tree: the names a
+-- picture binds for itself, whose tests the pass leaves to the picture's walk.
+private def condBoundLevel (acc : Array String) : List Raw → Array String
+  | [] => acc
+  | .ctrl "foreach" _ :: rest =>
+    let vs := condForeachVars rest
+    condBoundLevel (acc ++ vs) rest
+  | .ctrl "pgfmathsetmacro" _ :: .group g _ :: rest =>
+    let vs := condFirstCtrl g
+    condBoundLevel (acc ++ vs) rest
+  | .ctrl "pgfmathtruncatemacro" _ :: .group g _ :: rest =>
+    let vs := condFirstCtrl g
+    condBoundLevel (acc ++ vs) rest
+  | r :: rest => condBoundLevel (condBoundRaw acc r) rest
+
+private def condBoundRaw (acc : Array String) : Raw → Array String
+  | .group body _ => condBoundLevel acc body.toList
+  | .env _ body _ => condBoundLevel acc body.toList
+  | .math _ body _ => condBoundLevel acc body.toList
+  | .word _ _ => acc
+  | .space => acc
+  | .par _ => acc
+  | .ctrl _ _ => acc
+  | .sym _ _ => acc
+  | .verb _ _ _ => acc
+
+end
+
+/-- A brace group closes. What it defined stays bound — the flat reading of
+`defined` — but no value set inside it is read past it: the group is as
+often an argument (a definition body, a hook) whose definitions are not in
+force here as a TeX group whose definitions are gone, and in neither case
+is the value set inside it the one in force after it. -/
+private def condCloseGroup (s0 st : St) : St :=
+  let inside := (st.values.extract s0.values.size st.values.size).map (·.1)
+  let unread := inside.foldl (fun acc n => if acc.contains n then acc else acc.push n) #[]
+  let blank : Array (String × Option CondVal) := unread.map fun n => (n, none)
+  let g0 := s0.globals.size
+  let gBlank : Array (String × Option CondVal) :=
+    (st.globals.extract g0 st.globals.size).map fun p => (p.1, none)
+  { st with
+    values := (st.values.extract 0 s0.values.size) ++ blank
+    globals := (st.globals.extract 0 g0) ++ gBlank }
+
+/-- An environment closes. It is a TeX group, so the definition state is the
+one it opened with, and only the global definitions made inside it outlive
+it, in the order they were made. -/
+private def condCloseEnv (s0 st : St) : St :=
+  let made := st.globals.extract s0.globals.size st.globals.size
+  let base := { st with
+    defined := s0.defined, flags := s0.flags, picBound := s0.picBound
+    values := st.values.extract 0 s0.values.size }
+  made.foldl (fun acc p => { acc with
+    defined := if acc.defined.contains p.1 then acc.defined else acc.defined.push p.1
+    values := acc.values.push p }) base
+
+mutual
+
+/-- Resolve the decidable conditionals at one level. `stack` holds every open
+conditional, innermost first; an element is emitted only while every frame
+keeps what is read now (`CondOpen.keeps`), and a bare `\else`, `\or` or
+`\fi` with nothing open is not ours and passes through. `skip` counts the
+raws a decided head's test consumed. The list drives the recursion; `raws`
+and `i` give the heads their lookahead, exactly as `rewriteList` pairs
+them. -/
+private def condList (raws : Array Raw) (out : Array Raw) (stack : List CondOpen) :
+    List Raw → Nat → Nat → M (Array Raw)
+  | [], _, _ => pure out
+  | _ :: rest, i, skip + 1 => condList raws out stack rest (i + 1) skip
+  | .ctrl "newif" pos :: .ctrl n np :: rest, i, 0 => do
     -- `\newif\ifX` declares a decidable flag, initially false (plain TeX:
     -- `\newif` ends with `\csname …false\endcsname`): `\ifX` joins this
     -- pass, `\Xtrue`/`\Xfalse` set it. A `\newif` whose next token is not
     -- an `\if…` name passes through for the ordinary unknown warning.
-    if !(stack.all id) then
-      condList raws out stack rest (i + 2)
+    if !(stack.all CondOpen.keeps) then
+      condList raws out stack rest (i + 2) 0
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
       write fun st => { st with
@@ -1317,13 +1725,14 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      say .N0114 s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
-      condList raws out stack rest (i + 2)
+      sayOnce ("cond:newif:" ++ n) .N0114
+        s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
+      condList raws out stack rest (i + 2) 0
     else
-      condList raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2)
-  | .ctrl "newif" pos :: .space :: .ctrl n np :: rest, i => do
-    if !(stack.all id) then
-      condList raws out stack rest (i + 3)
+      condList raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
+  | .ctrl "newif" pos :: .space :: .ctrl n np :: rest, i, 0 => do
+    if !(stack.all CondOpen.keeps) then
+      condList raws out stack rest (i + 3) 0
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
       write fun st => { st with
@@ -1331,74 +1740,131 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      say .N0114 s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
-      condList raws out stack rest (i + 3)
+      sayOnce ("cond:newif:" ++ n) .N0114
+        s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
+      condList raws out stack rest (i + 3) 0
     else
       condList raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
-        stack rest (i + 3)
-  | .ctrl "else" pos :: rest, i => do
+        stack rest (i + 3) 0
+  | .ctrl "else" pos :: rest, i, 0 => do
     match stack with
-    | [] => condList raws (out.push (.ctrl "else" pos)) [] rest (i + 1)
-    | top :: more => condList raws out ((!top) :: more) rest (i + 1)
-  | .ctrl "fi" pos :: rest, i => do
+    | [] => condList raws (out.push (.ctrl "else" pos)) [] rest (i + 1) 0
+    | .decided k :: more => condList raws out (.decided (!k) :: more) rest (i + 1) 0
+    | .cased sel cur _ :: more => condList raws out (.cased sel cur true :: more) rest (i + 1) 0
+    | .opaque :: more =>
+      let out := if more.all CondOpen.keeps then out.push (.ctrl "else" pos) else out
+      condList raws out stack rest (i + 1) 0
+  | .ctrl "or" pos :: rest, i, 0 => do
     match stack with
-    | [] => condList raws (out.push (.ctrl "fi" pos)) [] rest (i + 1)
-    | _ :: more => condList raws out more rest (i + 1)
-  | .ctrl n pos :: rest, i => do
-    let flags := (← get).flags
-    match flagTested flags n with
-    | some (_, value) =>
-      -- `\ifX` of a recorded flag: resolve exactly as `\ifdefined` does,
-      -- extent check included.
-      if stack.isEmpty && !condExtent flags raws i then
-        condList raws (out.push (.ctrl n pos)) stack rest (i + 1)
+    | .cased sel cur false :: more =>
+      condList raws out (.cased sel (cur + 1) false :: more) rest (i + 1) 0
+    | _ =>
+      let out := if stack.all CondOpen.keeps then out.push (.ctrl "or" pos) else out
+      condList raws out stack rest (i + 1) 0
+  | .ctrl "fi" pos :: rest, i, 0 => do
+    match stack with
+    | [] => condList raws (out.push (.ctrl "fi" pos)) [] rest (i + 1) 0
+    | .opaque :: more =>
+      let out := if more.all CondOpen.keeps then out.push (.ctrl "fi" pos) else out
+      condList raws out more rest (i + 1) 0
+    | _ :: more => condList raws out more rest (i + 1) 0
+  | .ctrl n pos :: rest, i, 0 => do
+    let st ← get
+    -- `\unless` before a head reverses the head's test (e-TeX).
+    let unlessHead : Option (String × Pos) := if n == "unless" then
+        match rest with
+        | .ctrl h hp :: _ => if isCondHead st.flags h then some (h, hp) else none
+        | _ => none
+      else none
+    let head := (unlessHead.map (·.1)).getD n
+    let hi := if unlessHead.isSome then i + 1 else i
+    if isCondHead st.flags head then
+      if stack.isEmpty && !condExtent st.flags raws hi then
+        -- An extent the pass cannot match: left whole for what follows.
+        condList raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
       else
-        if stack.all id then
-          say .N0114 (flagMsg n value) pos
-        condList raws out (value :: stack) rest (i + 1)
-    | none =>
-      if !(stack.all id) then
-        condList raws out stack rest (i + 1)
-      else if n.endsWith "true" && flags.any (·.1 == (n.dropEnd 4).toString) then
-        let x := (n.dropEnd 4).toString
-        write fun st => { st with
-          flags := (st.flags.filter (·.1 != x)).push (x, true) }
-        say .N0114 s!"'\\{n}': '\\if{x}' is true from here on" pos
-        condList raws out stack rest (i + 1)
-      else if n.endsWith "false" && flags.any (·.1 == (n.dropEnd 5).toString) then
-        let x := (n.dropEnd 5).toString
-        write fun st => { st with
-          flags := (st.flags.filter (·.1 != x)).push (x, false) }
-        say .N0114 s!"'\\{n}': '\\if{x}' is false from here on" pos
-        condList raws out stack rest (i + 1)
-      else
-        if definesNext.contains n then
-          if let some m := (rest.dropWhile isSpaceOrStar).head?.bind boundName then
-            recordDefined m
-        condList raws (out.push (.ctrl n pos)) stack rest (i + 1)
-  | r :: rest, i => do
-    if stack.all id then
-      condList raws (out.push (← condOne r)) stack rest (i + 1)
+        let r := readHead st raws hi head unlessHead.isSome
+        let live := stack.all CondOpen.keeps
+        if live then
+          if let some (key, msg) := r.note then
+            sayOnce ("cond:" ++ key) .N0114 msg pos
+        let stack' := r.frame :: stack
+        match r.frame, unlessHead with
+        | .opaque, some (h, hp) =>
+          let out := if live then (out.push (.ctrl n pos)).push (.ctrl h hp) else out
+          condList raws out stack' rest (i + 1) 1
+        | .opaque, none =>
+          let out := if live then out.push (.ctrl n pos) else out
+          condList raws out stack' rest (i + 1) 0
+        | _, _ =>
+          let out := match r.tail with
+            | some t => if stack'.all CondOpen.keeps then out.push t else out
+            | none => out
+          condList raws out stack' rest (i + 1)
+            (r.used + (if unlessHead.isSome then 1 else 0))
+    else if !(stack.all CondOpen.keeps) then
+      condList raws out stack rest (i + 1) 0
+    else if n.endsWith "true" && st.flags.any (·.1 == (n.dropEnd 4).toString) then
+      let x := (n.dropEnd 4).toString
+      write fun st => { st with
+        flags := (st.flags.filter (·.1 != x)).push (x, true) }
+      sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on" pos
+      condList raws out stack rest (i + 1) 0
+    else if n.endsWith "false" && st.flags.any (·.1 == (n.dropEnd 5).toString) then
+      let x := (n.dropEnd 5).toString
+      write fun st => { st with
+        flags := (st.flags.filter (·.1 != x)).push (x, false) }
+      sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on" pos
+      condList raws out stack rest (i + 1) 0
     else
-      condList raws out stack rest (i + 1)
+      if definesNext.contains n then
+        if let some m := (rest.dropWhile isSpaceOrStar).head?.bind boundName then
+          unless n == "providecommand" && st.defined.contains m do
+            -- Inside a frame the pass cannot decide, the branch may not run:
+            -- the name is bound (the flat reading), its value unread.
+            let v := if stack.any (· matches .opaque) then none
+              else definedValue st raws i n
+            recordValue m v (definesGlobally raws i n)
+      condList raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+  | r :: rest, i, 0 => do
+    if stack.all CondOpen.keeps then
+      condList raws (out.push (← condOne r)) stack rest (i + 1) 0
+    else
+      condList raws out stack rest (i + 1) 0
 
-/-- Descend into a group or environment body; an `\input` wrapper switches
-the file its notes name, as `rewriteRaw` does. -/
+/-- Descend into a group, math or an environment body. An environment and
+math are TeX groups: the definition state is restored when they close
+(`condCloseEnv`); a brace group is read as `condCloseGroup` says. A
+picture's own bindings are known before its body is read. An `\input`
+wrapper switches the file its notes name, as `rewriteRaw` does, and is no
+group at all. -/
 private def condOne : Raw → M Raw
   | .group body p => do
-    return .group (← condList body #[] [] body.toList 0) p
+    let s0 ← get
+    let body' ← condList body #[] [] body.toList 0 0
+    write fun st => condCloseGroup s0 st
+    return .group body' p
   | .math d body p => do
-    return .math d (← condList body #[] [] body.toList 0) p
+    let s0 ← get
+    let body' ← condList body #[] [] body.toList 0 0
+    write fun st => condCloseEnv s0 st
+    return .math d body' p
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
       write fun st => { st with file := f }
-      let body' ← condList body #[] [] body.toList 0
+      let body' ← condList body #[] [] body.toList 0 0
       write fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      return .env n (← condList body #[] [] body.toList 0) p
+      let s0 ← get
+      if pictureEnvs.contains n then
+        let names := condBoundLevel #[] body.toList
+        write fun st => { st with picBound := st.picBound ++ names }
+      let body' ← condList body #[] [] body.toList 0 0
+      write fun st => condCloseEnv s0 st
+      return .env n body' p
   | r => pure r
 
 end
@@ -4149,7 +4615,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     (warned : Array String := #[]) :
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
-    let raws ← condList raws #[] [] raws.toList 0
+    let raws ← condList raws #[] [] raws.toList 0 0
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList
     let raws := (splitColumnsList raws.toList).toArray

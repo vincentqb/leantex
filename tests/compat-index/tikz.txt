@@ -28,9 +28,12 @@
 # TeXbook chapter 20 for the conditionals a picture body may hold: every
 # \if... control word opens one (which is what \newif mints), \ifnum and
 # \ifdim carry the <number><relation><number> form this walk computes,
-# \iftrue and \iffalse are their own value, and every other test is a fact
-# about TeX's own state or its control-sequence table, so it ships the
-# branch that draws with the assumption named,
+# \iftrue and \iffalse are their own value, a test the document's own
+# definitions decide (\ifodd, \ifnum and \ifcase over a literal or a
+# macro holding an integer, \ifx of two definitions) is decided before the
+# walk reads the picture, and every other test is a fact about TeX's own
+# state or its control-sequence table, so it ships the branch that draws
+# with the assumption named,
 # part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
 # tip). tikzpicture renders its subset natively; a picture with a
 # construct outside it routes whole to the graphics boundary (§53's
@@ -88,7 +91,8 @@ body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{2}\ifnum\k<5 \node (u) at (0,0
 body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{9}\ifnum\k>5 \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body impl \begin{tikzpicture}\iftrue \node (u) at (0,0) {x};\else \node (u) at (0,0) {y};\fi\end{tikzpicture}
 body impl \begin{tikzpicture}\iffalse \node (u) at (0,0) {y};\else \node (u) at (0,0) {x};\fi\end{tikzpicture}
-body refuse:W0334 \begin{tikzpicture}\ifodd 3 \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\ifodd 3 \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\ifmmode \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\ifnum\notamacro=1 \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.mid) -- (v.mid west);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}

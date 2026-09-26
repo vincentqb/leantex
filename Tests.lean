@@ -13,6 +13,7 @@ import Tests.Artifact
 import Tests.CompatGate
 import Tests.HtmlTokens
 import Tests.HtmlA11y
+import Tests.Conditionals
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -136,6 +137,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureInnerSepChecks ref oneFace
   pictureAutoLabelChecks ref oneFace
   pictureGlobalKeyChecks ref oneFace
+  condAccountingChecks ref oneFace
+  picStateChecks ref oneFace
   quoteChecks ref oneFace
   refChecks ref oneFace
   titleChecks ref

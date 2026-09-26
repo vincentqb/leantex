@@ -983,8 +983,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `\ifdefined` is decidable from the document's own definitions, so it
   -- resolves to its taken branch with a note — nothing nothing defines is
   -- undefined, which is the honest answer for another engine's primitives
-  -- too. Any other `\if…` head (open-ended family, undecidable here)
-  -- invalidates the extent and the skip-whole warning stays.
+  -- too. A head TeX defines that the document cannot decide is tracked, and
+  -- where its branch is reached it keeps the skip-whole warning; an `\if…`
+  -- name the pass does not know leaves the whole extent unresolved.
   t "compat ifdefined undefined keeps the else branch"
     (let (doc, ds) := elabStr "\\ifdefined\\nope A\\else B\\fi"
      doc.body == #[.para #[.text "B"]] && ds.any (·.code == "N0114") &&
@@ -995,9 +996,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat ifdefined nested resolves inside the kept branch"
     ((elabStr "\\ifdefined\\nope A\\else\\ifdefined\\nada B\\else C\\fi\\fi").1.body ==
       #[.para #[.text "C"]])
-  t "compat a foreign conditional inside keeps the skip-whole warning"
-    (let ds := (elabStr "\\ifdefined\\a\\ifx\\b\\c\\fi\\fi x").2
-     ds.any (·.code == "W0104") && ds.all (·.code != "N0114"))
+  t "compat a foreign conditional inside a taken branch keeps the skip-whole warning"
+    (let ds := (elabStr "\\def\\a{}\\ifdefined\\a\\ifx\\b\\c\\fi\\fi x").2
+     ds.any (·.code == "W0104") && ds.any (·.code == "N0114"))
+  t "compat an unknown if-name inside leaves the whole extent unresolved"
+    (let ds := (elabStr "\\ifdefined\\a\\ifsomething\\fi\\fi x").2
+     ds.all (·.code != "N0114"))
   -- `\newif` joins the same pass: `\ifX` resolves from the flag's flow
   -- state, `\Xtrue`/`\Xfalse` set it, the initial value is false (plain
   -- TeX's `\newif` ends by setting the false branch). A flag's `\ifX`
@@ -5987,11 +5991,26 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (pageHas guarded 0 "Pear" && !pageHas guarded 0 "Fig" &&
       (guarded[0]?.map (·.paths == 2)).getD false)
   -- Any `\if…` control word opens a conditional, not just the arithmetic
-  -- ones: TeX's own convention, and what `\newif` mints.
-  let (_, oddDs) := elabStr (pic
-    ("\\ifodd 3\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  -- ones: TeX's own convention, and what `\newif` mints. A test about TeX's
+  -- run-time state reaches the walk and is named by its own spelling; one
+  -- the document decides (`\ifodd` of a literal) is decided before the
+  -- walk reads the picture, and named there.
+  let modeSrc := pic
+    ("\\ifmmode\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
+  let (_, modeDs) := elabStr modeSrc
   t "an opener the subset cannot compute is named by its own spelling"
-    (oddDs.any fun d => d.code == "W0334" && hasStr d.message "ifodd")
+    (modeDs.any fun d => d.code == "W0334" && hasStr d.message "ifmmode")
+  -- A mode test takes no test tokens, so the branch opens at once: its first
+  -- statement is the branch's, not the test's.
+  let mode := censusSrc modeSrc
+  t "a head that takes no test keeps its branch's first statement"
+    (pageHas mode 0 "Pear" && pageHas mode 0 "Plum" && !pageHas mode 0 "Fig")
+  let oddSrc := pic
+    ("\\ifodd 3\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
+  let odd := censusSrc oddSrc
+  t "an opener the document decides ships the branch it takes, named"
+    (pageHas odd 0 "Pear" && !pageHas odd 0 "Fig" &&
+      (elabStr oddSrc).2.any fun d => d.code == "N0114" && d.subject.isSome)
   -- And the branch that draws, not simply the first: a guard is as often
   -- written with the content in the `\else`.
   let elseOnly := censusSrc (pic

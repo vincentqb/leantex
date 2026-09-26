@@ -438,6 +438,15 @@ def condKindOf (n : String) : Option CondKind :=
   else if n.startsWith "if" && n.length > 2 then some (.opaque n)
   else none
 
+/-- Does the head take no test at all? `\iftrue`/`\iffalse` are their own
+value and the four mode tests read TeX's state (TeXbook chapter 20), so
+the branch begins with the very next token: collecting a test up to a
+space would swallow the branch's first statement, since TeX drops the
+space after a control word before this walk sees it. -/
+def condTakesNoTest (n : String) : Bool :=
+  n == "iftrue" || n == "iffalse" || n == "ifmmode" || n == "ifhmode" ||
+    n == "ifvmode" || n == "ifinner"
+
 /-- One parsed picture statement. `fill` and `node` keep their tokenslices — coordinates and options are evaluated per loop iteration, where
 the bindings live. -/
 inductive Stmt where
@@ -694,7 +703,10 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "fi" => st.fiHere
     | .ctrl name =>
       match condKindOf name with
-      | some k => { st with mode := .icond k #[] false }
+      | some k =>
+        if condTakesNoTest name then
+          { st with conds := st.conds.push { kind := k, test := #[] }, mode := .top }
+        else { st with mode := .icond k #[] false }
       | none => { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
@@ -758,7 +770,11 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl name =>
       match condKindOf name with
       | some k =>
-        { st with pending := st.pending.push (vars, list), mode := .icond k #[] false }
+        if condTakesNoTest name then
+          { st with pending := st.pending.push (vars, list),
+                    conds := st.conds.push { kind := k, test := #[] }, mode := .top }
+        else
+          { st with pending := st.pending.push (vars, list), mode := .icond k #[] false }
       | none =>
         { (st.outside "this '\\foreach' body")
           with mode := .skip, pending := #[] }
@@ -3797,6 +3813,10 @@ theorem condFloor_mem (thenS elseS : List Stmt) :
   · exact Or.inl rfl
   · exact Or.inr rfl
 
+/-- Which branch a decided test draws, in words. -/
+def condDrawnWords (holds : Bool) : String :=
+  if holds then "the branch before '\\else' is drawn" else "only the '\\else' branch is drawn"
+
 mutual
 
 /-- Evaluate statements in order, threading the macro environment: a
@@ -3861,6 +3881,8 @@ is not set"))
   | .cond kind test thenS elseS, env, ev =>
     match kind with
     | .always v =>
+      let ev := ev.diag (.N0114, s!"'\\{if v then "iftrue" else "iffalse"}' is \
+{if v then "true" else "false"} by definition, so {condDrawnWords v}")
       if v then
         let (_, ev2) := evalList cx thenS env ev
         (env, ev2)
@@ -3892,7 +3914,12 @@ rendered picture subset; the branch that draws is drawn")
       | some (lhs, rel, rhs) =>
         match evalNum env lhs, evalNum env rhs with
         | .ok a, .ok b =>
-          if relHolds rel a b then
+          let holds := relHolds rel a b
+          -- Computed, not assumed: named all the same, so a reader can see
+          -- which values the picture's own walk decided a branch from.
+          let ev := ev.diag (.N0114, s!"'\\{n}' is computed from the picture's own values \
+and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
+          if holds then
             let (_, ev2) := evalList cx thenS env ev
             (env, ev2)
           else
