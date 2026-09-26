@@ -92,7 +92,8 @@ pages and the typed HTML tree. -/
 def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds, _) ← runStyParity "codehook"
-  let text := String.join ((bodyLines (layoutOf fonts doc)).toList.map (lineText ·))
+  -- Lines joined with a space: a phrase that wraps still reads as one.
+  let text := " ".intercalate ((bodyLines (layoutOf fonts doc)).toList.map (lineText ·))
   let (_, body, _) := HtmlDoc.emitTree {} doc
   -- base: "style words secret more secret boxed words Opening line. kept words".
   t "a style's hook sets none of a LaTeX internal's arguments on the page"
