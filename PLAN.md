@@ -18462,3 +18462,98 @@ box is measured from the body face's ascent and descent, not the glyph
 heights TeX boxes, a sub-point difference on this deck; a `titlepage` font
 template that carries a size already compounds with the HTML `h1` step
 outside slots (slots reset it).
+
+
+### 2026-09-26 — a template node never drops its datum, and the realized slot ink ships
+
+**The regression.** The overlay reader dropped a node it could not map
+whole, and a title page that declares slots sets only its slots, so four
+ordinary spellings shipped a title page without the document's title, or
+without its author and institute: a font declaration beside the insert, a
+`\usebeamercolor` beside it, a node not pinned to the page, and one node
+inserting two data. The loss was one W0110 ("unsupported command option"),
+under a false label in two of the four.
+
+**The invariant.** A datum a template node inserts ships in both artifacts:
+pinned where the node's pin reads, at the title page's default place where
+it does not, and the loss is one diagnostic with a subject.
+`titleSlotShipChecks` holds it, one construct per probe, over the census of
+`Layout.Out` and the typed HTML tree.
+
+- The content scan reads the style in force at each insert, scoped by
+  groups: NFSS declarations and their one-argument forms
+  (`TitleTemplate.fontAxes`, the elaborator's table), sizes,
+  `\usebeamerfont`, `\color` and ragged declarations. Line ends and the
+  breaker's parameters are transparent.
+- A slot can set several data (`Ir.TitleSlot.more`, spelled
+  `set = author \\ institute`), so a node that inserts two data in one style
+  stays one pinned slot, each datum on the node's own line.
+- **W0363** (degraded, new) names a node the engine cannot pin as written;
+  what it sets stands at the title page's default place. That place is the
+  page's flow for a node with no readable pin, or with data it styles
+  apart, and the built-in title page when a datum stands beside literal
+  text, which no slot holds.
+- A control word beside a datum that the reader does not read
+  (`\usebeamercolor`, an unknown command) is W0104, by subject. The datum
+  ships where its node is pinned.
+
+**The realized ink.** N0022 said a slot ink that fails the title page's
+ground is realized lighter, and both artifacts shipped the declared ink.
+The judge grounds a use in the title frame on the title page's ground; the
+realization walk grounded the same use on the page, so the planned rewrite,
+keyed by ground, never matched. The stylesheet re-scoped a realized token
+only on the frame-title bar and the standout inversion. `Ir.titleGroundOf`
+is now the one reading of a frame's own ground (the page painter, the judge
+and the walk), and `HtmlDoc.titlePageRealized` reads the realized runs off
+the IR and re-scopes each token on the title slide. The check reads the ink
+back from `Layout.Out` (the run and the ground fill under it) and from the
+stylesheet in the typed HTML tree. The policy is unchanged: realize, as the
+frame-title bar does.
+
+**Proved and tested.** `Ir.pagePoint_agree` proves the share arithmetic and
+no more. That the stylesheet writes each axis's share into its own property
+is tested: fifteen known-answer checks over the five-slot fixture's shipped
+stylesheet, and the title's text edge against the PDF's. Both were broken
+through the shipping path at `ecdb932c` (`lake build` 0, `lake test` 1).
+The review's mutant (`left:` reading the vertical share) together with the
+walk's old ground fails six checks: three `left` rows, the text edge, the
+PDF ink and the HTML token. Dropping only the stylesheet's re-scope fails
+the HTML token check alone.
+
+**Confinement.** The branch's history carried two design values of the
+private reference corpus: a title measure (in comments and in this file)
+and a size pair (in a docstring). The branch was squashed onto `17ac92f`
+(pre-rewrite tip `a24ae36e`) with invented values, and the fixtures' shifts
+and measures were re-invented away from near-copies. Over
+`17ac92f..HEAD`, `git log -p --no-color` and the commit messages grep empty
+for the review's list of values.
+
+**Measured** on the deck of the private reference corpus, base `17ac92f`
+against `94385e9e`, both through the shipped CLI on scratch copies: 36 pages
+either way; 35 of 36 rasters at 110 dpi byte-identical, page 1 the one that
+changed; the per-code census, PDF and HTML alike, W0361 −1, W0104 −3,
+W0110 +1, N0022 +1, as before this round. Against this branch's pre-fix
+binary, the one change on the deck is the author's ink, now the realized
+value in the PDF and in the title slide's token. The paper of the same
+corpus: 8 of 8 rasters identical, census identical.
+
+**Open**, the review's follow-ups not taken here:
+
+- `css = bulma` and `css = none` ship no title-page ground, but a slot's
+  inline ink (the span's `var(--role, …)`, `HtmlDoc.blockNode`'s
+  `.colored` arm) stays, chosen for the ground they drop: judge it against
+  the ground the mode ships, or drop it with the ground
+  (`HtmlDoc.titleSlotCss`).
+- Read order: a `\setbeamerfont` declared after the template is not seen,
+  because the reader resolves fonts where the template is declared (the
+  `title page` arm of `Compat`'s `\setbeamertemplate`, reading
+  `beamerFonts`); beamer resolves them at use.
+- W0110 still names template constructs that are not command options: a
+  `\draw` statement, a fill that does not cover the page, a node with no
+  content (the same arm, `rd.unread`). Owed: a template-reading code whose
+  loss matches what is dropped.
+- `font=\usebeamerfont{title}` names beamer's own `title` font element,
+  which the reader does not resolve through the engine's `title` style
+  (`TitleTemplate.fontOf`), so that title ships at the body size.
+- `\usebeamercolor` is named, not read: beamer colour elements beyond the
+  palette's roles are not recorded (`Compat`'s `\setbeamercolor` arm).
