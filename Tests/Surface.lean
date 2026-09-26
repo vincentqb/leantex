@@ -4557,6 +4557,53 @@ def titleSlideTextOne (inSlide : Bool) (acc : String) : Html.Node → String
 
 end
 
+mutual
+
+/-- Every `style` attribute under the title slide's `section`, in tree
+order: the inline declarations its runs carry. -/
+def titleSlideStylesList (inSlide : Bool) (acc : Array String) :
+    List Html.Node → Array String
+  | [] => acc
+  | n :: rest => titleSlideStylesList inSlide (titleSlideStylesOne inSlide acc n) rest
+
+def titleSlideStylesOne (inSlide : Bool) (acc : Array String) : Html.Node → Array String
+  | .elem tag attrs kids =>
+    let here := inSlide || (tag == "section" &&
+      attrs.any fun (k, v) => k == "class" && hasStr v "title-page")
+    let acc := if here then
+        attrs.foldl (fun a (k, v) => if k == "style" then a.push v else a) acc
+      else acc
+    titleSlideStylesList here acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+end
+
+mutual
+
+/-- The stylesheet text the typed tree ships, in tree order. -/
+def treeCssList (acc : String) : List Html.Node → String
+  | [] => acc
+  | n :: rest => treeCssList (treeCssOne acc n) rest
+
+def treeCssOne (acc : String) : Html.Node → String
+  | .style css => acc.append css
+  | .elem _ _ kids => treeCssList acc kids.toList
+  | .text _ => acc
+  | .script _ _ => acc
+
+end
+
+/-- The declarations of the first stylesheet rule whose selector is `sel`
+exactly: the text between its braces. -/
+def cssRuleOf (css sel : String) : Option String :=
+  (css.splitOn "}").findSome? fun chunk =>
+    match chunk.splitOn "{" with
+    | [s, decls] =>
+      if (s.splitOn "\n").getLast!.trimAscii.toString == sel then some decls else none
+    | _ => none
+
 /-- **No datum a template node inserts is dropped.** A node the reader
 cannot pin, or cannot wholly read, still ships what it sets: pinned where
 its pin reads, in the title page's flow where it does not, and the loss is
@@ -4649,6 +4696,41 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a datum beside literal text is one named loss with its subject"
     ((dsM.filter (·.code == "W0363")).size == 1 &&
      dsM.any fun d => d.code == "W0363" && d.subject == key "author")
+  -- **A slot ink the title page's ground fails is realized lighter, and
+  -- both artifacts ship the realized value** — N0022's claim, read off
+  -- each artifact: the PDF run's colour and the ground painted under it
+  -- off `Layout.Out`, the HTML token the title slide resolves the run's
+  -- `var(--role)` through off the stylesheet the typed tree ships.
+  let night : Ir.Color := { r := 0x20, g := 0x28, b := 0x33 }
+  let rust : Ir.Color := { r := 0xB0, g := 0x50, b := 0x2A }
+  let preR := "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeRust}{HTML}{B0502A}" ++
+    "\\definecolor{probeSnow}{HTML}{F4F4F0}" ++
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\fill[probeNight] (current page.south west) rectangle (current page.north east);" ++
+    "\\node[anchor=west, text=probeSnow] at ([xshift=2cm]current page.west) {\\inserttitle};" ++
+    "\\node[anchor=south west, text=probeRust] at ([xshift=2cm,yshift=1cm]current page.south west)" ++
+    " {\\insertauthor};\\end{tikzpicture}}\\title{Probe Heading}\\author{Pat Example}"
+  let (docR, dsR) := elabStr (deck169 preR "\\titlepage")
+  let outR := layoutOf oneFace docR
+  let authorInk : Option Ir.Color := (outR.pages[0]?.bind fun p =>
+    p.lines.find? fun l => hasStr (lineText l) "Pat Example").bind fun l =>
+      l.segs.findSome? fun s => match s with
+        | .run _ c .. => some c
+        | _ => none
+  let ground : Option Ir.Color := (outR.pages[0]?.bind (·.fills[0]?)).map (·.color)
+  t "the probe's author ink fails its ground as declared, and the loss is noted"
+    (Contrast.contrastMilli rust night < Contrast.aaText && dsR.any (·.code == "N0022"))
+  t "the PDF ships the realized author ink, legible on the ground painted under it"
+    (match authorInk, ground with
+     | some c, some g => g == night && c != rust && Contrast.contrastMilli c g ≥ Contrast.aaText
+     | _, _ => false)
+  let (headR, bodyR, _) := HtmlDoc.emitTree {} docR
+  let cssR := treeCssList (treeCssList "" headR.toList) bodyR.toList
+  t "the HTML title slide resolves the author's token to the ink the PDF ships"
+    ((titleSlideStylesList false #[] bodyR.toList).any (hasStr · "var(--probeRust") &&
+     (match authorInk, cssRuleOf cssR "section.slide.title-page" with
+      | some c, some decls => hasStr decls s!"--probeRust: {HtmlDoc.cssColor c};"
+      | _, _ => false))
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

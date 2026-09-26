@@ -541,8 +541,7 @@ mid-deck must reach the frames after it; the `Ir.VAlign` is, because the
 title page is identified by its declared distribution and not by a flag a
 second construct could set. -/
 def titleGround (pal : Ir.Palette) (valign : Ir.VAlign) : Option Ir.Color :=
-  if valign matches .golden then (Ir.Design.ofPalette pal).titlepage.map (·.bg)
-  else none
+  Ir.titleGroundOf pal valign
 
 /-- The ink that stands on a declared title-page ground, for the same page:
 the pair's own `fg`, which `ofPalette` defaults by inversion. `none` where
@@ -560,10 +559,8 @@ the title page is untouched. The HTML side reads the same role through
 theorem titleGround_projects (pal : Ir.Palette) (valign : Ir.VAlign) :
     titleGround pal valign =
       if valign matches .golden then pal.find? "titlepagebg" else none := by
-  unfold titleGround
-  split
-  · exact Ir.Design.titleGround_exact pal
-  · rfl
+  unfold titleGround Ir.titleGroundOf
+  cases valign <;> simp [Ir.Design.titleGround_exact]
 
 /-- Where a run's ink comes from, for the backends' marked content. No
 default: a construction must say. The tagger keys a run by the structure

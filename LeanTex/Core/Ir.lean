@@ -7402,6 +7402,15 @@ def Design.ofPalette (pal : Palette) : Design :=
     progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := {} }
 
+/-- The ground a frame's body stands on when the frame declares one of its
+own: a title page's (`titlepagebg`, through `Design.ofPalette`), `none` for
+a frame on the page's own ground. The one reading the page painter
+(`Layout.titleGround`), the contrast judge and the role-realization walk
+(`recolorRolesBlock`) make, so a pair realized on the title page is
+rewritten on the title page and painted there. -/
+def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
+  if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg) else none
+
 /-- The document's resolved design: `ofPalette` over its palette, with the
 two declarations a palette does not carry. -/
 def Design.ofDoc (doc : Doc) : Design :=
@@ -9309,12 +9318,13 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.nav spec r.1, r.2)
   -- The title sits on the frame-title bar when the palette in force
-  -- declares one; a standout frame's body sits on the inversion — the
-  -- grounds the judge reads, at the palette in force at the frame.
+  -- declares one; a standout frame's body sits on the inversion, and a
+  -- title page with a declared ground on that ground (`titleGroundOf`) —
+  -- the grounds the judge reads, at the palette in force at the frame.
   | .frame title standout valign br body =>
     let bodyGround := if standout then
         some ((pal.find? "standoutbg").getD ((pal.find? "fg").getD Color.black))
-      else ground
+      else (titleGroundOf pal valign).or ground
     let r := recolorRolesList repal recolor pal bodyGround #[] body.toList
     (.frame (recolorRolesInlines recolor pal (pal.find? "frametitlebg") #[] title.toList)
       standout valign br r.1, r.2)
@@ -9658,7 +9668,7 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
       recolorRolesList_text repal recolor pal
         (if standout then
           some ((pal.find? "standoutbg").getD ((pal.find? "fg").getD Color.black))
-         else ground) body.toList #[] _,
+         else (titleGroundOf pal valign).or ground) body.toList #[] _,
       blockTextList]
   | .framefoot content =>
     rw [recolorRolesBlock]

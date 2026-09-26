@@ -821,6 +821,23 @@ table. -/
 private def stepFactor (name : String) : String :=
   milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
 
+/-- **The title page's realized role values**, read off the IR: a role-named
+run inside a title frame whose colour is not its role's palette value is a
+run `Contrast.realizeDoc` rewrote on the title page's ground (the pair's
+realization, `Ir.titleGroundOf`). The page ships that colour; the
+stylesheet re-scopes the role's token on the title slide to it, so the
+run's `var(--role)` resolves to the same value rather than the page's. -/
+def titlePageRealized (doc : Doc) : Array (String × Ir.Color) :=
+  let run (acc : Array (String × Ir.Color)) (x : Inline) : Array (String × Ir.Color) :=
+    match x with
+    | .colored c (some n) _ =>
+      if doc.palette.find? n == some c || acc.any (·.1 == n) then acc else acc.push (n, c)
+    | _ => acc
+  Ir.foldBlocks (fun acc b => match b with
+      | .frame _ false .golden _ body => Ir.foldBlocks (fun a _ => a) run acc body
+      | _ => acc)
+    (fun acc _ => acc) #[] doc.body
+
 /-- **The title page's slots, pinned**: the stylesheet projection of the IR
 value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
 stands in the stage at the same page point the page puts it at, through the
@@ -963,7 +980,9 @@ def themeCss (doc : Doc) : String :=
   (match d.titlepage with
    | some _ =>
      "section.slide.title-page { background: var(--titlepagebg);\n" ++
-     "  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n" ++
+     "  color: var(--titlepagefg, var(--bg, #fafaf9));" ++
+     String.join ((titlePageRealized doc).toList.map fun (n, c) =>
+       s!"\n  --{n}: {cssColor c};") ++ " }\n" ++
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++

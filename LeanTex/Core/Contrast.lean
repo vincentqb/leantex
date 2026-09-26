@@ -366,15 +366,6 @@ white instead judged the lighter one and passed titles the HTML page fails —
 private def titledGround (pal : Palette) (kind : TitledKind) : Color :=
   (titledLook pal kind).bar.getD (surfaceOf pal)
 
-/-- The ground a frame's body stands on when the frame declares one of its
-own: the title page's, resolved through the one site the PDF page reads
-(`Ir.Design.ofPalette`, and `Layout.titleGround` over the same value), so
-the surface a pairing is judged against is the surface that is painted.
-`none` is the frame that takes the page's own ground. -/
-private def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
-  if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg)
-  else none
-
 /-- The text-size context of the walk below. `size` follows the layout
 semantics: a size declaration sets a factor over the document base (`base`
 here, so `\normalfont` can restore it), it does not compound. -/
@@ -575,8 +566,9 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
             ((acc.pal.find? "fg").getD Color.black))
                   groundName := some "the standout frame" }
       -- And a title page with a declared ground sits on that: the ground
-      -- `Layout.titleGround` paints, so every use on the page is judged
-      -- against the surface it really stands on rather than the document's.
+      -- `Layout.titleGround` paints and the realization walk rewrites on
+      -- (`Ir.titleGroundOf`, the one reading), so every use on the page is
+      -- judged against the surface it really stands on.
       else match titleGroundOf acc.pal valign with
         | some ground =>
           { cx with ground := some ground, groundName := some "the title page" }
