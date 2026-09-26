@@ -1,0 +1,22 @@
+% rhythm: article display math: a full last line into an unnumbered display and out of it, then the same around a numbered equation
+% boundary: par-display Birch span
+% boundary: display-par Cedar span
+% boundary: par-display Dogwood span
+% boundary: display-par Elm span
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\usepackage{unicode-math}
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\begin{document}
+Alder sets a paragraph whose last line runs the full measure, so that the
+display below it opens with the long skip and never the short one that a
+short last line would earn: this sentence is long enough to fill its lines.
+\[ a + b = \text{Birch} \]
+Cedar follows the unnumbered display, and it too runs on long enough that its
+last line is full before the numbered equation below it takes its own skip,
+which is the long one again because the line before it is not short at all.
+\begin{equation} c + d = \text{Dogwood} \end{equation}
+Elm closes the page after the numbered equation.
+\end{document}

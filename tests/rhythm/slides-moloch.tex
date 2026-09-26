@@ -1,0 +1,49 @@
+% rhythm: beamer frames under moloch, top-aligned: frame title to the first body line, paragraph to paragraph, list items, block title to body, two columns' first lines, and where a centred frame's one line and the frame number stand
+% boundary: frametitle-body Birch span
+% boundary: par-par Cedar span
+% boundary: par-list Dogwood span
+% boundary: item-item Elm span
+% boundary: list-par Hazel span
+% boundary: frametitle-block Larch span
+% boundary: blocktitle-body Maple span
+% boundary: block-par Oak span
+% boundary: column-top Rowan top
+% boundary: column-top Spruce top
+% boundary: centred-top Walnut top
+% boundary: page-footline =4 top
+\documentclass{beamer}
+\usetheme{moloch}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+\begin{frame}[t]{Alder title}
+Birch is the frame's first paragraph.
+
+Cedar is its second paragraph.
+\begin{itemize}
+\item Dogwood is the first item.
+\item Elm is the second item.
+\end{itemize}
+Hazel is the paragraph after the list.
+\end{frame}
+\begin{frame}[t]{Juniper title}
+\begin{block}{Larch block}
+Maple is the block's body.
+\end{block}
+Oak is the paragraph after the block.
+\end{frame}
+\begin{frame}[t]{Pine title}
+\begin{columns}[T]
+\begin{column}{0.45\textwidth}
+Rowan is the left column.
+\end{column}
+\begin{column}{0.45\textwidth}
+Spruce is the right column.
+\end{column}
+\end{columns}
+\end{frame}
+\begin{frame}{Teak title}
+Walnut is the one line of a centred frame.
+\end{frame}
+\end{document}

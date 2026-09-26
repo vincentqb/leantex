@@ -1,0 +1,39 @@
+% rhythm: article lists: paragraph into a list, item to item, into and out of a nested list, list back to paragraph, for itemize, enumerate and description
+% boundary: par-list Birch span
+% boundary: item-item Cedar span
+% boundary: item-nested Dogwood span
+% boundary: nested-nested Elm span
+% boundary: nested-item Hazel span
+% boundary: list-par Juniper span
+% boundary: par-list Larch span
+% boundary: item-item Maple span
+% boundary: list-par Oak span
+% boundary: par-list Pine span
+% boundary: item-item Rowan span
+% boundary: list-par Spruce span
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the paragraph before the first list.
+\begin{itemize}
+\item Birch is the first item.
+\item Cedar is the second item.
+  \begin{itemize}
+  \item Dogwood opens the nested list.
+  \item Elm is its second item.
+  \end{itemize}
+\item Hazel returns to the outer list.
+\end{itemize}
+Juniper is the paragraph after the first list.
+\begin{enumerate}
+\item Larch is the first numbered item.
+\item Maple is the second numbered item.
+\end{enumerate}
+Oak is the paragraph after the numbered list.
+\begin{description}
+\item[Pine] is the first described term.
+\item[Rowan] is the second described term.
+\end{description}
+Spruce closes the page.
+\end{document}

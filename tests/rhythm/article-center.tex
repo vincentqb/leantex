@@ -1,0 +1,35 @@
+% rhythm: article grouped content in center: a picture the engine draws itself (one filled rectangle, the native subset, no label), a tabular, an image; each read as the whole span between its paragraphs, and the picture and image also as their edges
+% boundary: par-center-picture Birch span
+% boundary: par-center-picture Birch above
+% boundary: center-picture-par Birch below
+% boundary: par-center-tabular Cedar span
+% boundary: tabular-row Dogwood span
+% boundary: center-tabular-par Elm span
+% boundary: par-center-image Hazel span
+% boundary: par-center-image Hazel above
+% boundary: center-image-par Hazel below
+\documentclass{article}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the paragraph above a centred picture.
+\begin{center}
+\begin{tikzpicture}
+\fill (0,0) rectangle (3,1.5);
+\end{tikzpicture}
+\end{center}
+Birch is the paragraph below the picture.
+\begin{center}
+\begin{tabular}{ll}
+Cedar & one \\
+Dogwood & two \\
+\end{tabular}
+\end{center}
+Elm is the paragraph below the table.
+\begin{center}
+\includegraphics[width=2cm]{../corpus/rects.png}
+\end{center}
+Hazel is the paragraph below the image.
+\end{document}

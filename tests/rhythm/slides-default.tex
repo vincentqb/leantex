@@ -1,0 +1,31 @@
+% rhythm: beamer frames, default theme, top-aligned so no centring enters: frame title to the first body line, paragraph to paragraph, into, through and out of a list, and a block's title to its body and out of it
+% boundary: frametitle-body Birch span
+% boundary: par-par Cedar span
+% boundary: par-list Dogwood span
+% boundary: item-item Elm span
+% boundary: list-par Hazel span
+% boundary: frametitle-block Larch span
+% boundary: blocktitle-body Maple span
+% boundary: block-par Oak span
+\documentclass{beamer}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+\begin{frame}[t]{Alder title}
+Birch is the frame's first paragraph.
+
+Cedar is its second paragraph.
+\begin{itemize}
+\item Dogwood is the first item.
+\item Elm is the second item.
+\end{itemize}
+Hazel is the paragraph after the list.
+\end{frame}
+\begin{frame}[t]{Juniper title}
+\begin{block}{Larch block}
+Maple is the block's body.
+\end{block}
+Oak is the paragraph after the block.
+\end{frame}
+\end{document}

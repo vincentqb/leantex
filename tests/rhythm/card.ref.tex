@@ -1,0 +1,17 @@
+% The LaTeX half of card.tex. The card class is one face at the ISO/IEC
+% 7810 ID-1 trim, 85.60 mm by 53.98 mm, with a 5 mm safe margin and no page
+% furniture; this is an article at that trim and margin, top-aligned, so
+% what differs is how each engine sets text on the face.
+\documentclass{article}
+\usepackage[paperwidth=85.60mm,paperheight=53.98mm,margin=5mm]{geometry}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Alder is the card's first line.
+
+Birch is its second.
+
+Cedar is its third.
+\end{document}

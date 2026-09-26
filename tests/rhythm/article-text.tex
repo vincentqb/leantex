@@ -1,0 +1,34 @@
+% rhythm: article text blocks: paragraph to paragraph, paragraph to and from both heading levels, heading to heading, and where the first and last lines stand on the page
+% boundary: page-first-baseline Alder top
+% boundary: par-par Birch span
+% boundary: par-section Cedar span
+% boundary: section-par Dogwood span
+% boundary: par-par Elm span
+% boundary: par-subsection Hazel span
+% boundary: subsection-par Juniper span
+% boundary: par-section Larch span
+% boundary: section-subsection Maple span
+% boundary: subsection-par Oak span
+% boundary: page-footline =1 top
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder opens the page with one short line.
+
+Birch follows as a second paragraph of one line.
+
+\section{Cedar heading}
+Dogwood starts the paragraph under the heading and runs on long enough to
+wrap onto a second line, so that the boundary below it is read from the
+last line of a wrapped paragraph rather than from its first line.
+
+Elm is a plain paragraph between two others.
+
+\subsection{Hazel subheading}
+Juniper sits under the subsection heading.
+
+\section{Larch heading}
+\subsection{Maple subheading}
+Oak closes the page.
+\end{document}

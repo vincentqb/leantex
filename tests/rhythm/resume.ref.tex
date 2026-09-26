@@ -1,0 +1,18 @@
+% The LaTeX half of resume.tex. The resume class declares the résumé
+% lineage's zero paragraph skip (moderncv keeps the standard classes' zero
+% \parskip), unnumbered headings and no page number; this is an article
+% declaring the same three, so what differs is what the classes do with them.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setlength{\parskip}{0pt}
+\pagestyle{empty}
+\begin{document}
+\section*{Alder heading}
+Birch is the first entry.
+
+Cedar is the second entry.
+
+\section*{Dogwood heading}
+Elm is the entry under the second heading.
+\end{document}

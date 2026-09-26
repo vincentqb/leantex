@@ -1,0 +1,28 @@
+% rhythm: the poster class: a block's title to its body, body paragraph to paragraph, and block to block down one column, at the class's own base
+% reference: poster.ref.tex
+% boundary: blocktitle-body Birch span
+% boundary: par-par Cedar span
+% boundary: block-block Dogwood span
+% boundary: blocktitle-body Elm span
+\documentclass{poster}
+\begin{document}
+\begin{frame}[t]
+\begin{columns}[T]
+\begin{column}{0.45\textwidth}
+\begin{block}{Alder block}
+Birch is the block's first paragraph.
+
+Cedar is its second paragraph.
+\end{block}
+\begin{block}{Dogwood block}
+Elm is the second block's body.
+\end{block}
+\end{column}
+\begin{column}{0.45\textwidth}
+\begin{block}{Hazel block}
+Juniper is the right column's body.
+\end{block}
+\end{column}
+\end{columns}
+\end{frame}
+\end{document}

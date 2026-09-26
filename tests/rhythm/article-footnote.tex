@@ -1,0 +1,11 @@
+% rhythm: article footnote at a declared geometry, so both text blocks stand alike: the first baseline against the page's top, the note's baseline against the page's top, and the note's baseline against the footnote rule above it
+% boundary: page-first-baseline Alder top
+% boundary: page-footnote Birch top
+% boundary: footrule-note Birch below
+\documentclass{article}
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the one paragraph, and it carries a note.\footnote{Birch is the note.}
+\end{document}

@@ -1,0 +1,16 @@
+% rhythm: article verbatim block: paragraph into it, its line pitch, and out of it
+% boundary: par-verbatim Birch span
+% boundary: verbatim-line Cedar pitch
+% boundary: verbatim-par Dogwood span
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmonofont{SourceCodePro-Regular.otf}[Path=../corpus/fonts/]
+\begin{document}
+Alder is the paragraph before the code.
+\begin{verbatim}
+Birch = one
+Cedar = two
+\end{verbatim}
+Dogwood is the paragraph after the code.
+\end{document}

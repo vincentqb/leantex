@@ -1,0 +1,27 @@
+% rhythm: article quotation environments: paragraph into and out of quote, quotation and verse, and verse line to line
+% boundary: par-quote Birch span
+% boundary: quote-par Cedar span
+% boundary: par-quotation Dogwood span
+% boundary: quotation-par Elm span
+% boundary: par-verse Hazel span
+% boundary: verse-line Juniper pitch
+% boundary: verse-par Larch span
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the paragraph before the quote.
+\begin{quote}
+Birch is the quoted line.
+\end{quote}
+Cedar is the paragraph after the quote.
+\begin{quotation}
+Dogwood is the quotation's line.
+\end{quotation}
+Elm is the paragraph after the quotation.
+\begin{verse}
+Hazel is the first line of verse\\
+Juniper is the second line
+\end{verse}
+Larch closes the page.
+\end{document}

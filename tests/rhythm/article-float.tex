@@ -1,0 +1,21 @@
+% rhythm: article float held here, standing between two paragraphs: paragraph to the float's picture, picture to its caption below, caption to the paragraph after; the caption's marker is the label the class generates, which opens its line
+% boundary: par-float Figure above
+% boundary: float-caption Figure below
+% boundary: caption-par Cedar span
+\documentclass{article}
+\usepackage{tikz}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the paragraph above the float.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\fill (0,0) rectangle (3,1.5);
+\end{tikzpicture}
+\caption{Birch caption}
+\end{figure}
+
+Cedar is the paragraph below the float.
+\end{document}

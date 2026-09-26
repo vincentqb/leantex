@@ -1,0 +1,21 @@
+% rhythm: article title block and abstract: title to author, author to date, date to the abstract heading, heading to its body, abstract to the first section
+% boundary: page-title Birch top
+% boundary: title-author Cedar span
+% boundary: author-date Dogwood span
+% boundary: date-abstract Abstract span
+% boundary: abstract-body Elm span
+% boundary: abstract-section Hazel span
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\title{Birch Title}
+\author{Cedar Author}
+\date{Dogwood Date}
+\begin{document}
+\maketitle
+\begin{abstract}
+Elm is the abstract's one paragraph.
+\end{abstract}
+\section{Hazel heading}
+Juniper is the body's first paragraph.
+\end{document}

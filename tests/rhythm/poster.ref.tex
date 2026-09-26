@@ -1,0 +1,30 @@
+% The LaTeX half of poster.tex. The poster class is beamerposter's A0
+% landscape board at its own base size; this is beamer with beamerposter at
+% that board, so what differs is how each engine spaces a block.
+\documentclass{beamer}
+\usepackage[orientation=landscape,size=a0,scale=1.0]{beamerposter}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setbeamertemplate{navigation symbols}{}
+\begin{document}
+\begin{frame}[t]
+\begin{columns}[T]
+\begin{column}{0.45\textwidth}
+\begin{block}{Alder block}
+Birch is the block's first paragraph.
+
+Cedar is its second paragraph.
+\end{block}
+\begin{block}{Dogwood block}
+Elm is the second block's body.
+\end{block}
+\end{column}
+\begin{column}{0.45\textwidth}
+\begin{block}{Hazel block}
+Juniper is the right column's body.
+\end{block}
+\end{column}
+\end{columns}
+\end{frame}
+\end{document}

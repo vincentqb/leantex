@@ -1,0 +1,19 @@
+% rhythm: article theorem-like environments: paragraph into a theorem, theorem to proof, proof to paragraph; the markers are the heads the classes generate, which open each block's first line
+% boundary: par-theorem Theorem span
+% boundary: theorem-proof Proof span
+% boundary: proof-par Dogwood span
+\documentclass{article}
+\usepackage{amsthm}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\newtheorem{theorem}{Theorem}
+\begin{document}
+Alder is the paragraph before the theorem.
+\begin{theorem}
+Birch is the theorem's statement.
+\end{theorem}
+\begin{proof}
+Cedar is the proof's one line.
+\end{proof}
+Dogwood is the paragraph after the proof.
+\end{document}
