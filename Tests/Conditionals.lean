@@ -41,10 +41,7 @@ def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let keyed (ds : Array Diag) : Nat := (ds.filter (·.subject.isSome)).size
-  let shipped (src : String) : Array CensusPage :=
-    let (doc, _) := elabStr src
-    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
-  let text (src : String) : String := censusText (shipped src)
+  let text (src : String) : String := censusText (censusOfSrc oneFace src)
   let picOf (body : String) : String :=
     dvDoc "" ("\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}")
   let thenNode := "\\node at (0,0) {Then};\n"
@@ -87,9 +84,7 @@ which branch ran is visible only as ink. Invented content throughout. -/
 def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let shipped (src : String) : Array CensusPage :=
-    let (doc, _) := elabStr src
-    censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let shipped := censusOfSrc oneFace
   let pic :=
     "\\begin{tikzpicture}\n\\ifnum\\stage=1\n\\node at (0,0) {Small};\n" ++
     "\\ifdefined\\cut\\else\n\\node at (2,0) {Edge};\n\\fi\n" ++
@@ -126,3 +121,39 @@ def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (bdoc, _) := elabStr (dvDoc "" ("\\def\\mode{1}\n" ++ bpic ++ "\n\n\\def\\mode{2}\n" ++ bpic))
   t "two states of one boundary picture are two requests"
     (bdoc.pictureSrcs.size == 2)
+
+
+/-- **`\ifx` compares the meaning TeX compares.** Two macros are `\ifx`-equal
+when their replacement texts and their prefixes agree (TeXbook chapter 20),
+and LaTeX's `\newcommand` is `\long` only when it takes arguments and is not
+starred: `\meaning` reads `macro:->x` for a parameterless `\newcommand` and a
+`\def` alike (measured against LaTeX2e 2025-11-01). The defect read every
+unstarred `\newcommand` as `\long`, so the common string switch — a
+`\newcommand` holding a word compared against a `\def` of the same word —
+shipped the wrong branch with a note. A robust command's meaning names the
+command itself, so two of them with one body are different meanings: the
+engine cannot say so from the text and refuses the test by name. Read off
+the shipped census. Invented content throughout. -/
+def ifxMeaningChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let text (body : String) : String := censusText (censusOfSrc oneFace (dvDoc "" body))
+  let ships (body keep drop : String) : Bool :=
+    let s := text body
+    hasStr s keep && !hasStr s drop
+  let test (a b : String) : String := a ++ b ++ "\\ifx\\probeA\\probeB Same\\else Differ\\fi"
+  t "a parameterless newcommand and a def of one text are ifx-equal"
+    (ships (test "\\def\\probeA{x}" "\\newcommand\\probeB{x}") "Same" "Differ")
+  t "the string switch: a newcommand word equals a def of the same word"
+    (ships ("\\newcommand{\\probeMode}{draft}\\def\\probeWord{draft}" ++
+      "\\ifx\\probeMode\\probeWord DraftBranch\\else FinalBranch\\fi")
+      "DraftBranch" "FinalBranch")
+  t "a long def differs from a parameterless newcommand of the same text"
+    (ships (test "\\long\\def\\probeA{x}" "\\newcommand\\probeB{x}") "Differ" "Same")
+  t "a starred newcommand equals a def of the same text"
+    (ships (test "\\def\\probeA{x}" "\\newcommand*\\probeB{x}") "Same" "Differ")
+  t "a protected def differs from a def of the same text"
+    (ships (test "\\protected\\def\\probeA{x}" "\\def\\probeB{x}") "Differ" "Same")
+  let robust := test "\\DeclareRobustCommand\\probeA{x}" "\\DeclareRobustCommand\\probeB{x}"
+  t "two robust commands of one text are not read as equal, and the test is refused by name"
+    (!hasStr (text robust) "Same" && (elabStr (dvDoc "" robust)).2.any (·.code == "W0104"))

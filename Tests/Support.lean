@@ -864,6 +864,12 @@ def allTextOf (fonts : Font.FontSet) (src : String)
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
 
+/-- The shipped-page census of a source laid out with `fonts`: which ink
+each page carries, the artifact a claim about a branch or a label reads. -/
+def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
+  let (doc, _) := elabStr src
+  censusOf (coveredColorsOf doc) (layoutOf fonts doc)
+
 /-- Diagnostics after layout too. -/
 def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
   let (doc, ds) := elabStr src

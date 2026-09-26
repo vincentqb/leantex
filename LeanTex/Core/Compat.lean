@@ -422,12 +422,14 @@ lineage already carries the design the options adjust"),
 point inside a template the engine does not model; where such a body carries \
 content the loss is E0111's, which is a dropped body and not a style key")]
 
-/-- A definition the conditional pass can read: its replacement text, and
-whether it is `\long`, which `\ifx` compares beside the text (TeXbook
-chapter 20: a `\long` macro and its short twin are different meanings). -/
+/-- A definition the conditional pass can read: its replacement text and the
+two prefixes its meaning carries, `\long` and e-TeX's `\protected`, which
+`\ifx` compares beside the text (TeXbook chapter 20: a `\long` macro and its
+short twin are different meanings). -/
 private structure CondVal where
   raws : Array Raw
   long : Bool
+  prot : Bool
 
 private structure St where
   file : String
@@ -1560,7 +1562,7 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
       if a == b then return two true src "compares a name with itself" "same" 2 none
       match condValueOf st.values a, condValueOf st.values b with
       | some (some va), some (some vb) =>
-        let v := rawSrc va.raws == rawSrc vb.raws && va.long == vb.long
+        let v := rawSrc va.raws == rawSrc vb.raws && va.long == vb.long && va.prot == vb.prot
         return two v src
           (if v then "compares two equal definitions" else "compares two different definitions")
           (toString v) 2 none
@@ -1579,24 +1581,56 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool) : M Un
     values := st.values.push (n, v)
     globals := if global then st.globals.push (n, v) else st.globals }
 
+/-- The prefixes standing before the definer at `raws[i]`, nearest first: a
+run of at most three of `\long`, `\protected`, `\outer` and `\global`
+(TeXbook chapter 24's ⟨prefix⟩, with e-TeX's `\protected`). -/
+private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run do
+  let mut out : List String := []
+  let mut k := i
+  for _ in [0:6] do
+    if k == 0 then break
+    match raws[k - 1]? with
+    | some .space => k := k - 1
+    | some (.ctrl p _) =>
+      if out.length < 3 && (p == "long" || p == "protected" || p == "outer" || p == "global") then
+        out := p :: out
+        k := k - 1
+      else break
+    | _ => break
+  return out
+
 /-- The value the definer `d` at `raws[i]` gives the name it binds: the body
-of a parameterless definition, and whether it is `\long`. An expanding
-definer (`\edef`, `\xdef`) reads a body with no control word as itself and
-one standing for a single macro as that macro's value; anything else it
-would expand to is unread here. -/
+of a parameterless definition and the prefixes its meaning carries. LaTeX's
+`\newcommand` family is `\long` exactly when it takes arguments and is not
+starred, so a parameterless one is never `\long` (measured against LaTeX2e
+2025-11-01: `\meaning` reads `macro:->x` for `\def` and `\newcommand` alike);
+one with arguments is unread here. An `\outer` macro cannot stand where
+`\ifx` would read it, and a robust command's meaning names the command
+itself (`\protect \name␣`), so neither has a value two names could share.
+An expanding definer (`\edef`, `\xdef`) reads a body with no control word
+as itself and one standing for a single macro whose value holds none as
+that value; anything else it would expand to is unread here. -/
 private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     Option CondVal := Id.run do
-  let longPre := (i ≥ 1 && (raws[i - 1]? matches some (.ctrl "long" _))) ||
-    (i ≥ 2 && (raws[i - 2]? matches some (.ctrl "long" _)))
+  let pre := definerPrefixes raws i
+  if pre.contains "outer" then return none
+  let long := pre.contains "long"
+  let prot := pre.contains "protected"
   if d == "def" || d == "gdef" || d == "edef" || d == "xdef" then
     let j := skipSpaces raws (i + 1)
     match raws[j]?, raws[j + 1]? with
     | some (.ctrl _ _), some (.group body _) =>
-      if d == "def" || d == "gdef" then return some { raws := body, long := longPre }
+      if d == "def" || d == "gdef" then return some { raws := body, long, prot }
       if body.all fun r => !(r matches .ctrl _ _) then
-        return some { raws := body, long := longPre }
+        return some { raws := body, long, prot }
       match (body.filter fun r => !(r matches .space)).toList with
-      | [.ctrl m _] => return (condValueOf st.values m).bind id
+      | [.ctrl m _] =>
+        match condValueOf st.values m with
+        | some (some v) =>
+          if v.raws.all fun r => !(r matches .ctrl _ _) then
+            return some { raws := v.raws, long, prot }
+          return none
+        | _ => return none
       | _ => return none
     | _, _ => return none
   if d == "let" then
@@ -1606,22 +1640,19 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     match raws[j]?, raws[k]? with
     | some (.ctrl _ _), some (.ctrl m _) => return (condValueOf st.values m).bind id
     | _, _ => return none
-  if d == "newcommand" || d == "renewcommand" || d == "providecommand" ||
-      d == "DeclareRobustCommand" then
+  if d == "newcommand" || d == "renewcommand" || d == "providecommand" then
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
     match raws[skipSpaces raws (j + 1)]? with
-    | some (.group body _) => return some { raws := body, long := !star }
+    | some (.group body _) => return some { raws := body, long := false, prot := false }
     | _ => return none
   return none
 
 /-- Does the definer `d` at `raws[i]` define globally: `\gdef`, `\xdef`, or
-a `\global` prefix, possibly beside `\long`? -/
+a `\global` prefix among the definer's prefixes? -/
 private def definesGlobally (raws : Array Raw) (i : Nat) (d : String) : Bool :=
-  d == "gdef" || d == "xdef" ||
-    (i ≥ 1 && (raws[i - 1]? matches some (.ctrl "global" _))) ||
-    (i ≥ 2 && (raws[i - 2]? matches some (.ctrl "global" _)))
+  d == "gdef" || d == "xdef" || (definerPrefixes raws i).contains "global"
 
 /-- The first control word of a group: the name a `\pgfmathsetmacro` sets. -/
 private def condFirstCtrl (g : Array Raw) : Array String :=
