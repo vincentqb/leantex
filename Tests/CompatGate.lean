@@ -390,11 +390,39 @@ a name no document wrote, for a construct the engine knows.
 What each means there was measured against lualatex (TeX Live 2026):
 `\begin{document}` selects the normal font and babel's main language, and
 keeps the colour. So a series or a language written in the preamble proper
-reaches no text, and the document is the one without it — an `\enquote` in
-the body included, whose quotes are the main language's under csquotes'
-default — while `\color` is in force where the body begins, the reading a
-`\begin{document}` hook body already gets here. Read as documents compared
-whole, never as words. -/
+— its top level — reaches no text, and the document is the one without it —
+an `\enquote` in the body included, whose quotes are the main language's
+under csquotes' default — while `\color` is in force where the body begins,
+the reading a `\begin{document}` hook body already gets here. Inside a
+preamble group the same construct is set with the group: lualatex sets a
+series in an `\author`, a `\title` or a running-head field, and a language
+in a `\title`. Read as documents compared whole, never as words, and where
+the claim is what a page shows, off the laid-out page and the emitted HTML
+tree. -/
+
+mutual
+
+/-- Every element of an emitted tree carrying the attribute `key`, as its
+subtree text and the attribute's value: which run a weight or a language
+lands on is a fact of the typed tree, never of a rendered string. -/
+def attrRunsOne (key : String) (acc : Array (String × String)) :
+    Html.Node → Array (String × String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let acc := match attrs.find? (·.1 == key) with
+      | some (_, v) => acc.push (nodeTextOne "" (.elem t attrs kids), v)
+      | none => acc
+    attrRunsList key acc kids.toList
+
+def attrRunsList (key : String) (acc : Array (String × String)) :
+    List Html.Node → Array (String × String)
+  | [] => acc
+  | k :: rest => attrRunsList key (attrRunsOne key acc k) rest
+
+end
+
 def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let markers := ["@series:", "@lang:", "@ink:"]
@@ -427,7 +455,10 @@ def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (where_, src) in [("in the body", dvDoc "" (decl ++ " Alpha.")),
         ("in a \\begin{document} hook", dvDoc s!"\\AtBeginDocument\{{decl}}\n" "Alpha."),
         ("inside a preamble definition",
-          dvDoc s!"\\newcommand\{\\zzdecl}\{{decl}}\n" "\\zzdecl Alpha.")] do
+          dvDoc s!"\\newcommand\{\\zzdecl}\{{decl}}\n" "\\zzdecl Alpha."),
+        ("inside a \\title argument", dvDoc s!"\\title\{{decl} Plain}\n" "\\maketitle Alpha."),
+        ("in a running-head field",
+          dvDoc s!"\\usepackage\{scrlayer-scrpage}\n\\ihead\{{decl} Head}\n" "Alpha.")] do
       t s!"preamble marker, {what} {where_}: its note is a translation, not a discard"
         (noteOf src key).isEmpty
   -- LaTeX resets these at `\begin{document}`: the document is the one
@@ -476,6 +507,63 @@ when {main} is the main language"
     | _ => n) 0 langDoc.body
   t "preamble marker: a language switch inside a preamble definition still applies where it is used"
     (tagged == 1)
+  -- The preamble proper is its top level. Inside a preamble group — an
+  -- argument the document sets later, or a running-head field — the
+  -- construct keeps its body meaning, and the page sets the group's text
+  -- under it, as lualatex does. Two copies of one face on the weight axis:
+  -- the bold weight has its own index, so the face a run shipped in says
+  -- whether the series reached it.
+  let some data ← findFont
+    | failures ref "preamble marker: the shipped test face is missing"
+  let .ok font := Font.parse data
+    | failures ref "preamble marker: the shipped test face is unparsable"
+  let weighted : Font.FontSet := {
+    fonts := #[font, font]
+    index := ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 1),
+       ((slot, 400, true), 0), ((slot, 700, true), 1)]).toArray }
+  let faceOf (src word : String) : Option Nat :=
+    (allLines (layoutOf weighted (elabStr src).1)).findSome? fun l =>
+      l.segs.findSome? fun s => match s with
+        | .run idx _ _ _ glyphs _ _ _ _ _ =>
+          if glyphs.foldl (fun acc (_, c) => acc.push c) "" == word then some idx else none
+        | _ => none
+  let htmlRuns (src key : String) : Array (String × String) :=
+    let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
+    attrRunsList key #[] body.toList
+  let bold (src word : String) : Bool :=
+    (htmlRuns src "style").any fun (txt, v) => txt == word && hasStr v "font-weight: 700"
+  let author := dvDoc
+    "\\title{Plain title}\n\\author{{\\fontseries{b}\\selectfont Ada} Example}\n\\date{}\n"
+    "\\maketitle\nAlpha bravo."
+  t "preamble marker: a series in an \\author argument sets the grouped name in the bold face"
+    (faceOf author "Ada" == some 1 && faceOf author "Example" == some 0)
+  t "preamble marker: a series in an \\author argument ships the grouped name bold in the HTML"
+    (bold author "Ada")
+  let running := dvDoc ("\\usepackage{scrlayer-scrpage}\n\\pagestyle{scrheadings}\n" ++
+    "\\ihead{{\\fontseries{b}\\selectfont Head} note}\n") "Alpha bravo."
+  t "preamble marker: a series in a running-head field sets the grouped word in the bold face"
+    (faceOf running "Head" == some 1 && faceOf running "note" == some 0)
+  let titled := dvDoc
+    "\\title{{\\fontseries{b}\\selectfont Bold} title}\n\\author{Ada Example}\n\\date{}\n"
+    "\\maketitle\nAlpha bravo."
+  t "preamble marker: a series in a \\title argument ships the grouped word bold in the HTML"
+    (bold titled "Bold")
+  let french := dvDoc
+    ("\\usepackage[french,english]{babel}\n\\title{\\selectlanguage{french}Le titre}\n" ++
+      "\\author{Ada Example}\n\\date{}\n") "\\maketitle\nAlpha bravo."
+  t "preamble marker: a language switch in a \\title argument tags the title in the HTML"
+    ((htmlRuns french "lang").any fun (txt, v) => txt == "Le titre" && v == "fr")
+  -- The switch is set inside the argument, so the body's quotes stay the
+  -- main language's, as lualatex gives, in both mirror cases.
+  for (main, other, title) in [("english", "french", "Le titre"),
+      ("french", "english", "The title")] do
+    let src (switch : String) : String :=
+      dvDoc (babelOf other main ++ s!"\\title\{{switch}{title}}\n\\author\{Ada Example}\n\\date\{}\n")
+        "\\maketitle\nAlpha \\enquote{bravo} charlie."
+    t s!"preamble marker (fails on base): a switch to {other} in a \\title argument reaches \
+no quote when {main} is the main language"
+      (pageTextOf weighted (src s!"\\selectlanguage\{{other}}") == pageTextOf weighted (src ""))
 
 /-- The compat accounting blocks. -/
 def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do

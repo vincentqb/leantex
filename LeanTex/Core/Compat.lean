@@ -464,6 +464,12 @@ private structure St where
   routes to the body side: a construct there reaches the body although
   `inDoc` is false for the replay. -/
   seam : Bool := false
+  /-- Inside a brace group of the walk: an argument (a `\title`, an
+  `\author`, a running-head field, a definition body) or a scope of its
+  own. A declaration there ends with the group, and its text is set
+  wherever the group is set; only one outside every group stays in force
+  until `\begin{document}`. -/
+  inGroup : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -658,15 +664,20 @@ argument that decided the discard where one did (`usepackage:url`,
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
 
-/-- The preamble proper: outside the document environment, outside a
-definition body (read where the command is used) and outside a
-`\begin{document}` hook's replay (routed to the body). What
-`\begin{document}` resets — the font series and babel's language — reaches
-no text from here (measured against lualatex), so an arm that would declare
-one there discards it instead. -/
+/-- The preamble proper: the preamble's top level. That is outside the
+document environment, outside a `\begin{document}` hook's replay (routed to
+the body), and outside every brace group of the walk — a definition body,
+read where the command is used, and any argument, which is set where its
+command sets it: a `\title` at `\maketitle`, a running-head field on its
+pages. Only there does a declaration stay in force until
+`\begin{document}` with no text set under it, and `\begin{document}`
+resets the font series and babel's language (measured against lualatex),
+so an arm that would declare one there discards it instead. Inside a group
+the construct keeps its body meaning, as lualatex gives it in the title,
+the author, the date and a running head. -/
 private def preambleProper : M Bool := do
   let st ← get
-  return !st.inDoc && !st.inDef && !st.seam
+  return !st.inDoc && !st.inDef && !st.seam && !st.inGroup
 
 /-- The top-level brace groups of a feature value:
 `{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
@@ -2100,7 +2111,7 @@ were dropped: {o}" pos
     let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
-      -- premise: compatMarkerChecks — a discard here leaves the Doc the one without it
+      -- premise: compatMarkerChecks — a top-level discard leaves the Doc the one without it
       if ← preambleProper then
         discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
           s!"fontseries:{code}" pos
@@ -2127,7 +2138,7 @@ the weight in force stands" pos
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let lname := rawSrc (args.getD 0 #[])
-    -- premise: compatMarkerChecks — a discard here leaves the Doc the one without it
+    -- premise: compatMarkerChecks — a top-level discard leaves the Doc the one without it
     if ← preambleProper then
       discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
         s!"selectlanguage:{lname}" pos
@@ -2137,11 +2148,11 @@ the weight in force stands" pos
       say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" pos
         (help := "the engine ships locale records for: en, fr, de")
-    -- `\enquote` reads its quotes through `mainLang`. `\begin{document}`
-    -- selects babel's main language again (measured against lualatex), so
-    -- a switch outside the body moves nothing. Under csquotes' default
-    -- lualatex keeps the main language's quotes after a body switch too;
-    -- the body's move here is that open divergence.
+    -- `\enquote` reads its quotes through `mainLang`, and only a switch in
+    -- the body moves it. Under csquotes' default lualatex keeps the main
+    -- language's quotes after every switch it was measured at: in a
+    -- `\begin{document}` hook, in a `\title` argument and in the body. The
+    -- body's move here is that open divergence.
     if (← get).inDoc then
       write fun st => { st with mainLang := tag }
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
@@ -3998,9 +4009,10 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     -- stealing `\newenvironment`'s second half.
     let saved := (← get).bodyNext
     let savedDef := (← get).inDef
-    write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0 }
+    let savedGroup := (← get).inGroup
+    write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    write fun st => { st with bodyNext := saved - 1, inDef := savedDef }
+    write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
