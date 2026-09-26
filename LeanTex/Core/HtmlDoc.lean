@@ -4278,11 +4278,11 @@ def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
 /-- A face as the attributes of the `<tspan>` its run sets in, relative to
 the label's own `<text>`, which inherits the body's regular weight and
 upright shape: the bold series is `font-weight: bolder`, the rendering the
-prose `<strong>` gets (HTML §15.3.4) — which over a Light body is the
-family's Regular, as the PDF's bold is there — any other series its numeric
-weight, italic `font-style`, the mono slot its family and the sans slot,
-small caps and a size the classes the prose `<span>` carries
-(`styleClass`), and a language its `lang`. The regular face is no
+prose `<strong>` gets (HTML §15.3.4), which over a regular of 400 asks for
+the 700 the PDF's bold series names (`Weight.css`); any other series is
+its numeric weight, italic is `font-style`, the mono slot its family, and
+the sans slot, small caps and a size are the classes the prose `<span>`
+carries (`styleClass`), a language its `lang`. The regular face is no
 attribute at all, so a run the PDF sets regular inherits the regular. -/
 def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
   let weight : Array (String × String) :=

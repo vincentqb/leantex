@@ -17648,26 +17648,54 @@ The node salvage (`Picture.salCtrl`) read every text command as an unknown
 macro: it kept the word, dropped the style, and named the loss (W0334) in a
 diagnostic no reader sees. `\emph`, `\textit` and `\textsc` lost their
 shapes the same way. A `\\` inside a `\textcolor` body merged the body's
-two lines into one, and no code named that. In HTML every coloured label was
-black, because the SVG label arm flattened each inline to its plain text.
+two lines into one, and no code named that. In HTML a colour set inside a
+node body was lost, because the SVG label arm flattened each inline to its
+plain text; a colour from the node's `text=` key did reach the SVG.
 
-**The invariant.** A node's shipped runs are the runs the same source ships
-as a paragraph: face, glyphs, colour and interword gaps per run, line by
-line. The SVG gives each glyph the weight and slant the PDF gives it.
-`pictureNodeStyleChecks` (`Tests/Surface.lean`) reads both off the
-artifact. The PDF side reads `Layout.Out` under a four-file font set, so
-each run's face is visible. The HTML side reads the typed tree's `<text>`
-runs, and the rendered string with its tags stripped. Run against the
-`17ac92f` engine in a scratch clone, 22 rows fail. The plain, coloured and
-math rows pass there and serve as the instrument's controls. The
-rendered-text rows, the neighbour row and the per-glyph agreement row also
-hold on the base, which has no `<tspan>` to get wrong, and are named as
-guards: the rendered-text rows failed on the fix's first cut, before `text`
-and `tspan` became phrasing, and the gap-aware rows failed on a cut that
-trimmed a space just inside the braces. No theorem is stated: the salvage
-is the mode machine that `nodeLabel_mem` (owed) already waits on, and its
-helper now recurses into `.styled`, so the owed statement covers the new
-wrapper.
+**The invariant, and what it is measured over.** Two statements, both read
+off the artifact by `pictureNodeStyleChecks` (`Tests/Surface.lean`) under a
+five-face set: four Source Serif files, so each run's face is visible, and
+FiraMath as the math face, so a formula sets as it does in a document.
+- *Node against paragraph, in the PDF:* a node's shipped runs are the runs
+  the same source ships as a paragraph — face, glyphs, colour and
+  interword gaps per run, line by line (`Layout.Out`). Measured on the
+  shapes the block names: plain, `\textbf`, `\emph`, `\textit`,
+  `\textsc`, a bold word between plain ones, a space just inside a styled
+  or coloured group, bold italic, `\textcolor`, colour around bold, math,
+  math inside bold, and a `\\` inside a bold or coloured body.
+- *SVG against PDF, glyph by glyph:* on nine node bodies — `\textbf`,
+  `\emph`, a bold word between plain ones, bold italic, colour around
+  bold, `\emph` inside `\textit`, `\emph` inside `\emph`, `\textnormal`
+  inside `\textbf`, and math inside `\textbf` — each glyph's character and
+  weight are the PDF's, and so is its slant, except on math. The PDF sets
+  a formula in the math face, where math italic is a character of its own,
+  so a face's slant says nothing of the glyph; the SVG sets every formula
+  as an italic floor (open below). The SVG side is the typed tree read as
+  CSS computes it: each `<tspan>`'s `font-weight` and `font-style`,
+  outermost first, `bolder` against the weight it meets, from the page's
+  initial 400. The PDF side is the face each glyph ships in, by that
+  face's own weight and slant. The weight is compared as a number on a set
+  whose regular face is 400; the private deck's one changed label was
+  measured instead (below). Colour is outside this statement: the SVG's
+  colour is checked for presence only, and two colour gaps are open below.
+
+Run against the `17ac92f` engine in a scratch clone, 22 rows fail. Against
+`eafb1cb`, the fix's first cut, exactly five fail: the four per-glyph rows
+for `\emph` inside `\textit` or `\emph`, `\textnormal` inside `\textbf` and
+math inside `\textbf`, and the row that math inside a bold or alerted node
+keeps the math face's weight. The plain, coloured and math rows pass on
+both and are the instrument's controls. The rendered-text rows, the
+neighbour row and the first five agreement rows hold on `17ac92f`, which
+has no `<tspan>` to get wrong, and are guards: the rendered-text rows
+failed on a cut before `text` and `tspan` became phrasing, and the
+gap-aware rows on a cut that trimmed a space just inside the braces. The
+four new agreement rows and the math-weight row also pass on `17ac92f`,
+where both artifacts lost the style alike. No theorem is stated. The
+salvage is the mode machine that `nodeLabel_mem` (owed) already waits on,
+and its helper now recurses into `.styled`, so the owed statement covers
+the new wrapper. The SVG's face step restates `Layout.applyStyle`'s slant
+and family arms, because a backend may not read another backend, so the
+two agree by this check and not by a theorem (routed below).
 
 **The fix.** The salvage reads the elaborator's own table. `Elab.argStyles`
 reaches it as `Cx.argStyles`, in the same way `Cx.math` hands over the
@@ -17678,12 +17706,22 @@ inside either body is a real break, and both resulting lines carry the
 wrapper. The body is walked one group deeper and untrimmed (`Sal.inner`),
 so a size switch inside it is named instead of dropped, and a space just
 inside its braces stays, as it does in a paragraph; only the ends a `\\`
-made are trimmed. HTML: `HtmlDoc.labelNodesList` emits a
-`<tspan>` for each style and colour. It carries the presentation that the
-prose carrier gets: `bolder`, italic, the style class, and `fill` through the
-palette role's custom property. `Html.phrasingTags` gains `text` and
-`tspan`. The printer had indented a tspan onto its own line, which put a
-space between two runs the source had joined.
+made are trimmed. HTML: the label arm resolves each run's face as the PDF
+does (`HtmlDoc.LabelFace.step`): the weight through `Style.weight?`, the
+one map `Layout.weight_agree` holds the PDF to; `\emph` toggles the slant;
+upright clears italic and small caps; `\textnormal` resets every axis.
+Every text run then carries its face in full on its own `<tspan>`,
+relative to the label's `<text>`: the bold series as `bolder`, the
+rendering the prose `<strong>` gets, italic as `font-style`, and the
+family and small caps as the prose classes. So a reset and a toggle set
+what the PDF sets. The first cut nested one `<tspan>` per style, and a
+nested `<tspan>` can only add to what it meets: emphasis inside italic
+stayed italic, `\textnormal` inside bold stayed bold, and math inside bold
+set bolder. A colour is a `<tspan>` of `fill` through the palette role's
+custom property, and it touches no face. The math floor stands under no
+weight. `Html.phrasingTags` gains `text` and `tspan`. The printer had
+indented a tspan onto its own line, which put a space between two runs the
+source had joined.
 
 **Measured on the private deck, `17ac92f` against `266090e` and again at
 `786a766` (identical rasters, census and HTML), through the shipped
@@ -17699,18 +17737,34 @@ same way, so the reader matrix was re-measured through its writer
 (`scripts/html-oracle.lean`, Chromium): every cell reads as before, and only
 its `src-key` moves.
 
-**Corrections to the brief.** The lost weight was not silent: W0334 named
-it at five sites of the deck. The coordinator's rasters were taken at
-`6095273`, not `17ac92f`. Re-measured here at `17ac92f`, the result is the
-same.
+**Re-measured at `061a48d` against `eafb1cb`, through the shipped CLI**,
+both builds from one copy of each private directory. The deck's PDF and
+the paper's PDF are byte-identical (`cmp`), so every raster, the census
+and the fonts are unchanged. The paper's HTML is byte-identical. In the
+deck's HTML one `<text>` element of 66 changes: the alerted math label
+loses its `bolder`, and keeps its colour and its italic floor. Against
+`17ac92f`, the numbers above stand: 36 pages, W0334 125 → 100 (notes
+102 → 82, warnings 23 → 18), engine pages 18 and 21–24 changed and the
+other 31 byte-identical, and the paper's 8 rasters byte-identical. The
+reader matrix's content key does not move (`htmlreader --check`: ok), so
+the corpus HTML it reads is unchanged.
 
-**A decision for the user.** `Compat.alertStyled` makes a themed `\alert`
-both bold and coloured. Its docstring calls the divergence deliberate
-(WCAG 2.2 SC 1.4.1), and prose already honours it. Node labels now honour
-it too, so the deck's alerted nodes set bold where the reference sets them
-coloured only. This is the invariant working. If node alerts should be
-coloured only, the change belongs to `alertStyled`, for prose and pictures
-together.
+**Corrections to the brief.** The lost weight was not silent: W0334 named
+it at 25 sites of the deck, from three source positions. The
+coordinator's rasters were taken at `6095273`, not `17ac92f`. Re-measured
+here at `17ac92f`, the result is the same.
+
+**A decision for the human.** A themed `\alert` keeps today's policy:
+bold plus colour, set in `Compat.alertStyled`. Its docstring calls the
+divergence from beamer's colour-only alert deliberate (WCAG 2.2 SC 1.4.1),
+and prose already sets it that way. Node labels now do too, so the deck's
+alerted nodes set bold where the lualatex reference sets them in colour
+only. On one such page the review counted seven node words: `eafb1cb`,
+whose PDF `061a48d` repeats byte for byte, sets five in the reference's
+face, and `17ac92f` four. Whether an alert is colour
+only, as in beamer, or colour plus bold everywhere, is the human's call.
+Either way the change is one site, `alertStyled`, for prose and pictures
+together, never the picture path alone.
 
 **Left open, with call sites.**
 - The HTML picture box is the hull of label *anchors*
@@ -17727,6 +17781,45 @@ together.
   this branch.
 - A picture label's math still sets as its linear floor in HTML
   (`labelPiece`; MathML inside SVG is owed to M6), and no code names it.
+  The floor is italic whatever the formula says, so `\mathrm` sets italic
+  in the SVG where the PDF sets it upright. It carries no weight of its
+  own, so it sets at the label's regular weight: the math face's own 400
+  where the body's regular is 400, the checked case, and lighter than the
+  PDF's math face on a body whose regular is lighter. The floor is set in
+  the body's family, where the next weight up may be the body's bold, so
+  the regular is kept rather than the math face's number.
+- A palette role too light for its ground is repaired in a paragraph and
+  not in a node. With a synthetic role `pale = #F0B000`,
+  `\textcolor{pale}{…}` ships `#a26600` in a paragraph (N0022) and the raw
+  `#efaf00` in a node, and the SVG ships the declared role. The site:
+  `Contrast.usesBlocks` skips a `.picture` on purpose, because its labels
+  stand on the picture's fills (the label-on-fill contract is owed), and
+  the realization's rewrite reaches no label run either.
+- `\textnormal` resets the colour in the PDF. `Layout.applyStyle` maps
+  `.normal` to the default `TextStyle`, which resets every field, colour
+  and size included, where `\normalfont` resets family, series and shape
+  only. Measured at `061a48d` on a synthetic probe:
+  `\textcolor{rose}{Plain \textnormal{Middle}}` sets Middle black in the
+  PDF, in a paragraph and a node alike, and rose in both HTML emissions.
+  The SVG's colour and the PDF's differ there. The owner is Layout.
+- The prose HTML emission does not toggle or reset
+  (`HtmlDoc.inlineNodeInto`'s `.styled` arm): `<em>` inside `<em>` stays
+  italic where the PDF sets it upright, `\textnormal` is spliced, so a
+  bold run stays bold, and `<strong>` around math asks the formula for
+  `bolder` where the PDF's math face takes no weight (review F6). The label
+  arm's `LabelFace` is the step that arm can thread.
+- The face step is stated twice. `HtmlDoc.LabelFace.step` restates
+  `Layout.applyStyle`'s slant, family and small-caps arms, so the two agree
+  by the per-glyph check, not by a theorem. The statement is an IR-level
+  step, as `Ir.Style.weight?` is for the weight, that `Layout.applyStyle`
+  is proven to project, as `weight_agree` does, and that both HTML arms
+  read. Sites: `Ir.Style` (Ir.lean), `Layout.applyStyle`,
+  `HtmlDoc.LabelFace.step`.
+- One suite row failed once on the reviewer's loaded host at `eafb1cb`:
+  `slot matrix: every PDF declares the run face's pitch its embedded
+  program does`, a mono row of the font-slot driver matrix. It passed on
+  two isolated re-runs and at `17ac92f` (review F10), and this branch does
+  not touch that matrix. For the coordinator to watch.
 - Font declarations in a node body (`{\bfseries …}`) and `font=\bfseries`
   are still refused by name (W0334). None appears in the private corpus.
 - The row layout (unit 2): an inline `\parbox[t]` followed by a
