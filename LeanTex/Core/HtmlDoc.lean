@@ -4238,6 +4238,65 @@ def labelPiece : Inline → String
   | .formula _ _ body => Ir.formulaFloor body
   | inl => Ir.plainTextOne inl
 
+/-- The presentation a style gives a run inside SVG `<text>`, which takes
+no HTML phrasing element: the rendering the prose emission's own carrier
+gets — `<strong>` is `font-weight: bolder` and `<em>` is italic in the HTML
+rendering rules (HTML §15.3.4), `<code>` sets the mono slot, a series is its
+numeric weight, a language its `lang` — and every other style the class the
+prose `<span>` carries (`styleClass`), whose stylesheet rule applies to a
+`<tspan>` as to any element. `.normal` is spliced by the caller, as the prose
+arm splices it. -/
+private def labelStyleAttrs : Style → Array (String × String)
+  | .bold => #[("font-weight", "bolder")]
+  | .italic => #[("font-style", "italic")]
+  | .emph => #[("font-style", "italic")]
+  | .mono => #[("style", "font-family: var(--font-mono)")]
+  | .series w => #[("font-weight", toString w.css)]
+  | .lang tag => #[("lang", tag)]
+  | .normal => #[]
+  | .smallcaps => #[("class", styleClass .smallcaps)]
+  | .sans => #[("class", styleClass .sans)]
+  | .roman => #[("class", styleClass .roman)]
+  | .medium => #[("class", styleClass .medium)]
+  | .upright => #[("class", styleClass .upright)]
+  | .size n => #[("class", styleClass (.size n))]
+
+mutual
+
+/-- One inline of a picture label as SVG `<text>` children, onto `acc`: the
+same runs the PDF sets. Text is character data; a style or a colour is a
+`<tspan>` carrying the presentation the prose emission gives the same inline
+(`labelStyleAttrs`; a colour is SVG's `fill`, through the palette role's
+custom property as prose's `color` is); math is an italic `<tspan>` of its
+floor. Every other inline is its plain text, which is what the label arm
+set for all of them before styles reached it — the node salvage produces
+none of them. Every string goes through the escaper by construction. -/
+def labelNodesOne (acc : Array Node) (x : Inline) : Array Node :=
+  match x with
+  | .text s => acc.push (Html.text s)
+  | .math _ _ | .formula _ _ _ =>
+    acc.push (Html.elem "tspan" #[Html.text (labelPiece x)] #[("font-style", "italic")])
+  | .styled st body =>
+    if st == .normal then labelNodesList acc body.toList
+    else acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) (labelStyleAttrs st))
+  | .colored c name body =>
+    let paint := match name with
+      | some n => ("style", s!"fill: var(--{n}, {cssColor c})")
+      | none => ("fill", cssColor c)
+    acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) #[paint])
+  | .role n body =>
+    acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) #[("class", roleClass n)])
+  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .strut _
+  | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
+  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (Html.text (labelPiece x))
+
+/-- `labelNodesOne` over a label's inlines, threading the accumulator. -/
+def labelNodesList (acc : Array Node) : List Inline → Array Node
+  | [] => acc
+  | x :: rest => labelNodesList (labelNodesOne acc x) rest
+
+end
+
 /-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
 py1))` the viewBox declares: the same evaluated shapes the PDF paints,
 through the typed tree so every label passes the escaper. SVG's y grows
@@ -4268,14 +4327,11 @@ def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp) : Array Node :=
         ("height", (max rh (-rh)).toPtString),
         ("fill", cssColor color)]
     | .label lx ly content color scale align =>
-      -- The label's inline content inside SVG's <text>: plain text as
-      -- character data, math as an italic <tspan> of its floor
-      -- (`labelPiece`), every string through the escaper by construction.
-      let nodes := content.map fun inl =>
-        match inl with
-        | .math _ _ | .formula _ _ _ =>
-          Html.elem "tspan" #[Html.text (labelPiece inl)] #[("font-style", "italic")]
-        | inl => Html.text (labelPiece inl)
+      -- The label's inline content inside SVG's <text>: the runs the PDF
+      -- sets, each style and colour a <tspan> (`labelNodesList`), math an
+      -- italic <tspan> of its floor, every string through the escaper by
+      -- construction.
+      let nodes := labelNodesList #[] content.toList
       let anchor := match align with
         | .center | .south | .north => "middle"
         | .west => "start"

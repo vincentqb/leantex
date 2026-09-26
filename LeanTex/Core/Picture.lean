@@ -868,6 +868,12 @@ structure Cx where
   paragraph's does — the picture walk owns no math parser. The result is
   the inline plus any losses the elaboration names. -/
   math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag
+  /-- The one-argument text commands and the style each names
+  (`\textbf` bold, `\emph` emphasis, …): the elaborator's own table, handed
+  down as `math` is, so a text command in a node body means what it means
+  in a paragraph — the picture walk owns no font-axis table, and a second
+  one here would drift from the first. -/
+  argStyles : List (String × Ir.Style) := []
   /-- The body size a node label's lines are spaced against
   (`nodeLineLead`). The nominal until the elaborator passes the document's
   own: the picture walk has no face and no page spec, which is the same
@@ -2060,6 +2066,10 @@ inductive SalMode where
   | colorRole
   /-- `\textcolor`'s second group, to set in the role it named. -/
   | colorBody (c : Ir.Color) (role : Option String)
+  /-- A text command's argument (`\textbf{...}`, read from `Cx.argStyles`):
+  the next group, or the one word standing there, sets in the style the
+  command names — what the same command does in a paragraph. -/
+  | styleBody (st : Ir.Style)
   deriving Repr, BEq, Inhabited
 
 /-- A node label under construction: the lines already closed, the current
@@ -2134,12 +2144,31 @@ def newline (s : Sal) : Sal :=
 line's size but not its content. -/
 def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
 
+/-- Splice a nested body's salvage into this label, every line of it
+wrapped (`wrap`, a style or a colour): the body's first line continues the
+current one, and each later line — a `\\` inside the body — closes the
+current line and opens the next, as the break does in TeX. So a break
+inside `\textbf{…}` is a real break whose both lines are bold, where
+merging the lines would have been a loss nothing named. An empty line
+wraps nothing, so no empty wrapper ships; the body's own losses join this
+label's. The body was walked one group deeper (`depth`), so no size switch
+inside it set a line's size — a size it asked for was named instead. -/
+def splice (s : Sal) (body : Sal) (wrap : Array Ir.Inline → Ir.Inline) : Sal := Id.run do
+  let body := body.newline
+  let mut s := s.addDiags (body.diags.extract s.diags.size body.diags.size)
+  for k in [0:body.lines.size] do
+    if let some (xs, _) := body.lines[k]? then
+      if k > 0 then s := s.newline
+      unless xs.isEmpty do s := s.inline (wrap xs)
+  return { s with mode := .text }
+
 /-- Does this label ship ink? The inlines it ships, counted across its
 lines: an empty line contributes none, so a label of nothing but blank
 lines is inkless — which is what `labelFloor` pays for. `inked` counts
 inlines rather than glyphs, and that is exact for what it guards: every
 inline the salvage pushes is a non-empty text run, a math span (which
-carries its own floor) or a non-empty coloured group. -/
+carries its own floor) or a non-empty coloured or styled group (`splice`
+wraps no empty line). -/
 def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
 
 def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
@@ -2153,7 +2182,7 @@ exists to prevent. -/
 def settled : SalMode → Bool
   | .text => true
   | .optMaybe k => k == 0
-  | .optDrop _ | .dropArgs _ | .colorRole | .colorBody _ _ => false
+  | .optDrop _ | .dropArgs _ | .colorRole | .colorBody _ _ | .styleBody _ => false
 
 /-- Settle a mode this token does not continue, so the content arm reads it
 instead. Idempotent on `.text`, which is why `salOne` may apply it twice and
@@ -2180,30 +2209,46 @@ def settle (t : Tok) (s : Sal) : Sal :=
   | .colorBody _ _, .space => s
   | .colorBody _ _, .group _ => s
   | .colorBody _ _, _ => (s.refuse "a colour with no body").mode0
+  -- A text command's argument is a group or the one word standing there, as
+  -- the elaborator reads it; anything else (a command, math, an
+  -- environment) is not an argument this subset can style, so the style is
+  -- named and the token goes on to be read as content.
+  | .styleBody _, .space => s
+  | .styleBody _, .group _ => s
+  | .styleBody _, .ident _ => s
+  | .styleBody _, .num _ => s
+  | .styleBody _, .sym _ => s
+  | .styleBody _, _ => (s.refuse "a text style whose argument is not a group").mode0
   | .text, _ => s
 
 end Sal
 
 /-- The mode a control sequence the subset cannot draw puts the salvage
-into, and the loss it names. Four are read rather than refused, because
+into, and the loss it names. Five are read rather than refused, because
 nothing a reader can see is lost: `\\` opens a line, a phantom is
 invisible by definition, a size switch opening a line sets that line's
-size, and `\textcolor` sets its body in the role it names. Everything else
-drops its own name — and the arguments `Ir.floorNamedArgs` says name
-rather than carry, so a key or a length never rides onto the page as
-ink — and keeps what its content groups say.
+size, `\textcolor` sets its body in the role it names, and a text command
+(`\textbf`, `\emph`, `\textsc`, …) sets its argument in its style.
+Everything else drops its own name — and the arguments `Ir.floorNamedArgs`
+says name rather than carry, so a key or a length never rides onto the
+page as ink — and keeps what its content groups say.
 
 `Ir.floorNamedArgs` is the math floor's own table, read here rather than
 restated: which arguments of a command are names is one fact about LaTeX,
-and a second list would drift from the first. -/
-private def salCtrl (env : List (String × Val)) (n : String) (s : Sal) : Sal :=
+and a second list would drift from the first. The text commands are the
+elaborator's own table for the same reason (`Cx.argStyles`). -/
+private def salCtrl (styles : List (String × Ir.Style)) (env : List (String × Val))
+    (n : String) (s : Sal) : Sal :=
   match env.lookup n with
   | some v => s.str v.text
   | none =>
     if n == "\\" then { s.newline with mode := .optMaybe 0 }
     else if phantomCtrl.contains n then { s with mode := .optMaybe 1 }
     else if n == "textcolor" then { s with mode := .colorRole }
-    else match Ir.sizeScale.lookup n with
+    else match styles.lookup n with
+    | some st => { s with mode := .styleBody st }
+    | none =>
+    match Ir.sizeScale.lookup n with
       | some k =>
         if s.fresh && s.depth == 0 then { s with scale := k }
         else
@@ -2256,11 +2301,18 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
   | .colorBody c role =>
     match t with
     | .group g =>
-      let sub := (salList cx env g s.sub).newline
-      let body := sub.lines.foldl (fun a (xs, _) => xs.foldl Array.push a) #[]
-      let s := s.addDiags (sub.diags.extract s.diags.size sub.diags.size)
-      if body.isEmpty then { s with mode := .text }
-      else { (s.inline (.colored c role body)) with mode := .text }
+      s.splice (salList cx env g { s.sub with depth := s.depth + 1 }) (.colored c role)
+    | _ => s
+  -- Only a space, a group or one word reaches here (`Sal.settle`): the
+  -- group is the argument, and a word standing where it would be is the
+  -- argument too, as the elaborator reads `\textbf x`.
+  | .styleBody st =>
+    match t with
+    | .group g =>
+      s.splice (salList cx env g { s.sub with depth := s.depth + 1 }) (.styled st)
+    | .ident w => { (s.inline (.styled st #[.text w])) with mode := .text }
+    | .num m => { (s.inline (.styled st #[.text (milliString m)])) with mode := .text }
+    | .sym c => { (s.inline (.styled st #[.text (String.singleton c)])) with mode := .text }
     | _ => s
   | .text =>
     match t with
@@ -2277,7 +2329,7 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
       let (inl, ds) := cx.math d body.toArray
       (s.inline inl).addDiags ds
     | .other what => s.refuse what
-    | .ctrl n => salCtrl env n s
+    | .ctrl n => salCtrl cx.argStyles env n s
 
 end
 
@@ -2313,9 +2365,10 @@ theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named)
   · decide
 
 /-- A node body's label lines. Words, numbers and bound macros become text,
-a math span elaborates through `Cx.math`, `\\` opens a line, and a
-construct the subset cannot draw drops its own spelling and keeps what it
-says (`salCtrl`).
+a math span elaborates through `Cx.math`, a text command sets its argument
+in the style the elaborator's own table gives it (`Cx.argStyles`), `\\`
+opens a line, and a construct the subset cannot draw drops its own spelling
+and keeps what it says (`salCtrl`).
 
 **A body the subset cannot fully read still ships the text it can read.**
 Dropping a label whole is the worse recovery: the reader sees an empty
@@ -4150,13 +4203,17 @@ them before its own, and a key set in both takes the inner value
 between them: pgf executes it inside the node's or path's own scope, so it
 beats what the picture set and loses to the bracket's own (`mergeOpts`).
 An `every X` this subset has no loop for stays unread and is named at the
-line that declared it. -/
+line that declared it. `argStyles` is the elaborator's text-command table
+(`Cx.argStyles`), and it has no default on purpose: a caller that forgot
+it would set every styled node label in the regular face, the defect the
+parameter exists to close. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
     (sets : Array (Array Parse.Raw) := #[])
     (metric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (macros : Array (String × String) := #[]) :
+    (macros : Array (String × String) := #[])
+    (argStyles : List (String × Ir.Style)) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRaws raws
   let toks := expandMacros (macroTable macros raw) raw
@@ -4247,6 +4304,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    everyPath := everyOf everyPathKey
                    dist := dist
                    math := math
+                   argStyles := argStyles
                    metric := metric
                    -- A declaration the parse skipped is gone before
                    -- evaluation begins, so a name that then resolves to

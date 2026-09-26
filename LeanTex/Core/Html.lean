@@ -196,10 +196,13 @@ def preserveTags : List String := ["pre", "code", "textarea"]
 
 /-- Elements whose content is phrasing: their children are rendered without
 added newlines, because in HTML a newline collapses to a space and would
-appear before punctuation that follows a nested element. -/
+appear before punctuation that follows a nested element. SVG's `text` and
+`tspan` collapse white space the same way, so a picture label whose word is
+wrapped in a `tspan` would otherwise gain a space its source never had. -/
 def phrasingTags : List String :=
   ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "span", "a", "strong", "em",
-   "code", "u", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label"]
+   "code", "u", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
+   "text", "tspan"]
 
 def elem (tag : String) (kids : Array Node := #[])
     (attrs : Array (String × String) := #[]) : Node :=

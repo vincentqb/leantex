@@ -5405,6 +5405,216 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "a phantom with an argument still costs nothing and names nothing"
     (inkOf "\\node (a) {\\vphantom{p}Damson};\n" == "Damson")
 
+mutual
+
+/-- The text runs of one SVG subtree, each with the attributes of every
+`<tspan>` around it, innermost first: how the drawing presents each run. -/
+def svgRunsOne (env : Array (String × String))
+    (acc : Array (String × Array (String × String))) :
+    Html.Node → Array (String × Array (String × String))
+  | .text s => if s.isEmpty then acc else acc.push (s, env)
+  | .elem tag attrs kids =>
+    svgRunsList (if tag == "tspan" then attrs ++ env else env) acc kids.toList
+  | .style _ => acc
+  | .script _ _ => acc
+
+def svgRunsList (env : Array (String × String))
+    (acc : Array (String × Array (String × String))) :
+    List Html.Node → Array (String × Array (String × String))
+  | [] => acc
+  | k :: rest => svgRunsList env (svgRunsOne env acc k) rest
+
+end
+
+mutual
+
+/-- Every SVG `<text>` element's runs (`svgRunsOne`), in document order. -/
+def svgTextRunsOne (acc : Array (String × Array (String × String))) :
+    Html.Node → Array (String × Array (String × String))
+  | .elem tag _ kids =>
+    if tag == "text" then svgRunsList #[] acc kids.toList
+    else svgTextRunsList acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def svgTextRunsList (acc : Array (String × Array (String × String))) :
+    List Html.Node → Array (String × Array (String × String))
+  | [] => acc
+  | k :: rest => svgTextRunsList (svgTextRunsOne acc k) rest
+
+end
+
+def svgTextRuns (body : Array Html.Node) : Array (String × Array (String × String)) :=
+  svgTextRunsList #[] body.toList
+
+/-- **A node's text is inline content, so its styles reach both artifacts.**
+The defect: `\textbf{…}` in a node body set in the regular weight where
+lualatex sets it bold, and `\emph`, `\textit` and `\textsc` lost their
+shapes the same way — the salvage read each text command as an unknown
+macro, kept the word, and named the loss where no reader looks. A `\\`
+inside a coloured body merged its two lines into one, in silence.
+
+The invariant, measured at the artifact: a node's shipped runs (face,
+glyphs, colour, one line per line) are the runs the same source ships as a
+paragraph — a picture is not a typographic island. Read off `Layout.Out`
+under a set whose four faces are four files, so the face is visible; and
+off the typed HTML tree, where the label's `<text>` carries the same
+presentation per character. The plain, coloured and math rows held before
+the fix and are the instrument's controls. Invented content. -/
+def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (n : String) : IO (Option Font.Font) := do
+    let p := testFonts ++ "/" ++ n
+    unless ← System.FilePath.pathExists p do return none
+    return (Font.parse (← IO.FS.readBinFile p)).toOption
+  let faces := #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
+    "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf"]
+  let mut loaded : Array Font.Font := #[]
+  for n in faces do
+    if let some f ← load n then loaded := loaded.push f
+  t "the four shipped Source Serif faces load" (loaded.size == 4)
+  unless loaded.size == 4 do return
+  -- Index 0 regular, 1 bold, 2 italic, 3 bold italic, in every slot.
+  let fs : Font.FontSet := {
+    fonts := loaded
+    index := ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 1),
+       ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray }
+  let boldIdx (i : Nat) : Bool := i == 1 || i == 3
+  let italIdx (i : Nat) : Bool := i == 2 || i == 3
+  let doc (inner : String) : String :=
+    "\\palette{ rose = #B03060 }\\begin{document}\n" ++ inner ++ "\n\\end{document}"
+  let node (body : String) : String :=
+    doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
+  -- One shipped line as its runs: face, glyphs and colour, in order.
+  let runsOf (l : Layout.LineOut) : Array (Nat × Array (Nat × Char) × Ir.Color) :=
+    l.segs.filterMap fun seg => match seg with
+      | .run idx color _ _ glyphs _ _ _ _ _ => some (idx, glyphs, color)
+      | _ => none
+  let shipped (src : String) : Array (Array (Nat × Array (Nat × Char) × Ir.Color)) :=
+    let (d, _) := elabStr src
+    ((bodyLines (layoutOf fs d)).filter fun l => !(runsOf l).isEmpty).map runsOf
+  let diagsOf (src : String) : Array Diag := (elabStr src).2
+  -- **The invariant row.** The node's lines are the paragraph's lines.
+  let agrees (body : String) : Bool :=
+    let n := shipped (node body)
+    !n.isEmpty && n == shipped (doc body)
+  -- The faces a source's glyphs ship in, one per non-space glyph.
+  let facesOf (src : String) : Array Nat :=
+    (shipped src).flatMap fun rs => rs.flatMap fun (i, gs, _) =>
+      (gs.filter (·.2 != ' ')).map fun _ => i
+  t "a plain node's runs are the paragraph's (control)" (agrees "Middle")
+  t "a bold node's runs are the paragraph's" (agrees "\\textbf{Middle}")
+  t "the bold node ships in the bold face, not the regular"
+    (let fs' := facesOf (node "\\textbf{Middle}")
+     !fs'.isEmpty && fs'.all boldIdx)
+  t "an emphasised node's runs are the paragraph's" (agrees "\\emph{Middle}")
+  t "the emphasised node ships in the italic face"
+    (let fs' := facesOf (node "\\emph{Middle}")
+     !fs'.isEmpty && fs'.all italIdx)
+  t "an italic node's runs are the paragraph's" (agrees "\\textit{Middle}")
+  t "a small-caps node's runs are the paragraph's" (agrees "\\textsc{Middle}")
+  t "a bold word inside a node's line keeps its neighbours regular"
+    (agrees "Left \\textbf{Middle} Right")
+  t "a nested bold italic node ships in the bold italic face"
+    (agrees "\\textbf{\\emph{Middle}}" &&
+      (facesOf (node "\\textbf{\\emph{Middle}}")).all (· == 3))
+  t "a coloured node's runs are the paragraph's (control)"
+    (agrees "\\textcolor{rose}{Middle}")
+  t "a coloured bold node, the alert shape, keeps both"
+    (agrees "\\textcolor{rose}{\\textbf{Middle}}")
+  t "a node's math runs are the paragraph's (control)" (agrees "$x^2$")
+  -- A `\\` inside a styled or coloured body is a real break, as in TeX:
+  -- two lines, each carrying the body's style.
+  t "a line break inside a bold body ships two bold lines"
+    (agrees "\\textbf{Pear\\\\Fig}" && (shipped (node "\\textbf{Pear\\\\Fig}")).size == 2)
+  t "a line break inside a coloured body ships two coloured lines"
+    (agrees "\\textcolor{rose}{Pear\\\\Fig}" &&
+      (shipped (node "\\textcolor{rose}{Pear\\\\Fig}")).size == 2)
+  -- Read as a paragraph reads it, so nothing is named.
+  t "the styled nodes elaborate with nothing refused"
+    (["\\textbf{Middle}", "\\emph{Middle}", "\\textit{Middle}", "\\textsc{Middle}",
+      "\\textcolor{rose}{\\textbf{Middle}}", "\\textbf{Pear\\\\Fig}"].all fun b =>
+      (diagsOf (node b)).all (·.severity == .note))
+  -- **What the subset cannot set is named, never set plain in silence.**
+  -- The floor held before the fix too; this row guards it through it.
+  let (_, dsEnd) := elabStr (node "\\textbf")
+  t "a text style whose argument never came is named (the floor)"
+    (dsEnd.any fun d => d.code == DiagCode.W0334.code)
+  -- One loss, the size's: the style itself is read, so a second W0334
+  -- would be the style refused as it was before the fix.
+  let (_, dsSize) := elabStr (node "Pear \\textbf{\\small Fig}")
+  t "a size switch inside a styled body is named, and is the only loss"
+    ((dsSize.filter fun d => d.code == DiagCode.W0334.code).size == 1)
+  t "the styled word beside it still ships bold"
+    ((facesOf (node "Pear \\textbf{\\small Fig}")).any boldIdx)
+  -- **HTML gets the same runs.** Every character of the label's `<text>`,
+  -- with the presentation the SVG gives it — the attributes of every
+  -- `<tspan>` around it, innermost first.
+  let svgRuns (src : String) : Array (String × Array (String × String)) :=
+    let (d, _) := elabStr src
+    let (_, body, _) := HtmlDoc.emitTree {} d
+    svgTextRuns body
+  let attrIn (env : Array (String × String)) (k : String) : Option String :=
+    (env.find? (·.1 == k)).map (·.2)
+  let svgBold (env : Array (String × String)) : Bool :=
+    match attrIn env "font-weight" with
+    | some w => w == "bolder" || w == "bold" || w == "700"
+    | none => false
+  let svgItal (env : Array (String × String)) : Bool :=
+    attrIn env "font-style" == some "italic"
+  -- One entry per non-space glyph, bold and italic, from each artifact.
+  let pdfFlags (src : String) : Array (Char × Bool × Bool) :=
+    (shipped src).flatMap fun rs => rs.flatMap fun (i, gs, _) =>
+      (gs.filter (·.2 != ' ')).map fun (_, c) => (c, boldIdx i, italIdx i)
+  let htmlFlags (src : String) : Array (Char × Bool × Bool) :=
+    (svgRuns src).flatMap fun (s, env) =>
+      (s.toList.filter (· != ' ')).toArray.map fun c => (c, svgBold env, svgItal env)
+  t "the SVG sets the bold node's word bold"
+    (let rs := svgRuns (node "\\textbf{Middle}")
+     rs.any (fun (s, env) => s == "Middle" && svgBold env))
+  t "the SVG sets the emphasised node's word italic"
+    ((svgRuns (node "\\emph{Middle}")).any fun (s, env) => s == "Middle" && svgItal env)
+  t "the SVG gives a small-caps node the small-caps class"
+    ((svgRuns (node "\\textsc{Middle}")).any fun (s, env) =>
+      s == "Middle" && attrIn env "class" == some "sc")
+  t "the SVG paints a coloured node's word in its palette role"
+    ((svgRuns (node "\\textcolor{rose}{Middle}")).any fun (s, env) =>
+      s == "Middle" && env.any fun (k, v) => k == "style" && hasStr v "var(--rose")
+  t "the SVG keeps a bold word's neighbours regular"
+    ((svgRuns (node "Left \\textbf{Middle} Right")).all fun (s, env) =>
+      svgBold env == (s == "Middle"))
+  t "per glyph, the SVG's weight and slant are the PDF's"
+    (["\\textbf{Middle}", "\\emph{Middle}", "Left \\textbf{Middle} Right",
+      "\\textbf{\\emph{Middle}}", "\\textcolor{rose}{\\textbf{Middle}}"].all fun b =>
+      let p := pdfFlags (node b)
+      !p.isEmpty && p == htmlFlags (node b))
+  -- The page, not the tree: a printer that broke a `<text>` element's
+  -- children onto indented lines put a space between `Left` and a bold
+  -- `Middle` that the source never had, because SVG text collapses the
+  -- indentation to one. The label's rendered text, tags stripped, is the
+  -- label's text exactly.
+  let stripTags (s : String) : String := Id.run do
+    let mut out := ""
+    let mut inTag := false
+    for c in s.toList do
+      if c == '<' then inTag := true
+      else if c == '>' then inTag := false
+      else if !inTag then out := out.push c
+    return out
+  let renderedLabel (src : String) (needle : String) : Option String :=
+    let (d, _) := elabStr src
+    let html := (HtmlDoc.emit {} d).1
+    ((html.splitOn "</text>").find? (hasStr · needle)).map fun piece =>
+      let afterOpen : List Char :=
+        (((piece.splitOn "<text").getLast?.getD "").toList.dropWhile (· != '>')).drop 1
+      stripTags (String.ofList afterOpen)
+  t "a styled label's rendered SVG text adds no whitespace"
+    (renderedLabel (node "Left\\textbf{Middle}") "Middle" == some "LeftMiddle")
+  t "a label's spaces survive the rendering exactly"
+    (renderedLabel (node "Left \\textbf{Middle} Right") "Middle" == some "Left Middle Right")
+
 /-- **A construct outside the subset costs only itself.** Two halves of one
 rule, both read off the shipped page.
 

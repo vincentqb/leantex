@@ -620,10 +620,10 @@ end
 mutual
 
 /-- The characters a label's inlines ink, in order. Recurses into a coloured
-group, which is the wrapper the node salvage introduced: a statement that
-read only top-level `.text` runs would be satisfied by a salvage that put
-whatever it liked inside a `.colored`. A math span carries its own floor and
-is outside this measure, as it is outside `bodyChars`. -/
+or a styled group, the wrappers the node salvage introduces: a statement
+that read only top-level `.text` runs would be satisfied by a salvage that
+put whatever it liked inside a wrapper. A math span carries its own floor
+and is outside this measure, as it is outside `bodyChars`. -/
 def labelChars (acc : Array Char) : List Ir.Inline → Array Char
   | [] => acc
   | x :: rest => labelChars (inlineChars acc x) rest
@@ -632,19 +632,20 @@ def labelChars (acc : Array Char) : List Ir.Inline → Array Char
 def inlineChars (acc : Array Char) : Ir.Inline → Array Char
   | .text s => s.toList.foldl Array.push acc
   | .colored _ _ body => labelChars acc body.toList
+  | .styled _ body => labelChars acc body.toList
   | _ => acc
 
 end
 
 -- owed: nodeLabel_mem
 -- owner: LeanTex.Core.Picture
--- source: the node-label recovery floor (PLAN 2026-09-24, the node-label floor entry and its review round): the lower bound on what a degraded node label inks. `labelFloor_accounts` is the paid-for side — a label that named a loss ships ink — and it holds for a salvage that kept nothing at all, since the placeholder then pays for it; on its own it permits a diagram of bracketed ellipses where words stood, and it permits markup on the page. This is the other side: every character a salvaged label inks, inside a coloured group as well as at the top level, is a character its body carried or one of the declared placeholder's, and none of them is LaTeX punctuation. It bounds *provenance* and not *selection* — a naming argument's characters are the body's too, so this statement cannot express "dropped the argument it was told to drop", and that half is executable only: the whole-label rows in `pictureNodeFloorChecks` ("a length argument never rides onto the page", "a starred name's star does not stand in for its argument", "every trailing option run goes with the command", "the named key never reaches the page" and their siblings) pin the salvage of sixteen shapes against the shipped page, and each is paired with a positive row over the same input so none passes under an all-dropping salvage.
--- blocker: `salList` is a mode machine (`Picture.SalMode`) threaded through a mutual walk over a token tree, and no equation names "the label after token k" — the pending text run, the closed lines and the mode advance together inside one `Sal`, so the statement needs an invariant carried through five modes and two mutual arms. The named factorization is a `Sal` split into the content built so far and the machine's pending state. Corrected 2026-09-24: this is no longer "the work `floorChars_id` waits on" — `floorChars_id` is proved, through `LeanTex.Core.Loop`, with no split of anything. The difference is the shape of the claim: that one is an identity under a hypothesis that makes every branch a no-op, which a state invariant carries; this one is a provenance census over a token tree, and a pure invariant cannot express a census. So what this row owes is a progress-indexed invariant over `salList`'s own recursion — or the `Sal` split, which buys the same thing by making the pending state nameable.
+-- source: the node-label recovery floor (PLAN 2026-09-24, the node-label floor entry and its review round): the lower bound on what a degraded node label inks. `labelFloor_accounts` is the paid-for side — a label that named a loss ships ink — and it holds for a salvage that kept nothing at all, since the placeholder then pays for it; on its own it permits a diagram of bracketed ellipses where words stood, and it permits markup on the page. This is the other side: every character a salvaged label inks, inside a coloured or a styled group as well as at the top level, is a character its body carried or one of the declared placeholder's, and none of them is LaTeX punctuation. It bounds *provenance* and not *selection* — a naming argument's characters are the body's too, so this statement cannot express "dropped the argument it was told to drop", and that half is executable only: the whole-label rows in `pictureNodeFloorChecks` ("a length argument never rides onto the page", "a starred name's star does not stand in for its argument", "every trailing option run goes with the command", "the named key never reaches the page" and their siblings) pin the salvage of sixteen shapes against the shipped page, and each is paired with a positive row over the same input so none passes under an all-dropping salvage.
+-- blocker: `salList` is a mode machine (`Picture.SalMode`) threaded through a mutual walk over a token tree, and no equation names "the label after token k" — the pending text run, the closed lines and the mode advance together inside one `Sal`, so the statement needs an invariant carried through six modes and two mutual arms. The named factorization is a `Sal` split into the content built so far and the machine's pending state. Corrected 2026-09-24: this is no longer "the work `floorChars_id` waits on" — `floorChars_id` is proved, through `LeanTex.Core.Loop`, with no split of anything. The difference is the shape of the claim: that one is an identity under a hypothesis that makes every branch a no-op, which a state invariant carries; this one is a provenance census over a token tree, and a pure invariant cannot express a census. So what this row owes is a progress-indexed invariant over `salList`'s own recursion — or the `Sal` split, which buys the same thing by making the pending state nameable.
 -- goldens: no
-/-- Every character a salvaged node label inks — inside a coloured group as
-well as at the top level — is a character its body carried, or one of the
-declared placeholder's, and none of them is LaTeX punctuation: the label
-keeps what the body says and invents nothing. -/
+/-- Every character a salvaged node label inks — inside a coloured or a
+styled group as well as at the top level — is a character its body carried,
+or one of the declared placeholder's, and none of them is LaTeX punctuation:
+the label keeps what the body says and invents nothing. -/
 theorem nodeLabel_mem (cx : Picture.Cx) (env : List (String × Picture.Val))
     (toks : List Picture.Tok) :
     ∀ l ∈ (Picture.nodeLabel cx env toks).1,
