@@ -701,7 +701,12 @@ the base carries)"] },
      edit := fun d _ => do
        IO.FS.writeFile (d / tsvPath "zzé") "# encoding: raw\nalpha\t3\n"
        IO.FS.writeFile (d / scriptPath "zzé") trivial
-     exit := 1, says := fun _ => ["scoreboard: tier=zz%C3%A9 items=0 regressed=0 improved=0 result=fault"] }]
+     exit := 1, says := fun _ => ["scoreboard: tier=zz%C3%A9 items=0 regressed=0 improved=0 result=fault"] },
+   -- A directory named like a baseline at the base holds no floor to read.
+   { label := "a directory named like a baseline at the base"
+     extra := [("tests/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
+     edit := fun d _ => IO.FS.removeDirAll (d / "tests/scoreboard/zz-dir.tsv")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
@@ -717,7 +722,9 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
       IO.FS.writeFile (dir / tsvPath t) "# retired-tier: a synthetic harness, nothing measured\n"
     IO.FS.writeFile (dir / scriptPath probeTier) trivialProducer
     IO.FS.writeFile (dir / tsvPath probeTier) probeText
-    for (p, text) in c.extra do IO.FS.writeFile (dir / p) text
+    for (p, text) in c.extra do
+      if let some parent := (dir / p).parent then IO.FS.createDirAll parent
+      IO.FS.writeFile (dir / p) text
     let _ ← harnessGit dir #["init", "-q", "."]
     let _ ← harnessGit dir #["add", "-A"]
     let tree ← harnessGit dir #["write-tree"]
