@@ -130,11 +130,57 @@ def git (e : Env) (ctr : IO.Ref Nat) (step : String) (args : Array String)
 
 -- ## Discovery
 
+/-- The variables that point git at a repository, an index, an object store,
+a ref namespace or a config other than the ones a command's working
+directory names. git's own list (`rev-parse --local-env-vars`, as of git
+2.47) plus `GIT_NAMESPACE`, which moves every ref a command reads. The driver
+asks git for the list as well, so a later git's addition is scrubbed too. -/
+def repoVarsFixed : Array String := #[
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+  "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS",
+  "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
+  "GIT_NAMESPACE"]
+
+/-- The name of every environment variable of this process that starts with
+`GIT_`, read from `/proc/self/environ` (NUL-separated `name=value`); empty
+where that file cannot be read. -/
+def gitVarsInEnv : IO (Array String) := do
+  let bytes ← try IO.FS.readBinFile "/proc/self/environ" catch _ => pure ByteArray.empty
+  let mut out : Array String := #[]
+  let mut name : String := ""
+  let mut inName := true
+  for b in bytes.toList do
+    if b == 0 then
+      if name.startsWith "GIT_" && !out.contains name then out := out.push name
+      name := ""; inName := true
+    else if inName then
+      if b == 61 then inName := false  -- '='
+      else name := name.push (Char.ofNat b.toNat)
+  if name.startsWith "GIT_" && !out.contains name then out := out.push name
+  return out
+
 def childEnvVars : IO (Array (String × Option String)) := do
   let cc ← IO.getEnv "LEAN_CC"
   let lp ← IO.getEnv "LIBRARY_PATH"
-  -- Never inherited: a child that can prompt can hang a scripted landing.
-  let mut out : Array (String × Option String) := #[("GIT_TERMINAL_PROMPT", some "0")]
+  -- Never inherited: a variable naming another repository. git exports
+  -- `GIT_DIR` and `GIT_INDEX_FILE` to a hook in every linked worktree, so a
+  -- landing started from a hook would otherwise probe, rebase and gate the
+  -- hook's repository — and a gate running `git` in the gate tree would read
+  -- the hook's index. The repository is the one the working directory names.
+  let scrub0 : Array (String × Option String) := repoVarsFixed.map (·, none)
+  let r ← try
+      IO.Process.output
+        { cmd := "git", args := #["rev-parse", "--local-env-vars"], env := scrub0,
+          stdin := .null }
+    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+  let asked := if r.exitCode == 0 then (wsSplit r.stdout).toArray else #[]
+  let names := asked.foldl (init := repoVarsFixed) fun acc n =>
+    if acc.contains n then acc else acc.push n
+  -- Never inherited either: a child that can prompt can hang a scripted
+  -- landing.
+  let mut out : Array (String × Option String) :=
+    names.map (·, none) |>.push ("GIT_TERMINAL_PROMPT", some "0")
   if cc.isNone then
     out := out.push ("LEAN_CC", some "/home/linuxbrew/.linuxbrew/bin/clang")
   if lp.isNone then
@@ -1300,18 +1346,43 @@ def selftest : IO UInt32 := do
 -- No real worktree is ever named: the tool under test may not be pointed at
 -- one, and this harness structurally cannot be.
 
+/-- The environment every harness child gets: each `GIT_` variable this
+process inherited removed, and git's global and system configuration out of
+reach. git exports `GIT_DIR` and `GIT_INDEX_FILE` to a hook in every linked
+worktree, so a harness started from one once committed its fixtures into the
+repository `GIT_DIR` named and opted that repository in to gate overrides;
+and a host's `commit.gpgsign` or `core.hooksPath` would change what a
+scenario tests. -/
+def harnessEnv : IO (Array (String × Option String)) := do
+  let set : Array (String × Option String) := #[("GIT_CONFIG_GLOBAL", some "/dev/null"),
+    ("GIT_CONFIG_NOSYSTEM", some "1"), ("GIT_TERMINAL_PROMPT", some "0")]
+  let inherited ← gitVarsInEnv
+  let names := repoVarsFixed.foldl (init := inherited) fun acc n =>
+    if acc.contains n then acc else acc.push n
+  let unset := (names.filter fun n => !(set.any (·.1 == n))).map (·, none)
+  return unset.append set
+
 /-- Run a command for the harness. Not `sh`: there is no run directory yet,
 and the harness asserts on exit codes rather than on parsed facts. -/
 def hrun (cmd : String) (args : Array String) (cwd : Option String)
     (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
+  let env ← harnessEnv
   let r ← try
       IO.Process.output
-        { cmd, args, cwd := cwd.map System.FilePath.mk, env := extraEnv, stdin := .null }
+        { cmd, args, cwd := cwd.map System.FilePath.mk, env := env.append extraEnv,
+          stdin := .null }
     catch ex => pure { exitCode := 127, stdout := "", stderr := toString ex }
   return (r.exitCode.toNat, trimWs (r.stdout ++ r.stderr))
 
 def hgit (args : Array String) (cwd : String) : IO (Nat × String) :=
   hrun "git" args (some cwd)
+
+/-- A fixture step that must succeed: a scenario built on a failed setup
+command would assert about a repository it never made. -/
+def hgitOk (args : Array String) (cwd : String) : IO Unit := do
+  let (c, o) ← hgit args cwd
+  if c != 0 then
+    throw (IO.userError s!"fixture: git {String.intercalate " " args.toList} exited {c}: {o}")
 
 /-- A scratch repository on `main` with one commit, opted in to gate
 overrides, plus a worktree for `agent/<name>` carrying one commit. -/
@@ -1328,18 +1399,18 @@ def writeExe (path body : String) : IO Unit := do
 def mkScratch (root name : String) : IO Scratch := do
   let repo := s!"{root}/repo"
   IO.FS.createDirAll repo
-  let _ ← hgit #["init", "-q", "-b", "main", "."] repo
-  let _ ← hgit #["config", "user.name", "Scratch"] repo
-  let _ ← hgit #["config", "user.email", "scratch@example.org"] repo
-  let _ ← hgit #["config", "--local", "land.allowGateOverride", "true"] repo
+  hgitOk #["init", "-q", "-b", "main", "."] repo
+  hgitOk #["config", "user.name", "Scratch"] repo
+  hgitOk #["config", "user.email", "scratch@example.org"] repo
+  hgitOk #["config", "--local", "land.allowGateOverride", "true"] repo
   IO.FS.writeFile s!"{repo}/base.txt" "base\n"
-  let _ ← hgit #["add", "base.txt"] repo
-  let _ ← hgit #["commit", "-qm", "Base"] repo
+  hgitOk #["add", "base.txt"] repo
+  hgitOk #["commit", "-qm", "Base"] repo
   let wt := s!"{root}/lt-{name}"
-  let _ ← hgit #["worktree", "add", "-q", "-b", s!"agent/{name}", wt, "main"] repo
+  hgitOk #["worktree", "add", "-q", "-b", s!"agent/{name}", wt, "main"] repo
   IO.FS.writeFile s!"{wt}/{name}.txt" s!"{name}\n"
-  let _ ← hgit #["add", s!"{name}.txt"] wt
-  let _ ← hgit #["commit", "-qm", s!"Add {name}"] wt
+  hgitOk #["add", s!"{name}.txt"] wt
+  hgitOk #["commit", "-qm", s!"Add {name}"] wt
   return { root, repo, wt }
 
 def revOf (repo rev : String) : IO String := do
@@ -1370,9 +1441,9 @@ def worktreePaths (repo : String) : IO (Array String) := do
 /-- A bare `origin` holding the scratch repository's `main`. -/
 def addRemote (s : Scratch) : IO String := do
   let remote := s!"{s.root}/remote.git"
-  let _ ← hgit #["init", "-q", "--bare", "-b", "main", remote] s.root
-  let _ ← hgit #["remote", "add", "origin", remote] s.repo
-  let _ ← hgit #["push", "-q", "origin", "main"] s.repo
+  hgitOk #["init", "-q", "--bare", "-b", "main", remote] s.root
+  hgitOk #["remote", "add", "origin", remote] s.repo
+  hgitOk #["push", "-q", "origin", "main"] s.repo
   return remote
 
 def scenarioBranchMoves (self root : String) : IO Outcome := do
@@ -1390,7 +1461,7 @@ def scenarioBranchMoves (self root : String) : IO Outcome := do
 
 def scenarioMainLeaves (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/leaves" "leaves"
-  let _ ← hgit #["branch", "side", "main"] s.repo
+  hgitOk #["branch", "side", "main"] s.repo
   writeExe s!"{s.root}/switch.sh"
     s!"#!/bin/sh\ngit -C {s.repo} checkout -q side\n"
   let before ← revOf s.repo "refs/heads/main"
@@ -1404,11 +1475,11 @@ def scenarioMainLeaves (self root : String) : IO Outcome := do
 def scenarioConflict (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/conflict" "conflict"
   IO.FS.writeFile s!"{s.repo}/shared.txt" "theirs\n"
-  let _ ← hgit #["add", "shared.txt"] s.repo
-  let _ ← hgit #["commit", "-qm", "main writes shared"] s.repo
+  hgitOk #["add", "shared.txt"] s.repo
+  hgitOk #["commit", "-qm", "main writes shared"] s.repo
   IO.FS.writeFile s!"{s.wt}/shared.txt" "ours\n"
-  let _ ← hgit #["add", "shared.txt"] s.wt
-  let _ ← hgit #["commit", "-qm", "branch writes shared"] s.wt
+  hgitOk #["add", "shared.txt"] s.wt
+  hgitOk #["commit", "-qm", "branch writes shared"] s.wt
   let bBefore ← revOf s.repo "refs/heads/agent/conflict"
   let mBefore ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["conflict"] "t=true"
@@ -1426,10 +1497,10 @@ signed stops the pick with its change staged. -/
 def scenarioStoppedRebase (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/stopped" "stopped"
   IO.FS.writeFile s!"{s.repo}/main.txt" "main\n"
-  let _ ← hgit #["add", "main.txt"] s.repo
-  let _ ← hgit #["commit", "-qm", "main moves on"] s.repo
-  let _ ← hgit #["config", "commit.gpgSign", "true"] s.repo
-  let _ ← hgit #["config", "gpg.program", "false"] s.repo
+  hgitOk #["add", "main.txt"] s.repo
+  hgitOk #["commit", "-qm", "main moves on"] s.repo
+  hgitOk #["config", "commit.gpgSign", "true"] s.repo
+  hgitOk #["config", "gpg.program", "false"] s.repo
   let bBefore ← revOf s.repo "refs/heads/agent/stopped"
   let mBefore ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["stopped"] "t=true"
@@ -1462,8 +1533,8 @@ another branch mid-landing, and `BAD` landed under a passing gate. -/
 def badBranch (root name : String) : IO Scratch := do
   let s ← mkScratch root name
   IO.FS.writeFile s!"{s.wt}/BAD" "bad\n"
-  let _ ← hgit #["add", "BAD"] s.wt
-  let _ ← hgit #["commit", "-qm", "Add BAD"] s.wt
+  hgitOk #["add", "BAD"] s.wt
+  hgitOk #["commit", "-qm", "Add BAD"] s.wt
   writeExe s!"{s.root}/no-bad.sh" "#!/bin/sh\ntest ! -e BAD\n"
   return s
 
@@ -1518,11 +1589,11 @@ def scenarioPushNotFastForward (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/pushff" "pushff"
   let remote ← addRemote s
   let other := s!"{s.root}/other"
-  let _ ← hgit #["clone", "-q", remote, other] s.root
-  let _ ← hgit #["config", "user.name", "Scratch"] other
-  let _ ← hgit #["config", "user.email", "scratch@example.org"] other
-  let _ ← hgit #["commit", "-q", "--allow-empty", "-m", "elsewhere"] other
-  let _ ← hgit #["push", "-q", "origin", "main"] other
+  hgitOk #["clone", "-q", remote, other] s.root
+  hgitOk #["config", "user.name", "Scratch"] other
+  hgitOk #["config", "user.email", "scratch@example.org"] other
+  hgitOk #["commit", "-q", "--allow-empty", "-m", "elsewhere"] other
+  hgitOk #["push", "-q", "origin", "main"] other
   let theirs ← revOf remote "refs/heads/main"
   let tip ← revOf s.repo "refs/heads/agent/pushff"
   let (code, out) ← landIn self s.repo #["pushff", "--push"] "t=true"
@@ -1540,15 +1611,15 @@ def scenarioUnionDrift (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/union" "union"
   IO.FS.writeFile s!"{s.repo}/.gitattributes" "PLAN.md merge=union\n"
   IO.FS.writeFile s!"{s.repo}/PLAN.md" "# plan\n\n### a\nbody a\n"
-  let _ ← hgit #["add", ".gitattributes", "PLAN.md"] s.repo
-  let _ ← hgit #["commit", "-qm", "Add the plan"] s.repo
-  let _ ← hgit #["rebase", "-q", "main"] s.wt
+  hgitOk #["add", ".gitattributes", "PLAN.md"] s.repo
+  hgitOk #["commit", "-qm", "Add the plan"] s.repo
+  hgitOk #["rebase", "-q", "main"] s.wt
   IO.FS.writeFile s!"{s.wt}/PLAN.md" "# plan\n\n### a\nbody a\n\n### b-draft\nbody b\n"
-  let _ ← hgit #["commit", "-qam", "Draft b"] s.wt
+  hgitOk #["commit", "-qam", "Draft b"] s.wt
   IO.FS.writeFile s!"{s.wt}/PLAN.md" "# plan\n\n### a\nbody a\n\n### b-final\nbody b\n"
-  let _ ← hgit #["commit", "-qam", "Final b"] s.wt
+  hgitOk #["commit", "-qam", "Final b"] s.wt
   IO.FS.writeFile s!"{s.repo}/PLAN.md" "# plan\n\n### a\nbody a\n\n### m\nbody m\n"
-  let _ ← hgit #["commit", "-qam", "Main m"] s.repo
+  hgitOk #["commit", "-qam", "Main m"] s.repo
   let bBefore ← revOf s.repo "refs/heads/agent/union"
   let mBefore ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["union"] "t=true"
@@ -1564,7 +1635,7 @@ status=[{st}]" }
 
 def scenarioNoOptIn (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/optin" "optin"
-  let _ ← hgit #["config", "--local", "--unset", "land.allowGateOverride"] s.repo
+  hgitOk #["config", "--local", "--unset", "land.allowGateOverride"] s.repo
   let before ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["optin"] "t=true"
   let after ← revOf s.repo "refs/heads/main"
@@ -1584,6 +1655,31 @@ def scenarioReserved (self root : String) : IO Outcome := do
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
+/-- A landing started with `GIT_DIR` naming another repository — as every
+hook in a linked worktree is — lands the repository its working directory
+names, runs its gates with no `GIT_DIR`, and writes nothing into the other
+one. -/
+def scenarioForeignGitDir (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/foreign" "foreign"
+  let target := s!"{s.root}/target"
+  IO.FS.createDirAll target
+  hgitOk #["init", "-q", "-b", "main", "."] target
+  hgitOk #["config", "user.name", "Target"] target
+  hgitOk #["config", "user.email", "target@example.org"] target
+  hgitOk #["commit", "-q", "--allow-empty", "-m", "The target's own commit"] target
+  let tBefore ← revOf target "refs/heads/main"
+  let tip ← revOf s.repo "refs/heads/agent/foreign"
+  writeExe s!"{s.root}/no-git-dir.sh" "#!/bin/sh\ntest -z \"$GIT_DIR\" && test -z \"$GIT_INDEX_FILE\"\n"
+  let (code, _) ← landIn self s.repo #["foreign"] s!"env={s.root}/no-git-dir.sh"
+    #[("GIT_DIR", some s!"{target}/.git"), ("GIT_INDEX_FILE", some s!"{target}/.git/index")]
+  let after ← revOf s.repo "refs/heads/main"
+  let tAfter ← revOf target "refs/heads/main"
+  let touched ← System.FilePath.pathExists s!"{target}/.git/land"
+  return { label := "a landing under another repository's GIT_DIR lands its own and leaves that one alone"
+         , ok := code == 0 && after == tip && tAfter == tBefore && !touched
+         , detail := s!"exit={code} main={after} gated={tip} target={tBefore}->{tAfter} \
+target-land-dir={touched}" }
+
 /-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
 names another build to drive instead of this one — how a scenario is shown
 to fail on the tip before its fix. -/
@@ -1600,20 +1696,20 @@ def scratchSelftest : IO UInt32 := do
     say "scenario" "skip" [("why", "git is not available")]
     sayFinal .checked [("scenarios", "0")]
     return 0
-  let outcomes ← do
-    let a ← scenarioLands self root
-    let b ← scenarioBranchMoves self root
-    let c ← scenarioMainLeaves self root
-    let d ← scenarioConflict self root
-    let e ← scenarioNoOptIn self root
-    let f ← scenarioReserved self root
-    let g ← scenarioStoppedRebase self root
-    let h ← scenarioWorktreeSwitched self root
-    let i ← scenarioTreeMoved self root
-    let j ← scenarioPushNamesTip self root
-    let k ← scenarioPushNotFastForward self root
-    let l ← scenarioUnionDrift self root
-    pure [a, b, c, d, e, f, g, h, i, j, k, l]
+  let scenarios : List (String × (String → String → IO Outcome)) :=
+    [ ("lands", scenarioLands), ("moves", scenarioBranchMoves), ("leaves", scenarioMainLeaves)
+    , ("conflict", scenarioConflict), ("optin", scenarioNoOptIn), ("reserved", scenarioReserved)
+    , ("stopped", scenarioStoppedRebase), ("switched", scenarioWorktreeSwitched)
+    , ("treemoved", scenarioTreeMoved), ("pushtip", scenarioPushNamesTip)
+    , ("pushff", scenarioPushNotFastForward), ("union", scenarioUnionDrift)
+    , ("foreign", scenarioForeignGitDir) ]
+  let mut outcomes : Array Outcome := #[]
+  for (key, sc) in scenarios do
+    -- A fixture that could not be built is the scenario's failure, named,
+    -- never a harness that stops with the rest unrun.
+    let o ← try sc self root
+      catch ex => pure { label := key, ok := false, detail := toString ex }
+    outcomes := outcomes.push o
   let mut bad := 0
   for o in outcomes do
     if o.ok then say "scenario" "ok" [("case", o.label)]
@@ -1622,10 +1718,10 @@ def scratchSelftest : IO UInt32 := do
       say "scenario" "fail" [("case", o.label), ("detail", o.detail)]
   rmQuiet root
   if bad == 0 then
-    sayFinal .checked [("scenarios", toString outcomes.length)]
+    sayFinal .checked [("scenarios", toString outcomes.size)]
     return 0
   else
-    sayFinal .failed [("scenarios", toString outcomes.length), ("bad", toString bad)]
+    sayFinal .failed [("scenarios", toString outcomes.size), ("bad", toString bad)]
     return 1
 
 -- ## Entry
