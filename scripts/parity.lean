@@ -151,32 +151,85 @@ def judge (stem : String) (side : Sidecar) (declared : List Divergence)
     return { fixture := stem, level := Level.all.length, stopped := none
              declared := declared, notes := notes }
 
+/-- Why a run is not a measurement of the committed pairings: one
+constructor per arm of `measureAll`, so a staged break is judged by the arm
+it reached (`Fault.arm`) and never by the words of its sentence. -/
+inductive Fault where
+  | noSidecar
+  | sidecarUnreadable (why : String)
+  | declaration (why : String)
+  | engineSourceMoved
+  | referenceSourceMoved
+  | inputGone (path : String)
+  | inputMoved (path : String)
+  | referenceNotRecorded
+  | referenceUnreadable (why : String)
+  deriving Repr, BEq, Inhabited
+
+def Fault.render : Fault → String
+  | .noSidecar => "no reference sidecar — regenerate it (scripts/parity-regen.lean)"
+  | .sidecarUnreadable e => s!"the sidecar is unreadable: {e}"
+  | .declaration e => e
+  | .engineSourceMoved => "the engine's source has changed since its reference was built \
+(if only a comment or a declaration moved, --repin clears it without the reference engine)"
+  | .referenceSourceMoved => "the reference source has changed since the reference was built"
+  | .inputGone p => s!"the reference read {p}, which is gone"
+  | .inputMoved p => s!"{p} has changed since the reference read it"
+  | .referenceNotRecorded => "the committed reference is not the one the sidecar records"
+  | .referenceUnreadable e => s!"the committed reference is unreadable — {e}"
+
+/-- The arm a fault came from, and the path it names: what the selftest
+compares, never the sentence. -/
+def Fault.arm : Fault → String
+  | .noSidecar => "no-sidecar"
+  | .sidecarUnreadable _ => "sidecar-unreadable"
+  | .declaration _ => "declaration"
+  | .engineSourceMoved => "engine-source-moved"
+  | .referenceSourceMoved => "reference-source-moved"
+  | .inputGone p => s!"input-gone {p}"
+  | .inputMoved p => s!"input-moved {p}"
+  | .referenceNotRecorded => "reference-not-recorded"
+  | .referenceUnreadable _ => "reference-unreadable"
+
 /-- One run over the corpus: what each fixture reached, and every reason the
-run is not a measurement of the committed pairings at all. A fault is
-collected rather than returned at once, so one run names every one. -/
+run is not a measurement of the committed pairings at all, fixture by
+fixture. A fault is collected rather than returned at once, so one run
+names every one. -/
 structure Measured where
   reached : Array Reached
-  faults : Array String
+  faults : Array (String × Fault)
   deriving Inhabited
 
-def measureAll : IO Measured := do
-  let pats := Hyphen.english.get
+/-- What every fixture is measured under: the shipped faces and the
+hyphenation patterns, read once per run. -/
+structure Env where
+  pats : Hyphen.Patterns
+  oneFace : Font.FontSet
+  mathSet : Font.FontSet
+  shipped : Array FontDb.Face
+
+def envOf : IO Env := do
   let some fontData ← findFont | throw (IO.userError "parity: no corpus font")
   let .ok font := Font.parse fontData | throw (IO.userError "parity: corpus font unparsable")
   let oneFace := oneFaceOf font
-  let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  return { pats := Hyphen.english.get, oneFace, mathSet := ← mathSetOf oneFace
+           shipped := ← FontDb.scanRoots [testFonts] }
+
+/-- Every pairing is read relative to the working directory — `tests/parity`,
+and the pinned inputs beside it — so the selftest drives this over a staged
+copy by changing directory. -/
+def measureWith (env : Env) : IO Measured := do
   let mut reached : Array Reached := #[]
-  let mut faults : Array String := #[]
+  let mut faults : Array (String × Fault) := #[]
   for stem in ← parityNames do
     let sidecarPath := System.FilePath.mk parityDir / (stem ++ ".ref.txt")
     unless ← sidecarPath.pathExists do
-      faults := faults.push s!"{stem}: no reference sidecar — regenerate it (scripts/parity-regen.lean)"
+      faults := faults.push (stem, .noSidecar)
       continue
     let side ← match Sidecar.parse (← IO.FS.readFile sidecarPath) with
       | .ok s => pure s
       | .error e => do
-          faults := faults.push s!"{stem}: the sidecar is unreadable: {e}"
+          faults := faults.push (stem, .sidecarUnreadable e)
           continue
     -- The pairing's two halves, pinned. A source edited since the reference
     -- was built is a stale pairing, never a level result.
@@ -185,13 +238,12 @@ def measureAll : IO Measured := do
     let declared ← match declaredDivergences src with
       | .ok ds => pure ds
       | .error e => do
-          faults := faults.push s!"{stem}: {e}"
+          faults := faults.push (stem, .declaration e)
           continue
     if srcKeyOf src != side.srcKey then
-      faults := faults.push s!"{stem}: the engine's source has changed since its reference was built \
-(if only a comment or a declaration moved, --repin clears it without the reference engine)"
+      faults := faults.push (stem, .engineSourceMoved)
     if srcKeyOf refSrc != side.refSrcKey then
-      faults := faults.push s!"{stem}: the reference source has changed since the reference was built"
+      faults := faults.push (stem, .referenceSourceMoved)
     -- Every in-repo file the reference read, pinned. The shipped font is the
     -- one this catches: it is read by both engines, and an update to it
     -- would otherwise leave the engine on the new face and the committed
@@ -199,16 +251,18 @@ def measureAll : IO Measured := do
     for (p, k) in inputPins side.inputs do
       let path := System.FilePath.mk parityDir / p
       unless ← path.pathExists do
-        faults := faults.push s!"{stem}: the reference read {p}, which is gone"
+        faults := faults.push (stem, .inputGone p)
         continue
       if Flate.contentKey (← IO.FS.readBinFile path) != k then
-        faults := faults.push s!"{stem}: {p} has changed since the reference read it"
+        faults := faults.push (stem, .inputMoved p)
     let refPath := System.FilePath.mk parityDir / (stem ++ ".ref.pdf")
     let refBytes ← if ← refPath.pathExists then IO.FS.readBinFile refPath else pure .empty
     if side.compiles then
       if refBytes.size != side.pdfSize || Flate.contentKey refBytes != side.pdfKey then
-        faults := faults.push s!"{stem}: the committed reference is not the one the sidecar records"
-    let (diags, ePages) ← engineSide oneFace mathSet shipped pats stem
+        faults := faults.push (stem, .referenceNotRecorded)
+    -- A pairing that is not the committed one has no level to report: the
+    -- engine is not measured against a reference built from other inputs.
+    if faults.any (·.1 == stem) then continue
     -- A reference the reader cannot read is a fault in the harness, not a
     -- level: every fixture would read as having fallen, and a regeneration
     -- would store it. One reader reads both sides, so a regression in it is
@@ -217,11 +271,14 @@ def measureAll : IO Measured := do
         match readArtifact refBytes with
         | .ok ps => pure ps
         | .error e => do
-            faults := faults.push s!"{stem}: the committed reference is unreadable — {e}"
+            faults := faults.push (stem, .referenceUnreadable e)
             continue
       else pure #[]
+    let (diags, ePages) ← engineSide env.oneFace env.mathSet env.shipped env.pats stem
     reached := reached.push (judge stem side declared diags ePages rPages)
   return { reached, faults }
+
+def measureAll : IO Measured := do measureWith (← envOf)
 
 /-- The baseline's own header lines: what the integers mean. The ratchet's
 rules are `Scoreboard`'s and are not restated here. -/
@@ -253,7 +310,7 @@ def gate (m : Measured) (args : List String) : IO UInt32 := do
   if !m.faults.isEmpty then
     IO.eprintln "parity: the measurement is not of the committed pairings, so nothing is judged \
 and nothing is written"
-    for f in m.faults do IO.eprintln s!"    {f}"
+    for (stem, f) in m.faults do IO.eprintln s!"    {stem}: {f.render}"
     IO.eprintln "  Regenerate with: lake env lean --run scripts/parity-regen.lean --force <fixture>"
     IO.println (Scoreboard.tierLine "parity" 0 0 0 "fault")
     return 2
@@ -337,6 +394,33 @@ def gateIn (board : String) (m : Measured) (args : List String) :
     IO.Process.setCurrentDir home
     let line := ((out.splitOn "\n").find? (·.startsWith "scoreboard: tier=")).getD ""
     return (code, ← IO.FS.readFile path, (Scoreboard.field line "result").getD "")
+  finally
+    IO.Process.setCurrentDir home
+    IO.FS.removeDirAll root
+
+/-- `measureWith` over a staged copy of one committed pairing, after `brk`
+has edited the copy: how the selftest reaches each fault arm through the
+loop `main` runs. The copy is the pairing's four files and the shipped
+faces, in a scratch directory, so the committed tree is never touched. -/
+def measureStaged (env : Env) (stem : String) (brk : System.FilePath → IO Unit) :
+    IO Measured := do
+  let home ← IO.currentDir
+  let root ← IO.FS.createTempDir
+  try
+    let pdir := root / parityDir
+    IO.FS.createDirAll pdir
+    for ext in [".tex", ".ref.tex", ".ref.pdf", ".ref.txt"] do
+      let name := stem ++ ext
+      IO.FS.writeBinFile (pdir / name) (← IO.FS.readBinFile (System.FilePath.mk parityDir / name))
+    let fdir := root / testFonts
+    IO.FS.createDirAll fdir
+    for e in ← System.FilePath.readDir testFonts do
+      IO.FS.writeBinFile (fdir / e.fileName) (← IO.FS.readBinFile e.path)
+    brk pdir
+    IO.Process.setCurrentDir root
+    let m ← measureWith env
+    IO.Process.setCurrentDir home
+    return m
   finally
     IO.Process.setCurrentDir home
     IO.FS.removeDirAll root
@@ -510,7 +594,7 @@ def selftest : IO UInt32 := do
   -- 5. a measurement that is not of the committed pairings is a fault in
   -- every mode, and writes nothing.
   let staleM : Measured :=
-    { reached := #[reach "prose" 5], faults := #["prose: the engine's source has changed"] }
+    { reached := #[reach "prose" 5], faults := #[("prose", .engineSourceMoved)] }
   let (c, _, result) ← gateIn at5 staleM ["--check"]
   unless c == 2 && result == "fault" do
     bad := bad.push s!"gate: a stale pairing exited {c} with result={result} under --check"
@@ -553,6 +637,57 @@ def selftest : IO UInt32 := do
   unless c3 == 1 && after3 == after2 do
     bad := bad.push s!"gate: the same fall after a recorded rise was written on the strength \
 of a spent lowering (exit {c3})"
+  -- 10. The fault arms of the loop `measureAll` runs, each reached by one
+  -- staged break of a copy of the committed `prose` pairing and judged by the
+  -- arm it names. The untouched copy names none, so each arm below is its
+  -- break's alone.
+  let editText (d : System.FilePath) (n : String) (f : String → String) : IO Unit := do
+    IO.FS.writeFile (d / n) (f (← IO.FS.readFile (d / n)))
+  let pinAlso (extra : String) (d : System.FilePath) : IO Unit :=
+    editText d "prose.ref.txt" fun s => s.replace "\ninputs: " s!"\ninputs: {extra} "
+  let garbage := "not a pdf\n".toUTF8
+  let unreadable (d : System.FilePath) : IO Unit := do
+    IO.FS.writeBinFile (d / "prose.ref.pdf") garbage
+    let side ← IO.ofExcept (Sidecar.parse (← IO.FS.readFile (d / "prose.ref.txt")))
+    let side := { side with pdfKey := Flate.contentKey garbage, pdfSize := garbage.size }
+    IO.FS.writeFile (d / "prose.ref.txt") side.render
+  let cases : List (String × (System.FilePath → IO Unit) × List String) := [
+    ("an untouched copy", fun _ => pure (), []),
+    ("an edit to the engine's source body",
+      fun d => editText d "prose.tex" fun s =>
+        s.replace "\\end{document}" "One more sentence.\n\\end{document}",
+      ["engine-source-moved"]),
+    ("an edit to the reference source",
+      fun d => editText d "prose.ref.tex" fun s => "% an edit\n" ++ s,
+      ["reference-source-moved", "input-moved ./prose.ref.tex"]),
+    ("a pinned input that changed",
+      fun d => do
+        IO.FS.writeFile (d / "extra.sty") "x"
+        pinAlso "./extra.sty=0" d,
+      ["input-moved ./extra.sty"]),
+    ("a pinned input that is gone", pinAlso "./gone.sty=0", ["input-gone ./gone.sty"]),
+    ("a reference that is not the recorded one",
+      fun d => do
+        IO.FS.writeBinFile (d / "prose.ref.pdf") ((← IO.FS.readBinFile (d / "prose.ref.pdf")).push 10),
+      ["reference-not-recorded"]),
+    ("a recorded reference the reader cannot read", unreadable, ["reference-unreadable"]),
+    ("an unreadable sidecar",
+      fun d => IO.FS.writeFile (d / "prose.ref.txt") "fixture: prose\n",
+      ["sidecar-unreadable"]),
+    ("no sidecar", fun d => IO.FS.removeFile (d / "prose.ref.txt"), ["no-sidecar"]),
+    ("an unregistered divergence",
+      fun d => editText d "prose.tex" fun s => "% diverges: no-such-thing\n" ++ s,
+      ["declaration"])]
+  let env ← envOf
+  for (what, brk, want) in cases do
+    let m ← measureStaged env "prose" brk
+    let got := m.faults.toList.map fun (s, f) => (s, f.arm)
+    unless got == want.map ("prose", ·) do
+      bad := bad.push s!"staged: {what} named {repr got}, not {repr want}"
+    -- A faulted pairing is never a level result; the untouched one is one.
+    let expect := if want.isEmpty then 1 else 0
+    unless m.reached.size == expect do
+      bad := bad.push s!"staged: {what} measured {m.reached.size} fixture(s), not {expect}"
   if bad.isEmpty then
     IO.println "parity --selftest: all passed"
     return 0
