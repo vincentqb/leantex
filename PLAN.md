@@ -18408,8 +18408,10 @@ find a slot from the block that shows it through one lookup
 (`Ir.titleSlotOf`), and both place it through one share arithmetic
 (`Ir.shareOf`): `Layout.slotShift_exact` says the page moves the slot's box
 (text plus pgf's `inner sep`, `Ir.pgfInnerSep`) so its anchor point lands on
-the page point plus the shifts, and `Ir.pagePoint_agree` says the
-stylesheet's stage percentage, applied to the page, is that same point. The
+the page point plus the shifts. The stylesheet is held to the same points by
+test, not by proof: `Ir.pagePoint_agree` proves only the share arithmetic
+both read, and `titleSlotShipChecks` tests that the shipped stylesheet puts
+each axis's share on its own property, slot by slot. The
 page point's vertical share is the vocabulary a frame's `VDist` declares in
 (`BoxPoint.vshares`: north is top's, west centre's, south bottom's).
 
@@ -18428,8 +18430,9 @@ ink `titlepagefg`, every node a slot. A theme's own `\setbeamerfont`
 element is recorded for `\usebeamerfont`; a read template that selects it
 withdraws the declaration's W0104 by subject (premise pinned to
 `themeTitleShipChecks`: two builds differing by that font's size ship
-different titles). What the reader meets and does not model is one W0110
-with a subject; any other template shape keeps its W0361.
+different titles). What the reader meets and does not model is named with a
+subject (the codes are the next entry's); any other template shape keeps
+its W0361.
 
 **Measured** on the deck of the private reference corpus, base `17ac92f`
 binary against this branch's, both through the shipped CLI in a copy of its
@@ -18449,12 +18452,13 @@ nothing else.
 light title on its ground passes); a slot's own ink is a use on the title
 page, judged against the ground it stands on. The deck's author ink reads
 just under 4.5:1 on that ground and is realized lighter (N0022), the policy
-the frame-title bar already applies to the same hue. Whether a theme's
-literal title-page ink should stand instead is the human's call.
+the frame-title bar already applies to the same hue; both artifacts ship the
+realized ink since the next entry's fix. Whether a theme's literal
+title-page ink should stand instead is the human's call.
 
 **Owed.** A declared baselineskip (the leading is one page-level factor);
-`\usebeamercolor` inside a template (a template that names a colour element
-rather than a colour is not read); the slot box is measured from the body
-face's ascent and descent, not the glyph heights TeX boxes, a sub-point
-difference on this deck; a `titlepage` font template that carries a size
-already compounds with the HTML `h1` step outside slots (slots reset it).
+`\usebeamercolor` inside a template (named, W0104, and not read); the slot
+box is measured from the body face's ascent and descent, not the glyph
+heights TeX boxes, a sub-point difference on this deck; a `titlepage` font
+template that carries a size already compounds with the HTML `h1` step
+outside slots (slots reset it).
