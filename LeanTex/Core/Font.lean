@@ -708,11 +708,11 @@ def classify (data : ByteArray) : Except String Class := do
         || macStyle / 2 % 2 == 1
   -- `post`: isFixedPitch is at offset 12 — version (4), italicAngle (4),
   -- underlinePosition (2), underlineThickness (2). Offset 16 is
-  -- minMemType42, which is 0 in every face that ships one, so reading
-  -- there answered "proportional" for Source Code Pro and every other
-  -- monospace design (`t "face pitch: ..."`, Tests/FontMath.lean). The
-  -- PDF descriptor's FixedPitch flag and the HTML `--font-mono` generic
-  -- both read this field.
+  -- minMemType42, a memory hint most faces leave at 0 and some do not (two
+  -- Arphic faces in TeX Live carry 100000), so a reader four bytes late
+  -- called every monospace design proportional and those two fixed-pitch.
+  -- The PDF descriptor's FixedPitch flag and the generic that closes every
+  -- slot's HTML stack (`HtmlDoc.genericFor`) read this field.
   let isFixedPitch := match findTable data "post" with
     | some t => if t.offset + 16 ≤ data.size then u32 data (t.offset + 12) != 0 else false
     | none => false

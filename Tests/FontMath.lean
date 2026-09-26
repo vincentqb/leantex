@@ -806,14 +806,16 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   t "plain face beats a condensed sibling"
     ((FontDb.resolve #[condensed, plain] "X" { bold := true }).map (·.1.path) == some "/x/a.otf")
   -- **A face's pitch is the face's own `post.isFixedPitch`.** The field is
-  -- at offset 12 of `post`; offset 16 is minMemType42, zero in every face
-  -- that ships one, so a reader four bytes late answers "proportional" for
-  -- every monospace design there is. Two faces whose declared answers
+  -- at offset 12 of `post`; offset 16 is minMemType42, a memory hint most
+  -- faces leave at 0 and some do not, so a reader four bytes late answers
+  -- "proportional" for every monospace design and "fixed-pitch" for a
+  -- proportional face whose hint is set. Two faces whose declared answers
   -- differ pin it: the shipped monospace says yes, the shipped serif no.
-  -- The PDF descriptor's FixedPitch flag and the HTML monospace generic
+  -- The PDF descriptor's FixedPitch flag and every slot stack's generic
   -- both read this, as does the slot report's face test. Read through
-  -- `classify` rather than a scan: the scan's answer can come from a disk
-  -- cache keyed by the file alone, and this is a claim about the parser.
+  -- `classify` rather than a scan: the scan answers from a disk cache, and
+  -- this is a claim about the parser (the artifact tier reads the two
+  -- fields it reaches, `artifactPitchChecks`).
   let pitchOf (name : String) : IO (Option Bool) := do
     match Font.classify (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok c => pure (some c.isFixedPitch)
