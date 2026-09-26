@@ -185,7 +185,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fence := "```"
   t "a fence inside a blockquote closes with its quote"
     (has ("> a\n> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n")
-      "<pre><code>code</code></pre>")
+      "<code>code</code></pre>")
   t "a block after a quoted fence still ships"
     (has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n")
       "</blockquote><p>after</p><h3>h</h3>")
@@ -193,13 +193,13 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n") "<code>> code")
   t "a fence inside a nested list item closes"
     (has ("- a\n  - b\n    " ++ fence ++ "\n    code\n    " ++ fence ++ "\n- c\n\nlast\n")
-      "<pre><code>code</code></pre>")
+      "<code>code</code></pre>")
   t "a sibling item after a nested fence still ships"
     (has ("- a\n  - b\n    " ++ fence ++ "\n    code\n    " ++ fence ++ "\n- c\n\nlast\n")
       "</li></ul></li><li>c</li></ul><p>last</p>")
   t "a fence in a list item does not ship the item's indent as code"
     (has ("- item\n\n  " ++ fence ++ "\n  code\n  " ++ fence ++ "\n")
-      "<pre><code>code</code></pre>")
+      "<code>code</code></pre>")
   -- Defect: the raw-HTML test fired on any `<` followed by a letter, so a
   -- valid autolink at the start of a line and text the spec reads literally
   -- failed the build. Only a complete tag (§6.6) is raw HTML.
@@ -328,7 +328,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dvMd src).any fun d => d.kind == .W0392 && d.subject == some "md:code-info"
   let noLeak (src : String) : Bool := (dvMd src).all (·.kind != .W0110)
   t "a bracket in an info string does not leak into the code"
-    (has (fence ++ "a]b\ncode\n" ++ fence ++ "\n") "<pre><code>code</code></pre>"
+    (has (fence ++ "a]b\ncode\n" ++ fence ++ "\n") "<code>code</code></pre>"
       && codeInfo (fence ++ "a]b\ncode\n" ++ fence ++ "\n"))
   t "text after a bracket in an info string does not reach the page"
     (!has (fence ++ "x]leaked text\ncode\n" ++ fence ++ "\n") "leaked")
