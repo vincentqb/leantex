@@ -15561,12 +15561,17 @@ apart rather than dropping them, since a filter that drops is what hid `zzé`,
 the aggregate faults each, and the porcelain prints any name with `%XX`
 escapes (`shownName`). A committed file still holding a request — a
 `# lowered:` line, or a `# retired:` beside its row — is `stale` under
-`--base` (`heldRequests`): regeneration spends a request in the writing, so
-such a file is not one a producer wrote, whatever that producer's `--check`
-answers. A pass prints `moved:` for each weakening (a fall, a vanish, an
-entry below the cap, a tier's rows under a tombstone) and `credited:` for each
-line new since the base, marking one whose text the base already carries.
-Every malformed-request message now ends with its remedy.
+`--base` (`heldRequests`) when its tier is present at the base: regeneration
+spends a request in the writing, so such a file is not one a producer wrote,
+whatever that producer's `--check` answers. This round's check iterated the
+base's listing only, so a tier new since the base was never read, its
+requests included; round 3c's entry below closes that. A pass prints `moved:`
+for each weakening (a fall, a vanish, an entry below the cap, a tier's rows
+under a tombstone) and `credited:` for each line new since the base, marking
+one whose text the base already carries. The message for a request naming a
+floor the file does not hold (and its two cap and unbaselined variants) now
+ends with its remedy; the `names no fall` message and the parse-level
+messages do not.
 
 **Every check broken once** (`mutate.sh`: a scratch clone per run, one
 mutation, `lake build scoreboard`, the shipped `scoreboard --selftest`). On
@@ -15594,9 +15599,17 @@ brief's list did not name; it is a tightening.
 leave: deleting it faults the base check, keeping it faults the aggregate, and
 its tombstone is misnamed too. The gate admits none and `ae2ddc6` holds none,
 so no landing reaches that wedge. A base that itself holds a request makes
-every landing `stale` until it is regenerated; commonmark's three
-`# lowered:` lines are that state, and re-marking them `(applied)`, as the
-review's L1 says, clears `--base` as well as `--check`.
+every landing `stale`, and at this round only deleting the line cleared it:
+the tool's own remedy, regenerating, wrote the request back as a record,
+and the base's request cancelled that record (`sameLine` ignored standing),
+so the landing read `laundered` (the review's W2, on the real obligations
+tier). commonmark's three `# lowered:` lines were not that state: commonmark
+is new since the base, which this round's check never read, and two of the
+three name a floor the file does not hold, which commonmark's own producer
+faults. Round 3c's entry below fixes both. Re-marking the three `(applied)`,
+as the review's L1 says, cleared commonmark's `--check` in the review's
+scratch copy, and the file `agent/commonmark` carries at `b0a9854`, which
+holds the three as records, reads `ok` to round 3c's `judgeNew`.
 
 **Decisions for the human.** F4: `newLowerings` is a multiset, so a tree
 carrying a base record twice has one new line and pays the same fall again,

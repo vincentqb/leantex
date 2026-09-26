@@ -53,11 +53,14 @@ from the file alone, which is what keeps every mode hermetic:
 
 A committed file still carrying a request is `stale` under `--check`: it is
 not what a regeneration wrote. `scoreboard --check --base <rev>` holds the
-tree's files to the ones committed at `<rev>` (`judgeBase`): a fall or a
-vanish there needs a line that is new since `<rev>`, which is what stops a
-hand-edited value, or a baseline deleted and regenerated from nothing, from
-laundering one; and a file still carrying a request is `stale` there too,
-whatever its producer answers.
+tree's files to the ones committed at `<rev>` (`judgeBase`), read with git's
+replacement objects off: a fall or a vanish there needs a line that is new
+since `<rev>` — a record spending a request `<rev>` holds is new, since the
+spend is — which is what stops a hand-edited value, or a baseline deleted and
+regenerated from nothing, from laundering one. Every tier file in the tree,
+one new since `<rev>` included (`judgeNew`), must read as the format
+(`validate`), and one still carrying a request is `stale` there too, whatever
+its producer answers.
 
 The encoding line is read by the queue, so a deficit is computed rather
 than declared: `# encoding: headroom cap=<n>` means the value is

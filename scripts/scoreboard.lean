@@ -5,7 +5,8 @@ The scoreboard: one line per goal, and a queue computed from the deficits.
   scoreboard --check        the same, quietly
   scoreboard --check --base <rev>
                             the gate the land tool runs: --check, plus every
-                            committed baseline held to the one committed at <rev>.
+                            committed baseline held to the one committed at <rev>
+                            and every tier file the tree adds read as the format.
                             A fall or a vanish since <rev> needs a line written
                             since <rev>, and a file still holding a request is
                             stale
