@@ -4507,7 +4507,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      Contrast.contrastMilli sun night ≥ Contrast.aaText)
   t "a node of literal content ships its content in its own corner"
     ((lineWith "Invented Series").any fun l => l.x > docO.page.width / 2)
-  t "the stylesheet pins each slot where the page does"
+  t "the stylesheet translates each slot by its anchor's shares"
     (let css := HtmlDoc.titleSlotCss docO
      (css.splitOn "translate(-0%, -50%)").length == 2 &&
      (css.splitOn "translate(-0%, -100%)").length == 2 &&
@@ -4731,6 +4731,51 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      (match authorInk, cssRuleOf cssR "section.slide.title-page" with
       | some c, some decls => hasStr decls s!"--probeRust: {HtmlDoc.cssColor c};"
       | _, _ => false))
+  -- **Each slot's stylesheet rule pins it where TikZ does**, read off the
+  -- stylesheet the typed tree ships for the five-slot fixture. Known
+  -- answers spelled from its declarations: `at` names the page point (a
+  -- share of the stage per axis: west 0/50, north west 0/0, south east
+  -- 100/100 …), `anchor` the box point (the translate), each shift em of
+  -- the body. And the title's text edge — the shift plus the inner sep —
+  -- agrees with the edge the PDF page sets it at.
+  let tgDoc := (← elabFixture "titleground" (← IO.FS.readFile "tests/corpus/titleground.tex")).1
+  let (tgHead, tgBody, _) := HtmlDoc.emitTree {} tgDoc
+  let tgCss := treeCssList (treeCssList "" tgHead.toList) tgBody.toList
+  let em := tgDoc.page.fontSize
+  -- One declaration's value: `left: calc(0% + 4.123em)` read as the
+  -- percentage and the shift in sp; `padding: 0.333em` as the shift alone.
+  let field (decls key : String) : Option String :=
+    (decls.splitOn (key ++ ": "))[1]?.map fun rest => ((rest.splitOn ";")[0]?).getD ""
+  let emSp (s : String) : Option Dim.Sp :=
+    (Decl.parseDecimal ((s.trimAscii.toString.dropEnd 2).toString)).map fun (m, sc) =>
+      m * em / (sc : Int)
+  let calcOf (v : String) : Option (String × Dim.Sp) :=
+    match ((v.drop 5).toString.dropEnd 1).toString.splitOn "% + " with
+    | [pct, shift] => (emSp shift).map (pct, ·)
+    | _ => none
+  let near (a b : Dim.Sp) : Bool := (a - b).natAbs ≤ (em / 1000).natAbs + 1
+  let want : List (Nat × String × Dim.Sp × String × Dim.Sp × String) :=
+    [(0, "0", Dim.mm 16, "50", Dim.mm 4, "translate(-0%, -50%)"),
+     (1, "0", Dim.mm 16, "0", Dim.mm 14, "translate(-0%, -0%)"),
+     (2, "0", Dim.mm 16, "100", -Dim.mm 14, "translate(-0%, -100%)"),
+     (3, "100", -Dim.mm 16, "100", -Dim.mm 14, "translate(-100%, -100%)"),
+     (4, "100", -Dim.mm 16, "0", Dim.mm 14, "translate(-100%, -0%)")]
+  for (i, lp, dx, tp, dy, tr) in want do
+    let decls := cssRuleOf tgCss s!"section.slide.title-page > .u-titlepage-slot-{i}"
+    t s!"slot {i}: its left is the page point's horizontal share plus its x shift"
+      (((decls.bind (field · "left")).bind calcOf).any fun (p, s) => p == lp && near s dx)
+    t s!"slot {i}: its top is the page point's vertical share plus its y shift"
+      (((decls.bind (field · "top")).bind calcOf).any fun (p, s) => p == tp && near s dy)
+    t s!"slot {i}: its box is moved by its anchor's shares"
+      ((decls.bind (field · "transform")).any (· == tr))
+  let tgPdfX := lineXOf (censusOf (coveredColorsOf tgDoc) (layoutOf oneFace tgDoc)) 0
+    "A Placeholder Deck"
+  let tgRule := cssRuleOf tgCss "section.slide.title-page > .u-titlepage-slot-0"
+  t "the title's text edge is one place in both artifacts"
+    (match tgPdfX, ((tgRule.bind (field · "left")).bind calcOf),
+        ((tgRule.bind (field · "padding")).bind emSp) with
+     | some x, some ("0", s), some pad => near (s + pad) x
+     | _, _, _ => false)
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

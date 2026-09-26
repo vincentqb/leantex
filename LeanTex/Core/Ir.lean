@@ -4705,17 +4705,20 @@ def BoxPoint.vshares : BoxPoint → Nat × Nat
   | .south | .southWest | .southEast => (1, 0)
 
 /-- The offset of a point `(a, b)` shares into an extent: `e * a / (a + b)`,
-zero for the empty split. The one arithmetic both backends read, so a
-page's placement and a stylesheet's percentages cannot disagree about what
-`north east` means. -/
+zero for the empty split. The one arithmetic both backends call: the page
+places a slot by it (`Layout.slotShift`) and the stylesheet writes its
+percentages from it (`HtmlDoc.titleSlotCss`). That the stylesheet puts each
+axis's share on the right property is tested (`titleSlotShipChecks`), not
+proved. -/
 def shareOf (s : Nat × Nat) (e : Int) : Int :=
   if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
 
-/-- **The stage's percentage is the page's point** (`_agree`): for every
-compass point, the share of a hundred-thousandth scale — what the stylesheet
-writes as a percentage of the stage — applied to an extent is exactly the
-share of that extent the page places at. The two backends read one
-`BoxPoint` and cannot disagree about where it is. -/
+/-- **The stage's percentage is the page's point** (`_agree`), as
+arithmetic: for every compass point, the share taken at the stylesheet's
+hundred-thousandth scale and applied to an extent is the page's share of
+that extent. What it does not say is which property the stylesheet writes
+each share into; `titleSlotShipChecks` tests that, slot by slot, over the
+stylesheet the typed tree ships. -/
 theorem pagePoint_agree (p : BoxPoint) (e : Int) :
     shareOf p.hshares e = shareOf p.hshares 100000 * e / 100000 ∧
     shareOf p.vshares e = shareOf p.vshares 100000 * e / 100000 := by

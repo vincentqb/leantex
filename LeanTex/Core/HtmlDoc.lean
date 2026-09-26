@@ -841,9 +841,10 @@ def titlePageRealized (doc : Doc) : Array (String × Ir.Color) :=
 /-- **The title page's slots, pinned**: the stylesheet projection of the IR
 value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
 stands in the stage at the same page point the page puts it at, through the
-same share arithmetic (`Ir.shareOf`; `Ir.pagePoint_agree` is the statement
-that the percentage, applied to the page, is the page's point), and the box
-point is the same translate of the box's own extent; the shifts, measure and
+same share arithmetic (`Ir.shareOf`; `Ir.pagePoint_agree` proves the
+arithmetic, and `titleSlotShipChecks` tests that each axis's share lands on
+its own property), and the box point is the same translate of the box's own
+extent; the shifts, measure and
 inner sep are `em` of the body size, the unit the deck's type scales in, so
 the box keeps its place as the stage scales. The slot's content takes its
 own template alone, as on the page: the heading's size and weight are the
