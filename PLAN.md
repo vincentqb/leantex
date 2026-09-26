@@ -17018,3 +17018,126 @@ branch, so the option travels in `--receive-pack`.
   - CI owes `lake build --wfail land`, `.lake/build/bin/land --selftest`
     and `.lake/build/bin/land --scratch-selftest`.
   - `scripts/cites.lean` `treeRoots` owes an entry for `scripts.land`.
+
+
+### 2026-09-26 — a landing counts only while main holds it, and a landed branch is not continued
+
+The round-3c review blocked the landing tool on one item, C1. A landing
+onto a `main` that has moved lands rebased copies and leaves the branch at
+its original commits. The branch probe read the ledger's last `landed` row
+and barred the branch whenever it still carried the tip that landing read.
+It never asked whether `main` still held the commit the landing landed as,
+though `land retire` asks exactly that. So after `main` was put back past
+such a landing, a local undo before any push, the tool got it wrong twice.
+It refused the unmoved branch as "already landed", though its work was not
+on `main`. It told a continued branch to run `git rebase --onto main <tip>`,
+and that rebase dropped the landed unit from the branch; the next landing
+then reported `landed` without it. The review's q12 probe reproduces this
+on 0f37ba4. The build before it, e8ca576, re-landed and kept the work.
+
+**The fact is an observation, and the rule is the core's.**
+- `Obs.branchStatus` carries `landedOnMain`. The driver reads it as `git
+  merge-base --is-ancestor <landed> <main>`, against the sha of `main` this
+  run read at its first probe. A landed commit git no longer has reads as
+  not on `main`. Any other git error arrives as `garbled`, which halts.
+- `landedBars` bars a branch only while it carries the landed-from tip and
+  `main` holds the landed commit.
+- `step_unheld_exact`: at every stage, a landing `main` does not hold is the
+  same step as no landing at all.
+- `step_barred_exact`: at the branch probe, a clean branch ahead of `main`
+  with a sha tip goes on to its gate tree exactly when `landedBars` is
+  false, and a barred branch halts refused with exit 2 and `landedWhy`.
+
+**A landed branch is not continued.** This is the user's rule for every
+branch now: a branch lands once, and its follow-ups start on a new branch
+from the new `main`. The rebase remedy is gone. The refusal is the same for
+an unmoved branch and a continued one: it sends the next unit to a new
+branch from `main` (`land new <name>`), names any commits made since the
+landing as a range that stays on the branch, and names no command that
+writes the branch. AGENTS.md's landing row and the entry above prescribed
+the rebase. Neither was on `main`, so both are corrected in place, and the
+entry above loses its open item about running that rebase in the gate tree.
+
+**What was measured, and on what.**
+- The rebase of 0f37ba4 onto 6095273: no conflict. Net content per file
+  (`git diff --no-color -U0`, hunk headers and `index` lines dropped),
+  95f3579..0f37ba4 against 6095273..f9a7284: 7 files, 0 drift. The 14
+  gates on f9a7284 each exited 0, with the tree clean before and after.
+- The pre-fix binary: `land` built from 0f37ba4's tree has md5 57b7a2c2…,
+  the same bytes as the review's build and as f9a7284's; `land.lean` and
+  `LandCore.lean` are byte-identical between the two commits.
+- The harness at d96678b has 24 scenarios. Driven against the 0f37ba4
+  binary, 23 pass and 1 fails: the new one, "main put back after a rebased
+  landing". That build refuses both landings the scenario expects after an
+  undo, and names a rebase in both refusals. Against d96678b, 24 of 24
+  pass.
+- The review's q12 probe, unchanged:
+  - 0f37ba4: after the undo, exit 2 "already landed"; the continued branch
+    is told the rebase, which the probe runs; `own.txt` is then on neither
+    the branch nor `main`, and the next landing exits 0 without it.
+  - d96678b: after the undo, the branch lands again (exit 0, `own.txt` on
+    `main`). The continued branch exits 2, pointed at `land new <name>`,
+    with no command named, and `own.txt` stays on both.
+- `land --selftest`: 53 cases, up from 51. The two refusals now read with
+  `main` holding the landing, and two new cases land after it was put
+  back. A further check holds the refusal to naming `land new <name>` and
+  no rebase.
+- The fix broken once per new check, through the path that ships: a
+  scratch clone with `main` at d96678b, origin a scratch bare remote, no
+  hooks, each mutant one commit, landed by the d96678b binary with the
+  shipped gate list. Each exited 1 with `main` and the remote unmoved.
+  - mut1, `landedBars` ignoring `landedOnMain`: gate `build` fails, on
+    `stepPre_unheld`'s unsolved goal.
+  - mut2, the same with the two theorems it breaks deleted: gate
+    `land-selftest` fails, on the two cases that land after `main` was put
+    back.
+  - mut3, the driver reporting "on main" when git says not: gates `build`
+    and `land-selftest` pass, and gate `land-scenarios` fails, on the new
+    scenario's first landing after the undo.
+- The gates at d96678b (the code of this round; this entry adds prose
+  only), on its clean tree, each exited 0, and the tree was clean after:
+  `lake build`; `lake build --wfail leantex precommit owed cites land
+  scoreboard`; `lake test`; `lake build precommit owed cites Obligations`;
+  `precommit --selftest` and `--tree`; `cites --selftest` and `--check`;
+  `owed`; `scoreboard --check`, `--check --base 6095273` and
+  `--selftest`; `land --selftest` (53 cases) and `--scratch-selftest` (24
+  scenarios).
+
+**Open, with their sites.** The review's follow-ups, none taken here:
+- F1: a branch named by the tip's sha. `git rebase <onto> <tip>` resolves
+  `tip` as `refs/heads/<tip>` first, so it checked that branch out in the
+  gate tree and moved it (land.lean, the `.rebase` arm). That falsifies
+  "two shas and no ref" in the entry above and in the arm's comment. Pass
+  `<tip>^{commit}`, or rebase from the tree already proven detached at the
+  tip.
+- F2: the fast-forward's `updateInstead` sync overwrites an ignored,
+  uncommitted file at a path the landing adds (land.lean, the
+  `.fastForward` arm). `Writes.mainTo`'s docstring and the entry above's
+  "an untracked file the sync would overwrite: rejected" need "not
+  ignored".
+- F3: `land status` reads a branch landed as copies as unlanded (land.lean,
+  `landStatus`). It should report what `landedTipOf` reads.
+- F4: the pre-branch `git status` refreshes the owner's index, which can
+  fail an owner's concurrent commit on `index.lock` (land.lean,
+  `statusClean` on the owner's worktree). Use `git --no-optional-locks`.
+- F5: `land push` records `landed-unpushed` for a tip the remote already
+  contains, and after a push that succeeded before the remote moved on
+  (land.lean, `landPush`). A read-back by ancestry tells them apart.
+- F6: `land push` does not check the `landed` row's `gateset`, so a
+  repository that opts in to `LAND_GATES` can publish an override-gated
+  landing (land.lean, `landPush`; `pushPlan`). Inferred, not probed.
+- F7: the entry above calls `conflictMarkers` "outside this branch's
+  files"; it is in `scripts/precommit.lean`, which this branch edits.
+- F8: refusal rows at the branch probe carry `"branch":""` (land.lean, the
+  halt's ledger row reads `branchTip`, which is set at the gate tree).
+- F9: carried from r3b and still open: review items 8–11 above, the
+  routed CI steps, and `cites` `treeRoots`.
+- New: a branch landed by a fast-forward, where `main` had not moved, has
+  a `landed` row whose `branch` equals its `gated`, and `landedFromRow`
+  answers empty for it. Continued, it is not refused: its landed tip is on
+  `main`, so ancestry cannot tell it from a new branch of the same name
+  made from `main` after a retire. Rule 6 is then the owner's to keep. No
+  work is lost: the landing replays only the new commits.
+- Routed, unchanged: CI owes `lake build --wfail land`, `.lake/build/bin/land
+  --selftest` and `.lake/build/bin/land --scratch-selftest`, and
+  `scripts/cites.lean` `treeRoots` owes an entry for `scripts.land`.
