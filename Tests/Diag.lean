@@ -840,17 +840,29 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "option run: the fragment's own code is retired from the registry"
     ((DiagCode.ofString? "W0341").isNone)
   -- Retiring a code a document can name is a migration, not a deletion.
-  -- `\allow{W0341}` built on base and must keep building: the old spelling
-  -- resolves to whatever answers for that loss now, with a note. Read off
-  -- the accepted list and the note's code, never the wording.
+  -- `\allow{W0341}` built before the retirement and must keep building:
+  -- the old spelling answers with a note naming what reports that loss
+  -- now. Read off the accepted list and the note's code, never the wording.
   let (retDoc, retDs) := elabStr (dvDoc "\\allow{W0341}\n" "Alpha \\zzret[16]{Bravo}.")
-  t "retired allow (fails on base): a retired code is not an error"
+  t "retired allow: a retired code is not an error"
     (retDs.all (·.code != "E0329"))
-  t "retired allow: it resolves to the code that names that loss now"
-    (retDoc.allow.contains "W0301")
+  -- And it accepts nothing. The fragment's loss is a clause of W0301 now,
+  -- and W0301 names every unknown command, so answering with the successor
+  -- widened the document's acceptance to all of them.
+  t "retired allow (fails on base): a folded fragment grants no acceptance"
+    (retDoc.allow.isEmpty)
   t "retired allow: and says so, once, as a note"
     ((retDs.filter (·.code == "N0105")).size == 1 &&
       (retDs.filter (·.code == "N0105")).all (·.subject == some "allow:W0341"))
+  -- The reviewer's shape, through the functions the driver runs: the
+  -- fragment's `\allow` beside a dropped run and a plain unknown command.
+  -- Before the retirement the fragment was accepted and both refusals stayed
+  -- warnings, so `--werror` failed; accepting the successor took it to 0.
+  let (wrDoc, wrDs) := elabStr (dvDoc "\\allow{W0341}\n"
+    "Alpha \\zzspace[16]{Bravo} charlie.\n\nDelta \\zzother{Echo} foxtrot.")
+  let wr := Diag.resolveAll wrDoc.allow false wrDs
+  t "retired allow (fails on base): an unrelated unknown command stays a warning under --werror"
+    (wr.accepted.isEmpty && wr.warnings == 2 && exitFor wr.errors 0 wr.warnings true == 1)
   -- A retirement with no successor accepts nothing and still does not fail.
   let (goneDoc, goneDs) := elabStr (dvDoc "\\allow{W0344}\n" "x")
   t "retired allow: a loss that cannot occur grants no acceptance"

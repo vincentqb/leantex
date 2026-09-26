@@ -10312,9 +10312,11 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
 teeth: an unknown code is an error (a typo must not grant a silent
 blanket), an entry that never fires warns (Main), and the acceptance always
 prints in the build summary. A *retired* code is not an unknown one: it
-resolves through `DiagCode.retired` to whatever answers for its loss now,
-with a note (N0105), because a document that names it was written against an
-engine that had it. -/
+answers through `DiagCode.retired` with a note (N0105) naming what reports
+its loss now, because a document that names it was written against an
+engine that had it — and it accepts nothing, because a successor that folds
+the retired fragment into a wider diagnostic would otherwise be a blanket
+the document never wrote. -/
 private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : Pos) :
     Array String × Array PEvent := Id.run do
   let mut allow := allow
@@ -10329,11 +10331,11 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
     | none =>
       match DiagCode.retired.lookup code with
       | some (some succ) =>
-        unless allow.contains succ do
-          allow := allow.push succ
         evs := evs.push (.say (diagOf ctx .N0105
-          s!"'\\allow' names the retired code '{code}'; '{succ}' accepts that loss now"
-          (some pos) (subject := some ("allow:" ++ code))))
+          s!"'\\allow' names the retired code '{code}'; its loss is a clause of '{succ}' \
+now, so this accepts nothing"
+          (some pos) (help := s!"\\allow\{{succ}} accepts every '{succ}', this loss among them")
+          (subject := some ("allow:" ++ code))))
       | some none =>
         evs := evs.push (.say (diagOf ctx .N0105
           s!"'\\allow' names the retired code '{code}'; the loss it named cannot occur"

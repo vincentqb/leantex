@@ -472,9 +472,17 @@ what answers it now. Without this row a retirement turned a building document
 into a hard error (`E0329`, a `dropped` loss: exit 1, no PDF) for a change
 that took nothing away.
 
-`some succ` means the loss is still named, under `succ`, and `\allow` accepts
-that instead. `none` means the loss cannot occur any more — the engine's rule
-changed — so there is nothing to accept and nothing to fail over.
+`some succ` means the loss is still named, as a clause of `succ`'s own
+diagnostic — which names more than the retired code did. So `\allow` of the
+old spelling accepts *nothing*: accepting `succ` in its place would accept
+every loss `succ` names, and a document that accepted dropped option runs
+would silently accept every unknown command with them (measured: `--werror`
+went from 1 to 0 on such a document). The note says which code names the
+loss now, and the document widens its acceptance only by writing that code
+itself. `none` means the loss cannot occur any more — the engine's rule
+changed — so there is nothing to accept and nothing to fail over. A pure
+renumbering, whose successor names exactly the retired loss, would accept
+its successor; no row is one, so the table does not carry that case.
 
 A row leaves this list only when a document naming the old code is
 implausible, which is a judgement about the world and not about this tree, so
@@ -482,7 +490,8 @@ in practice rows stay. -/
 def DiagCode.retired : List (String × Option String) :=
   [-- A refused command's leading `[...]` run was named by its own code at
    -- the same span as the command's refusal. Its fate is a clause of that
-   -- refusal's message now, so W0301 accepts the drop.
+   -- refusal's message now, and W0301 names every unknown command, so the
+   -- old spelling accepts nothing.
    ("W0341", some "W0301"),
    -- `\scshape` means uniform small caps, so a casing lie in the source is
    -- no longer how the canonical form is reached: the loss this named cannot
