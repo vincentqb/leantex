@@ -22,8 +22,11 @@ around, and `--selftest` breaks both through the path that ships.
    is ranked from `tests/coverage/public-corpus.txt` alone: paths relative to
    the TeX distribution's root, each resolved with symlinks followed and
    refused if it lands outside that root. Any other list goes to an output
-   the caller names, and `outsideCheckout` refuses one inside a leantex
-   checkout — any worktree, any clone, whatever the working directory. So a
+   the caller names, and `Dest.of?` refuses one inside a leantex checkout —
+   any worktree, any clone, whatever the working directory. `Dest.write`
+   then writes into the directory it checked, a new file renamed onto the
+   output's name, so a symlink or a hard link planted at the name — or at
+   `<out>.neither` — is replaced rather than written through. So a
    private corpus's composition — which public classes it loads, whose
    commands it reaches for — cannot reach the tree either, not only the names
    it chose itself.
@@ -196,27 +199,64 @@ def namesLeantex (lakefile : String) : Bool :=
     let t := String.ofList (l.toList.filter (!·.isWhitespace))
     t == "name=\"leantex\"" || t == "name='leantex'"
 
+/-- An output the caller named, placed: the directory it lands in, resolved
+and checked to lie outside every leantex checkout, and the name it takes
+there. `Dest.of?` is the one constructor, so a write cannot skip the check,
+and `Dest.write` writes into the directory that was checked — never through
+whatever the name itself points at. -/
+structure Dest where
+  private mk ::
+  dir : String
+  name : String
+
 /-- Where an output may be written: anywhere but a leantex checkout. The walk
 goes up from the output's resolved directory, and a directory whose
 `lakefile.toml` names the package `leantex` is a checkout — every worktree
 and every clone, whatever the working directory is. A directory that does
 not exist is refused too, since it cannot be resolved to say where it
-lies. -/
-def outsideCheckout (out : String) : IO (Option String) := do
-  let parent := ((System.FilePath.mk out).parent.getD ".").toString
+lies. The name is not resolved: a link there is replaced by the write, so
+where it points never matters. -/
+def Dest.of? (out : String) : IO (Except String Dest) := do
+  let fp := System.FilePath.mk out
+  let some name := fp.fileName
+    | return .error s!"{out}: names no file to write"
+  let parent := (fp.parent.getD ".").toString
   let parent := if parent.isEmpty then "." else parent
   let some dir ← realPath? parent
-    | return some s!"{out}: its directory does not exist"
+    | return .error s!"{out}: its directory does not exist"
   let mut cur : System.FilePath := dir
   for _ in [0:4096] do
     let lf := cur / "lakefile.toml"
     if ← lf.pathExists then
       if namesLeantex (← orElse (IO.FS.readFile lf) "") then
-        return some s!"{out}: inside a leantex checkout; write it outside every checkout"
+        return .error s!"{out}: inside a leantex checkout; write it outside every checkout"
     match cur.parent with
     | some p => if p == cur then break else cur := p
     | none => break
-  return none
+  return .ok ⟨dir, name⟩
+
+/-- Write an output, or a sibling of it (`suffix`, as `.neither`), into the
+checked directory. The bytes go to a file created there new — `writeNew`
+fails rather than open a name that exists — and that file is renamed onto
+the name. A rename replaces a symlink at the name instead of following it,
+and leaves a hard link's other names on the old inode, so no link planted
+at the name carries the write out of the checked directory. -/
+def Dest.write (d : Dest) (suffix content : String) : IO (Except String Unit) := do
+  let target := System.FilePath.mk d.dir / (d.name ++ suffix)
+  let tmp := System.FilePath.mk d.dir /
+    s!".{d.name}{suffix}.{← IO.Process.getPID}.{← IO.monoNanosNow}.tmp"
+  let h ← match ← (IO.FS.Handle.mk tmp .writeNew).toBaseIO with
+    | .ok h => pure h
+    | .error e => return .error s!"{target}: cannot create a file beside it ({e})"
+  let wrote ← (do h.putStr content; h.flush).toBaseIO
+  let moved ← match wrote with
+    | .ok () => (IO.FS.rename tmp target).toBaseIO
+    | .error e => pure (.error e)
+  match moved with
+  | .ok () => return .ok ()
+  | .error e =>
+    let _ ← (IO.FS.removeFile tmp).toBaseIO
+    return .error s!"{target}: not written ({e})"
 
 -- ## Screening: only what lualatex builds
 
@@ -265,9 +305,11 @@ def poolSize : Nat := 16
 /-- Screen a directory of `.tex` files. The buildable list goes to `out` and
 everything that is neither verdict to `out.neither`, one `<reason>\t<path>`
 per line. `out` holds absolute corpus paths, so it may not lie in a
-checkout. -/
+checkout, and both files are written through `Dest`. -/
 def screen (dir out : String) : IO UInt32 := do
-  if let some why ← outsideCheckout out then return (← die 3 ("blockers: " ++ why))
+  let dest ← match ← Dest.of? out with
+    | .ok d => pure d
+    | .error why => return (← die 3 ("blockers: " ++ why))
   let files := (← System.FilePath.walkDir dir).filter (·.toString.endsWith ".tex")
   let sorted := files.map (·.toString) |>.qsort (· < ·)
   IO.println s!"blockers: screening {sorted.size} candidate(s) with lualatex, \
@@ -288,8 +330,10 @@ def screen (dir out : String) : IO UInt32 := do
       | .ok s => neither := neither.push (s.word ++ "\t" ++ f)
       | .error _ => neither := neither.push (Screened.notRun.word ++ "\t" ++ f)
     i := stop
-  IO.FS.writeFile out (ok.foldl (fun acc f => acc ++ f ++ "\n") "")
-  IO.FS.writeFile (out ++ ".neither") (neither.foldl (fun acc f => acc ++ f ++ "\n") "")
+  if let .error e ← dest.write "" (ok.foldl (fun acc f => acc ++ f ++ "\n") "") then
+    return (← die 3 ("blockers: " ++ e))
+  if let .error e ← dest.write ".neither" (neither.foldl (fun acc f => acc ++ f ++ "\n") "") then
+    return (← die 3 ("blockers: " ++ e))
   IO.println s!"blockers: {ok.size} build, {failed} do not, {neither.size} neither \
 (killed or never run, in {out}.neither)"
   return 0
@@ -627,10 +671,13 @@ distinct document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
       IO.println s!"  {w.sole}\t{w.share}\t{w.docs}\t{w.kind}:{w.construct}\t{w.owner}"
     return 0
 
-/-- Rank any list to an output outside every checkout. The same publish rule
-applies: the file may be copied, so it carries nothing a copy could leak. -/
+/-- Rank any list to an output outside every checkout, written through
+`Dest`. The same publish rule applies: the file may be copied, so it carries
+nothing a copy could leak. -/
 def rankList (resolve : Resolver) (listPath out : String) : IO UInt32 := do
-  if let some why ← outsideCheckout out then return (← die 3 ("blockers: " ++ why))
+  let dest ← match ← Dest.of? out with
+    | .ok d => pure d
+    | .error why => return (← die 3 ("blockers: " ++ why))
   unless (← System.FilePath.pathExists listPath) do
     return (← die 3 s!"blockers: {listPath} is missing — run --screen first")
   let roots ← publicRoots
@@ -638,7 +685,8 @@ def rankList (resolve : Resolver) (listPath out : String) : IO UInt32 := do
   let r ← rankDocs roots resolve docs
   let corpus := "# corpus-manifest: none — a list outside the declared public corpus; \
 this table does not belong in the tree\n"
-  IO.FS.writeFile out (renderTable r corpus (← texLine))
+  if let .error e ← dest.write "" (renderTable r corpus (← texLine)) then
+    return (← die 3 ("blockers: " ++ e))
   IO.println s!"blockers: wrote {out} — {r.rows.size} row(s) over {r.distinct} distinct \
 document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
   return 0
@@ -647,11 +695,65 @@ document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
 
 def containsSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- A link at an output's name into a checkout — a symlink, one that points
+at nothing yet, a hard link, a symlink at `<out>.neither` — through both
+writers that ship. Each leaves the checkout holding exactly the bytes it
+held, and the output lands at the link's own name instead. The links are
+made with `ln`, which is how a caller would make them. -/
+def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve : Resolver)
+    (list checkout : String) : IO Unit := do
+  let ck := checkout ++ "/tests/coverage"
+  let table := ck ++ "/blockers.tsv"
+  let manifest := ck ++ "/public-corpus.txt"
+  IO.FS.writeFile table "sentinel table\n"
+  IO.FS.writeFile manifest "sentinel manifest\n"
+  let out := dir ++ "/outside"
+  let empty := dir ++ "/empty"
+  IO.FS.createDirAll out
+  IO.FS.createDirAll empty
+  let lnS (target link : String) : IO Unit := do
+    let _ ← IO.Process.output { cmd := "ln", args := #["-s", target, link] }
+  lnS table (out ++ "/sym.tsv")
+  lnS (ck ++ "/zzdangling.tsv") (out ++ "/dangling.tsv")
+  IO.FS.hardLink manifest (out ++ "/hard.tsv")
+  lnS table (out ++ "/screen.txt")
+  lnS (ck ++ "/zzneither.txt") (out ++ "/screen.txt.neither")
+  lnS ck (out ++ "/dirlink")
+  let codes := #[← rankList resolve list (out ++ "/sym.tsv"),
+    ← rankList resolve list (out ++ "/dangling.tsv"),
+    ← rankList resolve list (out ++ "/hard.tsv"),
+    ← screen empty (out ++ "/screen.txt")]
+  expect "an output named through a link is still written" (codes.all (· == 0))
+  let regular (p : String) : IO Bool := do
+    match ← (System.FilePath.symlinkMetadata p).toBaseIO with
+    | .ok m => return m.type == .file
+    | .error _ => return false
+  expect "a symlink at <out> is replaced, not followed"
+    ((← orElse (IO.FS.readFile table) "") == "sentinel table\n"
+      && (← regular (out ++ "/sym.tsv")) && (← regular (out ++ "/screen.txt")))
+  expect "a symlink at <out> that points at nothing creates nothing there"
+    (!(← System.FilePath.pathExists (ck ++ "/zzdangling.tsv"))
+      && (← regular (out ++ "/dangling.tsv")))
+  expect "a hard link at <out> leaves its other name's bytes"
+    ((← orElse (IO.FS.readFile manifest) "") == "sentinel manifest\n")
+  expect "a symlink at <out>.neither is replaced, not followed"
+    (!(← System.FilePath.pathExists (ck ++ "/zzneither.txt"))
+      && (← regular (out ++ "/screen.txt.neither")))
+  -- The control, which held before as well: a link on the directory is
+  -- resolved, so the checkout behind it is found and the output refused.
+  let viaDir ← rankList resolve list (out ++ "/dirlink/zz.tsv")
+  expect "an output under a linked directory inside a checkout is refused" (viaDir != 0)
+  let mut files : Array String := #[]
+  for p in ← System.FilePath.walkDir checkout do
+    unless ← p.isDir do files := files.push p.toString
+  expect "the checkout holds exactly the files it held"
+    (files.qsort (· < ·) == #[checkout ++ "/lakefile.toml", manifest, table].qsort (· < ·))
+
 /-- The confinement rule end to end, through the writer that ships: planted,
 private-looking names behind every lookup a document can use — a style by
 absolute path, a class by path, a style a shell's TEXINPUTS finds, a
-document-local macro, a name nothing defines — and every file the writer
-left, read back. -/
+document-local macro, a name nothing defines — every file the writer left,
+read back, and a link at the output's name into a checkout. -/
 def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
   let tmp ← IO.Process.output { cmd := "mktemp", args := #["-d"] }
   let dir := tmp.stdout.trimAscii.toString
@@ -717,6 +819,7 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
     let refused ← rankList resolve (dir ++ "/list.txt") inside
     expect "an output inside a checkout is refused" (refused != 0)
     expect "and nothing was written there" (!(← System.FilePath.pathExists inside))
+    linkedOutputs expect dir resolve (dir ++ "/list.txt") fakeCheckout
     -- A shell that points the distribution at the private tree does not make
     -- the private tree public.
     let honest ← publicRoots
@@ -837,8 +940,10 @@ def selftest : IO UInt32 := do
     (namesLeantex "[x]\nname = \"leantex\"\n" && namesLeantex "name=\"leantex\""
       && !namesLeantex "name = \"other\"" && !namesLeantex "")
   expect "an output inside the working tree is refused"
-    ((← outsideCheckout "tests/coverage/zz.tsv").isSome)
-  expect "an output under /tmp is not" ((← outsideCheckout "/tmp/zz-blockers.tsv").isNone)
+    ((← Dest.of? "tests/coverage/zz.tsv") matches .error _)
+  expect "an output under /tmp is not" ((← Dest.of? "/tmp/zz-blockers.tsv") matches .ok _)
+  expect "an output that names a directory and no file is refused"
+    ((← Dest.of? "/tmp/") matches .error _)
   -- The manifest can only name the distribution's own files.
   let realRoots ← publicRoots
   expect "the host names a TeX distribution" (!realRoots.isEmpty)

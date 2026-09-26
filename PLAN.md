@@ -17464,7 +17464,19 @@ that hold it back, and ranks them by `sole` and `share`.
     with symlinks followed and refused if it leaves the root. Any other list
     is ranked by `--rank <list> <out>`, and an `<out>` inside a leantex
     checkout (any worktree or clone, found by walking up to a
-    `lakefile.toml` that names the package) is refused. So not even a
+    `lakefile.toml` that names the package) is refused. The output is then
+    written as a new file in the directory that was checked and renamed
+    onto its name. A third review found the refusal resolved the directory
+    and never the name: a link at `<out>` or `<out>.neither` wrote into a
+    checkout anyway. Reproduced at `e7dec5a` through both writers
+    (`confine.sh D`): a symlink overwrote the committed table with a private
+    list's composition, a symlink to nothing and a symlinked `.neither` each
+    created a checkout file of absolute private paths, and a hard link
+    overwrote the manifest with them. A rename replaces a link at the name
+    rather than following it and leaves a hard link's other name on its old
+    inode; `--selftest` plants each of the four links into a scratch
+    checkout, runs both writers through them, and reads the checkout back —
+    those checks fail on `e7dec5a`'s writers and pass here. So not even a
     private corpus's composition — which public classes it loads, whose
     commands it reaches for — can reach the tree.
   - *Only a public definer is named.* A class or package is published only
