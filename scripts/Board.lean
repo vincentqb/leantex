@@ -56,7 +56,8 @@ not what a regeneration wrote. `scoreboard --check --base <rev>` holds the
 tree's files to the ones committed at `<rev>` (`judgeBase`): a fall or a
 vanish there needs a line that is new since `<rev>`, which is what stops a
 hand-edited value, or a baseline deleted and regenerated from nothing, from
-laundering one.
+laundering one; and a file still carrying a request is `stale` there too,
+whatever its producer answers.
 
 The encoding line is read by the queue, so a deficit is computed rather
 than declared: `# encoding: headroom cap=<n>` means the value is
@@ -677,10 +678,23 @@ line was written for it since the base"
 lowering line written since the base reaches it"
   return out
 
+/-- The requests a committed file still holds, as written: a `# lowered:` line
+no regeneration has applied, and a `# retired:` line beside its row. A file
+holding one is not what its producer writes — regeneration spends a request in
+the writing — so the base check reads it as `stale` whatever the producer's
+`--check` answers: the aggregate reads a producer by its exit status alone, and
+a producer need not know the request form. -/
+def heldRequests (t : Tsv) : Array String :=
+  t.pendingLowerings.map (·.render) ++
+    t.retired.filterMap fun (i, why) =>
+      if t.rows.any (·.item == i) then some s!"# retired: {i} — {why}" else none
+
 /-- The base check for one tier, from the two texts: the result word and its
 reasons. A baseline committed at the base that the tree no longer carries is
 a fault — deleting the file was the other way to discard a floor — and a
-whole tier is retired only by its tombstone. -/
+whole tier is retired only by its tombstone. A tree's file still holding a
+request is `stale`: whatever it would pay for, it is not a file a
+regeneration wrote. -/
 def judgeBase (baseText : String) (tipExists : Bool) (tipText : String) :
     String × Array String :=
   if !tipExists then
@@ -692,7 +706,12 @@ retired by a `# retired-tier: <why>` tombstone in its file, never by deleting it
     | _, .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
     | .ok b, .ok t =>
       let fs := baseFaults b t
-      if fs.isEmpty then ("ok", #[]) else ("laundered", fs)
+      let held := (heldRequests t).map fun l =>
+        s!"the tree's file still holds `{l}`, a request no regeneration has applied; \
+regenerate the tier with its producer"
+      if !fs.isEmpty then ("laundered", fs ++ held)
+      else if !held.isEmpty then ("stale", held)
+      else ("ok", #[])
 
 /-- Render a baseline: provenance first (retirement lines among it, carried
 forward), then the sorted rows. -/

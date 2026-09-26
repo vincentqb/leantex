@@ -2,11 +2,13 @@
 The scoreboard: one line per goal, and a queue computed from the deficits.
 
   scoreboard                one porcelain line per tier; exit 1 on any regression
-  scoreboard --check        the same, quietly — the landing gate
+  scoreboard --check        the same, quietly
   scoreboard --check --base <rev>
-                            the landing gate, plus every committed baseline held to
-                            the one committed at <rev>: a fall or a vanish since
-                            <rev> needs a line written since <rev>
+                            the gate the land tool runs: --check, plus every
+                            committed baseline held to the one committed at <rev>.
+                            A fall or a vanish since <rev> needs a line written
+                            since <rev>, and a file still holding a request is
+                            stale
   scoreboard --queue        ranked deficits across every tier
   scoreboard --bench        the speed report, never gated
   scoreboard --selftest     the format, the ratchet, and the malformations
@@ -216,11 +218,12 @@ def git (args : Array String) : IO (Option String) := do
   catch _ => return none
 
 /-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
-tree's copy (`judgeBase`). The ratchet compares committed files with a
-measurement, so it cannot see a floor edited down by hand, or a baseline
-deleted and regenerated from nothing: both leave file and tree agreeing.
-The base can see them. A rev that names no commit fails closed, and so does
-a tree that is not a git repository. -/
+tree's copy (`judgeBase`), one porcelain line per baseline,
+`scoreboard: base=<sha> tier=<t> result=ok|laundered|stale|fault`. The
+ratchet compares committed files with a measurement, so it cannot see a floor
+edited down by hand, or a baseline deleted and regenerated from nothing: both
+leave file and tree agreeing. The base can see them. A rev that names no
+commit fails closed, and so does a tree that is not a git repository. -/
 def baseCheck (rev : String) : IO UInt32 := do
   let some sha := (← git #["rev-parse", "--verify", "--quiet", rev ++ "^{commit}"]).map
       (·.trimAscii.toString)
@@ -431,7 +434,11 @@ def baseCases : List (String × String × String) :=
    ("clean", "retired", "ok"),
    ("clean", "tier-retired", "ok"),
    ("clean", "added", "laundered"),
-   ("clean", "encoding-changed", "laundered")]
+   ("clean", "encoding-changed", "laundered"),
+   ("clean", "lowered", "stale"),
+   ("clean", "lowered-second", "stale"),
+   ("clean", "retired-pending", "stale"),
+   ("clean", "lowered-unheld", "laundered")]
 
 def readFixture (name : String) : IO (Except String Tsv) := do
   let text ← readFileOr (fixture name)
@@ -445,6 +452,158 @@ def baseArg (args : List String) : Option (Option String) :=
   | [] => none
   | [_] => some none
   | _ :: rev :: _ => some (some rev)
+
+-- ## The base check through the path that ships
+
+/-- The environment the harness runs git and the scoreboard under: a fresh
+install's — no user or system config, so `core.quotePath` and every other
+default is git's own — and no variable naming another repository. git exports
+`GIT_DIR` and `GIT_INDEX_FILE` to a hook, and a selftest run from one would
+otherwise read the repository it checks instead of its own scratch. -/
+def harnessEnv : Array (String × Option String) :=
+  #[("GIT_CONFIG_GLOBAL", some "/dev/null"), ("GIT_CONFIG_NOSYSTEM", some "1"),
+    ("GIT_TERMINAL_PROMPT", some "0")] ++
+  (#["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX",
+      "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_IMPLICIT_WORK_TREE",
+      "GIT_GRAFT_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE",
+      "GIT_SHALLOW_FILE"].map fun n => (n, (none : Option String)))
+
+/-- The tier every harness repository carries live: a producer whose `--check`
+exits 0 whatever the file says, so the aggregate passes and the exit status of
+`--check --base` is the base check's alone, and a raw baseline with two rows to
+move. -/
+def probeTier : String := "zz-probe"
+
+def probeText : String := "# encoding: raw\nalpha\t5\nbravo\t3\n"
+
+/-- One harness case: files committed at the base beside the harness's own, the
+edit that makes the tree from the base (given the repository and the base's
+sha), the exit status `scoreboard --check --base <base>` must return, and lines
+its output must hold (given the base's 12-digit sha). -/
+structure CliCase where
+  label : String
+  extra : List (String × String)
+  edit : System.FilePath → String → IO Unit
+  exit : UInt32
+  says : String → List String
+
+/-- Replace `old` in a harness file, and fail the case when the file does not
+hold it: an edit that did nothing would pass a case for the wrong reason. -/
+def swapIn (dir : System.FilePath) (path old new : String) : IO Unit := do
+  let s ← IO.FS.readFile (dir / path)
+  unless containsSub s old do throw (IO.userError s!"{path} holds no '{old}'")
+  IO.FS.writeFile (dir / path) (s.replace old new)
+
+def harnessGit (dir : System.FilePath) (args : Array String) : IO String := do
+  let o ← IO.Process.output
+    { cmd := "git"
+      args := #["-c", "user.name=probe", "-c", "user.email=probe@example.org",
+                "-c", "init.defaultBranch=main"] ++ args
+      cwd := some dir, env := harnessEnv }
+  if o.exitCode != 0 then
+    throw (IO.userError s!"git {String.intercalate " " args.toList} exited {o.exitCode}: \
+{o.stderr.trimAscii.toString}")
+  return o.stdout.trimAscii.toString
+
+/-- The cases. Each refusal is a way the base check once failed open or could;
+each pass is a sanctioned act, so a check that refused everything fails too. -/
+def cliCases : List CliCase :=
+  let probe := tsvPath probeTier
+  let enc := "# encoding: raw\n"
+  let says (word : String) := fun (s : String) =>
+    [s!"scoreboard: base={s} tier={probeTier} result={word}"]
+  let request := "# lowered: alpha 5→4 — an invented reason\n"
+  let fall := fun d => swapIn d probe "alpha\t5\n" "alpha\t4\n"
+  [{ label := "nothing moved", extra := [], edit := fun _ _ => pure (), exit := 0
+     says := says "ok" },
+   { label := "a fall edited by hand", extra := [], edit := fun d _ => fall d, exit := 1
+     says := says "laundered" },
+   { label := "a vanish edited by hand", extra := []
+     edit := fun d _ => swapIn d probe "bravo\t3\n" "", exit := 1, says := says "laundered" },
+   { label := "the baseline deleted with its producer", extra := []
+     edit := fun d _ => do
+       IO.FS.removeFile (d / probe)
+       IO.FS.removeFile (d / scriptPath probeTier)
+     exit := 1, says := says "fault" },
+   { label := "an unapplied request, the floor unmoved", extra := []
+     edit := fun d _ => swapIn d probe enc (enc ++ request), exit := 1, says := says "stale" },
+   { label := "an unapplied request beside the fall it names", extra := []
+     edit := fun d _ => do
+       swapIn d probe enc (enc ++ request)
+       fall d
+     exit := 1, says := says "stale" },
+   { label := "a fall paid by a new record", extra := []
+     edit := fun d _ => do
+       swapIn d probe enc (enc ++ "# lowered (applied): alpha 5→4 — an invented reason\n")
+       fall d
+     exit := 0, says := says "ok" },
+   { label := "a vanish paid by a new retirement", extra := []
+     edit := fun d _ => do
+       swapIn d probe enc (enc ++ "# retired: bravo — an invented reason\n")
+       swapIn d probe "bravo\t3\n" ""
+     exit := 0, says := says "ok" },
+   { label := "a tier retired by a new tombstone", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / probe) "# retired-tier: an invented reason\n"
+       IO.FS.removeFile (d / scriptPath probeTier)
+     exit := 0, says := says "ok" }]
+
+/-- Lay out one harness repository, commit it as the base, make the tree by the
+case's edit, and run the scoreboard under test there: `none` when it answered as
+the case says. Every declared tier is a tombstone in the harness, so the
+aggregate passes without spawning their producers. -/
+def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
+  let dir ← IO.FS.createTempDir
+  try
+    IO.FS.createDirAll (dir / "tests" / "scoreboard")
+    IO.FS.createDirAll (dir / "scripts")
+    IO.FS.writeFile (dir / "lean-toolchain") toolchain
+    for t in declaredTiers do
+      IO.FS.writeFile (dir / tsvPath t) "# retired-tier: a synthetic harness, nothing measured\n"
+    IO.FS.writeFile (dir / scriptPath probeTier) "def main (_ : List String) : IO UInt32 := pure 0\n"
+    IO.FS.writeFile (dir / tsvPath probeTier) probeText
+    for (p, text) in c.extra do IO.FS.writeFile (dir / p) text
+    let _ ← harnessGit dir #["init", "-q", "."]
+    let _ ← harnessGit dir #["add", "-A"]
+    let tree ← harnessGit dir #["write-tree"]
+    let sha ← harnessGit dir #["commit-tree", tree, "-m", s!"harness base: {c.label}"]
+    c.edit dir sha
+    let o ← IO.Process.output
+      { cmd := bin, args := #["--check", "--base", sha], cwd := some dir, env := harnessEnv }
+    let lines := (o.stdout.splitOn "\n").map (·.trimAscii.toString)
+    let shown := String.intercalate "\n    " ((lines.filter (containsSub · "zz")).take 8)
+    if o.exitCode != c.exit then
+      return some s!"cli {c.label}: exit {o.exitCode}, wanted {c.exit}\n    {shown}"
+    for l in c.says (sha.take 12).toString do
+      unless lines.contains l do
+        return some s!"cli {c.label}: no line '{l}'\n    {shown}"
+    return none
+  catch e =>
+    return some s!"cli {c.label}: the harness could not run: {e}"
+  finally
+    IO.FS.removeDirAll dir
+
+/-- Every case, in parallel, against this binary: `IO.appPath` is the scoreboard
+under test, so the cases drive `main`, the listing, the blob reads and the
+count exactly as a landing does. Run interpreted, this process is `lean`, which
+has no `--base`; the selftest then says so rather than test another binary. -/
+def cliFailures : IO (Array String) := do
+  let bin ← IO.appPath
+  if bin.fileName != some "scoreboard" then
+    return #[s!"cli: the selftest drives its own binary and this process is {bin}; run \
+the compiled one: lake build scoreboard && .lake/build/bin/scoreboard --selftest"]
+  let toolchain ← readFileOr "lean-toolchain"
+  let mut tasks := #[]
+  for c in cliCases do
+    tasks := tasks.push (← IO.asTask (prio := .dedicated) (runCliCase bin.toString toolchain c))
+  let mut out := #[]
+  for t in tasks do
+    match ← IO.wait t with
+    | .ok none => pure ()
+    | .ok (some why) => out := out.push why
+    | .error e => out := out.push s!"cli: {e}"
+  return out
 
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
@@ -627,6 +786,9 @@ def selftest : IO UInt32 := do
     let add (line : String) : IO Unit := do
       let ls := (← IO.FS.readFile p).splitOn "\n"
       IO.FS.writeFile p (String.intercalate "\n" (ls.take 2 ++ [line] ++ ls.drop 2))
+    let del (line : String) : IO Unit := do
+      let ls := (← IO.FS.readFile p).splitOn "\n"
+      IO.FS.writeFile p (String.intercalate "\n" (ls.filter (· != line)))
     let says (frag : String) : IO Bool := return containsSub (← IO.FS.readFile p) frag
     set (some 998)
     no "flow: regeneration starts from nothing" ((← run []) == 0)
@@ -640,6 +802,14 @@ def selftest : IO UInt32 := do
     no "flow: the request went back as a record"
       ((← says "# lowered (applied): alpha 998→997") && !(← says "# lowered: alpha"))
     no "flow: --check passes on what regeneration wrote" ((← run ["--check"]) == 0)
+    -- A request no fall answers: the one committed state only the request
+    -- arm of `stale` sees, since nothing else in the file has moved.
+    let unanswered := "# lowered: alpha 997→995 — a request no fall answers, an invented reason"
+    add unanswered
+    no "flow: a committed request no fall answers is stale under --check" ((← run ["--check"]) == 1)
+    no "flow: regeneration refuses to carry it" ((← run []) == 1)
+    del unanswered
+    no "flow: without it --check passes again" ((← run ["--check"]) == 0)
     set (some 996)
     no "flow: a second fall is refused, the record pays nothing" ((← run []) == 1)
     add "# lowered: alpha 997→996 — the second fall, an invented reason"
@@ -679,6 +849,11 @@ def selftest : IO UInt32 := do
   no "reach: a fall between two records that no line covers is not reached"
     (reach [l 998 995, l 994 990] 998 == 995)
   no "reach: a record below the floor is not usable" (reach [l 991 990] 998 == 998)
+  -- The same check through the path that ships: `scoreboard --check --base`
+  -- spawned in throwaway repositories. Mutants that made `main` ignore the
+  -- base check, or the base check list nothing or count nothing, passed every
+  -- line above.
+  for why in ← cliFailures do no why false
 
   -- What the aggregate decides before any producer runs.
   no "aggregate: an empty baseline is a fault" ((precheck "" true).map (·.1) == some "fault")
@@ -806,7 +981,8 @@ faults" false
   IO.println s!"scoreboard selftest: format passed ({malformations.length} malformations, \
 {wellFormed.length} states the tool writes or asks for, 4 ratchet verdicts each failing \
 --check, retirement through the tool, a lowering authorising exactly one fall once, \
-{baseCases.length} base-check cases, the aggregate's own faults, the tool's printed remedies \
+{baseCases.length} base-check cases, {cliCases.length} more through `--check --base` in \
+throwaway repositories, the aggregate's own faults, the tool's printed remedies \
 followed to the end, and the key)"
   -- Then every tier's own selftest, in parallel: one command is what a
   -- landing runs, so the fan-out lives here rather than in a procedure
