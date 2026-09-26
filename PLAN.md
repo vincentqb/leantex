@@ -18175,7 +18175,7 @@ shipped CLI, PDF and HTML.
 
 
 
-### 2026-09-26 — package code sets no text: a style file's own test printed a package name on page 1
+### 2026-09-26 — package code sets no text from a LaTeX internal: a style file's own test printed a package name on page 1
 
 The user built the paper in the private reference corpus and found a word at
 the top of page 1 that lualatex never sets. The paper's local style file
@@ -18184,39 +18184,104 @@ with a warning in the true branch and an empty false branch. The engine
 replayed the hook at `\begin{document}` (N0100). It did not know
 `\@ifpackageloaded`, so W0301 kept the command's `{...}` arguments as text,
 and the tested package's name became the paper's first word. Two things were
-missing: the loaded-test family, and a rule that stops unknown commands in
-package code from setting body text.
+missing: the loaded-test family, and a rule that stops a LaTeX internal in
+package code from setting its arguments as body text.
 
-**The invariant.** An unknown command met in package code sets none of its
-arguments. Package code is a site whose file is a style or class file
-(`Compat.packageFile`). The splice wraps every span of a local `.sty` in its
-own file, and a hook such a file registers replays inside that wrapper, so
-the engine already knew which side of the boundary a site stands on. No
-refactor was needed. The `@`-letter state is not tracked: `Lex.nameChar`
-admits `@` everywhere, a recorded decision, and nothing here depends on it.
-At such a site, the recovery drops the command's option runs and its
-argument groups. It records no salvage, and names the site once under its
-own key (`pkgcode:<name>`) with a new config code, W0391. The key is not
-W0301's `ctrl:<name>`: a shared key would put the document's fate, "kept
-as text", and package code's fate, "dropped", on one counted line. A TeX
-internal demotes, as in the preamble, and N0020 counts it with the file's
-refusals. Document content keeps today's recovery. The theorem is
-`Elab.recoverPackageCmd_accounts`: the recovery pushes exactly one
-diagnostic (W0391, subject `pkgcode:<name>`) and leaves the salvage
-unchanged. The "no ink" half holds by construction: the recovery's type is
-an index with no inline in it, and its arm hands the text accumulator on as
-it came. The page-level checks are `packageCodeChecks`. They read
-`Layout.Out` and the typed HTML tree, and they run the two builds that
-differ only in which file registers the hook. The style file's build drops
-the arguments; the document's own `\AtBeginDocument` keeps them.
+**The invariant.** A LaTeX internal met in package code sets none of its
+arguments. An internal is a control word with `@` in its name
+(`Compat.codeInternal`). Package code is a site whose file is a style or
+class file (`Compat.packageFile`). The splice wraps every span of a local
+`.sty` in its own file, and a hook such a file registers replays inside that
+wrapper, so the engine already knew which side of the boundary a site stands
+on. No refactor was needed. The `@`-letter state is not tracked:
+`Lex.nameChar` admits `@` everywhere, a recorded decision, and the rule reads
+the name, not the state. At such a site the recovery drops the internal's
+option runs and its `{...}` groups, up to nine, TeX's limit. It records no
+salvage, and names the site once under its own key (`pkgcode:<name>`) with a
+new config code, W0391. The site demotes to a note, as a TeX internal's
+refusal in a style file does (`Compat.styInternal`), and N0020 counts it
+with the file's refusals. The key is not W0301's `ctrl:<name>`: a shared key
+would put the document's fate, "kept as text", and package code's fate,
+"dropped", on one counted line. Every other unknown command in package code,
+and every unknown command in the document, keeps today's recovery (W0301).
+
+**Why an `@` internal's arguments are code.** `@` is a letter only while a
+package or class file is read, or after `\makeatletter`: latex.ltx's
+`\@onefilewithoptions` runs `\makeatletter` before the load, and
+`\@pushfilename` saves the category code that `\@popfilename` restores. So a
+name holding `@` is written in package code, or after an explicit
+`\makeatletter`, and it names the kernel's or a package's own
+implementation. The groups after it are that code's operands: package
+names, option lists, definition bodies, tests and their branches. LaTeX's
+code consumes them. Set as text, they are that code printed on the page,
+which is how the paper got its first word. The rule's measured cost is an
+internal that sets an operand itself. The kernel's `\@firstofone{…}` in a
+style hook sets its operand in lualatex and at base, and the rule drops it
+(synthetic probe q04). An unknown conditional's branches go with its test:
+`\@ifundefined{…}{A}{B}` sets one branch in lualatex, all three groups at
+base, and none now (q09). W0391 is declared `config` because the construct
+is package machinery, the reading the vocabulary gives an unread TeX
+conditional. At a `\@firstofone` site the loss is in truth a drop, and
+reading the kernel's selection internals natively is the follow-up that
+removes it.
+
+**Round 4 narrowed the rule.** As first written (`dcf4d6ea`), the drop
+covered every unknown command in package code, and the review found text
+lost that LaTeX sets: a style hook's `\fbox{draft}` and `\centerline{…}`, a
+`\textbf{\fbox{…}}`, a style-declared `\title{\fbox{…}}` and
+`\date{\fbox{…}}`, and an `\fbox` followed by a second group. Those are
+typesetting commands the engine lacks, not programming, and they keep their
+groups now. On the review's probes p04, p05, p15, p25, p26 and p28 the
+branch sets the same text as base and lualatex, in PDF and HTML (the
+binary at `0365bba0`, probe sources copied from the review's directory).
+The coordinator's decision named the TeX internals: the `@` names and
+`Compat.texInternal`. The drop takes the `@` names only. `texInternal`'s
+other half, the TeX82 primitives, holds typesetting primitives, and five of
+them set their group from a style hook in lualatex: `\hbox`, `\vbox`,
+`\uppercase`, `\lowercase` and `\discretionary` (probes q01, q02, q06, q10,
+q11). Dropping those would repeat the defect the review blocked on.
+Admitting the primitives is one predicate (`Compat.codeInternal`) and one
+fixture row, and the choice is the human's.
+
+**The theorem.** `Elab.recoverPackageCmd_accounts` states the recovery
+whole. It pushes exactly one diagnostic (W0391, subject `pkgcode:<name>`)
+and leaves the salvage unchanged. It also consumes the arguments: the index
+it returns stands past a run of spaces and `{...}` groups and nothing else,
+holds at most nine groups, and stops at the bound or before a raw that is
+no group. `Elab.argGroupsEnd_covers` proves that for any bound. Every group
+that could be an argument therefore lies behind the index. The arm walks on
+from the index with its text accumulator as it came, so no argument reaches
+the walk. The review's mutation M1, a recovery that consumes no group, now
+fails `lake build`, in the theorem. That was measured in a scratch clone of
+`0365bba0` holding the worktree's build cache, and again with the theorem's
+proof restated for the mutated index (M1b), where the clauses fail. What
+the theorem does not see is the arm's use of the index. An arm that walks
+on from before the groups still builds, and `lake test` fails two rows
+(M3). Stating the arm's output would need the inline walk's unfolding
+equation across every arm before it.
+
+The page-level checks are `packageCodeChecks`. They read `Layout.Out` and
+the typed HTML tree, and two pairs of builds hold the two halves of the
+gate's condition. In one style hook, the internal drops while a venue macro
+and a TeX primitive keep their groups. The same internal in a hook the
+document registers keeps its arguments, and that pair differs only in which
+file registers the hook.
 
 One interaction was found by the suite. Rule (b)'s trial of a redefinition
-(`gateRedefB`) elaborates the body at its definition, and there a theme's
-`\maketitle` read as package code. Its unknown internals became config
-losses and the redefinition stopped being refused. A command a style file
-defines is called from the document's text, so the trial now reads the body
-as its use will (`Ctx.atUse`). `themeStyChecks` failed without this and
-passes with it.
+(`gateRedefB`) elaborates the body at its definition, and there a style's
+body read as package code. Its unknown commands became config losses, and
+the redefinition stopped being refused. A command a style file defines is
+called from the document's text, so the trial now reads the body as its use
+will (`Ctx.atUse`). Under the first rule a theme's `\maketitle` showed it:
+`themeStyChecks` failed without the guard. That body holds no `@` internal,
+so under the narrowed rule removing the guard left `lake test` green (at
+`dc08f14d`, in a scratch clone). The guard still decides a real shape: a
+style that redefines a size command through `\@setfontsize` and the
+kernel's size internals. With the guard the refused size reads as a ladder
+step. Without it the redefinition is accepted, and a synthetic `\small`
+sets "11" before its text; on the private paper, whose PDF does not
+change, eight ladder notes are lost and two W0391 notes appear. The
+`sizehook` rows of `packageCodeChecks` now hold the guard.
 
 **The loaded tests.** A pass after the conditional pass, `resolveLoaded`
 in Compat, answers `\@ifpackageloaded`, `\@ifclassloaded`,
@@ -18249,28 +18314,42 @@ second is that a group's test reads as run after the preamble.
 `loadedTestChecks` holds 16 rows over the family, the timing rules and the
 option list. 15 of them fail with `LeanTex/Core/Compat.lean` set back to
 `17ac92f`, measured with `lake build Tests && .lake/build/bin/Tests` in this
-worktree (16 FAIL lines: those 15 and the N0114 golden block). The unit 2 run
-set back both Compat and Elab: 25 FAIL lines. Three rows passed on base,
-and they pass by design: "the document's own use keeps its arguments", "the
-same hook registered by the document keeps the arguments as text", and "a
-test missing a branch is left to the unknown-command refusal". Each guards
-behaviour that must not change.
+worktree (16 FAIL lines: those 15 and the N0114 golden block). With both
+Compat and Elab set back to `17ac92f` at `dc08f14d`, measured the same way,
+the suite fails 24 rows: those 15, four diagnostics-golden and witness rows,
+and five of `packageCodeChecks`' nine. Five rows pass there by design, each
+guarding behaviour that must not change. In `packageCodeChecks` they are "a
+venue macro in a style's hook keeps its arguments", "a TeX primitive in a
+style's hook keeps its group", "the document's own use of the venue macro
+keeps its arguments" and "the same internal in a hook the document
+registers keeps its arguments"; in `loadedTestChecks`, "a test missing a
+branch is left to the unknown-command refusal". With the two files set back
+to the round-3 code (`dcf4d6ea`) instead, five rows fail: the W0391 golden
+block, and the four rows saying that the venue macro and the primitive keep
+their groups and their W0301 refusals. The two `sizehook` rows came later.
+On the base binary their fixture sets the same page and the same notes as
+at the tip, and with `Ctx.atUse` removed both fail (at `f3c9498b`, in a
+scratch clone).
 
 **Measured on the private paper and deck.** Commands: `leantex <the
 paper's source> -o <evidence>/…pdf --porcelain`, run from a scratch copy;
 `pdftoppm -png -r 110`; `compare -metric AE` per page; `pdftotext -bbox`
 for page 1.
 
-- Paper, base `17ac92f` → `dcf4d6ea`. Page 1's first word, the package
-  name, is gone. The title's first word now stands 0.9pt from lualatex's
-  position; at base it stood 9.1pt below it. Both builds have 8 pages, and
-  lualatex's has 8. Census deltas: N0114 16 → 17, W0301 notes 4 → 3, and
-  N0100 113 → 112 (the dead branch's `\PackageWarning` discard). No other
-  code moved, in the PDF build or the HTML build. Rasters: pages 1–2
-  differ (the removed line and its reflow); pages 3–8 are pixel-identical.
-- Deck: 36 pages in both builds, the per-code census identical, and all
-  36 rasters pixel-identical (AE = 0). Its local theme file is package code
-  too, and nothing in it changed.
+- Paper, base `17ac92f` → `dcf4d6ea`, and again → `0365bba0` after the
+  narrowing, with the same numbers both times. Page 1's first word, the
+  package name, is gone from the PDF and from the HTML. The title's first
+  word now stands 0.9pt from lualatex's position; at base it stood 9.1pt
+  below it. Both builds have 8 pages, and lualatex's has 8. Census deltas:
+  N0114 16 → 17, W0301 notes 4 → 3, and N0100 113 → 112 (the dead
+  branch's `\PackageWarning` discard). No other code moved, in the PDF
+  build or the HTML build, and W0391 fires nowhere in either document.
+  Rasters: pages 1–2 differ (the removed line and its reflow); pages 3–8
+  are pixel-identical.
+- Deck: 36 pages in both builds, the per-code census identical, the PDF
+  byte-identical at `0365bba0`, and all 36 rasters pixel-identical
+  (AE = 0). Its local theme file is package code too, and nothing in it
+  changed.
 - The hook's `\newgeometry` is honoured. Page 1's text block has the
   declared text width, centred, and its left edge stands within 0.1pt of
   lualatex's. One wart remains: W0101 still names the `top` key as
@@ -18280,11 +18359,28 @@ for page 1.
 
 **Left, each a follow-up:**
 
+- The kernel's selection internals (`\@firstofone`, `\@firstoftwo`,
+  `\@secondoftwo`, `\@iden`, the `\@gobble` family) read natively. That
+  removes the rule's measured cost (q04). Site: `Compat.resolveLoaded`'s
+  walk, which already keeps a chosen group unbraced.
+- Code-taking TeX primitives in package code (`\message`, `\special`,
+  `\mark`) still set their operand as text, as at base (q03, q07, q12).
+  A sourced list of the primitives whose operand is never typeset where
+  they stand could join them to the drop. Site: `Compat.codeInternal`.
+- A package another package loads reads as not loaded (review F3), and
+  N0114 states the negative answer as fact at `info`: "no package 'X' is
+  loaded here". Word it as what is visible ("no load of 'X' is visible
+  here"), and name it at a loss class whenever the document loads a
+  package the engine does not read. A sourced transitive-load table (each
+  package's own `\RequirePackage` closure) would retire the invisibility
+  premise. Sites: `Compat.loadedMsg`, `Compat.loadedDecide`.
+- A `\csname…\endcsname` pair in package code still sets the name between
+  them as text, as at base (review F5, probe p21). Read it as the
+  delimited pair it is. Site: the unknown-command arms of
+  `Elab.elabInlinesFrom`.
 - An unknown *environment* in package code still keeps its body (W0302).
 - `\@ifpackagelater` and `\IfPackageAtLeastTF` compare dates the engine
   does not have, and stay unknown.
-- A transitive-load table (each package's own `\RequirePackage` closure,
-  sourced) would retire the invisibility premise.
 - W0101's `top`, when it equals the centred margin, is not a loss.
 - The splice could carry a local style file's passed options, so that
   `\@ifpackagewith` reads them.
