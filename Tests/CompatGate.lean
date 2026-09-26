@@ -318,6 +318,65 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
       match defDoc.body with
       | #[.table _ _ _ rows _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
       | _ => false)
+  -- What the span line says, held at each shape of span: its text fills
+  -- one cell, and any cell written after it moves left by the columns it
+  -- spanned beyond the first — none at a row's end, where nothing moves.
+  for (what, row, want) in [
+      ("a leading span", "\\multicolumn{2}{c}{Span} & d", #["Span", "d", ""]),
+      ("a trailing span", "a & \\multicolumn{2}{c}{Span}", #["a", "Span", ""]),
+      ("a full-row span", "\\multicolumn{3}{c}{Span}", #["Span", "", ""])] do
+    let (spanDoc, _) := elabStr (dvDoc "" s!"\\begin\{tabular}\{lll}\n{row} \\\\\n\\end\{tabular}")
+    t s!"fragment arm, {what}: the text fills one cell, and only a later cell moves"
+      (match spanDoc.body with
+       | #[.table _ _ _ rows _] => rows.map (·.map Ir.plainText) == #[want]
+       | _ => false)
+
+/-! # One span, one visible line
+
+A span of n leaves its row n−1 cells short, because the IR has no cell
+span, so one `\multicolumn` prints two W0337 lines: its own, at the
+command, and the table's padded-row line, at the table — two spans, which
+`siteCollisions` cannot pair, and two warnings under `--werror` for one
+construct. The rows below are the shapes that do so today, each with the
+change that owes the merge, read in both directions: a row whose probe
+prints one line is stale, and a probe printing two with no row fails. -/
+
+/-- Span probes, as (what, preamble, body). -/
+def spanAccountingProbes : List (String × String × String) :=
+  [("a leading span", "",
+      "\\begin{tabular}{lll}\n\\multicolumn{2}{c}{Span} & d \\\\\na & b & c \\\\\n\\end{tabular}"),
+   ("a trailing span", "",
+      "\\begin{tabular}{lll}\na & \\multicolumn{2}{c}{Span} \\\\\na & b & c \\\\\n\\end{tabular}"),
+   ("a full-row span", "",
+      "\\begin{tabular}{lll}\n\\multicolumn{3}{c}{Span} \\\\\na & b & c \\\\\n\\end{tabular}"),
+   ("a span through a definition", "\\newcommand{\\zzspan}[1]{\\multicolumn{2}{c}{#1}}\n",
+      "\\begin{tabular}{lll}\n\\zzspan{Span} & d \\\\\na & b & c \\\\\n\\end{tabular}"),
+   ("a one-column realignment", "",
+      "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")]
+
+/-- The probes that print two lines for one span today, with what owes the
+merge. -/
+def spanAccounting : List (String × String) :=
+  let owner := "LeanTex/Core/Ir.lean and Elab's tabularArm: a cell that spans its \
+columns leaves no short row, so the padded-row line has nothing left to name"
+  [("a leading span", owner), ("a trailing span", owner), ("a full-row span", owner),
+   ("a span through a definition", owner)]
+
+def spanAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let visible (ds : Array Diag) (key : String) : Bool :=
+    ds.any fun d => d.code == "W0337" && d.severity == .warning && d.subject == some key
+  for (what, pre, body) in spanAccountingProbes do
+    let (_, ds) := elabStr (dvDoc pre body)
+    let doubled := visible ds "ctrl:multicolumn" && visible ds "tabular:ragged"
+    if spanAccounting.any (·.1 == what) then
+      t s!"span accounting {what} (fails on base): the row still describes two lines for one span"
+        doubled
+    else
+      t s!"span accounting {what}: one span, one visible line" (!doubled)
+  for (what, _) in spanAccounting do
+    t s!"span accounting {what}: the row names a probe"
+      (spanAccountingProbes.any (·.1 == what))
 
 /-! # Compat's markers in the preamble
 
@@ -422,4 +481,5 @@ when {main} is the main language"
 def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   compatDiscardChecks ref
   compatFragmentChecks ref
+  spanAccountingChecks ref
   compatMarkerChecks ref

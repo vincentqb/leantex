@@ -2730,9 +2730,10 @@ its value is skipped" pos
     -- definition's parameter, which a kept-but-unwalked group lost. What is
     -- dropped is named under the construct's own key, one per shape of
     -- loss, so a counted line is true of every site it counts: a count of 1
-    -- loses only the alignment, a wider one moves the row's later cells
-    -- left (the table then pads the short row), and a count that is not a
-    -- numeral says neither.
+    -- loses only the alignment; a wider one loses the alignment too, and
+    -- any cells after it in the row move left (none at a row's end, LaTeX's
+    -- commonest span, where the table then pads the short row); a count
+    -- that is not a numeral says no more than the one cell.
     let (gs, k) := takeGroups raws start 2
     let j := skipSpaces raws k
     match gs, raws[j]? with
@@ -2743,11 +2744,12 @@ its value is skipped" pos
           "'\\multicolumn{1}' alignment is not set: the cell takes its column's alignment" pos
       | some (_ + 2) =>
         sayOnce "ctrl:multicolumn" .W0337
-          "'\\multicolumn' spans are not set: its text fills one cell, and the cells after it move left"
-          pos
+          "'\\multicolumn' spans are not set: its text fills one cell in its column's \
+alignment, and any later cells move left" pos
       | _ =>
         sayOnce "ctrl:multicolumn:unread" .W0337
-          "'\\multicolumn' span is not a numeral the engine reads: its text fills one cell" pos
+          "'\\multicolumn' span is not a numeral the engine reads: its text fills one cell \
+in its column's alignment" pos
       return some (#[], j)
     | _, _ => return none
   | "usefonttheme" =>

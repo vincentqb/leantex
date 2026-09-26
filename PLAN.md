@@ -16105,8 +16105,10 @@ check that fails without it.
   family is resolved before the declaration fold, so an `\author` holding a
   `\url` reads the style whichever order the two stand in, as `\maketitle`
   expansion gives in LaTeX. `compose-fuzz` admits the head, with a synthetic
-  `\author{… \url{…}}` preamble: two swaps fail on e4d22a4, and every pair
-  commutes on head.
+  `\author{… \url{…}}` preamble: four swaps fail on e4d22a4's engine
+  (logo↔urlstyle, urlstyle↔runninghead, author↔urlstyle, urlstyle↔date —
+  this branch's script run in a 95f3579 scratch tree, whose Compat, Elab and
+  Diag are e4d22a4's), and every pair commutes on head.
 - **A redefinition trial resets `runShapes` with `diags`** (item 3), so
   W0361 names the construct the definition uses.
 - **A retired fragment whose successor names more accepts nothing** (item
@@ -16129,12 +16131,16 @@ check that fails without it.
   cell and the HTML `<td>` both read the argument (`pdftotext`, the emitted
   tree; HTML under `css =` not measured). The drop is W0337 under one key
   per shape of loss, each with a message true of all its sites:
-  `ctrl:multicolumn` (a span: the later cells move left),
-  `ctrl:multicolumn:1` (alignment only, grid intact) and
-  `ctrl:multicolumn:unread` (the count is not a numeral). Two things are still
-  open. The IR has no cell span, so a span still shifts the row. And a
-  LaTeX-valid span row also draws the table's own padded-row W0337, so one
-  cause prints two lines at two spans, which `siteCollisions` cannot see.
+  `ctrl:multicolumn` (a span: its text fills one cell in its column's
+  alignment, and any later cells move left — none at a row's end, LaTeX's
+  commonest span), `ctrl:multicolumn:1` (alignment only, grid intact) and
+  `ctrl:multicolumn:unread` (the count is not a numeral: one cell, in its
+  column's alignment). Two things are still open. The IR has no cell span,
+  so a span still moves any later cells. And a span row also draws the
+  table's own padded-row W0337, so one cause prints two lines at two spans,
+  which `siteCollisions` cannot see; `spanAccounting` registers the four
+  shapes that do so today, read in both directions (each direction broken
+  once through `lake test`).
   Padding the n−1 cells in the table loop would close both, but it is
   blocked, because an `&` that comes out of a macro body does not split
   cells: the build fails with E0311 on e4d22a4 and on head.

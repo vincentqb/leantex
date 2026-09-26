@@ -347,9 +347,9 @@ warning[W0336]: 1 pair(s) of node labels overlap: a relative placement parts nod
 warning[W0337]: a row carries 3 cells but the column spec declares 2; the grid widens
   help: declare one column type per cell: l, c, r, or p{width}
 warning[W0337]: a row carries fewer cells than the column spec; it is padded with empty cells
-warning[W0337]: '\multicolumn' spans are not set: its text fills one cell, and the cells after it move left
+warning[W0337]: '\multicolumn' spans are not set: its text fills one cell in its column's alignment, and any later cells move left
 warning[W0337]: '\multicolumn{1}' alignment is not set: the cell takes its column's alignment
-warning[W0337]: '\multicolumn' span is not a numeral the engine reads: its text fills one cell
+warning[W0337]: '\multicolumn' span is not a numeral the engine reads: its text fills one cell in its column's alignment
 ── W0338 (degraded) table is wider than the measure
 warning[W0338]: the table is 211.2pt wider than the measure
   help: narrow the p{...} column widths, or widen the text block
