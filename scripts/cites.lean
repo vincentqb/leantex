@@ -157,10 +157,16 @@ repair:
                     name both halves, or to write the sentence without the
                     shared stem.
 
-Keyed by name, not by site: a second citation of a listed name passes, and
-an entry left behind after its citation is fixed is dead weight rather than
-a failure. Both are deliberate -- the ratchet's job is to stop new phantoms,
-and neither looseness lets one through.
+Keyed by name and site: a row is one citation's anchor, so the ratchet reads
+in both directions, as `subjectDebt` and `siteAccounting` do. A second
+citation of a parked name is a new phantom, since a parked name is not a
+licence to cite it again, and a row whose citation was fixed is dead and
+fails `--check` until it is deleted, so the list cannot hold a name after
+its debt is paid. The site is the file and the declaration whose docstring
+carries the citation, `the module docstring` for a module's own, and `a
+docstring` for a script the build does not compile, where no finer anchor
+survives an edit. Line numbers are not keys, because every line number the
+first sweep recorded had moved by the second.
 
 The list stays when it empties. `citeCandidate` recognises a citation by its
 spelling, so the gate can fire on prose that makes no claim -- a docstring
@@ -170,41 +176,61 @@ deleting the sentence. That is the one repair this gate must not buy, and an
 empty list with no row to imitate invites it. A row added here carries the
 same three things every row above did: the anchor declaration, what actually
 holds the fact, and the one-line fix. -/
-def citePhantomKnown : List String :=
-  ["frames_sections", "sty_is_defaults",
+structure PhantomRow where
+  name : String
+  file : String
+  anchor : String
+  deriving BEq, Repr, Inhabited
+
+def citePhantomKnown : List PhantomRow :=
+  [⟨"frames_sections", "LeanTex/Core/Ir.lean", "LeanTex.Core.Ir.frameSteps"⟩,
+   ⟨"frames_sections", "Tests/Themes.lean", "deckStepChecks"⟩,
+   ⟨"sty_is_defaults", "LeanTex/Core/Elab.lean", "LeanTex.Core.Elab.sty_is_defaults_tokens"⟩,
+   ⟨"sty_is_defaults", "LeanTex/Core/Elab.lean", "LeanTex.Core.Elab.sty_is_defaults_palette"⟩,
    -- Five the qualified-spelling hole hid: the resolver read only the bare
    -- snake_case form, so a citation written `Namespace.theorem_name` was not
    -- a candidate at all, and the gate never asked. They are pre-existing,
    -- each in a file this branch does not own, and each is routed with its
    -- owner rather than silenced by deleting the sentence.
-   "Layout.spill_accounts",       -- LeanTex/Core/Ir.lean:3723, anchor
-                                  -- `Ir.Block.frame`: the claim is that a
-                                  -- frame's overflow is named rather than
-                                  -- dropped. `Layout` states nothing of the
-                                  -- kind. Fix: state it over `Layout.Out`
-                                  -- beside the spill emission, or drop the
-                                  -- name and let `censusChecks` carry it.
-   "Math.accentAttach_covers",    -- LeanTex/Core/Font.lean:1046, anchor
-                                  -- `Font.Font.topAccentX`: the attachment
-                                  -- point is claimed covered for every base.
-                                  -- Fix: state it over `Font.topAccentX`
-                                  -- itself, where the fallback arm lives.
-   "Picture.labelFace_agree",     -- Tests/Support.lean:350 and
-                                  -- Tests/Surface.lean:5918: a picture
-                                  -- label's face is claimed to agree across
-                                  -- backends. `pictureLabelFaceChecks` is
-                                  -- the artifact witness; the IR theorem it
-                                  -- projects from is unwritten. Fix: state
-                                  -- the `_agree` over the one IR value both
-                                  -- backends read.
-   "Picture.placeRel_exact",      -- Tests/Support.lean:387: relative node
-                                  -- placement claimed exact. Fix: state it
-                                  -- where the placement is computed.
-   "Picture.place_order_agree"]   -- Tests/Support.lean:387 and
-                                  -- Tests/Surface.lean:5106: node order
-                                  -- claimed to agree across backends. Fix:
-                                  -- as `labelFace_agree`, one IR statement
-                                  -- with two projections.
+   --
+   -- The claim is that a frame's overflow is named rather than dropped.
+   -- `Layout` states nothing of the kind. Fix: state it over `Layout.Out`
+   -- beside the spill emission, or drop the name and let `censusChecks`
+   -- carry it.
+   ⟨"Layout.spill_accounts", "LeanTex/Core/Ir.lean", "LeanTex.Core.Ir.Block.frame"⟩,
+   -- The attachment point is claimed covered for every base. Fix: state it
+   -- over `Font.topAccentX` itself, where the fallback arm lives.
+   ⟨"Math.accentAttach_covers", "LeanTex/Core/Font.lean", "LeanTex.Core.Font.Font.topAccentX"⟩,
+   -- A picture label's face is claimed to agree across backends.
+   -- `pictureLabelFaceChecks` is the artifact witness; the IR theorem it
+   -- projects from is unwritten. Fix: state the `_agree` over the one IR
+   -- value both backends read.
+   ⟨"Picture.labelFace_agree", "Tests/Support.lean", "CensusLine.runFonts"⟩,
+   ⟨"Picture.labelFace_agree", "Tests/Surface.lean", "pictureLabelFaceChecks"⟩,
+   -- Relative node placement claimed exact, at two sites. Nothing states
+   -- it; the rows of `pictureNodePlaceChecks` read it off shipped pages.
+   -- Fix: state it where the placement is computed.
+   ⟨"Picture.placeRel_exact", "Tests/Support.lean", "CensusPage.pathBoxes"⟩,
+   ⟨"Picture.placeRel_exact", "Tests/Surface.lean", "pictureNodePlaceChecks"⟩,
+   -- Node placement claimed independent of writing order. The statement is
+   -- already staged, as the owed `Obligations.place_order_agree`, and its
+   -- record says it is false as written: two statements naming one node are
+   -- order-sensitive, and the hypothesis it lacks is independence. Fix: cite
+   -- the owed statement as owed, and repair its hypothesis where it is
+   -- staged, not by writing a second statement.
+   ⟨"Picture.place_order_agree", "Tests/Support.lean", "CensusPage.pathBoxes"⟩]
+
+/-- The phantom judgement, pure so the selftest drives it in both
+directions: the hits no row parks (a new phantom, or a new site of a parked
+name), and the rows no hit met (dead, because the citation was fixed). -/
+def judgePhantoms (rows : List PhantomRow) (hits : Array PhantomRow) :
+    Array PhantomRow × List PhantomRow :=
+  (hits.filter (!rows.contains ·), rows.filter (!hits.contains ·))
+
+/-- The anchor a site is keyed by: the declaration its docstring is
+attached to, as `Site.subject` spells it without the backticks. -/
+def anchorOf (subject : String) : String :=
+  (subject.replace "`" "").trimAscii.toString
 
 /-- The modules this tree compiles, each with the lake target that builds
 it. The gate imports all of them: a citation may be written anywhere, and a
@@ -417,12 +443,13 @@ structure Census where
   frozen : Nat := 0
   names : Std.HashSet String := {}
   foreignSeen : Std.HashSet String := {}
-  frozenSeen : Std.HashSet String := {}
+  phantoms : Array PhantomRow := #[]
   deriving Inhabited
 
-/-- Every phantom citation, with the census of what was judged. -/
+/-- Every phantom citation no row parks, the rows no citation met, and the
+census of what was judged. -/
 def scan (envs : Array Environment) :
-    IO (Array (String × String × Nat × String) × Census) := do
+    IO (Array (String × String × Nat × String) × List PhantomRow × Census) := do
   let ss ← sites envs
   let idx := shortIndex envs
   let mut bad : Array (String × String × Nat × String) := #[]
@@ -440,11 +467,13 @@ def scan (envs : Array Environment) :
           | .scope => c := { c with scope := c.scope + 1 }
           | .tree => c := { c with tree := c.tree + 1 }
           | .phantom =>
-            if citePhantomKnown.contains tk then
+            let hit : PhantomRow := ⟨tk, s.file, anchorOf s.subject⟩
+            c := { c with phantoms := c.phantoms.push hit }
+            if citePhantomKnown.contains hit then
               c := { c with frozen := c.frozen + 1 }
-              c := { c with frozenSeen := c.frozenSeen.insert tk }
             else bad := bad.push (tk, s.file, s.line, s.subject)
-  return (bad, c)
+  let (_, dead) := judgePhantoms citePhantomKnown c.phantoms
+  return (bad, dead, c)
 
 /-- Every case the gate must catch and every legal spelling it must pass.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -503,11 +532,30 @@ def selftest : IO UInt32 := do
   for n in citeForeign do
     unless citeCandidate n do
       fails.modify (s!"allowlisted name is not a candidate: {n}" :: ·)
-    if citePhantomKnown.contains n then
+    if citePhantomKnown.any (·.name == n) then
       fails.modify (s!"name on both citation lists: {n}" :: ·)
-  for n in citePhantomKnown do
-    unless citeCandidate n do
-      fails.modify (s!"allowlisted name is not a candidate: {n}" :: ·)
+  for r in citePhantomKnown do
+    unless citeCandidate r.name do
+      fails.modify (s!"allowlisted name is not a candidate: {r.name}" :: ·)
+  unless citePhantomKnown.eraseDups.length == citePhantomKnown.length do
+    fails.modify ("a parked phantom row is listed twice" :: ·)
+
+  -- The parked list reads in both directions. A second site of a parked
+  -- name is a new phantom, a row no citation meets is dead, and the rows a
+  -- scan meets exactly pass.
+  let row : PhantomRow := ⟨"zz_parked_name", "x.lean", "Zz.anchor"⟩
+  let elsewhere : PhantomRow := { row with anchor := "Zz.other" }
+  let (fresh, dead) := judgePhantoms [row] #[row, elsewhere]
+  unless fresh == #[elsewhere] && dead.isEmpty do
+    fails.modify ("judgePhantoms: a new site of a parked name passed" :: ·)
+  let (fresh, dead) := judgePhantoms [row, elsewhere] #[row]
+  unless fresh.isEmpty && dead == [elsewhere] do
+    fails.modify ("judgePhantoms: a row no citation meets passed" :: ·)
+  let (fresh, dead) := judgePhantoms [row] #[row, row]
+  unless fresh.isEmpty && dead.isEmpty do
+    fails.modify ("judgePhantoms: two citations at one parked site failed" :: ·)
+  unless anchorOf "`LeanTex.Core.Ir.frameSteps`" == "LeanTex.Core.Ir.frameSteps" do
+    fails.modify ("anchorOf: the backticked subject did not read as its declaration" :: ·)
 
   let docCases : List (Array String × Array (Nat × String)) := [
     (#["/-- a `foo_bar` claim -/", "def x := 1"], #[(1, "/-- a `foo_bar` claim -/")]),
@@ -568,16 +616,25 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then
     return (← selftest)
   let envs ← loadTree
-  let (bad, c) ← scan envs
+  let (bad, dead, c) ← scan envs
   unless args.contains "--check" do
     IO.println s!"cites: {c.sites} docstrings, {c.candidates} citations \
       ({c.names.size} distinct names), {c.scope} resolving in scope, \
       {c.tree} resolving elsewhere in the tree, \
       {c.foreign} foreign ({c.foreignSeen.size} of {citeForeign.length} rows), \
-      {c.frozen} frozen ({c.frozenSeen.size} of {citePhantomKnown.length} rows), \
-      {bad.size} phantom"
-  if bad.isEmpty then
+      {c.frozen} frozen ({citePhantomKnown.length - dead.length} of \
+      {citePhantomKnown.length} rows), {bad.size} phantom"
+  if bad.isEmpty && dead.isEmpty then
     return 0
+  unless dead.isEmpty do
+    let rows := String.intercalate "\n"
+      (dead.map fun r => s!"  `{r.name}` at {r.file} ({r.anchor})")
+    IO.eprintln s!"cites: a parked phantom row meets no citation:
+{rows}
+  The citation it parked was fixed or moved, so the row is dead. Fix: delete
+  the row, or, if the citation moved, key the row to where it stands now."
+  if bad.isEmpty then
+    return 1
   let hits := String.intercalate "\n"
     (bad.toList.map fun (n, f, i, subj) => s!"  {f}:{i} ({subj}): `{n}`")
   IO.eprintln s!"cites: a docstring cites a theorem name that resolves to nothing:
@@ -586,5 +643,6 @@ def main (args : List String) : IO UInt32 := do
   Conventions); a name that resolves to nothing reads as held and is not.
   Fix: write the theorem, or cite the one that does hold the claim, or state
   the claim without a name. A name that is not this tree's -- foreign
-  vocabulary spelled snake_case -- goes in citeForeign with its source."
+  vocabulary spelled snake_case -- goes in citeForeign with its source. A
+  parked name is parked at its own sites only, so citing it again is new."
   return 1

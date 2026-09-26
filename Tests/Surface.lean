@@ -5124,11 +5124,13 @@ facts, each a defect the deck-shaped picture showed:
   since `pic.shapes.isEmpty` is the only door to it.
 * A name written before the option bracket (`\node (n) [keys] {body}`) is
   the same name as one written after it: pgf reads the two orders alike.
-* `left=of`/`right=of`/`above=of`/`below=of` place the node at `node
-  distance` from the named one, centre to centre (`Picture.placeRel_exact`).
+* `left=of`/`right=of`/`above=of`/`below=of` place the node at the
+  `node distance` from the named one, centre to centre (`Picture.placeRel_exact`).
 * The placement is a function of the reference graph, not of declaration
-  order: the page is the same whichever of two nodes is written first
-  (`Picture.place_order_agree`). TikZ rejects the forward reference; the
+  order: the page is the same whichever of two nodes is written first. The
+  rows below read that off two shipped pages; the statement is owed as
+  `Obligations.place_order_agree`, which still lacks the independence
+  hypothesis its record names. TikZ rejects the forward reference; the
   engine resolves it, and only a reference to a name no node carries — or
   a cycle — is refused, by name.
 
