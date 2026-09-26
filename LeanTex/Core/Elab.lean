@@ -3567,7 +3567,7 @@ no extent is reserved for it" pos
             match urlStyleFamily? v with
             | some fam => modify fun st => { st with urlFamily := fam }
             | none =>
-              warnOnce ctx "ctrl:urlstyle" .W0104
+              warnOnce ctx ("ctrl:urlstyle:" ++ v) .W0104
                 s!"'\\urlstyle\{{v}}' names no URL face; skipped" pos
                 (help := "url.sty defines tt, rm, sf and same")
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -10753,7 +10753,7 @@ tool = none refuses the boundary")
         modify fun st => { st with urlFamily := fam }
         return s
       | none =>
-        warnOnce s.ctx "ctrl:urlstyle" .W0104
+        warnOnce s.ctx ("ctrl:urlstyle:" ++ val) .W0104
           s!"'\\urlstyle\{{val}}' names no URL face; skipped" pos
           (help := "url.sty defines tt, rm, sf and same")
         return s

@@ -927,11 +927,31 @@ def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
     "A link \\url{https://example.org/a} here.")
   t "urlstyle: 'sf' sets the sans family, not the mono one"
     (monoRuns sfDoc == 0 && famRuns .sans sfDoc == 1)
-  -- A value url.sty does not define is still a named skip.
-  t "urlstyle: a value url.sty does not define is named"
+  -- A value url.sty does not define is still a named skip, keyed by the
+  -- value it names.
+  t "urlstyle (fails on base): a value url.sty does not define is named under that value"
     (((elabStr (dvDoc "\\usepackage{url}\n\\urlstyle{zzbogus}\n"
         "A link \\url{https://example.org/a} here.")).2).any fun d =>
-      d.code == "W0104" && d.subject == some "ctrl:urlstyle")
+      d.code == "W0104" && d.subject == some "ctrl:urlstyle:zzbogus")
+  -- Two undefined values are two refusals. One key for every value put the
+  -- first value's line, counting both sites, over the second one — in the
+  -- preamble and in the body alike, the two doors the selector has.
+  let w104 (pre body : String) : Array Diag :=
+    ((elabStr (dvDoc pre body)).2).filter (·.code == "W0104")
+  let two := w104 "\\usepackage{url}\n\\urlstyle{zzfoo}\n\\urlstyle{zzbar}\n" "x"
+  t "urlstyle (fails on base): two undefined preamble values are two refusals, each its own"
+    (two.size == 2 && two.all (fun d => d.sites == 1 && d.severity == .warning) &&
+      two.map (·.subject) == #[some "ctrl:urlstyle:zzfoo", some "ctrl:urlstyle:zzbar"])
+  let twoBody := w104 "\\usepackage{url}\n"
+    "A \\urlstyle{zzfoo}\\url{https://example.org/a} and \\urlstyle{zzbar}\\url{https://example.org/b}."
+  t "urlstyle (fails on base): two undefined body values are two refusals, each its own"
+    (twoBody.size == 2 && twoBody.all (fun d => d.sites == 1 && d.severity == .warning) &&
+      twoBody.map (·.subject) == #[some "ctrl:urlstyle:zzfoo", some "ctrl:urlstyle:zzbar"])
+  -- One undefined value at two sites is still one refusal, counted twice.
+  let same := w104 "\\usepackage{url}\n\\urlstyle{zzfoo}\n\\urlstyle{zzfoo}\n" "x"
+  t "urlstyle: one undefined value at two sites is one refusal counted at both"
+    (same.size == 2 && same.all (·.sites == 2) &&
+      (same.filter (·.severity == .warning)).size == 1)
   -- The slot fact itself. One face in every slot is the no-mono default and
   -- the collapse; a distinct face in slot 2 is a declared mono.
   let load (name : String) : IO (Option Font.Font) := do
