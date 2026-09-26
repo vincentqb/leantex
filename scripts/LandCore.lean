@@ -1252,4 +1252,211 @@ theorem pushVerdict_exact (ok : Bool) (r t : Sha) (h : pushVerdict ok r t = .pus
     exact ⟨hc.1.1, hc.2, hc.1.2⟩
   · simp at h
 
+-- ## The scenario harness's guard
+--
+-- `land --scratch-selftest` builds throwaway repositories and drives this
+-- tool against them, shelling out to git hundreds of times; a git command
+-- writes whatever repository its environment and its directory name. The
+-- harness as it stood before its scrub, run under the variables git exports
+-- to a hook in a linked worktree, committed its fixtures into the repository
+-- they named, rewrote that repository's config, and pushed its `main` to
+-- that repository's origin (reproduced on a scratch copy; PLAN 2026-09-26,
+-- the landguard entry). What follows is the decision the harness makes before
+-- every command it runs, over what git answered: the boundary asks, and runs
+-- only what this allows.
+
+/-- A path's components: `none` unless the path is absolute and never climbs.
+Empty components (`//`) and `.` are dropped. A relative path, or one that
+climbs with `..`, can name a directory a component comparison misjudges, so
+the guard owns neither. -/
+def pathParts (p : String) : Option (List String) :=
+  if !p.startsWith "/" then none
+  else
+    let cs := (p.splitOn "/").filter fun c => !c.isEmpty && c != "."
+    if cs.contains ".." then none else some cs
+
+/-- `p` is `root` or lies inside it, compared component by component, so
+`/tmp/a` does not hold `/tmp/ab`. The filesystem's own root holds nothing: a
+guard whose root is `/` guards nothing. -/
+def within (root p : String) : Bool :=
+  match pathParts root, pathParts p with
+  | some (r :: rs), some q => (r :: rs).isPrefixOf q
+  | _, _ => false
+
+/-- Two spellings of one absolute path. -/
+def samePath (a b : String) : Bool :=
+  match pathParts a, pathParts b with
+  | some x, some y => x == y
+  | _, _ => false
+
+/-- `p` as read from `cwd`: unchanged when absolute. -/
+def fromDir (cwd p : String) : String :=
+  if p.startsWith "/" then p else s!"{cwd}/{p}"
+
+/-- What the guard knows: the directory the run created for itself, and the
+bare repositories the run created under it — the only repositories a push
+may write. -/
+structure HGuard where
+  root : String
+  made : List String
+  deriving Repr, Inhabited
+
+/-- One command the harness is about to run, classified. No shape passes
+unmodelled: a global option before the subcommand, a push whose target is
+not its first operand, and a command that contacts a remote other than by a
+push are `opaque`, which the guard refuses. -/
+inductive HCall where
+  /-- `git --version`: names no repository. -/
+  | version
+  /-- `init`, `clone`, `worktree add` or `worktree move`, run from `cwd` in
+  the repository `gitDir` (empty when there is none yet). It creates what its
+  operands name, each read as a path from `cwd` — a branch name so read lands
+  under `cwd` too, so a destination is inside the root however it is spelled. -/
+  | create (cwd gitDir : String) (paths : List String)
+  /-- A push from the repository `gitDir` to `target`, read as a path. -/
+  | push (cwd gitDir target : String)
+  /-- Any other command: it reads or writes the repository `gitDir`, the one
+  `git rev-parse --absolute-git-dir` names from `cwd` in the command's own
+  environment (empty when git named none). -/
+  | inRepo (cwd gitDir : String)
+  /-- The tool under test, run from `cwd` in the repository `gitDir`, whose
+  remotes' URLs are `remotes`: it may push to any of them. -/
+  | drive (cwd gitDir : String) (remotes : List String)
+  /-- A shape the guard does not model. -/
+  | opaque (why : String)
+  deriving Repr, Inhabited
+
+/-- Where a guarded command may write. -/
+inductive HWrite where
+  /-- The repository a command runs in. -/
+  | repo (gitDir : String)
+  /-- A path a command creates. -/
+  | created (path : String)
+  /-- A repository a push reaches over a transport. -/
+  | remote (path : String)
+  deriving Repr, Inhabited
+
+/-- Every write a command may make, declared per shape with no wildcard. -/
+def HCall.writes : HCall → List HWrite
+  | .version => []
+  | .create _ g ps => (if g.isEmpty then [] else [.repo g]) ++ ps.map .created
+  | .push _ g t => [.repo g, .remote t]
+  | .inRepo _ g => [.repo g]
+  | .drive _ g rs => .repo g :: rs.map .remote
+  | .opaque _ => []
+
+/-- The directory a command runs from, where it names one. -/
+def HCall.cwd : HCall → Option String
+  | .create c _ _ | .push c _ _ | .inRepo c _ | .drive c _ _ => some c
+  | .version | .opaque _ => none
+
+/-- Is this write the run's? A repository, or a path a command creates, only
+inside the root; a remote only as a bare repository the run itself made
+there. -/
+def HWrite.owned (g : HGuard) : HWrite → Bool
+  | .repo d => within g.root d
+  | .created p => within g.root p
+  | .remote p => within g.root p && g.made.any (samePath p)
+
+/-- The guard's decision: a modelled command, run from inside the root, every
+write of which the run owns. -/
+def HCall.allowed (g : HGuard) (c : HCall) : Bool :=
+  match c with
+  | .opaque _ => false
+  | _ => c.cwd.all (within g.root) && c.writes.all (·.owned g)
+
+/-- Why the guard refuses `c`, for the refusal's message; empty when it
+allows it. -/
+def HCall.refusal (g : HGuard) (c : HCall) : String :=
+  match c with
+  | .opaque why => why
+  | _ =>
+    if !c.cwd.all (within g.root) then s!"it runs from outside the scratch root {g.root}"
+    else match c.writes.find? (!·.owned g) with
+      | some (.repo d) =>
+        s!"its repository {if d.isEmpty then "(none)" else d} is outside the scratch root {g.root}"
+      | some (.created p) => s!"it creates {p}, outside the scratch root {g.root}"
+      | some (.remote p) => s!"it would reach {p}, which is not a bare repository this run made"
+      | none => ""
+
+/-- The words of an argv that are not options. -/
+def operands (args : List String) : List String := args.filter fun a => !a.startsWith "-"
+
+/-- Push options after which the target is not the first operand, or that name
+a program to run at the target. -/
+def pushTargetOpts : List String := ["--repo", "-o", "--push-option", "--receive-pack", "--exec"]
+
+/-- Subcommands that contact a remote other than by a push. -/
+def remoteContacts : List String :=
+  ["fetch", "pull", "ls-remote", "send-pack", "fetch-pack", "archive", "submodule", "bundle"]
+
+/-- Classify an argv the harness is about to run from `cwd`, given what
+`git rev-parse --absolute-git-dir` named there (empty for nothing). -/
+def classify (cwd gitDir : String) (args : Array String) : HCall :=
+  match args.toList with
+  | [] => .opaque "an argv with no subcommand"
+  | c :: rest =>
+    if c == "--version" && rest.isEmpty then .version
+    else if c.startsWith "-" then .opaque s!"the global option {c}"
+    else if c == "init" || c == "clone" then
+      let ps := (operands rest).map (fromDir cwd)
+      .create cwd gitDir (if ps.isEmpty then [cwd] else ps)
+    else if c == "worktree" && (rest.head? == some "add" || rest.head? == some "move") then
+      .create cwd gitDir ((operands (rest.drop 1)).map (fromDir cwd))
+    else if c == "push" then
+      if rest.any (fun a => pushTargetOpts.any (a.startsWith ·)) then
+        .opaque "a push whose target is not its first operand"
+      else match operands rest with
+        | t :: _ => .push cwd gitDir (fromDir cwd t)
+        | [] => .opaque "a push that names no target"
+    else if remoteContacts.contains c then .opaque s!"{c} contacts a remote"
+    else if c == "remote" && (rest.head? != some "add" || rest.contains "-f"
+        || rest.contains "--fetch") then
+      .opaque "a remote subcommand other than a plain add"
+    else .inRepo cwd gitDir
+
+/-- The bare repository a successful command created, if it was
+`init --bare`: what the run records as its own, and so as a push target. -/
+def bareCreated (cwd : String) (args : Array String) : Option String :=
+  match args.toList with
+  | "init" :: rest =>
+    if !rest.contains "--bare" then none
+    else some ((operands rest).getLast?.map (fromDir cwd) |>.getD cwd)
+  | _ => none
+
+/-- Why a directory cannot be the harness's scratch root, or nothing. It must
+be absolute and below `/`, and no repository may enclose it: git discovers
+that repository from any directory under the root that is not a repository
+itself, and writes it. `enclosing` is what `git rev-parse --absolute-git-dir`
+names from the root (empty for nothing). -/
+def rootFault (root enclosing : String) : Option String :=
+  match pathParts root with
+  | none | some [] => some s!"the scratch root {root} is not an absolute directory below /"
+  | some _ =>
+    if enclosing.isEmpty then none
+    else some s!"the scratch root {root} is inside the checkout {enclosing}"
+
+/-- **The harness writes only what its run created.** Every write a command
+the guard lets run may make lies inside the run's scratch root, and a push —
+or a run of the tool under test, which may push to any remote its repository
+names — reaches only a bare repository the run itself made there. -/
+theorem hcall_writes_owned (g : HGuard) (c : HCall) (h : c.allowed g = true) :
+    ∀ w ∈ c.writes, w.owned g = true := by
+  intro w hw
+  unfold HCall.allowed at h
+  split at h
+  · simp at h
+  · simp only [Bool.and_eq_true, List.all_eq_true] at h
+    exact h.2 w hw
+
+/-- A push the guard lets run names a bare repository the run made inside its
+scratch root, from a repository inside it. -/
+theorem hpush_owned (g : HGuard) (cwd d t : String)
+    (h : (HCall.push cwd d t).allowed g = true) :
+    within g.root d = true ∧ within g.root t = true ∧ g.made.any (samePath t) = true := by
+  have hd := hcall_writes_owned g _ h (.repo d) (by simp [HCall.writes])
+  have ht := hcall_writes_owned g _ h (.remote t) (by simp [HCall.writes])
+  simp only [HWrite.owned, Bool.and_eq_true] at hd ht
+  exact ⟨hd, ht.1, ht.2⟩
+
 end Land

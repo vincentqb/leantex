@@ -1641,6 +1641,76 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "ledger escaping"), ("why", "a control byte survived")]
   else say "selftest" "ok" [("case", "ledger escaping")]
+  -- The scenario harness's guard, over the argv shapes the harness runs and
+  -- the ones it must refuse. `hcall_writes_owned` says an allowed command
+  -- writes only what the run owns; these say the classifier and the path
+  -- comparison answer what that statement reads.
+  let g : HGuard := { root := "/tmp/r", made := ["/tmp/r/s/remote.git"] }
+  let rp := "/tmp/r/s/repo"
+  let rg := "/tmp/r/s/repo/.git"
+  let guardCases : List (String × HCall × Bool) :=
+    [ ("init a scratch repository", classify rp "" #["init", "-q", "-b", "main", "."], true)
+    , ("init from outside the root", classify "/srv/elsewhere" "" #["init", "-q", "."], false)
+    , ("init a bare repository in the root",
+        classify "/tmp/r/s" "" #["init", "-q", "--bare", "-b", "main", "/tmp/r/s/remote.git"], true)
+    , ("init a repository outside the root", classify "/tmp/r/s" "" #["init", "-q", "/elsewhere"],
+        false)
+    , ("commit in a scratch repository", classify rp rg #["commit", "-qm", "x"], true)
+    , ("commit under a hook's GIT_DIR", classify rp "/real/.git/worktrees/w" #["commit", "-qm", "x"],
+        false)
+    , ("commit where git named no repository", classify rp "" #["commit", "-qm", "x"], false)
+    , ("push by a remote's name", classify rp rg #["push", "-q", "origin", "main"], false)
+    , ("push to the run's bare repository by path",
+        classify rp rg #["push", "-q", "/tmp/r/s/remote.git", "main"], true)
+    , ("push to it spelled with // and .",
+        classify rp rg #["push", "-q", "/tmp/r//s/./remote.git", "main"], true)
+    , ("push to a repository the run did not make",
+        classify rp rg #["push", "-q", "/tmp/r/s/other.git", "main"], false)
+    , ("push with --repo", classify rp rg #["push", "--repo=/tmp/r/s/remote.git"], false)
+    , ("a global option", classify rp rg #["-C", "/", "status"], false)
+    , ("a fetch", classify rp rg #["fetch", "/tmp/r/s/remote.git"], false)
+    , ("remote update", classify rp rg #["remote", "update"], false)
+    , ("remote add", classify rp rg #["remote", "add", "origin", "/tmp/r/s/remote.git"], true)
+    , ("worktree add inside the root",
+        classify rp rg #["worktree", "add", "-q", "-b", "agent/x", "/tmp/r/s/lt-x", "main"], true)
+    , ("worktree add outside the root",
+        classify rp rg #["worktree", "add", "-q", "/tmp/other/lt-x", "main"], false)
+    , ("clone inside the root",
+        classify "/tmp/r/s" "" #["clone", "-q", "/tmp/r/s/remote.git", "/tmp/r/s/other"], true)
+    , ("clone of a repository outside the root",
+        classify "/tmp/r/s" "" #["clone", "-q", "/real/repo", "/tmp/r/s/other"], false)
+    , ("git --version", classify "/tmp/r" "" #["--version"], true)
+    , ("the tool under test, its origin the run's", .drive rp rg ["/tmp/r/s/remote.git"], true)
+    , ("the tool under test, its origin a real remote",
+        .drive rp rg ["https://github.com/example/repo"], false)
+    , ("the tool under test, no remote", .drive rp rg [], true) ]
+  for (label, c, want) in guardCases do
+    if c.allowed g != want then
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"guard: {label}"),
+        ("why", if want then "refused" else "allowed")]
+    else say "selftest" "ok" [("case", s!"guard: {label}")]
+  let withinCases : List (String × String × String × Bool) :=
+    [ ("inside", "/tmp/r", "/tmp/r/x", true), ("itself", "/tmp/r", "/tmp/r", true)
+    , ("a sibling sharing a prefix", "/tmp/r", "/tmp/rx", false)
+    , ("a path that climbs", "/tmp/r", "/tmp/r/../x", false)
+    , ("a relative path", "/tmp/r", "tmp/r/x", false)
+    , ("the filesystem root holds nothing", "/", "/tmp", false)
+    , ("// and . spell one path", "/tmp/r", "/tmp//r/./x", true) ]
+  for (label, r, p, want) in withinCases do
+    if within r p != want then
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"within: {label}"), ("why", "wrong answer")]
+    else say "selftest" "ok" [("case", s!"within: {label}")]
+  if bareCreated "/tmp/r/s" #["init", "-q", "--bare", "-b", "main", "/tmp/r/s/remote.git"]
+        != some "/tmp/r/s/remote.git"
+      || bareCreated rp #["init", "-q", "-b", "main", "."] != none
+      || rootFault "/tmp/r" "" != none || (rootFault "/tmp/r" "/srv/checkout/.git").isNone
+      || (rootFault "/" "").isNone || (rootFault "tmp/r" "").isNone then
+    bad := bad + 1
+    say "selftest" "fail" [("case", "guard: made repositories and the scratch root"),
+      ("why", "wrong answer")]
+  else say "selftest" "ok" [("case", "guard: made repositories and the scratch root")]
   if bad == 0 then sayFinal .checked [("cases", toString cases.length)]; return 0
   else sayFinal .failed [("cases", toString cases.length), ("bad", toString bad)]; return 1
 
@@ -1654,27 +1724,46 @@ def selftest : IO UInt32 := do
 -- refs. Each scenario is one the reviewer reproduced against a landing that
 -- reported what had not happened, so a regression here is that defect back.
 -- No real worktree is ever named: the tool under test may not be pointed at
--- one, and this harness structurally cannot be.
+-- one, and this harness structurally cannot be: every git command it runs,
+-- and every run of the tool under test, passes the guard in
+-- `scripts/LandCore.lean` first (`hcall_writes_owned`).
 
 /-- The environment every harness child gets: each `GIT_` variable this
-process inherited removed, and git's global and system configuration out of
-reach. git exports `GIT_DIR` and `GIT_INDEX_FILE` to a hook in every linked
-worktree, so a harness started from one once committed its fixtures into the
-repository `GIT_DIR` named and opted that repository in to gate overrides;
-and a host's `commit.gpgsign` or `core.hooksPath` would change what a
-scenario tests. -/
+process inherited removed, git's global and system configuration out of
+reach, and no transport but a local path. git exports `GIT_DIR` and
+`GIT_INDEX_FILE` to a hook in every linked worktree, so a harness started
+from one once committed its fixtures into the repository `GIT_DIR` named,
+rewrote its config and pushed its `main` to its origin; a host's
+`commit.gpgsign` or `core.hooksPath` would change what a scenario tests; and
+every repository a scenario makes is a local path, while a real remote never
+is — so `GIT_ALLOW_PROTOCOL=file` leaves git itself refusing `https`, `ssh`
+and `git://` to this process's every descendant, the tool under test and its
+gates included. -/
+-- premise: scenarioNoNetwork — the variable reaches a gate the tool under test
+-- runs, and git refuses the transport before it connects.
 def harnessEnv : IO (Array (String × Option String)) := do
   let set : Array (String × Option String) := #[("GIT_CONFIG_GLOBAL", some "/dev/null"),
-    ("GIT_CONFIG_NOSYSTEM", some "1"), ("GIT_TERMINAL_PROMPT", some "0")]
+    ("GIT_CONFIG_NOSYSTEM", some "1"), ("GIT_TERMINAL_PROMPT", some "0"),
+    ("GIT_ALLOW_PROTOCOL", some "file")]
   let inherited ← gitVarsInEnv
   let names := repoVarsFixed.foldl (init := inherited) fun acc n =>
     if acc.contains n then acc else acc.push n
   let unset := (names.filter fun n => !(set.any (·.1 == n))).map (·, none)
   return unset.append set
 
-/-- Run a command for the harness. Not `sh`: there is no run directory yet,
-and the harness asserts on exit codes rather than on parsed facts. -/
-def hrun (cmd : String) (args : Array String) (cwd : Option String)
+/-- The guard every command of the harness is checked against: installed once
+the run's scratch root is made, canonical, and inside no checkout. Until then,
+and in any process that is not a harness run, `hgit` and `runTool` refuse
+everything. -/
+initialize harnessGuard : IO.Ref (Option HGuard) ← IO.mkRef none
+
+/-- The exit status of a command the guard refused: it never ran. -/
+def refusedCode : Nat := 126
+
+/-- Spawn a command in the harness's environment, standard input closed; its
+exit code, and its standard output and error joined. Git reaches it only
+through `hgit`, and the tool under test only through `runTool`. -/
+private def hspawn (cmd : String) (args : Array String) (cwd : Option String)
     (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
   let env ← harnessEnv
   let r ← try
@@ -1684,8 +1773,93 @@ def hrun (cmd : String) (args : Array String) (cwd : Option String)
     catch ex => pure { exitCode := 127, stdout := "", stderr := toString ex }
   return (r.exitCode.toNat, trimWs (r.stdout ++ r.stderr))
 
-def hgit (args : Array String) (cwd : String) : IO (Nat × String) :=
-  hrun "git" args (some cwd)
+/-- Run a command for the harness that is not git and not the tool under
+test. Not `sh`: there is no run directory yet, and the harness asserts on
+exit codes rather than on parsed facts. -/
+def hrun (cmd : String) (args : Array String) (cwd : Option String)
+    (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) := do
+  if cmd == "git" then
+    return (refusedCode, "land-harness: refused: git runs only through the guard (hgit)")
+  hspawn cmd args cwd extraEnv
+
+/-- What `git rev-parse --absolute-git-dir` names from `cwd` in the harness's
+environment extended by `extraEnv`: the repository a command run there, so,
+would read and write. Standard output only; empty when git names none. -/
+-- premise: scenarioHookGitDir — the repository named here is the one the
+-- command then writes: the same binary, environment and directory.
+def gitDirOf (cwd : String) (extraEnv : Array (String × Option String) := #[]) : IO String := do
+  let env ← harnessEnv
+  let r ← try
+      IO.Process.output
+        { cmd := "git", args := #["rev-parse", "--absolute-git-dir"],
+          cwd := some cwd, env := env.append extraEnv, stdin := .null }
+    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+  return if r.exitCode == 0 then trimWs r.stdout else ""
+
+/-- Run git for the harness, after the guard: the argv classified from its
+directory and what git names there, and run only when every write it may make
+is the run's. A refused command never runs; it answers `refusedCode` and why.
+A bare repository `init --bare` made becomes one the run may push to. -/
+-- The statement is `hcall_writes_owned` in scripts/LandCore.lean.
+-- premise: scenarioGuardRefuses — a command from outside the root, a push by a
+-- remote's name, a push to a repository the run did not make, a global option
+-- and a fetch are each refused, and none of them wrote anything.
+def hgit (args : Array String) (cwd : String) : IO (Nat × String) := do
+  let some g ← harnessGuard.get
+    | return (refusedCode, "land-harness: refused: no scratch root is guarded")
+  let gitDir ← if within g.root cwd then gitDirOf cwd else pure ""
+  let c := classify cwd gitDir args
+  if !c.allowed g then
+    return (refusedCode, s!"land-harness: refused git {String.intercalate " " args.toList} \
+from {cwd}: {c.refusal g}")
+  let r ← hspawn "git" args (some cwd)
+  if r.1 == 0 then
+    if let some b := bareCreated cwd args then
+      harnessGuard.modify (·.map fun g => { g with made := g.made ++ [b] })
+  return r
+
+/-- The URLs a push from the repository `cwd` names could reach: every
+remote's `url` and `pushurl`, read from `cwd` in the given environment. A
+`url.*.insteadOf` or `pushInsteadOf` rewrites a URL at push time, so any
+such key answers with a URL no run owns. -/
+def remoteUrlsOf (cwd : String) (extraEnv : Array (String × Option String)) :
+    IO (List String) := do
+  let env ← harnessEnv
+  let cfg (re : String) : IO (Nat × String) := do
+    let r ← try
+        IO.Process.output
+          { cmd := "git", args := #["config", "--get-regexp", re], cwd := some cwd,
+            env := env.append extraEnv, stdin := .null }
+      catch _ => pure { exitCode := 2, stdout := "", stderr := "" }
+    return (r.exitCode.toNat, r.stdout)
+  let (ci, _) ← cfg "^url\\."
+  let (cr, out) ← cfg "^remote\\..*\\.(push)?url$"
+  let urls := (out.splitOn "\n").filterMap fun l =>
+    match wsSplit l with
+    | [_, u] => some (fromDir cwd u)
+    | [] => none
+    | _ => some "(a remote URL that does not read as one word)"
+  return (if ci != 1 then ["(a url.*.insteadOf rewrite, or a config git could not read)"] else [])
+    ++ (if cr == 0 || cr == 1 then urls else ["(a config git could not read)"])
+
+/-- Run the tool under test from `cwd`, after the guard: its repository — as
+git names it in the environment the tool will get — inside the root, every
+remote that repository names a bare repository the run made, and a
+`LAND_SCRATCH_DIR` it is handed inside the root. -/
+def runTool (self cwd : String) (args : Array String)
+    (extraEnv : Array (String × Option String)) : IO (Nat × String) := do
+  let some g ← harnessGuard.get
+    | return (refusedCode, "land-harness: refused: no scratch root is guarded")
+  let gitDir ← if within g.root cwd then gitDirOf cwd extraEnv else pure ""
+  let remotes ← if within g.root gitDir then remoteUrlsOf cwd extraEnv else pure []
+  let c := HCall.drive cwd gitDir remotes
+  let scratch := extraEnv.find? (·.1 == "LAND_SCRATCH_DIR") |>.bind (·.2)
+  if !(scratch.all (within g.root)) then
+    return (refusedCode, s!"land-harness: refused {self} from {cwd}: its scratch directory \
+{scratch.getD ""} is outside the scratch root {g.root}")
+  if !c.allowed g then
+    return (refusedCode, s!"land-harness: refused {self} from {cwd}: {c.refusal g}")
+  hspawn self args (some cwd) extraEnv
 
 /-- A fixture step that must succeed: a scenario built on a failed setup
 command would assert about a repository it never made. -/
@@ -1736,7 +1910,7 @@ structure Outcome where
 /-- Run `land` (this binary) in a scratch repository under a gate override. -/
 def landIn (self repo : String) (args : Array String) (gates : String)
     (extraEnv : Array (String × Option String) := #[]) : IO (Nat × String) :=
-  hrun self args (some repo) (#[("LAND_GATES", some gates),
+  runTool self repo args (#[("LAND_GATES", some gates),
     ("GIT_TERMINAL_PROMPT", some "0")] ++ extraEnv)
 
 /-- Does `out` carry `s`? -/
@@ -1748,12 +1922,14 @@ def worktreePaths (repo : String) : IO (Array String) := do
   return ((o.splitOn "\n").filter (·.startsWith "worktree ")).toArray.map
     fun l => (l.drop "worktree ".length).toString
 
-/-- A bare `origin` holding the scratch repository's `main`. -/
+/-- A bare `origin` holding the scratch repository's `main`. Pushed to by its
+path: the guard lets a push through only to a bare repository this run made,
+which a remote's name does not show. -/
 def addRemote (s : Scratch) : IO String := do
   let remote := s!"{s.root}/remote.git"
   hgitOk #["init", "-q", "--bare", "-b", "main", remote] s.root
   hgitOk #["remote", "add", "origin", remote] s.repo
-  hgitOk #["push", "-q", "origin", "main"] s.repo
+  hgitOk #["push", "-q", remote, "main"] s.repo
   return remote
 
 def scenarioBranchMoves (self root : String) : IO Outcome := do
@@ -1905,7 +2081,7 @@ def scenarioPushNotFastForward (self root : String) : IO Outcome := do
   hgitOk #["config", "user.name", "Scratch"] other
   hgitOk #["config", "user.email", "scratch@example.org"] other
   hgitOk #["commit", "-q", "--allow-empty", "-m", "elsewhere"] other
-  hgitOk #["push", "-q", "origin", "main"] other
+  hgitOk #["push", "-q", remote, "main"] other
   let theirs ← revOf remote "refs/heads/main"
   let tip ← revOf s.repo "refs/heads/agent/pushff"
   let (code, out) ← landIn self s.repo #["pushff", "--push"] "t=true"
@@ -2269,22 +2445,216 @@ def scenarioPushUngated (self root : String) : IO Outcome := do
              && says out2 "a commit no landing gated"
          , detail := s!"land={c1} push={c2} remote={base}->{onRemote}" }
 
+/-- A repository with an origin, as the real one stood when its `main` was
+pushed unasked: `main` one commit ahead of its origin's, and a linked
+worktree on its own branch — the worktree whose hook is handed `GIT_DIR` and
+`GIT_INDEX_FILE` naming this repository. -/
+structure Victim where
+  root : String
+  repo : String
+  origin : String
+  wt : String
+  /-- The linked worktree's git directory, which a hook there is handed as
+  `GIT_DIR`. -/
+  gitDir : String
+
+def mkVictim (root : String) : IO Victim := do
+  let repo := s!"{root}/victim"
+  IO.FS.createDirAll repo
+  hgitOk #["init", "-q", "-b", "main", "."] repo
+  hgitOk #["config", "user.name", "Victim"] repo
+  hgitOk #["config", "user.email", "victim@example.org"] repo
+  IO.FS.writeFile s!"{repo}/v.txt" "v\n"
+  hgitOk #["add", "v.txt"] repo
+  hgitOk #["commit", "-qm", "The victim's own commit"] repo
+  let origin := s!"{root}/victim-origin.git"
+  hgitOk #["init", "-q", "--bare", "-b", "main", origin] root
+  hgitOk #["remote", "add", "origin", origin] repo
+  hgitOk #["push", "-q", origin, "main"] repo
+  hgitOk #["update-ref", "refs/remotes/origin/main", "main"] repo
+  IO.FS.writeFile s!"{repo}/w.txt" "w\n"
+  hgitOk #["add", "w.txt"] repo
+  hgitOk #["commit", "-qm", "Ahead of the origin"] repo
+  let wt := s!"{root}/victim-wt"
+  hgitOk #["worktree", "add", "-q", "-b", "agent/victim", wt, "main"] repo
+  let gitDir ← gitDirOf wt
+  if !within root gitDir then
+    throw (IO.userError s!"fixture: the victim's worktree names the repository {gitDir}")
+  return { root, repo, origin, wt, gitDir }
+
+/-- Everything a command could have written in the victim and its origin: the
+origin's refs; the victim's refs, config and worktrees; the linked worktree's
+`HEAD` and index, as bytes. -/
+structure VictimState where
+  origin : String
+  refs : String
+  config : String
+  worktrees : String
+  head : String
+  index : Array UInt8
+  deriving BEq
+
+def victimState (v : Victim) : IO VictimState := do
+  let (_, origin) ← hgit #["for-each-ref", "--format=%(objectname) %(refname)"] v.origin
+  let (_, refs) ← hgit #["for-each-ref", "--format=%(objectname) %(refname)"] v.repo
+  let (_, worktrees) ← hgit #["worktree", "list", "--porcelain"] v.repo
+  let config ← IO.FS.readFile s!"{v.repo}/.git/config"
+  let head ← IO.FS.readFile s!"{v.gitDir}/HEAD"
+  let index := (← IO.FS.readBinFile s!"{v.gitDir}/index").data
+  return { origin, refs, config, worktrees, head, index }
+
+/-- The parts of the victim that differ between two reads, for a detail. -/
+def VictimState.changed (a b : VictimState) : String :=
+  let parts := [("origin", a.origin == b.origin), ("refs", a.refs == b.refs),
+    ("config", a.config == b.config), ("worktrees", a.worktrees == b.worktrees),
+    ("head", a.head == b.head), ("index", a.index == b.index)]
+  match parts.filter (!·.2) with
+  | [] => "none"
+  | bad => String.intercalate "," (bad.map (·.1))
+
+/-- The incident's shape. The harness is started the way a hook in a linked
+worktree starts a program — `GIT_DIR` and `GIT_INDEX_FILE` naming that
+worktree's repository, whose `main` is ahead of its origin's — and must run
+its scenarios and leave that repository and its origin as they were: the
+origin's `main` unmoved, no ref, config or worktree written. The build before
+the scrub (cfd060d3), started so on a scratch copy, pushed that repository's
+`main` to its origin, added fourteen branches and twelve worktrees, and
+rewrote its config down to `core.bare`. -/
+def scenarioHookGitDir (self root : String) : IO Outcome := do
+  let v ← mkVictim s!"{root}/hookdir"
+  let before ← victimState v
+  let nested := s!"{v.root}/nested"
+  IO.FS.createDirAll nested
+  let (code, out) ← runTool self v.wt #["--scratch-selftest"]
+    #[("GIT_DIR", some v.gitDir), ("GIT_INDEX_FILE", some s!"{v.gitDir}/index"),
+      ("GIT_EDITOR", some ":"), ("GIT_PREFIX", some ""),
+      ("LAND_SCRATCH_DIR", some nested), ("LAND_SCENARIO_NESTED", some "1")]
+  let after ← victimState v
+  let ran := (out.splitOn "step=scenario result=").length - 1
+  let pushed := says out "the push sends the gated tip, not whatever main is by then"
+  return { label := "a harness started under a hook's GIT_DIR runs, and leaves that repository \
+and its origin as they were"
+         , ok := code == 0 && ran ≥ 10 && pushed && before == after
+         , detail := s!"exit={code} scenarios={ran} push-scenario={pushed} \
+changed={before.changed after}" }
+
+/-- A harness whose scratch root lies inside a checkout refuses to start: git
+discovers that checkout from any directory under the root that is not a
+repository itself, and a fixture command there would write it. The checkout
+is left as it was, and the directory holds nothing afterwards. -/
+def scenarioRootInCheckout (self root : String) : IO Outcome := do
+  let v ← mkVictim s!"{root}/incheckout"
+  let inside := s!"{v.repo}/scratch"
+  IO.FS.createDirAll inside
+  let before ← victimState v
+  let (code, out) ← runTool self v.repo #["--scratch-selftest"]
+    #[("LAND_SCRATCH_DIR", some inside), ("LAND_SCENARIO_NESTED", some "1")]
+  let after ← victimState v
+  let left := (← System.FilePath.readDir inside).size
+  let named := says out "is inside the checkout"
+  return { label := "a harness whose scratch root lies inside a checkout refuses to start"
+         , ok := code == 2 && named && before == after && left == 0
+         , detail := s!"exit={code} refused={named} left={left} changed={before.changed after}" }
+
+/-- The guard refuses, before git runs, each command whose writes the run does
+not own: one run from outside the root, a push by a remote's name, a push to
+a repository the run did not make bare, a global option, a fetch, and the
+tool under test in a repository with a remote the run did not make. None of
+them writes anything, and a push by path to the run's own bare repository
+still goes through. -/
+def scenarioGuardRefuses (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/guard" "guard"
+  let remote ← addRemote s
+  let unmade := s!"{s.root}/unmade.git"
+  hgitOk #["init", "-q", "-b", "main", unmade] s.root
+  let tries : List (String × Array String × String) :=
+    [ ("outside", #["status", "--porcelain"], "/")
+    , ("by-name", #["push", "-q", "origin", "main:refs/heads/by-name"], s.repo)
+    , ("unmade", #["push", "-q", unmade, "main:refs/heads/other"], s.repo)
+    , ("global", #["-C", s.repo, "status"], s.repo)
+    , ("fetch", #["fetch", "-q", remote], s.repo) ]
+  let mut refused : Array String := #[]
+  for (key, args, cwd) in tries do
+    let (c, _) ← hgit args cwd
+    if c == refusedCode then refused := refused.push key
+  hgitOk #["remote", "add", "elsewhere", unmade] s.repo
+  let (tool, _) ← runTool self s.repo #["status"] #[]
+  let (byPath, _) ← hgit #["push", "-q", remote, "main:refs/heads/by-path"] s.repo
+  let (_, onRemote) ← hgit #["for-each-ref", "--format=%(refname)"] remote
+  let (_, onUnmade) ← hgit #["for-each-ref", "--format=%(refname)"] unmade
+  let wrote := says onRemote "by-name" || says onUnmade "refs/heads/other"
+  return { label := "the guard refuses each command whose writes the run does not own, before \
+git runs"
+         , ok := refused.size == tries.length && tool == refusedCode && byPath == 0
+             && says onRemote "refs/heads/by-path" && !wrote
+         , detail := s!"refused=[{String.intercalate "," refused.toList}] tool={tool} \
+by-path={byPath} wrote={wrote}" }
+
+/-- No command the harness starts can use a network transport. Every
+repository a scenario makes is a local path and a real remote never is, so
+the harness's environment leaves git itself refusing `https`. The tool under
+test runs one gate that asks for a remote at the loopback address, on a port
+nothing answers, and that passes only when git refused the transport before
+it tried to connect. -/
+def scenarioNoNetwork (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/nonet" "nonet"
+  writeExe s!"{s.root}/probe.sh"
+    s!"#!/bin/sh\nunset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy\n\
+git ls-remote https://127.0.0.1:9/probe.git 2> {s.root}/probe.err\n\
+grep -q \"transport 'https' not allowed\" {s.root}/probe.err\n"
+  let tip ← revOf s.repo "refs/heads/agent/nonet"
+  let (code, _) ← landIn self s.repo #["nonet"] s!"probe={s.root}/probe.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let said := trimWs (← try IO.FS.readFile s!"{s.root}/probe.err" catch _ => pure "")
+  return { label := "no command the harness starts can use a network transport"
+         , ok := code == 0 && after == tip
+         , detail := s!"exit={code} main={after} gated={tip} git-said=[{said}]" }
+
 /-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
 names another build to drive instead of this one — how a scenario is shown
-to fail on the tip before its fix. -/
+to fail on the tip before its fix. The scratch root is a fresh directory
+this run creates, by its real path, under `LAND_SCRATCH_DIR` (else `/tmp`),
+and the run refuses to start, exit 2, when a repository encloses it. Under
+`LAND_SCENARIO_NESTED` — how the two scenarios that start a harness start
+it — those two are left out, so a harness never starts itself again. -/
 def scratchSelftest : IO UInt32 := do
   let self ← do
     match ← IO.getEnv "LAND_SCENARIO_BINARY" with
     | some b => pure b
     | none => pure (← IO.appPath).toString
-  let nanos ← IO.monoNanosNow
-  let root := ((← IO.getEnv "LAND_SCRATCH_DIR").getD "/tmp") ++ s!"/land-scenarios-{nanos % 1000000}"
-  IO.FS.createDirAll root
-  let (gv, _) ← hrun "git" #["--version"] none
+  let nested := (← IO.getEnv "LAND_SCENARIO_NESTED").isSome
+  -- A fresh directory, named by its real path: git names directories by
+  -- their real path, and the guard compares what git names.
+  let parent := (← IO.getEnv "LAND_SCRATCH_DIR").getD "/tmp"
+  let made ← try
+      IO.FS.createDirAll parent
+      let d := s!"{parent}/land-scenarios-{← IO.Process.getPID}-{← IO.monoNanosNow}"
+      IO.FS.createDir d
+      pure (some (← IO.FS.realPath d).toString)
+    catch _ => pure none
+  let some root := made
+    | say "scratch-root" "fail" [("parent", parent), ("why", "no fresh directory could be made")]
+      sayFinal .refused [("why", s!"no fresh scratch root under {parent}")]
+      return 2
+  -- premise: scenarioRootInCheckout — a root a repository encloses is refused
+  -- here, before any command runs, and the directory is left empty.
+  match rootFault root (← gitDirOf root) with
+  | some why =>
+    rmQuiet root
+    say "scratch-root" "fail" [("root", root), ("why", why)]
+    sayFinal .refused [("why", why)]
+    return 2
+  | none => pure ()
+  harnessGuard.set (some { root, made := [] })
+  say "scratch-root" "ok" [("root", root)]
+  let (gv, _) ← hgit #["--version"] root
   if gv != 0 then
+    rmQuiet root
     say "scenario" "skip" [("why", "git is not available")]
     sayFinal .checked [("scenarios", "0")]
     return 0
+  let starting : List (String × (String → String → IO Outcome)) :=
+    [("hookdir", scenarioHookGitDir), ("incheckout", scenarioRootInCheckout)]
   let scenarios : List (String × (String → String → IO Outcome)) :=
     [ ("lands", scenarioLands), ("moves", scenarioBranchMoves), ("leaves", scenarioMainLeaves)
     , ("conflict", scenarioConflict), ("optin", scenarioNoOptIn), ("reserved", scenarioReserved)
@@ -2297,7 +2667,8 @@ def scratchSelftest : IO UInt32 := do
     , ("decoy", scenarioLsRemoteDecoy), ("reland", scenarioRelandRefused)
     , ("putback", scenarioMainPutBack)
     , ("retireb", scenarioRetireRebased), ("pushlater", scenarioPushLater)
-    , ("pushungated", scenarioPushUngated) ]
+    , ("pushungated", scenarioPushUngated), ("guard", scenarioGuardRefuses)
+    , ("nonet", scenarioNoNetwork) ] ++ (if nested then [] else starting)
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
     -- A fixture that could not be built is the scenario's failure, named,
