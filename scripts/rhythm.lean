@@ -10,6 +10,8 @@ reference. Run from the repository root:
   lake env lean --run scripts/rhythm.lean --reference [fixture…]   needs lualatex; writes tests/rhythm/<f>.ref
   lake env lean --run scripts/rhythm.lean --verify-reference [fixture…]   needs lualatex; rebuilds
                                                         each reference and holds it to the file
+  lake env lean --run scripts/rhythm.lean --html <dir>  needs node and Playwright's Chromium: every
+                                                        fixture's page, measured in a browser; a report
 
 A fixture is `tests/rhythm/<name>.tex`. Its header declares what it probes
 (`% rhythm:`) and its boundaries, one per line:
@@ -695,7 +697,251 @@ def dumpLines (name : String) : IO UInt32 := do
   for d in diags do IO.println s!"  diag {d.code} {d.subject} {d.message.take 100}"
   return 0
 
-/-! ## The reference, measured (needs lualatex; never a gate) -/
+/-! ## The HTML report (needs node, Playwright and a cached Chromium; never a gate)
+
+Each fixture's page is emitted in process, exactly as `Scoreboard.Hermetic`
+emits a corpus page (the document's own stylesheet mode, its images beside
+it), and a browser measures it: every text line's baseline, found from the
+first glyph's box less its face's descent at its size, and every picture's
+and image's box. The same declarations are then read over those lines as
+over a PDF page. A browser's layout is a measurement, never a theorem, so
+this prints and gates nothing.
+
+The fair comparison is not in lengths. `HtmlDoc.backend_gaps_agree` holds the
+two backends to the same *multiple* of their own context's rhythm quantum —
+half the print leading on paper, half the screen leading on a screen — so
+each gap is also printed in its own context's quanta, the reference's in the
+PDF's. The screen leading is read off the page, as the first paragraph's
+computed line height: on an article page that is `bodyLeadingMilli` of the
+root size, and on a deck it is the stage's scaled one. -/
+
+/-- The measuring probe, run by node with the Playwright module in
+`PW_MODULE`: for every page named, every text line's baseline and text, and
+every picture's and image's vertical extent, all in CSS px from the
+document's top edge. -/
+def probeJs : String := r#"
+const { chromium } = require(process.env.PW_MODULE);
+const path = require('path');
+(async () => {
+  const dir = process.argv[2];
+  const names = process.argv.slice(3);
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+  console.log(['version', browser.version()].join('\t'));
+  const page = await browser.newPage({ viewport: { width: 1280, height: 960 } });
+  for (const n of names) {
+    await page.goto('file://' + path.join(dir, n + '.html'));
+    await page.evaluate(() => document.fonts.ready);
+    const got = await page.evaluate(() => {
+      const root = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const descents = new Map();
+      const descentOf = (el) => {
+        const cs = getComputedStyle(el);
+        const key = [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.fontStyle].join('|');
+        if (descents.has(key)) return descents.get(key);
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;line-height:normal;white-space:nowrap';
+        box.style.fontFamily = cs.fontFamily; box.style.fontSize = cs.fontSize;
+        box.style.fontWeight = cs.fontWeight; box.style.fontStyle = cs.fontStyle;
+        const t = document.createElement('span'); t.textContent = 'x';
+        const p = document.createElement('span');
+        p.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+        box.appendChild(t); box.appendChild(p); document.body.appendChild(box);
+        const r = document.createRange(); r.selectNodeContents(t);
+        const d = r.getBoundingClientRect().bottom - p.getBoundingClientRect().bottom;
+        box.remove(); descents.set(key, d); return d;
+      };
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (t) => {
+        const el = t.parentElement;
+        if (!el || el.closest('style,script,noscript,svg,[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
+        return t.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; } });
+      // Every glyph's baseline, in document order: its box's bottom less its
+      // face's descent at its size. Lines are the clusters of one baseline,
+      // so a hyphenation point or a formula's atoms never split a line.
+      const glyphs = [];
+      const rg = document.createRange();
+      for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+        const s = t.nodeValue;
+        let i = 0;
+        for (const ch of s) {
+          const w = ch.length;
+          rg.setStart(t, i); rg.setEnd(t, i + w);
+          i += w;
+          const b = rg.getBoundingClientRect();
+          if (b.width === 0 && b.height === 0) continue;
+          glyphs.push({ ch, base: b.bottom + scrollY - descentOf(t.parentElement) });
+        }
+      }
+      const lines = [];
+      for (const g of glyphs) {
+        let l = lines.find((x) => Math.abs(x.base - g.base) < 1);
+        if (!l) {
+          if (/\s/.test(g.ch)) continue;
+          l = { base: g.base, text: '' }; lines.push(l);
+        }
+        l.text += g.ch;
+      }
+      const p = document.querySelector('main p, section p, p');
+      const leading = p ? parseFloat(getComputedStyle(p).lineHeight) : root * 1.45;
+      const marks = [...document.querySelectorAll('svg, img')].map((e) => {
+        const b = e.getBoundingClientRect(); return [b.top + scrollY, b.bottom + scrollY]; })
+        .filter(([t, b]) => b > t);
+      return { root, leading, lines: lines.map((l) => [l.base, l.text]), marks };
+    });
+    console.log(['page', n, got.leading.toFixed(3)].join('\t'));
+    for (const [y, t] of got.lines) console.log(['line', n, y.toFixed(3), t.replace(/\s+/g, ' ')].join('\t'));
+    for (const [t, b] of got.marks) console.log(['mark', n, t.toFixed(3), b.toFixed(3)].join('\t'));
+  }
+  await browser.close();
+})().catch((e) => { console.error(String(e && e.message || e)); process.exit(4); });
+"#
+
+/-- A fixture's HTML page, emitted as a corpus page is (`Hermetic.pageFor`'s
+sequence and configuration, with no error gate: a page that errs is still
+measured), with the image bytes it names. -/
+def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
+    (oneFace : Font.FontSet) (name : String) : IO (String × Array (String × ByteArray)) := do
+  let file := s!"{rhythmDir}/{name}.tex"
+  let src ← IO.FS.readFile file
+  let (toks, lexDiags) := Lex.lex file src
+  let (raws, parseDiags) := Parse.parse file toks
+  let (raws, inputDiags, _) ← Input.expandInputs file raws
+  let (raws, dataDiags) ← Input.resolveData file raws
+  let prepared := Elab.prepare file raws
+  let pre := Elab.preambleDoc file prepared
+  let preFs ← Hermetic.fontSetFor cache oneFace faces fontsDir pre
+  let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
+  let (doc, _, spans) := Elab.runPrepared file prepared
+    (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
+  let (doc, _) ← Input.resolveBibliography file doc spans.bib
+  let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
+  let (store, _, read) ← Hermetic.storeFor rhythmDir doc
+  let css : HtmlDoc.CssMode := match cssFor doc.output.css with
+    | .own => .own
+    | .bulma => .bulma
+    | .none => .none
+  let cfg : HtmlDoc.Config :=
+    { css, imgs := store
+      fonts := if doc.fontPolicy == .embedded then some fs else none
+      fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
+  return ((HtmlDoc.emit cfg doc).1, read)
+
+/-- The PDF's rhythm quantum for a fixture, in thousandths of a bp: half the
+leading at the document's body size, the engine's own definition
+(`Ir.rhythmQuantum`). -/
+def pdfQuantumMilli (name : String) : IO Int := do
+  let file := s!"{rhythmDir}/{name}.tex"
+  let (doc, _) := Elab.run file (← IO.FS.readFile file)
+  return milliBpOfSp (Ir.rhythmQuantum doc.page.fontSize)
+
+/-- A number of thousandths as quanta of `q` thousandths, to two decimals. -/
+def inQuanta (v q : Int) : String :=
+  if q == 0 then "-" else
+  let h := (v * 100 + (if v ≥ 0 then q / 2 else -(q / 2))) / q
+  let a := h.natAbs
+  let f := toString (a % 100)
+  (if h < 0 then "-" else "") ++ s!"{a / 100}.{"".pushn '0' (2 - f.length)}{f}"
+
+/-- The Playwright modules whose Chromium launches on this host, in the
+order `html-oracle` tries them: `LEANTEX_PLAYWRIGHT`, then every module
+`npx playwright install` left under `~/.npm/_npx`. Nothing is installed. -/
+def playwrightModules : IO (Array String) := do
+  let mut cands : Array String := #[]
+  if let some p ← IO.getEnv "LEANTEX_PLAYWRIGHT" then cands := cands.push p
+  if let some home ← IO.getEnv "HOME" then
+    let npx : System.FilePath := home / ".npm" / "_npx"
+    if ← npx.isDir then
+      for e in (← npx.readDir).qsort (·.fileName < ·.fileName) do
+        let m := e.path / "node_modules" / "playwright"
+        if ← (m / "package.json").pathExists then cands := cands.push m.toString
+  let mut ok : Array String := #[]
+  for m in cands do
+    let launch := "require(process.env.PW_MODULE).chromium.launch({headless:true,args:['--no-sandbox','--disable-gpu']})" ++
+      ".then(b=>b.close()).catch(()=>process.exit(1))"
+    let r ← IO.Process.output { cmd := "node", args := #["-e", launch], env := #[("PW_MODULE", some m)] }
+    if r.exitCode == 0 then ok := ok.push m
+  return ok
+
+def htmlReport (outDir : String) : IO UInt32 := do
+  let out : System.FilePath := outDir
+  IO.FS.createDirAll out
+  let cache ← IO.mkRef #[]
+  let faces ← Hermetic.shippedFaces fontsDir
+  let oneFace ← oneFaceSet cache
+  let names ← fixtureNames
+  for n in names do
+    let (html, read) ← engineHtml cache faces oneFace n
+    IO.FS.writeFile (out / s!"{n}.html") html
+    for (cand, bytes) in read do
+      let p := out / s!"{n}.assets" / cand
+      if let some d := p.parent then IO.FS.createDirAll d
+      IO.FS.writeBinFile p bytes
+  let module ← match (← playwrightModules).toList with
+    | m :: _ => pure m
+    | [] =>
+      IO.eprintln "rhythm: no Playwright module found (LEANTEX_PLAYWRIGHT names one); the HTML is \
+written but not measured"
+      return 2
+  IO.FS.writeFile (out / "probe.cjs") probeJs
+  let r ← IO.Process.output
+    { cmd := "node", args := #[(out / "probe.cjs").toString, out.toString] ++ names
+      env := #[("PW_MODULE", some module)] }
+  IO.FS.writeFile (out / "probe.tsv") r.stdout
+  if r.exitCode != 0 then
+    IO.eprintln s!"rhythm: the probe exited {r.exitCode}: {r.stderr}"
+    return 2
+  -- The probe's lines back as pages the declarations read: CSS px scaled to
+  -- sp at 65536 per px, so every predicate above applies unchanged.
+  let pxSp (s : String) : Int := (parseMilli s).getD 0 * spPerBp / 1000
+  let mut pages : Array (String × MPage) := #[]
+  let mut leadings : Array (String × Int) := #[]
+  let mut version := "?"
+  for l in r.stdout.splitOn "\n" do
+    match l.splitOn "\t" with
+    | ["version", v] => version := v
+    | ["page", n, lead] =>
+      pages := pages.push (n, { lines := #[], marks := #[] })
+      leadings := leadings.push (n, pxSp lead)
+    | ["line", n, y, t] =>
+      pages := pages.map fun (m, p) =>
+        if m == n then (m, { p with lines := p.lines.push { y := pxSp y, text := t } }) else (m, p)
+    | ["mark", n, t, b] =>
+      pages := pages.map fun (m, p) =>
+        if m == n then (m, { p with marks := p.marks.push (pxSp t, pxSp b) }) else (m, p)
+    | _ => pure ()
+  let ms ← match ← measureAll with
+    | .ok ms => pure ms
+    | .error faults =>
+      for f in faults do IO.eprintln s!"rhythm: fault: {f}"
+      return 2
+  IO.println s!"# chromium {version}; engine PDF measured in process; the HTML emitted in process \
+and measured by the browser; lengths bp (PDF) and CSS px (HTML); q = that context's rhythm quantum"
+  IO.println "fixture\tclass\tmarker\tkind\tpdf_bp\tpdf_q\tref_bp\tref_q\thtml_px\thtml_q\tpdf-ref_q\thtml-pdf_q"
+  for m in ms do
+    let qPdf ← pdfQuantumMilli m.fixture
+    let lead := ((leadings.find? (·.1 == m.fixture)).map (·.2)).getD 0
+    let qHtml := milliBpOfSp (lead / 2)
+    let html : Except String Int := match pages.find? (·.1 == m.fixture) with
+      | some (_, p) =>
+        if m.row.spec.kind == .top then .error "a page's top is not a screen's"
+        else match openFault #[p] m.row.spec with
+          | some why => .error why
+          | none => (gapOf #[p] m.row.spec).map milliBpOfSp
+      | none => .error "not measured"
+    let showQ (v : Except String Int) (q : Int) : String × String := match v with
+      | .ok x => (showMilli x, inQuanta x q)
+      | .error _ => ("-", "-")
+    let (pb, pq) := showQ m.engine qPdf
+    let (rb, rq) := showQ (.ok m.row.milliBp) qPdf
+    let (hb, hq) := showQ html qHtml
+    let dPR := match m.engine with
+      | .ok e => inQuanta (e - m.row.milliBp) qPdf
+      | .error _ => "-"
+    let dHP := match m.engine, html with
+      | .ok e, .ok h => inQuanta (h * qPdf - e * qHtml) (qPdf * qHtml)
+      | _, _ => "-"
+    IO.println s!"{m.fixture}\t{m.row.spec.cls}\t{m.row.spec.marker}\t{m.row.spec.kind.name}\t\
+{pb}\t{pq}\t{rb}\t{rq}\t{hb}\t{hq}\t{dPR}\t{dHP}"
+  return 0
 
 def lualatex : String := "lualatex"
 
@@ -908,4 +1154,5 @@ def main (args : List String) : IO UInt32 := do
   | "--verify-reference" :: names => Rhythm.reference names (verify := true)
   | ["--table"] => Rhythm.table
   | ["--lines", name] => Rhythm.dumpLines name
+  | ["--html", dir] => Rhythm.htmlReport dir
   | _ => tierMain "rhythm" (.pairs "within" "boundaries") Rhythm.tierMeasure Rhythm.selftest args
