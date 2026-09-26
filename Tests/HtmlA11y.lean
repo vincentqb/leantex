@@ -213,6 +213,22 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a11y: the refused picture fires W0362" (rds.any (·.code == "W0362"))
   t s!"html a11y: the refused placeholder is named by its loss: {svgLabels rbody}"
     (svgLabels rbody == #[some "W0362"])
+  -- A boundary picture with no face in the store — a host with no tool, or
+  -- a tool that refused — ships its request key as the `src`, which draws
+  -- nothing: never decorative, so it is named by what it is, in the page's
+  -- language, and a caption the author wrote still wins.
+  let shaded := "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"
+  let (tdoc, _) := elabStr (dvDoc "" shaded)
+  let (_, tbody, _) := HtmlDoc.emitTree {} tdoc
+  t s!"html a11y: a boundary picture with no face is named: {imgAlts tbody}"
+    (imgAlts tbody == #[some "Figure"] && (a11yFactsOf tdoc tbody).imgsUnnamed == 0)
+  let (_, tgbody, _) := HtmlDoc.emitTree {}
+    (elabStr (dvDoc "\\usepackage[ngerman]{babel}\n" shaded)).1
+  t s!"html a11y: …in German too: {imgAlts tgbody}" (imgAlts tgbody == #[some "Abbildung"])
+  let (_, tcbody, _) := HtmlDoc.emitTree {} (elabStr (dvDoc ""
+    ("\\begin{figure}\n" ++ shaded ++ "\n\\caption{A shaded card}\n\\end{figure}"))).1
+  t s!"html a11y: …and its caption names it where it has one: {imgAlts tcbody}"
+    (imgAlts tcbody == #[some "A shaded card"])
   -- A picture's labels are its name: role="img" makes an SVG's children
   -- presentational (WAI-ARIA 1.2 §5.3), so the words a sighted reader sees
   -- reach assistive technology only through the name.

@@ -3410,6 +3410,30 @@ def altGroupNode (tag : String) (n : Nat) (last : Option Nat) (first : Bool)
        | none => #[])) ++
       (if first then #[] else #[("hidden", "hidden")]))
 
+/-- Does a string carry anything to read: a character that is not white
+space. The one blankness test for an accessible name, here and in the
+judge (`carriesName`): accname 1.2 does not take a name that is empty once
+trimmed of white space. -/
+def nonBlank (s : String) : Bool := s.toList.any (!·.isWhitespace)
+
+/-- The first of two strings that carries anything to read. -/
+def firstNonBlank (a b : String) : String := if nonBlank a then a else b
+
+theorem firstNonBlank_contract (a b : String) (hb : nonBlank b = true) :
+    nonBlank (firstNonBlank a b) = true := by
+  unfold firstNonBlank
+  split
+  · assumption
+  · exact hb
+
+/-- What a picture is called when nothing it says is known: the locale's
+figure word, and the engine's English word only where a locale carries
+none. -/
+def figureWord (loc : Locale) : String := firstNonBlank loc.figure "figure"
+
+theorem figureWord_contract (loc : Locale) : nonBlank (figureWord loc) = true :=
+  firstNonBlank_contract _ _ (by decide)
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -3436,6 +3460,13 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- the browser on the intrinsic ratio, the same invariant the PDF path
     -- proves.
     let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
+    -- A boundary picture with no face in the store ships its request key as
+    -- the `src`, which draws nothing, so the text alternative is all that
+    -- reaches the page: never decorative. With no author text it is named
+    -- by what it is (`figureWord`); the loss's own code is the fulfilment's
+    -- to carry, and `Image.Loaded` keeps none.
+    let alt := if src.startsWith Ir.picSrcPrefix && info?.isNone then
+        firstNonBlank alt (figureWord cfg.locale) else alt
     -- The link names the copy published beside the page (`imageHref`) —
     -- or, for an entry that ships none, the file on disk: a bare graphicx
     -- name resolved to a file with an extension must name that file, not
@@ -4299,22 +4330,6 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
      else
       #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")])
 
-/-- Does a string carry anything to read: a character that is not white
-space. The one blankness test for an accessible name, here and in the
-judge (`carriesName`): accname 1.2 does not take a name that is empty once
-trimmed of white space. -/
-def nonBlank (s : String) : Bool := s.toList.any (!·.isWhitespace)
-
-/-- The first of two strings that carries anything to read. -/
-def firstNonBlank (a b : String) : String := if nonBlank a then a else b
-
-theorem firstNonBlank_nonBlank (a b : String) (hb : nonBlank b = true) :
-    nonBlank (firstNonBlank a b) = true := by
-  unfold firstNonBlank
-  split
-  · assumption
-  · exact hb
-
 /-- The words a picture's labels set, as the SVG sets them (`labelPiece`),
 in shape order, joined. -/
 def pictureSaid (pic : Ir.Pic.Picture) : String :=
@@ -4324,15 +4339,13 @@ def pictureSaid (pic : Ir.Pic.Picture) : String :=
 
 /-- What a picture says in words: its labels (`pictureSaid`) — the text a
 sighted reader sees in the drawing. With none, the picture is named by what
-it is, in the document's language: the locale's figure word, and the
-engine's English word only where a locale carries none, so the name is
-never blank (`pictureName_nonBlank`). -/
+it is (`figureWord`), so the name is never blank (`pictureName_contract`). -/
 def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=
-  firstNonBlank (pictureSaid pic) (firstNonBlank loc.figure "figure")
+  firstNonBlank (pictureSaid pic) (figureWord loc)
 
-theorem pictureName_nonBlank (loc : Locale) (pic : Ir.Pic.Picture) :
+theorem pictureName_contract (loc : Locale) (pic : Ir.Pic.Picture) :
     nonBlank (pictureName loc pic) = true :=
-  firstNonBlank_nonBlank _ _ (firstNonBlank_nonBlank _ _ (by decide))
+  firstNonBlank_contract _ _ (figureWord_contract loc)
 
 /-- A string's words, one space apart: what a name built from prose reads
 once its line breaks and indentation are gone. -/
@@ -4372,18 +4385,18 @@ def frameName (title : Array Inline) (kids : Array Node) : String :=
   firstNonBlank (squashSpace (Ir.plainText title))
     (firstNonBlank (squashSpace (shownWordsList "" kids.toList)) "slide")
 
-theorem frameName_nonBlank (title : Array Inline) (kids : Array Node) :
+theorem frameName_contract (title : Array Inline) (kids : Array Node) :
     nonBlank (frameName title kids) = true :=
-  firstNonBlank_nonBlank _ _ (firstNonBlank_nonBlank _ _ (by decide))
+  firstNonBlank_contract _ _ (firstNonBlank_contract _ _ (by decide))
 
 /-- A themed section page's name: its title, else the engine's word its
 anchor would start from (`section`). -/
 def sectionPageName (title : Array Inline) : String :=
   firstNonBlank (squashSpace (Ir.plainText title)) "section"
 
-theorem sectionPageName_nonBlank (title : Array Inline) :
+theorem sectionPageName_contract (title : Array Inline) :
     nonBlank (sectionPageName title) = true :=
-  firstNonBlank_nonBlank _ _ (by decide)
+  firstNonBlank_contract _ _ (by decide)
 
 /-- A deck stage's keyboard door. On the paged deck every stage is a scroll
 container — content past the stage scrolls inside it (`deckStageRule`,
@@ -5720,7 +5733,7 @@ theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
       carriesName (blockNode cfg (.picture pic)) = true := by
   rcases h : pic.bbox with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [blockNode, pictureSvg, h, Html.elem, Node.tag?, carriesName, pictureRole,
-    pictureName_nonBlank]
+    pictureName_contract]
 
 /-- **Every deck stage the backend emits is reachable** (`_contract`): on
 the paged deck the frame arm's `section` — a scroll container by
@@ -5733,6 +5746,6 @@ theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)
     (body : Array Block) :
     scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
   simp [blockNode, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
-    frameName_nonBlank]
+    frameName_contract]
 
 end LeanTex.Core.HtmlDoc
