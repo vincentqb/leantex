@@ -31,9 +31,11 @@
 # \iftrue and \iffalse are their own value, a test the document's own
 # definitions decide (\ifodd, \ifnum and \ifcase over a literal or a
 # macro holding an integer, \ifx of two definitions) is decided before the
-# walk reads the picture, and every other test is a fact about TeX's own
-# state or its control-sequence table, so it ships the branch that draws
-# with the assumption named,
+# walk reads the picture, the four mode tests read the restricted
+# horizontal mode pgf sets a picture's statements in (\ifhmode and
+# \ifinner hold, \ifvmode and \ifmmode fail), and every other test is a
+# fact about TeX's own state or its control-sequence table, so it ships
+# the branch that draws with the assumption named,
 # part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
 # tip). tikzpicture renders its subset natively; a picture with a
 # construct outside it routes whole to the graphics boundary (§53's
@@ -92,7 +94,8 @@ body impl \begin{tikzpicture}\pgfmathsetmacro{\k}{9}\ifnum\k>5 \node (u) at (0,0
 body impl \begin{tikzpicture}\iftrue \node (u) at (0,0) {x};\else \node (u) at (0,0) {y};\fi\end{tikzpicture}
 body impl \begin{tikzpicture}\iffalse \node (u) at (0,0) {y};\else \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body impl \begin{tikzpicture}\ifodd 3 \node (u) at (0,0) {x};\fi\end{tikzpicture}
-body refuse:W0334 \begin{tikzpicture}\ifmmode \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body impl \begin{tikzpicture}\ifmmode \node (u) at (0,0) {y};\else \node (u) at (0,0) {x};\fi\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\ifvoid0 \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\ifnum\notamacro=1 \node (u) at (0,0) {x};\fi\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.mid) -- (v.mid west);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}

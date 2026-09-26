@@ -5990,19 +5990,33 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       (guarded[0]?.map (·.paths == 2)).getD false)
   -- Any `\if…` control word opens a conditional, not just the arithmetic
   -- ones: TeX's own convention, and what `\newif` mints. A test about TeX's
-  -- run-time state reaches the walk and is named by its own spelling; one
-  -- the document decides (`\ifodd` of a literal) is decided before the
-  -- walk reads the picture, and named there.
-  let modeSrc := pic
-    ("\\ifmmode\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
-  let (_, modeDs) := elabStr modeSrc
+  -- run-time state the walk cannot read reaches it and is named by its own
+  -- spelling; one the document decides (`\ifodd` of a literal) is decided
+  -- before the walk reads the picture, and named there.
+  let voidSrc := pic
+    ("\\ifvoid0\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
+  let (_, voidDs) := elabStr voidSrc
   t "an opener the subset cannot compute is named by its own spelling"
-    (modeDs.any fun d => d.code == "W0334" && hasStr d.message "ifmmode")
-  -- A mode test takes no test tokens, so the branch opens at once: its first
-  -- statement is the branch's, not the test's.
-  let mode := censusSrc modeSrc
+    (voidDs.any fun d => d.code == "W0334" && hasStr d.message "ifvoid")
+  -- The four mode tests read a mode that is fixed at a picture's
+  -- statements: pgf sets the picture in a horizontal box, so `\ifhmode`
+  -- and `\ifinner` hold and `\ifmmode` and `\ifvmode` fail (lualatex draws
+  -- exactly those branches). A mode test takes no test tokens, so the
+  -- branch opens at once: its first statement is the branch's, not the
+  -- test's.
+  let modeOf (h : String) : Array CensusPage := censusSrc (pic
+    ("\\" ++ h ++ "\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
+  let thenDrawn (c : Array CensusPage) : Bool :=
+    pageHas c 0 "Pear" && pageHas c 0 "Plum" && !pageHas c 0 "Fig" && !pageHas c 0 "Quince"
+  let elseDrawn (c : Array CensusPage) : Bool :=
+    pageHas c 0 "Fig" && pageHas c 0 "Quince" && !pageHas c 0 "Pear" && !pageHas c 0 "Plum"
   t "a head that takes no test keeps its branch's first statement"
-    (pageHas mode 0 "Pear" && pageHas mode 0 "Plum" && !pageHas mode 0 "Fig")
+    (thenDrawn (modeOf "ifhmode"))
+  t "the mode tests at a picture's statements take the branches TeX takes"
+    (thenDrawn (modeOf "ifinner") && elseDrawn (modeOf "ifmmode") && elseDrawn (modeOf "ifvmode"))
+  t "a mode test's decision is named"
+    ((elabStr (pic ("\\ifmmode\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++
+      nodes "Fig" "Quince" ++ "\\fi\n"))).2.any fun d => d.code == "N0114" && d.subject.isSome)
   let oddSrc := pic
     ("\\ifodd 3\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
   let odd := censusSrc oddSrc

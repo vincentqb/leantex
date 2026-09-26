@@ -24,6 +24,12 @@ def condProbeArgs : List (String × String × Option Bool) :=
    ("ifdefined", "\\probeundefined ", some false), ("ifcsname", "relax\\endcsname ", none),
    ("iffontchar", "\\font`a ", none)]
 
+/-- Where a picture's statements answer differently from running text: the
+four mode tests read a mode that is fixed there, since pgf sets a picture
+in a horizontal box (lualatex draws exactly these branches). -/
+def condPicTaken : List (String × Bool) :=
+  [("ifhmode", true), ("ifinner", true), ("ifmmode", false), ("ifvmode", false)]
+
 /-- **Every conditional is accounted for.** A TeX conditional the engine
 meets is either decided — its branch named, the other branch gone — or
 refused by name; it is never resolved in silence. The defect this pins:
@@ -61,9 +67,11 @@ def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       if let some v := taken then
         let (keep, drop) := if v then ("Then", "Other") else ("Other", "Then")
         let bt := text bodySrc
-        let pt := text picSrc
         t s!"'\\{h}' in running text ships the branch TeX takes, and only it"
           (hasStr bt keep && !hasStr bt drop)
+      if let some v := (condPicTaken.lookup h).orElse fun _ => taken then
+        let (keep, drop) := if v then ("Then", "Other") else ("Other", "Then")
+        let pt := text picSrc
         t s!"'\\{h}' in a picture ships the branch TeX takes, and only it"
           (hasStr pt keep && !hasStr pt drop)
   -- A document's own `\newif` flag is a conditional head too.

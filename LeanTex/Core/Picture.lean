@@ -424,8 +424,19 @@ shape this walk can compute:
 inductive CondKind where
   | num (name : String)
   | always (v : Bool)
+  | mode (name : String) (v : Bool)
   | opaque (name : String)
   deriving Repr, BEq, Inhabited
+
+/-- The answer a mode test gives at a picture's statements: pgf builds the
+picture in a horizontal box (`\pgfpicture` sets it with `\hbox`), so there
+TeX is in restricted horizontal mode — `\ifhmode` and `\ifinner` hold,
+`\ifvmode` and `\ifmmode` fail, whatever mode the picture stands in
+(measured against lualatex). -/
+def pictureMode (n : String) : Option Bool :=
+  if n == "ifhmode" || n == "ifinner" then some true
+  else if n == "ifvmode" || n == "ifmmode" then some false
+  else none
 
 /-- The conditional a control word opens, or `none` where it opens none.
 Keyed on the `if` prefix rather than on a list of primitives, because
@@ -435,6 +446,7 @@ def condKindOf (n : String) : Option CondKind :=
   if n == "ifnum" || n == "ifdim" then some (.num n)
   else if n == "iftrue" then some (.always true)
   else if n == "iffalse" then some (.always false)
+  else if let some v := pictureMode n then some (.mode n v)
   else if n.startsWith "if" && n.length > 2 then some (.opaque n)
   else none
 
@@ -3883,6 +3895,15 @@ is not set"))
     | .always v =>
       let ev := ev.diag (.N0114, s!"'\\{if v then "iftrue" else "iffalse"}' is \
 {if v then "true" else "false"} by definition, so {condDrawnWords v}")
+      if v then
+        let (_, ev2) := evalList cx thenS env ev
+        (env, ev2)
+      else
+        let (_, ev2) := evalList cx elseS env ev
+        (env, ev2)
+    | .mode n v =>
+      let ev := ev.diag (.N0114, s!"'\\{n}' {if v then "holds" else "fails"} at a picture's \
+statements, which pgf sets in a horizontal box, so {condDrawnWords v}")
       if v then
         let (_, ev2) := evalList cx thenS env ev
         (env, ev2)
