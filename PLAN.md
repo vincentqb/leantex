@@ -19067,3 +19067,34 @@ landing's included. They are cited by subject now, which a rebase keeps.
 The round-3b sha map is gone with the shas it mapped. The two base commits
 that entry named are main's, and their shas are stable, but they are
 cited by subject too, so the entries follow one convention.
+
+
+**Open after round 5, with their sites.** Each is routed, not done here:
+
+- **A literal U+0000 reaches both artifacts.** CommonMark §2.3 requires
+  U+FFFD. `&#0;` is replaced, the raw byte is not, and the tex surface does
+  the same. The substitution belongs where input is decoded, for both
+  surfaces: `Main.frontend` (`String.fromUTF8!` after the UTF-8 check) and
+  the reads in `Cli/Input.lean`. It does not belong in a reader or a
+  backend.
+- **`W0005` carries no site.** Both emissions in `Layout.lean`
+  (`B.warnOverfull`, and the line loop that sets a verbatim line) pass no
+  span. One code line two lists deep runs off the page and names nothing.
+  It is the one document in 2,490 where the PDF loses a token in silence;
+  the HTML census found none. Both are the layout owner's.
+- **Diagnostics print author bytes raw.** `Cli/Render.lean`'s `human`
+  writes the message as it stands, so an info word carrying ESC or BEL
+  reaches the terminal under `--color never`. The scoreboard spells
+  control characters out; the renderer does not.
+- **Blank lines are dropped from code, with no diagnostic.** A plain
+  fence loses its leading blank line, and any code block loses its
+  trailing one. `MdDesugar`'s `.code` arm hands `verbatim` the text whose
+  first newline the verbatim reading drops. The `lstlisting` spelling
+  keeps that newline.
+- **The entity table is partial, with no diagnostic.** `MdParse.entityAt`
+  knows a handful of names, so `&eacute;` ships as literal text.
+
+One decision belongs to the human. A `javascript:` or `data:` destination
+ships as a live `href` from markdown, as it does from `\href`. Whether a
+markdown link may carry a script-bearing scheme is the trust question
+behind the raw-HTML refusal, and nothing decides it yet.
