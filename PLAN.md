@@ -15776,3 +15776,138 @@ for this round's checks. The selftest catches 38 of them.
 `agent/coverage` (`6b3b17b`) and `agent/commonmark` (`b0a9854`) each read `ok`
 to `judgeNew`. AGENTS.md changes only this branch's row, so htmla11y's row
 insertion is the same keep-both conflict as before.
+
+
+
+### 2026-09-25 — what assistive technology is handed: named pictures, reachable stages, decodable images, and a tier that holds the rest
+
+The HTML audit (`leantex-evidence/htmlgen/REPORT.md`, §4–§8) ran axe-core
+4.10.2 in Playwright's Chromium 151.0.7922.34 over the 77 corpus pages. The
+same probe, rerun on `e4d22a4` (`leantex-evidence/htmla11y/axe-probe.cjs`,
+module `~/.npm/_npx/6f48…/node_modules/playwright`, the first that launches,
+as `html-oracle` picks it), reproduced it rule for rule and page for page:
+`page-has-heading-one` 61 pages, `color-contrast` 9, `svg-img-alt` 6,
+`scrollable-region-focusable` 3, `heading-order` 1, 10 of 77 clean.
+
+**Corrections to the brief, measured.** The scroll container axe named on
+the three decks is the *stage* — `section.slide`, `#collision`,
+`#a-frame-that-continues`, `#overflow` — not `.slide-track`, which never
+scrolls: `deckStageRule` gives every `section.slide, section.section-page`
+`overflow-y: auto`, and axe flags only the stages whose content overflows at
+1280 × 900. `diagram-boundary`'s valueless `alt` is a *drawn* boundary
+picture with no author alternative (W0376 names it), not a refused
+placeholder; the refused placeholder is `diagram-refused`'s inline `<svg>`
+(W0362), whose one label is its code. The 56 × 28 against 76 × 38 was the
+hypothesised unit error: `Image.probe` fills a PDF page's pixel fields with
+its box rounded to whole points, and the `<img>` wrote them as CSS px.
+
+**The invariants, as statements.**
+
+* *Every picture is named* — `picture_svg_named_contract`: the `.picture`
+  arm, the one site that builds an `<svg>`, ships `role="img"` and a
+  non-blank `aria-label` (`pictureName`): the labels as the SVG sets them
+  (`labelPiece`, shared with the `<text>` arm), else the locale's figure
+  word. `role="img"` makes the children presentational, so before this the
+  words a sighted reader saw reached no assistive technology at all.
+* *Every declared scroll container is reachable* —
+  `frame_stage_reachable_contract` (the deck frame arm), with the section
+  pages and `pre` (`overflow-x: auto`, `baseCss`) held by the suite:
+  `tabindex="0"`, and on a stage a name (its title, or the words it shows —
+  `shownWordsList` skips `hidden`, so a speaker note never leaks into it; an
+  existing check caught the first draft doing exactly that). Markup only:
+  `deck_script_constant` is untouched and the suite checks the page's one
+  script is the pinned literal. A keyboard walk in Chromium
+  (`tab-probe.cjs`) pages stage by stage on Tab, and the constant script's
+  arrows page on from wherever focus scrolled the deck.
+* *Every `<img src>` decodes, or a diagnostic names it* — W0605
+  (`degraded`, subject `img:<src>`, `undecodableSrcs` over the emitted
+  tree): a decoded PDF page that is not a boundary picture. The suite judges
+  every shipped `src` by the file's own bytes (WHATWG sniffing signatures),
+  never by the backend's classification, in both directions. Converting
+  pages is out of scope; the figure's text alternative is what shows.
+* *An `<img>` declares CSS pixels* — `intrinsicPx`: a PDF page's box on the
+  CSS ruler, `cssPxOfSp` (1pt = 4/3 px, nearest; `cssPxOfSp_between`). The
+  boundary picture now declares 76 × 38 and `html-oracle`'s `images` cell
+  for it passes.
+* A poster's corner logos are decorative by role (`Ir.logoImageSrcs`) and
+  now say so on the page, as the deck's logo strip does (`role="presentation"`,
+  `aria-hidden`).
+
+Every new check was run first against the emitter it replaces and failed
+there (evidence `51-`, `62-`, `74-`, `94-`), and every theorem was broken
+once by deleting what it rests on and watched to fail the build (`57-`,
+`71-`, `85-`).
+
+**The `htmla11y` tier.** `scripts/htmla11y.lean`, 385 items: five per golden
+fixture, as headroom (`debtCap - count`). The trees are built in-process
+(`a11yCorpusPage`: the document's own stylesheet mode, its images from
+`tests/corpus`) and judged by `HtmlDoc.a11yFacts`, the judge
+`htmlA11yChecks` reads, so the suite and the tier cannot disagree about what
+counts. Hermetic, measured: `htmla11y --check` exits 0, and the aggregate
+reports the tier `ok`, with every font tree and TeX tree masked by tmpfs,
+`HOME` empty and `PATH` holding `lake`, `lean`, `elan` and `sh` alone
+(`unshare -Urm bash hermetic-tier.sh`, `cont-17-hermetic-c4.log`); `--check`
+takes 3 s. The five, with
+today's totals: `contrast` 72 (the stylesheet's four token pairings,
+`themePairs` — `themePairs_contract` says it is exactly
+`ThemeColors.contractHolds` — over the colours the cascade resolves in each
+scheme, `schemeColors`, whose declared ink and page are `Design.ofDoc`'s),
+`h1` 61, `img` 1, `scroll` 0, `svg` 0. Broken once
+through the shipped path: an image with no alternative added to one fixture
+made `htmla11y --check` and `scoreboard --check` exit 1
+(`paragraphs.img: 1000 → 999`); two judge mutants (a `<title>` naming
+nothing, `pre` not a scroller) each failed the selftest by name.
+
+**Against axe, same pages** (`97-`, `98-`, `99-` in the evidence).
+`svg` 0 and `scroll` 0 agree with axe after the fixes; `h1` is axe's
+`page-has-heading-one` set exactly, 61 pages. `scroll` counts every
+*declared* scroll container, axe only those that overflow in its viewport —
+so before the fixes the judge counted 75 declared scroll containers, all
+unreachable, where axe saw 3. `img`: the judge wants a non-blank alt or a declared decorative role,
+axe accepts `alt=""` as decoration, so the in-process `diagram-boundary`
+placeholder counts here and not there. `contrast`: axe runs light only, and
+every static failure is dark, so axe was rerun under
+`prefers-color-scheme: dark`: 25 of the model's 26 pages agree; the model
+alone flags `poster-headline` (a code and an accent pairing no element on
+that page uses yet), and axe alone flags `blocks`, `trio-card`, `trio-page`
+— palette-role runs and block headers, which Contrast's use-judge owns and
+this token model does not reach.
+
+**Human-gated, measured and not decided** (the ratchet holds each):
+
+* **W1 — dark mode with declared colours.** Wider than the audit found.
+  Body pair, as `html-oracle` judges it: `palette`, `resume` 1.00:1,
+  `diagram` 1.04:1. But the deck stage paints `var(--surface)` whatever the
+  body carries, so every deck whose design declares an ink shows it on the
+  dark stage: 19 decks, the default `daylight` bundle's among them
+  (`scheme-probe.cjs`: `daylight`, `talk` 1.17:1, `themed` 1.42:1).
+  `html-oracle`'s `color-scheme` cell reads the body's ground and passes
+  them. axe dark: `color-contrast` on 28 pages.
+* **W2 — `h1` ownership.** 61 pages have no `<h1>`, identical in the static
+  count and in axe; `outline-gap` also skips a level (`heading-order`).
+* **S2 — dimmed overlay text.** 24 of axe's 27 light-scheme contrast nodes,
+  on 8 decks, sit inside an overlay step, 1.28–2.3:1 (`s2-probe.cjs`); the
+  other 3 are declared inline colours (`palette`, `themed`).
+* **S3/S4 — speaker view, deep links.** Notes ship as hidden asides (2 in
+  `notes`); nothing in the page listens for a hash or a second window. A
+  fragment lands on its stage at load, except an overflowing stage lands one
+  page short (`valign#overflow` → page 3 of 0–4, identical on `e4d22a4`);
+  paging never updates the fragment; Chromium's own scroll restoration keeps
+  the position on reload (`deeplink-probe.cjs`).
+* **W5 — multi-page output.** One source, one page: no `\output` key names
+  a second, so a site stays N invocations and a script.
+
+**Routed.** `Image.Loaded` could carry the code that named an unloaded
+entry's loss, so an `<img>` placeholder could name it the way the refused
+picture's does (`Image.fulfilOne`, `LeanTex/Core/Image.lean`); today such a
+placeholder ships the author's `alt` or none. Two stages with one title get
+one region name (axe `landmark-unique`, best practice); none in the corpus.
+The deck stage ignoring a declared `bg` belongs to the W1 decision
+(`deckStageRule`, `HtmlDoc.lean`). `tests/scoreboard/htmlreader.tsv` was
+regenerated by its own writer when this branch's matrix raised a cell
+(72 → 73); it is not this branch's file.
+
+**The reader matrix**, regenerated by `html-oracle` in each commit that
+moved the HTML: only `diagram-boundary`'s cells changed (its `images` cell
+and fixture row now pass); 6 target cells fail, was 7. Evidence:
+`leantex-evidence/htmla11y/`.

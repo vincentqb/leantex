@@ -32,6 +32,34 @@ decide which elements are scroll containers. -/
 def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
   HtmlDoc.a11yFacts (a11yCssOf doc == .own) (doc.docClass.record.model == .frame) body
 
+/-- A page's accessibility deficits, one count per check — what the
+`htmla11y` scoreboard tier ratchets, per fixture, as headroom:
+
+* `contrast` — the stylesheet's pairings the page fails, over both colour
+  schemes (`HtmlDoc.schemeFailures`);
+* `h1` — 1 unless the page carries exactly one `<h1>`;
+* `img` — `<img>` with no text alternative and no declared decorative role;
+* `scroll` — declared scroll containers a keyboard cannot reach;
+* `svg` — `<svg>` with no accessible name.
+
+Sorted by check name, so a tier's rows come out in the order it writes them. -/
+def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) : List (String × Nat) :=
+  let f := a11yFactsOf doc body
+  [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) doc).length),
+   ("h1", if f.h1s == 1 then 0 else 1),
+   ("img", f.imgsUnnamed),
+   ("scroll", f.scrollsUnreachable),
+   ("svg", f.svgsUnnamed)]
+
+/-- Every golden fixture's deficits, built in-process from committed inputs
+only: no browser, no network, no tool. -/
+def a11yCorpus : IO (Array (String × List (String × Nat))) := do
+  let mut out := #[]
+  for n in goldenNames do
+    let (doc, _, body, _) ← a11yCorpusPage n
+    out := out.push (n, a11yDeficits doc body)
+  return out
+
 mutual
 
 /-- Every element of a tree whose tag `want` accepts, with its attributes,

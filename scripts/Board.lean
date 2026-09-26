@@ -839,7 +839,7 @@ deleted outright and the gate stayed green.
 Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
-  ["commonmark", "compat", "coverage", "diagdebt", "htmlreader", "obligations",
+  ["commonmark", "compat", "coverage", "diagdebt", "htmla11y", "htmlreader", "obligations",
    "parity", "purity"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,

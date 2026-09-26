@@ -5585,6 +5585,54 @@ was emitted for. -/
 def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
   a11yList own deck false {} body.toList
 
+/-- The four pairings one variant of the stylesheet creates, as data: body
+text on the page, marker text on the page, code text on its tint, the focus
+indicator on the page — each with the ratio it owes (SC 1.4.3, SC 1.4.11).
+`Contrast.ThemeColors.contractHolds` is exactly their conjunction
+(`themePairs_contract`), so a count over this list judges what that
+contract judges. -/
+def themePairs (t : Contrast.ThemeColors) : List (String × Ir.Color × Ir.Color × Nat) :=
+  [("text", t.ink, t.surface, Contrast.aaText), ("muted", t.muted, t.surface, Contrast.aaText),
+   ("code", t.ink, t.tint, Contrast.aaText), ("accent", t.accent, t.surface, Contrast.aaNonText)]
+
+theorem themePairs_contract (t : Contrast.ThemeColors) :
+    t.contractHolds =
+      (themePairs t).all fun p => decide (Contrast.contrastMilli p.2.1 p.2.2.1 ≥ p.2.2.2) := by
+  simp [Contrast.ThemeColors.contractHolds, themePairs, Bool.and_assoc]
+
+/-- The colours a page's own stylesheet paints in one colour scheme, read
+as the cascade resolves them. A palette entry named after a token (`ink`,
+`muted`, …) is emitted after both scheme blocks at the same `:root`
+specificity (`tokenVars`), so it holds in both schemes; an undeclared
+token keeps the scheme's own. The text is the design's declared ink when it
+declares one (`themeCss`: `body { color: var(--fg) }`), and the ground
+under it is the declared page (`body { background: var(--bg) }`), both read
+off `Design.ofDoc`, their one resolving site — except
+on the paged deck, whose stage paints `var(--surface)` whatever the body
+carries (`deckStageRule`). Under `bulma` or `none` the engine ships no
+colour of its own and claims nothing; `schemeFailures` counts none. -/
+def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColors :=
+  let tok (n : String) (d : Ir.Color) : Ir.Color := (doc.palette.find? n).getD d
+  let d := Design.ofDoc doc
+  let surface := tok "surface" base.surface
+  let text := if d.fgDeclared then d.fg else tok "ink" base.ink
+  let page := if d.bgDeclared then d.bg else surface
+  { ink := text
+    surface := if doc.docClass.record.model == .frame then surface else page
+    muted := tok "muted" base.muted
+    accent := tok "accent" base.accent
+    tint := tok "tint" base.tint
+    rule := tok "rule" base.rule }
+
+/-- The pairings a page fails, over both colour schemes: `themePairs` over
+`schemeColors` in light and in dark. A page under a stylesheet the engine
+does not own fails none, because the engine paints none of them. -/
+def schemeFailures (own : Bool) (doc : Doc) : List (String × String) :=
+  if !own then [] else
+    [("light", Contrast.light), ("dark", Contrast.dark)].flatMap fun (scheme, base) =>
+      ((themePairs (schemeColors doc base)).filter fun p =>
+          Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (scheme, p.1)
+
 /-- **Every picture the backend emits is named** (`_contract`): the
 `.picture` arm — the one site that builds an `<svg>` — ships an `svg`
 element whose own markup carries a non-empty accessible name, whatever the
