@@ -18634,13 +18634,19 @@ end of round 2 (6bb87f4).
 
 Comparison is over *trees*. The engine's HTML is a typed tree already;
 the spec's expected HTML is read by a tolerant reader in the script into
-the same `Html.Node` shape, and both go through one `canon`. Seven
+the same `Html.Node` shape, and both go through one `canon`. Six
 normalizations are declared in the script, each with the thing it would
-hide named beside it, and `--selftest` breaks every one in both
-directions: it hides what it declares, and not the difference beside it.
+hide named beside it. One is the attribute table `droppedAttrs` (`class`
+but its `language-*` tokens, `id`, `style`, `tabindex`), which `canon`
+reads itself; every attribute outside it is compared. `--selftest` breaks
+every normalization in both directions: it hides what it declares, and
+not the difference beside it.
 Round 2 made that claim before it was true — the selftest then mutated
 the verdict rules, and its one normalization check asserted that `canon`
-drops `class`. Declaring them found two bugs in the comparison itself:
+drops `class`. From round 3 to round 5 the claim was false again: `canon`
+kept six attributes and dropped every other one, declared nowhere,
+`hidden` among them (round 5, below). Declaring them found two bugs in the
+comparison itself:
 `canon` emitted a closing tag for void elements, and the heading-level
 offset was subtracted from *both* sides, which collapsed `h1` and `h2` to
 one ordinal and reported every two-level heading document as owed. Fixing
@@ -18936,3 +18942,87 @@ writes the committed tier byte for byte.
 `tests/commonmark/verdicts.tsv` byte-identical: all 652 verdicts and
 their notes as committed (323 match, 127 rejected, 0 divergence, 202
 owed), and no tier row moved.
+
+
+
+### 2026-09-26 — markdown, round 5: an attribute is content unless a row declares it
+
+**Rebased onto main at "Rerun the HTML reader oracle over the pages this
+branch emits".** Main registered its own `W0391` (package code: an `@`
+internal skipped with its arguments), so the markdown warning is `W0392`
+now, from the commit that introduces it. The conflicts, each resolved by
+hand:
+
+- the constructor list, the `spec` match and `diagWitness`: both sides'
+  additions kept, main's first;
+- `pendingTiers`: main held `["commonmark"]` and the branch
+  `["coverage"]`; coverage has landed and commonmark leaves with this
+  branch, so the list is empty;
+- two commits whose hunks rewrote lines carrying the code: the commit's
+  side taken, then renumbered.
+
+The golden was regenerated through the harness (`lake exe Tests
+--update`), which changed its two markdown lines and nothing else. Net
+content, per file: `git diff --no-color -U0` over the old range, against
+the same over the new range, with `@@` and `index` lines dropped. Of 19
+files, 11 are identical. Seven differ only by `W0391`→`W0392`: `Diag.lean`,
+`MdDesugar.lean`, `scripts/commonmark.lean`, `Tests/Diag.lean`,
+`Tests/Markdown.lean`, the golden and this file. `scripts/Board.lean`
+differs only by `pendingTiers`. Every `W0391` left in the tree is main's.
+
+**The comparison dropped every attribute but six, and said it dropped
+none.** `canon` kept `href`, `src`, `alt`, `title`, `start` and `type`,
+plus a `language-*` class, and dropped every other attribute on both
+sides. No normalization declared the drop, and the selftest broke none of
+it. Measured through `commonmark --check` on the rebased tip, with one
+mutation per scratch clone:
+
+- every paragraph ships `hidden` (one edit to `HtmlDoc.lean`'s paragraph
+  arm): exit 0 and 323 matches, the per-section report byte-identical to
+  the clean run's;
+- `tabindex` is compared instead of dropped: exit 1, and 26 matches become
+  owed (Fenced code blocks 24→2, Block quotes 14→13, Backslash escapes
+  6→4, Link reference definitions 3→2). That is every match whose page
+  carries a code block, since the HTML backend made each `<pre>` a tab
+  stop.
+
+The filter is inverted and it is one table, `droppedAttrs`. Each row names
+an attribute the comparison ignores and what ignoring it hides: `class`
+(but its `language-*` tokens), `id`, `style`, and now `tabindex`, which is
+focus order, not content. `canon` and the chrome walks read the table, and
+the normalization entry is rendered from it. Every other attribute is
+compared. No row may name one of `readerAttrs`, the attributes that decide
+whether content reaches a reader: `hidden`, `inert`, `aria-hidden`, `role`
+and `lang`. `role` is in the list because it can make a construct's
+content presentational, or announce it as another thing. `lang` is in it
+because it decides the voice and the hyphenation the content is read with.
+
+The chrome follows the same rule: a `<section>` or `<main>` is looked
+through only when it carries nothing but declared drops, so
+`<section hidden>` stays in the compared tree. A style or script node was
+dropped and is now compared. An attribute census over the 652 cases,
+through `engineFragment`, found few attributes. The engine's fragments
+carry only `href`, `style`, `class`, `alt`, `src` and `tabindex`,
+`<main>` carries none, and a section carries only `id`. So the inversion
+moved no verdict and no note (`--check` is ok).
+
+After "Compare every attribute but the declared drops, and hidden content
+always":
+
+- the hidden-paragraph mutation exits 1: matches fall from 323 to 56, and
+  22 sections regress;
+- disabling the `tabindex` row exits 1 with the same 26 cases, and
+  `--selftest` fails its `tabindex` arm.
+
+The new selftest arms were run with each old piece swapped back into the
+new script. They fail 29 times against the keep-list, 15 against the old
+chrome walks, and twice against the node drop.
+
+Three sentences said the comparison declared every normalization, and
+each is corrected: the surface-reader row in AGENTS.md, the round-1
+paragraph above ("Seven normalizations are declared"), and the script's
+header. One consequence falls on other owners. A backend change that adds
+an attribute to a markdown page now moves this tier, until a row declares
+the attribute or the change is judged a real difference. That is the
+intended direction: the drop that hid `tabindex` would have hidden
+`hidden` too.
