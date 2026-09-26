@@ -2518,7 +2518,7 @@ worktree's repository, whose `main` is ahead of its origin's — and must run
 its scenarios and leave that repository and its origin as they were: the
 origin's `main` unmoved, no ref, config or worktree written. The build before
 the scrub (cfd060d3), started so on a scratch copy, pushed that repository's
-`main` to its origin, added fourteen branches and twelve worktrees, and
+`main` to its origin, added thirteen branches and twelve worktrees, and
 rewrote its config down to `core.bare`. -/
 def scenarioHookGitDir (self root : String) : IO Outcome := do
   let v ← mkVictim s!"{root}/hookdir"

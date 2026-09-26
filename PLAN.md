@@ -19098,3 +19098,141 @@ One decision belongs to the human. A `javascript:` or `data:` destination
 ships as a live `href` from markdown, as it does from `\href`. Whether a
 markdown link may carry a script-bearing scheme is the trust question
 behind the raw-HTML refusal, and nothing decides it yet.
+
+
+### 2026-09-26 — the scenario harness writes only what its run made, and it did not push main at 09:06
+
+At 09:06:08 UTC the main worktree's remote-tracking ref for `main` recorded
+an update by push to what local `main` was then. The remote is public, no
+agent's log records a push, and nobody approved one; the commit pushed was
+clean. The landing tool's scenario harness was the suspect: git exports
+`GIT_DIR` and `GIT_INDEX_FILE` to a hook in a linked worktree, and the
+harness's fixtures run `push -q origin main`. This entry is the measurement
+of that lead, and the guard that makes the harness unable to write outside
+the directory it creates.
+
+**The lead, re-dated.** The harness's scrub of inherited `GIT_` variables
+was authored at 02:47:40; `1185baa0` is its landed copy, whose committer
+date (10:08:49) is the rebase. `0f37ba4` (06:50) and `d96678b` (09:06:41)
+both carry it. The last build without it is `cfd060d3`.
+
+**The reproduction**, on a scratch repository R whose origin is a scratch
+bare repository O, R's `main` one commit ahead of O's (as at 09:06), and a
+linked worktree W of R. The hook's environment was measured, not assumed:
+a `pre-commit` in W is handed `GIT_DIR` (W's git directory under R),
+`GIT_INDEX_FILE`, `GIT_EDITOR=:`, `GIT_PREFIX`, `GIT_EXEC_PATH` and the
+author variables. Each build ran `--scratch-selftest` and `--selftest` from
+W, under those variables and under none, and R and O were read before and
+after (refs, config, worktrees, W's `HEAD` and index):
+
+| build | under the hook's variables | with no `GIT_` variable |
+|---|---|---|
+| `cfd060d3` | O's `main` moved, to a fixture commit; R gained 13 branches and 12 worktrees, and two of its branches moved; R's config rewritten (`core.bare=true`, a scratch author, `land.allowGateOverride=true`, `commit.gpgsign=true`); W's `HEAD` switched to `main` | unchanged |
+| `0f37ba4` | unchanged (23 scenarios pass) | unchanged |
+| `f9ebb1e5` | unchanged (24 pass) | unchanged |
+| this branch | unchanged (28 pass) | unchanged |
+
+`--selftest` drives the pure core and touches no repository under either
+environment, in all eight runs. (The guard commit's message says fourteen
+branches; the read-back is thirteen new and two moved.)
+
+**It does not explain 09:06:08, and nothing found does.**
+- The mechanism reproduced pushes after it has rewritten the named
+  repository's config and added its fixture branches, and it pushes a
+  fixture commit. The main worktree's config was last written the day
+  before, it holds no scenario branch, and the commit pushed was local
+  `main`.
+- Every build of the tool traced to that hour carries the scrub, and under
+  the scrubbed environment (`GIT_CONFIG_GLOBAL=/dev/null`) git finds no
+  credential helper for the public remote, so a push from it could not
+  authenticate. Under the user's own configuration a credential cache
+  answers.
+- Nothing in the hook, `scripts/precommit.lean` or `lake test` runs either
+  harness: the hook builds `land` and never runs it. Timed from the land
+  fixer's evidence files (not observed directly): its `lake test` ran
+  09:05:31–09:06:17, its commit message was written at 09:06:31 and the
+  commit took 12 s, so its hook was not running at 09:06:08.
+- No landing run directory or ledger row dates from that minute.
+
+What remains is a push run in a checkout of the real repository — the main
+worktree or a linked one, which share its refs and its origin — by a
+process that reads the user's global configuration. That is unproven.
+
+**The guard.** The decision is pure and lives in `scripts/LandCore.lean`.
+`classify` reads an argv into an `HCall`, with no wildcard: a global option,
+a fetch, and a push whose target is not its first operand are `opaque`.
+`HCall.writes` declares where each shape may write, and `HCall.allowed`
+lets a command run only from inside the run's root, when it writes only
+there. `hcall_writes_owned`: every write of an allowed command lies inside
+the run's scratch root, and a push — or a run of the tool under test, which
+may push to any remote its repository names — reaches only a bare
+repository the run made there (`hpush_owned` for the push). The boundary
+in `scripts/land.lean` holds three premises, each named beside its site
+with the scenario that falsifies it:
+- `hgit` asks git where the command's repository is (`rev-parse
+  --absolute-git-dir`, same environment, same directory) and runs only what
+  the guard allows; `runTool` also reads every `url` and `pushurl` of the
+  tool's repository, and refuses on any `insteadOf`; pushes name their
+  target by path. `hrun` refuses git outright.
+- The root is a fresh directory named by its real path, and the run
+  refuses to start (exit 2) when a repository encloses it. This host's home
+  directory is itself an empty git work tree, so a root anywhere under it is
+  refused; the default root is under the system's temporary directory.
+- Every child runs with `GIT_ALLOW_PROTOCOL=file`: git itself refuses
+  `https`, `ssh` and `git://` to the tool under test and its gates.
+
+**Measured.** Every scenario below ran through `land --scratch-selftest`.
+- New scenarios. `hookdir`: a harness started under a hook's variables runs
+  and leaves that repository and its origin as they were. `incheckout`: a
+  root inside a checkout refuses to start. `guard`: six commands whose
+  writes the run does not own are refused and none writes, while a push by
+  path to the run's bare repository goes through. `nonet`: a gate asking
+  git for `https` at the loopback address passes only when git refused the
+  transport.
+- This branch's harness driving the older builds: against `cfd060d3`,
+  `hookdir` fails (every part of the victim changed) and `incheckout`
+  fails; against `0f37ba4` and `f9ebb1e5`, only `incheckout` fails (plus
+  `0f37ba4`'s known put-back case). The scrub already held at the base, so
+  `hookdir` is the regression floor for it, witnessed by the builds below.
+- One layer dropped at a time, each a mutant commit on a scratch clone:
+  - the scrub dropped: `hookdir` fails, because the nested run refuses to
+    start;
+  - the root refusal dropped: `incheckout` fails;
+  - the guard's two checks dropped: `guard` fails;
+  - the protocol variable dropped: `nonet` fails, git reporting a refused
+    connection to the loopback.
+- All four dropped, landed by this branch's binary through the shipped gate
+  list: exit 1 at `land-scenarios`, with `build`, `obligations-build`,
+  `test` and `land-selftest` green, `main` and the scratch remote unmoved,
+  and the four new scenarios failing.
+- `HCall.allowed` without its writes check, committed through the
+  pre-commit hook: refused, `hcall_writes_owned` no longer proves.
+- The harness takes 50–65 s for 28 scenarios, up from 24 s for 24; the
+  nested harness in `hookdir` is most of the difference.
+
+**Every other git call that can push, fetch or write a ref:**
+
+| call site | repository reached | verdict |
+|---|---|---|
+| `land.lean` `.push`; `landPush` (`push origin <tip>:refs/heads/main`) | the landing repository's origin, the public remote in the real one | by design, only with `--push` or `land push`; the gated tip on a proven run (`step_push_exact`, `pushPlan_exact`); under the harness a made bare repository only, never a network URL |
+| `land.lean` `.readRemote`, `landPush` (`ls-remote origin`) | the same, read | only on the two push paths |
+| `land.lean` `.fastForward` (`push … . <tip>:refs/heads/main`) | the repository itself | `refs/heads/main` by name, fast-forward only (`step_ff_exact`) |
+| `land.lean` `landNew`, `landRetire`, gate tree and rebase, lock and retention | the landing repository | owned writes (`step_writes_owned`): a new branch and worktree by name, a compare-and-swap delete, the run's own tree |
+| `land.lean` harness: `hgit`, `runTool` | the run's scratch root | guarded (`hcall_writes_owned`) |
+| `land.lean` harness: the scenarios' shell gates and git wrappers | the scratch paths they name | not guarded per call; scratch paths only, harness environment |
+| `scoreboard.lean` `gitRead` (`--check --base`) | the checked repository | read-only, `--no-replace-objects` |
+| `scoreboard.lean` `harnessGit` (selftest) | a temporary directory it runs `git init` in first | writes only there, repository variables unset, no push or fetch |
+| `precommit.lean` `git`, `gitOpt`, `git grep`; the hook's `git diff --cached` | the repository being committed | read-only |
+| `Tests/**` | none | no git |
+
+**Open, and not this branch's.**
+- The premise gate reads markers in `LeanTex/Core` and `Main.lean` only,
+  so the three markers in `scripts/land.lean` are unchecked, and `cites`
+  still has no root for the landing modules (routed twice before), which
+  is why `hcall_writes_owned` is named in a line comment beside `hgit`, not
+  in its docstring.
+- `scoreboard.lean`'s harness could take the same guard; it cannot reach a
+  real repository today, for the reasons in the table.
+- A `pre-push` hook refusing unapproved pushes, what to do with the stray
+  public branches, and whether the empty repository at the home directory
+  should exist, are the user's decisions.
