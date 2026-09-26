@@ -4,6 +4,7 @@
   land new <name>          create and seed a worktree for agent/<name>
   land check <name>        preconditions and gates, no merge
   land <name> [--push]     land agent/<name> onto main
+  land push                publish the last landing to the remote's main
   land retire <name>       remove a merged, clean worktree and its branch
   land status              porcelain listing of the agent worktrees
   land --selftest          drive the pure core over scripted observations
@@ -1054,6 +1055,61 @@ def landRetire (e : Env) (name : String) : IO UInt32 := do
       sayFinal .retired [("name", name)]
       return 0
 
+-- ## land push
+
+/-- Publish the last landing: the way to push a landing made without
+`--push`, which a second `land <name> --push` cannot do — the branch is no
+longer ahead. `main` must read at the last `landed` row's tip, which is also
+its gated tip, so a commit on `main` that no landing gated is refused rather
+than published; the push names that sha, never `main`, and is never forced;
+and the remote is read back by its exact refname. A remote already at the
+tip is reported, and nothing is written. -/
+def landPush (e : Env) : IO UInt32 := do
+  let ctr ← IO.mkRef 0
+  let t0 ← IO.monoMsNow
+  say "run" "ok" [("id", e.runId), ("dir", e.runDir), ("mode", "push")]
+  let row ← lastVerdict e "landed" none
+  let fld (k : String) : String := match row with
+    | some l => (jsonField l k).getD ""
+    | none => ""
+  let name := fld "name"
+  let mt ← revParse e ctr "pre" "refs/heads/main" (some e.mainWt)
+  match pushPlan (fld "tip") (fld "gated") mt with
+  | .error why =>
+    say "pre" "fail" [("main", if mt.isEmpty then "?" else mt),
+      ("landed", if (fld "tip").isEmpty then "?" else fld "tip"), ("why", why)]
+    sayFinal .refused [("why", why)]
+    return 2
+  | .ok tip =>
+    say "pre" "ok" [("main", mt), ("landed", tip), ("name", name), ("run", fld "run")]
+    let r0 ← git e ctr "pre" #["ls-remote", "origin", "refs/heads/main"] (some e.mainWt)
+    if r0.code != 0 then
+      say "pre" "fail" [("why", "the remote cannot be read"), ("log", "pre.log")]
+      sayFinal .refused [("why", "the remote cannot be read")]
+      return 2
+    if lsRemoteTip r0.out "refs/heads/main" == tip then
+      -- Nothing to publish, so nothing to record.
+      sayFinal .pushed [("name", name), ("tip", tip), ("already", "yes")]
+      return 0
+    let rp ← git e ctr "push" #["push", "origin", s!"{tip}:refs/heads/main"] (some e.mainWt)
+    say "push" (if rp.code == 0 then "ok" else "fail") [("tip", tip), ("log", "push.log")]
+    let r1 ← git e ctr "verify-push" #["ls-remote", "origin", "refs/heads/main"] (some e.mainWt)
+    let after := lsRemoteTip r1.out "refs/heads/main"
+    let v := pushVerdict (rp.code == 0) after tip
+    say "verify-push" (if v == .pushed then "ok" else "fail")
+      [("remote", if after.isEmpty then "?" else after), ("landed", tip)]
+    let why := if v == .pushed then ""
+      else "the push was rejected, or the remote's main did not read back at the landed tip"
+    let t1 ← IO.monoMsNow
+    let ok ← writeLedger e ([("ts", e.ts), ("run", e.runId), ("name", name),
+      ("verdict", v.name), ("tip", tip), ("gated", tip), ("remote", "origin/main"),
+      ("landed-run", fld "run"), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
+      ++ (if why.isEmpty then [] else [("why", why)]))
+    if !ok then say "ledger" "fail" [("row", v.name)]
+    sayFinal v ([("name", name), ("tip", tip), ("remote", if after.isEmpty then "?" else after),
+      ("ms", toString (t1 - t0))] ++ (if why.isEmpty then [] else [("why", why)]))
+    return (if v == .pushed then 0 else 4)
+
 -- ## land status
 
 def landStatus (e : Env) : IO UInt32 := do
@@ -1454,6 +1510,30 @@ def selftest : IO UInt32 := do
       say "selftest" "fail" [("case", s!"ls-remote: {label}"),
         ("why", s!"read {lsRemoteTip out "refs/heads/main"}")]
     else say "selftest" "ok" [("case", s!"ls-remote: {label}")]
+  -- `land push`'s two decisions, which the scenarios reach only through git.
+  let planCases : List (String × Sha × Sha × Sha × Option Sha) :=
+    [ ("publishes the last landed tip", sha3s, sha3s, sha3s, some sha3s)
+    , ("no landed row", "", "", sha3s, none)
+    , ("a landed row whose tip is not its gated tip", sha3s, sha2s, sha3s, none)
+    , ("a commit on main no landing gated", sha3s, sha3s, sha1s, none) ]
+  for (label, lt, lg, mt, want) in planCases do
+    let got := match pushPlan lt lg mt with
+      | .ok t => some t
+      | .error _ => none
+    if got != want then
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"push plan: {label}"), ("why", "wrong answer")]
+    else say "selftest" "ok" [("case", s!"push plan: {label}")]
+  let verdictCases : List (String × Bool × Sha × Sha × Verdict) :=
+    [ ("pushed and read back", true, sha3s, sha3s, .pushed)
+    , ("rejected", false, sha3s, sha3s, .landedUnpushed)
+    , ("read back at another commit", true, sha1s, sha3s, .landedUnpushed)
+    , ("nothing read back", true, "", "", .landedUnpushed) ]
+  for (label, ok, r, t, want) in verdictCases do
+    if pushVerdict ok r t != want then
+      bad := bad + 1
+      say "selftest" "fail" [("case", s!"push verdict: {label}"), ("why", "wrong verdict")]
+    else say "selftest" "ok" [("case", s!"push verdict: {label}")]
   -- The net comparison, which the scenarios reach only through git.
   for (label, before, after, want) in netCases do
     let got := netDrift (netOf before) (netOf after)
@@ -2040,6 +2120,40 @@ def scenarioRetireRebased (self root : String) : IO Outcome := do
          , ok := c1 == 0 && c2 == 0 && hasRef != 0 && wtGone && says out2 "result=retired"
          , detail := s!"land={c1} retire={c2} ref-left={hasRef == 0} worktree-gone={wtGone}" }
 
+/-- A landing made without `--push` is published later by `land push`, which
+names the landed sha and reads the remote back: a second `land <name>
+--push` refuses, because the branch is no longer ahead, and a hand push has
+no read-back and leaves no row. -/
+def scenarioPushLater (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/pushlater" "later"
+  let remote ← addRemote s
+  let base ← revOf remote "refs/heads/main"
+  let tip ← revOf s.repo "refs/heads/agent/later"
+  let (c1, _) ← landIn self s.repo #["later"] "t=true"
+  let mid ← revOf remote "refs/heads/main"
+  let (c2, out2) ← landIn self s.repo #["push"] "t=true"
+  let onRemote ← revOf remote "refs/heads/main"
+  let ledger ← try IO.FS.readFile s!"{s.repo}/.git/land/ledger.jsonl" catch _ => pure ""
+  return { label := "land push publishes the last landing and records it"
+         , ok := c1 == 0 && mid == base && c2 == 0 && onRemote == tip
+             && says out2 "result=pushed" && says ledger "\"verdict\":\"pushed\""
+         , detail := s!"land={c1} push={c2} remote={base}->{mid}->{onRemote} gated={tip}" }
+
+/-- A commit lands on `main` by hand after the last landing: `land push`
+must refuse to publish it, and the remote stays where it was. -/
+def scenarioPushUngated (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/pushungated" "ungated"
+  let remote ← addRemote s
+  let base ← revOf remote "refs/heads/main"
+  let (c1, _) ← landIn self s.repo #["ungated"] "t=true"
+  hgitOk #["commit", "-q", "--allow-empty", "-m", "ungated"] s.repo
+  let (c2, out2) ← landIn self s.repo #["push"] "t=true"
+  let onRemote ← revOf remote "refs/heads/main"
+  return { label := "land push refuses a main that holds a commit no landing gated"
+         , ok := c1 == 0 && c2 == 2 && onRemote == base
+             && says out2 "a commit no landing gated"
+         , detail := s!"land={c1} push={c2} remote={base}->{onRemote}" }
+
 /-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
 names another build to drive instead of this one — how a scenario is shown
 to fail on the tip before its fix. -/
@@ -2066,7 +2180,8 @@ def scratchSelftest : IO UInt32 := do
     , ("killed", scenarioKilled), ("ownerbefore", scenarioOwnerCommitsBeforeRebase)
     , ("ownerafter", scenarioOwnerCommitsAfterRebase), ("switchff", scenarioMainSwitchedAtMerge)
     , ("decoy", scenarioLsRemoteDecoy), ("reland", scenarioRelandRefused)
-    , ("retireb", scenarioRetireRebased) ]
+    , ("retireb", scenarioRetireRebased), ("pushlater", scenarioPushLater)
+    , ("pushungated", scenarioPushUngated) ]
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
     -- A fixture that could not be built is the scenario's failure, named,
@@ -2091,13 +2206,13 @@ def scratchSelftest : IO UInt32 := do
 -- ## Entry
 
 def usage : String :=
-  "usage: land new <name> | land check <name> | land <name> [--push] | \
+  "usage: land new <name> | land check <name> | land <name> [--push] | land push | \
 land retire <name> | land status | land --selftest | land --scratch-selftest"
 
 /-- The subcommand words, which are not agent names. `land check` with no
 name once fell through to the bare-name form and would have landed
 `agent/check`. -/
-def reserved : List String := ["new", "check", "retire", "status"]
+def reserved : List String := ["new", "check", "retire", "status", "push"]
 
 def resolveGates (e : Env) : IO (Except String (Array Gate × String)) := do
   let ctr ← IO.mkRef 0
@@ -2147,6 +2262,7 @@ def main (argv : List String) : IO UInt32 := do
           match args with
           | ["new", n] => named n (landNew env n)
           | ["retire", n] => named n (landRetire env n)
+          | ["push"] => withLock env "push" (landPush env)
           | ["check", n] => landing n .check false
           | [n] => landing n .land false
           | [n, "--push"] => landing n .land true

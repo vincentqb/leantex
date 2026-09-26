@@ -79,6 +79,8 @@ inductive Verdict where
   | retired
   /-- `land status` printed its listing. -/
   | listed
+  /-- `land push` published the last landing, and the remote read back at it. -/
+  | pushed
   deriving DecidableEq, Repr, Inhabited
 
 def Verdict.name : Verdict → String
@@ -90,6 +92,7 @@ def Verdict.name : Verdict → String
   | .created => "created"
   | .retired => "retired"
   | .listed => "listed"
+  | .pushed => "pushed"
 
 /-- Which command the run is: a landing may mutate refs, a check never
 reaches the stage that can. -/
@@ -729,6 +732,24 @@ def trace (s : State) : List Obs → List (State × Act)
   | [] => []
   | o :: os => (step s o) :: trace (step s o).1 os
 
+-- ## `land push`
+
+/-- `land push`: publish the last landing. The commit is the last `landed`
+row's tip, which must also be its gated tip and must be what `main` reads
+now — a commit on `main` that no landing gated refuses. The push names that
+sha, never `main`. -/
+def pushPlan (landedTip landedGated mainTip : Sha) : Except String Sha :=
+  if !isSha landedTip then .error "the ledger has no landed row with a tip"
+  else if landedGated != landedTip then .error "the last landed row's tip is not its gated tip"
+  else if mainTip != landedTip then
+    .error "main is not at the last landed tip: it holds a commit no landing gated"
+  else .ok landedTip
+
+/-- The verdict of `land push`: published only when the push succeeded and
+the remote's `main`, read back by its exact name, is the commit pushed. -/
+def pushVerdict (pushedOk : Bool) (remote tip : Sha) : Verdict :=
+  if pushedOk && isSha remote && remote == tip then .pushed else .landedUnpushed
+
 -- ## The theorems
 --
 -- Four properties, and the ways each could have held vacuously. Each is
@@ -1129,5 +1150,24 @@ theorem init_pinned (name : String) (m : Mode) (plan : Array GateSpec) (p : Bool
     (State.init name m plan p).pinned = true := by
   simp [State.init, State.pinned, State.atOrPastFF, State.preTree, State.rebased,
     State.landedVerdict]
+
+/-- `land push` pushes the last landing's tip, which is its gated tip and
+the `main` read, and a sha. -/
+theorem pushPlan_exact (lt lg mt t : Sha) (h : pushPlan lt lg mt = .ok t) :
+    t = lt ∧ t = lg ∧ t = mt ∧ isSha t = true := by
+  unfold pushPlan at h
+  repeat' split at h
+  all_goals simp_all
+
+/-- `land push` reports `pushed` only for a push that succeeded and a remote
+that read back, by its exact name, at the commit pushed. -/
+theorem pushVerdict_exact (ok : Bool) (r t : Sha) (h : pushVerdict ok r t = .pushed) :
+    ok = true ∧ r = t ∧ isSha r = true := by
+  unfold pushVerdict at h
+  split at h
+  · rename_i hc
+    simp only [Bool.and_eq_true, beq_iff_eq] at hc
+    exact ⟨hc.1.1, hc.2, hc.1.2⟩
+  · simp at h
 
 end Land
