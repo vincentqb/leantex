@@ -4059,6 +4059,31 @@ private def substTok (args : Array (List Tok)) : Tok → Tok
 
 end
 
+/-- Does `n` open an arithmetic conditional, whose test the walk computes? -/
+private def numCondHead (n : String) : Bool :=
+  (condKindOf n) matches some (.num _)
+
+/-- How many tokens after an arithmetic conditional's head its test takes,
+as the walk's own reader closes it (`step`'s `icond` arm): through the
+right side of a relation, up to the space that ends it, or none at all when
+an `\else` or `\fi` comes first. `sawRel`: a relation has been read; `last`:
+the latest token the test holds. -/
+private def numTestLen : List Tok → Nat → Bool → Option Tok → Nat
+  | [], n, _, _ => n
+  | .space :: rest, n, sawRel, last =>
+    let ready := sawRel && (match last with
+      | some (.sym c) => c != '<' && c != '>' && c != '='
+      | some _ => true
+      | none => false)
+    if ready then n else numTestLen rest (n + 1) sawRel last
+  | .ctrl "else" :: _, n, _, _ => n
+  | .ctrl "fi" :: _, n, _, _ => n
+  | t :: rest, n, sawRel, _ =>
+    let rel := match t with
+      | .sym c => c == '<' || c == '>' || c == '='
+      | _ => false
+    numTestLen rest (n + 1) (sawRel || rel) (some t)
+
 mutual
 
 /-- One expansion level over the whole stream: every name in the table
@@ -4074,41 +4099,62 @@ wrapper, a two-word one); a wider macro is left in place, so `salCtrl`
 names it and the label keeps the words it can read — a named loss rather
 than a body substituted against the wrong arguments. -/
 private def expandList (tbl : List (String × Macro)) (acc : Array Tok) :
-    List Tok → Array Tok
-  | [] => acc
+    List Tok → Nat → Array Tok
+  | [], _ => acc
+  -- The test of an arithmetic conditional is read as written: a document
+  -- macro there is not expanded from this table, which says what a name
+  -- means somewhere in the document and not where the picture stands. The
+  -- conditional pass decided every test it could read at the picture's
+  -- site before this walk ran, so what is left here is a test over the
+  -- picture's own values, or one the walk names and floors.
+  | t :: rest, skip + 1 => expandList tbl (acc.push t) rest skip
   -- A space between a name and its argument is the name's, as TeX reads it.
-  | .ctrl n :: .space :: rest => expandList tbl acc (.ctrl n :: rest)
-  | .ctrl n :: .group a :: .group b :: rest =>
+  | .ctrl n :: .space :: rest, 0 =>
+    if numCondHead n then
+      expandList tbl (acc.push (.ctrl n)) (.space :: rest) (numTestLen (.space :: rest) 0 false none)
+    else expandList tbl acc (.ctrl n :: rest) 0
+  | .ctrl n :: .group a :: .group b :: rest, 0 =>
+    if numCondHead n then
+      expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest)
+        (numTestLen (.group a :: .group b :: rest) 0 false none)
+    else
     match tbl.lookup n with
     | some m =>
       if m.arity == 2 then
-        expandList tbl ((substList #[a, b] #[] m.body).foldl Array.push acc) rest
+        expandList tbl ((substList #[a, b] #[] m.body).foldl Array.push acc) rest 0
       else if m.arity == 1 then
         expandList tbl ((substList #[a] #[] m.body).foldl Array.push acc)
-          (.group b :: rest)
+          (.group b :: rest) 0
       else if m.arity == 0 then
-        expandList tbl (m.body.foldl Array.push acc) (.group a :: .group b :: rest)
-      else expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest)
-    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest)
-  | .ctrl n :: .group a :: rest =>
+        expandList tbl (m.body.foldl Array.push acc) (.group a :: .group b :: rest) 0
+      else expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest) 0
+    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: .group b :: rest) 0
+  | .ctrl n :: .group a :: rest, 0 =>
+    if numCondHead n then
+      expandList tbl (acc.push (.ctrl n)) (.group a :: rest)
+        (numTestLen (.group a :: rest) 0 false none)
+    else
     match tbl.lookup n with
     | some m =>
       if m.arity == 1 then
-        expandList tbl ((substList #[a] #[] m.body).foldl Array.push acc) rest
+        expandList tbl ((substList #[a] #[] m.body).foldl Array.push acc) rest 0
       else if m.arity == 0 then
-        expandList tbl (m.body.foldl Array.push acc) (.group a :: rest)
-      else expandList tbl (acc.push (.ctrl n)) (.group a :: rest)
-    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: rest)
-  | .ctrl n :: rest =>
+        expandList tbl (m.body.foldl Array.push acc) (.group a :: rest) 0
+      else expandList tbl (acc.push (.ctrl n)) (.group a :: rest) 0
+    | none => expandList tbl (acc.push (.ctrl n)) (.group a :: rest) 0
+  | .ctrl n :: rest, 0 =>
+    if numCondHead n then
+      expandList tbl (acc.push (.ctrl n)) rest (numTestLen rest 0 false none)
+    else
     match tbl.lookup n with
     | some m =>
-      if m.arity == 0 then expandList tbl (m.body.foldl Array.push acc) rest
-      else expandList tbl (acc.push (.ctrl n)) rest
-    | none => expandList tbl (acc.push (.ctrl n)) rest
-  | t :: rest => expandList tbl (acc.push (expandTok tbl t)) rest
+      if m.arity == 0 then expandList tbl (m.body.foldl Array.push acc) rest 0
+      else expandList tbl (acc.push (.ctrl n)) rest 0
+    | none => expandList tbl (acc.push (.ctrl n)) rest 0
+  | t :: rest, 0 => expandList tbl (acc.push (expandTok tbl t)) rest 0
 
 private def expandTok (tbl : List (String × Macro)) : Tok → Tok
-  | .group g => .group (expandList tbl #[] g).toList
+  | .group g => .group (expandList tbl #[] g 0).toList
   | .ctrl n => .ctrl n
   | .ident s => .ident s
   | .num m => .num m
@@ -4141,7 +4187,7 @@ def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array Tok :=
   if tbl.isEmpty then return ts
   let mut out := ts
   for _ in [0:tbl.length] do
-    let next := expandList tbl #[] out.toList
+    let next := expandList tbl #[] out.toList 0
     if next == out then break
     out := next
   return out

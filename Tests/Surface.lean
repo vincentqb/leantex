@@ -4860,9 +4860,10 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      " (0,0) rectangle (1,1);\\end{tikzpicture}"))
   t "an optional argument's default travels with its definition"
     (hasStr (reqOf fdoc2) "\\renewcommand{\\opt}[2][d]")
-  t "a redefinition rides as the document's last word"
-    (hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{q}" &&
-      !hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{p}")
+  t "a redefinition in force at the picture rides in the picture as the site's text"
+    (hasStr (reqOf fdoc2) "[q\\opt" &&
+      !hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{p}" &&
+      !hasStr (reqOf fdoc2) "\\newcommand{\\plain}{p}")
   t "TeX's own def rides in its own spelling"
     (hasStr (reqOf fdoc2) "\\def\\raw#1{<#1>}")
   -- Conservation across the definer rewrite, with a picture in play: the

@@ -529,6 +529,11 @@ private structure St where
   /-- Where the macro being expanded by the conditional pass is used: the
   site its decisions are named at, since that is where TeX makes them. -/
   useSite : Option Pos := none
+  /-- The conditional pass is inside a picture: a document macro there is
+  read at the picture's own site, so the pass puts the value in force there
+  into the picture rather than leave the walk a table for the whole
+  document. -/
+  inPicture : Bool := false
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand`'s keep-existing policy reads. Separate from
   `binds`, which the conditional pass fills for the whole document
@@ -993,6 +998,14 @@ A set line written *inside* one is already that standalone's, so the
 collector does not hoist it: hoisting would scope one picture's styling to
 every other picture in the document. -/
 def pictureEnvs : List String := ["tikzpicture", "external"]
+
+/-- The control words the picture walk gives a meaning of its own — its
+statement heads, `\else` and `\fi` (`Picture.walkCtrls`, which a test holds
+equal to this list). The conditional pass puts no document macro of such a
+name into a picture: the walk names it where it stands. -/
+def picWalkCtrls : List String :=
+  ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
+   "pgfmathtruncatemacro", "else", "fi"]
 
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`
@@ -2204,11 +2217,13 @@ private def condOne (ex : String → Pos → M (Option (Array Raw))) : Raw → M
       return .env n body' p
     | none =>
       let m ← condMark
+      let inPic := (← get).inPicture
       if pictureEnvs.contains n then
         let names := condBoundLevel #[] body.toList
-        write fun st => { st with picBound := st.picBound ++ names }
+        write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let body' ← condList ex body #[] [] body.toList 0 0
       condCloseEnv m
+      write fun st => { st with inPicture := inPic }
       return .env n body' p
   | r => pure r
 
@@ -2216,10 +2231,11 @@ end
 
 /-- Expand the macro `n` where the conditional pass meets it in live
 content, when its text does something only a use can decide
-(`CondVal.live`): the text is walked where the use stands, against the state
-in force there, so its conditionals are decided — and its flags set, its
-definitions made — at the use, as TeX does, and the decisions are named at
-the use. `bound` is the serial below which a text may expand: a use in
+(`CondVal.live`), or when the use stands inside a picture, which reads a
+macro at its own site: the text is walked where the use stands, against the
+state in force there, so its conditionals are decided — and its flags set,
+its definitions made — at the use, as TeX does, and the decisions are named
+at the use. `bound` is the serial below which a text may expand: a use in
 running text sees every definition made so far, a use inside a macro's text
 only those made before that macro, the elaborator's own visibility rule, so
 each nested expansion strictly lowers the bound. A live use the bound rules
@@ -2227,17 +2243,19 @@ out is refused by name; `none` leaves the name to the elaborator. -/
 private def condExpandAt (bound : Nat) (n : String) (pos : Pos) : M (Option (Array Raw)) := do
   let st ← get
   let site := st.useSite
-  let own := st.picBound.contains n || st.provideKeeps.contains n
+  let inPic := st.inPicture
+  let own := st.picBound.contains n || st.provideKeeps.contains n ||
+    (inPic && picWalkCtrls.contains n)
   match condValueOf st.binds n with
   | some (some v) =>
     -- premise: macroUseChecks — a use between two states of what the text reads
-    if !v.live || own then return none
+    if !(v.live || inPic) || own then return none
     if _h : v.serial < bound then
       write fun s => { s with useSite := some (site.getD pos) }
       let out ← condList (fun m p => condExpandAt v.serial m p) v.raws #[] [] v.raws.toList 0 0
       write fun s => { s with useSite := site }
       return some out
-    else
+    else if v.live then
       sayOnce ("cond:unexpanded:" ++ n) .W0104
         (s!"'\\{n}' holds a conditional or sets a flag, which TeX decides where it is \
 used; here it is reached through a macro defined before it, which this engine expands \
@@ -2245,6 +2263,7 @@ without it, so that part of its text is skipped whole")
         (site.getD pos)
         (help := "define '\\{n}' before the macros that use it")
       return none
+    else return none
   | _ => return none
 termination_by bound
 

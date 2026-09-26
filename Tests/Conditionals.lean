@@ -221,3 +221,49 @@ def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let figs := text fig "\\def\\probeStage{1}\\probeFig\n\n\\def\\probeStage{2}\\probeFig"
   t "a picture written as a macro draws the state in force at each use"
     (occurs figs "Small" == 1 && occurs figs "Large" == 1)
+
+
+/-- **A picture's macro-dependent values are the ones in force at its own
+site.** TeX expands a macro in a picture where the picture stands; the
+defect read every document macro in a picture from one table for the whole
+document, the last definition winning — a label redefined between two
+pictures drew its last text in both, and a test over a macro defined only
+after the picture was computed from that later definition and named as the
+picture's own values. The conditional pass now puts the value in force at
+the site into the picture, for the walk and the boundary alike; the walk
+expands nothing into a test; and a name the whole-document table cannot
+answer for every site — defined with different texts — is not expanded but
+named. Read off the shipped census, the boundary requests and the
+structured diagnostics. Invented content throughout. -/
+def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let occurs (s needle : String) : Nat := (s.splitOn needle).length - 1
+  let pic (body : String) : String :=
+    "\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n"
+  t "the pass's picture vocabulary is the walk's"
+    (Compat.picWalkCtrls == Picture.walkCtrls)
+  let label := pic "\\node at (0,0) {\\probeLabel};\n"
+  let labels := censusText (censusOfSrc oneFace (dvDoc "\\newcommand\\probeLabel{Early}\n"
+    (label ++ "\n\\renewcommand\\probeLabel{Late}\n" ++ label)))
+  t "a label macro redefined between two pictures draws each site's text"
+    (occurs labels "Early" == 1 && occurs labels "Late" == 1)
+  let lateSrc := dvDoc ""
+    (pic ("\\ifnum\\probeLate=1 \\node at (0,0) {Small};\\else \\node at (0,0) {Large};\\fi\n") ++
+      "\n\\def\\probeLate{1}\n")
+  let (_, lateDs) := elabStr lateSrc
+  t "a picture's test is not computed from a definition made after the picture"
+    (lateDs.all (·.code != "N0114") && lateDs.any fun d => d.code == "W0334" && d.subject.isSome)
+  let wrapSrc := dvDoc "\\newcommand\\probeWrap[1]{A#1}\n"
+    (pic "\\node at (0,0) {\\probeWrap{x}};\n" ++ "\n\\renewcommand\\probeWrap[1]{B#1}\n")
+  let wrapped := censusText (censusOfSrc oneFace wrapSrc)
+  t "a macro the document defines with two texts is named in a picture, not drawn as its last"
+    (!hasStr wrapped "Bx" &&
+      (elabStr wrapSrc).2.any fun d => d.code == "W0334" && hasStr d.message "probeWrap")
+  let bpic := "\\begin{tikzpicture}\\draw (0,0) circle (1) node {\\probeLabel};\\end{tikzpicture}"
+  let (bdoc, _) := elabStr (dvDoc "\\newcommand\\probeLabel{Early}\n"
+    (bpic ++ "\n\n\\renewcommand\\probeLabel{Late}\n" ++ bpic))
+  t "two sites of one boundary picture under two label texts are two requests, each its own text"
+    (bdoc.pictureSrcs.size == 2 &&
+      bdoc.pictureSrcs.any (fun p => hasStr p.2 "Early") &&
+      bdoc.pictureSrcs.any (fun p => hasStr p.2 "Late"))

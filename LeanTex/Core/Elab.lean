@@ -11381,21 +11381,43 @@ private def macroScanRaw (out : Array (String × String)) : Raw → Array (Strin
 
 end
 
-/-- The document's own macro definitions for the boundary, one entry per
-name, in the document order of each name's last word — LaTeX's last
-definition is what a use at the end of the document means, and the
-standalone reads one definition per name rather than a replay.
+/-- The document's own macro definitions for the boundary and the picture
+walk, one entry per name, in the document order of each name's last word —
+LaTeX's last definition is what a use at the end of the document means, and
+the standalone reads one definition per name rather than a replay.
+
+**A name the document defines with different texts is left out.** A
+picture reads a macro where the picture stands, and one table for the whole
+document cannot say which of several definitions is in force at a given
+picture: read that way, a label drew the last definition at every site.
+The conditional pass puts the site's own value into a picture for every
+parameterless macro it can read there; what is left here is the rest, so a
+name whose definitions all agree is the same at every site, and one whose
+definitions differ is not expanded at all — the walk names it where it
+stands, and a boundary standalone that needs it fails in the tool, in the
+tool's words — rather than drawn with a definition that may not be its.
 
 Read over the *unrewritten* tree, as the boundary preamble's collector is
 (`Compat.boundaryScan`): the native `\define` a rewrite produces cannot
 spell an optional argument's default back, so the declaration the
 standalone reads is captured as the document wrote it rather than
 reconstructed from a `UserCmd`. -/
-def macroScan (raws : Array Raw) : Array (String × String) :=
+def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
   let all := macroScanLevel raws #[] raws.toList 0 0
-  (Array.range all.size).filterMap fun i =>
-    (all[i]?).bind fun p =>
-      if (all.extract (i + 1) all.size).any (fun q => q.1 == p.1) then none else some p
+  let mut last : Std.HashMap String Nat := {}
+  let mut text : Std.HashMap String String := {}
+  let mut differ : Std.HashSet String := {}
+  for i in [0:all.size] do
+    if let some (n, l) := all[i]? then
+      last := last.insert n i
+      match text[n]? with
+      | some l0 => if l0 != l then differ := differ.insert n
+      | none => text := text.insert n l
+  let mut out : Array (String × String) := #[]
+  for i in [0:all.size] do
+    if let some (n, l) := all[i]? then
+      if last[n]? == some i && !differ.contains n then out := out.push (n, l)
+  return out
 
 /-- The pictures the engine drew *itself*: the `.picture` nodes the body walk
 produced, at any depth. Those nodes have exactly two sources — the shapes the
