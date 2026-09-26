@@ -39,7 +39,7 @@ which puts the fixture outside the denominator.
 | P2 census | per page, the same multiset of inked Unicode scalars |
 | P3 order | per page, the same scalar sequence in reading order (lines top to bottom, each line left to right) |
 | P4 lines | per page, the same partition into lines |
-| P5 placement | *not built.* Every glyph origin within a declared tolerance by one-to-one same-character matching. Measured 2026-09-25 on `prose`, whose lines agree exactly: \|Δx\| p50 0.29 bp, p95 1.32 bp, max 1.88 bp with micro-typography declared off; \|Δy\| is a uniform 0.725 bp page offset (`first-baseline`). The re-review decomposed the \|Δx\| into three separable causes: micro-typography the pairing had not declared (now declared off here, and undeclared in `pagebreak`), LaTeX's sentence spacing (a divergence decision for a human), and the engine writing truncated widths. The level waits for all three, not for a tolerance wide enough to pass |
+| P5 placement | *not built.* Every glyph origin within a declared tolerance by one-to-one same-character matching. Measured 2026-09-25 on `prose`, whose lines agree exactly: \|Δx\| p50 0.29 bp, p95 1.32 bp, max 1.88 bp with micro-typography declared off; \|Δy\| is a uniform 0.725 bp page offset (`first-baseline`). The re-review decomposed the \|Δx\| into three separable causes: micro-typography the pairing had not declared (now declared off here, and undeclared in `pagebreak`), LaTeX's sentence spacing (measured 2026-09-26 with `prose`'s reference declaring `\frenchspacing` too: p95 0.418 bp, max 0.493 bp; which half gives way is a human's decision), and the engine writing truncated widths. The level waits for all three, not for a tolerance wide enough to pass |
 | R raster | reported, never gated. Not built |
 
 `P0`–`P2` are flashtex's `L0`–`L2` against pdflatex; `P3` and `P4` have no
@@ -106,14 +106,33 @@ nothing is judged on its measurement alone.
   loads no microtype. Every level the ladder has holds here, line for line,
   and the fixture exists so that a change which breaks them has somewhere
   to fail.
+
+## The probe whose pairing is not yet declared alike
+
 - `pagebreak.tex` — two pages, the break declared rather than computed.
-  Isolates the page *count* level from the page-*breaking* policy. Measured
-  2026-09-25: it holds through reading order and stops at the line level —
-  page 2's first line takes one more word on the engine's side. That P4
-  holds only with the engine's expansion on, which the reference does not
-  have: declared off, the engine hyphenates the word instead and the
-  fixture stops at P2. Declaring it off is a fall of this floor, and a
-  human's to accept.
+  Isolates the page *count* level from the page-*breaking* policy. Its
+  pairing differs in two ways neither half declares. The engine keeps its
+  default micro-typography (protrusion and expansion), and the reference
+  loads no microtype. The reference keeps LaTeX's default sentence spacing
+  (`\nonfrenchspacing`, a wider space after a sentence's full stop), and
+  the engine spaces every interword gap alike. As committed it stops at
+  P4: page 2's first line takes one more word on the engine's side.
+  Measured 2026-09-26, one variable per arm, through
+  `parity-regen --force` and `parity --check`:
+
+  | engine micro-typography | reference sentence spacing | level |
+  |---|---|---|
+  | on (committed) | default (committed) | 4 |
+  | off | default | 2: the engine inks "be-" |
+  | on | `\frenchspacing` | 2: the reference inks "be-" |
+  | off | `\frenchspacing` | 5, the top |
+
+  With both declared alike, both engines set "be-/lieved" and every level
+  holds. There are two ways to get there: the engine implements LaTeX's
+  space factor, or both halves declare the same micro-typography and
+  sentence spacing and a registry divergence records it. Choosing between
+  them is a human's decision, and until it is made the pairing stays as
+  committed.
 
 ## The probe that is outside the denominator
 

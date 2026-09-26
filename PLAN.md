@@ -15018,9 +15018,13 @@ order, P4 lines; placement is P5 and raster R, both deferred.
 
 The `pagebreak` line disagreement is the ladder's first finding and is
 recorded as a level, not a target: same declared measure on both sides, page
-1 agreeing, one marginal line on page 2 differing. Whether that is a
-line-breaking tolerance difference or a defect is for whoever owns
-`Layout.lean`; the ratchet's job is that it does not get worse.
+1 agreeing, one marginal line on page 2 differing. The ratchet's job is that
+it does not get worse. *(Corrected in round 3b: this entry left the cause to
+whoever owns `Layout.lean`, as a tolerance difference or a defect. It is
+neither. The pairing differs in two ways neither side declares, the engine's
+micro-typography and LaTeX's default sentence spacing, and with both
+declared alike the fixture reaches the top. The four measured arms are in
+the round-3 entry's "For the human".)*
 
 **Deferred, each with its reason.** Placement (P5): the `/W` defect above.
 Raster (R): it needs `pdftoppm`, so it belongs in the regenerate mode, and
@@ -15113,9 +15117,11 @@ reference source's own content key (`-jobname` supplied, since the
 argument is no longer a file name). What is *measured*, not asserted:
 `prose` rebuilt at `a/tests/parity` and at
 `b/deeper/still/further/tests/parity` and the committed bytes all give
-sha256 `7881423079948d47fca4199f5752479e`, and the committed `/ID` is the
-`ref-src-key`. The check lives in `parity-regen --selftest`, which reports
-itself skipped rather than passed when `lualatex` is absent.
+the sha256 whose first 32 hex digits are
+`7881423079948d47fca4199f5752479e` (a prefix, not the digest), and the
+committed `/ID` is the `ref-src-key`. The check lives in
+`parity-regen --selftest`, which reports itself skipped rather than passed
+when `lualatex` is absent.
 
 **Corrected: the pin was sha256 in prose and `Flate.contentKey` in code.**
 It is FNV `contentKey` throughout, deliberately: the gate must verify a pin
@@ -15326,11 +15332,16 @@ scratch clones.** Scripts and output are in
   which confirms that the old delta was expansion (`Tz`), not the `hmtx`.
   The re-review measured the residue as the engine flooring `/W` (3663
   against 3666 thousandths); that part was not re-measured here.
-* `pagebreak` with the same declaration **falls from P4 to P2**. The
-  engine hyphenates "believed" at the end of page 2's first line, where
-  lualatex sets it whole on the next. So its recorded P4 holds only
-  because of expansion the reference does not have. It is left undeclared,
-  and its header says so.
+* `pagebreak` with the same declaration falls from P4 to P2: the engine
+  then hyphenates "be-lieved" at the end of page 2's first line, where
+  lualatex sets the word whole on the next. *(Corrected in round 3b: this
+  bullet blamed the recorded P4 on expansion alone, and it was wrong. The
+  review measured, and round 3b reproduced, that lualatex hyphenates the
+  same word once its reference declares `\frenchspacing`. The line
+  difference comes from two undeclared differences: LaTeX's default
+  sentence spacing on the reference's side and expansion on the engine's.
+  With both declared alike, `pagebreak` reaches the top. The four arms are
+  under "For the human".)*
 * `measure`'s census stop is the engine's hyphen in "agree-", on one page.
   It is not scalars moving between pages, which is what its header claimed.
 
@@ -15371,18 +15382,65 @@ earlier entries are corrected in place.
   Whether the driver ever sees such an exit is inferred, not measured.
 * `scripts/scoreboard.lean:100`, `collectTier`: a tier's
   `result=stale` under a non-zero exit is reported as `fail`.
-* Layout: the `pagebreak` finding above, for whoever owns line breaking.
+* `LeanTex/Core/Compat.lean:236`: `\nonfrenchspacing`, LaTeX's default,
+  is a `meaningFree` row whose reason reads "inter-sentence space is uniform
+  here either way". So the engine answers it with `note[N0100]`, which only
+  `-v` shows. Its PDF is byte-identical to the one for `\frenchspacing`,
+  while lualatex's two PDFs differ, down to where page 2 of `pagebreak`
+  breaks. Silence is only for constructs that change nothing the engine
+  models, and this one changes an interword space, so it is a named loss:
+  the `configSkip` shape `\sloppy` already has (`warning[W0104]`). This is
+  for the next Compat owner, whichever way the decision below goes. *(In
+  round 3b this replaces a Layout routing of the `pagebreak` finding, which
+  was spurious: once the pairing is declared alike, every level the ladder
+  has holds on `pagebreak`, the line partition and the hyphen included.)*
 * Still owed from the last entry: CI (`parity` built, `--selftest` and
   `--check` run) and `Tests/Support.lean` `oneFaceOf`.
 * Owed here, next round: `Tests/Artifact.lean:482` adds `Td` to the pen
   rather than to the line start, and `TD`, `T*`, `'`, `"`, `Tc` and `Tw`
   are unhandled. No reference uses them yet.
 
-**For the human.**
+**For the human.** One decision, not two. *(Corrected in round 3b: this
+section offered two decisions, and it left out the option that raises the
+floor.)* The question is how the pairing comes to declare one
+micro-typography and one sentence spacing on both sides. `pagebreak` is
+where the answer shows. Each arm below changes one variable, runs through
+`parity-regen --force` and then `parity --check`, and was measured by the
+review at `04005f6` and reproduced at `a76fbb9` with identical keys and
+levels (`leantex-evidence/parity-r3b/18-spacing-probe.txt`):
 
-* `pagebreak`: declare micro-typography off and accept
-  `# lowered: pagebreak 4→2`, or keep a P4 held up by undeclared
-  expansion.
-* Sentence spacing, P5's other prerequisite: implement LaTeX's
-  `\nonfrenchspacing` default, or have the references declare
-  `\frenchspacing`.
+| arm | engine micro-typography | reference sentence spacing | `pagebreak` |
+|---|---|---|---|
+| A | on, as committed | LaTeX's default `\nonfrenchspacing`, as committed | P4 |
+| B | off | default | P2: the engine inks "be-" |
+| C | on | `\frenchspacing` | P2: the reference inks "be-" |
+| D | off | `\frenchspacing` | 5, the top |
+
+Under D both engines set "be-/lieved", and every level holds. The options:
+
+* **The engine implements LaTeX's space factor**, and the engine's half
+  declares micro-typography off, since the reference loads no `microtype`.
+  The reference keeps LaTeX's default. There is no run of this arm, because
+  the engine has no space factor to measure. Until one lands, the loss
+  stays named (routed above) and a registry divergence says what the
+  pairing differs in.
+* **Both sides declare the same micro-typography and sentence spacing.**
+  The engine's half turns micro-typography off, the reference declares
+  `\frenchspacing`, and a registry divergence records that the reference
+  pins LaTeX's default away, in `point-unit`'s shape (it excuses nothing).
+  This is arm D: `pagebreak` reaches 5, a rise that regeneration records.
+  Micro-typography on both sides, with the reference loading `microtype`,
+  was not measured.
+* **Keep the pairing as committed** (arm A). The fixture stays at P4 with
+  both differences undeclared. Arms B and C show each difference, removed
+  alone, making its own side hyphenate.
+* **Declare one axis alone** (arm B or C) and accept
+  `# lowered: pagebreak 4→2`. That lowers the floor for a pairing
+  difference, not for an engine change.
+
+Sentence spacing is not only a prerequisite for P5. On `pagebreak` it
+decides P4 as committed, and P2 once micro-typography is off. It carries
+the placement tail too. With `prose`'s reference declaring
+`\frenchspacing`, `prose` stays at 5 and its placement |Δx| goes from p50
+0.288, p95 1.324 and max 1.879 bp to p50 0.199, p95 0.418 and max 0.493 bp
+(`parity-measure`, arms F and E of the same probe).

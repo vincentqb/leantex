@@ -1,16 +1,21 @@
 % parity: two pages with the break declared rather than computed, which separates the page-count level from either engine's page-breaking policy
-% Floor probe. The point of declaring the break is that the page-count level
-% then tests the count and nothing else: a fixture whose pages are filled
-% until they overflow would fail P1 for a difference in breaking policy and
-% say nothing about whether the two engines agree on how many pages a
-% document has.
+% The point of declaring the break is that the page-count level then tests
+% the count and nothing else: a fixture whose pages are filled until they
+% overflow would fail P1 for a difference in breaking policy and say
+% nothing about whether the two engines agree on how many pages a document
+% has.
 %
-% Micro-typography is left at the engine's default, protrusion and
-% expansion on, although the reference loads no microtype. Measured
-% 2026-09-25: declared off, the engine hyphenates "believed" at the end of
-% page 2's first line where the reference does not, and this fixture stops
-% at P2 instead of P4. So the P4 recorded for it holds only with expansion
-% on, and declaring it off is a fall of this floor, a human's to accept.
+% The pairing is not yet declared alike on two axes. The engine keeps its
+% default micro-typography, protrusion and expansion on, although the
+% reference loads no microtype. The reference keeps LaTeX's default
+% sentence spacing, \nonfrenchspacing, while the engine sets every
+% interword space alike. Measured 2026-09-26, one variable at a time:
+% engine micro-typography off stops this fixture at P2, because the engine
+% then hyphenates "be-lieved" on page 2's first line. The reference
+% declaring \frenchspacing also stops it at P2, because the reference then
+% hyphenates the same word. Both changes together reach the top. Which way
+% the pairing is made alike is a human's decision, and until then the
+% fixture stays at P4.
 \documentclass{article}
 \page{ size = letter, margin = 1in, fontsize = 10pt, measure = free }
 \fonts{ body = "Open Sans" }
