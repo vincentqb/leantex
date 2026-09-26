@@ -334,17 +334,21 @@ def validate (t : Tsv) : Array String := Id.run do
     if w.old ≤ w.new then
       out := out.push s!"lowering of '{w.item}' names no fall ({w.old}→{w.new})"
     else if w.state == .pending then
+      -- The remedy is part of the message: a request carried after the fall it
+      -- asked for was written reads exactly like this.
+      let remedy := "; if it records a fall already written, mark it `# lowered (applied):`, \
+otherwise correct or delete it"
       match t.find? w.item, t.cap? with
       | some v, _ =>
         if v != w.old then
           out := out.push s!"lowering of '{w.item}' says {w.old}→{w.new} but the \
-committed floor is {v}"
+committed floor is {v}{remedy}"
       | none, some cap =>
         if cap != w.old then
           out := out.push s!"lowering of '{w.item}' says {w.old}→{w.new}, but the item \
-is not baselined, so it enters from the cap {cap}"
+is not baselined, so it enters from the cap {cap}{remedy}"
       | none, none =>
-        out := out.push s!"lowering of '{w.item}' names no baselined item"
+        out := out.push s!"lowering of '{w.item}' names no baselined item{remedy}"
   return out
 
 /-- Faults of a **fresh measurement**, sorted by the caller, judged against

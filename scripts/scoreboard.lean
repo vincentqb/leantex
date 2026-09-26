@@ -831,6 +831,12 @@ def selftest : IO UInt32 := do
   for name in wellFormed do
     let t ← load name
     no s!"well-formed {name}: refused as {joined (validate t)}" (validate t).isEmpty
+  -- A request held to another floor names its remedy: the committed file is
+  -- where commonmark's three carried `# lowered:` lines stopped its landing.
+  let unheld ← load "lowered-unheld"
+  no s!"malformation lowered-unheld: names no remedy ({joined (validate unheld)})"
+    ((validate unheld).any fun m =>
+      containsSub m "mark it `# lowered (applied):`" && containsSub m "correct or delete it")
 
   -- A fresh measurement is judged against the committed file it meets: a
   -- retired item that is still measured is the fault, never the committed
