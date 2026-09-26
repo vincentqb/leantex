@@ -823,6 +823,71 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   t "face pitch: a proportional design does not"
     ((← pitchOf "SourceSerifPro-Regular.otf") == some false)
 
+/-- The shipped faces as `classify` answers them, pinned to the classifier
+version that answers so: file, family, subfamily, bold, italic, fixed pitch,
+weight — every field the probe cache stores. -/
+def classifierPinsVersion : Nat := 2
+
+def classifierPins : List (String × String × String × Bool × Bool × Bool × Nat) := [
+  ("ExampleIcons-Regular.ttf", "Example Icons", "Regular", false, false, false, 400),
+  ("FiraMath-Regular.otf", "Fira Math", "Regular", false, false, false, 400),
+  ("FiraSans-Regular.otf", "Fira Sans", "Regular", false, false, false, 400),
+  ("OpenSans-Bold.ttf", "Open Sans", "Bold", true, false, false, 700),
+  ("OpenSans-BoldItalic.ttf", "Open Sans", "Bold Italic", true, true, false, 700),
+  ("OpenSans-Italic.ttf", "Open Sans", "Italic", false, true, false, 400),
+  ("OpenSans-Regular.ttf", "Open Sans", "Regular", false, false, false, 400),
+  ("SourceCodePro-Regular.otf", "Source Code Pro", "Regular", false, false, true, 400),
+  ("SourceSerifPro-Bold.otf", "Source Serif Pro", "Bold", true, false, false, 700),
+  ("SourceSerifPro-BoldIt.otf", "Source Serif Pro", "Bold Italic", true, true, false, 700),
+  ("SourceSerifPro-Regular.otf", "Source Serif Pro", "Regular", false, false, false, 400),
+  ("SourceSerifPro-RegularIt.otf", "Source Serif Pro", "Italic", false, true, false, 400)]
+
+/-- **A stored classification is read only by the classifier that wrote
+it.** Two halves. The probe cache's file name carries
+`Font.classifierVersion`, checked by two scans of the shipped directory
+through a private cache that differ only in which file holds one stale
+row — the answer an offset-16 classifier left for Source Code Pro,
+proportional and under a family no scan answers: under the unversioned
+name every earlier binary wrote, the scan answers from the face; under
+this version's own name the same row is served, so the cache is live and
+only the name stands between the scan and the stale answer. And the
+version moves with the answer: the shipped faces' classifications are
+pinned to the version, so changing what `classify` says about any of them
+without moving the version fails here. -/
+def probeCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let path := testFonts ++ "/SourceCodePro-Regular.otf"
+  let some key ← FontDb.probeKey path
+    | failures ref "probe cache: the shipped Source Code Pro cannot be stat'd"; return
+  let stale := key ++ "\tOld Classifier\tRegular\tfalse\tfalse\tfalse\t400\n"
+  let scanWith (file : String) : IO (Option FontDb.Face) := do
+    let dir ← IO.FS.createTempDir
+    IO.FS.writeFile (dir / file) stale
+    let faces ← FontDb.scanRootsIn (some dir) [testFonts]
+    IO.FS.removeDirAll dir
+    return faces.find? (·.path == path)
+  let legacy ← scanWith "fontdb.tsv"
+  t "probe cache: a row an earlier classifier wrote is not read"
+    ((legacy.map fun f => (f.family, f.fixedPitch)) == some ("Source Code Pro", true))
+  let live ← scanWith FontDb.probeCacheName
+  t "probe cache: the same row in this classifier's own file is read, so the name is what refuses it"
+    ((live.map fun f => (f.family, f.fixedPitch)) == some ("Old Classifier", false))
+  t s!"classifier pins: recorded under version {classifierPinsVersion}, the classifier is \
+version {Font.classifierVersion} — re-pin the table below when the version moves"
+    (Font.classifierVersion == classifierPinsVersion)
+  for (file, family, sub, bold, italic, fixed, weight) in classifierPins do
+    match Font.classify (← IO.FS.readBinFile (testFonts ++ "/" ++ file)) with
+    | .ok c =>
+      t s!"classifier pins: {file} classifies as pinned — a changed answer moves \
+Font.classifierVersion, so no stored answer of the old one is read"
+        (c.family == family && c.subfamily == sub && c.isBold == bold && c.isItalic == italic
+          && c.isFixedPitch == fixed && c.weight == weight)
+    | .error e => t s!"classifier pins: {file} classifies: {e}" false
+  let shipped := ((← (System.FilePath.mk testFonts).readDir).map (·.fileName)).filter
+    fun n => n.endsWith ".otf" || n.endsWith ".ttf"
+  t "classifier pins: every shipped face is pinned"
+    (shipped.qsort (· < ·) == (classifierPins.map (·.1)).toArray.qsort (· < ·))
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -845,6 +910,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref
   shippedFontChecks ref faces
+  probeCacheChecks ref
   match FontDb.resolve faces "Source Serif Pro" { bold := true } with
   | some (face, exact) =>
     t "fontdb bold is exact" exact

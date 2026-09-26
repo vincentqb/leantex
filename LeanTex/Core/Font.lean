@@ -727,6 +727,15 @@ def classify (data : ByteArray) : Except String Class := do
     | none => if isBold then 700 else 400
   return { psName, family, subfamily, isBold, isItalic, isFixedPitch, weight }
 
+/-- The version of `classify`'s answer, for any store that keeps the answer
+past one process: it moves whenever the answer changes for some byte
+string, so an answer from another version is never read as this one's.
+Version 2 reads `post.isFixedPitch` at offset 12; every classifier before it
+read offset 16 and stored its answers under an unversioned name. The suite
+pins the shipped faces' answers to this number, so a change to the answer
+that leaves the number alone fails there. -/
+def classifierVersion : Nat := 2
+
 /-- The underline band a face declares, normalized to something drawable:
 `(position, thickness)` in font units, the band spanning
 `[position - thickness, position]` relative to the baseline. `post` values

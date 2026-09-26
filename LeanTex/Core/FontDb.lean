@@ -132,7 +132,16 @@ is 25 ms. So the classification of each file is cached on disk, keyed by the
 file's path, size, and mtime: a face that changed on disk misses and is
 probed again, one that vanished is never read, and a corrupt or missing cache
 is a full rescan. Nothing about the cache can make the answer differ from a
-scan, which is the property that lets it exist. -/
+scan, which is the property that lets it exist.
+
+The key names the file and not the classifier, and binaries of every
+vintage share the cache directory, so the classifier's version is in the
+file's name (`probeCacheName`): a row is read only by the classifier that
+wrote it. A version line inside one shared file would not hold that: an
+older binary rewrites the file without the lines it cannot parse, the line
+goes, and each such rewrite would cost the newer binary a full rescan. So
+each version keeps a file of its own, and the unversioned `fontdb.tsv`
+every earlier classifier wrote is never read. -/
 
 /-- `$XDG_CACHE_HOME/leantex`, or `~/.cache/leantex`; none without a home. -/
 def cacheDir : IO (Option System.FilePath) := do
@@ -143,8 +152,8 @@ def cacheDir : IO (Option System.FilePath) := do
       | none => pure none
   return base.map (· / "leantex")
 
-private def cachePath : IO (Option System.FilePath) := do
-  return (← cacheDir).map (· / "fontdb.tsv")
+/-- The probe cache's file name, which carries `Font.classifierVersion`. -/
+def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.tsv"
 
 /-- One line per file, tab-separated: the key (path, size, mtime joined by
 tabs), then the classification — or nothing after the key for a file `probe`
@@ -172,6 +181,12 @@ private def fileKey (path : String) : IO (Option (String × String)) := do
     return some (toString md.byteSize, s!"{md.modified.sec}.{md.modified.nsec}")
   catch _ => return none
 
+/-- A file's probe-cache key as the scan spells it — path, size and mtime,
+tab-joined — so a check can write the row a given classifier would have
+left. `none` for a file that cannot be stat'd. -/
+def probeKey (path : String) : IO (Option String) := do
+  return (← fileKey path).map fun (size, mtime) => path ++ "\t" ++ size ++ "\t" ++ mtime
+
 /-! ## The listing cache
 
 On a warm run the walk itself is what remains: a `readDir` per directory and
@@ -186,8 +201,7 @@ catches. A new subdirectory appears in its parent's listing, whose mtime
 moved, so the walk that first sees the parent fresh discovers it. As with
 the probe cache, nothing here can make the answer differ from a real walk. -/
 
-private def dirsPath : IO (Option System.FilePath) := do
-  return (← cacheDir).map (· / "fontdb-dirs.tsv")
+private def dirsName : String := "fontdb-dirs.tsv"
 
 /-- One line per directory: path, mtime, then each entry in sorted order
 prefixed `F` (a font file) or `D` (a subdirectory). Entries the walk skips
@@ -267,13 +281,15 @@ def systemRoots (dirs : List String := []) : IO (List String) := do
 /-- The faces under exactly `roots`, classified, in root order then sorted
 path order — so the result is a function of the directories' contents alone,
 which is what lets a test suite scan a directory it ships and get the same
-faces on every host. Cached by the caller. Probing opens and reads every
-face, so chunks of files are probed in parallel; joining in chunk order keeps
-the face array exactly what the sequential scan produced, which matters
+faces on every host. Both caches live under `cache` (none: no cache at all,
+every run a full walk and probe). Probing opens and reads every face, so
+chunks of files are probed in parallel; joining in chunk order keeps the
+face array exactly what the sequential scan produced, which matters
 because resolution prefers earlier faces on ties. -/
-def scanRoots (roots : List String) : IO (Array Face) := do
+def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
+    IO (Array Face) := do
   -- The walk, through the listing cache: a stat per unchanged directory.
-  let dirsFile ← dirsPath
+  let dirsFile := cache.map (· / dirsName)
   let mut knownDirs : Std.HashMap String (String × Array (Bool × String)) := {}
   if let some df := dirsFile then
     if ← df.pathExists then
@@ -303,8 +319,9 @@ def scanRoots (roots : List String) : IO (Array Face) := do
         IO.FS.writeFile df (String.intercalate "\n"
           (merged.toList.map fun (k, m, es) => dirLine k m es) ++ "\n")
       catch _ => pure ()
-  -- What the cache remembers, keyed by path + size + mtime.
-  let cacheFile ← cachePath
+  -- What the cache remembers, keyed by path + size + mtime, in the file
+  -- this classifier's version names.
+  let cacheFile := cache.map (· / probeCacheName)
   let mut known : Std.HashMap String (Option Face) := {}
   if let some cf := cacheFile then
     if ← cf.pathExists then
@@ -370,6 +387,10 @@ def scanRoots (roots : List String) : IO (Array Face) := do
           (merged.toList.map fun (key, face?) => faceLine key face?) ++ "\n")
       catch _ => pure ()
   return result.filterMap id
+
+/-- `scanRootsIn` through the host's own cache directory (`cacheDir`). -/
+def scanRoots (roots : List String) : IO (Array Face) := do
+  scanRootsIn (← cacheDir) roots
 
 /-- All installed faces: the built-in locations plus `dirs`. -/
 def scan (dirs : List String := []) : IO (Array Face) := do
