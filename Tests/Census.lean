@@ -325,7 +325,24 @@ def censusTable :
     -- to it. Here: the page after it is a page like any other.
     ("the frame after it ships its own page",
       pageHas c 1 "On the document" &&
-        pageHas c 1 "on the ground every other page carries")]),
+        pageHas c 1 "on the ground every other page carries"),
+    -- Each datum stands where its slot pins it: the title's border 1.6cm
+    -- in, its text one inner sep (pgf's 0.3333em of the body) inside that,
+    -- at the slot's own size; the author above the page foot, the
+    -- institute set flush right at the foot's other corner.
+    ("the title starts one inner sep inside its pinned left edge",
+      lineXOf c 0 "A Placeholder Deck" == some (Dim.mm 16 + Ir.pgfInnerSep geom.fontSize)),
+    ("the title sets at its slot's declared size",
+      lineSizeOf c 0 "A Placeholder Deck" == some (Dim.pt 18)),
+    ("the author's slot is pinned above the page foot, not under the title",
+      ((lineYOf c 0 "P. Placeholder").map fun y =>
+        decide (y ≤ geom.pageH - Dim.mm 14 ∧ y ≥ geom.pageH - Dim.mm 14 - Dim.pt 14)).getD false),
+    ("the institute stands in the foot's other corner, right of the middle",
+      ((lineXOf c 0 "example.org").map fun x => decide (x > geom.pageW / 2)).getD false &&
+        ((lineYOf c 0 "example.org").map fun y =>
+          decide (y ≤ geom.pageH - Dim.mm 14 ∧ y ≥ geom.pageH - Dim.mm 14 - Dim.pt 14)).getD false),
+    ("a title page with slots ships no lineage separator",
+      (c[0]?.map (·.rules)) == some 0)]),
   ("titlebars", fun geom c =>
     let bars := pageRuleSegs c 0
     let titleY := (lineYOf c 0 "Bars Probe Title").getD 0

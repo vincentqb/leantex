@@ -1,10 +1,11 @@
-% Invented deck whose title page declares a ground of its own: the case a
-% theme spells as a full-bleed fill over the page, written in the engine's
-% own vocabulary. The pair is dark ground with light ink, declared — so the
+% Invented deck whose title page declares a ground of its own and its own
+% arrangement: the case a theme spells as a full-bleed fill over the page
+% with each datum pinned to a point of it, written in the engine's own
+% vocabulary. The pair is dark ground with light ink, declared — so the
 % contrast judge tests the author's own pair and realizes nothing — and the
 % frames after it keep the document's ground, which is what makes the
-% declaration a page's and not a document's. Colours invented; nothing here
-% derives from any private document.
+% declaration a page's and not a document's. The shape is a common theme
+% construct; every colour, name and length is invented.
 \documentclass[aspectratio=169]{slides}
 
 \fonts{
@@ -15,6 +16,20 @@
 \palette{
   titlepagebg = #101822,
   titlepagefg = #F4F6F8,
+}
+
+\style{titlepage}{
+  separator = none,
+  slot = { set = title, anchor = west, at = west, xshift = 1.6cm, yshift = -0.4cm,
+           width = 11cm, size = 18pt, align = left, font = {\bfseries} },
+  slot = { set = subtitle, anchor = north west, at = north west, xshift = 1.6cm,
+           yshift = -1.4cm, align = left },
+  slot = { set = author, anchor = south west, at = south west, xshift = 1.6cm,
+           yshift = 1.4cm, align = left, font = {\large} },
+  slot = { set = institute, anchor = south east, at = south east, xshift = -1.6cm,
+           yshift = 1.4cm, align = right },
+  slot = { set = date, anchor = north east, at = north east, xshift = -1.6cm,
+           yshift = -1.4cm, align = right },
 }
 
 \title{A Placeholder Deck}

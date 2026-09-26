@@ -18384,3 +18384,77 @@ for page 1.
 - W0101's `top`, when it equals the centred margin, is not a loss.
 - The splice could carry a local style file's passed options, so that
   `\@ifpackagewith` reads them.
+
+
+### 2026-09-26 — a theme's title page is its template: a ground, and data pinned to points of the page
+
+**The defect.** A beamer theme that draws a full-bleed title page writes it
+as beamer's `title page` template over an overlay picture: `\fill` over the
+whole page, then one `\node` per datum pinned to a point of the page
+(`anchor=west` at `([xshift=…,yshift=…]current page.west)`), each with its
+own `text=`, `font=\usebeamerfont{…}` and `text width`. The engine routed
+that template to `\define \maketitle` and rule (b) refused it (W0361): a
+deck of the private reference corpus shipped its first page white, its
+title at the class step and its author under a lineage separator, while the
+reference page is dark with a large light title at mid-page and the author
+at the foot.
+
+**The invariant.** The design a document declares for its title frame is
+the one both artifacts ship, and it is one IR value: the `titlepage` style's
+slots (`Ir.TitleSlot`: the datum or literal content, its font template,
+alignment, measure, size and `Ir.TitlePlace`) with the ground and ink roles
+`titlepagebg`/`titlepagefg` resolved at `Design.ofPalette`. Both backends
+find a slot from the block that shows it through one lookup
+(`Ir.titleSlotOf`), and both place it through one share arithmetic
+(`Ir.shareOf`): `Layout.slotShift_exact` says the page moves the slot's box
+(text plus pgf's `inner sep`, `Ir.pgfInnerSep`) so its anchor point lands on
+the page point plus the shifts, and `Ir.pagePoint_agree` says the
+stylesheet's stage percentage, applied to the page, is that same point. The
+page point's vertical share is the vocabulary a frame's `VDist` declares in
+(`BoxPoint.vshares`: north is top's, west centre's, south bottom's).
+
+**Native vocabulary.** `\style{titlepage}{ separator = none, slot = { set =
+author, anchor = south west, at = south west, xshift = 1cm, yshift = 1cm,
+width = 0.8\paperwidth, size = 20pt, align = left, font = {…} } }`. A title
+page that declares slots is its slots: a datum no slot sets is not set, as a
+template that never inserts it does not set it. Slot content sets at the
+body size (or the slot's `size`) under the slot's template alone — a node's
+text takes the font its options name and no other. Style lengths now read
+the engine's page tokens (`0.6\paperwidth`), as `\setlength` does.
+
+**The reader.** `TitleTemplate.read` reads the overlay shape and nothing
+else, as source: the fill's colour becomes `titlepagebg`, the title node's
+ink `titlepagefg`, every node a slot. A theme's own `\setbeamerfont`
+element is recorded for `\usebeamerfont`; a read template that selects it
+withdraws the declaration's W0104 by subject (premise pinned to
+`themeTitleShipChecks`: two builds differing by that font's size ship
+different titles). What the reader meets and does not model is one W0110
+with a subject; any other template shape keeps its W0361.
+
+**Measured** on the deck of the private reference corpus, base `17ac92f`
+binary against this branch's, both through the shipped CLI in a copy of its
+directory: 36 pages either way; at 110 dpi, 35 of 36 page rasters are
+byte-identical and page 1 is the one that changed (`cmp` over the
+`pdftoppm` output). Page 1 by `pdftotext -bbox`: the title's and the
+author's left edges within 0.2 pt of the lualatex reference's, the title at
+the size its template declares, the author's top within 1 pt of the
+reference's; the ground painted; no separator. The HTML title slide,
+screenshotted with the headless shell at 1280×720, shows the same
+arrangement. Diagnostic census, per code: W0361 −1, W0104 −3 (the three
+theme fonts the template selects), W0110 +1 (the baselineskip the title's
+`size*` declares; the engine's 1.2 leading stands), N0022 +1 (below);
+nothing else.
+
+**Contrast.** The ground/ink pair is `titlePageStep`'s to judge (the deck's
+light title on its ground passes); a slot's own ink is a use on the title
+page, judged against the ground it stands on. The deck's author ink reads
+just under 4.5:1 on that ground and is realized lighter (N0022), the policy
+the frame-title bar already applies to the same hue. Whether a theme's
+literal title-page ink should stand instead is the human's call.
+
+**Owed.** A declared baselineskip (the leading is one page-level factor);
+`\usebeamercolor` inside a template (a template that names a colour element
+rather than a colour is not read); the slot box is measured from the body
+face's ascent and descent, not the glyph heights TeX boxes, a sub-point
+difference on this deck; a `titlepage` font template that carries a size
+already compounds with the HTML `h1` step outside slots (slots reset it).

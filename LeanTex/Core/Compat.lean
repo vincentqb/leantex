@@ -3,6 +3,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.Ir
+import LeanTex.Core.TitleTemplate
 
 namespace LeanTex.Core.Compat
 
@@ -610,6 +611,10 @@ private structure St where
   deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
   /-- The loads the loaded-test pass has read so far (`resolveLoaded`). -/
   loads : LoadSet := {}
+  /-- A theme's own beamer font elements, as `\setbeamerfont` declared
+  them: what `\usebeamerfont{<element>}` selects in a template the engine
+  reads (`TitleTemplate.read`). Latest declaration wins. -/
+  beamerFonts : Array (String × TitleTemplate.Font) := #[]
 
 private abbrev M := StateM St
 
@@ -3873,6 +3878,29 @@ the definition is skipped" pos
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
       return some (← synthAt "\\framefoot" pos, j)
     else if element == "title page" then
+      let (_, j) := takeOpt raws j
+      -- A template of the overlay shape — one picture on the page, a fill
+      -- over it, nodes pinned to its points — is a spelling of the engine's
+      -- own title page, and is read as one: the ground and one slot per
+      -- node (`TitleTemplate.read`, `.native`). What the reader meets and
+      -- does not model is one named loss, never a fallback.
+      let (bodyArgs, k) := takeGroups raws j 1
+      match TitleTemplate.read (← get).beamerFonts.toList (bodyArgs.getD 0 #[]) with
+      | some rd =>
+        let native := TitleTemplate.native rd
+        -- The theme's own fonts the template selects are honoured here:
+        -- each skip their declarations drew is withdrawn, by its subject.
+        -- premise: themeTitleShipChecks — a selected theme font's declared size reaches the page
+        let skips := rd.fonts.map ("beamer:setbeamerfont:" ++ ·)
+        write fun st => { st with diags := st.diags.filter fun d =>
+          !(d.code == DiagCode.W0104.code && d.subject.any skips.contains) }
+        became "\\setbeamertemplate{title page}" native pos
+        unless rd.unread.isEmpty do
+          sayOnce "beamer:setbeamertemplate:title page" .W0110
+            s!"not read from the title-page template: \
+{String.intercalate ", " rd.unread.toList}; the rest of it stands" pos
+        return some (← synthAt native pos, k)
+      | none =>
       -- `\setbeamertemplate{title page}` IS beamer's spelling of
       -- `\renewcommand{\maketitle}`: `\titlepage` expands this template
       -- (beamerbasetitle.sty). So it routes to the native definer and lands
@@ -3885,7 +3913,6 @@ the definition is skipped" pos
       -- The synthesised head is the *native* spelling: synthesised output
       -- is not walked again, so a synthesised `\renewcommand` would reach
       -- elaboration as an unknown command and take the body with it.
-      let (_, j) := takeOpt raws j
       became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
       write fun st => { st with bodyNext := 1 }
       return some (← synthAt "\\define \\maketitle()" pos, j)
@@ -4002,6 +4029,30 @@ not an element style; skipped" pos
             s!"'\\setbeamerfont\{{element}}' names a beamer font element the engine \
 has no styleable element for; skipped" pos
             (help := beamerNative.lookup "setbeamerfont")
+          -- A theme's own element is the font a template selects by name
+          -- (`\usebeamerfont{<element>}`, beamerbasefont.sty), so it is
+          -- also recorded for the one template reader the engine has: a
+          -- read template that selects it withdraws this skip by its
+          -- subject, and what the record could not take joins that
+          -- template's own named loss. `size*`'s size rides apart, as the
+          -- slot's own size.
+          let mut font : TitleTemplate.Font := {}
+          for e in (rawSrc args[1]).splitOn "," do
+            match (e.splitOn "=").map (·.trimAscii.toString) with
+            | [key, v] =>
+              if beamerFontKeys.contains key then font := { font with cmds := font.cmds ++ v }
+              else if key == "size*" then
+                let gs := braceGroups v
+                font := { font with size := gs[0]? }
+                if gs.size > 1 then
+                  let note := s!"the baselineskip of '{element}'"
+                  font := { font with unread := font.unread.push note }
+              else
+                let note := s!"'{key}' of '{element}'"
+                font := { font with unread := font.unread.push note }
+            | _ => pure ()
+          write fun st => { st with beamerFonts :=
+            (st.beamerFonts.filter (·.1 != element)).push (element, font) }
         return some (#[], k)
       | some (target, styleKey) =>
         let mut cmds : String := ""

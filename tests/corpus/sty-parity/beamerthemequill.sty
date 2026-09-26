@@ -1,0 +1,19 @@
+\ProvidesPackage{beamerthemequill}
+% Invented theme: a full-bleed title page written as beamer's own
+% `title page` template over an overlay picture. The shape is a common
+% theme construct; every colour, element name, length and word is invented.
+\definecolor{quillNight}{HTML}{1B2330}
+\definecolor{quillSun}{HTML}{F2A33A}
+\definecolor{quillSnow}{HTML}{FAFAF7}
+\setbeamercolor{normal text}{fg=quillNight,bg=quillSnow}
+\setbeamerfont{quill heading}{size=\Large,series=\bfseries}
+\setbeamerfont{quill byline}{size=\large}
+\setbeamertemplate{title page}{%
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[quillNight] (current page.north west) rectangle (current page.south east);
+    \node[anchor=west, align=left, text width=0.6\paperwidth, text=quillSnow, font=\usebeamerfont{quill heading}] at ([xshift=2cm,yshift=-0.4cm]current page.west) {\raggedright\linepenalty=400 \inserttitle\par};
+    \node[anchor=south west, align=left, text=quillSun, font=\usebeamerfont{quill byline}] at ([xshift=2cm,yshift=1.5cm]current page.south west) {\insertauthor};
+    \node[anchor=north east, align=right, text=quillSun] at ([xshift=-1cm,yshift=-1cm]current page.north east) {Invented Series};
+  \end{tikzpicture}%
+}
+\endinput

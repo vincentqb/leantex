@@ -75,6 +75,10 @@ structure Config where
   the boundary pictures' SVGs) into, relative to the page — what every
   loaded raster's `<img src>` references (`imageHref`). -/
   assetsDir : String := "assets"
+  /-- Inside a declared title slot: the slot's font template already wraps
+  what it sets, so the title heading there takes no `titlepage` template
+  of its own — the PDF's `slotTitle` reading, the same one value. -/
+  slotTitle : Bool := false
 
 def cssColor (c : Color) : String :=
   let r := Color.hexByte c.r false
@@ -817,6 +821,54 @@ table. -/
 private def stepFactor (name : String) : String :=
   milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
 
+/-- **The title page's slots, pinned**: the stylesheet projection of the IR
+value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
+stands in the stage at the same page point the page puts it at, through the
+same share arithmetic (`Ir.shareOf`; `Ir.pagePoint_agree` is the statement
+that the percentage, applied to the page, is the page's point), and the box
+point is the same translate of the box's own extent; the shifts, measure and
+inner sep are `em` of the body size, the unit the deck's type scales in, so
+the box keeps its place as the stage scales. The slot's content takes its
+own template alone, as on the page: the heading's size and weight are the
+slot's (`Config.slotTitle`). Emitted for the paged deck's screen only — in a
+printed handout a slide is flow, and the slots stand in their declared
+order. -/
+def titleSlotCss (doc : Doc) : String :=
+  let slots := ((doc.styles.find? "titlepage").getD {}).slots
+  if slots.isEmpty || doc.docClass != .slides then "" else
+  let body := max doc.page.fontSize 1
+  let emOf (l : Dim.Length) : String :=
+    let e := if l.ex != 0 then s!" + {decMilli l.ex}ex" else ""
+    s!"{decMilli (l.em + l.sp * 1000 / body)}em{e}"
+  let zero : Dim.Length := {}
+  let rules := slots.zipIdx.toList.filterMap fun (sl, i) => sl.place.map fun pl =>
+    let sel := s!"section.slide.title-page > .{roleClass (Ir.titleSlotRole i)}"
+    let dx := (pl.xshift.map (·.width)).getD zero
+    let dy := (pl.yshift.map (·.width)).getD zero
+    -- TikZ's `yshift` is up; the stage's `top` grows down.
+    let up : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+    let sep := (pl.innerSep.map (·.width)).getD
+      (Dim.Length.ofSp (Ir.pgfInnerSep doc.page.fontSize))
+    let width := match sl.width with
+      | some w => s!" width: {emOf w.width};"
+      | none => ""
+    -- The declared size is the content's, never the box's: the box's own
+    -- offsets, measure and inner sep stay em of the body, as on the page.
+    let size := match sl.size with
+      | some z => s!"{sel} > * \{ font-size: {emOf z.width}; }\n"
+      | none => ""
+    s!"{sel} \{ position: absolute; margin: 0;\n" ++
+    s!"  left: calc({decMilli (Ir.shareOf pl.pagePoint.hshares 100000)}% + {emOf dx});\n" ++
+    s!"  top: calc({decMilli (Ir.shareOf pl.pagePoint.vshares 100000)}% + {emOf up});\n" ++
+    s!"  transform: translate(-{decMilli (Ir.shareOf pl.anchor.hshares 100000)}%, \
+-{decMilli (Ir.shareOf pl.anchor.vshares 100000)}%);\n" ++
+    s!"  padding: {emOf sep};{width} }\n" ++ size
+  "@media screen { section.slide.title-page { position: relative; }\n" ++
+  String.join rules ++
+  "section.slide.title-page > [class^=\"u-titlepage-slot-\"] h1 {\n" ++
+  "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
+  "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -914,6 +966,7 @@ def themeCss (doc : Doc) : String :=
      "  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n" ++
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
+  titleSlotCss doc ++
   -- A role names a hue; the contract chooses its lightness on each ground
   -- (`Contrast.realize`, the same solver `Contrast.realizeDoc` ships the
   -- PDF's runs through): on the frame-title bar and the standout
@@ -4570,9 +4623,9 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | _ => "subsubsection"
     let tag := headingTag level
     let st := (cfg.styles.find? element).getD {}
-    let title := match st.font with
-      | some tpl => fillTemplate tpl title
-      | none => title
+    let title := match st.font, cfg.slotTitle && level == 0 with
+      | some tpl, false => fillTemplate tpl title
+      | _, _ => title
     -- The number is a structural piece of the heading, never text glued
     -- into the title: the anchor slug reads the title alone, and a
     -- stylesheet can address the number (`pandoc` sets the same span).
@@ -4607,6 +4660,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper.
   | .role n body =>
+    -- A title slot's role marks its content as the slot's own: set under
+    -- the slot's template alone (`Config.slotTitle`), placed by the rule
+    -- `titleSlotCss` writes for this class hook.
+    let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
+      then { cfg with slotTitle := true } else cfg
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.

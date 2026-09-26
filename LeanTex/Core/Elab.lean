@@ -5203,6 +5203,31 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   let tps : ElementStyle := (ctx.styles.find? "titlepage").getD {}
   let part (v : Option (Array Inline)) : Option (Array Inline) :=
     v.bind fun xs => if xs.isEmpty then none else some xs
+  -- A title page that declares slots is its slots: each sets its datum (or
+  -- its own content) in its own font and alignment, inside the role its
+  -- placement is found by. The title stays the document's one level-0
+  -- heading wherever its slot stands.
+  unless tps.slots.isEmpty do
+    let mut out : Array Block := #[]
+    for (sl, i) in tps.slots.zipIdx do
+      let xs := match sl.datum with
+        | some .title => part st.title
+        | some .subtitle => part st.subtitle
+        | some .author => part st.author
+        | some .institute => part st.institute
+        | some .date => part st.date
+        | none => part (some sl.content)
+      if let some xs := xs then
+        let xs := match sl.font with
+          | some tpl => Ir.fillTemplate tpl xs
+          | none => xs
+        let blk : Block := if sl.datum == some .title then .section 0 true none xs else .para xs
+        let blk : Block := match sl.align with
+          | some "center" => .center #[blk]
+          | some "right" => .ragged .right #[blk]
+          | _ => .ragged .left #[blk]
+        out := out.push (.role (Ir.titleSlotRole i) #[blk])
+    return out
   let push (inner : Array Block) (before : Option (Sourced SymGlue)) (b : Block) : Array Block :=
     match before, inner.isEmpty with
     | some g, false => inner.push (.spaced g #[b])
@@ -6933,7 +6958,9 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     -- matter ragged left; undeclared, the title page centres.
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
-    let content := if tps.align == some "left" then inner else #[.center inner]
+    -- A slotted title page aligns per slot (`titleBlocks`), never as one.
+    let content := if tps.align == some "left" || !tps.slots.isEmpty then inner
+      else #[.center inner]
     blocks := blocks.push (.frame #[] false .golden false content)
   else
     -- The flow classes centre the title block, as `\@maketitle`
@@ -9797,7 +9824,13 @@ def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "hover", "focus", "motion"]
+   "author-strut", "hover", "focus", "motion", "slot"]
+
+/-- The keys of one `slot = {...}` group in `\style{titlepage}`: what it
+sets, in which font, aligned how, how wide, and where it is pinned. -/
+def titleSlotKeys : List String :=
+  ["set", "content", "font", "align", "width", "size", "anchor", "at", "xshift", "yshift",
+   "inner-sep"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -9820,35 +9853,49 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
 list levels: itemize2..4, enumerate2..4")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
+  -- The two value readers, over any source text: an entry's own value, or
+  -- one sub-entry of a `slot = {...}` group, read through the same door.
+  let inlineOf (src : String) : EM (Option (Array Inline)) := do
+    let inner := if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
+      then (src.drop 1).dropEnd 1 |>.toString else src
+    let (toks, _) := Lex.lex ctx.file inner
+    let (raws, _) := Parse.parse ctx.file toks
+    -- Value text re-enters through the same door as the document, idiom
+    -- translation included, or a \color inside a font spec would leak.
+    -- Seeded with the document's warn-once keys (one set, `Compat.rewrite`
+    -- carries why) but not merged back: this site discards the notes the
+    -- rewrite produced, so a key it fired may stand for a diagnostic the
+    -- document never received, and recording it would silence the later
+    -- visible one.
+    let (raws, ds, _) := Compat.rewrite ctx.file raws (warned := (← get).warnedUnknown)
+    modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
+    return some (← elabInlines ctx raws)
+  let lengthOf (key src : String) : EM (Option SymGlue) := do
+    -- The engine's own page lengths read here as in any length the
+    -- document writes (`0.6\paperwidth`, a template node's measure): the
+    -- expression grammar spells tokens bare, so the backslash is dropped,
+    -- as `imageLenOf` drops it.
+    let expr := fun (_ : Unit) =>
+      match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
+          (String.join (src.splitOn "\\")) with
+      | .ok g => some g
+      | .error _ => none
+    match Decl.parseValue src ctx.tokens.entries with
+    | some (.glue g) => return some g
+    | some (.dim d) => return some { width := Dim.Length.ofSp d }
+    | _ =>
+      if let some g := expr () then return some g
+      diag ctx .E0321 s!"cannot read length for '{key}' in '\\style': {src.quote}" pos
+        (help := "lengths look like 10pt, 1.5ex, or a token name")
+      return none
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
       diag ctx .E0320 s!"invalid entry in '\\style': {entry.quote}" pos
         (help := "entries look like: key = value")
     | some (key, valueSrc) =>
-      let asInline : EM (Option (Array Inline)) := do
-        let inner := if valueSrc.startsWith "{" && valueSrc.endsWith "}" && valueSrc.length ≥ 2
-          then (valueSrc.drop 1).dropEnd 1 |>.toString else valueSrc
-        let (toks, _) := Lex.lex ctx.file inner
-        let (raws, _) := Parse.parse ctx.file toks
-        -- Value text re-enters through the same door as the document, idiom
-        -- translation included, or a \color inside a font spec would leak.
-        -- Seeded with the document's warn-once keys (one set, `Compat.rewrite`
-        -- carries why) but not merged back: this site discards the notes the
-        -- rewrite produced, so a key it fired may stand for a diagnostic the
-        -- document never received, and recording it would silence the later
-        -- visible one.
-        let (raws, ds, _) := Compat.rewrite ctx.file raws (warned := (← get).warnedUnknown)
-        modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
-        return some (← elabInlines ctx raws)
-      let asLength : EM (Option SymGlue) := do
-        match Decl.parseValue valueSrc ctx.tokens.entries with
-        | some (.glue g) => return some g
-        | some (.dim d) => return some { width := Dim.Length.ofSp d }
-        | _ =>
-          diag ctx .E0321 s!"cannot read length for '{key}' in '\\style': {valueSrc.quote}" pos
-            (help := "lengths look like 10pt, 1.5ex, or a token name")
-          return none
+      let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
+      let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       -- A colour key resolves through the palette (mixes included), then
       -- as a literal colour; a value that is neither is E0326 and the
       -- key keeps what it had. Only a plain palette name rides along for
@@ -9889,7 +9936,71 @@ list levels: itemize2..4, enumerate2..4")
         | v =>
           diag ctx .E0323 s!"'rule-position' in '\\style' expects baseline or xheight, got '{v}'" pos
       | "separator" =>
-        if let some v ← asColor then st := { st with separator := some v }
+        -- `none` is a declaration too: a title page whose own template draws
+        -- no rule (a theme's `title page` replaces the lineage's separator
+        -- along with the rest of the page).
+        if valueSrc.trimAscii.toString == "none" then st := { st with separator := none }
+        else if let some v ← asColor then st := { st with separator := some v }
+      | "slot" =>
+        if element != "titlepage" then
+          diag ctx .E0323 s!"'slot' in '\\style' belongs to the title page, not '{element}'" pos
+            (help := "write \\style{titlepage}{ slot = { set = title, anchor = west, at = west } }")
+        else
+          let inner := if valueSrc.startsWith "{" && valueSrc.endsWith "}" && valueSrc.length ≥ 2
+            then (valueSrc.drop 1).dropEnd 1 |>.toString else valueSrc
+          let mut sl : Ir.TitleSlot := { datum := none }
+          let mut anchor : Option Ir.BoxPoint := none
+          let mut pagePoint : Option Ir.BoxPoint := none
+          let mut xshift : Option SymGlue := none
+          let mut yshift : Option SymGlue := none
+          let mut innerSep : Option SymGlue := none
+          let mut ok := true
+          for sub in Decl.splitEntries inner do
+            match Decl.splitEntry sub with
+            | none =>
+              ok := false
+              diag ctx .E0320 s!"invalid entry in a title slot: {sub.quote}" pos
+                (help := "entries look like: key = value")
+            | some (k, v) =>
+              let vt := v.trimAscii.toString
+              let point (what : String) : EM (Option Ir.BoxPoint) := do
+                match Ir.BoxPoint.ofName? vt with
+                | some p => return some p
+                | none =>
+                  diag ctx .E0323 s!"'{what}' in a title slot expects a compass point \
+such as north west, got '{vt}'" pos
+                  return none
+              match k with
+              | "set" =>
+                match Ir.TitleDatum.ofName? vt with
+                | some d => sl := { sl with datum := some d }
+                | none =>
+                  ok := false
+                  diag ctx .E0323 s!"'set' in a title slot expects title, subtitle, author, \
+institute, or date, got '{vt}'" pos
+              | "content" => sl := { sl with content := (← inlineOf v).getD #[] }
+              | "font" => sl := { sl with font := ← inlineOf v }
+              | "align" =>
+                if vt == "left" || vt == "center" || vt == "right" then
+                  sl := { sl with align := some vt }
+                else
+                  diag ctx .E0323
+                    s!"'align' in a title slot expects left, center, or right, got '{vt}'" pos
+              | "width" => sl := { sl with width := ← lengthOf "width" v }
+              | "size" => sl := { sl with size := ← lengthOf "size" v }
+              | "anchor" => anchor := (← point "anchor") <|> anchor
+              | "at" => pagePoint := (← point "at") <|> pagePoint
+              | "xshift" => xshift := ← lengthOf "xshift" v
+              | "yshift" => yshift := ← lengthOf "yshift" v
+              | "inner-sep" => innerSep := ← lengthOf "inner-sep" v
+              | _ =>
+                modify fun st' => { st' with
+                  diags := st'.diags.push (Decl.unknownKey ctx.file "slot" k titleSlotKeys pos) }
+          let place : Option Ir.TitlePlace :=
+            if anchor.isNone && pagePoint.isNone then none
+            else some { anchor := anchor.getD .center, pagePoint := pagePoint.getD .center
+                        xshift := xshift, yshift := yshift, innerSep := innerSep }
+          if ok then st := { st with slots := st.slots.push { sl with place := place } }
       | "align" =>
         match valueSrc.trimAscii.toString with
         | "left" => st := { st with align := some "left" }
@@ -10868,7 +10979,12 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   | .style args pos =>
     match args with
     | some (elem, body) =>
-      let styles ← applyStyle s.ctx s.styles elem body pos
+      -- A style's lengths read the token environment a `\setlength` reads
+      -- (`0.6\paperwidth` names the page the class has fixed so far), as
+      -- the logo arm's sizes do.
+      let ctx := { s.ctx with
+        engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+      let styles ← applyStyle ctx s.styles elem body pos
       return { s with styles := styles }
     | none =>
       diag s.ctx .E0304 "'\\style' needs {element} and a {...} block" pos

@@ -4777,6 +4777,49 @@ private structure ParaJob where
   line placed from it names (`LineOut.leaf`). `none` for generated ink. -/
   leaf : Option Nat := none
 
+/-- A title slot's placement resolved to the page: which point of its box
+(`anchor`) stands at which point of the page (`pagePoint`), the shifts in
+page coordinates (`dy` down-positive, TikZ's `yshift` negated), the inner
+sep around the text, and — when the slot declares its width — the box's
+left edge and width as collected. -/
+structure SlotSpec where
+  anchor : Ir.BoxPoint
+  pagePoint : Ir.BoxPoint
+  dx : Int
+  dy : Int
+  sep : Int
+  box : Option (Int × Int)
+  deriving Repr, Inhabited
+
+/-- **Where a slot's box goes.** The box is the text's extent plus the
+inner sep on every side (pgf manual §17.2.2: the border is the text plus
+`inner sep`); the shift is what moves the box's `anchor` point onto the
+page's `pagePoint`, plus the declared shifts — the page point and the box
+point both read through the one share arithmetic (`Ir.shareOf`), the
+vocabulary a frame's vertical distribution declares in. `left`/`w` and
+`top`/`h` are the text extent as set. -/
+def slotShift (spec : SlotSpec) (pageW pageH left w top h : Int) : Int × Int :=
+  let bw := w + 2 * spec.sep
+  let bh := h + 2 * spec.sep
+  let px := Ir.shareOf spec.pagePoint.hshares pageW + spec.dx
+  let py := Ir.shareOf spec.pagePoint.vshares pageH + spec.dy
+  (px - (left - spec.sep + Ir.shareOf spec.anchor.hshares bw),
+   py - (top - spec.sep + Ir.shareOf spec.anchor.vshares bh))
+
+/-- **The pinned point lands where it is declared** (`_exact`): after the
+shift, the box's anchor point is the page point plus the declared shifts —
+for every anchor and every page point, whatever the box. -/
+theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int) :
+    left + (slotShift spec pageW pageH left w top h).1 - spec.sep
+        + Ir.shareOf spec.anchor.hshares (w + 2 * spec.sep)
+      = Ir.shareOf spec.pagePoint.hshares pageW + spec.dx ∧
+    top + (slotShift spec pageW pageH left w top h).2 - spec.sep
+        + Ir.shareOf spec.anchor.vshares (h + 2 * spec.sep)
+      = Ir.shareOf spec.pagePoint.vshares pageH + spec.dy := by
+  unfold slotShift
+  dsimp only
+  constructor <;> omega
+
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
 does not depend on task scheduling. -/
@@ -4855,6 +4898,13 @@ private inductive Op where
   here: the builder attaches it to the page the next committed line lands
   on, which is where the outline's destinations resolve. -/
   | anchor (slug : String)
+  /-- A title slot opens (`Ir.TitleSlot`): placement saves where the slot
+  starts, as a column does, so every slot of the page is set from the same
+  place and none spills its neighbour off the page. -/
+  | slotOpen
+  /-- The slot closes: the lines and fills it placed move as one box to the
+  point of the page it is pinned to (`slotShift`), and stay pinned there. -/
+  | slotClose (spec : SlotSpec)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -4894,6 +4944,11 @@ private structure Rd where
   read. `run`'s step driver sets it per step page; a page with no overlay
   behind it is step 1. -/
   step : Nat := 1
+  /-- Inside a declared title slot (`Ir.TitleSlot`): the slot's own font
+  template already wraps what it sets, so the document title there takes
+  the body size and nothing else — a template node sets its text in the
+  font its options name and in no other (TikZ manual §17.4.2, `font=`). -/
+  slotTitle : Bool := false
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -5398,6 +5453,10 @@ own `h1` step, so a bundle carrying the size would multiply the two. -/
 private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     (indent : Sp) (center : Bool) : Acc :=
   let (a, leaf) := a.leafRange (leafCount title)
+  if r.slotTitle then
+    collectDisplay r a title indent center r.geom.fontSize
+      (leaf := leaf) (span := leafCount title)
+  else
   match (r.style "titlepage").font with
   | some tpl =>
     collectDisplay r a (Ir.fillTemplate tpl title) indent center r.geom.fontSize
@@ -6467,6 +6526,13 @@ private def collectFrameOpen (a : Acc) (breakable : Bool) : Acc :=
 
 mutual
 
+/-- The declared title slot a block shows, if it is one: a slot's content
+rides in the role `Ir.titleSlotRole` names, found by the one lookup both
+backends make (`Ir.titleSlotOf`). -/
+private def slotOfBlock (slots : Array Ir.TitleSlot) : Block → Option Ir.TitleSlot
+  | .role n _ => Ir.titleSlotOf slots n
+  | _ => none
+
 /-- A rule standing on its own is furniture, not a paragraph. TeX
 contributes `\parskip` when a paragraph *starts*, and an `\hrule` with its
 declared skips beside it starts none — so a gap declared next to a rule is
@@ -6495,6 +6561,49 @@ private def collectBlockList (r : Rd) (a : Acc)
     let a := collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectBlockList r a rest indent false (ruleBlock blk)
+
+/-- The title frame's body when the title page declares slots: a block that
+shows a slot (`Ir.titleSlotOf`, the lookup HTML makes too) sets the slot's
+content at the body size under its own template, and a placed slot is set
+as one box — from where every slot starts, its measure the declared width —
+then pinned where it is declared (`B.placeSlot`). Anything else collects as
+it would. A walk of its own, one level over the frame's children, because a
+slot is a child of the title frame by construction (the title page's
+elaboration emits each slot there), and peers of an overlay owe each other
+no gap. -/
+private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
+    (blocks : List Block) (indent : Sp) : Acc :=
+  match blocks with
+  | [] => a
+  | blk :: rest =>
+    let a := match slotOfBlock slots blk with
+      | some sl =>
+        -- The slot's declared size is its body size, the abstract's
+        -- `\small` shape: a modified reader handed to the sub-walk.
+        let rs := { r with slotTitle := true
+                           geom := match sl.size with
+                             | some g => { r.geom with fontSize := (r.resolve g).width }
+                             | none => r.geom }
+        match sl.place with
+        | some pl =>
+          let w := sl.width.map fun g => (r.resolve g).width
+          let saved := a.measure
+          let a := a.pushOp .slotOpen
+          let a := match w with
+            | some w => { a with measure := some (indent + w) }
+            | none => a
+          let a := collectBlock rs a blk indent
+          let spec : SlotSpec :=
+            { anchor := pl.anchor, pagePoint := pl.pagePoint
+              dx := (pl.xshift.map fun g => (r.resolve g).width).getD 0
+              dy := -((pl.yshift.map fun g => (r.resolve g).width).getD 0)
+              sep := (pl.innerSep.map fun g => (r.resolve g).width).getD
+                (Ir.pgfInnerSep r.geom.fontSize)
+              box := w.map fun w => (r.geom.hmargin + indent, w) }
+          { a.pushOp (.slotClose spec) with measure := saved }
+        | none => collectBlock rs a blk indent
+      | none => collectBlock r a blk indent
+    collectSlots r a slots rest indent
 
 /-- One list item: its leading paragraph carries the marker. -/
 private def collectItem (r : Rd) (a : Acc)
@@ -6871,8 +6980,10 @@ private def collectBlock (r : Rd) (a : Acc)
     -- and everything on it is display furniture: titles never hyphenate
     -- and never justify (collectDisplay's rule, through the declaration).
     let a := if valign matches .golden then
-        collectBlocks { r with pats := none, geom := { r.geom with justify := false } }
-          a body indent
+        let rd := { r with pats := none, geom := { r.geom with justify := false } }
+        let slots := (r.style "titlepage").slots
+        if slots.isEmpty then collectBlocks rd a body indent
+        else collectSlots rd a slots body.toList indent
       else collectBlocks r a body indent
     -- Restore by recomputing from the palette in force, the same reason the
     -- standout arm does: a `.setPalette` inside the frame must reach what
@@ -7442,6 +7553,8 @@ private inductive StagedOp where
   | floatOpen
   | floatClose
   | anchor (slug : String)
+  | slotOpen
+  | slotClose (spec : SlotSpec)
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. -/
@@ -7464,6 +7577,9 @@ replayed whole (`runFloat`) through the same step every other op takes. -/
 private structure StepSt where
   b : B
   colSaves : Array ColSave := #[]
+  /-- An open title slot: where it started (the column save its neighbours
+  restart from) and the first line and fill it placed. -/
+  slotSaves : Array (ColSave × Nat × Nat) := #[]
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
@@ -7567,6 +7683,47 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     freshStart := false }
   return b
 
+/-- Close a title slot: the lines and fills it placed since `save` move by
+`slotShift` as one box, stay pinned where they land (the page's vertical
+distribution moves nothing placed), and the next slot starts where this one
+did — a slot is an overlay node, never a neighbour's spill. The text extent
+is the lines' own: their ascents above the first ink, their descents below
+the last, their widest reach across — or the declared width. -/
+private def B.placeSlot (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec) : B :=
+  let (col, l0, f0) := save
+  let group := b.cur.lines.extract l0 b.cur.lines.size
+  let restored := { b with y := col.y, prevDepth := col.prevDepth
+                           prevBelow := col.prevBelow, prevRuleOnly := col.prevRule
+                           skip := col.skip, freshStart := col.fresh }
+  match group[0]? with
+  | none => restored
+  | some first =>
+    let asc (l : LineOut) : Sp := b.ascent * l.size / b.geom.fontSize
+    let dsc (l : LineOut) : Sp := b.descent * l.size / b.geom.fontSize
+    let top := group.foldl (fun m l => min m (l.y - asc l)) (first.y - asc first)
+    let bot := group.foldl (fun m l => max m (l.y + dsc l)) (first.y + dsc first)
+    let lo := group.foldl (fun m l => min m l.x) first.x
+    let hi := group.foldl (fun m l => max m (l.x + l.setWidth)) (first.x + first.setWidth)
+    let (left, w) := spec.box.getD (lo, hi - lo)
+    let (dx, dy) := slotShift spec b.geom.pageW b.geom.pageH left w top (bot - top)
+    let lines := b.cur.lines.mapIdx fun i l =>
+      if i < l0 then l else { l with x := l.x + dx, y := l.y + dy }
+    let fills := b.cur.fills.mapIdx fun i f =>
+      if i < f0 then f else { f with x := f.x + dx, y := f.y + dy }
+    { restored with cur := { b.cur with lines := lines, fills := fills }
+                    pinnedLines := lines.size, pinnedFills := fills.size }
+
+/-- A slot moves ink inside the page being built and nothing else: the
+shipped pages, the geometry, the document's ground and the break flag
+stand — what the page-step facts below read. -/
+private theorem placeSlot_keeps (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec) :
+    (b.placeSlot save spec).pages = b.pages ∧ (b.placeSlot save spec).geom = b.geom ∧
+    (b.placeSlot save spec).docBg = b.docBg ∧
+    (b.placeSlot save spec).noBreak = b.noBreak := by
+  obtain ⟨col, l0, f0⟩ := save
+  simp only [B.placeSlot]
+  split <;> exact ⟨rfl, rfl, rfl, rfl⟩
+
 /-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
 driver loop consumes the outermost pair (`runFloat`), and an inner pair —
 a subfigure inside its parent — is already kept whole by the enclosing
@@ -7575,6 +7732,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (s : StagedOp) : StepSt := Id.run do
   let mut b := st.b
   let mut colSaves := st.colSaves
+  let mut slotSaves := st.slotSaves
   let mut logoSpans := st.logoSpans
   let mut prose := st.prose
   match s with
@@ -7718,7 +7876,19 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := placePara fs b j breaks
   | .picture x pic leaf =>
     b := placePicture fs imgs b x pic leaf
-  return { b := b, colSaves := colSaves, logoSpans := logoSpans, prose := prose }
+  | .slotOpen =>
+    slotSaves := slotSaves.push ({
+      y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
+      prevRule := b.prevRuleOnly, skip := b.skip
+      fresh := b.cur.lines.isEmpty || b.freshStart
+      bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
+      bottomRule := b.prevRuleOnly }, b.cur.lines.size, b.cur.fills.size)
+  | .slotClose spec =>
+    if let some save := slotSaves.back? then
+      slotSaves := slotSaves.pop
+      b := b.placeSlot save spec
+  return { b := b, colSaves := colSaves, slotSaves := slotSaves, logoSpans := logoSpans,
+           prose := prose }
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
 are (a float body is a `\vbox` — placed on one page or deferred, never
@@ -8061,6 +8231,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placeLine_extends ..
     | exact placePara_extends ..
     | exact placePicture_extends ..
+    | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _); simp; done)
     | (refine pagesExtend_congr ?_
         (pagesExtend_trans (finishPage_extends _) (pagesExtend_of_eq ?_)) <;> simp <;> done)
@@ -8081,6 +8252,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
         placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
     | exact placePicture_noBreak _ _ _ _ _ _ h
+    | exact ⟨(placeSlot_keeps ..).1, (placeSlot_keeps ..).2.2.2.trans h⟩
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
@@ -8255,6 +8427,8 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     | exact bgStep_placeLine ..
     | exact bgStep_placePara ..
     | exact bgStep_placePicture ..
+    | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1
+        (placeSlot_keeps ..).1
     | (refine (bgStep_finishPage _).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
@@ -8957,6 +9131,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .floatOpen => .floatOpen
     | .floatClose => .floatClose
     | .anchor sl => .anchor sl
+    | .slotOpen => .slotOpen
+    | .slotClose spec => .slotClose spec
   -- A declared asymmetry that survives the reading is named: equal gaps
   -- are the default, and a difference is exactly what the document asked
   -- for — the hand-struck footskip patch made visible instead of doubled.

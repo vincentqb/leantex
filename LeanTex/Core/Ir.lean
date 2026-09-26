@@ -4617,6 +4617,159 @@ theorem heading_rule_position_exact (xh : Int) :
     RulePosition.raise .baseline xh = 0 ∧ RulePosition.raise .xHeight xh = xh / 2 :=
   ⟨rfl, rfl⟩
 
+/-- The declared datum a title-page slot sets: the five parts `\maketitle`
+reads back, which beamer's inserts name (beamerbasetitle.sty:
+`\inserttitle`, `\insertsubtitle`, `\insertauthor`, `\insertinstitute`,
+`\insertdate`). -/
+inductive TitleDatum where
+  | title
+  | subtitle
+  | author
+  | institute
+  | date
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def TitleDatum.name : TitleDatum → String
+  | .title => "title"
+  | .subtitle => "subtitle"
+  | .author => "author"
+  | .institute => "institute"
+  | .date => "date"
+
+def TitleDatum.ofName? : String → Option TitleDatum
+  | "title" => some .title
+  | "subtitle" => some .subtitle
+  | "author" => some .author
+  | "institute" => some .institute
+  | "date" => some .date
+  | _ => none
+
+theorem TitleDatum.ofName_name (d : TitleDatum) : TitleDatum.ofName? d.name = some d := by
+  cases d <;> rfl
+
+/-- A point of a box, by pgf's compass names (TikZ manual §17.5.1, the
+rectangle shape's anchors): the page's own points are the same names on
+the page's box (`current page.south west`, §17.13.2). -/
+inductive BoxPoint where
+  | center
+  | north
+  | south
+  | east
+  | west
+  | northEast
+  | northWest
+  | southEast
+  | southWest
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def BoxPoint.ofName? : String → Option BoxPoint
+  | "center" => some .center
+  | "north" => some .north
+  | "south" => some .south
+  | "east" => some .east
+  | "west" => some .west
+  | "north east" => some .northEast
+  | "north west" => some .northWest
+  | "south east" => some .southEast
+  | "south west" => some .southWest
+  | _ => none
+
+def BoxPoint.name : BoxPoint → String
+  | .center => "center"
+  | .north => "north"
+  | .south => "south"
+  | .east => "east"
+  | .west => "west"
+  | .northEast => "north east"
+  | .northWest => "north west"
+  | .southEast => "south east"
+  | .southWest => "south west"
+
+theorem BoxPoint.ofName_name (p : BoxPoint) : BoxPoint.ofName? p.name = some p := by
+  cases p <;> rfl
+
+/-- Where the point stands across its box, as a split of the box's width:
+`(left, right)` shares on either side of it — the vocabulary `VAlign.shares`
+distributes leftover space in, read here over an extent instead. -/
+def BoxPoint.hshares : BoxPoint → Nat × Nat
+  | .west | .northWest | .southWest => (0, 1)
+  | .center | .north | .south => (1, 1)
+  | .east | .northEast | .southEast => (1, 0)
+
+/-- Where the point stands down its box: `(above, below)` shares of its
+height, the same pair a frame's vertical distribution declares — `north` is
+`VAlign.top`'s, `west` `VAlign.center`'s, `south` `VAlign.bottom`'s. -/
+def BoxPoint.vshares : BoxPoint → Nat × Nat
+  | .north | .northWest | .northEast => (0, 1)
+  | .center | .west | .east => (1, 1)
+  | .south | .southWest | .southEast => (1, 0)
+
+/-- The offset of a point `(a, b)` shares into an extent: `e * a / (a + b)`,
+zero for the empty split. The one arithmetic both backends read, so a
+page's placement and a stylesheet's percentages cannot disagree about what
+`north east` means. -/
+def shareOf (s : Nat × Nat) (e : Int) : Int :=
+  if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
+
+/-- **The stage's percentage is the page's point** (`_agree`): for every
+compass point, the share of a hundred-thousandth scale — what the stylesheet
+writes as a percentage of the stage — applied to an extent is exactly the
+share of that extent the page places at. The two backends read one
+`BoxPoint` and cannot disagree about where it is. -/
+theorem pagePoint_agree (p : BoxPoint) (e : Int) :
+    shareOf p.hshares e = shareOf p.hshares 100000 * e / 100000 ∧
+    shareOf p.vshares e = shareOf p.vshares 100000 * e / 100000 := by
+  cases p <;> simp [shareOf, BoxPoint.hshares, BoxPoint.vshares] <;> omega
+
+/-- A title slot pinned to its page: which point of its box (`anchor`)
+stands at which point of the page (`pagePoint`), moved by the shifts —
+TikZ's own node placement (`anchor=`, `at (current page.<point>)`,
+`[xshift=…, yshift=…]`; TikZ manual §17.5.1, §13.2). `yshift` keeps TikZ's
+sense, positive up. `innerSep` is the space between the text and the box's
+border, pgf's `inner sep` (§17.2.2); undeclared it is pgf's own
+`0.3333em`, of the body font the node's options are read in. -/
+structure TitlePlace where
+  anchor : BoxPoint
+  pagePoint : BoxPoint
+  xshift : Option SymGlue := none
+  yshift : Option SymGlue := none
+  innerSep : Option SymGlue := none
+  deriving Repr, BEq, Inhabited
+
+/-- pgf's own `inner sep`, `0.3333em` (TikZ manual §17.2.2, the
+`inner sep` key's initial value), at the em it is read in: a template
+node's options are read in the surrounding font, the body's. The same
+value as `Picture.innerSepDefault`, which the picture subset reads. -/
+def pgfInnerSep (em : Sp) : Sp := em * 3333 / 10000
+
+/-- One slot of a declared title page: the datum it sets (or, with no datum,
+its own `content`), the font template it sets it in, its lines' alignment,
+its measure, and where it stands. A title page that declares slots is the
+slots: a declared datum no slot names is not set, as a beamer title-page
+template that never inserts it does not set it. -/
+structure TitleSlot where
+  datum : Option TitleDatum
+  content : Array Inline := #[]
+  font : Option (Array Inline) := none
+  align : Option String := none
+  width : Option SymGlue := none
+  /-- The slot's own body size: its content sets at this size, a font
+  template's named steps relative to it (beamer's `size*={18pt}{22pt}`,
+  beamerbasefont.sty); undeclared, the document's body size. -/
+  size : Option SymGlue := none
+  place : Option TitlePlace := none
+  deriving Repr, BEq, Inhabited
+
+/-- The role a title slot's block rides in, by the slot's index: the class
+hook both backends already read (`Block.role`), so the one IR value that
+says where slot `i` stands is found from the block that shows it. -/
+def titleSlotRole (i : Nat) : String := s!"titlepage-slot-{i}"
+
+/-- The slot a role name shows, among a title page's declared slots: the
+one lookup both backends make from the block to the value that places it. -/
+def titleSlotOf (slots : Array TitleSlot) (n : String) : Option TitleSlot :=
+  (slots.zipIdx.find? fun (_, i) => titleSlotRole i == n).map (·.1)
+
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.
 `font` is a template: the inline wrappers a declaration like
@@ -4685,6 +4838,10 @@ structure ElementStyle where
   hover : Option (Color × Option String) := none
   focus : Option (Color × Option String) := none
   motion : Option Nat := none
+  /-- The title page's declared slots (`TitleSlot`), read by the title page
+  only: a title page that declares any sets exactly its slots, each where
+  it is pinned. Empty is the built-in title page. -/
+  slots : Array TitleSlot := #[]
   deriving Repr, BEq, Inhabited
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,

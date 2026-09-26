@@ -2187,6 +2187,38 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     t "the title page splits its leftover by the composed golden share"
       ((y2 - predicted).natAbs ≤ 2)
   | _, _ => t "the title page's split probe produced its blocks" false
+  -- **A declared title slot stands where it is pinned** (`Layout.slotShift`,
+  -- `slotShift_exact`), read off the shipped lines: the box — the slot's
+  -- text plus its inner sep — puts its `anchor` point on the page's `at`
+  -- point, moved by the shifts. Three readings, each a fact of the page:
+  -- the left edge (text starts one inner sep inside the pinned border), the
+  -- shift (a 10pt larger `yshift` lifts the line exactly 10pt), and the
+  -- anchor (a west-anchored title keeps its vertical middle as it grows).
+  let slotted (title yshift : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\style{titlepage}{ slot = { set = title, anchor = west, at = west, xshift = 20pt }, " ++
+    "slot = { set = author, anchor = south west, at = south west, xshift = 20pt, " ++
+    "yshift = " ++ yshift ++ ", inner-sep = 0pt } }\n" ++
+    "\\begin{document}\n\\title{" ++ title ++ "}\\author{Pat Placeholder}\n" ++
+    "\\maketitle\n\\end{document}"
+  let slotLines (src : String) := (linesOf src).filter (!·.furniture)
+  let one := slotLines (slotted "Alpha" "30pt")
+  let three := slotLines (slotted "Alpha\\\\ Beta\\\\ Gamma" "30pt")
+  let lifted := slotLines (slotted "Alpha" "40pt")
+  t "a pinned title slot's text starts one inner sep inside its declared left edge"
+    (one[0]?.any (·.x == Dim.pt 20 + Ir.pgfInnerSep geom.fontSize))
+  t "a pinned slot with no inner sep starts at its declared shift"
+    (one.back?.any (·.x == Dim.pt 20))
+  t "a larger yshift lifts a bottom-pinned slot by exactly the difference"
+    (match one.back?, lifted.back? with
+     | some a, some b => a.y - b.y == Dim.pt 10
+     | _, _ => false)
+  t "a west-anchored title keeps its vertical middle as it grows"
+    (match one[0]?, three[0]?, three[2]? with
+     | some a, some f, some l => (2 * a.y - (f.y + l.y)).natAbs ≤ 2
+     | _, _, _ => false)
+  t "a slotted title page ships no separator and no golden flow"
+    (one.size == 2 && one.all fun l => l.segs.all fun sg => !(sg matches .rule ..))
   -- A title whose breaks the author declared keeps them: the second
   -- declared line stays one line and keeps its declared indent, rather
   -- than re-flowing and returning the remainder to the flush-left margin

@@ -4471,6 +4471,72 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (outT.pages.size == 2)
   t "the shipped title page carries the document's own declared metadata"
     (pageHas censusT 0 "A Placeholder Deck" && pageHas censusT 0 "R. Placeholder")
+  -- **A theme's full-bleed title page is its template, read.** The overlay
+  -- shape — one picture on the page, a fill over it, nodes pinned to its
+  -- points — spells the engine's own title page, so it is read as the
+  -- ground and one slot per node (`TitleTemplate.read`) and ships as the
+  -- template draws it: judged on the shipped page, colours included.
+  let (docO, dsO, _) ← runStyParity "themeoverlay"
+  let outO := layoutOf oneFace docO
+  let night : Ir.Color := { r := 0x1B, g := 0x23, b := 0x30 }
+  let snow : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xF7 }
+  let sun : Ir.Color := { r := 0xF2, g := 0xA3, b := 0x3A }
+  let runInks (l : Layout.LineOut) : List Ir.Color :=
+    l.segs.toList.filterMap fun s => match s with
+      | .run _ c .. => some c
+      | _ => none
+  let titleLines := ((outO.pages[0]?.map (·.lines)).getD #[]).filter (!·.furniture)
+  let lineWith (needle : String) : Option Layout.LineOut :=
+    titleLines.find? fun l => hasStr (lineText l) needle
+  t "an overlay title-page template is read as slots, never refused"
+    (dsO.all (·.code != "W0361") && dsO.all (·.code != "W0110") &&
+     ((docO.styles.find? "titlepage").map (·.slots.size)) == some 3)
+  t "the theme's fonts a read template selects are honoured, not skipped"
+    (dsO.all fun d => !(d.code == "W0104" &&
+      d.subject.any (·.startsWith "beamer:setbeamerfont:quill")))
+  t "the template's fill is the title page's own ground, over the whole page"
+    ((outO.pages[0]?.bind (·.fills[0]?)).any fun f =>
+      f.color == night && f.x == 0 && f.y == 0)
+  t "the title ships in its node's ink, and the pair clears 4.5:1"
+    (((lineWith "Placeholder Deck").any fun l =>
+        !(runInks l).isEmpty && (runInks l).all (· == snow)) &&
+     Contrast.contrastMilli snow night ≥ Contrast.aaText)
+  t "the author ships in its node's ink, legible on the ground"
+    (((lineWith "R. Placeholder").any fun l =>
+        !(runInks l).isEmpty && (runInks l).all (· == sun)) &&
+     Contrast.contrastMilli sun night ≥ Contrast.aaText)
+  t "a node of literal content ships its content in its own corner"
+    ((lineWith "Invented Series").any fun l => l.x > docO.page.width / 2)
+  t "the stylesheet pins each slot where the page does"
+    (let css := HtmlDoc.titleSlotCss docO
+     (css.splitOn "translate(-0%, -50%)").length == 2 &&
+     (css.splitOn "translate(-0%, -100%)").length == 2 &&
+     (css.splitOn "translate(-100%, -0%)").length == 2)
+  -- Any other shape stays rule (b)'s: refused by name, the built-in standing.
+  let (_, dsR) := elabStr (deck169
+    "\\setbeamertemplate{title page}{\\centering\\inserttitle\\par\\null}\\title{T}"
+    "\\titlepage")
+  t "a title-page template of another shape keeps its refusal"
+    (dsR.any (·.code == "W0361"))
+  -- The withdrawal's premise, falsifiable: a theme font the read template
+  -- selects reaches the page. Two builds differing only by that font's
+  -- declared size ship different title sizes, so the skip it withdraws was
+  -- never the only thing standing between the declaration and the artifact.
+  let fontProbe (size : String) : Option Dim.Sp :=
+    let pre := "\\setbeamerfont{probe heading}{size=" ++ size ++ "}" ++
+      "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+      "\\node[anchor=west, font=\\usebeamerfont{probe heading}] at (current page.west) " ++
+      "{\\inserttitle};\\end{tikzpicture}}\\title{Probe}"
+    let (doc, _) := elabStr (deck169 pre "\\titlepage")
+    ((layoutOf oneFace doc).pages[0]?.bind fun p =>
+      (p.lines.filter (!·.furniture))[0]?).map fun l =>
+        l.segs.foldl (fun w s => match s with
+          | .run _ _ _ wd .. => w + wd
+          | _ => w) 0
+  t "a theme font a read template selects reaches the shipped title"
+    (match fontProbe "\\Large", fontProbe "\\small" with
+     | some a, some b => a > b
+     | _, _ => false)
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

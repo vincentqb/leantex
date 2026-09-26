@@ -323,7 +323,8 @@ def styleMerge (top base : ElementStyle) : ElementStyle :=
     authorStrut := top.authorStrut <|> base.authorStrut
     hover := top.hover <|> base.hover
     focus := top.focus <|> base.focus
-    motion := top.motion <|> base.motion }
+    motion := top.motion <|> base.motion
+    slots := if top.slots.isEmpty then base.slots else top.slots }
 
 private def installPalette (p : Palette) : List (String × Color) → Palette
   | [] => p
@@ -509,6 +510,8 @@ private theorem or_absorb {α : Type} (a b : Option α) : a.or (a.or b) = a.or b
 private theorem styleMerge_absorb (a b : ElementStyle) :
     styleMerge a (styleMerge a b) = styleMerge a b := by
   simp [styleMerge, or_absorb]
+  intro h h'
+  exact absurd h' h
 
 /-- The keyed store, as every declare door writes it: filter the key out,
 push the entry. `Palette.declare`, `Tokens.declare`, and `Styles.declare`
