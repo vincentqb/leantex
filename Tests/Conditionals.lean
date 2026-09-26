@@ -157,3 +157,67 @@ def ifxMeaningChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let robust := test "\\DeclareRobustCommand\\probeA{x}" "\\DeclareRobustCommand\\probeB{x}"
   t "two robust commands of one text are not read as equal, and the test is refused by name"
     (!hasStr (text robust) "Same" && (elabStr (dvDoc "" robust)).2.any (·.code == "W0104"))
+
+
+/-- **A conditional in a macro's text is decided where the macro is used.**
+TeX expands a macro where it is used, so a conditional in its text reads the
+state in force at the use, and a macro used under two states takes two
+branches. The defect decided the conditional where the macro was defined:
+`\def\n{1}\def\show{\ifnum\n=1 One\else Two\fi}\def\n{2}\show` shipped "One"
+(TeX: "Two") with a note, where the base had named the loss. A use the engine
+cannot decide is refused by name, never decided at the definition: a macro
+with parameters is expanded by the elaborator, which has no conditionals.
+Read off the shipped census and the structured diagnostics. Invented
+content throughout. -/
+def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let text (pre body : String) : String := censusText (censusOfSrc oneFace (dvDoc pre body))
+  let occurs (s needle : String) : Nat := (s.splitOn needle).length - 1
+  let ships (body keep drop : String) : Bool :=
+    let s := text "" body
+    hasStr s keep && !hasStr s drop
+  let showDef := "\\def\\probeShow{\\ifnum\\probeN=1 One\\else Two\\fi}"
+  t "a def's conditional reads the value in force where the macro is used"
+    (ships ("\\def\\probeN{1}" ++ showDef ++ "\\def\\probeN{2}\\probeShow") "Two" "One")
+  t "a newcommand's conditional reads the value in force where the macro is used"
+    (ships ("\\newcommand{\\probeN}{1}" ++
+      "\\newcommand{\\probeShow}{\\ifnum\\probeN=1 One\\else Two\\fi}" ++
+      "\\renewcommand{\\probeN}{2}\\probeShow") "Two" "One")
+  t "a macro's ifdefined sees a name defined after the macro and before its use"
+    (ships ("\\newcommand{\\probeShow}{\\ifdefined\\probeLater Defined\\else Undefined\\fi}" ++
+      "\\def\\probeLater{}\\probeShow") "Defined" "Undefined")
+  let twice := text "" (showDef ++ "\\def\\probeN{1}\\probeShow\n\n\\def\\probeN{2}\\probeShow")
+  t "one macro used under two states ships each state's branch"
+    (occurs twice "One" == 1 && occurs twice "Two" == 1)
+  let flag := text "\\newif\\ifprobe\n"
+    ("\\newcommand\\probeShow{\\ifprobe On\\else Off\\fi}\\probeShow\n\n\\probetrue\\probeShow")
+  t "a flag's test in a macro reads the flag where the macro is used"
+    (occurs flag "Off" == 1 && occurs flag "On" == 1)
+  t "a macro that sets a flag sets it where it is used"
+    (ships ("\\newif\\ifprobe\\newcommand\\probeOn{\\probetrue}" ++
+      "\\ifprobe Early\\fi\\probeOn\\ifprobe Late\\fi") "Late" "Early")
+  t "a definition a macro makes takes effect where the macro is used"
+    (ships ("\\newcommand\\probeSet{\\def\\probeMode{2}}\\def\\probeMode{1}\\probeSet" ++
+      "\\ifnum\\probeMode=1 One\\else Two\\fi") "Two" "One")
+  t "a macro used through another macro is decided at the outer use"
+    (ships ("\\def\\probeInner{\\ifnum\\probeN=1 One\\else Two\\fi}" ++
+      "\\def\\probeOuter{\\probeInner}\\def\\probeN{1}\\def\\probeN{2}\\probeOuter") "Two" "One")
+  let (_, useDs) := elabStr (dvDoc "" (showDef ++ "\\def\\probeN{2}\\probeShow"))
+  t "the decision at the use is a keyed note"
+    (useDs.any fun d => d.code == "N0114" && d.subject.isSome)
+  -- Never decided at the definition: with parameters the use is the
+  -- elaborator's, so the text's conditional is refused by name there, and
+  -- no branch is chosen from the state the definition was made in.
+  let argSrc := dvDoc "" ("\\def\\probeN{2}\\newcommand\\probeShow[1]{\\ifnum\\probeN=1 #1\\fi}" ++
+    "\\def\\probeN{1}\\probeShow{Arg}")
+  let (_, argDs) := elabStr argSrc
+  t "a conditional in a macro with parameters is refused by name, not decided where it is defined"
+    (argDs.any (fun d => d.code == "W0104" && d.subject.isSome) &&
+      argDs.all (·.code != "N0114"))
+  -- A picture written as a macro draws the state at each use.
+  let fig := "\\newcommand{\\probeFig}{\\begin{tikzpicture}\\ifnum\\probeStage=1 " ++
+    "\\node at (0,0) {Small};\\else \\node at (0,0) {Large};\\fi\\end{tikzpicture}}\n"
+  let figs := text fig "\\def\\probeStage{1}\\probeFig\n\n\\def\\probeStage{2}\\probeFig"
+  t "a picture written as a macro draws the state in force at each use"
+    (occurs figs "Small" == 1 && occurs figs "Large" == 1)
