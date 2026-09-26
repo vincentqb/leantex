@@ -314,7 +314,62 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
       | #[.table _ _ _ rows _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
       | _ => false)
 
+/-! # Compat's markers in the preamble
+
+Three arms translate into an unforgeable marker the elaborator reads:
+`@series:` (`\fontseries`), `@lang:` (`\selectlanguage`) and `@ink:`
+(`\color`). `@` never lexes into a control word, so no document can write
+one. The preamble reader knew none of them, so each reached it as an unknown
+command and the warning quoted the marker — `unknown command '\@series:b'`,
+a name no document wrote, for a construct the engine knows.
+
+What each means there was measured against lualatex (TeX Live 2026):
+`\begin{document}` selects the normal font and babel's main language, and
+keeps the colour. So a series or a language written in the preamble proper
+reaches no text, and the document is the one without it, while `\color` is
+in force where the body begins, the reading a `\begin{document}` hook body
+already gets here. Read as documents compared whole, never as words. -/
+def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let markers := ["@series:", "@lang:", "@ink:"]
+  let namesMarker (d : Diag) : Bool :=
+    d.subject.any fun s => markers.any fun m => hasStr s m
+  let docOf (pre : String) : Ir.Doc × Array Diag :=
+    elabStr (dvDoc pre "Alpha bravo.\n\nCharlie delta.")
+  for (what, decl) in [("a font series", "\\fontseries{b}\n"),
+      ("a language switch", "\\selectlanguage{french}\n"),
+      ("a colour", "\\color{red}\n")] do
+    let (_, ds) := docOf decl
+    t s!"preamble marker, {what} (fails on base): no diagnostic names Compat's own spelling"
+      (!ds.any namesMarker)
+    t s!"preamble marker, {what} (fails on base): the known construct is not called unknown"
+      (ds.all (·.code != "W0301"))
+    -- The premise the preamble reader's silence rests on: the construct's
+    -- accounting is the translation note Compat wrote at the same site.
+    t s!"preamble marker, {what}: the construct's own translation note accounts for it"
+      ((ds.filter (·.code == "N0100")).size == 1)
+  -- LaTeX resets these at `\begin{document}`: the document is the one
+  -- without them.
+  t "preamble marker: a font series reaches no text, as LaTeX's does not"
+    ((docOf "\\fontseries{b}\n").1 == (docOf "").1)
+  t "preamble marker: a language switch reaches no text, as babel's does not"
+    ((docOf "\\selectlanguage{french}\n").1 == (docOf "").1)
+  -- LaTeX keeps the colour: the document is the one whose `\begin{document}`
+  -- hook sets it.
+  t "preamble marker (fails on base): a colour is the body's first declaration, as in LaTeX"
+    ((docOf "\\color{red}\n").1 == (docOf "\\AtBeginDocument{\\color{red}}\n").1)
+  -- Inside a definition the marker is the body's business, read where the
+  -- command is used: the preamble reading is the preamble proper's alone.
+  let (defDoc, _) := elabStr (dvDoc "\\newcommand{\\zzheavy}{\\fontseries{b}\\selectfont}\n"
+    "Alpha {\\zzheavy bravo} charlie.")
+  let series := Ir.foldBlocks (fun n _ => n) (fun n i => match i with
+    | .styled (.series _) _ => n + 1
+    | _ => n) 0 defDoc.body
+  t "preamble marker: a series inside a preamble definition still applies where it is used"
+    (series == 1)
+
 /-- The compat accounting blocks. -/
 def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   compatDiscardChecks ref
   compatFragmentChecks ref
+  compatMarkerChecks ref

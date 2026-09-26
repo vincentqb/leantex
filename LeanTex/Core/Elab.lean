@@ -9996,6 +9996,11 @@ inductive PDecl where
   the preamble, where url.sty documents it, and in the body, where the inline
   arm reads it. -/
   | urlstyle (v : Option String) (pos : Pos)
+  /-- A declaration written in the preamble proper that is in force where
+  the body begins: Compat's `\color` marker, which LaTeX's
+  `\begin{document}` keeps (measured against lualatex). It is the body's
+  first declaration, the reading a `\begin{document}` hook body gets. -/
+  | bodyStart (marker : String) (pos : Pos)
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw)) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
@@ -10144,6 +10149,20 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
         if let some f := fileMarkerFile? name then
           curFile := f
           out := out.push (.fileMark f)
+        else if name.startsWith "@series:" || name.startsWith "@lang:" then
+          -- Compat's markers for `\fontseries` and `\selectlanguage`, met in
+          -- the preamble proper. LaTeX's `\begin{document}` selects the
+          -- normal font and babel's main language (measured against
+          -- lualatex), so neither reaches text there, and neither does here.
+          -- The construct's accounting is the translation note Compat wrote
+          -- at this site, which `compatMarkerChecks` holds. Never an unknown
+          -- command: the marker is Compat's own spelling, and a warning
+          -- quoting it named nothing the document wrote.
+          pure ()
+        else if name.startsWith "@ink:" then
+          -- `\color`'s marker: LaTeX keeps the colour across
+          -- `\begin{document}`, so it is the body's first declaration.
+          out := out.push (.bodyStart name pos)
         else if runningCtrl.contains name then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
           let j := skipSpaces preamble k
@@ -10764,6 +10783,10 @@ tool = none refuses the boundary")
     | none =>
       diag s.ctx .E0304 "'\\urlstyle' needs a {tt|rm|sf|same} group" (some pos)
       return s
+  | .bodyStart _ _ =>
+    -- Read off the scanned declarations by `elabDoc`, which opens the body
+    -- with it; the fold has nothing to apply.
+    return s
   | .captionsetup unclosed body pos =>
     -- The caption package's option interface (caption manual §2–4).
     -- `position`/`tableposition`/`figureposition` declare which side
@@ -11560,7 +11583,13 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
   -- will resolve against), once, before any backend reads the body.
-  let blocks := Ir.numberFloats (← elabBlocks ctx body)
+  -- The preamble's own declarations that are in force where the body
+  -- begins open it, in the order they were written (`PDecl.bodyStart`).
+  let opening : Array Raw := decls.filterMap fun d =>
+    match d with
+    | .bodyStart m p => some (.ctrl m p)
+    | _ => none
+  let blocks := Ir.numberFloats (← elabBlocks ctx (opening ++ body))
   -- **Whatever drew a picture, the keys that drawing did not read are
   -- named.** A `\tikzset` entry outside the rendered subset has exactly one
   -- other reader: the real TikZ, and only for a picture that went *whole*
