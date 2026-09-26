@@ -970,6 +970,34 @@ def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit
       (code != 0 && !(← System.FilePath.pathExists table) && !leaked)
     let _ ← orElse (IO.FS.removeFile table) ()
 
+/-- The queue's reader of this table fails loudly, through the command that
+ships: `scoreboard --queue`, run in a scratch directory that holds nothing
+but a table, ranks a well-formed one and stops with exit 2 on a malformed
+row. The reader it replaced skipped what it could not parse and ranked
+nothing, and every gate passed with it restored. -/
+def queueReader (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
+  let cwd := dir ++ "/qcwd"
+  IO.FS.createDirAll (cwd ++ "/tests/coverage")
+  let table := cwd ++ "/tests/coverage/blockers.tsv"
+  let lean := (← IO.appPath).toString
+  let script := ((← IO.currentDir) / "scripts" / "scoreboard.lean").toString
+  let queue : IO (UInt32 × String) := do
+    let o ← IO.Process.output
+      { cmd := lean, args := #["--run", script, "--queue"], cwd := some cwd }
+    return (o.exitCode, o.stdout)
+  let good := "# a table\nkind\tconstruct\towner\tsole\tshare\tdocs\n\
+ctrl\thspace\tkernel\t1\t1000\t1\naggregate\t(document)\tdocument\t0\t500\t1\n"
+  IO.FS.writeFile table good
+  let (ok, out) ← queue
+  expect "the queue ranks a well-formed blocker table"
+    (ok == 0 && containsSub out "queue: blocker ctrl:hspace owner=kernel sole=1")
+  IO.FS.writeFile table (good ++ "hspace\tkernel\t1\t1000\t1\n")
+  let (five, _) ← queue
+  expect "a five-field blocker row stops the queue with exit 2" (five == 2)
+  IO.FS.writeFile table (good ++ "ctrl\tvspace\tkernel\tone\t1000\t1\n")
+  let (word, _) ← queue
+  expect "a blocker count that is not an integer stops the queue with exit 2" (word == 2)
+
 /-- The confinement rule end to end, through the writer that ships: planted,
 private-looking names behind every lookup a document can use — a style by
 absolute path, a class by path, a style a shell's TEXINPUTS finds, a
@@ -1043,6 +1071,7 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
     linkedOutputs expect dir resolve (dir ++ "/list.txt") fakeCheckout
     pinnedManifest expect dir
     hostileShell expect dir
+    queueReader expect dir
   finally
     let _ ← IO.Process.output { cmd := "rm", args := #["-r", dir] }
 

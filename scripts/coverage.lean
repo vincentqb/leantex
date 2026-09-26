@@ -212,8 +212,9 @@ def bodyStamp (body : String) : String :=
 -- ## The rung: what this engine does with one construct
 
 /-- The support rungs, per construct, lowest first. Words, not numbers:
-`L0`–`L5` name the parity ladder's per-document levels and `L3` also names
-LaTeX3, so a third meaning for the same labels would be one too many.
+`P0`–`P5` and R name the parity ladder's per-document levels, `L0`–`L2`
+the theorem layers, and `L3` also names LaTeX3, so numbering the rungs too
+would be one meaning per label too many.
 
 Each rung is a reading of the diagnostics whose subject names the
 construct, so the ladder derives from `Loss` in one place exactly as
@@ -256,7 +257,7 @@ inductive Rung where
   whose effect needs a later construct to show. The effect is the parity
   ladder's to witness. -/
   | native
-  /-- The construct's own one-construct probe holds at T3 or better against
+  /-- The construct's own one-construct probe holds at P3 or better against
   lualatex. The rung that joins this ladder to the parity ladder; it is the
   only one that needs a rendered page, so nothing here can award it and
   this script never does. -/
@@ -893,7 +894,9 @@ must still read the name below the cut. -/
 def falseQueue : Array Explanation := #[
   { name := "multicolumn", side := .probe,
     usage := ⟨false, "\\begin{tabular}{ll}\n\\multicolumn{2}{c}{x} \\\\\n\\end{tabular}"⟩,
-    why := "answered with three arguments at the start of a cell; no probe shape has three" }]
+    why := "recognised with three arguments at the start of a cell, where no probe shape \
+reaches; its text is kept and its span and column spec are dropped with no code naming \
+the loss, so it is recognised and not supported" }]
 
 def explained (name : String) : Option Explanation :=
   witnessExplained.find? (·.name == name)
@@ -1018,7 +1021,7 @@ def report : IO UInt32 := do
     | some e => IO.println s!"    {c.name}\t{c.rung.word}\t{c.file}\t{e.side.word}: {e.why}"
     | none => IO.println s!"    {c.name}\t{c.rung.word}\t{c.file}\tNOT EXPLAINED"
   let known := (witnessExplained ++ falseQueue).filter (·.side == .probe)
-  IO.println s!"  known false readings below the cut (the engine answers them; no probe \
+  IO.println s!"  known false readings below the cut (the engine recognises them; no probe \
 fragment spells them): {known.size}"
   for e in known do
     IO.println s!"    {e.name}\t{(pr e.name).word}\t{e.why}"

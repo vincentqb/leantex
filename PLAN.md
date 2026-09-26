@@ -17369,8 +17369,9 @@ mean something else there — a palette role and a TikZ coordinate — and each
 natural usage draws W0301). Ten are
 `probe` — known false readings below the cut, which `--report` now prints —
 and `\multicolumn`, which no fixture uses, is an eleventh from a spot check:
-answered with three arguments at the start of a cell, where no probe shape
-reaches. `--selftest` fails on an unexplained contradiction, a stale row, a
+recognised with three arguments at the start of a cell, where no probe
+shape reaches — recognised and not supported, since its span is dropped
+(routed below). `--selftest` fails on an unexplained contradiction, a stale row, a
 row whose usage reads the other side's way, and a context-blind place list
 that passes the control; it takes 9 s.
 
@@ -17387,10 +17388,11 @@ differ on counting — `\DontPrintSemicolon`, `\LinesNumbered`, `\linenomath`,
 reviewer and by the engine, and the package half counts it while the kernel
 rule does not. Reported as its own number rather than folded into either.
 
-**The support rungs, per construct — words, not numbers.** `L0`–`L5` name
-the parity ladder's per-document levels, `L0`–`L2` already named the theorem
-layer map, and `L3` also names LaTeX3; a fourth meaning for those labels was
-one too many, and the first draft's `L0`–`L4` had already made a reader ask
+**The support rungs, per construct — words, not numbers.** `P0`–`P5` and R
+name the parity ladder's per-document levels, `L0`–`L2` name the theorem
+layers, and `L3` also names LaTeX3; numbering the rungs too would have been
+one meaning per label too many, and the first draft's `L0`–`L4` had already
+made a reader ask
 what they were. The rungs derive from `Loss` in one place, as
 `Loss.severity`, `Loss.floor` and `Loss.censused` do — which is also what
 gives `config` and `dropped` losses the rungs the numbered draft left them
@@ -17405,7 +17407,7 @@ without:
 | degraded | the content is kept, but not as declared, or it is owed | a `degraded` or `pending` code about the construct |
 | rewritten | translated onto a native construct, its conservation owed | an `info` code (N0100) that is not a rewrite onto nothing |
 | native | implemented natively: no code, and the usage differs from the same shape under a name nothing knows — which shows the construct consumed its arguments, not that anything came of it | no code, and a difference from the decoy |
-| verified | the construct's own probe holds at T3 or better against lualatex | the parity ladder |
+| verified | the construct's own probe holds at P3 or better against lualatex | the parity ladder |
 
 Coverage counts `rewritten`, `native` and `verified`: a named refusal is
 better than silence and is still not support, the same judgement
@@ -17603,10 +17605,15 @@ Routed, not mine to change:
   and bibliography discards read as translations. One key per kind — the
   construct's own for a translation, `ctrl:nothing:` for a discard — lets
   every such note be read by subject.
-- `\multicolumn{2}{c}{x}` drops its span with no code naming it
-  (`Compat.lean`, the `"multicolumn"` arm; the only diagnostic is the row's
-  W0337 from `Elab.lean`, if the row comes out wide). The loss is a
-  `degraded` one and wants its own subject.
+- `\multicolumn{2}{c}{x}` keeps its text and drops its span and its column
+  spec with no code naming the loss (`Compat.lean`, the `"multicolumn"`
+  arm). Measured on this branch rebased onto `ae2ddc6`, alone in a
+  two-column `tabular` row: the PDF sets the text at the first column's left
+  edge, where the same text written as a plain first cell sits, and the
+  HTML writes one plain `<td>` beside an empty one. The one diagnostic is
+  W0337, "a row carries fewer cells than the column spec", which names the
+  padding and not the span, and fires only when the dropped span leaves the
+  row short. The loss is a `degraded` one and wants its own subject.
 - `\fontseries{b}` in the preamble rewrites to the `@series:b` marker
   (`Compat.lean`) and the preamble path, which does not read it, then
   reports W0301 for that internal name.
@@ -17620,7 +17627,12 @@ parallel with the other tiers — 11 s, since the probe runs in 24 parallel
 chunks (73 s serial) — and `scoreboard --queue` ranks its items by the names
 each still owes, with the blocker table read in its six fields (a row the
 reader cannot parse stops the queue with exit 2; the reader it replaced
-ranked 0 of the table's 39 rows and said nothing).
+ranked 0 of the table's 39 rows and said nothing). A review then restored
+that reader and every gate passed, so the fault path had no guard:
+`blockers --selftest` now runs `scoreboard --queue` in a scratch directory
+holding only a table — a well-formed one must rank, a five-field row and a
+count that is not an integer must each exit 2 — and all three fail against
+`ae2ddc6`'s reader.
 
 One measurement worth stating plainly, because it is the shape of the 434:
 `\hspace` is W0301. Not refused, not rewritten — unknown, with its argument
