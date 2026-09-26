@@ -1978,8 +1978,7 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"slot matrix: the warm-up run builds: {warm.log}" (warm.exit == 0)
   let mut outcomes : Array (Option (Except IO.Error SlotOutcome)) := Array.replicate rows.size none
   -- Sixteen workers: measured on a 192-core host, the matrix took 3.4 s at
-  -- 16, 4.2 s at 32 and 5.7 s at 64 — the spawns contend, so wider is
-  -- slower — and 5.0 s at 4.
+  -- 16, 4.2 s at 32, 5.7 s at 64 and 5.0 s at 4.
   let width := 16
   -- Workers over a static partition — worker `j` builds rows `j`,
   -- `j + width`, … — so no state is shared and a slow row delays only its

@@ -14729,3 +14729,254 @@ second time; Board cannot import them, because `Tests.Support` declares
 names like `check` in the root namespace and every tier imports Board. The
 sibling tiers credit a fall under `--base` only through lowering lines in
 this form, and `commonmark`'s rows still want sorting before it ports.
+
+
+
+### 2026-09-25 — a lost slot is judged by its face, a cached answer by its classifier, and three costs restated with their commands
+
+Round-3 follow-ups to two entries above — "a collapsed family slot is
+named, and the face answers for its own pitch" and "three costs that were
+not where they were inferred to be" — each item re-established on e4d22a4
+before it was fixed. Evidence: `leantex-evidence/fufonts/`.
+
+**The slot report reads the face.** W0390 for mono tested the index
+(`slotCollapsed`) before the pitch, so a deck declaring body and sans —
+text set in the sans, an undeclared mono slot handed to the body family —
+put `\texttt` in a proportional serif the index called the slot's own
+face, and said nothing. The invariant is now `SlotLoss.losses_mono_exact`:
+the mono report fires exactly when some artifact carries a face, the
+document sets the slot, declares no mono family, and the face serving
+slot 2 is not fixed-pitch; no index enters. Sans keeps face identity with
+the text (`SlotKind.contrast`), since no face field says "is a sans
+design". The message says "the body family" when that family's face, not
+the text's, served the slot, and "in the PDF" when a page beside the PDF
+carries no face (`Carry.only`). Main.lean's call site compiles unchanged.
+
+The test drives the binary over a generated matrix (`slotMatrixChecks`):
+class (article, beamer, webpage) × the eight subsets of declared keys (none
+means `LEANTEX_FONT`) × pitch × artifacts (PDF, HTML embedded, HTML
+`css = own`, PDF beside `css = own`) × slot, 384 rows, each judged on the
+face the artifact itself sets the run in. The merge base's driver is
+ae2ddc6 built from source, byte-identical to e4d22a4's (md5 `a805102d…`;
+the two commits differ in no driver source, `base-ae2ddc6.txt`). Run
+against it, with only the matrix's binary swapped (`m12/run.sh`), the
+committed suite fails 41 checks, all in the matrix:
+- the verdicts of the three deck rows (body and sans, proportional, mono;
+  in the PDF, the page and the mixed build), where the base is silent;
+- those rows' three messages;
+- the messages of the other 35 mixed-build losses, where the base names
+  no artifact.
+
+Against the head's driver (e146f9f's sources, md5 `c775232d…`) it passes.
+With the index gate put back into the shipped driver, the suite fails 8:
+the three deck verdicts, their three messages and the two unit rows for
+the deck (`m12/result.txt`).
+
+Every driver run gets a private cache, an empty home and an empty `PATH`,
+so no TeX tree or user font reaches the scan. The system font directories
+are still scanned, behind the document's own `dir`, which outranks them.
+The matrix takes 3.3–3.5 s at 16 workers (two timed runs,
+`36-width3.log`). Every width from 24 to 96 was slower in every run, at
+4.1–7.0 s, and so was 4 (`36-width*.log`). That the spawns contend is a
+guess, not a measurement.
+
+The two drivers write byte-identical files for the seven one-construct
+probes and the reviewer's thirteen, 31 files in all (`m3/run.sh`:
+`probes/run.sh` per driver, then `cmp` per file). Their diagnostics
+differ in exactly the two probes the fix is about: the deck gains its
+W0390, and the build of a PDF beside a `css = own` page says the PDF lost
+(`m3/diag-diff-normalized.txt`). The private reference corpus deck gets
+the same 198 diagnostics from both, none of them W0390, and a
+byte-identical PDF (`m3/result.txt`).
+
+**An oracle must not share the reader it judges.** The first matrix read
+pitch through `Font.classify` and through the descriptor flag that
+`classify` decides, both the engine's own. With `classify` put back at
+offset 16 in a scratch clone, the suite failed nine checks and the matrix
+none. The oracle now reads the `post` table of the program the artifact
+carries — the PDF's embedded program, the page's shipped file — through
+the table directory itself. It also holds each PDF's descriptor flag to
+that program's own pitch. Under the same mutation, the suite fails 46
+checks, 37 of them in the matrix (`break3/result2.txt`).
+
+**A cached classification is read only by the classifier that wrote
+it.** The probe cache is now `fontdb-<Font.classifierVersion>.tsv`
+(`fontdb-2.tsv`), and the unversioned `fontdb.tsv` that every earlier
+classifier wrote is never read. On 2026-09-26, the host's shared file held
+3,172 checkable rows, 266 of which disagree with the offset-12 reader (the
+review's `post-offsets.py cache` over it, `45-host-cache-post.txt`).
+Before the change, a stale row for Source Code Pro was served — family
+"Old Classifier", proportional (`cache-probe/before.txt`). After it, the
+scan answers from the face (`cache-probe/after.txt`). `probeCacheChecks`
+holds both directions: the stale row is not read under the old name, and
+is read under this version's name. It also pins the twelve shipped faces'
+classifications to the version, so an answer that moves while the version
+stays fails. `fontcache-check` gained the classifier case and runs in
+temporary directories rather than the host cache. It passes, and fails
+with the unversioned name restored (`break2/`).
+
+**The artifact carries the pitch.** `artifactPitchChecks` reads the
+FixedPitch flag the driver writes into `fonts.tex`'s descriptors: set for
+Source Code Pro, clear for Source Serif Pro. It also reads the generic
+that closes a page's body stack: `monospace` for a Source Code Pro body,
+`serif` for Source Serif Pro. All four assertions hold on the merge
+base's driver too, whose reader is already right (`m4/result-ae2ddc6.txt`:
+the same inputs and environment, by hand), so a mutation is their
+witness. The offset-16 reader fails the two Source Code Pro assertions
+(`break3/result.txt`), and an inverted reader, `== 0` for `!= 0`, fails
+all four (`m5/run.sh`: a scratch clone at e146f9f, `lake build`, then the
+Tests binary). Correction to the brief: `fonts.tex`'s own stacks
+cannot witness the pitch, because its mono slot closes with `monospace`
+through the declared kind either way. So the stack claim is read off a
+page whose body is the monospace face.
+
+**Corrections to "a collapsed family slot is named".**
+- "Offset 16 is minMemType42, zero in every face that ships one" is false.
+  Two Arphic faces in TeX Live, `gbsn00lp.ttf` and `gkai00mp.ttf`, carry
+  100000 there and 0 at offset 12 (`16-arphic.txt`), so the old reader
+  also marked two proportional faces fixed-pitch.
+- The field decides the generic of every slot's stack
+  (`HtmlDoc.genericFor`), not only `--font-mono`'s.
+- "Judge the face, not the index" held only where the index said
+  "collapsed"; the deck above was the other direction.
+- The routed cache item landed as this entry's third part.
+
+**Corrections to "three costs that were not where they were inferred to
+be".**
+- **The suite's cost is re-reading, not writing.** The review's compiled
+  probe (`review-perf-probes/ReviewPhases.lean`, three runs in
+  `phases.txt`) forces each phase before reading the clock. Per pass over
+  the 77 golden fixtures, it measures:
+  - `pdfText`: 4.98 s
+  - `refWalk`: 4.90–4.92 s
+  - write: 0.60 s
+  - read, elaborate and store: 0.07 s
+  - layout: 0.07 s
+
+  The suite's 47.5 → 37.0 s saving (the review's `suite-ab.txt`, three
+  interleaved runs per side, medians) was two redundant `pdfText` passes
+  per fixture: three at base, one at head. "81 ms … one reference walk is
+  5.7 s" read an unforced pure `let`, whose value floated into the next
+  timed window (`perf/block-attribution.txt`: `write1=1`).
+- **The table build is counted in user-space instructions per run**, not
+  "~13.7M → ~4.7M cycles". Every figure is `perf stat -x, -e
+  instructions:u` (`nfc/startup-counts.sh`, output
+  `nfc/startup-counts-run2.txt`).
+  - It costs 11.5 M on e146f9f: a one-accent page minus a one-ASCII page,
+    fifty runs each (14,866,511,638 − 14,290,396,114).
+  - It cost 44.0 M on efcd27e, paid by every process at load: `--version`,
+    two hundred runs, on efcd27e minus e146f9f (9,959,953,594 −
+    1,151,083,697).
+  - The review measured 11.6 M and 44.0 M the same way
+    (`review-perf-probes/startup-ab.txt`).
+  - The millisecond figures are illustrative; they move within noise
+    between runs.
+- **"5301 checks … corrupting one byte fails 213, emptying the structure
+  tree fails 51" is retracted.** It had no evidence file and named no
+  byte. The suite makes 14,794 `check` calls, identical in order and
+  verdict before and after the sharing (the review's instrumented
+  transcript, `review-perf-probes/labels-*-normalized.txt.gz`). Measured
+  by `mutations/run.sh` in a scratch clone at e146f9f — per mutation,
+  `lake build Tests` and one run of the Tests binary — with each diff in
+  `mutations/`:
+  - Flipping the middle byte of every shared golden PDF, before its text
+    and objects are read, fails 153 checks: 77 twice-written equalities
+    and 76 reference walks.
+  - Writing the structure judge's file with an empty tree fails 51.
+  - The control fails 0.
+- `perf/load-time-after.txt` (`load_us=0`) is not a load record, although
+  it matches the `load-*.txt` pattern the entry cites.
+- **The generated notice** said the separated form "cost 5 ms of every
+  process that touched a non-ASCII character". It was parsed when its
+  module loaded, so every process paid, ASCII-only documents included.
+  `scripts/gen-nfc-data.lean` now emits that, and `NfcData.lean`,
+  regenerated from the same `UnicodeData.txt` (sha256 `2e1efc1d…`,
+  `nfc/regen.txt`), is byte-identical from its namespace line on: 87,240
+  bytes, sha256 `3be3147e…` on both sides (`nfc/data-identity.txt`).
+
+**The decide sites on the chain.** The kernel seconds per site come from
+`lake env lean -Dtrace.profiler=true -Dtrace.profiler.threshold=20` on a
+loaded host (`21-`, `25-tprof*`). The module wall times come from eliding
+proofs: `decide-variants/make.py` writes each variant with the named
+proofs replaced by `sorry`, and `decide-variants/run.sh` times
+`lake env lean` on each, a module's variants side by side, three rounds,
+medians.
+
+| module | site | kernel s | module wall, proof elided |
+|---|---|---|---|
+| Diag | `DiagCode.all_nodup` | 12.0 | 13.19 → 10.83 s; 3.46 s with `all_complete` too |
+| Ir | `Color.pdfMilli_decode` | 10.7 | see next row |
+| Ir | `Color.pdfMilli_no_space` | 21.4 | 58.18 → 47.14 s; 37.14 s with `pdfMilli_decode` too |
+| Ir | `outlineWalk_finds` | 0.08 (0.18 elaborating) | — |
+| Ir | `crefNameOf_covers` | 0.18 | — |
+| Elab | `structural_rendered_disjoint` | 1.6 | 77.30 → 72.50 s for these four |
+| Elab | `builtin_verdict_total` | 4.0 | (in the four) |
+| Elab | `phantom_rendered_covers` | 4.1 | (in the four) |
+| Elab | `phantom_named_covers` | 4.15 | (in the four) |
+| Elab | `phantom_axes_set_eq` | < 0.02 | — |
+| Elab | `barCtrlName_alias_resolves` | 0.46 | — |
+
+`all_complete` is an 8.5 s `cases c <;> rfl`, not a decide.
+
+The rule needed a mechanism. A theorem's kernel check runs
+asynchronously, but the next structure its module declares waits for
+every pending check before it is added. In the traces, `structure Diag`
+waited 12.0 s, `Ir.Tokens` 21.5 s and Elab's `PhantomAxes` 4.1 s. So a
+slow check runs in series with its module and everything downstream. The
+import closure of Elab also holds `LocaleContract` (three sites; the whole
+module takes 0.85 s) and `Oklab` (one `example`, 0.22 s).
+
+One move paid. `pdfMilli_no_space` moved to `ColorContract.lean`, which
+only `LeanTex.lean` imports, together with its one consumer
+`pdfComponents_inj` and that theorem's private helper. A false statement
+there fails `lake build` (`decide-move/break-leaf.txt`). Clean builds
+from source (`decide-move/clean-ab.sh`: a `git archive` of each commit,
+built with no `.lake`), c4a0761 (the commit before the move) against
+e146f9f, alternating, two rounds, 192 cores (`decide-move/clean-ab.txt`):
+
+| build | round 1 | round 2 |
+|---|---|---|
+| clean build, c4a0761 | 250 s | 250 s |
+| clean build, e146f9f | 241 s | 243 s |
+| `Ir`, c4a0761 | 61 s | 60 s |
+| `Ir`, e146f9f | 50 s | 50 s |
+
+`ColorContract` builds in 12 s, beside the chain rather than on it.
+`lake env lean --run scripts/bench.lean` on c4a0761 and on e146f9f puts
+every leantex median within 6 ms of the other, median of five runs each
+(`decide-move/bench-*.txt`). Three measured candidates were not moved,
+because the brief allowed one:
+- `pdfMilli_decode`, a further 10.0 s off Ir;
+- `all_nodup` together with `all_complete`, 9.7 s off Diag, the chain's
+  first module;
+- Elab's four, 4.8 s.
+
+**Lessons into rules.** AGENTS.md now carries both rules: the leaf rule
+with its mechanism, and the zero-argument-`def` rule. The second is
+measured on this toolchain, not inferred (`c-lazy/`: one 3M-entry table,
+`perf stat -r 20 -e instructions:u`, a run that never reads it against
+one that does). A zero-argument `def` is paid at every process start,
+from the main module or an imported one, and a `Thunk` around it defers
+nothing: 383.9 M instructions either way, against 3.1 M for no table.
+Taking `Unit` defers it, whether the body is the loop itself or a call
+with closed arguments, and so does writing the build inside
+`Thunk.mk fun _ =>`: 3.1 M until read. Closed-term extraction hoists
+none of the three to module initialization.
+
+**Routed.**
+- **`scripts/precommit.lean`**, owned this round by the land fixer.
+  - Reject `decide +kernel` in any module of `LeanTex.Core.Elab`'s import
+    closure, against a per-module baseline that may fall and never rise.
+    Today that is Ir 3, Diag 1, Elab 6, LocaleContract 3 and Oklab 1
+    (`chain-decides.py`), counted in code only: `Theme.lean:395` spells the
+    tactic inside a docstring, and a line scan counts it.
+  - Reject a zero-argument `def` whose body parses a generated `*Data`
+    value (`splitOn`, `toUTF8` or `toNat?` over `<X>Data.<y>`) unless the
+    body is `Thunk.mk fun _ =>` or the `def` takes `Unit` (both exemptions
+    measured to defer, `c-lazy/`). No site matches today: of four
+    candidates, all are lazy or cheap (`58-zero-arg-scan.txt`).
+- **`LeanTex/Cli/Render.lean:76`** (`porcelainDiag`): carry `subject`, so
+  machine consumers such as this matrix can count a diagnostic by its
+  subject rather than by its line.
+- **`LeanTex/Core/Font.lean`**, the `slotCollapsed` docstring: it still
+  says the loss "has never been named", but W0390 names it.
