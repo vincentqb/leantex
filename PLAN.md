@@ -18172,3 +18172,119 @@ shipped CLI, PDF and HTML.
   the definitions made before the macro, not those in force at the use. That
   predates this branch.
 - **Routed (unchanged):** N0114's registered meaning in `Diag.lean`.
+
+
+
+### 2026-09-26 — package code sets no text: a style file's own test printed a package name on page 1
+
+The user built the paper in the private reference corpus and found a word at
+the top of page 1 that lualatex never sets. The paper's local style file
+registers an `\AtBeginDocument` hook that tests whether a package is loaded,
+with a warning in the true branch and an empty false branch. The engine
+replayed the hook at `\begin{document}` (N0100). It did not know
+`\@ifpackageloaded`, so W0301 kept the command's `{...}` arguments as text,
+and the tested package's name became the paper's first word. Two things were
+missing: the loaded-test family, and a rule that stops unknown commands in
+package code from setting body text.
+
+**The invariant.** An unknown command met in package code sets none of its
+arguments. Package code is a site whose file is a style or class file
+(`Compat.packageFile`). The splice wraps every span of a local `.sty` in its
+own file, and a hook such a file registers replays inside that wrapper, so
+the engine already knew which side of the boundary a site stands on. No
+refactor was needed. The `@`-letter state is not tracked: `Lex.nameChar`
+admits `@` everywhere, a recorded decision, and nothing here depends on it.
+At such a site, the recovery drops the command's option runs and its
+argument groups. It records no salvage, and names the site once under its
+own key (`pkgcode:<name>`) with a new config code, W0391. The key is not
+W0301's `ctrl:<name>`: a shared key would put the document's fate, "kept
+as text", and package code's fate, "dropped", on one counted line. A TeX
+internal demotes, as in the preamble, and N0020 counts it with the file's
+refusals. Document content keeps today's recovery. The theorem is
+`Elab.recoverPackageCmd_accounts`: the recovery pushes exactly one
+diagnostic (W0391, subject `pkgcode:<name>`) and leaves the salvage
+unchanged. The "no ink" half holds by construction: the recovery's type is
+an index with no inline in it, and its arm hands the text accumulator on as
+it came. The page-level checks are `packageCodeChecks`. They read
+`Layout.Out` and the typed HTML tree, and they run the two builds that
+differ only in which file registers the hook. The style file's build drops
+the arguments; the document's own `\AtBeginDocument` keeps them.
+
+One interaction was found by the suite. Rule (b)'s trial of a redefinition
+(`gateRedefB`) elaborates the body at its definition, and there a theme's
+`\maketitle` read as package code. Its unknown internals became config
+losses and the redefinition stopped being refused. A command a style file
+defines is called from the document's text, so the trial now reads the body
+as its use will (`Ctx.atUse`). `themeStyChecks` failed without this and
+passes with it.
+
+**The loaded tests.** A pass after the conditional pass, `resolveLoaded`
+in Compat, answers `\@ifpackageloaded`, `\@ifclassloaded`,
+`\@ifpackagewith`, `\@ifclasswith`, and the `\If…Loaded…` interface with its
+T and F forms. The table `loadedTests` is latex.ltx's own list. The kept
+branch replaces the test unbraced, and N0114 names the choice; its registry
+meaning now reads "…definitions and loads". The rules come from the kernel
+source on this host (TeX Live 2026, latex.ltx):
+
+- `\@ifl@aded` holds once `\ver@<p>.sty` is defined, and
+  `\load@onefile@withoptions` defines it as the file starts to load. A test
+  in the flow is therefore read against the loads before it, and a style
+  file's own tests see the style itself.
+- A test inside a group (a hook's body, a definition, an argument) runs when
+  its holder runs it, which is after the preamble in every case except a
+  preamble-time use. The pass reads the whole preamble on a first walk and
+  answers such a test on a second walk against every load the preamble
+  writes. Its note says "by the end of the preamble".
+- `\@ifpackagewith` reads `\opt@<p>.sty`, the list `\@pass@ptions`
+  accumulates: every `\PassOptionsToPackage` for `p` and the options its
+  first load passed, compared after `\zap@space`. It never reads the
+  class's global options. A local style file's passed options are not
+  carried by the splice, so a negative options answer for one is left
+  unread.
+
+Two premises are written beside the decision (`-- premise: none`). The first
+is that a package another package loads, through a `\RequirePackage` in a
+file the engine never reads, is invisible and reads as not loaded. The
+second is that a group's test reads as run after the preamble.
+`loadedTestChecks` holds 16 rows over the family, the timing rules and the
+option list. 15 of them fail with `LeanTex/Core/Compat.lean` set back to
+`17ac92f`, measured with `lake build Tests && .lake/build/bin/Tests` in this
+worktree (16 FAIL lines: those 15 and the N0114 golden block). The unit 2 run
+set back both Compat and Elab: 25 FAIL lines. Three rows passed on base,
+and they pass by design: "the document's own use keeps its arguments", "the
+same hook registered by the document keeps the arguments as text", and "a
+test missing a branch is left to the unknown-command refusal". Each guards
+behaviour that must not change.
+
+**Measured on the private paper and deck.** Commands: `leantex <the
+paper's source> -o <evidence>/…pdf --porcelain`, run from a scratch copy;
+`pdftoppm -png -r 110`; `compare -metric AE` per page; `pdftotext -bbox`
+for page 1.
+
+- Paper, base `17ac92f` → `dcf4d6ea`. Page 1's first word, the package
+  name, is gone. The title's first word now stands 0.9pt from lualatex's
+  position; at base it stood 9.1pt below it. Both builds have 8 pages, and
+  lualatex's has 8. Census deltas: N0114 16 → 17, W0301 notes 4 → 3, and
+  N0100 113 → 112 (the dead branch's `\PackageWarning` discard). No other
+  code moved, in the PDF build or the HTML build. Rasters: pages 1–2
+  differ (the removed line and its reflow); pages 3–8 are pixel-identical.
+- Deck: 36 pages in both builds, the per-code census identical, and all
+  36 rasters pixel-identical (AE = 0). Its local theme file is package code
+  too, and nothing in it changed.
+- The hook's `\newgeometry` is honoured. Page 1's text block has the
+  declared text width, centred, and its left edge stands within 0.1pt of
+  lualatex's. One wart remains: W0101 still names the `top` key as
+  dropped, although on the declared paper the declared text height centres
+  the body at exactly the declared top margin, so the loss it names does
+  not happen here.
+
+**Left, each a follow-up:**
+
+- An unknown *environment* in package code still keeps its body (W0302).
+- `\@ifpackagelater` and `\IfPackageAtLeastTF` compare dates the engine
+  does not have, and stay unknown.
+- A transitive-load table (each package's own `\RequirePackage` closure,
+  sourced) would retire the invisibility premise.
+- W0101's `top`, when it equals the centred margin, is not a loss.
+- The splice could carry a local style file's passed options, so that
+  `\@ifpackagewith` reads them.
