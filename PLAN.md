@@ -17638,3 +17638,91 @@ kept as text. The largest gaps are Special insertions (103), the registers
 (58), Math formulas (53) and Environments (47) (`--report`): text symbols,
 accents, lengths and the tabular and picture apparatus. They are not exotic
 corners; they are the chapters a real document touches on its first page.
+
+
+### 2026-09-26 — a node's text is inline content, so its styles reach both artifacts
+
+The report: in a diagram of the private reference corpus's deck, a node
+written `\textbf{…}` set in the regular face where lualatex sets it bold.
+The node salvage (`Picture.salCtrl`) read every text command as an unknown
+macro: it kept the word, dropped the style, and named the loss (W0334) in a
+diagnostic no reader sees. `\emph`, `\textit` and `\textsc` lost their
+shapes the same way. A `\\` inside a `\textcolor` body merged the body's
+two lines into one, and no code named that. In HTML every coloured label was
+black, because the SVG label arm flattened each inline to its plain text.
+
+**The invariant.** A node's shipped runs are the runs the same source ships
+as a paragraph: face, glyphs and colour per run, line by line. The SVG gives
+each glyph the weight and slant the PDF gives it. `pictureNodeStyleChecks`
+(`Tests/Surface.lean`) reads both off the artifact. The PDF side reads
+`Layout.Out` under a four-file font set, so each run's face is visible. The
+HTML side reads the typed tree's `<text>` runs, and the rendered string with
+its tags stripped. On `17ac92f` 17 rows fail. The plain, coloured and math
+rows pass there and serve as the instrument's controls. The two rendered-text
+rows failed on the fix's first cut, before `text` and `tspan` became
+phrasing. No theorem is stated: the salvage is the mode machine that
+`nodeLabel_mem` (owed) already waits on, and its helper now recurses into
+`.styled`, so the owed statement covers the new wrapper.
+
+**The fix.** The salvage reads the elaborator's own table. `Elab.argStyles`
+reaches it as `Cx.argStyles`, in the same way `Cx.math` hands over the
+elaborator's parser, and `elabPicture` takes the table with no default, so a
+caller cannot forget it. `SalMode.styleBody` sets a group, or one word, as a
+styled run. The coloured and styled bodies share one `Sal.splice`. A `\\`
+inside either body is a real break, and both resulting lines carry the
+wrapper. A size switch inside either body is walked one group deeper, so it
+is named instead of dropped. HTML: `HtmlDoc.labelNodesList` emits a
+`<tspan>` for each style and colour. It carries the presentation that the
+prose carrier gets: `bolder`, italic, the style class, and `fill` through the
+palette role's custom property. `Html.phrasingTags` gains `text` and
+`tspan`. The printer had indented a tspan onto its own line, which put a
+space between two runs the source had joined.
+
+**Measured on the private deck, `17ac92f` against `266090e`, through the
+shipped CLI.** The deck has 36 pages before and after. W0334 falls from 125
+sites to 100, and the only diagnostic that changed is the node-body
+`\textbf` refusal (25 → 0). Rasterized at 110 dpi, 31 pages are
+byte-identical. Five pages change (engine pages 18 and 21–24), and every one
+holds styled node text. On the reported page, `pdftohtml -xml` puts the
+word in the deck's bold face, which is also where the lualatex reference
+puts it. The paper has 8 pages, and all 8 rasters are byte-identical. Its
+HTML differs only in white space inside `<text>`.
+
+**Corrections to the brief.** The lost weight was not silent: W0334 named
+it at five sites of the deck. The coordinator's rasters were taken at
+`6095273`, not `17ac92f`. Re-measured here at `17ac92f`, the result is the
+same.
+
+**A decision for the user.** `Compat.alertStyled` makes a themed `\alert`
+both bold and coloured. Its docstring calls the divergence deliberate
+(WCAG 2.2 SC 1.4.1), and prose already honours it. Node labels now honour
+it too, so the deck's alerted nodes set bold where the reference sets them
+coloured only. This is the invariant working. If node alerts should be
+coloured only, the change belongs to `alertStyled`, for prose and pictures
+together.
+
+**Left open, with call sites.**
+- The HTML picture box is the hull of label *anchors*
+  (`HtmlDoc.pictureSvg`: `pic.bbox`), so a one-row diagram's SVG is 0–3 pt
+  tall and headless Chromium clips its labels to a strip. This is the
+  defect the PDF side closed with `inkBbox`. The route: an
+  `Ir.Pic.LabelMetric` field on `HtmlDoc.Config`, filled by the driver from
+  `Layout.labelMetric` (a backend may not import Layout), and read by
+  `pic.inkBbox`.
+- Node text defaults to black (`Picture.evalNode`,
+  `color := Ir.Color.black`), where TikZ uses the colour in force. On the
+  deck the result is `#000000` against the reference's theme foreground.
+  Fixing it would repaint every picture page, which is why it is not in
+  this branch.
+- A picture label's math still sets as its linear floor in HTML
+  (`labelPiece`; MathML inside SVG is owed to M6), and no code names it.
+- Font declarations in a node body (`{\bfseries …}`) and `font=\bfseries`
+  are still refused by name (W0334). None appears in the private corpus.
+- The row layout (unit 2): an inline `\parbox[t]` followed by a
+  `tikzpicture` still stacks. Setting them on one line is the adjacent-box
+  row that bug 3 is building for side-by-side minipages. It needs the row
+  builder to admit a picture and first-baseline alignment in `.columns`.
+  Honouring `baseline={(c.base)}` needs the picture to carry the named
+  node's base offset, which the picture walk already computes as
+  `NodeGeom.base`. That is more than one unit, and it shares code with bug
+  3, so it waits for that branch.
