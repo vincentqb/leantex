@@ -476,9 +476,7 @@ def selftest : IO UInt32 := do
   unless (firstGap "ab" "abc").startsWith "the readings agree for 2" do
     bad := bad.push s!"firstGap prefix: {firstGap "ab" "abc"}"
   -- The gate, through the path that ships: `gate` is what `main` runs after
-  -- measuring, and each case hands it a measurement and a baseline. The
-  -- ratchet cases are the ones that hold whatever `Scoreboard.ratchet`
-  -- decides about a lowering line that has already been applied once.
+  -- measuring, and each case hands it a measurement and a baseline.
   let reach (f : String) (lvl : Int) : Reached :=
     { fixture := f, level := lvl, stopped := none, declared := [], notes := #[] }
   let measured (rs : List Reached) : Measured := { reached := rs.toArray, faults := #[] }
@@ -540,18 +538,21 @@ def selftest : IO UInt32 := do
       declared := [.defaultMeasure], notes := #[] }
   let (c, _, _) ← gateIn (board ["# encoding: raw", "prose\t2"]) (measured [explained]) ["--check"]
   unless c == 0 do bad := bad.push s!"gate: an explained stop exited {c}"
-  -- Owed to `Scoreboard.ratchet`, reported and never gated here: once a
-  -- lowering has been applied, a recorded rise back followed by the same
-  -- fall must not be written on the strength of the line left behind. Which
-  -- way it goes is the Board's decision, not this tier's, so the selftest
-  -- only says what it saw.
+  -- 9. a spent lowering authorises nothing again: the fall it named is
+  -- written, a recorded rise takes the item back up, and the same fall is
+  -- then refused with the baseline untouched. The rule is the Board's
+  -- (`Scoreboard.authorises_exact`: a line authorises a change exactly when
+  -- it is a request and the change is the fall it names); this is the
+  -- tier's own path to it.
   let (c1, after1, _) ← gateIn lowered (measured [reach "prose" 4]) []
   let (c2, after2, _) ← gateIn after1 (measured [reach "prose" 5]) []
-  let (c3, _, _) ← gateIn after2 (measured [reach "prose" 4]) []
-  if c1 == 0 && c2 == 0 then
-    let seen := if c3 == 0 then "re-accepted by the lowering line left behind" else "refused"
-    IO.println s!"parity --selftest: owed to Scoreboard.ratchet, not gated here — the same \
-fall after a recorded rise is {seen} (exit {c3})"
+  unless c1 == 0 && c2 == 0 && (after2.splitOn "\nprose\t5\n").length == 2 do
+    bad := bad.push s!"gate: a lowering and the recorded rise back did not both write \
+(exits {c1}, {c2}): {repr after2}"
+  let (c3, after3, _) ← gateIn after2 (measured [reach "prose" 4]) []
+  unless c3 == 1 && after3 == after2 do
+    bad := bad.push s!"gate: the same fall after a recorded rise was written on the strength \
+of a spent lowering (exit {c3})"
   if bad.isEmpty then
     IO.println "parity --selftest: all passed"
     return 0

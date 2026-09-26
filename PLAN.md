@@ -15251,6 +15251,13 @@ it runs through `gate`, the function `main` runs after measuring:
 * a lowering that names other numbers authorises nothing;
 * an unrecorded rise is `stale`.
 
+*(Closed in round 3b. The Board's fix is on `main` (`4502139`): a request
+is spent in the writing and comes back as a record, which authorises
+nothing. After the rebase onto `ae2ddc6`, the report-only line is
+selftest case 9, an assertion: the same fall after a recorded rise is
+refused and the baseline is untouched. Built at `04005f6` with only that
+case added, the selftest fails on it, exit 1; on this branch it passes.)*
+
 **Before the ratchet.** Two things stop a run in every mode, exit 2, with
 nothing written:
 
@@ -15372,7 +15379,9 @@ earlier entries are corrected in place.
 * `scripts/Board.lean`, `tierMain`'s regenerate path and
   `Lowered.authorises`: a carried lowering re-authorises its fall after a
   recorded rise. AGENTS.md's tier row ("retirement and lowering lines both
-  carry forward") owes the same correction.
+  carry forward") owes the same correction. *(Closed in round 3b: both
+  landed on `main` with `4502139`, and AGENTS.md's row now spends a request
+  once.)*
 * `LeanTex/Core/Pdf.lean:314`, `wArray`: widths are floored to integer
   thousandths (read in the source). The re-review measured interword `TJ`
   displacements floored the same way. Fix both before P5's arm is
