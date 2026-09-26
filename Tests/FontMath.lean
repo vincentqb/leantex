@@ -1767,16 +1767,37 @@ def slotRows : Array SlotRow := Id.run do
             out := out.push { cls, decl := d, fixed, art, slot }
   return out
 
+/-- A font file's own `post.isFixedPitch`, read through the OpenType table
+directory — the uint32 at offset 12 of `post` (OpenType spec, the `post`
+table header) — with no engine code between the bytes and the answer, so
+the matrix's pitch oracle does not share the reader it judges. `none`: no
+readable `post` table. -/
+def postIsFixedPitch (data : ByteArray) : Option Bool := Id.run do
+  let byte (i : Nat) : Nat := (data[i]?.map (·.toNat)).getD 0
+  let u16 (i : Nat) : Nat := byte i * 256 + byte (i + 1)
+  let u32 (i : Nat) : Nat := u16 i * 65536 + u16 (i + 2)
+  if data.size < 12 then return none
+  for k in [0:u16 4] do
+    let entry := 12 + 16 * k
+    if byte entry == 0x70 && byte (entry + 1) == 0x6F && byte (entry + 2) == 0x73
+        && byte (entry + 3) == 0x74 then
+      let off := u32 (entry + 8)
+      return if off + 16 ≤ data.size then some (u32 (off + 12) != 0) else none
+  return none
+
 /-- What a written PDF sets in each face resource: the resource's name,
-the text its runs spell through that face's own `/ToUnicode`, and the
-`/Flags` its descriptor declares. The artifact tier's tokenizer and CMap
+the text its runs spell through that face's own `/ToUnicode`, the `/Flags`
+its descriptor declares, and the pitch the embedded program's own `post`
+table declares (`postIsFixedPitch`). The artifact tier's tokenizer and CMap
 reading, plus the one fact that tier does not keep: which face a run is
 set in. -/
-def pdfFaceRuns (pdf : ByteArray) : Except String (Array (String × String × Int)) := do
+def pdfFaceRuns (pdf : ByteArray) :
+    Except String (Array (String × String × Int × Option Bool)) := do
   let es := (← PdfRead.objects pdf).val
   let deref := PdfCensus.deref es
   let mut texts : Std.HashMap String String := {}
   let mut flags : Std.HashMap String Int := {}
+  let mut programs : Std.HashMap String (Option Bool) := {}
   for e in es do
     unless e.val.get? "Type" == some (.name "Page") do continue
     let resources := deref ((e.val.get? "Resources").getD .null)
@@ -1790,6 +1811,17 @@ def pdfFaceRuns (pdf : ByteArray) : Except String (Array (String × String × In
           | d => d
         let fd := deref ((cid.get? "FontDescriptor").getD .null)
         flags := flags.insert nm (((fd.get? "Flags").bind Obj.int?).getD 0)
+        let program : Option Bool :=
+          match (fd.get? "FontFile2").orElse fun _ => fd.get? "FontFile3" with
+          | some (.ref n _) =>
+            match es.find? (·.num == n) with
+            | some pe =>
+              match pe.decoded with
+              | .ok (some bytes) => postIsFixedPitch bytes
+              | _ => none
+            | none => none
+          | _ => none
+        programs := programs.insert nm program
     let data ← match e.val.get? "Contents" with
       | some (.ref n _) =>
         match es.find? (·.num == n) with
@@ -1818,12 +1850,14 @@ def pdfFaceRuns (pdf : ByteArray) : Except String (Array (String × String × In
                   String.join ((artCodes d).toList.map fun g => toUni[g]?.getD artUnmapped))
         stack := #[]
       | other => stack := stack.push other
-  return texts.toArray.map fun (nm, s) => (nm, s, flags[nm]?.getD 0)
+  return texts.toArray.map fun (nm, s) =>
+    (nm, s, flags[nm]?.getD 0, (programs[nm]?).getD none)
 
-/-- The face resource whose runs spell `needle`, with its `/Flags`. -/
-def faceSetting (runs : Array (String × String × Int)) (needle : String) :
-    Option (String × Int) :=
-  (runs.find? fun (_, s, _) => hasStr s needle).map fun (nm, _, fl) => (nm, fl)
+/-- The face resource whose runs spell `needle`, with its `/Flags` and its
+embedded program's own pitch. -/
+def faceSetting (runs : Array (String × String × Int × Option Bool)) (needle : String) :
+    Option (String × Int × Option Bool) :=
+  (runs.find? fun (_, s, _, _) => hasStr s needle).map fun (nm, _, fl, p) => (nm, fl, p)
 
 /-- The file a page sets a slot in: walk the slot's `--font-<slot>` stack
 — the last declaration, which is the one the cascade keeps — to the first
@@ -1850,14 +1884,16 @@ def htmlSlotFile (html slot : String) : Option String := do
 
 /-- One row's outcome: the driver's exit code and log, the W0390 lines it
 printed, and what the artifact says — whether any artifact carrying a
-face sets the slot's run in a face that is not of the slot's kind, and
-whether that face is the running text's own. -/
+face sets the slot's run in a face that is not of the slot's kind, whether
+that face is the running text's own, and whether the PDF's descriptor
+declares the pitch its embedded program does. -/
 structure SlotOutcome where
   exit : UInt32
   log : String
   reports : Array String
   lost : Bool
   textFace : Bool
+  flagsAgree : Bool
   oracle : String
 
 /-- Build one row with the driver and read its artifacts back. The driver
@@ -1881,6 +1917,7 @@ def slotRunRow (bin : String) (dir : System.FilePath) (cache : String) (i : Nat)
     hasStr l "\"event\":\"diagnostic\"" && hasStr l "\"code\":\"W0390\""
   let mut lost := false
   let mut textFace := false
+  let mut flagsAgree := true
   let mut oracle := ""
   if r.art == .pdf || r.art == .pdfHtmlOwn then
     let pdf ← IO.FS.readBinFile (out / s!"row{i}.pdf")
@@ -1888,11 +1925,14 @@ def slotRunRow (bin : String) (dir : System.FilePath) (cache : String) (i : Nat)
     | .error e => oracle := s!"pdf unreadable: {e}"
     | .ok runs =>
       match faceSetting runs "zqx", faceSetting runs "Plain" with
-      | some (runFace, runFlags), some (textRes, _) =>
+      | some (runFace, runFlags, runFixed), some (textRes, _, _) =>
         let same := runFace == textRes
         textFace := same
-        lost := if r.slot == "mono" then runFlags % 2 == 0 else same
-        oracle := s!"pdf: run in {runFace} (flags {runFlags}), text in {textRes}"
+        let fixed := runFixed.getD false
+        lost := if r.slot == "mono" then !fixed else same
+        flagsAgree := runFixed.isSome && (runFlags % 2 == 1) == fixed
+        oracle := s!"pdf: run in {runFace} (program fixed {runFixed}, flags {runFlags}), \
+text in {textRes}"
       | _, _ => oracle := s!"pdf: the run or the text is not in the file: {runs.map (·.2.1)}"
   if r.art == .htmlEmbedded then
     let html ← IO.FS.readFile (out / s!"row{i}.html")
@@ -1900,23 +1940,24 @@ def slotRunRow (bin : String) (dir : System.FilePath) (cache : String) (i : Nat)
     | some runFile, some textFile =>
       let same := runFile == textFile
       textFace := same
-      let pitch ← match Font.classify (← IO.FS.readBinFile (out / runFile)) with
-        | .ok c => pure c.isFixedPitch
-        | .error _ => pure false
+      let pitch := (postIsFixedPitch (← IO.FS.readBinFile (out / runFile))).getD false
       lost := if r.slot == "mono" then !pitch else same
       oracle := s!"html: run in {runFile} (fixed {pitch}), text in {textFile}"
     | _, _ => oracle := "html: the page ships no face for the slot or the text"
-  return { exit := p.exitCode, log := p.stdout ++ p.stderr, reports, lost, textFace, oracle }
+  return { exit := p.exitCode, log := p.stdout ++ p.stderr, reports, lost, textFace,
+           flagsAgree, oracle }
 
 /-- **W0390 fires exactly when an artifact sets a slot's runs in a face
 not of the slot's kind, and the document declared no family for the
-slot.** For mono the kind is fixed pitch, read from the artifact: the
-FixedPitch bit of the descriptor the PDF sets the run under, or the
-shipped file's own `post` table for the face the page's stack reaches.
-For sans the kind is contrast with the running text — no face field says
-"is a sans design" — so the loss is the run set in the text's own face.
-An artifact carrying no face (a page under a declared `css =`) sets no
-run in a resolved face and loses nothing. -/
+slot.** For mono the kind is fixed pitch, read from the face program the
+artifact carries — the PDF's embedded program, the page's shipped file —
+through its `post` table directly (`postIsFixedPitch`), never through the
+engine's classifier, which is what the report rests on; and every PDF's
+descriptor must declare the pitch its own program does. For sans the kind
+is contrast with the running text — no face field says "is a sans design"
+— so the loss is the run set in the text's own face. An artifact carrying
+no face (a page under a declared `css =`) sets no run in a resolved face
+and loses nothing. -/
 def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
@@ -1958,11 +1999,13 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error _ => pure ()
   let mut expectedReports := 0
   let mut expectedSilent := 0
+  let mut flagDisagree : Array String := #[]
   for k in [0:rows.size] do
     let r := rows[k]!
     match (outcomes[k]?).bind id with
     | some (.ok o) =>
       t s!"slot matrix {r.label}: the build succeeds: {o.log}" (o.exit == 0)
+      unless o.flagsAgree do flagDisagree := flagDisagree.push s!"{r.label} ({o.oracle})"
       let declared := r.decl.contains r.slot
       let want := !declared && o.lost
       if want then expectedReports := expectedReports + 1
@@ -1985,6 +2028,8 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
   -- defect was found in is one of the rows whose artifact says "lost".
   t s!"slot matrix: some rows are losses ({expectedReports})" (0 < expectedReports)
   t s!"slot matrix: some rows are not ({expectedSilent})" (0 < expectedSilent)
+  t s!"slot matrix: every PDF declares the run face's pitch its embedded program does: \
+{flagDisagree}" flagDisagree.isEmpty
   IO.FS.removeDirAll dir
 
 /-- **A family slot set in a face not of its kind, and the report that
