@@ -756,11 +756,16 @@ const path = require('path');
         return t.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; } });
       // Every glyph's baseline, in document order: its box's bottom less its
       // face's descent at its size. Lines are the clusters of one baseline,
-      // so a hyphenation point or a formula's atoms never split a line.
+      // so a hyphenation point or a formula's atoms never split a line. A
+      // deck's stages stand side by side, so a stage's lines are set apart
+      // by a stride no page reaches: no line is ever another stage's above.
+      const stages = [...document.querySelectorAll('section.slide')];
       const glyphs = [];
       const rg = document.createRange();
       for (let t = walker.nextNode(); t; t = walker.nextNode()) {
         const s = t.nodeValue;
+        const st = t.parentElement.closest('section.slide');
+        const stride = st ? 100000 * (stages.indexOf(st) + 1) : 0;
         let i = 0;
         for (const ch of s) {
           const w = ch.length;
@@ -768,7 +773,7 @@ const path = require('path');
           i += w;
           const b = rg.getBoundingClientRect();
           if (b.width === 0 && b.height === 0) continue;
-          glyphs.push({ ch, base: b.bottom + scrollY - descentOf(t.parentElement) });
+          glyphs.push({ ch, base: stride + b.bottom + scrollY - descentOf(t.parentElement) });
         }
       }
       const lines = [];
@@ -942,6 +947,157 @@ and measured by the browser; lengths bp (PDF) and CSS px (HTML); q = that contex
     IO.println s!"{m.fixture}\t{m.row.spec.cls}\t{m.row.spec.marker}\t{m.row.spec.kind.name}\t\
 {pb}\t{pq}\t{rb}\t{rq}\t{hb}\t{hq}\t{dPR}\t{dHP}"
   return 0
+
+/-! ## The private documents (a report; never a gate, never the tree)
+
+A document with no markers is read by pairing: each engine line whose
+structure tag opens a new marked-content sequence is a block boundary, and
+the reference line whose first twelve letters match it on the same page is
+the same boundary there. The gap on each side is the baseline of the line
+above it to its own. A boundary is classed by the engine's tags on either
+side (`P-P`, `H2-P`, `LI-LI`, …), with whether a picture or an image stands
+between.
+
+It reads private inputs, so it is structurally unable to write into the
+repository: it writes only into a directory named on the command line, and
+refuses one that resolves inside the working tree. What it writes carries no
+text of the document: page numbers, tags and lengths. -/
+
+/-- A line's structure: the tag and marked-content id of its first run's
+innermost content mark, as the engine's writer wrote it. -/
+def lineTag (rs : Array ArtRun) : Option (String × Nat) :=
+  rs.findSome? fun r => r.marks.reverse.findSome? fun m => match m with
+    | .content t n => some (t, n)
+    | .artifact _ => none
+
+structure PLine where
+  y : Int
+  key : String
+  tag : Option (String × Nat)
+  deriving Inhabited
+
+/-- A page's lines for pairing: baseline, the first twelve letters of the
+text (the pairing key, never written out), and the structure tag. -/
+def pairLines (p : ArtPage) : Array PLine := Id.run do
+  let top := p.media.2.2.2
+  let mut ys : Array Int := #[]
+  let mut runs : Array (Array ArtRun) := #[]
+  for r in p.runs do
+    match ys.findIdx? (· == r.y) with
+    | some i => runs := runs.modify i (·.push r)
+    | none =>
+      ys := ys.push r.y
+      runs := runs.push #[r]
+  let mut out : Array PLine := #[]
+  for i in [0:ys.size] do
+    let rs := runs[i]!.qsort (·.x < ·.x)
+    let letters := String.ofList ((String.join (rs.toList.map (·.text))).toList.filter Char.isAlpha)
+    if letters.length ≥ 3 then
+      out := out.push { y := top - ys[i]!, key := String.ofList (letters.toList.take 12), tag := lineTag rs }
+  return out.qsort (·.y < ·.y)
+
+/-- Is `dir` inside the working tree? Both sides resolved, so neither a
+relative spelling nor a symlink hides the answer. -/
+def insideTree (dir : String) : IO Bool := do
+  IO.FS.createDirAll dir
+  let d ← IO.FS.realPath dir
+  let t ← IO.FS.realPath "."
+  return d == t || d.toString.startsWith (t.toString ++ "/")
+
+def privateReport (enginePdf refPdf outDir label : String) (probe : Option String := none) :
+    IO UInt32 := do
+  if ← insideTree outDir then
+    IO.eprintln "rhythm: refusing: the private report writes only outside the working tree"
+    return 2
+  let read (f : String) : IO (Array ArtPage) := do
+    match readArtifact (← IO.FS.readBinFile f) with
+    | .ok ps => pure ps
+    | .error e => throw (IO.userError s!"{f}: {e}")
+  let eng ← read enginePdf
+  let ref ← read refPdf
+  -- The HTML page's lines, when a browser measured it (`probeJs`'s output
+  -- over the engine's own page): baselines in CSS px as sp, one document.
+  let keyOfText (t : String) : String :=
+    String.ofList ((t.toList.filter Char.isAlpha).take 12)
+  let mut html : Array (Int × String) := #[]
+  let mut lead : Int := 0
+  if let some pf := probe then
+    for l in (← IO.FS.readFile pf).splitOn "\n" do
+      match l.splitOn "\t" with
+      | ["line", _, y, t] =>
+        if (keyOfText t).length ≥ 3 then
+          html := html.push ((parseMilli y).getD 0 * spPerBp / 1000, keyOfText t)
+      | ["page", _, v] => lead := (parseMilli v).getD 0 * spPerBp / 1000
+      | _ => pure ()
+  let mut cursor := 0
+  let mut rows : Array String :=
+    #["page\tabove\tbelow\tmarks\tengine_bp\treference_bp\tdelta_bp\thtml_px\thtml_lead_px"]
+  for pi in [0:eng.size] do
+    let el := pairLines eng[pi]!
+    let rl := (ref[pi]?.map pairLines).getD #[]
+    let emarks := ctmMarks eng[pi]!.content
+    let etop := eng[pi]!.media.2.2.2
+    for i in [1:el.size] do
+      let me := el[i]!
+      let up := el[i - 1]!
+      let opens := match me.tag, up.tag with
+        | some (_, a), some (_, b) => a != b
+        | _, _ => true
+      if !opens then continue
+      let tagName (t : Option (String × Nat)) : String := (t.map (·.1)).getD "none"
+      -- A mark stands between only when it lies inside the band: a page's
+      -- ground or a title bar overlaps every band and stands between none.
+      let between := emarks.any fun (_, y0, _, y1) => etop - y1 ≥ up.y && etop - y0 ≤ me.y
+      let egap := me.y - up.y
+      let rgap : Option Int := do
+        let j ← rl.findIdx? (·.key == me.key)
+        if j == 0 then none
+        some (rl[j]!.y - rl[j - 1]!.y)
+      let (rb, d) := match rgap with
+        | some g => (showMilli (milliBpOfSp g), showMilli (milliBpOfSp (egap - g)))
+        | none => ("-", "-")
+      -- The HTML twin of the same boundary: the next line in document order
+      -- with the same key, and the line standing above it on the screen.
+      let mut hb := "-"
+      match (html.extract cursor html.size).findIdx? (·.2 == me.key) with
+      | some k =>
+        let j := cursor + k
+        cursor := j + 1
+        let above := html.filter fun (y, _) => y < html[j]!.1
+        if let some (ya, _) := above.foldl (fun (acc : Option (Int × String)) h =>
+            match acc with
+            | some a => if a.1 < h.1 then some h else some a
+            | none => some h) none then
+          hb := showMilli (milliBpOfSp (html[j]!.1 - ya))
+      | none => pure ()
+      rows := rows.push s!"{pi + 1}\t{tagName up.tag}\t{tagName me.tag}\t{if between then "yes" else "no"}\t\
+{showMilli (milliBpOfSp egap)}\t{rb}\t{d}\t{hb}\t{showMilli (milliBpOfSp lead)}"
+  let path : System.FilePath := outDir / s!"{label}-boundaries.tsv"
+  IO.FS.writeFile path ("\n".intercalate rows.toList ++ "\n")
+  IO.println s!"rhythm: {rows.size - 1} boundaries over {eng.size} engine pages, {ref.size} reference pages"
+  return 0
+
+/-- One page a browser measures with `probeJs`, for a private document's
+HTML: its lines go to `<outDir>/probe-<page>.tsv`, and like the report the
+probe refuses a directory inside the working tree, because those lines are
+the document's text. -/
+def probePage (htmlDir page outDir : String) : IO UInt32 := do
+  if ← insideTree outDir then
+    IO.eprintln "rhythm: refusing: a private page's probe writes only outside the working tree"
+    return 2
+  let some module := (← playwrightModules)[0]?
+    | IO.eprintln "rhythm: no Playwright module launches a Chromium here"; return 2
+  let js : System.FilePath := (outDir : System.FilePath) / "probe.cjs"
+  IO.FS.writeFile js probeJs
+  let r ← IO.Process.output
+    { cmd := "node", args := #[js.toString, htmlDir, page], env := #[("PW_MODULE", some module)] }
+  IO.FS.writeFile ((outDir : System.FilePath) / s!"probe-{page}.tsv") r.stdout
+  if r.exitCode != 0 then
+    IO.eprintln s!"rhythm: the probe exited {r.exitCode}"
+    return 2
+  return 0
+
+/-! ## The reference, measured (needs lualatex; never a gate) -/
 
 def lualatex : String := "lualatex"
 
@@ -1155,4 +1311,7 @@ def main (args : List String) : IO UInt32 := do
   | ["--table"] => Rhythm.table
   | ["--lines", name] => Rhythm.dumpLines name
   | ["--html", dir] => Rhythm.htmlReport dir
+  | ["--private", eng, ref, dir, label] => Rhythm.privateReport eng ref dir label
+  | ["--private", eng, ref, dir, label, probe] => Rhythm.privateReport eng ref dir label (some probe)
+  | ["--probe", htmlDir, page, dir] => Rhythm.probePage htmlDir page dir
   | _ => tierMain "rhythm" (.pairs "within" "boundaries") Rhythm.tierMeasure Rhythm.selftest args
