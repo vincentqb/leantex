@@ -691,6 +691,56 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"site accounting {a}/{b}: the row still describes a live collision"
       (seen.contains (a, b))
 
+/-- Documents whose body drops a leading `[...]` run, each written with the
+run and with the run deleted, and a preamble site or none. Invented command
+names throughout. -/
+def visibleRunProbes : List (String × String × String × String) :=
+  [("preamble first, one body site", "\\zzvis{x}\n",
+     "Alpha \\zzvis[16]{Bravo}.", "Alpha \\zzvis{Bravo}."),
+   ("preamble first, a run and a plain body site", "\\zzvis{x}\n",
+     "Alpha \\zzvis[16]{Bravo}.\n\nDelta \\zzvis{Echo}.",
+     "Alpha \\zzvis{Bravo}.\n\nDelta \\zzvis{Echo}."),
+   ("body only, one site", "", "Alpha \\zzvis[16]{Bravo}.", "Alpha \\zzvis{Bravo}."),
+   ("body only, a run and a plain site", "",
+     "Alpha \\zzvis[16]{Bravo}.\n\nDelta \\zzvis{Echo}.",
+     "Alpha \\zzvis{Bravo}.\n\nDelta \\zzvis{Echo}.")]
+
+/-- Probes whose dropped run no default-visible line reflects today, each
+with what owes the change. Read in both directions by
+`visibleRunAccountingChecks`, the `siteAccounting` shape one step over: that
+registry is keyed by two codes at one span, and this defect is one code at
+every span, so it needs its own key. When the preamble refuses a command
+first, the key is spent there, every body site becomes a note of that
+refusal, and the one visible line is the preamble's "skipped", whatever the
+body dropped. -/
+def visibleRunAccounting : List (String × String) :=
+  [("preamble first, one body site",
+     "LeanTex/Core/Elab.lean, the declared-accounting change: the preamble \
+and body refusals share ctrl:<name>, so the preamble's words stand for body sites"),
+   ("preamble first, a run and a plain body site",
+     "LeanTex/Core/Elab.lean, the declared-accounting change: as above, and the \
+first body note carries the group's rule")]
+
+/-- **A dropped run shows at default verbosity.** Measured as two engine
+outputs, never against a spelling: if the visible lines are the same with
+the run and without it, no visible line reflects the drop. A probe that
+hides its run needs a row, and a row whose probe shows its run is stale, so
+the registry is a migration list that fails in both directions. -/
+def visibleRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let visible (pre body : String) : Array (String × String) :=
+    ((elabStr (dvDoc pre body)).2.filter (·.severity != .note)).map
+      fun d => (d.code, d.message)
+  for (what, pre, withRun, without) in visibleRunProbes do
+    let hidden := visible pre withRun == visible pre without
+    if visibleRunAccounting.any (·.1 == what) then
+      t s!"visible run accounting {what}: the row still describes a hidden run" hidden
+    else
+      t s!"visible run {what}: a visible line reflects the dropped run" (!hidden)
+  for (what, _) in visibleRunAccounting do
+    t s!"visible run accounting {what}: the row names a probe"
+      (visibleRunProbes.any (·.1 == what))
+
 /-- **A construct's recovery accounts for all of its arguments.** The
 `_accounts` half of the one-accounting-per-site rule, asserted where
 `siteAccountingChecks` cannot reach: that gate says no two codes name one
