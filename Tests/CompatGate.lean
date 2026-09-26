@@ -220,8 +220,9 @@ structured told the two apart. `discard` is now the one writer of that
 shape, and its subject is `ctrl:nothing:<key>`, sub-keyed by the argument
 that decided the discard, so two discards are two census keys. -/
 
-/-- The discard arms, one usage each, with the key each owes: preamble,
-body, key. -/
+/-- The discard arms, one usage for each call that writes a discard (the
+inert table's rows are the `makeatletter` row below), with the key each
+owes: preamble, body, key. -/
 def discardSites : List (String × String × String) :=
   [("\\usepackage{hyperref}\n", "", "usepackage:hyperref"),
    ("\\RequirePackage{url}\n", "", "RequirePackage:url"),
@@ -229,6 +230,8 @@ def discardSites : List (String × String × String) :=
    ("\\usepackage[left]{lineno}\n", "", "usepackage:lineno"),
    ("\\newcommand{\\zzkept}{a}\n\\providecommand{\\zzkept}{b}\n", "",
      "providecommand:zzkept"),
+   ("\\providecommand{\\section}{}\n", "", "providecommand:section"),
+   ("\\usepackage{babel}\n", "", "usepackage:babel"),
    ("\\pagestyle{fancy}\n", "", "pagestyle:fancy"),
    ("\\usefonttheme{professionalfonts}\n", "", "usefonttheme"),
    ("\\setbeameroption{hide notes}\n", "", "setbeameroption"),
