@@ -516,6 +516,25 @@ theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
   · rfl
   · simp
 
+/-- **In a centred frame the leftover splits evenly above and below the
+content, to within one sp** (`_exact`): the share above and the share below
+differ by the single scaled point the halving assigns below. The source is
+moloch's `[c]` key — `\beamer@frametopskip` and `\beamer@framebottomskip`
+both `0pt plus 1fil` (beamerinnerthememoloch.sty:455-456), measured under
+lualatex as a split of exactly one half; plain beamer's own key is
+`1fill` against `1.5fill` (beamerbaseframe.sty:257-258), a ratio the
+vocabulary can declare but no shipped bundle does. The content's top is the
+title box's bottom (`B.openBody`), as the fil above stands there in beamer,
+so the two shares are the content's gaps. -/
+theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
+    VDist.center.aboveShare l ≤ l - VDist.center.aboveShare l ∧
+      l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + 1 := by
+  have key : ∀ x s : Int, 0 ≤ x → s = (if x ≤ 0 then 0 else x / 2) →
+      s ≤ x - s ∧ x - s ≤ s + 1 := by
+    intro x s hx hs
+    split at hs <;> omega
+  exact key l _ h (VDist.center_is_halving l)
+
 /-- The distribution a frame's declaration names: a projection of the one
 IR table (`Ir.VAlign.shares`), so the PDF page cannot drift from the HTML
 deck's spacers. `golden` is the title page's composed 3618:2000. -/
@@ -4526,6 +4545,35 @@ theorem bars_clear_descenders (body descMilli : Int)
         simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
         omega
 
+/-- The body strut's leaded depth: what stands below a line of body text at
+the body size (`lineExtent` of an empty line is the strut). A box that sits
+on a baseline — a picture, the frame content's opening `\vbox{}` — leaves
+this pending, so the next body line stands one leading below it: TeX's
+`\baselineskip` from a box of depth zero, which the leaded halves realize
+exactly (`baselines_on_grid`). -/
+private def B.strutBelow (fs : FontSet) (b : B) : Sp :=
+  (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading
+    b.geom.fontSize #[]).below
+
+/-- **A titled frame's content opens on a baseline below the title box.**
+beamer builds a frame as the title box — the `frametitle` template, then
+`\vskip0.25em` (beamerbaseframe.sty:126) — the frame's top skip (`[t]`:
+`.2cm`, :263; moloch's `[c]`: a bare fil, beamerinnerthememoloch.sty:455),
+and the content, which opens with `\vskip-\parskip\vbox{}` (:115): an empty
+box, so the first line's interline glue is `\baselineskip` from the title
+box's bottom and no `\parskip` is spent. The box's bottom is the bar's
+bottom edge (the last pinned fill, as the spill page's resume reads it) or
+the title's own depth, whichever is lower; `g` is the declared skip. Before,
+the first line was spaced off the title's baseline, so on a `[t]` frame its
+ascent reached into the bar. -/
+private def B.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
+  let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
+  { b with y := max (b.y + b.prevDepth) barBottom
+           prevDepth := 0
+           prevBelow := b.strutBelow fs
+           prevRuleOnly := false
+           skip := b.skip.add g }
+
 /-- The fit-or-spill skeleton every committed band takes — the one
 spelling of `overflow ≤ shrink ∨ noBreak → commit | close and retry`:
 commit at `stepY b` when the band's ink past `bottom` is within the
@@ -4822,6 +4870,9 @@ them in document order, so the page builder stays sequential and the output
 does not depend on task scheduling. -/
 private inductive Op where
   | skip (g : Glue)
+  /-- A titled frame's content opens here (`B.openBody`): below the title
+  box, on a baseline, with the frame's own top skip pending. -/
+  | bodyOpen (g : Glue)
   | para (job : ParaJob)
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
@@ -7003,7 +7054,16 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectFrameTitle r a title titleLeaf titleSpan
     -- The title just placed is page-top chrome: the frame's distribution
     -- moves the body below it, never the title (beamer's frametitle).
-    let a := if title.isEmpty then a else { a with ops := a.ops.push .pin }
+    -- Its content opens on a baseline below the title box (`B.openBody`),
+    -- with no peer gap: beamer's `\vskip-\parskip` cancels the first one.
+    -- The skip is the title box's own `\vskip0.25em`
+    -- (beamerbaseframe.sty:126) and, on a `[t]` frame, the `.2cm` top skip
+    -- (:263); a centred frame's top skip is a bare fil (moloch,
+    -- beamerinnerthememoloch.sty:455), which the distribution spends.
+    let a := if title.isEmpty then a else
+      let g : Glue := { width := r.geom.fontSize / 4 + -- \vskip0.25em, beamerbaseframe.sty:126
+        (if valign matches .top then Dim.mm 2 else 0) } -- [t]'s .2cm, beamerbaseframe.sty:263
+      { a with ops := (a.ops.push .pin).push (.bodyOpen g), wantDefault := false }
     -- A golden frame is the title page (only \maketitle declares golden),
     -- and everything on it is display furniture: titles never hyphenate
     -- and never justify (collectDisplay's rule, through the declaration).
@@ -7565,6 +7625,7 @@ theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeSlot)
 /-- One op staged for placement: paragraphs carry their breaking task. -/
 private inductive StagedOp where
   | skip (g : Glue)
+  | bodyOpen (g : Glue)
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
@@ -7622,6 +7683,10 @@ case analysis stays inside the elaboration budget and the page facts
 (`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
 private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) : B := Id.run do
+  -- The picture's bottom edge is a baseline (TikZ's default: the lower end
+  -- of the picture on the baseline), so the next line stands a leading
+  -- below it, as TeX's `\baselineskip` from a box of depth zero does.
+  let strut := b0.strutBelow fs
   let mut b := b0
   -- Fit the picture's box the way `placeLine` fits a line of height
   -- `h` and no depth: at the top of a fresh page, else below the last
@@ -7708,7 +7773,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     needed := max b.needed overflow
     y := yTop + h
     prevDepth := 0
-    prevBelow := 0
+    prevBelow := strut
     prevRuleOnly := false
     skip := {}
     freshStart := false }
@@ -7773,6 +7838,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- carry this content; a later span overrides.
     logoSpans := logoSpans.push (b.pages.size, c)
   | .skip g => b := { b with skip := b.skip.add g }
+  | .bodyOpen g => b := b.openBody fs g
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
     -- A boundary closes a page only when the page holds something: two
@@ -8255,7 +8321,7 @@ in `runFloat`, this is what makes "no page was closed" mean "the shipped
 pages are exactly what they were". -/
 private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) : PagesExtend st.b (stepStaged fs imgs st s).b := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
+  cases s <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
     | exact fitCommit_extends ..
@@ -8273,7 +8339,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) (h : st.b.noBreak = true) (hs : s ≠ .brk) :
     (stepStaged fs imgs st s).b.pages = st.b.pages ∧
     (stepStaged fs imgs st s).b.noBreak = true := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
+  cases s <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
@@ -8450,7 +8516,7 @@ private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
 
 private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (op : StagedOp) : BgStep st.b (stepStaged fs imgs st op).b := by
-  cases op <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
+  cases op <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
@@ -9141,6 +9207,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   let staged : Array StagedOp := accF.ops.map fun op =>
     match op with
     | .skip g => .skip g
+    | .bodyOpen g => .bodyOpen g
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad strut => .titleBar color pad strut

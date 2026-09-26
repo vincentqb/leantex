@@ -3666,6 +3666,61 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      hasStr page (":where(.u-trivlist-env + *, blockquote + *) { margin-top: " ++
       "calc(var(--topsep, 0.725rem) + 0.725rem); }"))
 
+/-- **A frame's content opens on a baseline below the title box, and a
+picture's bottom is a baseline** (`B.openBody`, `B.strutBelow`,
+`VDist.center_split_exact`). beamer builds a frame as the title box (the
+bar, then `\vskip0.25em`), the frame's top skip (`.2cm` on `[t]`, a fil on
+moloch's `[c]`) and content that opens with `\vskip-\parskip\vbox{}`, so its
+first line stands one `\baselineskip` below that box; TikZ puts a picture's
+lower edge on the baseline. Asserted over `Layout.Out`: a `[t]` frame's
+first baseline against the bar's own fill; a `[c]` frame's two gaps, the
+floor read off a `[b]` frame of the same body (its content ends on the
+floor, so the depth cancels); and the text under a centred picture against
+the text under a centred line. Invented words. -/
+def frameBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (opt : String) : String :=
+    "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}" ++ opt ++
+    "{Heading}\nWords on one line.\n\\end{frame}\\end{document}"
+  let run (src : String) : Option (Layout.Geom × Dim.Sp × Dim.Sp) := do
+    let (d, _) := elabStr src
+    let g := Layout.Geom.ofPage d.page
+    let p ← (layoutOf oneFace d g).pages[0]?
+    -- The bar: the page-top fill, not the page's own ground.
+    let bar := p.fills.foldl (fun m f =>
+      if f.x == 0 && f.y == 0 && f.h < g.pageH then max m (f.y + f.h) else m) 0
+    let l ← p.lines.find? fun l => !l.furniture && hasStr (lineText l) "Words"
+    pure (g, bar, l.y)
+  match run (deck "[t]"), run (deck ""), run (deck "[b]") with
+  | some (g, barT, yT), some (_, barC, yC), some (_, _, yB) =>
+    let lead := Ir.leadingFor g.fontSize g.leading
+    t "a top frame's first line stands the title box's skip, the top skip and a leading below the bar"
+      (yT == barT + g.fontSize / 4 + Dim.mm 2 + lead)
+    let top := yC - lead - (barC + g.fontSize / 4)
+    let bottom := yB - yC
+    t "a centred frame's leftover splits evenly above and below its content"
+      (0 < top && top ≤ bottom && bottom ≤ top + 1)
+  | _, _, _ => t "frame body fixtures lay out" false
+  -- A picture's bottom edge is a baseline: the line under a centred
+  -- picture stands where the line under a centred line of text stands.
+  let art (inner : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}Alpha.\n\n" ++
+    "\\begin{center}\n" ++ inner ++ "\n\\end{center}\n\nCharlie.\n\\end{document}"
+  let picSrc := art "\\begin{tikzpicture}\\fill (0,0) rectangle (2,1);\\end{tikzpicture}"
+  let (pd, _) := elabStr picSrc
+  let below : Option Dim.Sp := do
+    let p ← (layoutOf oneFace pd).pages[0]?
+    let f ← p.fills.find? fun f => f.h < (Layout.Geom.ofPage pd.page).pageH
+    let l ← p.lines.find? fun l => hasStr (lineText l) "Charlie."
+    pure (l.y - (f.y + f.h))
+  let c := censusOfSrc oneFace (art "Bravo.")
+  let pitch : Option Dim.Sp := do
+    let b ← lineYOf c 0 "Bravo."
+    let d ← lineYOf c 0 "Charlie."
+    pure (d - b)
+  t "the line under a centred picture stands as far below it as under a centred line"
+    (below.isSome && below == pitch)
+
 /-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
 `Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over
 `Layout.Out` and the emitted SVG, through the shipped path — source,

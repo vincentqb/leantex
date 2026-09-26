@@ -1122,10 +1122,13 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   judge "a glyph the /ToUnicode does not name" .glyphNames geom
     (artWriteWith fs geom doc out store (artOnPage 0 (artRegidList 60000 #[] ·.toList))) true
   judge "paragraphs untouched" .glyphNames geom plain false
-  -- The band claim needs a page that paints one: chrome's third frame.
+  -- The band claim needs a page that paints one: chrome's third frame. The
+  -- lift lands the frame's centred body line inside the title band (the
+  -- line stands 107pt below the band's bottom edge since a frame's content
+  -- opens below the title box, `B.openBody`).
   let (cf, cg, cd, co, cs) ← build "chrome"
-  judge "body prose lifted 100pt into a title band" .bandFree cg
-    (moved true 0 (Dim.pt 100) 2 cf cg cd co cs) true
+  judge "body prose lifted 110pt into a title band" .bandFree cg
+    (moved true 0 (Dim.pt 110) 2 cf cg cd co cs) true
   judge "chrome untouched" .bandFree cg (driverPdf cf cg cd co cs) false
   -- The vanished overlay increment: two consecutive pages, one content stream.
   let (of_, og, od, oo, os) ← build "overlays"
