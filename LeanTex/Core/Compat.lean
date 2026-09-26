@@ -2686,13 +2686,33 @@ its value is skipped" pos
         (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
     return some (#[], k)
   | "multicolumn" =>
-    -- `\multicolumn{n}{align}{text}`: spans are not modelled — the cell's
-    -- text lands in its own single cell, and the short row is padded with
-    -- a W0337 naming it. The span count and alignment spec are dropped.
-    let (gs, k) := takeGroups raws start 3
-    match gs with
-    | #[_, _, text] => return some (#[.group text pos], k)
-    | _ => return none
+    -- `\multicolumn{n}{align}{text}`: spans are not modelled, so the text
+    -- fills one cell and cell alignment is its column's. Only the count and
+    -- the alignment are consumed: `text` stays where it stands, so the walk
+    -- rewrites it like any group — a `#1` inside a definition body is the
+    -- definition's parameter, which a kept-but-unwalked group lost. What is
+    -- dropped is named under the construct's own key, one per shape of
+    -- loss, so a counted line is true of every site it counts: a count of 1
+    -- loses only the alignment, a wider one moves the row's later cells
+    -- left (the table then pads the short row), and a count that is not a
+    -- numeral says neither.
+    let (gs, k) := takeGroups raws start 2
+    let j := skipSpaces raws k
+    match gs, raws[j]? with
+    | #[n, _], some (.group _ _) =>
+      match (rawSrc n).trimAscii.toString.toNat? with
+      | some 1 =>
+        sayOnce "ctrl:multicolumn:1" .W0337
+          "'\\multicolumn{1}' alignment is not set: the cell takes its column's alignment" pos
+      | some (_ + 2) =>
+        sayOnce "ctrl:multicolumn" .W0337
+          "'\\multicolumn' spans are not set: its text fills one cell, and the cells after it move left"
+          pos
+      | _ =>
+        sayOnce "ctrl:multicolumn:unread" .W0337
+          "'\\multicolumn' span is not a numeral the engine reads: its text fills one cell" pos
+      return some (#[], j)
+    | _, _ => return none
   | "usefonttheme" =>
     -- beamer's `professionalfonts` theme turns beamer's font substitution
     -- off and keeps the document's declared fonts — the only behaviour this

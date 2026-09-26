@@ -262,6 +262,59 @@ def compatDiscardChecks (ref : IO.Ref (List String)) : IO Unit := do
       (keyed two "usepackage:url").all (·.sites == 1) &&
       (keyed two "usepackage:hyperref").size == 1 && (keyed two "usepackage:url").size == 1)
 
+/-! # Arguments a rewrite reads and keeps only part of
+
+The silence guard (`Compat.account`, `rewriteCtrl_accounts`) holds an arm to
+account for what it consumed only when its replacement is empty. An arm that
+keeps a fragment of what it read and drops the rest passes the guard whatever
+it does with the rest: `\multicolumn{n}{align}{text}` kept `text`, dropped
+the span and the alignment, and no code named the construct — the one
+diagnostic was the table's padded-row warning, keyed to the table, and a
+one-column realignment drew nothing at all. The kept group was also never
+walked, so a definition's `#1` inside it shipped as a reserved-character
+error and a stray digit. These rows are the census the guard cannot take. -/
+
+/-- The fragment-keeping arms, one row per shape of loss: what the row
+exercises, the key the loss owes (`ctrl:<key>`), and a usage. A new
+fragment-keeping arm, or a new shape of an old one, enters here. -/
+def fragmentArms : List (String × String × String) :=
+  [("a span", "multicolumn",
+      "\\begin{tabular}{lll}\n\\multicolumn{2}{c}{Spanning} & d \\\\\na & b & c \\\\\n\\end{tabular}"),
+   ("one column", "multicolumn:1",
+      "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}"),
+   ("a count that is not a numeral", "multicolumn:unread",
+      "\\begin{tabular}{lll}\n\\multicolumn{\\relax}{c}{Wide} & b & c \\\\\n\\end{tabular}")]
+
+def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let own (ds : Array Diag) (key : String) : Array Diag :=
+    ds.filter (·.subject == some ("ctrl:" ++ key))
+  for (what, key, usage) in fragmentArms do
+    let (_, ds) := elabStr (dvDoc "" usage)
+    t s!"fragment arm, {what} (fails on base): what it drops is named under its own key"
+      ((own ds key).size == 1 && (own ds key).all (·.severity == .warning))
+    -- Counted, not repeated: two sites are one visible line reading two.
+    let (_, twice) := elabStr (dvDoc "" (usage ++ "\n\n" ++ usage))
+    t s!"fragment arm, {what} (fails on base): two sites are one named loss, counted twice"
+      ((own twice key).size == 2 && (own twice key).all (·.sites == 2) &&
+        ((own twice key).filter (·.severity == .warning)).size == 1)
+  -- A one-column realignment moves nothing: the row keeps its grid.
+  let (oneDoc, _) := elabStr (dvDoc "" "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")
+  t "fragment arm, one column: the row's cells stay in their columns"
+    (match oneDoc.body with
+     | #[.table _ _ _ rows _] => rows.map (·.map Ir.plainText) == #[#["Right", "b", "c"]]
+     | _ => false)
+  -- The kept text is walked like any group: inside a definition body, its
+  -- `#1` is the definition's parameter.
+  let (defDoc, defDs) := elabStr (dvDoc "\\newcommand{\\zzhead}[1]{\\multicolumn{2}{c}{#1}}\n"
+    "\\begin{tabular}{lll}\n\\zzhead{Heading} & z \\\\\na & b & c \\\\\n\\end{tabular}")
+  t "fragment arm (fails on base): a parameter in the kept text is the definition's parameter"
+    (!defDs.any (·.code == "E0311") &&
+      match defDoc.body with
+      | #[.table _ _ _ rows _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
+      | _ => false)
+
 /-- The compat accounting blocks. -/
 def compatAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   compatDiscardChecks ref
+  compatFragmentChecks ref
