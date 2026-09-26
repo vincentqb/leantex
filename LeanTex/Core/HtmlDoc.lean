@@ -5352,8 +5352,16 @@ first; retitle one frame, or link to '#{id}'"))
       let slot (c : Option (Array Ir.Inline)) : Array Html.Node :=
         match c with
         | some xs =>
-          #[Html.elem "div" (inlineNodesInto cfg #[] xs.toList)
-            #[("class", "headline-logo")]]
+          -- A logo is decorative furniture by role (`Ir.logoImageSrcs`):
+          -- declared so, as the deck's logo strip is (`attachLogo`), so
+          -- assistive technology skips it and an empty `alt` reads as the
+          -- decoration it is, not as a missing alternative.
+          let deco := Ir.mapInlines (fun x => match x with
+            | .image src size _ => .image src size ""
+            | x => x) xs
+          #[Html.elem "div" (inlineNodesInto cfg #[] deco.toList)
+            #[("class", "headline-logo"), ("role", "presentation"),
+              ("aria-hidden", "true")]]
         | none => #[]
       let line (cls : String) (xs : Array Ir.Inline) : Array Html.Node :=
         if xs.isEmpty then #[] else

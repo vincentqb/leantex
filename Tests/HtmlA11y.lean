@@ -229,3 +229,18 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{verbatim}\ncode\n\\end{verbatim}")).1
   let pres := (elemAttrsList (· == "pre") #[] cbody.toList).map (HtmlDoc.attrOf? ·.2 "tabindex")
   t s!"html a11y: a code block is focusable: {pres}" (pres == #[some "0"])
+  -- A poster's corner logo is decorative furniture by role
+  -- (`Ir.logoImageSrcs`), declared so on the page as the deck's logo strip
+  -- is: assistive technology skips the slot, so its empty alt is not a
+  -- missing alternative.
+  let (pdoc2, _) := elabStr ("\\documentclass{poster}\n\\title{T}\n" ++
+    "\\logoright{\\includegraphics{rects.png}}\n\\begin{document}\n" ++
+    "\\begin{frame}\nx\n\\end{frame}\n\\end{document}")
+  let (_, lgbody, _) := HtmlDoc.emitTree {} pdoc2
+  let slots := ((elemAttrsList (· == "div") #[] lgbody.toList).filter fun (_, a) =>
+      (HtmlDoc.classTokens a).contains "headline-logo").map fun (_, a) =>
+    (HtmlDoc.attrOf? a "role", HtmlDoc.attrOf? a "aria-hidden")
+  t s!"html a11y: a poster logo slot is declared decorative: {slots}"
+    (slots == #[(some "presentation", some "true")])
+  t "html a11y: …so the judge counts no unnamed image on it"
+    ((a11yFactsOf pdoc2 lgbody).imgsUnnamed == 0)
