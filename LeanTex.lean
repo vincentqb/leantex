@@ -13,6 +13,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Math
 import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
+import LeanTex.Core.ColorContract
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
 import LeanTex.Core.Pending
