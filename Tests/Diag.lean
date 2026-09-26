@@ -952,6 +952,28 @@ def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "urlstyle: one undefined value at two sites is one refusal counted at both"
     (same.size == 2 && same.all (·.sites == 2) &&
       (same.filter (·.severity == .warning)).size == 1)
+  -- The preamble selector is whole-document. A `\url` inside `\author` or a
+  -- running head elaborates where it is declared, while LaTeX typesets it at
+  -- `\maketitle` or on the page — after every preamble selector has run — so
+  -- the selector's place among the declarations must not matter. Asserted
+  -- as the commutation itself: the two orders are one document. `tt` is the
+  -- default and cannot tell the orders apart, so it is not a row.
+  let titled (pre : String) : Ir.Doc :=
+    (elabStr (dvDoc ("\\usepackage{url}\n\\title{An Invented Title}\n" ++ pre)
+      "\\maketitle\nBody text.")).1
+  for (what, decl) in [("an author", "\\author{A. Person \\url{https://example.org/me}}\n"),
+      ("a running head", "\\runninghead{\\url{https://example.org/head}}\n")] do
+    for v in ["same", "rm", "sf"] do
+      let sel := s!"\\urlstyle\{{v}}\n"
+      t s!"urlstyle (fails on base): {what} holding a URL reads '{v}' in either order"
+        (titled (decl ++ sel) == titled (sel ++ decl))
+  -- And the value it reads is the preamble's last: two selectors around the
+  -- declaration give the later one, as `\maketitle` would see it.
+  let twoSel := titled ("\\urlstyle{sf}\n\\author{A. Person \\url{https://example.org/me}}\n" ++
+    "\\urlstyle{same}\n")
+  t "urlstyle (fails on base): a URL declared between two selectors takes the later one"
+    (twoSel == titled ("\\author{A. Person \\url{https://example.org/me}}\n\\urlstyle{same}\n") &&
+      famRuns .sans twoSel == 0)
   -- The slot fact itself. One face in every slot is the no-mono default and
   -- the collapse; a distinct face in slot 2 is a declared mono.
   let load (name : String) : IO (Option Font.Font) := do

@@ -328,7 +328,10 @@ structure ESt where
   `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
   running face, which is `none` — no family style at all, not a fourth
   family. url.sty's own default is `tt`, so that is the initial value.
-  Flow scope, as `flowPalette` is: a selector applies to the URLs after it. -/
+  In the preamble it is the last defined value the preamble names, for
+  every declaration wherever the selector stands (`elabDoc` reads it before
+  the fold); in the body, flow scope, as `flowPalette` is: a selector
+  applies to the URLs after it. -/
   urlFamily : Option Ir.Style := some .mono
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
@@ -10745,13 +10748,14 @@ tool = none refuses the boundary")
     -- values it defines map onto the engine's three families and the
     -- running face. Refusing it was wrong twice — it told a reader who
     -- asked for the running face that URLs are set mono, and the slot
-    -- census then counted such a URL as mono the document had lost.
+    -- census then counted such a URL as mono the document had lost. The
+    -- family itself is read before the fold (`elabDoc`, `urlFamily0`), so
+    -- this arm only reports: a write here would give a `\url` in a title
+    -- part the selector's position rather than the preamble's value.
     match v with
     | some val =>
       match urlStyleFamily? val with
-      | some fam =>
-        modify fun st => { st with urlFamily := fam }
-        return s
+      | some _ => return s
       | none =>
         warnOnce s.ctx ("ctrl:urlstyle:" ++ val) .W0104
           s!"'\\urlstyle\{{val}}' names no URL face; skipped" pos
@@ -11412,6 +11416,20 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
             else if picTools.contains v then some (some v) else none
           | _ => none
       | _ => none).getD (some "lualatex")
+  -- url.sty's selector is read off the scanned declarations too, for the
+  -- reason the boundary door is: order. A `\url` inside `\author`, a
+  -- running head or a logo elaborates where it is declared, while LaTeX
+  -- typesets it at `\maketitle` or on the page — after every preamble
+  -- selector has run. So the family the preamble's content reads is the
+  -- last defined value the preamble names, wherever it stands (T1, the
+  -- commutation `scripts/compose-fuzz.lean` checks over this head); the
+  -- apply arm keeps every diagnostic and writes nothing, and the body
+  -- starts from the same value.
+  let urlFamily0 : Option Ir.Style := decls.foldl (fun fam d =>
+      match d with
+      | .urlstyle (some v) _ => (urlStyleFamily? v).getD fam
+      | _ => fam) (← get).urlFamily
+  modify fun st => { st with urlFamily := urlFamily0 }
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, picTool := picTool0, picPreamble := picPre
                picMetric := picMetric

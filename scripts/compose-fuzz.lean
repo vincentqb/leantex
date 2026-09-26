@@ -27,7 +27,7 @@ declared so far. -/
 def safeHeads : List String :=
   ["page", "pdfmeta", "fonts", "output", "chrome", "assert", "allow",
    "runninghead", "runningfoot", "logo", "title", "subtitle", "author",
-   "institute", "date"]
+   "institute", "date", "urlstyle"]
 
 /-- Every head that starts a new declaration unit during segmentation. -/
 def declHeads : List String :=
@@ -188,11 +188,36 @@ def syntheticSameHead : String :=
   "\\chrome{ footer = { right = \\framenumber } }\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
 
+/-- `\urlstyle` beside the inline-content heads that can hold a `\url`, each
+of which elaborates its content at the declaration while LaTeX sets it on
+the page, after every preamble selector has run: a logo and a running head
+here, the title parts below. -/
+def syntheticUrl : String :=
+  "\\documentclass{slides}\n" ++
+  "\\logo{\\url{https://example.org/logo}}\n" ++
+  "\\urlstyle{sf}\n" ++
+  "\\runninghead{\\url{https://example.org/head}}\n" ++
+  "\\date{An Invented Date}\n" ++
+  "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
+
+/-- The title parts reach the document only through `\maketitle`, so they
+are exercised where one is set: an author holding a `\url` beside the
+selector, the shape the reported defect had. -/
+def syntheticUrlTitle : String :=
+  "\\documentclass{article}\n" ++
+  "\\title{An Invented Title}\n" ++
+  "\\author{Placeholder Name \\url{https://example.org/me}}\n" ++
+  "\\urlstyle{same}\n" ++
+  "\\date{An Invented Date \\url{https://example.org/date}}\n" ++
+  "\\begin{document}\n\\maketitle\nx\n\\end{document}\n"
+
 def main : IO UInt32 := do
   let mut bad := 0
   let mut pairs := 0
   bad := bad + (← checkSource "synthetic.tex" synthetic)
   bad := bad + (← checkSource "synthetic-samehead.tex" syntheticSameHead)
+  bad := bad + (← checkSource "synthetic-urlstyle.tex" syntheticUrl)
+  bad := bad + (← checkSource "synthetic-urlstyle-title.tex" syntheticUrlTitle)
   let dir : System.FilePath := "tests/corpus"
   let entries ← dir.readDir
   let texs := (entries.map (·.path)).filter (·.extension == some "tex")
