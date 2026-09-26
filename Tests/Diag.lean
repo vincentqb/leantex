@@ -234,7 +234,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
     dvE (dvDoc "\\allow{W0341}\n" "x") ++ dvE (dvDoc "\\allow{W0344}\n" "x")
   | .N0114 =>
     dvE (dvDoc "\\ifdefined\\shiny\\sloppy\\else\\relax\\fi\n" "x") ++
-    dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")
+    dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x") ++
+    dvE (dvDoc "\\usepackage{booktabs}\n\\@ifpackageloaded{booktabs}{\\relax}{}\n" "x") ++
+    dvE (dvDoc "\\AtBeginDocument{\\IfPackageLoadedF{wideframe}{\\relax}}\n" "x")
   | .N0200 => dvL one (dvDoc "\\page{ height = 127pt, margin = 20pt }\n"
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
   | .N0016 => probed .N0016

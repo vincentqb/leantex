@@ -261,7 +261,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
   | .N0104 => ("0104", .info, "a frame declared for another mode ships no page in this one")
   | .N0105 => ("0105", .info, "\\allow names a retired code; its successor answers")
-  | .N0114 => ("0114", .info, "TeX '\\ifdefined' resolved from the document's own definitions")
+  | .N0114 => ("0114", .info, "a TeX conditional resolved from the document's own definitions and loads")
   | .W0111 => ("0111", .config, "a styling declaration names no styleable element; ignored")
   | .N0200 => ("0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")

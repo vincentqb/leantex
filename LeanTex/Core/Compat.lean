@@ -456,6 +456,20 @@ private structure CondPending where
   file : String
   pos : Pos
 
+/-- What the package- and class-loaded tests read (`resolveLoaded`): the loads
+written so far, in flow order. A package carries the option list its first
+load passed — a second load of a loaded package passes nothing new, the
+kernel's clash check aside (latex.ltx, `\@onefilewithoptions`) — and `none`
+for a local style file, whose passed options the splice resolves inside the
+file and does not carry. `passed` holds every `\PassOptionsToPackage` list
+per package, and the class half mirrors the package half. -/
+structure LoadSet where
+  pkgs : Array (String × Option (Array String)) := #[]
+  passed : Array (String × Array String) := #[]
+  cls : Option (String × Array String) := none
+  clsPassed : Array (String × Array String) := #[]
+  deriving Repr, BEq, Inhabited
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -594,6 +608,8 @@ private structure St where
   travels with the body because the replay happens in its own pass: what the
   engine refuses inside a `.sty`'s hook is still named at the `.sty`. -/
   deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
+  /-- The loads the loaded-test pass has read so far (`resolveLoaded`). -/
+  loads : LoadSet := {}
 
 private abbrev M := StateM St
 
@@ -2401,6 +2417,320 @@ private def condDocument (raws : Array Raw) : M (Array Raw) := do
     let pre' := if texts.isEmpty then pre' else condPatchList texts file #[] pre'.toList
     let post' ← condList condTopExpand post #[] [] post.toList 0 0
     return pre' ++ post'
+
+/-! # Package- and class-loaded tests
+
+`\@ifpackageloaded{p}{t}{f}` asks whether package `p` is loaded, and the
+document's own loads make that decidable here. The kernel's test
+(`\@ifl@aded`, latex.ltx; ltclass.dtx) holds exactly when `\ver@p.sty` is
+defined, and `\load@onefile@withoptions` defines it as the file starts to be
+read: a package counts as loaded from its `\usepackage` or `\RequirePackage`
+on, and never before. `\@ifpackagewith{p}{opts}` reads the list
+`\@pass@ptions` accumulates for `p` — each `\PassOptionsToPackage` for it and
+the options its load passed, never the class's global options — and holds
+when every wanted option is on it. The class forms read the `\documentclass`
+line the same way.
+
+What the pass reads is the loads this document and its local style files
+write. A package that another package loads, by a `\RequirePackage` inside a
+file this engine never reads, is invisible and reads as not loaded: that is
+the premise a negative answer rests on. A positive answer read where the test
+stands rests on nothing, since a load written here is a load LaTeX performs.
+
+A test is answered for the moment it runs. Standing in the flow — the
+preamble's, a style file's, the body's — it runs where it stands, and is read
+against the loads before it. Inside a group it runs when the command holding
+the group runs it: a deferred hook's body at `\begin{document}`, a definition
+body where the command is used, an argument where its command sets it. Every
+one of those is after the preamble but a preamble-time use, so a group's test
+is read against the whole preamble's loads, on the pass's second walk, and
+its note says so. The kept branch replaces the test, unbraced, as
+`\@firstoftwo` leaves it, and the other goes with it; N0114 names the
+choice. -/
+
+/-- The branches a loaded test carries after its name and option list: both,
+the true one only, or the false one only (latex.ltx defines the `T` and `F`
+forms over the `TF` one with `\@firstofone\@gobble` and `{}`). -/
+inductive LoadedBranches where
+  | tf
+  | t
+  | f
+  deriving BEq, Repr
+
+/-- One spelling of the loaded-test family: whether it reads the class or the
+packages, whether an option list follows the name, and its branches. -/
+structure LoadedTest where
+  ctrl : String
+  cls : Bool
+  withOpts : Bool
+  branches : LoadedBranches
+  deriving BEq, Repr
+
+/-- The family as latex.ltx defines it: the `\@if…` internals, and the
+`\If…Loaded…` interface `\let` to them or wrapped around them. -/
+def loadedTests : List LoadedTest :=
+  [⟨"@ifpackageloaded", false, false, .tf⟩, ⟨"IfPackageLoadedTF", false, false, .tf⟩,
+   ⟨"IfPackageLoadedT", false, false, .t⟩, ⟨"IfPackageLoadedF", false, false, .f⟩,
+   ⟨"@ifclassloaded", true, false, .tf⟩, ⟨"IfClassLoadedTF", true, false, .tf⟩,
+   ⟨"IfClassLoadedT", true, false, .t⟩, ⟨"IfClassLoadedF", true, false, .f⟩,
+   ⟨"@ifpackagewith", false, true, .tf⟩, ⟨"IfPackageLoadedWithOptionsTF", false, true, .tf⟩,
+   ⟨"IfPackageLoadedWithOptionsT", false, true, .t⟩,
+   ⟨"IfPackageLoadedWithOptionsF", false, true, .f⟩,
+   ⟨"@ifclasswith", true, true, .tf⟩, ⟨"IfClassLoadedWithOptionsTF", true, true, .tf⟩,
+   ⟨"IfClassLoadedWithOptionsT", true, true, .t⟩,
+   ⟨"IfClassLoadedWithOptionsF", true, true, .f⟩]
+
+/-- What one test asks: the class or the packages, the name, and the options
+it wants (`none` for a load test). -/
+structure LoadQuery where
+  cls : Bool
+  name : String
+  want : Option (Array String)
+  deriving BEq, Repr
+
+/-- An option list as the kernel compares it: comma-separated, spaces zapped
+(`\zap@space`), empty items skipped. -/
+def optionItems (s : String) : Array String :=
+  ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
+    |>.filter (!·.isEmpty) |>.toArray
+
+/-- One package load: the first load of a name stands, and a later one of the
+same name passes nothing new. -/
+def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
+  if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
+
+/-- The class line: the first `\documentclass` is the class. -/
+def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
+  if s.cls.isSome then s else { s with cls := some (c, os) }
+
+/-- Option passes, onto the class half or the package half. -/
+def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
+    LoadSet :=
+  if toClass then { s with clsPassed := s.clsPassed ++ ps }
+  else { s with passed := s.passed ++ ps }
+
+/-- The answer the loads read so far give a test: `some true` when it holds,
+`some false` when it fails, `none` when what it reads is not carried — a
+local style file's passed options, where only a positive answer is sound. -/
+def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
+  let passes (ps : Array (String × Array String)) : Array String :=
+    (ps.filter (·.1 == q.name)).foldl (fun acc e => acc ++ e.2) #[]
+  match q.cls, q.want with
+  | false, none => some (s.pkgs.any (·.1 == q.name))
+  | true, none => some (s.cls.any (·.1 == q.name))
+  | false, some want =>
+    let (seen, whole) := match s.pkgs.find? (·.1 == q.name) with
+      | some (_, some os) => (passes s.passed ++ os, true)
+      | some (_, none) => (passes s.passed, false)
+      | none => (passes s.passed, true)
+    if want.all seen.contains then some true else if whole then some false else none
+  | true, some want =>
+    let own := match s.cls with
+      | some (c, os) => if c == q.name then os else #[]
+      | none => #[]
+    some (want.all (passes s.clsPassed ++ own).contains)
+
+/-- When a test runs, as far as its place in the flow says. -/
+inductive LoadTiming where
+  /-- Where it stands: the preamble's flow, a style file's, the body's. -/
+  | now
+  /-- Inside a group — a hook's body, a definition, an argument: when the
+  command holding the group runs it, after the preamble. -/
+  | after
+  deriving BEq, Repr
+
+/-- The answer a test site gets, or `none` when nothing fixes one yet:
+`soFar` is what is loaded where the site stands, `final` the preamble's
+whole load set, known on the second walk. -/
+def loadedDecide (t : LoadTiming) (soFar : LoadSet) (final : Option LoadSet)
+    (q : LoadQuery) : Option Bool :=
+  match t with
+  | .now => soFar.answer q
+  | .after => final.bind (·.answer q)
+
+/-- Exactly `n` brace groups after `i`, each after any spaces: a loaded
+test's shape, read before anything is decided. A token that is not a group,
+or a paragraph break, leaves the test unread. -/
+private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Raw)) :=
+  Id.run do
+    let mut out : Array (Array Raw) := #[]
+    let mut j := i
+    for _ in [0:n] do
+      let k := skipSpaces raws j
+      match raws[k]? with
+      | some (.group body _) =>
+        out := out.push body
+        j := k + 1
+      | _ => return none
+    return some out
+
+/-- A name argument the pass can read: letters and punctuation only. A
+control word there is expanded by the kernel before the test, and this pass
+does not expand. -/
+private def plainName (body : Array Raw) : Bool :=
+  body.all fun
+    | .word .. | .space | .sym .. => true
+    | .par .. | .ctrl .. | .group .. | .math .. | .env .. | .verb .. => false
+
+/-- The question a loaded test at `i` asks, read from the groups after it;
+`none` when its shape is not the family's. -/
+private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option LoadQuery :=
+  let n := 1 + (if test.withOpts then 1 else 0) + (if test.branches == .tf then 2 else 1)
+  (argGroupsAt raws i n).bind fun args =>
+    let name := args.getD 0 #[]
+    if !plainName name || (rawSrc name).isEmpty then none
+    else some { cls := test.cls, name := rawSrc name,
+                want := if test.withOpts then some (optionItems (rawSrc (args.getD 1 #[])))
+                  else none }
+
+/-- Which of the groups after a resolved test are kept, unbraced, and which go
+with it: the name and the option list go, and the branch the answer picks
+stays. -/
+def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
+  let lead := if test.withOpts then [false, false] else [false]
+  let branches := match test.branches with
+    | .tf => [ans, !ans]
+    | .t => [ans]
+    | .f => [!ans]
+  lead ++ branches
+
+/-- The note a resolved test earns: what it read, when, and what that keeps. -/
+private def loadedMsg (test : LoadedTest) (q : LoadQuery) (ans : Bool) (t : LoadTiming) :
+    String :=
+  let opts := String.intercalate "," (q.want.getD #[]).toList
+  let fact := match q.cls, q.want.isSome, ans with
+    | false, false, true => s!"'{q.name}' is loaded"
+    | false, false, false => s!"no package '{q.name}' is loaded"
+    | false, true, true => s!"'{q.name}' was given '{opts}'"
+    | false, true, false => s!"'{q.name}' was not given '{opts}'"
+    | true, false, true => s!"the class is '{q.name}'"
+    | true, false, false => s!"the class is not '{q.name}'"
+    | true, true, true => s!"the class was given '{opts}'"
+    | true, true, false => s!"the class was not given '{opts}'"
+  let moment := match t with
+    | .now => " here"
+    | .after => " by the end of the preamble"
+  let kept := match test.branches, ans with
+    | .tf, true => "the first branch is kept"
+    | .tf, false => "only the second branch is kept"
+    | .t, true | .f, false => "its branch is kept"
+    | .t, false | .f, true => "its branch is dropped"
+  s!"'\\{test.ctrl}': {fact}{moment}, so {kept}"
+
+/-- A load the flow performs where it stands: a package line, the class line,
+an option pass, or a theme slot (beamer's `\usetheme{X}` is
+`\usepackage{beamerthemeX}`). A package loaded already keeps its first
+options. -/
+private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
+  let names (g : Array Raw) : Array String := optionItems (rawSrc g)
+  if name == "usepackage" || name == "RequirePackage" ||
+      name == "RequirePackageWithOptions" then
+    let (opt, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let os := if name == "RequirePackageWithOptions" then none
+      else some (optionItems (opt.getD ""))
+    write fun st => { st with loads :=
+      (names (args.getD 0 #[])).foldl (fun s p => s.addPkg p os) st.loads }
+  else if name == "documentclass" then
+    let (opt, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let c := rawSrc (args.getD 0 #[])
+    unless c.isEmpty do
+      write fun st => { st with loads := st.loads.setCls c (optionItems (opt.getD "")) }
+  else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
+    let (args, _) := takeGroups raws (i + 1) 2
+    let os := optionItems (rawSrc (args.getD 0 #[]))
+    let ps := (names (args.getD 1 #[])).map (·, os)
+    write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
+  else if let some pre := themeAsking.lookup name then
+    let (_, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let nm := rawSrc (args.getD 0 #[])
+    unless nm.isEmpty do
+      write fun st => { st with loads := st.loads.addPkg (pre ++ nm) (some #[]) }
+
+mutual
+
+/-- One level of the loaded-test pass. The list drives the recursion and the
+array gives the lookahead, as `condList` pairs them; `plan` is what the
+groups after a resolved test become, one entry per group, and the spaces
+between them go too. -/
+private def loadList (final : Option LoadSet) (raws : Array Raw) (t : LoadTiming)
+    (out : Array Raw) (plan : List Bool) : List Raw → Nat → M (Array Raw)
+  | [], _ => pure out
+  | .space :: rest, i =>
+    loadList final raws t (if plan.isEmpty then out.push .space else out) plan rest (i + 1)
+  | .ctrl name pos :: rest, i => do
+    match (loadedTests.find? (·.ctrl == name)).bind fun test =>
+        (loadedAt raws (i + 1) test).map (test, ·) with
+    | some (test, q) =>
+      -- premise: none — a package another package loads is invisible here and
+      -- reads as not loaded, and a group's test is read as run after the preamble
+      match loadedDecide t (← get).loads final q with
+      | some ans =>
+        let msg := loadedMsg test q ans t
+        sayOnce ("ifloaded:" ++ msg) .N0114 msg pos
+        loadList final raws t out (loadedPlan test ans) rest (i + 1)
+      | none => loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1)
+    | none =>
+      if t == .now then recordLoad raws name i
+      loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1)
+  | r :: rest, i => do
+    -- A group is tested, not matched, so `r` stays the list's own element.
+    if r matches .group _ _ then
+      match plan with
+      | keep :: more =>
+        let out ← if keep then loadOne final t out true r else pure out
+        loadList final raws t out more rest (i + 1)
+      | [] =>
+        let out ← loadOne final .after out false r
+        loadList final raws t out [] rest (i + 1)
+    else
+      let out ← loadOne final t out false r
+      loadList final raws t out [] rest (i + 1)
+termination_by structural l _ => l
+
+/-- One element under the pass. A kept branch is walked into the level it
+stands in, unbraced; the first walk leaves every other group whole, since the
+loads a group's tests are read against are not all known yet. A local style
+file is a load where it is spliced: `\ver@X.sty` is defined as the file starts
+to be read, so the file's own tests already see it. -/
+private def loadOne (final : Option LoadSet) (t : LoadTiming) (out : Array Raw)
+    (unbrace : Bool) : Raw → M (Array Raw)
+  | .group body p => do
+    if unbrace then loadList final body t out [] body.toList 0
+    else if final.isNone then pure (out.push (.group body p))
+    else
+      let inner ← loadList final body t #[] [] body.toList 0
+      pure (out.push (.group inner p))
+  | .env n body p => do
+    match Parse.inputEnvFile? n with
+    | some f =>
+      if t == .now && f.endsWith ".sty" then
+        let pkg := (f.dropEnd ".sty".length).toString
+        write fun st => { st with loads := st.loads.addPkg pkg none }
+      let saved := (← get).file
+      write fun st => { st with file := f }
+      let inner ← loadList final body t #[] [] body.toList 0
+      write fun st => { st with file := saved }
+      pure (out.push (.env n inner p))
+    | none =>
+      let inner ← loadList final body t #[] [] body.toList 0
+      pure (out.push (.env n inner p))
+  | r => pure (out.push r)
+termination_by structural r => r
+
+end
+
+/-- The loaded-test pass: a first walk reads the preamble's loads and answers
+every test standing in the flow, and a second answers every test inside a
+group against the whole preamble. A site is answered by exactly one walk, so
+each choice is named once. -/
+private def resolveLoaded (raws : Array Raw) : M (Array Raw) := do
+  let raws ← loadList none raws .now #[] [] raws.toList 0
+  let final := (← get).loads
+  write fun st => { st with loads := {} }
+  loadList (some final) raws .now #[] [] raws.toList 0
 
 /-- One collected hook: the note naming its replay point, and the body
 stored against that point. Separate from the walk so the walk's recursive
@@ -5269,6 +5599,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
     let raws ← condDocument raws
+    let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList
     let raws := (splitColumnsList raws.toList).toArray

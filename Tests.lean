@@ -15,6 +15,7 @@ import Tests.HtmlTokens
 import Tests.HtmlA11y
 import Tests.Conditionals
 import Tests.BoxRow
+import Tests.PackageCode
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -189,6 +190,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   logOnlyChecks ref oneFace pats
   leafAttributionChecks ref oneFace pats
   inlineAttributionChecks ref oneFace pats
+  loadedTestChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
