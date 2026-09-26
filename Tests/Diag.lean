@@ -795,6 +795,22 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
        (a.splitOn "any [...] options were dropped").length == 1 &&
        (b.splitOn "options were dropped").length == 1
      | _, _ => false)
+  -- The recorded line index belongs to the document's diagnostic array. A
+  -- redefinition trial elaborates its body against a fresh one, and an index
+  -- carried into it reworded whatever the trial had pushed there — so W0361
+  -- named the wrong construct. The verdict a redefinition earns is a
+  -- function of the definition alone: the same redefinition reads the same
+  -- whether or not the document refused a construct before it. Compared as
+  -- two engine outputs (W0361 carries no subject), never against a spelling;
+  -- the lines match so the quoted site does too.
+  let redefVerdict (before : String) : Option String :=
+    let (_, ds) := elabStr (dvDoc "" (before ++ "\n\n" ++
+      "\\renewcommand{\\maketitle}{\\begin{zzbanner}x\\end{zzbanner} \\zzmix[1]{y}}" ++
+      "\n\nDelta."))
+    ((ds.filter (·.code == "W0361"))[0]?).map (·.message)
+  t "redefinition trial (fails on base): a recorded line index does not reach into the trial"
+    (let withSite := redefVerdict "Alpha \\zzmix{Bravo} charlie."
+     withSite.isSome && withSite == redefVerdict "Alpha charlie.")
   -- The census hypothesis, discharged: every diagnostic of this loss is
   -- subjected, which is what `Diag.tallySites_exact` needs to apply at all.
   t "option run: every diagnostic of the refusal is inside the census"

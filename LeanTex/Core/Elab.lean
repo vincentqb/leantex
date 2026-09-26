@@ -276,7 +276,8 @@ structure ESt where
   and the index in `diags` of the line the group's total is read off. The
   index is recorded rather than searched for, so only the diagnostic *this*
   emitter wrote is ever rewritten — the preamble's own refusal, which shares
-  the key but not the wording, is untouched. -/
+  the key but not the wording, is untouched. An index is a position in one
+  `diags` array, so it is reset with that array (`ESt.freshReport`). -/
   runShapes : Array (String × RunShape × Nat) := #[]
   /-- `\title` / `\subtitle` / `\author` / `\institute` / `\date`, wherever
   they appear — beamer documents declare them in the body — read back by
@@ -424,6 +425,15 @@ structure ESt where
   /-- The document-global algorithm state the preamble declared. -/
   alg : AlgSt := {}
 
+/-- **The reporting state a trial elaboration starts from.** A trial swaps
+`diags` for an empty array, and every field that indexes that array or
+dedups against it goes with it: `runShapes` holds positions in `diags`, so a
+trial that kept it while emptying `diags` let `bumpRunShape` reword whatever
+the trial had pushed at a recorded position — a diagnostic another construct
+emitted — and W0361 then quoted that construct. One helper, so a field of
+this kind is reset at the one place a trial begins, never field by field. -/
+def ESt.freshReport (e : ESt) : ESt :=
+  { e with diags := #[], warnedUnknown := #[], runShapes := #[] }
 /-- The mandatory `{language}` head of a `{minted}` body, after any option
 head: the language text and the index past the `}`, `none` when the group
 is missing. -/
@@ -7555,7 +7565,7 @@ losses are harmless and do not refuse. -/
 private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
   if !renderedBuiltins.contains cmd.name then return true
   let saved ← get
-  set { saved with diags := #[], warnedUnknown := #[] }
+  set saved.freshReport
   let ⟨checkCtx, hm⟩ : MCtx ctx ← pure ⟨{ ctx with
     args := cmd.params.map fun p => (p.name, some #[Inline.text "x"]) },
     rfl, rfl, rfl, rfl⟩
