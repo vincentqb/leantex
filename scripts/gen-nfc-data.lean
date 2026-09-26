@@ -26,8 +26,11 @@ excludes é neither hyphenates an accented word nor keeps it one box.
 
 Every table is fixed-width lowercase hex with no separators, so the loader
 addresses a field by byte offset instead of splitting and re-parsing text:
-each entry's widths are on its own docstring below. A separated form cost
-5 ms of every process that touched a non-ASCII character.
+each entry's widths are on its own docstring below. The separated decimal
+form this replaced was parsed when its module loaded, so every process
+paid for it, ASCII-only documents included; this form is never split or
+parsed, and a process builds the tables only when its text first needs
+one (`Nfc.load`).
 
 licence: UNICODE LICENSE V3 (Unicode data files); see
 https://www.unicode.org/license.txt
