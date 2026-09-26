@@ -217,6 +217,16 @@ def git (args : Array String) : IO (Option String) := do
     return (if o.exitCode == 0 then some o.stdout else none)
   catch _ => return none
 
+/-- git's answer, or its own first words on stderr when it gives none: a base
+check that fails closed says why in the tool's words. -/
+def gitRead (args : Array String) : IO (Except String String) := do
+  try
+    let o ← IO.Process.output { cmd := "git", args }
+    if o.exitCode == 0 then return .ok o.stdout
+    let said := ((o.stderr.splitOn "\n").find? (!·.trimAscii.isEmpty)).getD ""
+    return .error s!"git {args[0]!} exited {o.exitCode}: {said.trimAscii.toString}"
+  catch e => return .error s!"git did not run: {e}"
+
 /-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
 tree's copy (`judgeBase`), one porcelain line per baseline,
 `scoreboard: base=<sha> tier=<t> result=ok|laundered|stale|fault`. The
@@ -240,12 +250,23 @@ held to it; failing closed"
   let mut bad := 0
   for p in files do
     let tier := ((System.FilePath.mk p).fileStem).getD p
-    let baseText := (← git #["show", s!"{sha}:{p}"]).getD ""
-    let tipExists ← System.FilePath.pathExists p
-    let (result, reasons) := judgeBase baseText tipExists (← readFileOr p)
-    IO.println s!"scoreboard: base={short} tier={tier} result={result}"
-    for r in reasons do IO.println s!"scoreboard:   {r}"
-    if result != "ok" then bad := bad + 1
+    -- A blob git cannot read is no empty base: an empty base holds no floor,
+    -- so reading one as `""` passed any fall at all. `cat-file` rather than
+    -- `show`: the bytes as committed, with no textconv an attributes file
+    -- could ask for.
+    match ← gitRead #["cat-file", "blob", s!"{sha}:{p}"] with
+    | .error why =>
+      IO.println s!"scoreboard: base={short} tier={tier} result=fault"
+      IO.println s!"scoreboard:   git cannot read {p} as committed at {short} ({why}), so no \
+floor can be held to it; failing closed — fetch the base's objects, or run the check in a \
+full clone"
+      bad := bad + 1
+    | .ok baseText =>
+      let tipExists ← System.FilePath.pathExists p
+      let (result, reasons) := judgeBase baseText tipExists (← readFileOr p)
+      IO.println s!"scoreboard: base={short} tier={tier} result={result}"
+      for r in reasons do IO.println s!"scoreboard:   {r}"
+      if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
 -- ## The queue
@@ -506,6 +527,14 @@ def harnessGit (dir : System.FilePath) (args : Array String) : IO String := do
 {o.stderr.trimAscii.toString}")
   return o.stdout.trimAscii.toString
 
+/-- Make the blob `path` holds at `sha` unreadable, as a blobless partial clone
+whose promisor is out of reach leaves it: the commit and its trees still
+answer, the one object does not. A fresh harness repository's objects are
+loose, one file each. -/
+def unreadable (dir : System.FilePath) (sha path : String) : IO Unit := do
+  let oid ← harnessGit dir #["rev-parse", s!"{sha}:{path}"]
+  IO.FS.removeFile (dir / ".git" / "objects" / (oid.take 2).toString / (oid.drop 2).toString)
+
 /-- The cases. Each refusal is a way the base check once failed open or could;
 each pass is a sanctioned act, so a check that refused everything fails too. -/
 def cliCases : List CliCase :=
@@ -547,7 +576,17 @@ def cliCases : List CliCase :=
      edit := fun d _ => do
        IO.FS.writeFile (d / probe) "# retired-tier: an invented reason\n"
        IO.FS.removeFile (d / scriptPath probeTier)
-     exit := 0, says := says "ok" }]
+     exit := 0, says := says "ok" },
+   -- A base blob git cannot read — a blobless partial clone whose promisor is
+   -- out of reach, simulated by deleting the loose object — once read as an
+   -- empty base, and an empty base holds no floor.
+   { label := "the base's blob unreadable, a fall edited by hand", extra := []
+     edit := fun d sha => do
+       unreadable d sha probe
+       fall d
+     exit := 1, says := says "fault" },
+   { label := "the base's blob unreadable, nothing moved", extra := []
+     edit := fun d sha => unreadable d sha probe, exit := 1, says := says "fault" }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
