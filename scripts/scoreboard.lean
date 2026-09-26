@@ -29,7 +29,7 @@ exits 0 silently is `ok`.
 The gated path is hermetic: every tier's `--check` reads committed
 references and in-repo data only. `--bench` is the one mode that shells out
 to another engine, and it gates nothing. `--base` reads git's copy of the
-committed files at `<rev>` and nothing else.
+committed files at `<rev>`, with replacement objects off, and nothing else.
 -/
 import scripts.Board
 
@@ -223,21 +223,25 @@ measured: {err}"
 
 -- ## The base check
 
-def git (args : Array String) : IO (Option String) := do
-  try
-    let o ← IO.Process.output { cmd := "git", args }
-    return (if o.exitCode == 0 then some o.stdout else none)
-  catch _ => return none
-
-/-- git's answer, or its own first words on stderr when it gives none: a base
-check that fails closed says why in the tool's words. -/
+/-- git as the base check runs it, and the only way it runs git: with
+replacement objects off. A replace ref makes git answer with another object's
+bytes for a commit, a tree or a blob, and `refs/replace/` is shared by every
+worktree of a repository — so one `git replace` from any of them laundered a
+fall, and hid a deleted baseline, past this check, and a landing tool that
+scrubs `GIT_NO_REPLACE_OBJECTS` from its children cannot switch it off from
+outside. The flag reads the objects as committed. Returns git's answer, or its
+own first words on stderr when it gives none: a base check that fails closed
+says why in the tool's words. -/
 def gitRead (args : Array String) : IO (Except String String) := do
   try
-    let o ← IO.Process.output { cmd := "git", args }
+    let o ← IO.Process.output { cmd := "git", args := #["--no-replace-objects"] ++ args }
     if o.exitCode == 0 then return .ok o.stdout
     let said := ((o.stderr.splitOn "\n").find? (!·.trimAscii.isEmpty)).getD ""
     return .error s!"git {args[0]!} exited {o.exitCode}: {said.trimAscii.toString}"
   catch e => return .error s!"git did not run: {e}"
+
+def git (args : Array String) : IO (Option String) := do
+  return (← gitRead args).toOption
 
 /-- A direct child of `tests/scoreboard/` named like a baseline, as git lists it
 at the base: a regular file's blob, or anything else under such a name. -/
@@ -274,7 +278,8 @@ tree's copy (`judgeBase`), one porcelain line per baseline,
 ratchet compares committed files with a measurement, so it cannot see a floor
 edited down by hand, or a baseline deleted and regenerated from nothing: both
 leave file and tree agreeing. The base can see them. A rev that names no
-commit fails closed, and so does a tree that is not a git repository. -/
+commit fails closed, and so does a tree that is not a git repository. Every
+object is read through `gitRead`, so a replace ref cannot stand in for one. -/
 def baseCheck (rev : String) : IO UInt32 := do
   let some sha := (← git #["rev-parse", "--verify", "--quiet", rev ++ "^{commit}"]).map
       (·.trimAscii.toString)
@@ -602,6 +607,16 @@ def unreadable (dir : System.FilePath) (sha path : String) : IO Unit := do
   let oid ← harnessGit dir #["rev-parse", s!"{sha}:{path}"]
   IO.FS.removeFile (dir / ".git" / "objects" / (oid.take 2).toString / (oid.drop 2).toString)
 
+/-- `git replace <old> <new>` in a harness repository, then read back through
+the harness's own git, whose environment leaves replacement on, that the
+replacement is in effect — `holds` over what `probe` prints — so a case cannot
+pass for want of one. -/
+def replaceIn (dir : System.FilePath) (old new : String) (probe : Array String)
+    (holds : String → Bool) : IO Unit := do
+  let _ ← harnessGit dir #["replace", old, new]
+  unless holds (← harnessGit dir probe) do
+    throw (IO.userError s!"the replace ref {old} → {new} is not in effect")
+
 /-- The cases. Each refusal is a way the base check once failed open or could;
 each pass is a sanctioned act, so a check that refused everything fails too. -/
 def cliCases : List CliCase :=
@@ -706,7 +721,41 @@ the base carries)"] },
    { label := "a directory named like a baseline at the base"
      extra := [("tests/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
      edit := fun d _ => IO.FS.removeDirAll (d / "tests/scoreboard/zz-dir.tsv")
-     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] }]
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
+   -- A replace ref makes git answer with another object's bytes, for a blob,
+   -- a tree or a commit, and `refs/replace/` is shared by every worktree of a
+   -- repository: one `git replace` from any of them laundered a fall, and hid
+   -- a deleted baseline, past this check. One case per kind of object the
+   -- check reads.
+   { label := "a replace ref swaps the base's blob for one already holding the fall"
+     extra := []
+     edit := fun d sha => do
+       let old ← harnessGit d #["rev-parse", s!"{sha}:{probe}"]
+       IO.FS.writeFile (d / ".git" / "zz-stand-in") "# encoding: raw\nalpha\t4\nbravo\t3\n"
+       let new ← harnessGit d #["hash-object", "-w", ".git/zz-stand-in"]
+       replaceIn d old new #["cat-file", "blob", old] (containsSub · "alpha\t4")
+       fall d
+     exit := 1, says := says "laundered" },
+   { label := "a replace ref swaps the base's tree for one without a deleted baseline"
+     extra := [(tsvPath "zz-del", "# encoding: raw\nalpha\t3\n"), (scriptPath "zz-del", trivial)]
+     edit := fun d sha => do
+       let old ← harnessGit d #["rev-parse", s!"{sha}:tests/scoreboard"]
+       let _ ← harnessGit d #["rm", "--cached", "-q", tsvPath "zz-del"]
+       let new ← harnessGit d #["write-tree", "--prefix=tests/scoreboard/"]
+       replaceIn d old new #["ls-tree", "--name-only", sha, "tests/scoreboard/"]
+         (!containsSub · "zz-del")
+       IO.FS.removeFile (d / tsvPath "zz-del")
+       IO.FS.removeFile (d / scriptPath "zz-del")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-del result=fault"] },
+   { label := "a replace ref swaps the base commit for one already holding the fall"
+     extra := []
+     edit := fun d sha => do
+       fall d
+       let _ ← harnessGit d #["add", probe]
+       let tree ← harnessGit d #["write-tree"]
+       let new ← harnessGit d #["commit-tree", tree, "-m", "a stand-in for the base"]
+       replaceIn d sha new #["cat-file", "blob", s!"{sha}:{probe}"] (containsSub · "alpha\t4")
+     exit := 1, says := says "laundered" }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
