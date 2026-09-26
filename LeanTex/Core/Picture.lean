@@ -469,6 +469,10 @@ inductive Stmt where
   asks: pgf's `every edge` carries `draw`, so an `edge` operation strokes
   where a bare `\path ... -- ...` paints nothing. -/
   | path (toks : Array Tok)
+  /-- `\useasboundingbox (a) rectangle (b);` — pgf's `\path[use as bounding
+  box]`: a size declaration, not a drawing. The rectangle is the picture's
+  box from here on (pgf manual §15.8). -/
+  | bbox (toks : Array Tok)
   /-- `\pgfmathsetmacro`, and `\pgfmathtruncatemacro` when `trunc`. -/
   | set (name : String) (expr : Array Tok) (trunc : Bool)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
@@ -486,6 +490,7 @@ private inductive StKind where
   | node
   | draw
   | path
+  | bbox
   deriving Repr, BEq, Inhabited
 
 private def StKind.name : StKind → String
@@ -493,6 +498,7 @@ private def StKind.name : StKind → String
   | .node => "node"
   | .draw => "draw"
   | .path => "path"
+  | .bbox => "useasboundingbox"
 
 /-- What the statement machine is in the middle of. -/
 private inductive Mode where
@@ -708,6 +714,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "node" => { st with mode := .stmt .node #[] }
     | .ctrl "draw" => { st with mode := .stmt .draw #[] }
     | .ctrl "path" => { st with mode := .stmt .path #[] }
+    | .ctrl "useasboundingbox" => { st with mode := .stmt .bbox #[] }
     | .ctrl "foreach" => { st with mode := .fvars #[] }
     | .ctrl "pgfmathsetmacro" => { st with mode := .sname false }
     | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname true }
@@ -734,6 +741,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
         | .node => st.finish (.node acc)
         | .draw => st.finishMany ((subpaths acc).toList.map Stmt.draw)
         | .path => st.finishMany ((subpaths acc).toList.map Stmt.path)
+        | .bbox => st.finish (.bbox acc)
     | _ => { st with mode := .stmt kind (acc.push t) }
   | .sname trunc =>
     match t with
@@ -1957,6 +1965,11 @@ is one problem, not forty. -/
 structure Ev where
   shapes : Array Ir.Pic.Shape := #[]
   diags : Array PDiag := #[]
+  /-- The box a `\useasboundingbox` declared (`Ir.Pic.Picture.declared`). -/
+  declared : Option Ir.Pic.Box := none
+  /-- Each placed node's border, text extent plus `inner sep`
+  (`Ir.Pic.Picture.borders`). -/
+  borders : Array Ir.Pic.Box := #[]
   /-- Named nodes seen so far, latest first: what a `\draw` endpoint's
   `(name)` resolves against. -/
   nodes : List (String × NodeGeom) := []
@@ -1981,6 +1994,44 @@ structure Ev where
 def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
 
+/-- `(x,y) rectangle (x',y')` (or `++(dx,dy)`, relative) from token `i` to
+the end: the rectangle's corners in sp, sorted — `(x0, y0, x1, y1)` with
+`x0 ≤ x1` and `y0 ≤ y1`. `what` names the statement and `cost` what a
+refusal costs, so each caller's diagnostic says its own loss. -/
+private def readRect (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i0 : Nat)
+    (what cost : String) : Except PDiag (Sp × Sp × Sp × Sp) := Id.run do
+  let mut i := i0
+  let c1 ← match readCoord ts i with
+    | .ok v => pure v
+    | .error e => return .error (.E0333, s!"in {what}, {e}; {cost}")
+  let ((x1s, y1s), i1) := c1
+  i := i1
+  unless ts[i]? == some (.ident "rectangle") do
+    return .error (.W0334, s!"{what} with \
+{((ts[i]?).map tokText).getD "no shape operation"} is outside the rendered picture \
+subset; {cost}")
+  i := i + 1
+  let mut relative := false
+  if ts[i]? == some (.sym '+') && ts[i+1]? == some (.sym '+') then
+    relative := true
+    i := i + 2
+  let c2 ← match readCoord ts i with
+    | .ok v => pure v
+    | .error e => return .error (.E0333, s!"in {what}, {e}; {cost}")
+  let ((x2s, y2s), i2) := c2
+  if h : i2 < ts.size then
+    return .error (.W0334, s!"{what} continues with {tokText ts[i2]}, outside the \
+rendered picture subset; {cost}")
+  let vals ← match evalNum env x1s, evalNum env y1s, evalNum env x2s, evalNum env y2s with
+    | .ok a, .ok b, .ok c, .ok d => pure (a, b, c, d)
+    | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
+      return .error (.E0333, s!"in {what}, {e}; {cost}")
+  let (x1m, y1m, x2m, y2m) := vals
+  let (x2m, y2m) := if relative then (x1m + x2m, y1m + y2m) else (x2m, y2m)
+  let (x1, y1) := (cx.toSp x1m, cx.toSp y1m)
+  let (x2, y2) := (cx.toSp x2m, cx.toSp y2m)
+  return .ok (min x1 x2, min y1 y2, max x1 x2, max y1 y2)
+
 /-- `\fill[colour] (x,y) rectangle ++(dx,dy);` — the one drawing shape of
 the subset (`++` relative, or a second absolute corner). The rectangle is
 stored corner-sorted, so the IR shape always has non-negative extents. -/
@@ -2004,37 +2055,18 @@ private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     | .ok c => color := c
     | .error e => return .error (.E0333, s!"{e}; the shape is not drawn")
     i := j + 1
-  let c1 ← match readCoord ts i with
-    | .ok v => pure v
-    | .error e => return .error (.E0333, s!"in '\\fill', {e}; the shape is not drawn")
-  let ((x1s, y1s), i1) := c1
-  i := i1
-  unless ts[i]? == some (.ident "rectangle") do
-    return .error (.W0334, s!"'\\fill' with \
-{((ts[i]?).map tokText).getD "no shape operation"} is outside the rendered picture \
-subset; the shape is not drawn")
-  i := i + 1
-  let mut relative := false
-  if ts[i]? == some (.sym '+') && ts[i+1]? == some (.sym '+') then
-    relative := true
-    i := i + 2
-  let c2 ← match readCoord ts i with
-    | .ok v => pure v
-    | .error e => return .error (.E0333, s!"in '\\fill', {e}; the shape is not drawn")
-  let ((x2s, y2s), i2) := c2
-  if h : i2 < ts.size then
-    return .error (.W0334, s!"'\\fill' continues with {tokText ts[i2]}, outside the \
-rendered picture subset; the shape is not drawn")
-  let vals ← match evalNum env x1s, evalNum env y1s, evalNum env x2s, evalNum env y2s with
-    | .ok a, .ok b, .ok c, .ok d => pure (a, b, c, d)
-    | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
-      return .error (.E0333, s!"in '\\fill', {e}; the shape is not drawn")
-  let (x1m, y1m, x2m, y2m) := vals
-  let (x2m, y2m) := if relative then (x1m + x2m, y1m + y2m) else (x2m, y2m)
-  let (x1, y1) := (cx.toSp x1m, cx.toSp y1m)
-  let (x2, y2) := (cx.toSp x2m, cx.toSp y2m)
-  return .ok (.rect (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
-    (max y1 y2 - min y1 y2) color)
+  match readRect cx env ts i "'\\fill'" "the shape is not drawn" with
+  | .ok (x0, y0, x1, y1) => return .ok (.rect x0 y0 (x1 - x0) (y1 - y0) color)
+  | .error d => return .error d
+
+/-- `\useasboundingbox (a) rectangle (b);`: the declared box, corners sorted.
+The one path shape the declaration takes here is the rectangle, read by the
+same reader `\fill` uses, so the two cannot disagree about a corner. -/
+private def evalBBox (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
+    Except PDiag Ir.Pic.Box := do
+  let (x0, y0, x1, y1) ← readRect cx env (toks.filter (· != .space)) 0
+    "'\\useasboundingbox'" "the declared box is ignored"
+  return ((x0, y0), (x1, y1))
 
 /-- One line of a node label: its inline content and the size it sets at,
 per mille of the node's own. A label is one line per `\\`, because
@@ -3079,6 +3111,9 @@ this one against; the node is not drawn")
   -- degraded word tells them almost everything.
   match pos with
   | .ok (sx, sy) =>
+        -- pgf's natural bounding box includes the node's shape — its text
+        -- plus `inner sep` — whether or not a path paints it (§17.2.2).
+        ev := { ev with borders := ev.borders.push ((sx - ownA, sy - ownB), (sx + ownA, sy + ownB)) }
         -- A named node registers its anchoring geometry whether or not
         -- its border draws: pgf anchors edges on the shape's border even
         -- when the path itself is never painted.
@@ -3856,6 +3891,19 @@ rendered picture subset; the keys are dropped")
   | .node toks, env, ev => (env, evalNode cx env toks ev)
   | .draw toks, env, ev => (env, evalDraw cx env toks ev)
   | .path toks, env, ev => (env, evalDraw cx env toks ev (isPath := true))
+  | .bbox toks, env, ev =>
+    match evalBBox cx env toks with
+    | .ok b =>
+      -- pgf never shrinks a box already established (§15.8): what the
+      -- marks before the declaration reached stays inside it, and a
+      -- second declaration joins the first.
+      let before := ev.shapes.map (Ir.Pic.Shape.inkBox cx.metric) ++ ev.borders
+      let b := if before.isEmpty then b else Ir.Pic.Box.join (Ir.Pic.Box.hull before) b
+      let b := match ev.declared with
+        | some d => Ir.Pic.Box.join d b
+        | none => b
+      (env, { ev with declared := some b })
+    | .error d => (env, ev.diag d)
   | .set name expr trunc, env, ev =>
     match evalExpr env expr with
     | .ok (.num m) =>
@@ -4443,7 +4491,7 @@ or node; the option is dropped")
     unless seen.contains d.2 do
       seen := seen.push d.2
       out := out.push d
-  return ({ shapes := ev.shapes }, out)
+  return ({ shapes := ev.shapes, declared := ev.declared, borders := ev.borders }, out)
 
 /-- The stand-in for a picture whose every construct was refused: one
 outlined box carrying the diagnostic code, following the image precedent

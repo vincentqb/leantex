@@ -7,6 +7,9 @@ section 1 number "1"
 para
   text "Before the diagram stands a paragraph, so the picture spaces below text."
 picture 7 shapes
+  border -9.921 -9.921 9.921 9.921
+  border 75.118 -9.921 94.961 9.921
+  border 29.764 -51.024 55.276 -34.016
   circle 0 0 9.921 stroke #000000 0.4
   label 0 0 #000000 1000
     text "P"

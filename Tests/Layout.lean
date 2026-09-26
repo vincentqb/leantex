@@ -3608,6 +3608,78 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
+/-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
+`Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over
+`Layout.Out` and the emitted SVG, through the shipped path — source,
+elaboration with the driver's label measurement, layout — never over an IR
+dump. Each claim is a pair of builds differing in one declaration: a
+declared box grown by a length moves the ink and the text below by exactly
+that length, a box grown on the left moves the ink right by half of it (the
+box centres, not the ink), and a node's `inner sep` reserves room around its
+label whether or not a path draws the node. Invented labels. -/
+def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (box node : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}Above.\n\n" ++
+    "\\begin{center}\n\\begin{tikzpicture}\n" ++ box ++ node ++
+    "\n\\end{tikzpicture}\n\\end{center}\n\nBelow.\n\\end{document}"
+  -- Elaborated as the driver elaborates: with the label measurement layout
+  -- sets with, so a node's border is measured from its letters.
+  let elabM (s : String) : Ir.Doc × Array Diag :=
+    let (toks, lds) := Lex.lex "t" s
+    let (raws, pds) := Parse.parse "t" toks
+    Elab.runRaws "t" raws (lds ++ pds)
+      (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) oneFace)
+  let probe (s : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := do
+    let (doc, _) := elabM s
+    let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+    let ay ← lineYOf c 0 "Above."
+    let lx ← lineXOf c 0 "Label"
+    let ly ← lineYOf c 0 "Label"
+    let bl ← lineYOf c 0 "Below."
+    pure (ay, lx, ly, bl)
+  let node := "\\node at (0,0) {Label};"
+  let cm : Dim.Sp := Dim.mm 10
+  let boxed := src "\\useasboundingbox (-2,-1) rectangle (2,1);\n" node
+  let declared := probe boxed
+  let taller := probe (src "\\useasboundingbox (-2,-1) rectangle (2,2);\n" node)
+  let deeper := probe (src "\\useasboundingbox (-2,-2) rectangle (2,1);\n" node)
+  let wider := probe (src "\\useasboundingbox (-4,-1) rectangle (2,1);\n" node)
+  t "a declared box grown one cm above moves its ink and the text below one cm down"
+    (match declared, taller with
+     | some (a0, x0, l0, b0), some (a1, x1, l1, b1) =>
+       a1 == a0 && x1 == x0 && l1 - l0 == cm && b1 - b0 == cm
+     | _, _ => false)
+  t "a declared box grown one cm below moves only the text below it"
+    (match declared, deeper with
+     | some (a0, x0, l0, b0), some (a1, x1, l1, b1) =>
+       a1 == a0 && x1 == x0 && l1 == l0 && b1 - b0 == cm
+     | _, _ => false)
+  t "a declared box grown two cm left centres the box, so its ink moves one cm right"
+    (match declared, wider with
+     | some (a0, x0, l0, b0), some (a1, x1, l1, b1) =>
+       a1 == a0 && x1 - x0 == cm && l1 == l0 && b1 == b0
+     | _, _ => false)
+  t "the declaration is a size, not a drawing: no loss is named for it"
+    (!((elabM boxed).2.any (·.code == "W0334")))
+  -- The HTML half: the SVG's viewBox is the declared box, width by height.
+  let (dd, _) := elabM boxed
+  let page := (HtmlDoc.emit
+    { labelMetric := Layout.labelMetric (Layout.Geom.ofPage dd.page) oneFace } dd).1
+  t "the SVG's viewBox is the declared box"
+    (hasStr page s!"viewBox=\"0 0 {(4 * cm).toPtString} {(2 * cm).toPtString}\"")
+  -- The natural box: an undrawn node's inner sep still reserves room, one
+  -- sep above the letters and one below (the lower edge may take the odd sp
+  -- of a centred band's halving).
+  let padded := probe (src "" "\\node at (0,0) {Label};")
+  let tight := probe (src "" "\\node[inner sep=0pt] at (0,0) {Label};")
+  let sep := Picture.innerSep (Layout.Geom.ofPage dd.page).fontSize
+  t "an undrawn node's inner sep reserves room above and below its label"
+    (match padded, tight with
+     | some (a0, _, l0, b0), some (a1, _, l1, b1) =>
+       a1 == a0 && l0 - l1 == sep && 2 * sep ≤ b0 - b1 && b0 - b1 ≤ 2 * sep + 1
+     | _, _ => false)
+
 /-- **The wobble, and the three constraints on correcting it.** TeX centres
 a node on `(ht − dp)/2` of its *measured* box, so depth enters at slope one
 half and a word with a descender floats up — 1.155 pt between `value` and

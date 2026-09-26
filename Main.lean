@@ -1144,6 +1144,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then (System.FilePath.mk mdPath).fileName
             else none
+          -- A picture's `viewBox` is the box the PDF reserves: the same
+          -- label measurement layout places with, over the one face set.
+          labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
         let r4 ← ui.resolve doc.allow allowAll hdiags

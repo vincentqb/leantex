@@ -2512,10 +2512,19 @@ def Shape.box : Shape → Box
 
 structure Picture where
   shapes : Array Shape := #[]
+  /-- The box `\useasboundingbox` declared, corners sorted: the picture's
+  size is this box whatever its marks do (pgf manual §15.8, "use as
+  bounding box") — ink may stand outside it, and nothing is clipped. -/
+  declared : Option Box := none
+  /-- Every node's border — its text extent plus `inner sep` — drawn or
+  not: pgf adds a node's shape to the natural bounding box whether or not
+  the path paints it (§17.2.2), so a diagram of undrawn nodes is one inner
+  sep larger on every side than its letters. -/
+  borders : Array Box := #[]
   deriving Repr, BEq, Inhabited
 
 def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
-  { shapes := p.shapes.map (·.recolor f) }
+  { p with shapes := p.shapes.map (·.recolor f) }
 
 /-- The inline content each label sets, for the font-scalar walk: every
 glyph — text or math — a picture can ask a face for is here. -/
@@ -2801,6 +2810,42 @@ answer. -/
 theorem Picture.inkBbox_covers (p : Picture) (m : LabelMetric) (s : Shape)
     (h : s ∈ p.shapes) : Box.le (s.inkBox m) (p.inkBbox m) :=
   Box.hull_covers _ (s.inkBox m) (Array.mem_map_of_mem h)
+
+/-- **The natural box**: what TikZ reserves when nothing is declared — every
+mark's ink (`inkBoxes`, so a label's letters and not its anchor) and every
+node's border (`borders`: the text extent plus `inner sep`, which pgf's
+bounding box includes even for a node no path draws). -/
+def Picture.natural (p : Picture) (m : LabelMetric) : Box :=
+  Box.hull (p.inkBoxes m ++ p.borders)
+
+/-- **The box a picture occupies**: the declared box when `\useasboundingbox`
+gave one, else the natural box. The one IR value both backends read — the
+PDF reserves and places by it, the SVG's `viewBox` is it — so the two
+artifacts cannot size one picture two ways (`Pdf.picture_box_agree`,
+`HtmlDoc.pictureViewBox_projects`). -/
+def Picture.box (p : Picture) (m : LabelMetric) : Box :=
+  p.declared.getD (p.natural m)
+
+/-- **A picture occupies exactly its declared box** (pgf manual §15.8): with
+a declaration in force the box is that box, whatever the measurement and
+whatever the marks — so a figure that declares room for nodes a later
+frame adds keeps its place, and its ink sits where the declaration puts
+it, off-centre when the box extends past the ink. -/
+theorem Picture.box_declared_exact (p : Picture) (m : LabelMetric) (b : Box)
+    (h : p.declared = some b) : p.box m = b := by
+  simp [Picture.box, h]
+
+/-- **Otherwise its box covers every mark**: with nothing declared, every
+shape's ink and every node's border lies inside the box, whatever face
+resolves. `inkBbox_covers` is the ink half of the old box; the borders are
+what made TikZ's box one inner sep larger than the engine's. -/
+theorem Picture.box_covers (p : Picture) (m : LabelMetric) (h : p.declared = none) :
+    (∀ s ∈ p.shapes, Box.le (s.inkBox m) (p.box m)) ∧
+      (∀ b ∈ p.borders, Box.le b (p.box m)) := by
+  simp only [Picture.box, h, Option.getD_none, Picture.natural]
+  refine ⟨fun s hs => ?_, fun b hb => ?_⟩
+  · exact Box.hull_covers _ _ (Array.mem_append_left _ (Array.mem_map_of_mem hs))
+  · exact Box.hull_covers _ _ (Array.mem_append_right _ hb)
 
 /-- The measured box loses nothing the declared box held: a shape's own
 geometry is its ink box unchanged, and a label's anchor is inside the
@@ -7190,8 +7235,15 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
     -- Every evaluated shape, so a golden witnesses the whole elaboration:
-    -- unrolled loops, reduced expressions, resolved colours.
+    -- unrolled loops, reduced expressions, resolved colours — and the box
+    -- the picture declared, and each node border its natural box counts.
+    let boxS := fun (b : Pic.Box) =>
+      s!"{b.1.1.toPtString} {b.1.2.toPtString} {b.2.1.toPtString} {b.2.2.toPtString}"
     s!"{ind}picture {pic.shapes.size} shapes\n" ++
+    (match pic.declared with
+      | some b => s!"{ind}  declared {boxS b}\n"
+      | none => "") ++
+    String.join (pic.borders.toList.map fun b => s!"{ind}  border {boxS b}\n") ++
     String.join (pic.shapes.toList.map fun s =>
       match s with
       | .rect x y w h c =>

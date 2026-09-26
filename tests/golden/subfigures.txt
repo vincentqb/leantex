@@ -13,6 +13,7 @@ float figure 1
         caption
           text "The first invented panel."
         picture 2 shapes
+          border 25.013 10.84 31.679 17.506
           rect 0 0 56.693 28.346 #CCCCCC
           label 28.346 14.173 #000000 1000
             text "left box"
@@ -21,6 +22,7 @@ float figure 1
         caption
           text "The second invented panel."
         picture 2 shapes
+          border 25.013 10.84 31.679 17.506
           rect 0 0 56.693 28.346 #999999
           label 28.346 14.173 #000000 1000
             text "right box"

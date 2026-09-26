@@ -5837,23 +5837,35 @@ def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
   let font := fs.body
   picMetric fs imgs geom (font.xHeight * geom.fontSize / font.unitsPerEm)
 
+/-- **The box a picture occupies on the page**: the IR's one box
+(`Ir.Pic.Picture.box` — the declared box, else the natural one) under the
+measurement layout sets the picture's labels with. Both placement sites
+read it — the reservation and centring in `collectPicture`, the transform in
+`placePicture` — and the HTML backend's `viewBox` is the same IR value
+under the metric the driver hands it (`Pdf.picture_box_agree`). -/
+def pictureBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
+    (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
+  pic.box (picMetric fs imgs geom xHeight)
+
 /-- Stage one picture. The theorem side of the stays-in-its-box contract
 bounds every shape's *ink* by the picture's measured box
-(`Ir.Pic.Picture.inkBbox_covers`); this is the diagnostic side, bounding
+(`Ir.Pic.Picture.box_covers`); this is the diagnostic side, bounding
 the box by the text area — a picture that cannot fit is still placed (best
 effort, never a blank), and W0335 says the page may be overrun. `center`
 sets the box's left edge the way a centred paragraph sets its lines.
 
-The box is `inkBbox`, not `bbox`: a label's declared box is its anchor
-point, so a diagram of node labels reserved the hull of their *centres* —
-narrower than the text by half a label at each edge — and both halves of
-that were silent. The reserved box fitted while glyphs left the page, and
-the centring it drives put the leftmost label's ink at negative page x. -/
+The box is `pictureBox` — TikZ's: a declared `\useasboundingbox` exactly
+(`box_declared_exact`), else every mark's ink and every node's border. Not
+`bbox`: a label's declared box is its anchor point, so a diagram of node
+labels reserved the hull of their *centres* — narrower than the text by
+half a label at each edge — and both halves of that were silent. The
+reserved box fitted while glyphs left the page, and the centring it drives
+put the leftmost label's ink at negative page x. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     (indent : Sp) (center : Bool) : Acc :=
   let metric := picMetric r.fs r.imgs r.geom r.xHeight
   let boxes := pic.inkBoxes metric
-  let bb := Ir.Pic.Box.hull boxes
+  let bb := pictureBox r.geom r.fs r.imgs r.xHeight pic
   let ((px0, py0), (px1, py1)) := bb
   let w := px1 - px0
   let h := py1 - py0
@@ -7593,7 +7605,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- `h` and no depth: at the top of a fresh page, else below the last
   -- line's depth, breaking to a new page when even the shrink above
   -- cannot absorb the overflow.
-  let ((px0, py0), (_px1, py1)) := pic.inkBbox (picMetric fs imgs b.geom b.xHeight)
+  let ((px0, py0), (_px1, py1)) := pictureBox b.geom fs imgs b.xHeight pic
   let h := py1 - py0
   let bottom := b.geom.bodyBottom
   let mut yTop := b.geom.vmargin
@@ -7658,7 +7670,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       if let some (segs, size, ink) := labelInk fs imgs b.geom b.xHeight leaf content color scale then
         -- Where the label's ink stands around its anchor is one fact, and
         -- `Ir.Pic.labelInkBox` is where it is stated: the box the picture
-        -- reserved (`inkBbox`, above) and the line set here are the same
+        -- reserved (`pictureBox`, above) and the line set here are the same
         -- box through the same transform, so a label cannot land outside
         -- the space measured for it.
         let ((ix0, _), (_, iy1)) := Ir.Pic.labelInkBox lx ly align ink

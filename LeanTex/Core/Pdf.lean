@@ -233,6 +233,19 @@ theorem features_agree (size : Sp) (font : Font)
   · unfold Layout.kernVal
     cases box.back? <;> simp
 
+/-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
+reserves and places a picture by `Layout.pictureBox`, and the SVG's
+`viewBox` is `HtmlDoc.pictureBoxOf` (`HtmlDoc.pictureViewBox_projects`);
+under the measurement the driver hands both — `Layout.labelMetric` over the
+one face set, the x-height the layout resolves — the two are the one value
+`Ir.Pic.Picture.box`: the declared box exactly (`box_declared_exact`), else
+every mark's ink and every node's border (`box_covers`). Before, the SVG
+read the hull of label *anchors* while the page read the ink, so one
+picture had two sizes. -/
+theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Picture) :
+    Layout.pictureBox geom fs {} (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
+      HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic := rfl
+
 /-- **Both artifacts' font decisions are projections of one policy value**
 (`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
 `shipFonts` is the spelling `doc.fontPolicy == .embedded`, and the HTML's

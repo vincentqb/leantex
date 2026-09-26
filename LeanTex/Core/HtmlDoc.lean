@@ -79,6 +79,12 @@ structure Config where
   what it sets, so the title heading there takes no `titlepage` template
   of its own — the PDF's `slotTitle` reading, the same one value. -/
   slotTitle : Bool := false
+  /-- How a picture label's content measures, from the driver: the same
+  function layout places labels with (`Layout.labelMetric` over the one
+  `FontSet`), so a picture's `viewBox` is the box the PDF reserves
+  (`Pdf.picture_box_agree`). The default answers nothing — a caller with no
+  font environment sizes a picture by its declared box and node borders. -/
+  labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
 
 def cssColor (c : Color) : String :=
   let r := Color.hexByte c.r false
@@ -4609,11 +4615,32 @@ its name names the loss: a placeholder is never decorative. -/
 def pictureRole (loc : Locale) (pic : Ir.Pic.Picture) : Array (String × String) :=
   #[("role", "img"), ("aria-label", pictureName loc pic), ("class", "picture")]
 
+/-- The box a picture's SVG declares: the IR's one box under the driver's
+label measurement (`Ir.Pic.Picture.box`) — the declared box exactly, else
+every mark's ink and every node's border — so the `viewBox` is the box the
+PDF reserves, never the hull of label anchors. -/
+def pictureBoxOf (cfg : Config) (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
+  pic.box cfg.labelMetric
+
 /-- The picture as inline SVG. -/
 def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
-  let ((px0, py0), (px1, py1)) := pic.bbox
+  let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
   Html.elem "svg" (pictureKids pic px0 py1)
     (pictureBox cfg (px1 - px0) (py1 - py0) ++ pictureRole cfg.locale pic)
+
+/-- **The SVG's box is the IR's box** (`_projects`): the `viewBox` a
+picture's SVG declares spans `Ir.Pic.Picture.box` under the configured
+measurement, width by height — the value the PDF reserves
+(`Layout.pictureBox`), never a second hull. The HTML half of
+`Pdf.picture_box_agree`. -/
+theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
+    (match pictureSvg cfg pic with
+      | .elem _ attrs _ => attrOf? attrs "viewBox"
+      | _ => none) =
+      some s!"0 0 {((pic.box cfg.labelMetric).2.1 - (pic.box cfg.labelMetric).1.1).toPtString} \
+{((pic.box cfg.labelMetric).2.2 - (pic.box cfg.labelMetric).1.2).toPtString}" := by
+  rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
+  simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
 
 mutual
 
@@ -5952,7 +5979,7 @@ by its own words is this backend's projection of what the drawing shows.
 theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
     (blockNode cfg (.picture pic)).tag? = some "svg" ∧
       carriesName (blockNode cfg (.picture pic)) = true := by
-  rcases h : pic.bbox with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
+  rcases h : pictureBoxOf cfg pic with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [blockNode, pictureSvg, h, Html.elem, Node.tag?, carriesName, pictureRole,
     pictureName_contract]
 

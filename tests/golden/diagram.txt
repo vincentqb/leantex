@@ -10,6 +10,10 @@ para
   text "Before the diagram stands a paragraph, so the picture spaces below text."
 center
   picture 20 shapes
+    border 4.654 4.654 10.653 10.653
+    border 21.662 21.662 27.661 27.661
+    border 38.67 38.67 44.669 44.669
+    border 55.677 55.677 61.677 61.677
     rect 0 0 15.307 15.307 #AEC8BC
     rect 0 17.008 15.307 15.307 #88AE9C
     rect 0 34.016 15.307 15.307 #61947C
