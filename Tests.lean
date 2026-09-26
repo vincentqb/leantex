@@ -241,6 +241,7 @@ def fontFaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   iconChecks ref
   fontsDeclChecks ref
   slotLossChecks ref
+  artifactPitchChecks ref
   fontSuiteChecks ref
 
 def main (args : List String) : IO UInt32 := do

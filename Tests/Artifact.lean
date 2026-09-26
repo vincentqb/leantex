@@ -1671,3 +1671,85 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t s!"ground parity: painted grounds are reached ({paintedSeen})" (0 < paintedSeen)
   t s!"ground parity: declared grounds are reached ({declaredSeen})" (0 < declaredSeen)
   t s!"ground parity: carried grounds are reached ({carriedSeen})" (0 < carriedSeen)
+
+
+
+/-! ## The pitch the artifact declares
+
+`Font.classify` reads a face's `post.isFixedPitch`, and two artifact fields
+carry that answer to a reader: the FixedPitch flag of the PDF's font
+descriptor (ISO 32000-2 §9.8.2, Table 121: bit position 1, value 1) and the
+generic that closes an HTML slot stack (`HtmlDoc.genericFor`). The rows
+pinning `classify` read the cause; these read the files, built by the
+driver in an environment of its own — a private cache, an empty home, a
+`PATH` holding nothing — from faces the corpus ships.
+
+`fonts.tex`'s own stacks cannot witness the pitch: its mono slot closes
+with `monospace` through the slot's declared kind whatever the flag says,
+and its body and sans faces are proportional. So the stack's claim is read
+off a page whose *body* family is the monospace face, where the generic is
+the pitch's to decide. -/
+
+/-- Every font descriptor a written PDF carries: its `/FontName` and its
+`/Flags`. -/
+def artDescriptorFlags (pdf : ByteArray) : Except String (Array (String × Int)) := do
+  let es := (← PdfRead.objects pdf).val
+  return es.filterMap fun e =>
+    if e.val.get? "Type" == some (.name "FontDescriptor") then
+      match e.val.get? "FontName", (e.val.get? "Flags").bind Obj.int? with
+      | some (.name n), some f => some (n, f)
+      | _, _ => none
+    else none
+
+/-- The generic that closes a page's `--font-<slot>` stack, read from the
+last declaration — the one the cascade keeps. -/
+def artStackGeneric (html slot : String) : Option String := do
+  let parts := html.splitOn ("--font-" ++ slot ++ ": ")
+  if parts.length < 2 then none
+  let decl ← parts.getLast?
+  let stack ← (decl.splitOn ";").head?
+  ((stack.splitOn ",").getLast?).map (·.trimAscii.toString)
+
+def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"artifact pitch: leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode != 0 then return
+  let dir ← IO.FS.createTempDir
+  IO.FS.createDirAll (dir / "fonts")
+  IO.FS.createDirAll (dir / "home")
+  for e in ← (System.FilePath.mk testFonts).readDir do
+    if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
+      IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
+  IO.FS.writeFile (dir / "fonts.tex") (← IO.FS.readFile "tests/corpus/fonts.tex")
+  let page (body : String) : String :=
+    "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"" ++ body ++ "\" }\n" ++
+    "\\output{ formats = html }\n\\begin{document}\nPlain words.\n\\end{document}\n"
+  IO.FS.writeFile (dir / "codebody.tex") (page "Source Code Pro")
+  IO.FS.writeFile (dir / "serifbody.tex") (page "Source Serif Pro")
+  let run (name : String) : IO (UInt32 × String) := do
+    let p ← IO.Process.output
+      { cmd := ".lake/build/bin/leantex"
+        args := #[(dir / s!"{name}.tex").toString, "-o", (dir / "out").toString ++ "/"]
+        env := #[("XDG_CACHE_HOME", some (dir / "cache").toString),
+          ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+          ("LEANTEX_FONT_PATH", none), ("LEANTEX_FONT", none)] }
+    return (p.exitCode, p.stdout ++ p.stderr)
+  let (code, log) ← run "fonts"
+  t s!"artifact pitch: fonts.tex builds: {log}" (code == 0)
+  match artDescriptorFlags (← IO.FS.readBinFile (dir / "out" / "fonts.pdf")) with
+  | .error e => t s!"artifact pitch: fonts.pdf reads back: {e}" false
+  | .ok fds =>
+    let flagsOf (n : String) : Option Int := (fds.find? (·.1 == n)).map (·.2)
+    t s!"artifact pitch: fonts.pdf declares Source Code Pro fixed-pitch: {fds}"
+      ((flagsOf "SourceCodePro-Regular").map (· % 2 == 1) == some true)
+    t s!"artifact pitch: fonts.pdf declares Source Serif Pro proportional: {fds}"
+      ((flagsOf "SourceSerifPro-Regular").map (· % 2 == 0) == some true)
+  for (name, want) in [("codebody", "monospace"), ("serifbody", "serif")] do
+    let (code, log) ← run name
+    t s!"artifact pitch: {name}.tex builds: {log}" (code == 0)
+    let html ← IO.FS.readFile (dir / "out" / s!"{name}.html")
+    let got := artStackGeneric html "body"
+    t s!"artifact pitch: {name}.html closes the body stack with {want}: {got}"
+      (got == some want)
+  IO.FS.removeDirAll dir
