@@ -694,6 +694,20 @@ warning. -/
 def texInternal (name : String) : Bool :=
   name.contains '@' || texPrimitives.contains name
 
+/-- Is this control word a LaTeX internal whose `{...}` arguments are code —
+the names whose arguments package code drops (`Elab.recoverPackageCmd`)?
+`@` is a letter only while a package or class file is read, or after
+`\makeatletter`: latex.ltx's `\@onefilewithoptions` runs `\makeatletter`
+before the load, and `\@pushfilename` saves the category code that
+`\@popfilename` restores. A control word holding one is therefore the
+kernel's or a package's own implementation, and the groups after it are its
+operands: names, option lists, definition bodies, tests. The engine does not
+run that code, and set as text it is code on the page. The TeX82 primitives,
+`texInternal`'s other half, are not in it: `\hbox`, `\uppercase` and
+`\discretionary` set their groups. -/
+def codeInternal (name : String) : Bool :=
+  name.contains '@'
+
 /-- Is a site in `file` package code — a style or class file the document
 loads — rather than the document's own text? The splice names every span of
 a local `.sty` by its file (the input wrapper), and a hook such a file

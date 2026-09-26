@@ -388,7 +388,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0388 => ("0388", .degraded, "ink is painted off the medium; a viewer clips to the page and cannot show it")
   | .W0389 => ("0389", .degraded, "a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics")
   | .W0390 => ("0390", .degraded, "no family is declared for a font slot the document sets in; the body face serves it")
-  | .W0391 => ("0391", .config, "an unknown command in package code is skipped with its arguments; package code sets no text")
+  | .W0391 => ("0391", .config, "an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments, which are its code, not text")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

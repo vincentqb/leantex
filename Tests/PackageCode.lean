@@ -2,14 +2,16 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-! # Package code sets no text
+/-! # Package code sets no text from a LaTeX internal
 
-A style file is programming: its tests, definitions and hooks address the
-engine, never the page. The defect these blocks pin shipped a package name as
-the first word of a paper, because a style file's `\AtBeginDocument` hook
-tested whether another package was loaded, the test was an unknown command,
-and the unknown-command recovery set its arguments as body text. Fixtures in
-tests/corpus/sty-parity, synthetic and invented. -/
+A style file's tests, definitions and registrations go through LaTeX's
+internals, whose arguments address the engine, never the page. The defect
+these blocks pin shipped a package name as the first word of a paper,
+because a style file's `\AtBeginDocument` hook tested whether another
+package was loaded, the test was an unknown command, and the
+unknown-command recovery set its arguments as body text. A style file also
+typesets on purpose, through commands whose groups LaTeX sets, and those
+keep them. Fixtures in tests/corpus/sty-parity, synthetic and invented. -/
 
 /-- The body text a `sty-parity` fixture ships, read off the laid-out pages,
 with its diagnostics. -/
@@ -78,45 +80,51 @@ def loadedTestChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((dvE (dvDoc "" "\\@ifpackageloaded{booktabs}{yes}")).any (·.code == "W0301"))
 
 
-/-- **An unknown command in package code sets none of its arguments, and one
-diagnostic per site says so.** The same construct registered by the
-document's own hook is document content and keeps today's recovery — that
-pair is the two builds the premise beside the rule reads: they differ only
-in which file registers the hook, and only the style's drops. Both
-artifacts are read: the laid-out pages and the typed HTML tree. -/
+/-- **A LaTeX internal in package code sets none of its arguments, and one
+diagnostic per site says so; every other unknown command there keeps them.**
+Two pairs of builds hold the two halves of the rule's condition. The same
+internal in a hook the document itself registers is document content and
+keeps today's recovery: those two builds differ only in which file
+registers the hook, the pair the premise beside the rule reads. In the one
+style hook, the internal drops and a venue macro and a TeX primitive keep
+their groups, as LaTeX sets them. Both artifacts are read: the laid-out
+pages and the typed HTML tree. -/
 def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds, _) ← runStyParity "codehook"
   let text := String.join ((bodyLines (layoutOf fonts doc)).toList.map (lineText ·))
   let (_, body, _) := HtmlDoc.emitTree {} doc
-  -- was: "hidden words more hidden secret Opening line. kept words".
-  t "a style's hook sets none of an unknown command's arguments on the page"
-    (!hasStr text "hidden" && !hasStr text "secret" && !hasStr text "wide" &&
-     hasStr text "Opening line.")
+  -- base: "style words secret more secret boxed words Opening line. kept words".
+  t "a style's hook sets none of a LaTeX internal's arguments on the page"
+    (!hasStr text "secret" && !hasStr text "mode" && hasStr text "Opening line.")
   t "nor in the web page"
-    (treeShownOccurs body "hidden" == 0 && treeShownOccurs body "secret" == 0 &&
+    (treeShownOccurs body "secret" == 0 && treeShownOccurs body "mode" == 0 &&
      treeShownOccurs body "Opening line." == 1)
-  t "the document's own use of the same command keeps its arguments"
+  -- The round-3 rule dropped these two as well, where LaTeX sets them.
+  t "a venue macro in a style's hook keeps its arguments, its option run dropped"
+    (hasStr text "style words" && !hasStr text "wide" &&
+     treeShownOccurs body "style words" == 1)
+  t "a TeX primitive in a style's hook keeps its group, as LaTeX sets it"
+    (hasStr text "boxed words" && treeShownOccurs body "boxed words" == 1)
+  t "the document's own use of the venue macro keeps its arguments"
     (hasStr text "kept words" && treeShownOccurs body "kept words" == 1)
   let pkg := ds.filter fun d => d.code == "W0391" && d.span.any (·.file == "venuecode.sty")
-  t "each package-code site is named once, under the construct's own key"
-    (pkg.size == 2 &&
-     pkg.any (·.subject == some "pkgcode:venueprobe") &&
-     pkg.any (·.subject == some "pkgcode:@venuehelper"))
-  t "a TeX internal there is a note, counted as the style file's refusal"
-    (pkg.any (fun d => d.subject == some "pkgcode:@venuehelper" && d.severity == .note) &&
-     pkg.any (fun d => d.subject == some "pkgcode:venueprobe" && d.severity == .warning) &&
-     Compat.styCounts "venuecode.sty" ds == (1, 1, 1))
-  t "the document's site keeps its own refusal, with the kept text as salvage"
-    ((ds.filter fun d => d.code == "W0301" && d.subject == some "ctrl:venueprobe").size == 1 &&
-     doc.salvage.all (fun s => !hasStr s.text "hidden" && !hasStr s.text "secret") &&
+  t "the internal is named once, under its own key, as the style file's refusal"
+    (pkg.size == 1 &&
+     pkg.all (fun d => d.subject == some "pkgcode:@venuehelper" && d.severity == .note) &&
+     Compat.styCounts "venuecode.sty" ds == (1, 1, 2))
+  t "the other commands keep the document's refusal, with the kept text as salvage"
+    ((ds.filter fun d => d.code == "W0301" && d.subject == some "ctrl:venueprobe").size == 2 &&
+     (ds.filter fun d => d.code == "W0301" && d.subject == some "ctrl:hbox").size == 1 &&
+     doc.salvage.all (fun s => !hasStr s.text "secret") &&
+     doc.salvage.any (fun s => hasStr s.text "style words") &&
      doc.salvage.any (fun s => hasStr s.text "kept words"))
-  -- The other build: the same hook written by the document itself.
+  -- The other build: the same internal in a hook the document registers.
   let own := pageTextOf fonts
-    ("\\documentclass{article}\n\\AtBeginDocument{\\venueprobe[wide]{hidden words}}\n" ++
+    ("\\documentclass{article}\n\\AtBeginDocument{\\@venuehelper[mode]{own words}}\n" ++
      "\\begin{document}\nOpening line.\n\\end{document}")
-  t "the same hook registered by the document keeps the arguments as text"
-    (hasStr own "hidden words" && hasStr own "Opening line.")
+  t "the same internal in a hook the document registers keeps its arguments"
+    (hasStr own "own words" && !hasStr own "mode" && hasStr own "Opening line.")
   -- The loaded-test fixture, on the web page too.
   let (gDoc, _, _) ← runStyParity "guardhook"
   let (_, gBody, _) := HtmlDoc.emitTree {} gDoc

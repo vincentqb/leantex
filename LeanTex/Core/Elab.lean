@@ -2865,26 +2865,33 @@ theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws
       omega
     · omega
 
-/-- The key an unknown command in package code is counted under: its own,
-never the document's `ctrl:` one. The two sites have different fates — a
-document's arguments stand as text, package code's go — so a shared key
+/-- The key an unknown LaTeX internal in package code is counted under: its
+own, never the document's `ctrl:` one. The two sites have different fates —
+a document's arguments stand as text, package code's go — so a shared key
 would put one fate's words on the other's line and ride the second as a
 note under the first. -/
 def pkgCodeKey (name : String) : String := "pkgcode:" ++ name
 
-/-- The words an unknown command in package code is refused in. -/
+/-- The words a LaTeX internal in package code is refused in. They name what
+went and nothing more: a word run after the command is no `{...}` group and
+stays where it stands. -/
 private def pkgCodeMsg (name : String) : String :=
-  s!"unknown command '\\{name}' in package code; its arguments were dropped, not set as text"
+  s!"unknown command '\\{name}' in package code; any [...] options and its " ++
+    "{...} arguments were dropped, not set as text"
 
-/-- **An unknown command in package code sets none of its arguments.** Style
-and class files are programming — conditionals, definitions, tests — so an
-argument there addresses the engine, never the page, and recovering it as
-text is how a style file's own test printed a package name on a paper's first
-line. The recovery is the index past the command's arguments, option runs
-included: there is no inline in its type to add, and the arm hands its text
-accumulator on untouched. The loss is still accounted for, once per site,
-under the construct's own key (`recoverPackageCmd_accounts`); a TeX internal
-demotes as it does in the preamble (`Compat.styInternal`). -/
+/-- **A LaTeX internal in package code sets none of its arguments.** A
+control word with `@` in it is written only where `@` is a letter, a style
+or class file being read, and names the kernel's or a package's own code
+(`Compat.codeInternal`). The groups after it are that code's operands; set
+as text, they printed a style file's own package test on a paper's first
+line. The arm skips the command's option runs, and the recovery returns the
+index past the `{...}` groups after them, up to TeX's nine: the arm walks on
+from there with its text accumulator as it came, so the groups never reach
+the walk. The loss is still accounted for, once per site, under the
+construct's own key, demoted as a TeX internal is in the preamble
+(`Compat.styInternal`). `recoverPackageCmd_accounts` states both halves.
+Any other unknown command in package code keeps the document's recovery:
+`\fbox` or `\hbox` there sets its group in LaTeX. -/
 private def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
     (pos : Pos) : EM { k : Nat // j ≤ k } := do
   modify (warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name)
@@ -4170,12 +4177,14 @@ a side channel, never slide content" pos
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
   else if (unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
-      !ctx.atUse then
+      Compat.codeInternal name && !ctx.atUse then
     -- premise: packageCodeChecks — a style's spans, and the hooks it
     -- registers, carry the style's own file; that block builds both sides
-    -- Package code sets no text: the arguments, option runs included, go
-    -- with the command (`recoverPackageCmd`), and `acc`/`sb` pass on as
-    -- they came. A definition's trial reads as its use (`atUse`).
+    -- A LaTeX internal in package code sets no text: its option runs and
+    -- `{...}` groups are its code and go with it (`recoverPackageCmd`), and
+    -- `acc`/`sb` pass on as they came. Any other unknown command there
+    -- takes the document's recovery below. A definition's trial reads as
+    -- its use (`atUse`).
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     let j1 := skipStar raws j0
@@ -4317,7 +4326,7 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
 
 /-- **Package code sets no text: its refusal is paid for by exactly one
 diagnostic, and by nothing on the page.** The empty recovery `_accounts`
-names: an unknown command in a style or class file adds no inline —
+names: a LaTeX internal in a style or class file adds no inline —
 `recoverPackageCmd` returns an index and nothing else, and its arm hands the
 text accumulator on as it came — and records no salvage, so the census can
 attribute no ink to it. What it does push is one diagnostic at the end,

@@ -409,10 +409,11 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- whose mono slot is the proportional body face, and an artifact that
   -- carries it — so what the golden records is what a build emits.
   | .W0390 => probed .W0390
-  -- A style file's hook calls a command nothing defines: package code, so
-  -- its argument is dropped and the site named, never set as text.
+  -- A style file's hook calls a LaTeX internal nothing defines: its
+  -- argument is its code, so it is dropped and the site named, never set
+  -- as text.
   | .W0391 =>
-    let sty := "\\AtBeginDocument{\\venueprobe{hidden words}}\n"
+    let sty := "\\AtBeginDocument{\\@venueprobe{hidden words}}\n"
     let sraws := (Parse.parse "venuecode.sty" (Lex.lex "venuecode.sty" sty).1).1
     let draws := (Parse.parse "t" (Lex.lex "t"
       "\\usepackage{venuecode}\n\\begin{document}\nx\n\\end{document}\n").1).1
