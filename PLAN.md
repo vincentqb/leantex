@@ -15852,11 +15852,16 @@ today's totals: `contrast` 72 (the stylesheet's four token pairings,
 `themePairs` — `themePairs_contract` says it is exactly
 `ThemeColors.contractHolds` — over the colours the cascade resolves in each
 scheme, `schemeColors`, whose declared ink and page are `Design.ofDoc`'s),
-`h1` 61, `img` 1, `scroll` 0, `svg` 0. Broken once
-through the shipped path: an image with no alternative added to one fixture
-made `htmla11y --check` and `scoreboard --check` exit 1
-(`paragraphs.img: 1000 → 999`); two judge mutants (a `<title>` naming
-nothing, `pre` not a scroller) each failed the selftest by name.
+`h1` 61, `img` 1, `scroll` 0, `svg` 0. Broken once each way through the
+shipped path, on the landed Board (`ae2ddc6`): an image with no alternative
+added to one fixture is a fall (`paragraphs.img: 1000 → 999`), and the same
+fixture gaining its one `<h1>` an unrecorded rise (`stale`). Each made
+`htmla11y --check`, `scoreboard --check` and `scoreboard --check --base
+ae2ddc6` exit 1; regeneration refused the fall, left the baseline
+untouched, and printed the `# lowered:` request that would authorise it;
+and the restored fixture checked `ok` on all three (`cont-31-break.log`).
+Two judge mutants (a `<title>` naming nothing, `pre` not a scroller) each
+failed the selftest by name.
 
 **Against axe, same pages** (`97-`, `98-`, `99-` in the evidence).
 `svg` 0 and `scroll` 0 agree with axe after the fixes; `h1` is axe's
@@ -15879,7 +15884,8 @@ this token model does not reach.
   Body pair, as `html-oracle` judges it: `palette`, `resume` 1.00:1,
   `diagram` 1.04:1. But the deck stage paints `var(--surface)` whatever the
   body carries, so every deck whose design declares an ink shows it on the
-  dark stage: 19 decks, the default `daylight` bundle's among them
+  dark stage: 19 decks — every deck that declares `fg`, and no other
+  (`cont-29-`) — the default `daylight` bundle's among them
   (`scheme-probe.cjs`: `daylight`, `talk` 1.17:1, `themed` 1.42:1).
   `html-oracle`'s `color-scheme` cell reads the body's ground and passes
   them. axe dark: `color-contrast` on 28 pages.
