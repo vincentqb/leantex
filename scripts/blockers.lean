@@ -1132,7 +1132,7 @@ def selftest : IO UInt32 := do
   -- by where it resolved, and never public through a path load.
   let fake : Resolver := fun file => pure <|
     if file == "zzinside.sty" then some ("/r/dist/tex/latex/zzinside.sty", "\\newcommand{\\zzq}{}")
-    else if file == "zzoutside.sty" then some ("/home/x/zzoutside.sty", "\\newcommand{\\zzq}{}")
+    else if file == "zzoutside.sty" then some ("/r/private/zzoutside.sty", "\\newcommand{\\zzq}{}")
     else if file == "/r/dist/tex/latex/zzinside.sty" then
       some ("/r/dist/tex/latex/zzinside.sty", "\\newcommand{\\zzq}{}")
     else if file == "zzalias.cls" then

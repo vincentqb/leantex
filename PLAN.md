@@ -17143,8 +17143,6 @@ entry above loses its open item about running that rebase in the gate tree.
   `scripts/cites.lean` `treeRoots` owes an entry for `scripts.land`.
 
 
-### 2026-09-25 — how much of LaTeX: 33.8%, measured, and the support ladder under it
-### 2026-09-25 — how much of LaTeX: 41.1%, measured in context, and the rungs under it
 ### 2026-09-25 — how much of LaTeX: 40.4%, measured in context, and the rungs under it
 
 The engine had no answer to "how much of LaTeX does this support?", so
