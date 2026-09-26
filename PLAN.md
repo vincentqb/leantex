@@ -17978,3 +17978,197 @@ keeps the unknown-`if…`-name case whole. The picture's "opener the subset
 cannot compute" probe moved from `\ifodd 3`, which the document now decides,
 to `\ifmmode`. `tests/compat-index/tikz.txt` turns its `\ifodd` row to
 `impl` and adds a `\ifmmode` refusal row.
+
+
+
+
+### 2026-09-26 — a macro's conditional is decided where the macro is used, and a picture reads its own site
+
+The review of the entry above blocked on three defects, each reproduced
+against lualatex. They share one root: a decision taken with the wrong state.
+A conditional in a `\def` or `\newcommand` text was decided where the macro
+was defined, so `\def\n{1}\def\show{\ifnum\n=1 One\else Two\fi}\def\n{2}\show`
+shipped "One" with a note, where TeX sets "Two" and the base had named the
+loss. A picture written as a macro read the whole-document table. And
+`\ifx` read every unstarred `\newcommand` as `\long`.
+
+**Corrections to the entry above.**
+- "`\ifx` is decided for one name or two recorded definitions, with `\long`
+  compared." The model behind it was wrong. Measured with lualatex (LaTeX2e
+  2025-11-01, sixteen pairs; the probe is in the evidence directory), a
+  parameterless `\newcommand` is not `\long`: `\meaning` reads `macro:->x`
+  for it and for `\def` alike. Only a `\newcommand` that takes arguments and
+  is unstarred is `\long`. A robust command's meaning names the command
+  (`\protect \name␣`), and so does one with an optional argument, so neither
+  compares equal to another. `\ifx` now compares the replacement text and the
+  prefixes `\long` and `\protected`. An `\outer` macro and a robust command
+  have no comparable value, so a test over one is refused (W0104).
+  `ifxMeaningChecks`.
+- "The picture's macro table is still the whole document's for everything
+  but conditionals." False. A picture written as a macro read its
+  conditional from that table too. See below for what now holds.
+- "The picture's own computed tests are now named (N0114, 'computed from
+  the picture's own values')." The note fired for any test the walk
+  computed, whatever an operand held. The walk now expands nothing into an
+  arithmetic test, so what it computes reads only the picture's own values,
+  and the note is true.
+- "A value a macro invocation sets … is not seen by the pass." It is now
+  seen, for a macro without parameters, because such a macro is expanded at
+  its use (below).
+- The brace-group reading's rationale named "a definition body" as an
+  argument whose definitions are not scoped to it. A definition's text is no
+  longer walked as content at all (below). The flat reading of a name stays,
+  for hooks and plain groups.
+
+**The invariant.** A conditional is decided where TeX decides it. That is at
+the use of the macro whose text holds it, from the state in force there, or
+where the engine itself reads the text. Otherwise the conditional is refused
+by name. It is never decided where the macro is defined.
+`macroUseChecks` (eleven rows), `picSiteChecks` (four rows and a
+vocabulary pin), `settleChecks` (four rows) and `ifxMeaningChecks` (six rows)
+are in Tests/Conditionals.lean. Every behaviour row fails on the previous tip
+`40585eca` except three kinds that already held there:
+- the starred `\newcommand` rule;
+- the settled branch, which the definition-time reading got right on that
+  fixture;
+- the picture rows for the two mode tests whose first branch is TeX's
+  (`\ifhmode`, `\ifinner`, and the first-statement guard), which the
+  first-branch reading already drew.
+
+The vocabulary pin cannot compile there. Command: `lake test` in a clone of
+`40585eca` with only the test files copied in, 28 failures
+(`pre-final-fails.txt` in the evidence directory).
+
+**The fix** (Compat, the conditional pass):
+- **Nothing happens at the definition.** A definition's texts are opaque
+  where it is made (`definerShape`). Nothing in them is decided, set or
+  defined there. The names they bind count as bound from the definition on,
+  which is the flat reading.
+- **A live macro is expanded at its use.** A macro without parameters whose
+  text is *live* is expanded by the pass where it is used (`condExpandAt`).
+  Live means the text holds a conditional, a flag's setter, `\newif`, a
+  definition, a picture, or a use of another live macro. The text is walked
+  where the use stands, and its decisions are named at the use.
+- **Termination.** A text expands only the macros defined before it, which is
+  the elaborator's own visibility rule (`limit`). Each nested expansion
+  therefore lowers a serial bound: `condExpandAt` is `termination_by bound`,
+  and the build checks it. A token after `\noexpand`, `\string`, `\meaning`,
+  `\show`, `\expandafter` or `\futurelet` is not a use.
+- **What the pass cannot expand is refused by name (W0104),** and taken out of
+  the definition the elaborator expands (`condStripRaw`). That covers four
+  cases:
+  - a macro with parameters whose text holds a conditional or sets a flag
+    (the elaborator expands it, keeping a parameterized command's role, and
+    has no conditionals);
+  - an environment's definition with such a text;
+  - a live macro reached through a macro defined before it;
+  - a built-in's redefinition made in the body.
+- **Where the elaborator reads a text itself, it is settled there.** The
+  elaborator reads a built-in's refused redefinition, and the macros it
+  reaches, at the end of the preamble, for the appearance they declare. No
+  use there is one the pass sees. A parameterless preamble definition whose
+  text went out without its decisions is therefore settled at the preamble's
+  end (`condSettle`). The text is walked against the state then, read and not
+  run (the save stack puts the state back), named "as the engine reads it at
+  the end of the preamble", and put back where the definition stands.
+- **The regression that required the settling step.** Without it, the first
+  version of this fix moved every page of the private reference corpus's
+  paper, and said nothing. A style file's refused title redefinition reaches
+  a macro whose author block sits in a flag's branch, and taking the branch
+  out dropped the author's weight and the title's rules. `settleChecks`
+  holds the shape, synthetic.
+
+**A picture reads its own site.** Three sites read a table for the whole
+document, in which the last definition wins (`Elab.macroScan`). Each now reads
+the site, or names the loss.
+- The native walk's expansion (`Picture.macroTable`, fed by `Elab.tikzArm`
+  from `ctx.picMacros`) and the boundary standalone's macro preamble
+  (`Ir.macroDecls doc.pictureMacros`). Inside a picture the pass now puts in
+  the value in force at the site for every parameterless macro it can read.
+  That covers every such macro, not only live ones, apart from the walk's own
+  words (`Compat.picWalkCtrls`, pinned equal to `Picture.walkCtrls`). So the
+  walk and the standalone see the site's text, and two states of one picture
+  are two requests. `macroScan` keeps only names whose definitions all
+  agree, so the table's remaining answers are the same at every site. A name
+  defined with different texts is not expanded: the walk names it (W0334),
+  and a boundary standalone that needs it fails in the tool, in the tool's
+  words.
+- The walk's arithmetic tests (Picture's `.cond .num`). The walk expands
+  nothing into such a test (`numTestLen`). The pass has decided every test it
+  could read at the site, so a test over a document macro it could not read
+  is floored and named (W0334), never computed from another site's value.
+
+**Mode tests in a picture.** At a picture's statements TeX is in
+restricted horizontal mode, because pgf sets the picture in an `\hbox`. So
+`\ifhmode` and `\ifinner` hold, and `\ifmmode` and `\ifvmode` fail: lualatex
+draws exactly those branches (the reviewer's probe). The walk decides the
+four (`CondKind.mode`) with a note. The check that asserted `\ifmmode`'s
+then-branch now asserts TeX's branch for each of the four.
+
+**The save stack.** The pass copied its whole value table, and its globals,
+at every brace group's close. It now keeps TeX's shape (tex.web §268): one
+table of names with their readable values, one of flags, and a save stack of
+changes with what they replaced. An environment's close unwinds the stack to
+its mark and replays the globals made inside it. A group that binds nothing
+costs nothing at its close. The reviewer's synthetic stress document has
+3,000 preamble definitions and 40,000 brace groups. It builds in
+2,142–3,090 ms on the base (six runs), 3,465–4,360 ms on `40585eca` (three
+runs) and 2,163–2,208 ms now (three runs). All runs were on this host, a
+shared machine. Its PDF is byte-identical before and after the change.
+`scripts/bench.lean` on the bench corpus is within 5 ms of `40585eca` in
+every row (paper 153 ms against 155 ms, lorem 328 ms against 331 ms).
+
+**Tests changed, not only added.**
+- Surface's "a redefinition rides as the document's last word" asserted that
+  the boundary request carries a redefined parameterless macro's last
+  definition. It now asserts that the site's text rides in the picture and
+  that neither definition does.
+- The picture checks' "opener the subset cannot compute" moved from
+  `\ifmmode`, which the walk now decides, to `\ifvoid`. The first-statement
+  guard moved to `\ifhmode`.
+- The accounting check carries a picture's answers for the mode tests beside
+  running text's.
+- The tikz compat index turns its `\ifmmode` row to `impl` and keeps a
+  refusal witness with `\ifvoid`. The compat tier moved through its writer:
+  tikz impl 78 to 79, rows 84 to 85.
+- `inTitleBlock` moved to Tests/Support.lean at its second caller.
+
+**Measured on the private reference corpus**, from scratch copies, with the
+shipped CLI, PDF and HTML.
+- **Deck:** 35 pages. Its census is identical per code to `40585eca`'s
+  (185 diagnostics, N0114 32), and all 35 pages are pixel-identical to it
+  (`compare -metric AE`, 50 dpi). The user's two bugs stay fixed.
+- **Paper:** 8 pages, pixel-identical to `40585eca`'s by the same command.
+  Its census is identical per code (168). One note is reworded: the settled
+  branch now says it is decided as the engine reads the definition at the end
+  of the preamble.
+- **The reviewer's probes** (`s01`–`s20`, `c01`–`c16`, `x01`, `x02`) with the
+  new binary: `s12`, `s13` "Two"; `s14` "Defined"; `s15` "Small, Large"; `s19`
+  "Two"; `c03` "Same"; `c16` the draft branch; `c12` and `x02` the branches
+  lualatex draws. Each of these equals lualatex. `c09` is now floored and
+  named, where the walk had computed it from another site's definition.
+  Every probe that already matched lualatex on `40585eca` still matches.
+
+**Open, with their sites.**
+- **F1, the row note names the wrong file.** `Compat.boxRowRaw` descends
+  through the `\input` wrapper environment without switching `St.file`,
+  unlike `condOne` and `rewriteRaw`. So N0100 (`env:minipage-row`) and N0102
+  (`env:minipage-row-options`) name the including file for a row in an
+  `\input` file.
+- **F6, the minipage row's remainders** (`Compat.boxRows`):
+  - a box after a fill-row separated by a space alone is pushed to the
+    margin, or to the next line;
+  - fills on both sides of a pair do not centre it;
+  - a row wider than the measure is not named;
+  - text before or after the boxes splits the row out of its paragraph.
+- **A macro with parameters is refused, not decided at its uses.** Expanding
+  it in the pass would drop the elaborator's role annotation (the class hook
+  and `\style` target). So its conditional is refused by name. That includes
+  the common flag-in-a-`\newcommand[1]` idiom, which the definition-time
+  reading used to get right when the flag never changed.
+- **A live macro reached through one defined before it is refused.** This is
+  the serial bound.
+- **The elaborator's own nested lookup is lexical.** A macro's text expands
+  the definitions made before the macro, not those in force at the use. That
+  predates this branch.
+- **Routed (unchanged):** N0114's registered meaning in `Diag.lean`.
