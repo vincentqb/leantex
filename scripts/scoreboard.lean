@@ -1474,7 +1474,13 @@ throwaway repositories, the aggregate's own faults, the tool's printed remedies 
 followed to the end, and the key)"
   -- Then every tier's own selftest, in parallel: one command is what a
   -- landing runs, so the fan-out lives here rather than in a procedure
-  -- someone has to remember.
+  -- someone has to remember. Built first, as the aggregate builds: `lake env
+  -- lean --run` builds nothing, so a tier's selftest otherwise ran against
+  -- whatever its imports' last build left, and against nothing at all in a
+  -- tree where only `--check` had ever built them.
+  if let some err ← buildImports then
+    IO.eprintln s!"FAIL the tiers' imports do not build, so no tier's selftest can run: {err}"
+    return 1
   let (tiers, _) ← discover
   let mut spawned : Array (String × Option (IO.Process.Child { } ×
     System.FilePath × String × String)) := #[]
