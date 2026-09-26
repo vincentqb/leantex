@@ -16476,13 +16476,17 @@ push.
 
 The theorem, `step_mutates_gated`: whenever `step` proposes a mutating
 action, the resulting state is `proven` — `!gates.isEmpty && gates.all
-(·.ok)`. Two corollaries close the ways it could hold while proving
-nothing: `step_mutates_needs_a_gate` (a run that skipped the gates cannot
-merge, so the `all` is not vacuous) and `step_ff_gates_complete` (the
-fast-forward is proposed only with the gate list exhausted, not merely
-unfalsified). Both guards are written as conditionals in `afterGates` and
-the push transition rather than argued from the surrounding cases: deleting
-one leaves `step_mutates_gated` with unsolved goals.
+(·.ok)`. The `!gates.isEmpty` half closes the way it could hold while
+proving nothing: a run that skipped the gates cannot merge, so the `all` is
+not vacuous. `step_ff_covers` adds that the fast-forward is proposed only
+with the gate index at the plan's size, every planned gate observed rather
+than none failed. (Corrected in place 2026-09-26: this paragraph first
+named two corollaries, `step_mutates_needs_a_gate` and
+`step_ff_gates_complete`, that were dropped in review and never existed;
+the two properties are the ones just named.) Both guards are written as
+conditionals in `afterGates` and the push transition rather than argued
+from the surrounding cases: deleting one leaves `step_mutates_gated` with
+unsolved goals.
 
 Corrected 2026-09-25 (round 2): as first written that was a prose guarantee,
 not a guarantee. No gate, hook or CI step built `land` or `LandLib`, so the
@@ -16806,7 +16810,11 @@ strong as that fix.
   and the six regression scenarios pass. The nine are: the tree's lifecycle,
   a switched branch worktree, a gate that moves its tree, the push naming
   the tip, a non-fast-forward push, union drift, a foreign `GIT_DIR`,
-  retention during a landing, and a landing killed in its gates.
+  retention during a landing, and a landing killed in its gates. (Qualified
+  in place 2026-09-26: that is one recorded run. The retention scenario
+  passed against the defective 1503979 in two runs of five, because run ids
+  within a second did not sort by time; the entry below makes it
+  deterministic.)
 - The positive control landed the round's tip before the rebase onto its
   base, through the twelve gates then shipped. It ran on a scratch clone
   whose `origin` was a scratch bare remote. Exit 0 in 104 s; `main`, the
@@ -16842,3 +16850,171 @@ not honoured by this one, so during the change one binary lands at a time.
 Routed to the coordinator: CI's `lake build --wfail land`, `land
 --selftest` and `land --scratch-selftest` steps, and `scripts.land` in
 `cites.lean`'s `treeRoots`.
+
+
+
+### 2026-09-26 — a landing writes only what it owns, so a drift has nothing to put back
+
+The round-3b review blocked the landing tool on a reproduced loss of
+committed work. When the net comparison found drift, the run put the branch
+back with `reset --keep` at the tip it read *before* the rebase, in the
+owner's own worktree, and a commit the owner made while the rebase ran was
+erased from `agent/<name>` and its file from the worktree. The review's P6
+and P6c probes reproduce it on d4ff187 and on that tip rebased onto
+95f3579, e8ca576: the owner's commit unreachable, the file gone, exit 2.
+The restore was the one step in the tool that deleted work, and
+`Act.mutates` exempted it through a wildcard, as "a write confined to the
+branch's own worktree". The worktree and the ref were the owner's.
+
+**The landing owns its tree, its ledger, and `main` by name; nothing
+else.** The run now makes the gate tree first, detached at the branch tip it
+read, and rebases there: `git rebase <main sha> <tip sha>`, two shas and no
+ref. A drift refuses with nothing to put back, as a conflict does. The
+branch and its owner's worktree are read and never written. Every action
+declares what it writes, with no wildcard (`Act.writes`): the gate tree,
+the ledger, `main` to a named tip, the remote to a named tip, a branch by
+compare-and-swap, or a foreign ref or worktree. `step_writes_owned` proves,
+over the step function and from any state satisfying the run invariant,
+that every declared write is owned in the state it was proposed from. The
+tree and the ledger always are. `main` and the remote are owned only to
+the gated tip, with the gates' evidence about it, on a proven run. A branch
+is owned only by compare-and-swap from the tip the run read, and a foreign
+write never. `trace_writes_owned` lifts this over every run, and
+`step_rebase_exact` pins the rebase to the two shas. The statement is only
+as good as the classification, which is why the classification is one
+exhaustive match beside the constructors, where a reviewer reads it.
+
+**The branch is not moved, not even by compare-and-swap.** The review
+offered a compare-and-swap on `agent/<name>` or no write at all. A
+compare-and-swap on a branch another worktree has checked out moves that
+worktree's `HEAD` and leaves its index at the old tree. The worktree then
+reads as staged changes that revert everything `main` gained, and the
+owner's next `commit -a` commits the reversal. git refuses `branch -f` and
+`fetch` into a checked-out branch for the same reason. So a landing onto a
+`main` that has moved lands rebased copies and leaves the branch at its
+original commits, as a merge queue does. Three consequences follow, each
+with a scenario:
+- `landing`, `landed` and `checked` rows carry `branch`, the tip the run
+  read.
+- `land retire` counts a branch merged when the ledger's last `landed` row
+  read exactly its tip and landed a commit that is on `main`. It deletes the
+  branch with `update-ref -d <ref> <tip>`, a compare-and-swap.
+- A second landing of such a branch refuses. An unmoved branch is "already
+  landed". A branch the owner built on "still carries the commits it
+  landed", and the refusal names `git rebase --onto main <tip>`.
+
+**`main` is pinned by name.** `git merge --ff-only <tip>` moved whatever
+ref the main worktree's `HEAD` named, so a switch just before it
+fast-forwarded another branch (review follow-up 1). The fast-forward is now
+a push into the repository itself, `git push
+--receive-pack='git -c receive.denyCurrentBranch=updateInstead
+receive-pack' . <tip>:refs/heads/main`. git's receiving side moves only
+the ref it is named and accepts only a fast-forward. It also syncs the
+worktree that has `main` checked out, and refuses, with nothing moved,
+when that worktree has changes.
+
+Measured on a scratch repository with git 2.47.3:
+- clean and on `main`: `main` moves and the worktree follows;
+- `HEAD` on another branch: only `main` moves;
+- a modified tracked file, or an untracked file the sync would overwrite:
+  rejected, nothing moved;
+- not a fast-forward: rejected.
+
+The transaction that would do it atomically is refused: `update-ref
+--stdin` will not verify `HEAD` as a symref and update its referent in one
+transaction ("multiple updates for 'HEAD'"). A `-c` option on the push did
+not reach the local receive-pack, which rejected the push as a checked-out
+branch, so the option travels in `--receive-pack`.
+
+**The follow-ups taken.**
+- `land push` publishes the last landing (review follow-up 2). It takes the
+  lock and refuses unless `main` reads at the last `landed` row's tip,
+  which must also be its gated tip. It pushes `<tip>:refs/heads/main`
+  without force, reads the remote back, and writes a `pushed` row, or a
+  `landed-unpushed` row with exit 4. `pushPlan_exact` and
+  `pushVerdict_exact` state both decisions.
+- The remote is read back from the line whose refname is exactly
+  `refs/heads/main` (`lsRemoteTip`, follow-up 3). The pattern matches any
+  ref ending in it, and such a ref sorts first.
+- The hook reads `+++ ` as a file header only before a file's first hunk
+  (follow-up 4). The selftest case fails on the old parse.
+- `sh`'s stream counter advances, so each command keeps its own
+  `<step>.N.out` and `.err` (follow-up 5).
+- `scoreboard --selftest` is the fourteenth gate (follow-up 6).
+- The retention scenario is deterministic (follow-up 7). Sixty directories
+  that sort after any run id stand in the run directory first, so the
+  landing's own directory is the oldest one there. It fails in five runs of
+  five against 1503979, the build before the fix, and in three of three
+  against a mutant that drops only the live-run check.
+- B2: the round-1 entry named two corollaries that never existed. Corrected
+  in place.
+
+**What was measured, and on what.**
+- The rebase onto 95f3579. `lakefile.toml` conflicted twice, parity's
+  target block beside land's, and both were kept. Net content per file
+  (`git diff-tree -p -U0`, hunk headers and `index` lines dropped),
+  ae2ddc6..d4ff187 against 95f3579..e8ca576: 7 files, 0 drift.
+- The harness at e7f989d, 23 scenarios on throwaway git-only repositories.
+  All 23 pass there.
+  - Driven against d4ff187, 8 fail and 15 pass. The 8: union drift without
+    a restore step, P6, P6c, the switch at the fast-forward, the
+    `ls-remote` decoy, a re-landing, and `land push` publishing and
+    refusing.
+  - Against e8ca576, the same 8 fail.
+  - Against 1503979, 15 fail.
+- The review's own probes, e8ca576 then e7f989d:
+  - P6: the commit erased, then kept (exit 2, "moved during the landing");
+  - P6c: erased, then kept (exit 0, checked);
+  - P7: exit 4, then exit 0 with a `pushed` row.
+- P5 is the exception. Its wrapper fires on `git merge`, which the tool no
+  longer runs, so it proves nothing about the new fast-forward. The
+  harness's switch scenario fires on the new command, and asserts that it
+  fired.
+- The gates, on a clean tree at e7f989d (the code of this round; this entry
+  adds prose only), each exited 0, and the tree was clean after:
+  - `lake build`, with zero warning lines;
+  - `lake build --wfail leantex precommit owed cites land scoreboard`;
+  - `lake test`;
+  - `lake build precommit owed cites Obligations`;
+  - `precommit --selftest` and `--tree`;
+  - `cites --selftest` and `--check`;
+  - `owed`;
+  - `scoreboard --check`, `--check --base 95f3579` and `--selftest`;
+  - `land --selftest` (51 cases) and `--scratch-selftest` (23 scenarios).
+
+**What this supersedes.**
+- The entry above, "the gates run in a tree the landing owns": no drift puts
+  a branch back now, and neither `land` nor `land check` rebases the
+  branch. The question that round left for the human is answered: both
+  rebase in the gate tree.
+- The autonomy-loop entry's "a rebase in the branch's own worktree": the
+  rebase runs in the gate tree.
+
+**Open, with their sites.**
+- Union can move a line under another entry, and the drift check passes it
+  (review 8; `netOf` drops positions). The case: a dated correction
+  appended to the file's last entry, while `main` appended a newer entry.
+  A candidate rule for a union-merged file: a branch block that now follows
+  a different line must open with a heading.
+- `netDrift` keys a file by its `diff --git` line and compares the first
+  section only (review 9). A typechange prints two sections under one
+  header. Key by the header and its occurrence.
+- The `abandoned` row does not say whether the dead run had already moved
+  `main` (review 10, `withLock`). It owes the dead run's `gated` sha and a
+  read-back of `main`.
+- Carried (review 11):
+  - `step_ff_covers` restates its guard;
+  - a refused gate set writes no ledger row;
+  - no `worktree prune` runs;
+  - the old `lock` directory is not honoured.
+- A continuing branch is refused, and the refusal names the rebase. Running
+  that rebase in the gate tree, from the ledger's tip, is the next step.
+- `land check` does not re-read the branch after its gates. Its row
+  carries `branch` so that a reader can tell which tip was checked.
+- Routed:
+  - `scripts/precommit.lean` `conflictMarkers`, outside this branch's
+    files, parses `+++ ` as `addedLines` did. The same one-line fix
+    applies.
+  - CI owes `lake build --wfail land`, `.lake/build/bin/land --selftest`
+    and `.lake/build/bin/land --scratch-selftest`.
+  - `scripts/cites.lean` `treeRoots` owes an entry for `scripts.land`.
