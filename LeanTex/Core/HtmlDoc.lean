@@ -693,7 +693,7 @@ float or a second heading directly under a heading realizes 1 quantum
 here where the PDF walk gives that element its own larger gap. -/
 def blockGapKinds : List (String × String) :=
   [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("pre", "peer"),
-   ("blockquote", "peer"), ("table.booktabs", "peer"),
+   ("table.booktabs", "peer"),
    ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading")]
 
 /-- The realized gap equals the emitted gap, in both formatting contexts:
@@ -712,7 +712,7 @@ The float's rules stand outside `blockGapKinds` (they carry the
 `--floatsep` token), so its row is its own conjunct. -/
 theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
-    0 < gapK "caption" ∧ 0 < gapK "display" := by decide
+    0 < gapK "caption" ∧ 0 < gapK "display" ∧ 0 < gapK "trivlist" := by decide
 
 /-- The gap rules, one adjacent-sibling rule per block element, each inside
 `:where()`: the base sheet's defaults carry zero specificity, so any
@@ -740,6 +740,19 @@ def blockGapCss : String :=
   -- of its own, so the boundary has exactly one emitter.
   s!":where(* + .display) \{ margin-top: var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")}); }\n" ++
   s!":where(.display + *) \{ margin-top: var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")}); }\n" ++
+  -- A trivlist environment — the engine role a `{center}`/`{flushleft}`/
+  -- `{flushright}` scope rides in, and `<blockquote>` — owns both its
+  -- boundaries, the display's shape: its `\topsep` on top of the peer gap,
+  -- above as its own margin, below as the follower's (the pair rule). The
+  -- token is the one the PDF walk reads (`Ir.trivlistSkip`), its fallback
+  -- the same one-quantum default, so the whole boundary is the table's
+  -- trivlist row.
+  s!":where(* + .{roleClass Ir.trivlistRole}, * + blockquote) \{ margin-top: \
+calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + \
+{quantaRem (gapK "peer")}); }\n" ++
+  s!":where(.{roleClass Ir.trivlistRole} + *, blockquote + *) \{ margin-top: \
+calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + \
+{quantaRem (gapK "peer")}); }\n" ++
   -- The heading's band below is the heading's own (`blockGapKinds`): the
   -- follower's default top margin is suppressed, standing last so it wins
   -- every zero-specificity default above, and the heading rule's
@@ -760,6 +773,8 @@ private def pdfGapSp : String → Dim.Sp
   | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
   | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.sp
   | "display" => (Ir.displaySkipDefault Ir.baseFontSize).width.sp
+  | "trivlist" => (Ir.parskipDefault Ir.baseFontSize).width.sp
+      + (Ir.trivlistSkipDefault Ir.baseFontSize).width.sp
   | _ => 0
 
 /-- The screen backend's emitted default gap, in milli-rem: the number

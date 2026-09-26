@@ -8331,9 +8331,12 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     blocks := blocks.push (.list (n == "enumerate") elabItems)
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
-    blocks := blocks.push (match Ir.raggedSideOf? n with
+    -- The environment is a trivlist and opens `\topsep` around its scope;
+    -- the `\centering`/`\raggedright` declarations open the same scope and
+    -- no space, so the environment's rides in the engine's trivlist role.
+    blocks := blocks.push (.role Ir.trivlistRole #[match Ir.raggedSideOf? n with
       | some side => .ragged side inner
-      | none => .center inner)
+      | none => .center inner])
   else if n == "minipage" then
     -- A minipage is one column of declared width: the column model
     -- reused whole, never a parallel box model. LaTeX's signature

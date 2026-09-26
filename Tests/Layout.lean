@@ -3608,6 +3608,64 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
+/-- **A trivlist opens its `\topsep` on top of the peer gap** (`Ir.trivlistSkip`,
+the trivlist row of `Ir.rhythm_table_exact`). LaTeX's `{center}`,
+`{flushleft}`, `{flushright}` and `{quote}` are trivlists: `\@trivlist`
+spends `\topsep` by `\addvspace` above and below, and `\parskip` still
+arrives when the following paragraph starts — measured under lualatex,
+baseline to baseline across `\end{center}` is `\topsep + \parskip +
+\baselineskip`. Asserted over `Layout.Out` against a peer boundary of the
+same document, so the claim is the difference the environment makes.
+Invented words. -/
+def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let ys (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    words.filterMap (lineYOf c 0 ·)
+  let q := (Ir.trivlistSkipDefault (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize).width.sp
+  let peer : Dim.Sp := match ys (doc "" "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
+    | [a, b] => b - a
+    | _ => 0
+  t "trivlist fixtures lay out their peer boundary" (peer > 0)
+  let gaps (src : String) : List Dim.Sp :=
+    match ys src ["Alpha.", "Bravo.", "Charlie."] with
+    | [a, b, c] => [b - a, c - b]
+    | _ => []
+  t "a center environment opens its topsep above and below, on top of the peer gap"
+    (gaps (doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
+      == [peer + q, peer + q])
+  t "a flushleft environment opens the same space"
+    (gaps (doc "" "Alpha.\n\n\\begin{flushleft}\nBravo.\n\\end{flushleft}\n\nCharlie.")
+      == [peer + q, peer + q])
+  t "a quote opens the same space"
+    (gaps (doc "" "Alpha.\n\n\\begin{quote}\nBravo.\n\\end{quote}\n\nCharlie.")
+      == [peer + q, peer + q])
+  t "two trivlists meeting pay the larger space once, not both"
+    (gaps (doc "" ("Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n" ++
+      "\\begin{center}\nCharlie.\n\\end{center}")) == [peer + q, peer + q])
+  t "a declared \\topsep is the space, exactly"
+    (gaps (doc "\\setlength{\\topsep}{3pt}"
+      "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
+      == [peer + Dim.pt 3, peer + Dim.pt 3])
+  -- A guard, not a witness (it holds at the base too): the declaration
+  -- opens the scope and no space.
+  t "the centering declaration opens no space"
+    (gaps (doc "" "Alpha.\n\n{\\centering Bravo.\\par}\n\nCharlie.") == [peer, peer])
+  -- The HTML half: the environment's scope rides in the trivlist role, and
+  -- the base sheet gives that role and `<blockquote>` both boundaries at
+  -- the table's trivlist row, through the token the PDF reads.
+  let (cdoc, _) := elabStr (doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
+  let page := (HtmlDoc.emit {} cdoc).1
+  t "html: a center environment ships inside the trivlist role"
+    (hasStr page "<div class=\"u-trivlist-env\">" && hasStr page "<div class=\"centered\">")
+  t "html: the trivlist owns both its boundaries at topsep over the peer gap"
+    (hasStr page (":where(* + .u-trivlist-env, * + blockquote) { margin-top: " ++
+      "calc(var(--topsep, 0.725rem) + 0.725rem); }") &&
+     hasStr page (":where(.u-trivlist-env + *, blockquote + *) { margin-top: " ++
+      "calc(var(--topsep, 0.725rem) + 0.725rem); }"))
+
 /-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
 `Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over
 `Layout.Out` and the emitted SVG, through the shipped path — source,

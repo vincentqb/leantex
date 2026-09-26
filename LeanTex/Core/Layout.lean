@@ -5058,6 +5058,17 @@ private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
   | some last => if last.width < g.width then { a with owed := a.owed.pop.push g } else a
   | none => { a with owed := #[g] }
 
+/-- A trivlist's own space (`\topsep`, `Ir.trivlistSkip`): an `\addvspace`,
+so two trivlists meeting pay the larger of their spaces once — and paid on
+top of the peer gap, not in place of it, because TeX contributes `\parskip`
+when the following paragraph starts, after the trivlist's space already
+stands (ltlists.dtx `\@trivlist`, `\@endparenv`; measured under lualatex:
+baseline to baseline across `\end{center}` is `\topsep + \parskip +
+\baselineskip`). At a frame's or page's first block no peer gap is open, so
+the space stands alone, as beamer's frame start cancels its `\parskip`. -/
+private def Acc.trivSpace (a : Acc) (g : Glue) : Acc :=
+  { a.addvspace g with declaredSkip := true }
+
 /-- The glue one boundary pays: the declared glue owed, and — when a
 document skip stands in it at a peer boundary — the page's parskip *on top
 of* it. A paragraph break has two independent contributors and TeX pays
@@ -6790,6 +6801,12 @@ private def collectBlock (r : Rd) (a : Acc)
   -- the space stands above and below where the role stands, as a list's
   -- topsep does, so the value lives once, upstream, never at use sites.
   | .role n body =>
+    -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
+    -- stands above and below it, on top of the peer gap (`Acc.trivSpace`).
+    if n == Ir.trivlistRole then
+      let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+      (collectBlocks r (a.trivSpace g) body indent).trivSpace g
+    else
     let st := r.style n
     let a := match st.before with
       | some g => a.addvspace (r.resolve g)
@@ -6804,12 +6821,14 @@ private def collectBlock (r : Rd) (a : Acc)
     -- \leftmargin}`, and a top-level list's \leftmargin is \leftmargini —
     -- the same indent the engine's lists take. The right edge moves in by
     -- narrowing the measure the body collects against; the outer measure
-    -- is restored after, exactly as a column restores it.
+    -- is restored after, exactly as a column restores it. Being a list, it
+    -- is a trivlist: its `\topsep` stands above and below it.
+    let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
     let saved := a.measure
-    let sub := { a with
+    let sub := { a.trivSpace g with
       measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
     let sub := collectBlocks r sub body (indent + r.geom.listIndent)
-    { sub with measure := saved }
+    { sub.trivSpace g with measure := saved }
   | .titled kind title body =>
     collectBlocks r (collectTitledTitle r a kind title indent) body indent
   | .abstract body =>
@@ -7011,11 +7030,14 @@ takes that theorem's name rather than a fresh shape suffix because it is the
 same property over the other walk. Was an oracle over the shipped pages
 (roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
 whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
-cheap. -/
+cheap. The engine's own trivlist role is the one name that is not
+transparent — an environment opens space — and a document cannot spell it. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
-    (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none) :
+    (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
+    (htl : n ≠ Ir.trivlistRole) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
-  simp only [collectBlock, Rd.style, hst, Option.getD]
+  have h : (n == Ir.trivlistRole) = false := by simpa using htl
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, Bool.false_eq_true, ite_false]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open

@@ -8,36 +8,37 @@ section 1 number "1"
   text "A shaded grid"
 para
   text "Before the diagram stands a paragraph, so the picture spaces below text."
-center
-  picture 20 shapes
-    border 4.654 4.654 10.653 10.653
-    border 21.662 21.662 27.661 27.661
-    border 38.67 38.67 44.669 44.669
-    border 55.677 55.677 61.677 61.677
-    rect 0 0 15.307 15.307 #AEC8BC
-    rect 0 17.008 15.307 15.307 #88AE9C
-    rect 0 34.016 15.307 15.307 #61947C
-    rect 0 51.024 15.307 15.307 #3B7B5C
-    rect 17.008 0 15.307 15.307 #88AE9C
-    rect 17.008 17.008 15.307 15.307 #88AE9C
-    rect 17.008 34.016 15.307 15.307 #61947C
-    rect 17.008 51.024 15.307 15.307 #3B7B5C
-    rect 34.016 0 15.307 15.307 #61947C
-    rect 34.016 17.008 15.307 15.307 #61947C
-    rect 34.016 34.016 15.307 15.307 #61947C
-    rect 34.016 51.024 15.307 15.307 #3B7B5C
-    rect 51.024 0 15.307 15.307 #3B7B5C
-    rect 51.024 17.008 15.307 15.307 #3B7B5C
-    rect 51.024 34.016 15.307 15.307 #3B7B5C
-    rect 51.024 51.024 15.307 15.307 #3B7B5C
-    label 7.654 7.654 #14141A 900
-      text "aa"
-    label 24.661 24.661 #14141A 900
-      text "bb"
-    label 41.669 41.669 #FFFFFF 900
-      text "cc"
-    label 58.677 58.677 #FFFFFF 900
-      text "dd"
+role trivlist-env
+  center
+    picture 20 shapes
+      border 4.654 4.654 10.653 10.653
+      border 21.662 21.662 27.661 27.661
+      border 38.67 38.67 44.669 44.669
+      border 55.677 55.677 61.677 61.677
+      rect 0 0 15.307 15.307 #AEC8BC
+      rect 0 17.008 15.307 15.307 #88AE9C
+      rect 0 34.016 15.307 15.307 #61947C
+      rect 0 51.024 15.307 15.307 #3B7B5C
+      rect 17.008 0 15.307 15.307 #88AE9C
+      rect 17.008 17.008 15.307 15.307 #88AE9C
+      rect 17.008 34.016 15.307 15.307 #61947C
+      rect 17.008 51.024 15.307 15.307 #3B7B5C
+      rect 34.016 0 15.307 15.307 #61947C
+      rect 34.016 17.008 15.307 15.307 #61947C
+      rect 34.016 34.016 15.307 15.307 #61947C
+      rect 34.016 51.024 15.307 15.307 #3B7B5C
+      rect 51.024 0 15.307 15.307 #3B7B5C
+      rect 51.024 17.008 15.307 15.307 #3B7B5C
+      rect 51.024 34.016 15.307 15.307 #3B7B5C
+      rect 51.024 51.024 15.307 15.307 #3B7B5C
+      label 7.654 7.654 #14141A 900
+        text "aa"
+      label 24.661 24.661 #14141A 900
+        text "bb"
+      label 41.669 41.669 #FFFFFF 900
+        text "cc"
+      label 58.677 58.677 #FFFFFF 900
+        text "dd"
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics

@@ -1581,15 +1581,18 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (doc, ds) := elabStr "{\\raggedleft one} two"
      doc.body == #[.ragged .right #[.para #[.text "one"]], .para #[.text "two"]] &&
        ds.all (fun d => d.code != "W0104" && d.code != "W0301"))
+  -- The environments are trivlists and open `\topsep` (ltlists.dtx), so
+  -- their scope rides in the engine's trivlist role; the declarations open
+  -- the same scope and no space.
   t "the flushright environment sets the mirror block"
     (let (doc, ds) := elabStr "\\begin{flushright}a\\end{flushright}"
-     doc.body == #[.ragged .right #[.para #[.text "a"]]] &&
+     doc.body == #[.role Ir.trivlistRole #[.ragged .right #[.para #[.text "a"]]]] &&
        ds.all (fun d => d.code != "W0302" && d.code != "W0104"))
   t "flushright as a command maps as raggedleft does"
     ((elabStr "{\\flushright a}").1.body == #[.ragged .right #[.para #[.text "a"]]])
   t "the flushleft environment sets the same block"
     (let (doc, ds) := elabStr "\\begin{flushleft}a\\end{flushleft}"
-     doc.body == #[.ragged .left #[.para #[.text "a"]]] &&
+     doc.body == #[.role Ir.trivlistRole #[.ragged .left #[.para #[.text "a"]]]] &&
        ds.all (fun d => d.code != "W0302"))
   t "flushleft inside an argument aligns nothing, named W0108"
     ((warnCodes "\\textbf{\\flushleft a}").contains "W0108")

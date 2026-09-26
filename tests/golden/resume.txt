@@ -21,17 +21,18 @@ assert fonts.all_embedded
 assert pages == 1
 assert text.in_area
 assert text.xheight >= 3.968pt
-center
-  para
-    styled sans
-      styled bold
-        styled size:Huge
-          color primary #7C3AED
-            text "Alex"
-          text " Doe"
-    linebreak 675/1000ex plus 270/1000ex minus 135/1000ex
-    color muted #71717A
-      text "alex@example.org · example.org · github.com/adoe"
+role trivlist-env
+  center
+    para
+      styled sans
+        styled bold
+          styled size:Huge
+            color primary #7C3AED
+              text "Alex"
+            text " Doe"
+      linebreak 675/1000ex plus 270/1000ex minus 135/1000ex
+      color muted #71717A
+        text "alex@example.org · example.org · github.com/adoe"
 section* 1
   text "Experience"
 role role

@@ -5,13 +5,14 @@ font body "Source Serif Pro"
 assert pages == 1
 assert text.in_area
 assert text.xheight >= 3.968pt
-center
-  para
-    styled bold
-      styled size:Huge
-        text "Alex Doe"
-    linebreak
-    text "alex@example.org"
+role trivlist-env
+  center
+    para
+      styled bold
+        styled size:Huge
+          text "Alex Doe"
+      linebreak
+      text "alex@example.org"
 section* 1
   text "Experience"
 para

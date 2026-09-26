@@ -6,9 +6,10 @@ para
   text "An inline mark "
   image "rects.png" height 8pt alt "A small synthetic mark"
   text " sits in the line like a word."
-center
-  para
-    image "rects.png" width 800/1000tw alt "Three synthetic rectangles, wide"
+role trivlist-env
+  center
+    para
+      image "rects.png" width 800/1000tw alt "Three synthetic rectangles, wide"
 float figure 1
   caption
     text "Three rectangles, fitted"

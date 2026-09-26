@@ -719,6 +719,58 @@ theorem displaySkips_default_exact (size : Sp) :
     displayAbove {} size = displaySkipDefault size ∧
     displayBelow {} size = displaySkipDefault size := ⟨rfl, rfl⟩
 
+/-- The space a trivlist environment — `{center}`, `{flushleft}`,
+`{flushright}` (ltlists.dtx: `\center` is `\trivlist\centering\item`),
+`{quote}`, `{quotation}` — opens against the text above and below it:
+LaTeX's top-level `\topsep`, which the size file's `\@listi` sets
+(size10.clo:218 `8pt plus 2pt minus 4pt`, size11.clo:218 `9pt plus 3pt
+minus 5pt`, size12.clo:218 `10pt plus 4pt minus 6pt`) and beamer keeps at top
+level — its own `\@listi` (beamerbaselocalstructure.sty:152) is invoked only
+inside a list, measured under lualatex as `8.0pt plus 2.0pt minus 4.0pt` in
+a 10pt frame. Quantized to the rhythm as the display skip is: one quantum,
+inside each size file's own range (`trivlist_between`), with size10's rubber
+proportions (a fifth of the body stretch, two fifths shrink). `\partopsep`
+(size10.clo:215, 2–3 pt in article; 0 in beamer, beamerbaselocalstructure
+.sty:164) is added by LaTeX only where the environment opens a new
+paragraph, which the block walk does not record, so it is not spent.
+Overridable as `\tokens{ topsep = ... }` or `\setlength{\topsep}{...}`. -/
+def trivlistSkipDefault (size : Sp) : SymGlue :=
+  { width := { sp := rhythmQuantum size }
+    stretch := { sp := size / 5 }
+    shrink := { sp := size * 2 / 5 } }
+
+/-- The trivlist space's token name, as `\tokens` and `\setlength` spell it. -/
+def trivlistSkipName : String := "topsep"
+
+/-- The one resolving site for a trivlist's space: the document's token
+where declared, else the rhythm default at the governing size. Both
+backends read it — the PDF walk around a trivlist, the HTML base sheet's
+`var(--topsep, …)` fallback the same default. -/
+def trivlistSkip (tokens : Tokens) (size : Sp) : SymGlue :=
+  (tokens.find? trivlistSkipName).getD (trivlistSkipDefault size)
+
+/-- The role a trivlist environment's body rides in: the environment
+opens space (`\topsep` above and below), the `\centering` and `\raggedright`
+declarations open none, and both elaborate to the same `.center` or
+`.ragged` scope — so the environment's scope is wrapped in this engine role,
+as a title slot's is (`titleSlotRole`). A name no document command can
+spell (it carries a hyphen), so no authored role collides with it. -/
+def trivlistRole : String := "trivlist-env"
+
+/-- **The quantized trivlist space lies inside every size file's glue.** One
+quantum at LaTeX's three standard bodies sits between `\topsep`'s own
+minimum and maximum there — 4..10 pt at 10 pt, 4..12 pt at 10.95 pt,
+4..14 pt at 12 pt — so the engine's default is a length each class's own
+glue could have set. -/
+theorem trivlist_between :
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.sp ∧
+      (trivlistSkipDefault (Dim.pt 10)).width.sp ≤ Dim.pt 10 ∧
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 1095 / 100)).width.sp ∧
+      (trivlistSkipDefault (Dim.pt 1095 / 100)).width.sp ≤ Dim.pt 12 ∧
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 12)).width.sp ∧
+      (trivlistSkipDefault (Dim.pt 12)).width.sp ≤ Dim.pt 14 := by
+  decide
+
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
 2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
@@ -884,13 +936,17 @@ theorem covers. The quantum differs per context (the print leading against
 the screen leading), which is exactly the statement: a boundary's multiple
 is declared once; each backend realizes it in its own context's unit. -/
 def rhythmGapQuanta : List (String × Nat) :=
-  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("display", 2)]
+  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("display", 2),
+   ("trivlist", 2)]
 
 /-- The table and the tokens agree: each declared default gap is its row's
 multiple of the quantum, and the heading row is twice the peer row — the
-walk's `parskip.add parskip` spelled as a multiple. An edit that moves a
-token off its declared multiple, or drops a row a backend reads, fails the
-build here. -/
+walk's `parskip.add parskip` spelled as a multiple. The trivlist row is the
+boundary's whole gap: the peer gap *and* the environment's own space on top
+of it, because TeX contributes `\parskip` when the following paragraph
+starts, after the trivlist's `\addvspace` already stands. An edit that
+moves a token off its declared multiple, or drops a row a backend reads,
+fails the build here. -/
 theorem rhythm_table_exact (size : Sp) :
     ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum size
       = (parskipDefault size).width.sp ∧
@@ -902,11 +958,14 @@ theorem rhythm_table_exact (size : Sp) :
       = (headingBeforeDefault size).width.sp ∧
     ((rhythmGapQuanta.lookup "display").getD 0 : Int) * rhythmQuantum size
       = (displaySkipDefault size).width.sp ∧
+    ((rhythmGapQuanta.lookup "trivlist").getD 0 : Int) * rhythmQuantum size
+      = (parskipDefault size).width.sp + (trivlistSkipDefault size).width.sp ∧
     (rhythmGapQuanta.lookup "heading").getD 0
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
     simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
-      headingBeforeDefault, displaySkipDefault, Dim.Length.ofSp, List.lookup]
+      headingBeforeDefault, displaySkipDefault, trivlistSkipDefault, Dim.Length.ofSp,
+      List.lookup] <;> omega
 
 /-- Named colours declared by `\palette`. -/
 structure Palette where
