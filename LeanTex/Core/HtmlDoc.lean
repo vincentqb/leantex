@@ -3434,6 +3434,10 @@ def figureWord (loc : Locale) : String := firstNonBlank loc.figure "figure"
 theorem figureWord_contract (loc : Locale) : nonBlank (figureWord loc) = true :=
   firstNonBlank_contract _ _ (by decide)
 
+/-- An attribute's value on an element's attribute list. -/
+def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
+  (attrs.find? (·.1 == k)).map (·.2)
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -4846,6 +4850,32 @@ private def claimId (taken : Std.HashMap String String) (base text : String) :
     | none => break
   return (id, clash)
 
+/-- The first stage name no earlier stage on the page carries: `name`,
+then `name (2)`, `name (3)`, … Two regions named alike are one landmark to
+a reader moving by landmark (axe `landmark-unique`), so a repeated title
+takes its occurrence number, as its repeated anchor does (`claimId`); k
+names taken block at most k candidates, so the first free one is always
+found among the k+1 checked. -/
+private def claimName (taken : Std.HashSet String) (name : String) : String := Id.run do
+  let mut out := name
+  for n in [2 : taken.size + 3] do
+    if taken.contains out then out := s!"{name} ({n})" else break
+  return out
+
+/-- A stage with its accessible name claimed (`claimName`) against the
+names the page's earlier stages carry, and the claim recorded. -/
+private def claimStageName (taken : Std.HashSet String) : Node → Node × Std.HashSet String
+  | .elem tag attrs kids =>
+    match attrOf? attrs "aria-label" with
+    | some name =>
+      let got := claimName taken name
+      (.elem tag (attrs.map fun kv => if kv.1 == "aria-label" then (kv.1, got) else kv) kids,
+        taken.insert got)
+    | none => (.elem tag attrs kids, taken)
+  | .text s => (.text s, taken)
+  | .style s => (.style s, taken)
+  | .script attrs s => (.script attrs s, taken)
+
 /-- The snap spacers of a stepped frame's track, one per overlay step:
 each claims its deep-link anchor `<frame>-k` through the same door as
 every id this backend assigns (`claimId`), a clash named exactly as a
@@ -4960,10 +4990,6 @@ retitle one section, or link to '#{id}'"))
       cur := #[withEpoch cfg.epochStyle (blockNode cfg b)]
     | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
   return (close out cur openId, diags)
-
-/-- An attribute's value on an element's attribute list. -/
-def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
-  (attrs.find? (·.1 == k)).map (·.2)
 
 /-- Does an element take keyboard focus in sequential navigation — a tab
 stop (HTML §6.6.3)? A `tabindex` that parses decides: zero or more is a
@@ -5270,6 +5296,8 @@ def emitTree (cfg : Config) (doc : Doc) :
       -- Each assigned frame id with the plain title that holds it: the
       -- same uniqueness door the article's sections claim through.
       let mut taken : Std.HashMap String String := {}
+      -- Each stage name claimed so far (`claimName`).
+      let mut named : Std.HashSet String := {}
       -- The epoch state threads through the deck's top level exactly as
       -- through `blockNodesInto`.
       let mut cfg := cfg
@@ -5306,7 +5334,8 @@ via \\chrome is the sequence both backends share"))
           -- HTML section count is the frame count — the PDF's page count
           -- less its per-step duplicates (`frames_sections` in Tests;
           -- both counts are projections of `Ir.maxStepBlocks`).
-          let node := blockNode cfg b
+          let (node, named2) := claimStageName named (blockNode cfg b)
+          named := named2
           -- The frame's anchor: its title slug, unique among the deck's
           -- ids (`claimId`), so every slide is fragment-addressable — a
           -- deep link into the paged deck is `#its-title`. A repeated
@@ -5400,11 +5429,13 @@ first; retitle one frame, or link to '#{id}'"))
             -- stepless frame: the section itself carries the
             -- `[data-snap]` door — and, being a page, the logo state in
             -- force, as the PDF furnishes every page.
+            let name := claimName named (sectionPageName title)
+            named := named.insert name
             acc := acc.push (withEpoch cfg.epochStyle
               (attachLogo cfg
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
-                    stageAttrs cfg.deck (sectionPageName title) ++ #[("data-snap", "")]))
+                    stageAttrs cfg.deck name ++ #[("data-snap", "")]))
                 (Ir.logoInForce doc.logo logoSpans i)))
           else
             acc := acc.push (withEpoch cfg.epochStyle

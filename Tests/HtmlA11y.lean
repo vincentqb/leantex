@@ -141,6 +141,10 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- are what fire it.
     t s!"html a11y {n}: no tab stop is hidden from assistive technology \
 ({f.hiddenTabStops})" (f.hiddenTabStops == 0)
+    -- No two stages share a name (a floor: the corpus repeats no title).
+    let names := (stageMarks body).filterMap (·.2)
+    t s!"html a11y {n}: no two stages share a name"
+      (names.all fun nm => (names.filter (· == nm)).size == 1)
     -- W3: every <img src> the page emits is a format a browser decodes, or
     -- a diagnostic names the file (subject `img:<src>`). The format is read
     -- off the file's own bytes, never off the backend's classification;
@@ -275,6 +279,19 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\section{An Invented Part}\n\\begin{frame}{F}\nx\n\\end{frame}")).1
   t s!"html a11y: a section page is a focusable, named stage: {stageMarks sbody}"
     (stageMarks sbody == #[(some "0", some "An Invented Part"), (some "0", some "F")])
+  -- Two stages named alike are one landmark to a reader moving by landmark
+  -- (axe `landmark-unique`): a repeated name takes its occurrence number,
+  -- as the repeated title's anchor does. One construct per probe: two
+  -- frames of one title, then a section page and a frame of one title.
+  let (_, twbody, _) := HtmlDoc.emitTree {} (elabStr (dvDeck ""
+    ("\\begin{frame}{Results}\nfirst\n\\end{frame}\n" ++
+     "\\begin{frame}{Results}\nsecond\n\\end{frame}"))).1
+  t s!"html a11y: two frames of one title are two stage names: {stageMarks twbody}"
+    (stageMarks twbody == #[(some "0", some "Results"), (some "0", some "Results (2)")])
+  let (_, spbody, _) := HtmlDoc.emitTree {} (elabStr (dvDeck "\\theme{moloch}\n"
+    "\\section{Results}\n\\begin{frame}{Results}\nx\n\\end{frame}")).1
+  t s!"html a11y: a section page and a frame of one title are two names: {stageMarks spbody}"
+    (stageMarks spbody == #[(some "0", some "Results"), (some "0", some "Results (2)")])
   -- Outside the deck a frame is a handout card, not a scroller: no tab stop.
   let (_, abody, _) := HtmlDoc.emitTree {} (elabStr (dvDoc ""
     "\\begin{frame}{A Card}\nx\n\\end{frame}")).1
