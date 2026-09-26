@@ -16088,3 +16088,113 @@ not to an edit here.
   `01e9da4` the same logo shipped hidden instead.
 
 Evidence: `leantex-evidence/htmla11y-r3c/`.
+
+
+### 2026-09-26 — the accounting follow-ups: an order-free url style, keyed discards, a named \multicolumn, and parked phantoms that fail both ways
+
+The round-3 follow-ups to optfold's re-review (items 1–13) and to the
+coverage fixer's Compat routes, on `agent/fuelab`: eleven commits before this
+entry, rebased from e4d22a4 onto ae2ddc6 with each file's own diff
+unchanged. Each row this branch labels "(fails on base)" fails on an
+e4d22a4 scratch copy (`lake test` there, with this branch's test files
+copied in), and each unlabelled new row passes there. Rows that optfold
+labelled keep optfold's merge base, efcd27e. Each change below names the
+check that fails without it.
+
+- **A preamble `\urlstyle` is the whole document's** (items 1–2). The
+  family is resolved before the declaration fold, so an `\author` holding a
+  `\url` reads the style whichever order the two stand in, as `\maketitle`
+  expansion gives in LaTeX. `compose-fuzz` admits the head, with a synthetic
+  `\author{… \url{…}}` preamble: two swaps fail on e4d22a4, and every pair
+  commutes on head.
+- **A redefinition trial resets `runShapes` with `diags`** (item 3), so
+  W0361 names the construct the definition uses.
+- **A retired fragment whose successor names more accepts nothing** (item
+  6). With `\allow{W0341}` beside a dropped run and a plain unknown command,
+  `--werror` exits 1 before optfold, 0 on e4d22a4 and 1 on head, and N0105
+  still says the code is retired.
+- **An undefined `\urlstyle` value is keyed `ctrl:urlstyle:<value>`** (item
+  11), so a `bar` site is never printed under `foo`.
+- **A discard is keyed as a discard.** `discard` is the one writer of
+  `'\X' → nothing: …`, with the subject `ctrl:nothing:<key>`, sub-keyed by
+  what decided it (`usepackage:<pkg>`, `providecommand:<cmd>`,
+  `pagestyle:<v>`), at every call that wrote one; `discardSites` holds one
+  usage per call. Before, only the inert table's rows carried a subject.
+- **`\multicolumn` names what it drops and walks what it keeps.** The arm
+  returned its text group unwalked, so a `#1` inside a definition body stayed
+  literal. On e4d22a4, `\newcommand{\hd}[1]{\multicolumn{2}{c}{#1}}` used in
+  a row fails the build with E0311 (exit 1, no artifact). On head the PDF
+  cell and the HTML `<td>` both read the argument (`pdftotext`, the emitted
+  tree; HTML under `css =` not measured). The drop is W0337 under one key
+  per shape of loss, each with a message true of all its sites:
+  `ctrl:multicolumn` (a span: the later cells move left),
+  `ctrl:multicolumn:1` (alignment only, grid intact) and
+  `ctrl:multicolumn:unread` (the count is not a numeral). Two things are still
+  open. The IR has no cell span, so a span still shifts the row. And a
+  LaTeX-valid span row also draws the table's own padded-row W0337, so one
+  cause prints two lines at two spans, which `siteCollisions` cannot see.
+  Padding the n−1 cells in the table loop would close both, but it is
+  blocked, because an `&` that comes out of a macro body does not split
+  cells: the build fails with E0311 on e4d22a4 and on head.
+- **Compat's markers in the preamble** (`@series:`, `@lang:`, `@ink:`) were
+  read as unknown commands, whose warning quoted the marker. Measured
+  against lualatex (TeX Live 2026, LuaHBTeX 1.24.0): `\begin{document}`
+  selects series `m` and babel's main language, and keeps the colour. So a
+  preamble series or language reaches no text, with Compat's N0100 as its
+  accounting (`compatMarkerChecks` pins that premise), and a preamble colour
+  opens the body, with the same `Doc` an `\AtBeginDocument` hook gives
+  (`PDecl.bodyStart`).
+- **The rows and docstrings say what they hold** (items 8–10, 12–13).
+  "mixed shapes read the same in either order" passes on its merge base and
+  loses the label. "the only one naming it" now tests exclusivity. The two
+  edge witnesses get direct rows, compared as engine outputs. The first-site
+  docstrings say a mixed group's first site reads the group's rule, and
+  `url.txt` states the flow-scope caveat. Six theorems take the registered
+  `_exact` suffix: `warnOnceDiag_kind_exact`, `warnOnceDiag_subject_exact`,
+  `warnOnceState_diags_exact`, `runShapeReword_size_exact`,
+  `bumpRunShape_size_exact` and `warnUnknownCmd_push_exact`, which were
+  `…_kind`, `…_subject`, `…_diags`, `…_length`, `…_length` and
+  `warnUnknownCmd_pushes_one`. Older entries here keep the old names as
+  history, and this line is their forward pointer.
+- **Parked phantom citations are keyed by name, file and anchor** (items
+  4–5). A dead row and a new site of a parked name each fail `cites --check`.
+  Each was broken once through `lake build cites` and `--check`, and head
+  exits 1 on both, where the e4d22a4 binary passes the new site. The
+  `place_order_agree` row now names the owed statement and its missing
+  independence hypothesis, and its `Tests/Surface.lean` site cites that
+  statement as owed. The `placeRel_exact` row carries its second site. That
+  site was invisible to the gate: `backtickSpans` reads each line alone, so a
+  span wrapped across two lines flips the parity for the rest of the line.
+- **Preamble-first groups that hide a body run are a registry**
+  (`visibleRunAccounting`, item 7). A probe whose visible lines are the same
+  with the run and without it needs a row, and a row whose probe shows its
+  run fails. Each direction was broken once through `lake test`. This is the
+  `siteAccounting` shape with its own key: that registry is keyed by two
+  codes at one span, and this defect is one code at every span.
+
+**Correction to "a counted line is a claim about every site it counts"
+(2026-09-25).** It calls the preamble/body W0301 pair "untouched here". It
+was touched, twice. Retiring W0341 (a4b65ea on main) removed the body
+site's own visible line: before optfold, a preamble-first document printed
+`'[16]' went with unknown command …` at the body site, and now the one
+visible line is the preamble's "skipped (N sites)", whatever the body
+dropped. The first body note is also reworded to the group's rule. The two
+rows above hold that until the declared-accounting change lands.
+
+**Corrections to the brief, measured.** W0387 already carried
+`ctrl:<name>` at e4d22a4 (634af48), so no change was owed. The marker defect
+was three markers, not one. The uncommitted \multicolumn draft would have
+printed "the cells after it move left" over a one-column realignment,
+where nothing moves, so it was redesigned, and the E0311 above was
+pre-existing. Item 7's registry cannot be a `siteAccounting` row, for the key
+reason above.
+
+**Routed, and still open.** A `\bfseries`-style declaration in the preamble
+proper still reads "unknown command … in the preamble; skipped". Skipping
+matches LaTeX, which resets the series at `\begin{document}` (measured), but
+the word "unknown" is false. The fix goes in Elab's `scanDecls`, as a new
+unit. The `backtickSpans` blind spot belongs to `cites`'s scanner, which is
+outside the phantom list. The comment at `Tests/Layout.lean:1777` still
+names `warnUnknownCmd_pushes_one`; `cites` does not read line comments. The
+`&`-from-a-macro defect goes to the table elaborator. The declared-accounting
+change owes the two `visibleRunAccounting` rows.
