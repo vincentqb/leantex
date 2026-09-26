@@ -4271,6 +4271,70 @@ theorem pictureName_nonBlank (loc : Locale) (pic : Ir.Pic.Picture) :
     nonBlank (pictureName loc pic) = true :=
   firstNonBlank_nonBlank _ _ (firstNonBlank_nonBlank _ _ (by decide))
 
+/-- A string's words, one space apart: what a name built from prose reads
+once its line breaks and indentation are gone. -/
+def squashSpace (s : String) : String :=
+  String.intercalate " "
+    (((s.map fun c => if c.isWhitespace then ' ' else c).splitOn " ").filter (!·.isEmpty))
+
+mutual
+
+/-- The words a subtree shows a sighted reader, onto `acc`: its text, each
+element closed by a space so adjacent blocks keep their words apart, with
+every `hidden` or `aria-hidden="true"` subtree, stylesheet and script left
+out — a speaker note (`hidden`), an alternation's other group, a
+decorative strip. A hand-rolled walk because `Html.Node` has no generic
+fold; the list companion keeps it structural. -/
+def shownWordsOne (acc : String) : Node → String
+  | .text s => acc ++ s
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem _ attrs kids =>
+    if attrs.any (fun kv => kv.1 == "hidden" || (kv.1 == "aria-hidden" && kv.2 == "true"))
+    then acc
+    else shownWordsList acc kids.toList ++ " "
+
+def shownWordsList (acc : String) : List Node → String
+  | [] => acc
+  | k :: rest => shownWordsList (shownWordsOne acc k) rest
+
+end
+
+/-- A deck stage's name: its title, or — untitled, as a title page or a
+standout statement is — the words it shows (`shownWordsList` over its
+emitted children: a speaker note or a hidden alternative never leaks into
+the name), or at the last the engine's word the untitled frame's anchor
+already starts from (`slide`). -/
+def frameName (title : Array Inline) (kids : Array Node) : String :=
+  firstNonBlank (squashSpace (Ir.plainText title))
+    (firstNonBlank (squashSpace (shownWordsList "" kids.toList)) "slide")
+
+theorem frameName_nonBlank (title : Array Inline) (kids : Array Node) :
+    nonBlank (frameName title kids) = true :=
+  firstNonBlank_nonBlank _ _ (firstNonBlank_nonBlank _ _ (by decide))
+
+/-- A themed section page's name: its title, else the engine's word its
+anchor would start from (`section`). -/
+def sectionPageName (title : Array Inline) : String :=
+  firstNonBlank (squashSpace (Ir.plainText title)) "section"
+
+theorem sectionPageName_nonBlank (title : Array Inline) :
+    nonBlank (sectionPageName title) = true :=
+  firstNonBlank_nonBlank _ _ (by decide)
+
+/-- A deck stage's keyboard door. On the paged deck every stage is a scroll
+container — content past the stage scrolls inside it (`deckStageRule`,
+`overflow-y: auto`) — and the constant script binds its keys on the
+document, so a reader whose focus has no way into the stage cannot scroll
+what spills (WCAG 2.2 SC 2.1.1; axe `scrollable-region-focusable`).
+`tabindex="0"` puts the stage in the tab order and the name makes it a
+named region (HTML-AAM: a `section` with an accessible name is a
+`region`), so each stop announces which slide it is. Markup only: the
+script is untouched (`deck_script_constant`). Outside the deck a stage is a
+handout card that never scrolls, and carries neither. -/
+def stageAttrs (deck : Bool) (name : String) : Array (String × String) :=
+  if deck then #[("tabindex", "0"), ("aria-label", name)] else #[]
+
 /-- The picture's role and name. `role="img"` makes the SVG one image to
 assistive technology — its children presentational (WAI-ARIA 1.2 §5.3), so
 the label `<text>` a sighted reader sees is not read out — and the name
@@ -4453,7 +4517,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++
        (match covered with
         | some c => #[("style", s!"color: {cssColor c}")]
-        | none => #[]))
+        | none => #[]) ++
+       -- A code block scrolls sideways (`overflow-x: auto` in `baseCss`),
+       -- so it is a tab stop: a keyboard reaches what a long line spills
+       -- (WCAG 2.2 SC 2.1.1). Its role takes no name, so it carries none.
+       #[("tabindex", "0")])
     match spec.caption with
     | some (n, cap) =>
       Html.elem "figure"
@@ -4509,7 +4577,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
         let down := spacer below
         up ++ kids ++ down
       else kids
-    Html.elem "section" (header ++ kids) #[("class", cls)]
+    Html.elem "section" (header ++ kids)
+      (#[("class", cls)] ++ stageAttrs cfg.deck (frameName title kids))
   | .framefoot _ =>
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
@@ -5158,7 +5227,8 @@ first; retitle one frame, or link to '#{id}'"))
             acc := acc.push (withEpoch cfg.epochStyle
               (attachLogo cfg
                 (Html.elem "section" kids
-                  #[("class", "section-page"), ("data-snap", "")])
+                  (#[("class", "section-page")] ++
+                    stageAttrs cfg.deck (sectionPageName title) ++ #[("data-snap", "")]))
                 (Ir.logoInForce doc.logo logoSpans i)))
           else
             acc := acc.push (withEpoch cfg.epochStyle
@@ -5357,6 +5427,16 @@ def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × St
     (deck && tag == "section" &&
       (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
 
+/-- Can a keyboard reach a scroll container, and assistive technology say
+what it is: `tabindex="0"`, and a name — except on a code block, whose
+generic role takes none (WAI-ARIA 1.2 §5.2.8.6, naming prohibited). -/
+def scrollReachable : Node → Bool
+  | n@(.elem tag attrs _) =>
+    attrOf? attrs "tabindex" == some "0" && (tag == "pre" || carriesName n)
+  | .text _ => false
+  | .style _ => false
+  | .script _ _ => false
+
 /-- One element's own contribution to the facts, its children aside. -/
 def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
     (kids : Array Node) (acc : A11yFacts) : A11yFacts :=
@@ -5375,11 +5455,9 @@ def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
                    (if carriesName (.elem tag attrs kids) then 0 else 1) }
     else acc
   if declaresScroll own deck tag attrs then
-    let focusable := attrOf? attrs "tabindex" == some "0"
-    let named := tag == "pre" || carriesName (.elem tag attrs kids)
     { acc with scrolls := acc.scrolls + 1
                scrollsUnreachable := acc.scrollsUnreachable +
-                 (if focusable && named then 0 else 1) }
+                 (if scrollReachable (.elem tag attrs kids) then 0 else 1) }
   else acc
 
 mutual
@@ -5420,5 +5498,18 @@ theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
   rcases h : pic.bbox with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [blockNode, pictureSvg, h, Html.elem, Node.tag?, carriesName, pictureRole,
     pictureName_nonBlank]
+
+/-- **Every deck stage the backend emits is reachable** (`_contract`): on
+the paged deck the frame arm's `section` — a scroll container by
+`deckStageRule` — carries `tabindex="0"` and a non-blank name, whatever the
+frame. A fact of the artifact: which boxes scroll is the stylesheet's
+decision, not the IR's. `htmlA11yChecks` holds it, with the section pages
+and code blocks, over every shipped corpus page. -/
+theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)
+    (title : Array Inline) (standout : Bool) (valign : VAlign) (br : Bool)
+    (body : Array Block) :
+    scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
+  simp [blockNode, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
+    frameName_nonBlank]
 
 end LeanTex.Core.HtmlDoc

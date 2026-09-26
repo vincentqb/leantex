@@ -2,7 +2,7 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)
 date: 2026-09-26
-src-key: cd04efc5b84335e3
+src-key: dbf06d20e58b9ee7
 fixtures: 77 built, unbuilt: theme-modern
 
 [feature]
