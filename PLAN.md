@@ -15519,3 +15519,98 @@ changes an interword space. Re-measured at `a76fbb9`: `note[N0100]` under
 `-v` only, and byte-identical engine PDFs for `\frenchspacing` and
 `\nonfrenchspacing` (`25-nfs-probe.txt`). CI still owes a build of
 `parity` and runs of its `--selftest` and `--check`.
+
+
+### 2026-09-26 — the base check fails closed on what git cannot say, and prints what it credited
+
+The scoreboard re-review (APPROVE-WITH-FOLLOWUPS) found three ways
+`scoreboard --check --base <rev>` passed a laundered floor, and the land tool
+is to make that check the gate every landing passes. Each was reproduced on
+`ae2ddc6` through the shipping binary before it was fixed:
+`leantex-evidence/sbfollow/harness.sh` runs a given binary as `--check --base
+<sha>` in throwaway repositories whose declared tiers are all tombstones and
+whose one live probe tier has a producer that exits 0, so the aggregate
+passes and the exit status is the base check's alone. On `ae2ddc6` a base
+blob git cannot read passed a hand-edited fall (exit 0; `partial.sh` shows the
+same on the real repository in a blobless clone whose promisor is gone, while
+a full clone says `laundered`); a baseline under a name git quotes (`zzé`) was
+dropped by the `.tsv` filter, so its deletion passed; a committed `# lowered:`
+request passed `--base` with a producer that does not know the form; a live
+tier under such a name ran as a tier; and a pass printed nothing about the
+line it credited. The selftest caught 9 of the 14 prior mutants: M9 (the key
+reading `LEANTEX_FONT`) and R1–R4 survived (`mutations-before-ae2ddc6.log`).
+
+**The base check through the path that ships.** The selftest drives its own
+binary (`IO.appPath`; run interpreted it says so and fails), 17 cases in that
+harness, with git's user and system config and every repository variable
+scrubbed. The refusals exit 1 with their porcelain line: a fall, a vanish, a
+deleted baseline, an unapplied request (floor unmoved, and beside its fall),
+an unreadable base blob (with a fall, and with nothing moved), a deleted
+baseline under a quoted name, a live tier under a bad name, a directory named
+like a baseline. The passes exit 0: nothing moved, a fall paid by a new
+record, a vanish by a new retirement, a tombstone, and the two credits below
+that are the human's. The whole `scoreboard --selftest` takes 2.8–3.0 s
+against 1.2 s for the `ae2ddc6` binary on the same tree (three runs each).
+
+**What changed in the check.** A base blob is `git cat-file blob <oid>` of the
+listed object, and one git cannot read is a `fault` carrying git's own words.
+The listing is `ls-tree -z`, read as committed (`readListing`); only a
+regular file is a baseline, and a tree or symlink named `*.tsv` faults. A tier
+name is `[a-z0-9-]+` (`tierNameOk`): `discover` returns the names that are not
+apart rather than dropping them, since a filter that drops is what hid `zzé`,
+the aggregate faults each, and the porcelain prints any name with `%XX`
+escapes (`shownName`). A committed file still holding a request — a
+`# lowered:` line, or a `# retired:` beside its row — is `stale` under
+`--base` (`heldRequests`): regeneration spends a request in the writing, so
+such a file is not one a producer wrote, whatever that producer's `--check`
+answers. A pass prints `moved:` for each weakening (a fall, a vanish, an
+entry below the cap, a tier's rows under a tombstone) and `credited:` for each
+line new since the base, marking one whose text the base already carries.
+Every malformed-request message now ends with its remedy.
+
+**Every check broken once** (`mutate.sh`: a scratch clone per run, one
+mutation, `lake build scoreboard`, the shipped `scoreboard --selftest`). On
+`c15c873` all 22 are caught by the selftest itself: M1–M10, R1–R4 (R3
+re-expressed as the listing dropped, since the code moved), and N1–N8 for
+this branch's checks (the blob read as empty, no `-z`, every name a tier name,
+a held request not stale, no credits printed, and each new fault path
+printing without counting). M9 is caught because the selftest asks its binary
+for the key (`scoreboard --key <dir>`) under the ambient environment and
+under one with `LEANTEX_FONT` naming another face, `LEANTEX_FONT_PATH`,
+`HOME`, `XDG_CACHE_HOME` and `PATH` an empty directory, and another
+`TZ`/`LC_ALL`/`LANG` — the variables vary; the system font directories do
+not. R4 is caught by a flow case that commits a request no fall answers.
+`scoreboard --key tests/corpus` prints `c13e1a74ff3543d9`, the matrix's
+`src-key`, and `htmlreader` now calls `hermeticHtmlKey` by name.
+
+**Corrections to the brief.** The provenance line at `htmlreader.lean`≈127
+does not name the binary — "rebuilt and compared on every --check" is what
+the in-process key does — so it and `htmlreader.tsv` are unchanged;
+`agent/htmla11y` regenerates that line. An unapplied request fails closed
+through `--base` only if the base check refuses a held request, which the
+brief's list did not name; it is a tightening.
+
+**What it does not do.** A misnamed baseline committed at a base could not
+leave: deleting it faults the base check, keeping it faults the aggregate, and
+its tombstone is misnamed too. The gate admits none and `ae2ddc6` holds none,
+so no landing reaches that wedge. A base that itself holds a request makes
+every landing `stale` until it is regenerated; commonmark's three
+`# lowered:` lines are that state, and re-marking them `(applied)`, as the
+review's L1 says, clears `--base` as well as `--check`.
+
+**Decisions for the human.** F4: `newLowerings` is a multiset, so a tree
+carrying a base record twice has one new line and pays the same fall again,
+and the tool itself writes that file from a request worded like the old
+record, so no rule over the file alone tells a copy from a repeat. Set
+semantics would refuse a sincere second fall that reuses a reason's text; the
+multiset keeps one record per regeneration, and a pass now prints the copy
+marked. F5: `reach` composes lines with free rises between them, so one line
+`1000→0` pays any fall above 0. A line naming exactly the fall is sound per
+regeneration and refuses a branch that regenerates twice with a rise between;
+the alternatives read the branch's history or bound how far one line reaches.
+A pass prints the line under the movement it paid for.
+
+**Routed.** `scripts/land.lean:392` (agent/land, 565346a): `scoreboard-check`
+runs `--check` alone and owes `--check --base {main}`, which the gate list's
+`{main}` substitution already spells. CI owes the same, through the
+coordinator.
