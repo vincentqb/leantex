@@ -4238,62 +4238,116 @@ def labelPiece : Inline → String
   | .formula _ _ body => Ir.formulaFloor body
   | inl => Ir.plainTextOne inl
 
-/-- The presentation a style gives a run inside SVG `<text>`, which takes
-no HTML phrasing element: the rendering the prose emission's own carrier
-gets — `<strong>` is `font-weight: bolder` and `<em>` is italic in the HTML
-rendering rules (HTML §15.3.4), `<code>` sets the mono slot, a series is its
-numeric weight, a language its `lang` — and every other style the class the
-prose `<span>` carries (`styleClass`), whose stylesheet rule applies to a
-`<tspan>` as to any element. `.normal` is spliced by the caller, as the prose
-arm splices it. -/
-private def labelStyleAttrs : Style → Array (String × String)
-  | .bold => #[("font-weight", "bolder")]
-  | .italic => #[("font-style", "italic")]
-  | .emph => #[("font-style", "italic")]
-  | .mono => #[("style", "font-family: var(--font-mono)")]
-  | .series w => #[("font-weight", toString w.css)]
-  | .lang tag => #[("lang", tag)]
-  | .normal => #[]
-  | .smallcaps => #[("class", styleClass .smallcaps)]
-  | .sans => #[("class", styleClass .sans)]
-  | .roman => #[("class", styleClass .roman)]
-  | .medium => #[("class", styleClass .medium)]
-  | .upright => #[("class", styleClass .upright)]
-  | .size n => #[("class", styleClass (.size n))]
+/-- The face a picture label's run is set in, on the axes the PDF resolves
+for it (`Layout.applyStyle`): the weight, the slant, the family slot, small
+caps, and the size and language switches. A label starts at `{}`, where
+the PDF starts it (`Layout.labelInk` sets a label from the default text
+style under the label's colour). -/
+structure LabelFace where
+  weight : Ir.Weight := .m
+  italic : Bool := false
+  slot : Nat := 0
+  smallcaps : Bool := false
+  size : Option String := none
+  lang : Option String := none
+  deriving BEq, Inhabited
+
+/-- One style's step on a label's face, as the PDF takes it: the weight
+through `Style.weight?`, the one map `Layout.weight_agree` holds the PDF
+to; `\emph` toggles the slant, so emphasis inside italic sets upright; NFSS
+shapes are exclusive, so upright clears italic and small caps both; and
+`\textnormal` resets every axis. A backend may not read another backend,
+so the slant and the family are the PDF's step restated here, and the
+per-glyph agreement check (`pictureNodeStyleChecks`) is what holds the
+two to each other. -/
+def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
+  let f := { f with weight := (s.weight?).getD f.weight }
+  match s with
+  | .italic => { f with italic := true }
+  | .emph => { f with italic := !f.italic }
+  | .upright => { f with italic := false, smallcaps := false }
+  | .smallcaps => { f with smallcaps := true }
+  | .mono => { f with slot := 2 }
+  | .sans => { f with slot := 1 }
+  | .roman => { f with slot := 0 }
+  | .normal => {}
+  | .lang tag => { f with lang := some tag }
+  | .size n => { f with size := some n }
+  | .bold | .medium | .series _ => f
+
+/-- A face as the attributes of the `<tspan>` its run sets in, relative to
+the label's own `<text>`, which inherits the body's regular weight and
+upright shape: the bold series is `font-weight: bolder`, the rendering the
+prose `<strong>` gets (HTML §15.3.4) — which over a Light body is the
+family's Regular, as the PDF's bold is there — any other series its numeric
+weight, italic `font-style`, the mono slot its family and the sans slot,
+small caps and a size the classes the prose `<span>` carries
+(`styleClass`), and a language its `lang`. The regular face is no
+attribute at all, so a run the PDF sets regular inherits the regular. -/
+def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
+  let weight : Array (String × String) :=
+    if f.weight == .m then #[]
+    else if f.weight == .b then #[("font-weight", "bolder")]
+    else #[("font-weight", toString f.weight.css)]
+  let slant : Array (String × String) := if f.italic then #[("font-style", "italic")] else #[]
+  let classes := (if f.slot == 1 then [styleClass .sans] else []) ++
+    (if f.smallcaps then [styleClass .smallcaps] else []) ++
+    (match f.size with
+     | some n => [styleClass (.size n)]
+     | none => [])
+  let cls : Array (String × String) :=
+    if classes.isEmpty then #[] else #[("class", " ".intercalate classes)]
+  let family : Array (String × String) :=
+    if f.slot == 2 then #[("style", "font-family: var(--font-mono)")] else #[]
+  let lang : Array (String × String) := match f.lang with
+    | some tag => #[("lang", tag)]
+    | none => #[]
+  weight ++ slant ++ cls ++ family ++ lang
+
+/-- One run of text in a face: character data where the face is the
+label's own, else a `<tspan>` carrying it. -/
+def LabelFace.run (f : LabelFace) (s : String) : Node :=
+  let a := f.attrs
+  if a.isEmpty then Html.text s else Html.elem "tspan" #[Html.text s] a
 
 mutual
 
 /-- One inline of a picture label as SVG `<text>` children, onto `acc`: the
-same runs the PDF sets. Text is character data; a style or a colour is a
-`<tspan>` carrying the presentation the prose emission gives the same inline
-(`labelStyleAttrs`; a colour is SVG's `fill`, through the palette role's
-custom property as prose's `color` is); math is an italic `<tspan>` of its
-floor. Every other inline is its plain text, which is what the label arm
-set for all of them before styles reached it — the node salvage produces
-none of them. Every string goes through the escaper by construction. -/
-def labelNodesOne (acc : Array Node) (x : Inline) : Array Node :=
+same runs the PDF sets, each text run in the face the PDF resolves for it
+(`LabelFace`). A style is no element of its own: it steps the face, and
+every run it covers carries the face in full on its own `<tspan>`
+(`LabelFace.run`), so no weight or slant is ever relative to an enclosing
+run's — which is what lets a reset (`\textnormal`) and a toggle (`\emph`
+inside italic) set what the PDF sets, where nested `bolder` and `italic`
+tspans could only add. A colour is a `<tspan>` of SVG's `fill`, through the
+palette role's custom property as prose's `color` is, and a role its
+class; neither touches the face. Math is an italic `<tspan>` of its floor
+under no weight at all: the PDF sets a formula in the math face, which no
+text weight reaches, so the floor keeps the label's regular weight
+whatever style surrounds it. Every other inline is its plain text in the
+face in force — the node salvage produces none of them. Every string goes
+through the escaper by construction. -/
+def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :=
   match x with
-  | .text s => acc.push (Html.text s)
+  | .text s => acc.push (f.run s)
   | .math _ _ | .formula _ _ _ =>
     acc.push (Html.elem "tspan" #[Html.text (labelPiece x)] #[("font-style", "italic")])
-  | .styled st body =>
-    if st == .normal then labelNodesList acc body.toList
-    else acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) (labelStyleAttrs st))
+  | .styled st body => labelNodesList (f.step st) acc body.toList
   | .colored c name body =>
     let paint := match name with
       | some n => ("style", s!"fill: var(--{n}, {cssColor c})")
       | none => ("fill", cssColor c)
-    acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) #[paint])
+    acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[paint])
   | .role n body =>
-    acc.push (Html.elem "tspan" (labelNodesList #[] body.toList) #[("class", roleClass n)])
+    acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
   | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (Html.text (labelPiece x))
+  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))
 
 /-- `labelNodesOne` over a label's inlines, threading the accumulator. -/
-def labelNodesList (acc : Array Node) : List Inline → Array Node
+def labelNodesList (f : LabelFace) (acc : Array Node) : List Inline → Array Node
   | [] => acc
-  | x :: rest => labelNodesList (labelNodesOne acc x) rest
+  | x :: rest => labelNodesList f (labelNodesOne f acc x) rest
 
 end
 
@@ -4328,10 +4382,10 @@ def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp) : Array Node :=
         ("fill", cssColor color)]
     | .label lx ly content color scale align =>
       -- The label's inline content inside SVG's <text>: the runs the PDF
-      -- sets, each style and colour a <tspan> (`labelNodesList`), math an
+      -- sets, each in its face and colour (`labelNodesList`), math an
       -- italic <tspan> of its floor, every string through the escaper by
       -- construction.
-      let nodes := labelNodesList #[] content.toList
+      let nodes := labelNodesList {} #[] content.toList
       let anchor := match align with
         | .center | .south | .north => "middle"
         | .west => "start"

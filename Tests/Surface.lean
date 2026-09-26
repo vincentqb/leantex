@@ -5469,18 +5469,20 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     unless ← System.FilePath.pathExists p do return none
     return (Font.parse (← IO.FS.readBinFile p)).toOption
   let faces := #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
-    "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf"]
+    "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf", "FiraMath-Regular.otf"]
   let mut loaded : Array Font.Font := #[]
   for n in faces do
     if let some f ← load n then loaded := loaded.push f
-  t "the four shipped Source Serif faces load" (loaded.size == 4)
-  unless loaded.size == 4 do return
-  -- Index 0 regular, 1 bold, 2 italic, 3 bold italic, in every slot.
+  t "the four shipped Source Serif faces and the math face load" (loaded.size == 5)
+  unless loaded.size == 5 do return
+  -- Index 0 regular, 1 bold, 2 italic, 3 bold italic, in every slot; 4 is
+  -- the math face, so a formula sets in it as it does in a document.
   let fs : Font.FontSet := {
     fonts := loaded
     index := ((List.range 3).flatMap fun slot =>
       [((slot, 400, false), 0), ((slot, 700, false), 1),
-       ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray }
+       ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray
+    math := some 4 }
   let boldIdx (i : Nat) : Bool := i == 1 || i == 3
   let italIdx (i : Nat) : Bool := i == 2 || i == 3
   let doc (inner : String) : String :=
@@ -5575,20 +5577,54 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     svgTextRuns body
   let attrIn (env : Array (String × String)) (k : String) : Option String :=
     (env.find? (·.1 == k)).map (·.2)
-  let svgBold (env : Array (String × String)) : Bool :=
-    match attrIn env "font-weight" with
-    | some w => w == "bolder" || w == "bold" || w == "700"
-    | none => false
-  let svgItal (env : Array (String × String)) : Bool :=
-    attrIn env "font-style" == some "italic"
-  -- One entry per non-space glyph, bold and italic, from each artifact.
-  let pdfFlags (src : String) : Array (Char × Bool × Bool) :=
+  -- How CSS presents a run (CSS Fonts 4 §2.2, §2.4). The `<text>` element
+  -- inherits the page's weight and shape — this page ships no faces, so
+  -- CSS's initial `normal`, 400, the regular face's own weight — and every
+  -- `<tspan>` around the run applies its `font-weight` and `font-style`,
+  -- outermost first: `bolder` and `lighter` against the weight they meet,
+  -- a keyword or a number outright, and a class the stylesheet gives a
+  -- weight or a shape (`md`, `up`) as its rule. Reading only the innermost
+  -- attribute took a nested `bolder` for one bold, and an `italic` inside
+  -- an `italic` for the upright the PDF sets.
+  let bolder (w : Nat) : Nat := if w < 350 then 400 else if w < 550 then 700 else 900
+  let lighter (w : Nat) : Nat := if w < 550 then 100 else if w < 750 then 400 else 700
+  let svgFace (env : Array (String × String)) : Nat × Bool :=
+    env.reverse.foldl (init := (400, false)) fun (w, it) (k, v) =>
+      if k == "font-weight" then
+        (if v == "bolder" then bolder w else if v == "lighter" then lighter w
+         else if v == "normal" then 400 else if v == "bold" then 700
+         else v.toNat?.getD w, it)
+      else if k == "font-style" then (w, v == "italic" || v == "oblique")
+      else if k == "class" then
+        let cs := v.splitOn " "
+        (if cs.contains "md" then 400 else w, if cs.contains "up" then false else it)
+      else (w, it)
+  let svgBold (env : Array (String × String)) : Bool := 600 ≤ (svgFace env).1
+  let svgItal (env : Array (String × String)) : Bool := (svgFace env).2
+  -- One entry per non-space glyph, from each artifact. The PDF's is the
+  -- face the glyph ships in — its own weight and slant, the descriptors
+  -- CSS matches the SVG's request against — and whether it is the math
+  -- face; the SVG's is what CSS computes for the run (`svgFace`).
+  let pdfFaces (src : String) : Array (Char × Nat × Bool × Bool) :=
     (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
-      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun (_, c) => (c, boldIdx i, italIdx i)
+      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun (_, c) =>
+        (c, (fs.get i).weight, (fs.get i).isItalic, fs.math == some i)
       | none => #[]
-  let htmlFlags (src : String) : Array (Char × Bool × Bool) :=
+  let svgFaces (src : String) : Array (Char × Nat × Bool) :=
     (svgRuns src).flatMap fun (s, env) =>
-      (s.toList.filter (· != ' ')).toArray.map fun c => (c, svgBold env, svgItal env)
+      let (w, it) := svgFace env
+      (s.toList.filter (· != ' ')).toArray.map fun c => (c, w, it)
+  -- Glyph by glyph: the character and the weight are the PDF's, and so is
+  -- the slant, except where the PDF sets the glyph in the math face: math
+  -- italic is a character of its own there, so the face's slant says
+  -- nothing of the glyph's shape, and the SVG sets every formula as an
+  -- italic floor (`HtmlDoc.labelPiece`), the one label math has.
+  let facesAgree (src : String) : Bool :=
+    let p := pdfFaces src
+    let h := svgFaces src
+    !p.isEmpty && p.size == h.size &&
+      (p.zip h).all fun ((c, w, it, m), (c', w', it')) =>
+        c == c' && w == w' && (m || it == it')
   t "the SVG sets the bold node's word bold"
     (let rs := svgRuns (node "\\textbf{Middle}")
      rs.any (fun (s, env) => s == "Middle" && svgBold env))
@@ -5603,13 +5639,29 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the SVG keeps a bold word's neighbours regular (guard)"
     ((svgRuns (node "Left \\textbf{Middle} Right")).all fun (s, env) =>
       svgBold env == (s == "Middle"))
-  -- Agreement, not presence: it held on the base too, where both artifacts
-  -- lost the style alike; the presence rows above are what failed there.
-  t "per glyph, the SVG's weight and slant are the PDF's"
-    (["\\textbf{Middle}", "\\emph{Middle}", "Left \\textbf{Middle} Right",
-      "\\textbf{\\emph{Middle}}", "\\textcolor{rose}{\\textbf{Middle}}"].all fun b =>
-      let p := pdfFlags (node b)
-      !p.isEmpty && p == htmlFlags (node b))
+  t "a bold node's math runs are the paragraph's (control)" (agrees "\\textbf{$x$}")
+  -- Agreement, not presence: the first five held on the base too, where
+  -- both artifacts lost the style alike, and the presence rows above are
+  -- what failed there. The last four failed at the fix's first cut, whose
+  -- nested tspans could only add to what they met: emphasis inside italic
+  -- stayed italic where the PDF sets it upright, `\textnormal` inside bold
+  -- stayed bold, and math inside bold set bolder.
+  for b in ["\\textbf{Middle}", "\\emph{Middle}", "Left \\textbf{Middle} Right",
+      "\\textbf{\\emph{Middle}}", "\\textcolor{rose}{\\textbf{Middle}}",
+      "\\textit{Plain \\emph{Middle}}", "\\emph{Plain \\emph{Middle}}",
+      "\\textbf{Plain \\textnormal{Middle}}", "\\textbf{$x$}"] do
+    t s!"per glyph, the SVG's weight and slant are the PDF's: {b}" (facesAgree (node b))
+  -- **Math keeps the math face's weight.** The PDF sets a formula in the
+  -- math face, which no text weight reaches, so a bold or alerted node's
+  -- math is the regular math face. The first cut wrapped the floor in the
+  -- enclosing style's `bolder`, and the SVG alone set it bold.
+  t "math inside a bold or alerted node keeps the math face's weight in the SVG"
+    (["\\textbf{$x$}", "\\textbf{\\textcolor{rose}{$x$}}",
+      "\\textcolor{rose}{\\textbf{$x$}}"].all fun b =>
+      let p := pdfFaces (node b)
+      let h := svgFaces (node b)
+      p.any (·.2.2.2) && p.size == h.size &&
+        (p.zip h).all fun ((_, w, _, m), (_, w', _)) => !m || w == w')
   -- The page, not the tree: a printer that broke a `<text>` element's
   -- children onto indented lines put a space between `Left` and a bold
   -- `Middle` that the source never had, because SVG text collapses the
