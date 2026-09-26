@@ -313,9 +313,14 @@ full clone"
         bad := bad + 1
       | .ok baseText =>
         let tipExists ← System.FilePath.pathExists p
-        let (result, reasons) := judgeBase baseText tipExists (← readFileOr p)
+        let tipText ← readFileOr p
+        let (result, reasons) := judgeBase baseText tipExists tipText
         IO.println s!"scoreboard: base={short} tier={tier} result={result}"
         for r in reasons do IO.println s!"scoreboard:   {r}"
+        -- A pass prints what it credited: the weakening a human sanctions
+        -- at landing, read off the gate's own output rather than a diff.
+        if result == "ok" then
+          for c in creditsOf baseText tipText do IO.println s!"scoreboard:   {c}"
         if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
@@ -565,6 +570,8 @@ structure CliCase where
   edit : System.FilePath → String → IO Unit
   exit : UInt32
   says : String → List String
+  /-- Fragments no line of the output may hold. -/
+  absent : List String := []
 
 /-- Replace `old` in a harness file, and fail the case when the file does not
 hold it: an edit that did nothing would pass a case for the wrong reason. -/
@@ -602,8 +609,14 @@ def cliCases : List CliCase :=
   let request := "# lowered: alpha 5→4 — an invented reason\n"
   let trivial := trivialProducer
   let fall := fun d => swapIn d probe "alpha\t5\n" "alpha\t4\n"
+  -- What a passing run prints under its tier line: each weakening, and each
+  -- line new since the base that pays for one — the human gate on weakening
+  -- reads this, not a diff.
+  let credits (lines : List String) := fun (s : String) =>
+    says "ok" s ++ lines.map (s!"scoreboard:   " ++ ·)
+  let record := "# lowered (applied): alpha 5→4 — an old reason\n"
   [{ label := "nothing moved", extra := [], edit := fun _ _ => pure (), exit := 0
-     says := says "ok" },
+     says := says "ok", absent := ["credited:", "moved:"] },
    { label := "a fall edited by hand", extra := [], edit := fun d _ => fall d, exit := 1
      says := says "laundered" },
    { label := "a vanish edited by hand", extra := []
@@ -624,17 +637,39 @@ def cliCases : List CliCase :=
      edit := fun d _ => do
        swapIn d probe enc (enc ++ "# lowered (applied): alpha 5→4 — an invented reason\n")
        fall d
-     exit := 0, says := says "ok" },
+     exit := 0
+     says := credits ["moved: alpha 5 → 4",
+       "credited: # lowered (applied): alpha 5→4 — an invented reason"] },
    { label := "a vanish paid by a new retirement", extra := []
      edit := fun d _ => do
        swapIn d probe enc (enc ++ "# retired: bravo — an invented reason\n")
        swapIn d probe "bravo\t3\n" ""
-     exit := 0, says := says "ok" },
+     exit := 0
+     says := credits ["moved: bravo 3 → gone", "credited: # retired: bravo — an invented reason"] },
    { label := "a tier retired by a new tombstone", extra := []
      edit := fun d _ => do
        IO.FS.writeFile (d / probe) "# retired-tier: an invented reason\n"
        IO.FS.removeFile (d / scriptPath probeTier)
-     exit := 0, says := says "ok" },
+     exit := 0
+     says := credits ["moved: the tier's 2 rows → gone", "credited: # retired-tier: an invented reason"] },
+   -- Two credits a human decides on, printed so they can: a verbatim copy of
+   -- a record the base carries, and a line whose values are not the fall.
+   { label := "a fall paid by a copy of a record the base carries"
+     extra := [(probe, enc ++ record ++ "alpha\t5\nbravo\t3\n")]
+     edit := fun d _ => do
+       swapIn d probe record (record ++ record)
+       fall d
+     exit := 0
+     says := credits ["moved: alpha 5 → 4",
+       "credited: # lowered (applied): alpha 5→4 — an old reason (the same text as a line \
+the base carries)"] },
+   { label := "a fall paid by a line naming another fall", extra := []
+     edit := fun d _ => do
+       swapIn d probe enc (enc ++ "# lowered (applied): alpha 1000→0 — an invented reason\n")
+       fall d
+     exit := 0
+     says := credits ["moved: alpha 5 → 4",
+       "credited: # lowered (applied): alpha 1000→0 — an invented reason"] },
    -- A base blob git cannot read — a blobless partial clone whose promisor is
    -- out of reach, simulated by deleting the loose object — once read as an
    -- empty base, and an empty base holds no floor.
@@ -694,6 +729,9 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
     for l in c.says (sha.take 12).toString do
       unless lines.contains l do
         return some s!"cli {c.label}: no line '{l}'\n    {shown}"
+    for frag in c.absent do
+      if lines.any (containsSub · frag) then
+        return some s!"cli {c.label}: a line holds '{frag}'\n    {shown}"
     return none
   catch e =>
     return some s!"cli {c.label}: the harness could not run: {e}"
@@ -965,6 +1003,18 @@ def selftest : IO UInt32 := do
   no "reach: a fall between two records that no line covers is not reached"
     (reach [l 998 995, l 994 990] 998 == 995)
   no "reach: a record below the floor is not usable" (reach [l 991 990] 998 == 998)
+  -- What a pass prints: weakening only, and the new lines, carried ones not.
+  let credit (b t : String) : IO (Array String) :=
+    return creditsOf (← readFileOr (fixture b)) (← readFileOr (fixture t))
+  no "credits: a rise is no weakening" (← credit "clean" "raised").isEmpty
+  no "credits: a fall, and the record new since the base that pays it"
+    ((← credit "clean" "lowered-applied") == #["moved: alpha 998 → 995",
+      "credited: # lowered (applied): alpha 998→995 — an invented reason, so the fixture is \
+self-contained"])
+  no "credits: a record carried from the base is not credited"
+    ((← credit "lowered-reauth" "reauth-tip") == #["moved: alpha 998 → 995"])
+  no "credits: a new item below the cap is a weakening"
+    ((← credit "clean" "added") == #["moved: delta entered at 3, below the cap 1000"])
   -- The same check through the path that ships: `scoreboard --check --base`
   -- spawned in throwaway repositories. Mutants that made `main` ignore the
   -- base check, or the base check list nothing or count nothing, passed every

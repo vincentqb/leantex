@@ -678,6 +678,42 @@ line was written for it since the base"
 lowering line written since the base reaches it"
   return out
 
+/-- What a passing base check credited, for the human who lands it to read:
+each weakening the tree's file makes against the base's — a fall, a vanish, an
+item entering a `headroom` tier below its cap, a tier retired — then each line
+new since the base that can pay for one, as written. A new line whose text the
+base already carries is marked: the multiset counts the extra copy as new, and
+whether it should is the human's call. -/
+def baseCredits (base tip : Tsv) : Array String := Id.run do
+  let mut out : Array String := #[]
+  if tip.tierRetired.isSome && base.tierRetired.isNone then
+    if !base.rows.isEmpty then out := out.push s!"moved: the tier's {base.rows.size} rows → gone"
+  else
+    for r in base.rows do
+      match tip.find? r.item with
+      | some v => if v < r.value then out := out.push s!"moved: {r.item} {r.value} → {v}"
+      | none => out := out.push s!"moved: {r.item} {r.value} → gone"
+    if let some cap := base.cap? then
+      for r in tip.rows do
+        if (base.find? r.item).isNone && r.value < cap then
+          out := out.push s!"moved: {r.item} entered at {r.value}, below the cap {cap}"
+  for w in newLowerings base tip do
+    let copy := if base.lowered.any (·.sameLine w)
+      then " (the same text as a line the base carries)" else ""
+    out := out.push s!"credited: {w.render}{copy}"
+  for (i, why) in tip.retired do
+    if !base.isRetired i then out := out.push s!"credited: # retired: {i} — {why}"
+  if let some why := tip.tierRetired then
+    if base.tierRetired.isNone then out := out.push s!"credited: # retired-tier: {why}"
+  return out
+
+/-- `baseCredits` from the two texts; nothing when either does not read, which
+`judgeBase` has already faulted. -/
+def creditsOf (baseText tipText : String) : Array String :=
+  match parse baseText, parse tipText with
+  | .ok b, .ok t => baseCredits b t
+  | _, _ => #[]
+
 /-- The requests a committed file still holds, as written: a `# lowered:` line
 no regeneration has applied, and a `# retired:` line beside its row. A file
 holding one is not what its producer writes — regeneration spends a request in
