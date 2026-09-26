@@ -253,18 +253,27 @@ def homePaths (l : String) : Array String := Id.run do
             if let some h := hit dirUsers [] then out := out.push h
   return out
 
-/-- Added lines of a unified=0 diff, with file and new-file line number. -/
+/-- Added lines of a unified=0 diff, with file and new-file line number. A
+`+++ ` line is a file header only between a `diff --git` line and the first
+hunk after it: inside a hunk it is an added line whose own text begins
+`++ `, and reading it as a header once dropped the rest of that hunk, home
+path and all. -/
 def addedLines (diff : String) : Array (String × Nat × String) := Id.run do
   let mut out : Array (String × Nat × String) := #[]
   let mut file := ""
   let mut line := 0
+  let mut inHunk := false
   for l in diff.splitOn "\n" do
-    if l.startsWith "+++ " then
+    if l.startsWith "diff --git " then
+      inHunk := false
+      file := ""
+    else if !inHunk && l.startsWith "+++ " then
       file := if l.startsWith "+++ b/" then (l.drop "+++ b/".length).toString else ""
     else if l.startsWith "@@" then
+      inHunk := true
       let plus := ((l.splitOn "+").getD 1 "").takeWhile Char.isDigit
       line := (plus.toString.toNat?).getD 0
-    else if l.startsWith "+" then
+    else if inHunk && l.startsWith "+" then
       if !file.isEmpty then out := out.push (file, line, (l.drop 1).toString)
       line := line + 1
   return out
@@ -1570,6 +1579,14 @@ def selftest : IO UInt32 := do
     ++ dirLocalHome ++ "alice/w\n"
   if homePathHits (addedLines hd) != #[("PLAN.md", 11, dirLocalHome ++ "alice")] then
     fails.modify ("homePathHits: wrong hit from a staged diff" :: ·)
+  -- An added line whose own text begins `++ ` prints as `+++ …` inside the
+  -- hunk; the path after it, and the next file's, must still be read.
+  let hp := "diff --git a/x.md b/x.md\n--- a/x.md\n+++ b/x.md\n@@ -0,0 +1,2 @@\n+++ counter\n+see "
+    ++ dirLocalHome ++ "bob/x\ndiff --git a/y.md b/y.md\n--- /dev/null\n+++ b/y.md\n@@ -0,0 +1 @@\n+"
+    ++ dirHome ++ "carol/z\n"
+  if homePathHits (addedLines hp)
+      != #[("x.md", 2, dirLocalHome ++ "bob"), ("y.md", 1, dirHome ++ "carol")] then
+    fails.modify ("addedLines: an added line beginning ++ read as a file header" :: ·)
   let gr := "notes.md\x003\x00" ++ dirHome ++ "dave/x\n" ++ "AGENTS.md\x0017\x00export LEAN_CC="
     ++ dirHome ++ "linuxbrew/.linuxbrew/bin/clang\n"
   if homePathHits (grepRecords gr) != #[("notes.md", 3, dirHome ++ "dave")] then
