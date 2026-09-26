@@ -15843,10 +15843,11 @@ fixture, as headroom (`debtCap - count`). The trees are built in-process
 (`a11yCorpusPage`: the document's own stylesheet mode, its images from
 `tests/corpus`) and judged by `HtmlDoc.a11yFacts`, the judge
 `htmlA11yChecks` reads, so the suite and the tier cannot disagree about what
-counts. Hermetic, measured: `htmla11y --check` exits 0, and the aggregate
-reports the tier `ok`, with every font tree and TeX tree masked by tmpfs,
-`HOME` empty and `PATH` holding `lake`, `lean`, `elan` and `sh` alone
-(`unshare -Urm bash hermetic-tier.sh`, `cont-17-hermetic-c4.log`); `--check`
+counts. Hermetic, measured at `2e666c4`: `htmla11y --check` exits 0, and
+so does the whole `scoreboard --check`, with every font tree and TeX tree
+masked by tmpfs, `HOME` empty and `PATH` holding `lake`, `lean`, `elan` and
+`sh` alone (`unshare -Urm bash hermetic-tier.sh`,
+`cont-38-hermetic-tip.log`); `--check`
 takes 3 s. The five, with
 today's totals: `contrast` 72 (the stylesheet's four token pairings,
 `themePairs` — `themePairs_contract` says it is exactly
