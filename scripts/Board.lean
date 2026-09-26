@@ -133,8 +133,11 @@ deriving BEq, Inhabited
 def Lowered.render (w : Lowered) : String :=
   s!"{w.state.tag} {w.item} {w.old}→{w.new} — {w.why}"
 
-/-- The same line whatever its standing: a request and the record it became
-are one human act. -/
+/-- The same text whatever its standing: a request and the record it became
+are one human act of writing. Spending the request is another act, so the
+base check cancels a line only against one of the same standing
+(`newLowerings`) and reads this only to say which base line a new one shares
+its text with. -/
 def Lowered.sameLine (a b : Lowered) : Bool :=
   a.item == b.item && a.old == b.old && a.new == b.new && a.why == b.why
 
@@ -562,17 +565,25 @@ lines that are **new** since the base — a record carried from the base
 cannot pay twice. -/
 
 /-- The lowering lines the tree's file carries that the base's does not, as
-a multiset: one base line cancels one identical tree line, whatever the
-standing of either. -/
+a multiset: one base line cancels one identical tree line **of the same
+standing**. A record the tree writes for a request the base holds is new,
+because spending the request is: it was never applied at the base, so the
+regeneration that applies it is the act this landing adds. Cancelling across
+standings once let the base's request swallow that record, and the tool's own
+remedy for a base holding a request ended at `laundered`. -/
 def newLowerings (base tip : Tsv) : Array Lowered :=
   let step := fun (acc : List Lowered × Array Lowered) (w : Lowered) =>
-    if acc.1.any (·.sameLine w) then (acc.1.eraseP (·.sameLine w), acc.2)
+    if acc.1.any (· == w) then (acc.1.eraseP (· == w), acc.2)
     else (acc.1, acc.2.push w)
   (tip.lowered.foldl step (base.lowered.toList, #[])).2
 
-/-- The items the tree's file retires that the base's did not. -/
+/-- The items the tree's file retires that the base's does not record as
+retired. A retirement the base only requests — its line beside the row it
+retires — is unspent there, and the regeneration that drops the row spends
+it, as a record spends a request (`newLowerings`). -/
 def newRetirements (base tip : Tsv) : Array String :=
-  tip.retired.filterMap fun (i, _) => if base.isRetired i then none else some i
+  tip.retired.filterMap fun (i, _) =>
+    if base.isRetired i && !base.pendingRetirements.contains i then none else some i
 
 /-- One pass: the lowest `new` among the lines usable from `m`. The value may
 rise freely — rises need no line — so a line whose `old` is at or above `m`
@@ -686,8 +697,10 @@ lowering line written since the base reaches it"
 each weakening the tree's file makes against the base's — a fall, a vanish, an
 item entering a `headroom` tier below its cap, a tier retired — then each line
 new since the base that can pay for one, as written. A new line whose text the
-base already carries is marked: the multiset counts the extra copy as new, and
-whether it should is the human's call. -/
+base already carries is marked. A record spending a request the base holds,
+or a retirement the base requested and the tree applied, says so; any other
+copy is marked because the multiset counts the extra copy as new, and whether
+it should is the human's call. -/
 def baseCredits (base tip : Tsv) : Array String := Id.run do
   let mut out : Array String := #[]
   if tip.tierRetired.isSome && base.tierRetired.isNone then
@@ -701,12 +714,18 @@ def baseCredits (base tip : Tsv) : Array String := Id.run do
       for r in tip.rows do
         if (base.find? r.item).isNone && r.value < cap then
           out := out.push s!"moved: {r.item} entered at {r.value}, below the cap {cap}"
+  let spends := " (spends the request the base carries)"
   for w in newLowerings base tip do
-    let copy := if base.lowered.any (·.sameLine w)
-      then " (the same text as a line the base carries)" else ""
-    out := out.push s!"credited: {w.render}{copy}"
+    let note :=
+      if w.state == .applied && base.pendingLowerings.any (·.sameLine w) then spends
+      else if base.lowered.any (·.sameLine w) then " (the same text as a line the base carries)"
+      else ""
+    out := out.push s!"credited: {w.render}{note}"
+  let retiredNow := newRetirements base tip
   for (i, why) in tip.retired do
-    if !base.isRetired i then out := out.push s!"credited: # retired: {i} — {why}"
+    if retiredNow.contains i then
+      let note := if base.pendingRetirements.contains i then spends else ""
+      out := out.push s!"credited: # retired: {i} — {why}{note}"
   if let some why := tip.tierRetired then
     if base.tierRetired.isNone then out := out.push s!"credited: # retired-tier: {why}"
   return out
@@ -733,14 +752,18 @@ def heldRequests (t : Tsv) : Array String :=
 /-- What the tree's copy of a baseline owes whatever the base holds: the
 format's faults (`validate`) — a duplicated item, whose floor a first reader
 picks, and a request naming a floor the file does not hold among them — and
-the requests it still holds. The base check applies it to every tier file in
-the tree, one the base does not carry included; reading the base's listing
-alone once let a new tier land holding a request, and validating nothing let
-a duplicate row hide a fall. -/
-def treeVerdict (t : Tsv) : Array String × Array String :=
+the requests it still holds, each saying whether the base holds it too: then
+main carries it, and a landing that never touched it is stale all the same.
+The base check applies it to every tier file in the tree, one the base does
+not carry included; reading the base's listing alone once let a new tier land
+holding a request, and validating nothing let a duplicate row hide a fall. -/
+def treeVerdict (base : Option Tsv) (t : Tsv) : Array String × Array String :=
+  let inherited := (base.map heldRequests).getD #[]
   ((validate t).map (s!"the tree's file is malformed: {·}"),
    (heldRequests t).map fun l =>
-     s!"the tree's file still holds `{l}`, a request no regeneration has applied; \
+     let also := if inherited.contains l then " — the base holds it too, so main carries it \
+and every landing is stale until one spends it or deletes it" else ""
+     s!"the tree's file still holds `{l}`, a request no regeneration has applied{also}; \
 regenerate the tier with its producer, which spends it in the writing, or delete the line")
 
 /-- The base check for one tier, from the two texts: the result word and its
@@ -762,7 +785,7 @@ retired by a `# retired-tier: <why>` tombstone in its file, never by deleting it
     | .error e, _ => ("fault", #[s!"the base's baseline does not read: {e}"])
     | _, .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
     | .ok b, .ok t =>
-      let (bad, held) := treeVerdict t
+      let (bad, held) := treeVerdict (some b) t
       let fs := baseFaults b t
       if !bad.isEmpty then ("fault", bad ++ fs ++ held)
       else if !fs.isEmpty then ("laundered", fs ++ held)
@@ -775,7 +798,7 @@ def judgeNew (tipText : String) : String × Array String :=
   match parse tipText with
   | .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
   | .ok t =>
-    let (bad, held) := treeVerdict t
+    let (bad, held) := treeVerdict none t
     if !bad.isEmpty then ("fault", bad ++ held)
     else if !held.isEmpty then ("stale", held)
     else ("ok", #[])

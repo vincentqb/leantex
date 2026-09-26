@@ -580,7 +580,15 @@ def baseCases : List (String × String × String) :=
    ("clean", "lowered-second", "stale"),
    ("clean", "retired-pending", "stale"),
    ("clean", "lowered-unheld", "fault"),
-   ("clean", "duplicate", "fault")]
+   ("clean", "duplicate", "fault"),
+   -- A request the base holds is unspent there: the regeneration that spends
+   -- it writes a record, which is the act this landing adds, so it pays.
+   -- Before, the base's request cancelled that record and the tool's own
+   -- remedy ended at `laundered`.
+   ("lowered", "lowered-applied", "ok"),
+   ("retired-pending", "retired", "ok"),
+   ("lowered", "lowered", "stale"),
+   ("lowered", "clean", "ok")]
 
 def readFixture (name : String) : IO (Except String Tsv) := do
   let text ← readFileOr (fixture name)
@@ -855,7 +863,32 @@ alone — its format, and any request it still holds"] },
        let o ← IO.Process.output
          { cmd := "ln", args := #["-s", "../../zz-elsewhere.tsv", probe], cwd := some d }
        unless o.exitCode == 0 do throw (IO.userError s!"ln exited {o.exitCode}")
-     exit := 1, says := says "fault" }]
+     exit := 1, says := says "fault" },
+   -- A base that holds a request: main carries authority nobody spent. Every
+   -- landing is stale until one spends it or deletes it, and spending it the
+   -- way the tool does — the fall made, the line written back as a record —
+   -- passes, where the base's request once cancelled that record.
+   { label := "a request the base holds, the tree unchanged"
+     extra := [(probe, enc ++ request ++ "alpha\t5\nbravo\t3\n")]
+     edit := fun _ _ => pure (), exit := 1, says := says "stale" },
+   { label := "a request the base holds, spent as the tool spends it"
+     extra := [(probe, enc ++ request ++ "alpha\t5\nbravo\t3\n")]
+     edit := fun d _ => do
+       swapIn d probe request "# lowered (applied): alpha 5→4 — an invented reason\n"
+       fall d
+     exit := 0
+     says := credits ["moved: alpha 5 → 4",
+       "credited: # lowered (applied): alpha 5→4 — an invented reason (spends the request the \
+base carries)"] },
+   { label := "a request the base holds, deleted"
+     extra := [(probe, enc ++ request ++ "alpha\t5\nbravo\t3\n")]
+     edit := fun d _ => swapIn d probe request "", exit := 0
+     says := says "ok", absent := ["credited:", "moved:"] },
+   { label := "a retirement the base holds, spent as the tool spends it"
+     extra := [(probe, enc ++ "# retired: bravo — an invented reason\nalpha\t5\nbravo\t3\n")]
+     edit := fun d _ => swapIn d probe "bravo\t3\n" "", exit := 0
+     says := credits ["moved: bravo 3 → gone",
+       "credited: # retired: bravo — an invented reason (spends the request the base carries)"] }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
@@ -1228,6 +1261,24 @@ self-contained"])
     ((← credit "lowered-reauth" "reauth-tip") == #["moved: alpha 998 → 995"])
   no "credits: a new item below the cap is a weakening"
     ((← credit "clean" "added") == #["moved: delta entered at 3, below the cap 1000"])
+  -- A record, or a dropped row, spending a request the base holds is credited,
+  -- and says whose request it spent.
+  no s!"credits: a record spending the base's request ({joined (← credit "lowered" "lowered-applied")})"
+    ((← credit "lowered" "lowered-applied") == #["moved: alpha 998 → 995",
+      "credited: # lowered (applied): alpha 998→995 — an invented reason, so the fixture is \
+self-contained (spends the request the base carries)"])
+  no s!"credits: a row dropped for the base's retirement ({joined (← credit "retired-pending" "retired")})"
+    ((← credit "retired-pending" "retired") == #["moved: alpha 998 → gone",
+      "credited: # retired: alpha — the measurement it stood for is no longer made (spends \
+the request the base carries)"])
+  -- A request the landing did not add says so: main carries it, and every
+  -- landing is stale until one spends it or deletes it.
+  let inherited := judgeBase (← readFileOr (fixture "lowered")) true (← readFileOr (fixture "lowered"))
+  no s!"held: a request the base holds too says so ({joined inherited.2})"
+    (inherited.2.any (containsSub · "the base holds it too"))
+  let own := judgeBase cleanText true (← readFileOr (fixture "lowered"))
+  no s!"held: a request new since the base does not ({joined own.2})"
+    (own.2.size == 1 && !own.2.any (containsSub · "the base holds it too"))
   -- The same check through the path that ships: `scoreboard --check --base`
   -- spawned in throwaway repositories. Mutants that made `main` ignore the
   -- base check, or the base check list nothing or count nothing, passed every
