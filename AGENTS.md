@@ -140,7 +140,10 @@ in this repo; refer to the private reference corpus abstractly.
   is the shape), `_gated` (a mutating output implies a proven state — the
   landing's merge and push are proposed only from a state whose every gate
   observation was ok; a shape of its own because the antecedent is the
-  *action*, not the value, so no other suffix's reading applies). A new
+  *action*, not the value, so no other suffix's reading applies), `_pinned`
+  (the landing's run invariant — the gated tip, the gate tree's read-back
+  and the landed `main` are one sha — holds initially and is preserved by
+  every transition: `init_pinned`, `step_pinned`, `trace_pinned`). A new
   property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks

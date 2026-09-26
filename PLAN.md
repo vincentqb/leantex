@@ -16694,3 +16694,148 @@ same `land` build and the `land --selftest` and `land --scratch-selftest`
 steps the gate list now has, and `scripts/cites.lean`'s `treeRoots` owes an
 entry for `scripts.land`, without which a docstring in the landing modules
 cannot cite its own theorem by name.
+
+
+### 2026-09-26 — the gates run in a tree the landing owns, and the push names the sha
+
+The round-2 review of the landing tool blocked on two reproductions, and a
+landing done by hand found a third defect no gate could see. The gates ran
+in the branch's worktree while only the branch *ref* was pinned, so a
+worktree switched to another branch mid-landing had that tree gated and the
+pinned tip landed. The push named `main`, so a commit made on `main` between
+the verify and the push reached the remote with no gate behind it. And a
+rebase through PLAN.md's `merge=union` driver kept a heading the branch had
+deleted: git reported no conflict, and every gate passed. Each fix below was
+broken once through the path that ships. The transcripts are in the
+evidence directory for this task.
+
+**The gated tree is the landed commit, by construction.** After the rebase
+the run makes `git worktree add --detach <run dir>/tree <gatedTip>`. It
+seeds the tree with a copy of a `.lake` — the branch worktree's, else
+main's, `cp -a --reflink=auto`, never a hardlink — and runs every gate
+there. The tree is read back (`rev-parse --is-inside-work-tree`, `rev-parse
+HEAD`, `status --porcelain`) when it is made, and before and after every
+gate. Each gate observation carries that read-back, and the core records a
+gate only at the gated tip, clean. The tree is removed before the final
+line on every halt, and by a `finally` after an exception. The
+inside-work-tree test is there because the run directory lives inside
+`.git`: in a directory there that is not a work tree, `rev-parse HEAD`
+walks up and answers with the main worktree's `HEAD`, which is a sha, only
+not the tree's. The branch re-read after the gates now asks one thing:
+whether the author still names the commit the gates ran on.
+
+**Both mutations name one sha, as theorems.** `.push` carries the tip. The
+driver runs `git push origin <tip>:refs/heads/main`, with no force of any
+kind, so a remote that moved on rejects it. `step_ff_exact` and
+`step_push_exact` state it: whenever `step` proposes the fast-forward or the
+push, it names the gated tip, and the push also names the `main` read back
+after the merge. In both cases `gatedAt t` holds: the tree read back at `t`
+when it was made and after every gate the run recorded, clean each time.
+`trace_mutates_exact` lifts both over every run from a state satisfying the
+invariant, and `init_pinned` puts every run the driver starts in that
+state. So the gated sha is the merged sha is the pushed sha.
+
+**A rebase is judged by what it produced.** After the rebase the core
+compares each file's net change before and after. Before is the diff from
+the branch's fork point with the new base to its old tip. After is the diff
+from the new base to the rebased tip. Both are read with `git diff-tree -r
+-p --no-renames --binary -U0`: plumbing, because this host sets
+`color.diff=always`, which reaches `git diff` even through a pipe. `netOf`
+drops hunk headers and `index` lines, the two kinds of line that record
+*where* rather than *what*. `netDrift` names every file whose remaining
+lines differ in order, including a file present on one side only. A drift
+puts the branch back with `reset --keep` to its pre-rebase tip. That happens
+only if the worktree still reads at the rebased tip, on its branch, clean.
+The run then refuses, naming the files, and `proven` requires the
+comparison to have held. A union-merged file is compared like any other
+file: that is exactly where the kept line came back. The comparison has a
+known cost. A rebase that joins or splits two of the branch's hunks
+reorders their lines, and is refused though nothing was lost. That needs
+the new base to have changed the lines between the two hunks, which outside
+a union-merged file is a conflict anyway. The branch's owner rebases such a
+branch and lands it again. A rebase conflict still refuses before this
+comparison, with the unmerged paths in the ledger's `why`.
+
+**Exit 4 is `landed-unpushed`.** A push that was rejected, or a remote that
+does not read back at the landed tip, follows a verified fast-forward:
+`main` moved. Exit 1 had meant "a gate failed". That run now has its own
+verdict word and exit code.
+
+**Nothing a child inherits names another repository.** git exports
+`GIT_DIR` and `GIT_INDEX_FILE` to a hook in every linked worktree. The
+driver's children lose git's own `rev-parse --local-env-vars` list, a fixed
+copy of it, and `GIT_NAMESPACE`; the repository is the one the working
+directory names. The scenario harness's children lose every `GIT_` variable
+the process inherited, read from `/proc/self/environ`. They also run with
+`GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so a host's
+signing or hooks setting cannot change a scenario. Every fixture command
+must succeed, and a fixture that fails is that scenario's named failure.
+
+**The lock dies with its holder, and retention never deletes a live run.**
+The lock is `flock` on `land/landing.lock`, which the kernel releases
+however its holder ends. Beside it, an owner record names the run, its pid,
+the agent and the run directory. A run that gets the lock and finds a
+record left behind writes an `abandoned` ledger row for the dead run, and
+removes its gate tree. A refusal names the live holder. Every run holds a
+`flock` on `<run dir>/alive` for its whole life. Retention skips a
+directory whose lock is held, and its own. `status` prunes nothing and
+removes its own run directory. Run ids are the seconds, then fixed-width
+nanoseconds, then the pid, so they sort by time and no two runs can share
+one. One measured pitfall: Lean frees a handle at its last use, and the
+lock goes with it, so the `alive` handle is unlocked at the very end of
+`main`.
+
+**The gate list is one data value.** `defaultGates` holds one line per gate,
+in the syntax a `LAND_GATES` override uses, read by the same parser
+(`parseGates`): a new gate is one line. A list that does not parse is
+empty, and an empty plan proves nothing. No shipped gate may be absent. The
+scoreboard's skip read the lakefile for a substring, so both scoreboard
+gates are unconditional now, with the build under `--wfail`. An argument
+spelled `{main}` becomes the sha of `main` the run read.
+
+**What was measured, and on what.**
+- `land --scratch-selftest` builds each of 15 scenarios as a throwaway
+  git-only repository. All 15 pass at the tip of this round. The harness
+  can drive another build (`LAND_SCENARIO_BINARY`). Driven against the
+  round-2 build (7e59075), the nine scenarios for this round's defects fail
+  and the six regression scenarios pass. The nine are: the tree's lifecycle,
+  a switched branch worktree, a gate that moves its tree, the push naming
+  the tip, a non-fast-forward push, union drift, a foreign `GIT_DIR`,
+  retention during a landing, and a landing killed in its gates.
+- The positive control landed this round's tip onto its base through the
+  twelve shipped gates. It ran on a scratch clone whose `origin` was a
+  scratch bare remote. Exit 0 in 104 s; `main`, the remote and the gated
+  tip read back as one sha; the tree was removed; the ledger holds
+  `landing`, `landed` and `pushed`.
+- Four breaks went through the path that ships, on a scratch clone. Pushing
+  `prevMainTip` is refused by the pre-commit hook, because
+  `stepMerge_push_exact` no longer proves. Dropping the gate's head check is
+  refused by the hook through `stepGate_pinned`. Ignoring the drift,
+  committed with hooks off, fails the landing at `land-selftest`. The
+  driver pushing `main`, committed with hooks off, fails the landing at
+  `land-scenarios`. In both landings `main` was unmoved.
+- The review's own case ran with `GIT_DIR` exported to
+  `--scratch-selftest`, from outside any repository. It exits 0 and leaves
+  the named repository untouched: HEAD, log, config, branches, worktrees,
+  and no `land/` directory.
+
+**What this supersedes in the entry above.** The branch re-read after the
+gates no longer checks cleanliness: the gate tree's read-back catches a
+gate that edits tracked files. "A directory under `land/` serialises
+landings" became `flock`. "Kept to the newest fifty" is now never a live
+run's. The scoreboard's gates are no longer skipped on a lakefile without
+the target. "The honest fix is a detached scratch worktree" is done for the
+gates. `land check` still rebases the branch in its own worktree.
+
+**Left, and routed.** `land check` rewriting the branch stays: the gate
+tree is made from the rebased tip. `step_ff_covers` still restates its
+guard, and its docstring says so. A refused gate set still writes no ledger
+row. The tool runs no `worktree prune`, which would also prune another
+agent's missing worktree, so a dead run whose directory is already gone
+leaves a registration for git's own gc. The old tool's `lock` directory is
+not honoured by this one, so during the change one binary lands at a time.
+Routed to the coordinator: CI's `lake build --wfail land`, `land
+--selftest` and `land --scratch-selftest` steps; `scripts.land` in
+`cites.lean`'s `treeRoots`; and `scoreboard --check --base {main}` as a
+shipped gate. That last is one line in `defaultGates`, and its fail-open
+paths (the scoreboard review's F1–F3) belong to a sibling.
