@@ -4133,6 +4133,126 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
+/-- Glue a row of boxes can hold between two boxes: a space, or the fill
+that takes what the boxes leave of the measure (`\hfill`, `\hfil`). A
+paragraph break is not among them — it ends the line the boxes stand on. -/
+private def rowGlue : Raw → Bool
+  | .space => true
+  | .ctrl "hfill" _ => true
+  | .ctrl "hfil" _ => true
+  | _ => false
+
+/-- A minipage's width group and its content past it, and whether a
+`[pos]`-family option stood before the width (classes.dtx §minipage:
+`[pos][height][inner-pos]{width}`). `none` without a width group. -/
+private def boxParts (body : Array Raw) : Option (Raw × Array Raw × Bool) :=
+  let (opts, k) := takeOpts body 0 3
+  let k := skipSpaces body k
+  match body[k]? with
+  | some (.group g gp) => some (.group g gp, body.extract (k + 1) body.size, opts)
+  | _ => none
+
+/-- Each run of minipages at one level whose separators are row glue holding
+a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
+declare: LaTeX sets such boxes on one line with the fill between them
+(`\hfill` is `\hskip 0pt plus 1fill`, TeXbook chapter 12), which is the
+columns model's own leftover rule — the measure the declared widths leave
+goes into equal gutters between the boxes. A box standing alone, a pair a
+paragraph break or other content separates, and a pair only a space
+separates are left as they stand. Returns the level and, for each row,
+where it opened and whether a box carried `[pos]` options. -/
+private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool) := Id.run do
+  let mut out : Array Raw := #[]
+  let mut rows : Array (Pos × Bool) := #[]
+  let mut i := 0
+  for _ in [0:rs.size + 1] do
+    match (rs[i]? : Option Raw) with
+    | none => break
+    | some (.env "minipage" b p) =>
+      match boxParts b with
+      | none =>
+        out := out.push (.env "minipage" b p)
+        i := i + 1
+      | some (w0, c0, o0) =>
+        let mut cols : Array (Raw × Array Raw × Pos) := #[(w0, c0, p)]
+        let mut opts := o0
+        let mut j := i + 1
+        for _ in [i + 1:rs.size + 1] do
+          let mut k := j
+          let mut fill := false
+          for _ in [j:rs.size + 1] do
+            match rs[k]? with
+            | some r =>
+              if rowGlue r then
+                if !(r matches .space) then fill := true
+                k := k + 1
+              else break
+            | none => break
+          match rs[k]? with
+          | some (.env "minipage" b2 p2) =>
+            match boxParts b2 with
+            | some (w, c, o) =>
+              if fill then
+                cols := cols.push (w, c, p2)
+                opts := opts || o
+                j := k + 1
+              else break
+            | none => break
+          | _ => break
+        if cols.size ≥ 2 then
+          out := out.push (.env "columns"
+            (cols.map fun (w, c, cp) => Raw.env "column" (#[w] ++ c) cp) p)
+          rows := rows.push (p, opts)
+          i := j
+        else
+          out := out.push (.env "minipage" b p)
+          i := i + 1
+    | some r =>
+      out := out.push r
+      i := i + 1
+  return (out, rows)
+
+/-- One level of rows, formed and named: each row is a translation onto the
+columns model (N0100), and a `[pos]` option inside one is noted where the
+row opens, since a row's boxes stand top-aligned. -/
+private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
+  let (out, rows) := boxRows rs
+  for (p, opts) in rows do
+    became "\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…"
+      "one row of boxes, the fill between them" p (subject := some "env:minipage-row")
+    if opts then
+      sayOnce "env:minipage-row-options" .N0102
+        "'minipage' [pos] options are ignored in a row of boxes: the boxes stand top-aligned" p
+  return out
+
+mutual
+
+/-- The pass that sets side-by-side boxes in one row, whole tree, after the
+idiom rewrite (so a `\parbox` is the box it became). Structural on `Raw`,
+the list walk carrying its accumulator. -/
+private def boxRowList (acc : Array Raw) : List Raw → M (Array Raw)
+  | [] => pure acc
+  | r :: rest => do
+    let r' ← boxRowRaw r
+    boxRowList (acc.push r') rest
+
+private def boxRowRaw : Raw → M Raw
+  | .group body p => do
+    let kids ← boxRowList #[] body.toList
+    return .group (← boxRowEmit kids) p
+  | .env n body p => do
+    let kids ← boxRowList #[] body.toList
+    return .env n (← boxRowEmit kids) p
+  | .math d body p => pure (.math d body p)
+  | .word s p => pure (.word s p)
+  | .space => pure .space
+  | .par p => pure (.par p)
+  | .ctrl n p => pure (.ctrl n p)
+  | .sym c p => pure (.sym c p)
+  | .verb env s p => pure (.verb env s p)
+
+end
+
 /-- Is this raw an overlay spec token? Shape alone, because an item's
 boundary is a lexical question: `\onslide<...>` starts an item whatever its
 spec says. Whether that spec names a step — and so whether the item can be
@@ -4621,6 +4741,9 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[]
     let out ← rewriteList false raws #[] raws.toList 0 0
+    -- After the idiom rewrite, so a `\parbox` is the box it became.
+    let out ← boxRowList #[] out.toList
+    let out ← boxRowEmit out
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0
     -- Replay. Each body is rewritten as the preamble material it was

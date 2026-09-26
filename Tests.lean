@@ -14,6 +14,7 @@ import Tests.CompatGate
 import Tests.HtmlTokens
 import Tests.HtmlA11y
 import Tests.Conditionals
+import Tests.BoxRow
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -86,6 +87,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   filChecks ref oneFace
   raggedSideChecks ref oneFace
   boxWidthChecks ref oneFace
+  minipageRowChecks ref oneFace
   underlineChecks ref geom oneFace font
   linkSignalChecks ref geom oneFace
   inkGeometryChecks ref
