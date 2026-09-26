@@ -694,13 +694,21 @@ warning. -/
 def texInternal (name : String) : Bool :=
   name.contains '@' || texPrimitives.contains name
 
+/-- Is a site in `file` package code — a style or class file the document
+loads — rather than the document's own text? The splice names every span of
+a local `.sty` by its file (the input wrapper), and a hook such a file
+registers replays inside that wrapper (`rewrite`), so the file a site stands
+in is the boundary. A class file would be `.cls`; none is read today. -/
+def packageFile (file : String) : Bool :=
+  file.endsWith ".sty" || file.endsWith ".cls"
+
 /-- A refusal of `name` at a site in `file` demotes exactly when the site is
-inside a spliced `.sty` — the only door a `.sty` span enters by is the
-splice (`\input` reads `.tex`) — and the name is a TeX internal. The author
-can act on a per-line warning in their own files; in a venue's style file
-they cannot, and N0020 already names that file once. -/
+inside package code — the only door a `.sty` span enters by is the splice
+(`\input` reads `.tex`) — and the name is a TeX internal. The author can act
+on a per-line warning in their own files; in a venue's style file they
+cannot, and N0020 already names that file once. -/
 def styInternal (file name : String) : Bool :=
-  file.endsWith ".sty" && texInternal name
+  packageFile file && texInternal name
 
 /-- The one door a diagnostic lands through here: a push, never a write —
 the silence guard reads `diags.size` growth on its own. `subject` is the
@@ -6066,15 +6074,16 @@ theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[
 /-- What a spliced `.sty` yielded, counted after elaboration: a construct
 was honoured when its translation note (N0100) carries the file, named
 when a warning does, and a TeX internal refused when a demoted refusal
-does — a note that kept its W0301/W0357 code is the demotion's signature,
-and at this point in the run nothing else makes one (`\allow` acceptance
-resolves later, in the driver). -/
+does — a note that kept its W0301/W0357/W0391 code is the demotion's
+signature, and at this point in the run nothing else makes one (`\allow`
+acceptance resolves later, in the driver). -/
 def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
   let mine := diags.filter fun d => d.span.any (·.file == sty)
   ((mine.filter (·.code == "N0100")).size,
    (mine.filter (·.severity == .warning)).size,
    (mine.filter fun d =>
-     d.severity == .note && (d.code == "W0301" || d.code == "W0357")).size)
+     d.severity == .note &&
+       (d.code == "W0301" || d.code == "W0357" || d.code == "W0391")).size)
 
 /-- The one N0020 construction — the note that says the file was looked
 at, and how much of it took. Built after elaboration, from the splice

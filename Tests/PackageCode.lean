@@ -76,3 +76,49 @@ def loadedTestChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       "\\@ifpackageloaded{booktabs}{\\@ifclassloaded{article}{both}{one}}{none}" == "both")
   t "a test missing a branch is left to the unknown-command refusal"
     ((dvE (dvDoc "" "\\@ifpackageloaded{booktabs}{yes}")).any (·.code == "W0301"))
+
+
+/-- **An unknown command in package code sets none of its arguments, and one
+diagnostic per site says so.** The same construct registered by the
+document's own hook is document content and keeps today's recovery — that
+pair is the two builds the premise beside the rule reads: they differ only
+in which file registers the hook, and only the style's drops. Both
+artifacts are read: the laid-out pages and the typed HTML tree. -/
+def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds, _) ← runStyParity "codehook"
+  let text := String.join ((bodyLines (layoutOf fonts doc)).toList.map (lineText ·))
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  -- was: "hidden words more hidden secret Opening line. kept words".
+  t "a style's hook sets none of an unknown command's arguments on the page"
+    (!hasStr text "hidden" && !hasStr text "secret" && !hasStr text "wide" &&
+     hasStr text "Opening line.")
+  t "nor in the web page"
+    (treeShownOccurs body "hidden" == 0 && treeShownOccurs body "secret" == 0 &&
+     treeShownOccurs body "Opening line." == 1)
+  t "the document's own use of the same command keeps its arguments"
+    (hasStr text "kept words" && treeShownOccurs body "kept words" == 1)
+  let pkg := ds.filter fun d => d.code == "W0391" && d.span.any (·.file == "venuecode.sty")
+  t "each package-code site is named once, under the construct's own key"
+    (pkg.size == 2 &&
+     pkg.any (·.subject == some "pkgcode:venueprobe") &&
+     pkg.any (·.subject == some "pkgcode:@venuehelper"))
+  t "a TeX internal there is a note, counted as the style file's refusal"
+    (pkg.any (fun d => d.subject == some "pkgcode:@venuehelper" && d.severity == .note) &&
+     pkg.any (fun d => d.subject == some "pkgcode:venueprobe" && d.severity == .warning) &&
+     Compat.styCounts "venuecode.sty" ds == (1, 1, 1))
+  t "the document's site keeps its own refusal, with the kept text as salvage"
+    ((ds.filter fun d => d.code == "W0301" && d.subject == some "ctrl:venueprobe").size == 1 &&
+     doc.salvage.all (fun s => !hasStr s.text "hidden" && !hasStr s.text "secret") &&
+     doc.salvage.any (fun s => hasStr s.text "kept words"))
+  -- The other build: the same hook written by the document itself.
+  let own := pageTextOf fonts
+    ("\\documentclass{article}\n\\AtBeginDocument{\\venueprobe[wide]{hidden words}}\n" ++
+     "\\begin{document}\nOpening line.\n\\end{document}")
+  t "the same hook registered by the document keeps the arguments as text"
+    (hasStr own "hidden words" && hasStr own "Opening line.")
+  -- The loaded-test fixture, on the web page too.
+  let (gDoc, _, _) ← runStyParity "guardhook"
+  let (_, gBody, _) := HtmlDoc.emitTree {} gDoc
+  t "a style's hook test sets no text in the web page either"
+    (treeShownOccurs gBody "wideframe" == 0 && treeShownOccurs gBody "Body words stay." == 1)

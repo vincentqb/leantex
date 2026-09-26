@@ -145,6 +145,12 @@ structure Ctx where
   first pass — the one that discovers which face the document declared —
   must use. -/
   picMetric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- A definition body read the way its use will read it, at the definition
+  (rule (b)'s trial, `gateRedefB`): document content, whatever file defined
+  it. A command a style file defines is called from the document's own text,
+  and the call is where its arguments stand, so the trial must not read the
+  body as package code. -/
+  atUse : Bool := false
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -2837,6 +2843,54 @@ private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
       (code == .W0301 && Compat.styInternal ctx.file name)
       (bumpRunShape name key optionRun st)
 
+/-- The index past an unknown command's `{...}` groups: up to `n` of them,
+each after any spaces. Spaces after the last group stay where they stand, as
+TeX leaves them after a macro's arguments. -/
+def argGroupsEnd (raws : Array Raw) (j : Nat) : Nat → Nat
+  | 0 => j
+  | n + 1 =>
+    let k := skipSpaces raws j
+    match raws[k]? with
+    | some (.group _ _) => argGroupsEnd raws (k + 1) n
+    | _ => j
+
+theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws j n := by
+  induction n generalizing j with
+  | zero => simp [argGroupsEnd]
+  | succ n ih =>
+    simp only [argGroupsEnd]
+    split
+    · have h1 := skipSpaces_ge raws j
+      have h2 := ih (skipSpaces raws j + 1)
+      omega
+    · omega
+
+/-- The key an unknown command in package code is counted under: its own,
+never the document's `ctrl:` one. The two sites have different fates — a
+document's arguments stand as text, package code's go — so a shared key
+would put one fate's words on the other's line and ride the second as a
+note under the first. -/
+def pkgCodeKey (name : String) : String := "pkgcode:" ++ name
+
+/-- The words an unknown command in package code is refused in. -/
+private def pkgCodeMsg (name : String) : String :=
+  s!"unknown command '\\{name}' in package code; its arguments were dropped, not set as text"
+
+/-- **An unknown command in package code sets none of its arguments.** Style
+and class files are programming — conditionals, definitions, tests — so an
+argument there addresses the engine, never the page, and recovering it as
+text is how a style file's own test printed a package name on a paper's first
+line. The recovery is the index past the command's arguments, option runs
+included: there is no inline in its type to add, and the arm hands its text
+accumulator on untouched. The loss is still accounted for, once per site,
+under the construct's own key (`recoverPackageCmd_accounts`); a TeX internal
+demotes as it does in the preamble (`Compat.styInternal`). -/
+private def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
+    (pos : Pos) : EM { k : Nat // j ≤ k } := do
+  modify (warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name)
+    pos (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name))
+  return ⟨argGroupsEnd raws j 9, argGroupsEnd_ge raws j 9⟩
+
 /-- Record what a refusal recovered: the code that named the loss, the
 command it stood for, and the source the kept groups carried. Outside the
 inline knot for the same reason `warnUnknownCmd` is — the arm calls one
@@ -2922,7 +2976,7 @@ def refFormNeedsKind : Ir.RefForm → Bool
   | .plain | .paren | .labelOnly => false
 
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
+seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
@@ -4115,6 +4169,25 @@ a side channel, never slide content" pos
     have hadv : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
+  else if (unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
+      !ctx.atUse then
+    -- premise: packageCodeChecks — a style's spans, and the hooks it
+    -- registers, carry the style's own file; that block builds both sides
+    -- Package code sets no text: the arguments, option runs included, go
+    -- with the command (`recoverPackageCmd`), and `acc`/`sb` pass on as
+    -- they came. A definition's trial reads as its use (`atUse`).
+    let j0 := skipSpaces raws (i + 1)
+    have hj0 := skipSpaces_ge raws (i + 1)
+    let j1 := skipStar raws j0
+    have hj1 := skipStar_ge raws j0
+    let jr := skipOptionRuns raws j1 pos
+    have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
+    let ⟨j3, hj3⟩ ← recoverPackageCmd ctx name raws jr.1 pos
+    if let some bpos := jr.2 then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    have hadv : sliceWeight raws j3 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws j3 acc sb
   else
     -- Best effort: the {...} arguments are content, and content is
     -- never dropped for want of a command. Only the formatting is lost.
@@ -4160,7 +4233,7 @@ end
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage
+unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
@@ -4241,6 +4314,26 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     simp [bumpRunShape_size_exact]
   · rw [hrun, warnOnceState_diags_exact]
     simp
+
+/-- **Package code sets no text: its refusal is paid for by exactly one
+diagnostic, and by nothing on the page.** The empty recovery `_accounts`
+names: an unknown command in a style or class file adds no inline —
+`recoverPackageCmd` returns an index and nothing else, and its arm hands the
+text accumulator on as it came — and records no salvage, so the census can
+attribute no ink to it. What it does push is one diagnostic at the end,
+W0391, under the construct's own key: the loss named once per site, as every
+counted refusal is (`Diag.tallySites_exact` reads that subject). -/
+theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw)
+    (j : Nat) (pos : Pos) (st : ESt) :
+    ((recoverPackageCmd ctx name raws j pos).run st).2.salvage = st.salvage ∧
+      ∃ d, ((recoverPackageCmd ctx name raws j pos).run st).2.diags = st.diags.push d ∧
+        d.kind = .W0391 ∧ d.subject = some (pkgCodeKey name) := by
+  have hrun : ((recoverPackageCmd ctx name raws j pos).run st).2 =
+      warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name) pos
+        (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name) st := rfl
+  rw [hrun]
+  exact ⟨rfl, _, warnOnceState_diags_exact .., warnOnceDiag_kind_exact ..,
+    warnOnceDiag_subject_exact ..⟩
 
 /-- Bind declared parameters from the call site — a user command's, or a
 user environment's from the groups after its `\begin`. Returns the bindings
@@ -7579,7 +7672,8 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
   let saved ← get
   set saved.freshReport
   let ⟨checkCtx, hm⟩ : MCtx ctx ← pure ⟨{ ctx with
-    args := cmd.params.map fun p => (p.name, some #[Inline.text "x"]) },
+    args := cmd.params.map fun p => (p.name, some #[Inline.text "x"])
+    atUse := true },
     rfl, rfl, rfl, rfl⟩
   let nonEmpty ←
     if bodyIsBlock cmd.body then do
