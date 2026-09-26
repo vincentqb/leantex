@@ -6,7 +6,10 @@ reference. Run from the repository root:
   lake env lean --run scripts/rhythm.lean --check       gate against tests/scoreboard/rhythm.tsv
   lake env lean --run scripts/rhythm.lean --selftest    break each predicate once
   lake env lean --run scripts/rhythm.lean --table       every boundary: engine, reference, delta
+  lake env lean --run scripts/rhythm.lean --lines <f>   a fixture's engine lines, leaves and marks
   lake env lean --run scripts/rhythm.lean --reference [fixture…]   needs lualatex; writes tests/rhythm/<f>.ref
+  lake env lean --run scripts/rhythm.lean --verify-reference [fixture…]   needs lualatex; rebuilds
+                                                        each reference and holds it to the file
 
 A fixture is `tests/rhythm/<name>.tex`. Its header declares what it probes
 (`% rhythm:`) and its boundaries, one per line:
@@ -757,7 +760,7 @@ declared before it, so the line above it is not the previous boundary's block"
   finally
     IO.FS.removeDirAll work
 
-def reference (names : List String) : IO UInt32 := do
+def reference (names : List String) (verify : Bool := false) : IO UInt32 := do
   let all ← fixtureNames
   let names := if names.isEmpty then all.toList else names
   let mut bad := 0
@@ -773,8 +776,18 @@ def reference (names : List String) : IO UInt32 := do
         IO.eprintln s!"rhythm: {e}"
         bad := bad + 1
       | .ok r =>
-        IO.FS.writeFile (refPath n) r.render
-        IO.println s!"rhythm: wrote {refPath n} ({r.rows.size} boundaries)"
+        if verify then
+          -- The committed numbers are only as good as their reproducibility:
+          -- rebuild each one and hold it to the file, byte for byte.
+          let committed ← readFileOr (refPath n)
+          if committed == r.render then IO.println s!"rhythm: {refPath n} reproduces"
+          else
+            IO.eprintln s!"rhythm: {refPath n} does not reproduce on this host; a fresh \
+measurement differs from the committed file"
+            bad := bad + 1
+        else
+          IO.FS.writeFile (refPath n) r.render
+          IO.println s!"rhythm: wrote {refPath n} ({r.rows.size} boundaries)"
   return (if bad == 0 then 0 else 1)
 
 /-! ## Selftest -/
@@ -892,6 +905,7 @@ end Rhythm
 def main (args : List String) : IO UInt32 := do
   match args with
   | "--reference" :: names => Rhythm.reference names
+  | "--verify-reference" :: names => Rhythm.reference names (verify := true)
   | ["--table"] => Rhythm.table
   | ["--lines", name] => Rhythm.dumpLines name
   | _ => tierMain "rhythm" (.pairs "within" "boundaries") Rhythm.tierMeasure Rhythm.selftest args
