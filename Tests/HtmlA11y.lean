@@ -194,6 +194,19 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (dims == #[(some "340", some "204")])
     t "html a11y: a PDF page's <img> is named undecodable"
       (pdiags.any fun d => d.subject == some "img:box.pdf")
+    -- W0605's remedy, followed, clears it: the web page's include gated to
+    -- HTML and the PDF include to PDF. Keeping the PDF include for both
+    -- backends, as a reader of "keep the PDF for print" might, does not.
+    let webOnly := "\\begin{ifbackend}{html}\n\\includegraphics[alt={A card}]{rects.png}\n\
+\\end{ifbackend}\n"
+    let pdfInclude := "\\includegraphics[alt={A card}]{box.pdf}"
+    let fires (body : String) : Bool :=
+      let (_, _, ds) := HtmlDoc.emitTree { imgs := boxStore } (elabStr (dvDoc "" body)).1
+      ds.any fun d => d.subject == some "img:box.pdf"
+    t "html a11y: W0605 holds while the PDF include ships to both backends"
+      (fires (webOnly ++ pdfInclude))
+    t "html a11y: W0605's remedy clears it"
+      (!fires (webOnly ++ "\\begin{ifbackend}{pdf}\n" ++ pdfInclude ++ "\n\\end{ifbackend}"))
     let pdoc := (elabStr (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"))).1
     match (Ir.imageRefs pdoc).find? (·.startsWith Ir.picSrcPrefix) with

@@ -1323,15 +1323,17 @@ def undecodableSrcs (assetsDir : String) (imgs : Image.Store) (srcs : Array Stri
     imgs.entries.any fun en => pdfPageImg en && imageHref assetsDir imgs en.src == s
 
 /-- W0605: the page links a file no browser decodes — the image stays a
-dead box showing its text alternative. Keyed `img:<src>` so the site census
-counts it. -/
+dead box, labelled only by its text alternative where it has one. Keyed
+`img:<src>` so the site census counts it. The help names the remedy that
+clears it: the web page's include and the print include each gated to
+their own backend. -/
 def undecodableDiag (src : String) : Diag :=
   Diag.of .W0605
-    s!"image '{src}' is a PDF page no browser decodes; the web page shows its text \
-alternative instead"
+    s!"image '{src}' is a PDF page no browser decodes; the web page shows a \
+placeholder box instead"
     (subject := some s!"img:{src}")
     (help := some "for the web page, \\includegraphics a PNG export inside \
-\\begin{ifbackend}{html} and keep the PDF for print")
+\\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}")
 
 /-- No decimal digit is the separator the asset name is split on. -/
 private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by
