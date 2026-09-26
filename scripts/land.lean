@@ -59,6 +59,11 @@ structure Env where
   /-- ISO-8601 UTC, for the ledger. -/
   ts : String
   childEnv : Array (String × Option String)
+  /-- An exclusive lock on `<run dir>/alive`, held for the whole run: how
+  retention tells a live run's directory from a dead one's. Unlocked at the
+  very end of `main`, which is also what keeps the handle — and so the lock
+  — alive until then. -/
+  alive : IO.FS.Handle
 
 /-- A porcelain value: quoted when it holds whitespace, a quote, or nothing
 at all. Every `why` holds spaces and a conflicted path may, so an unquoted
@@ -218,36 +223,65 @@ def mkEnv : IO (Except String Env) := do
     | none => top
   let d ← try
       IO.Process.output
-        { cmd := "date", args := #["-u", "+%Y%m%dT%H%M%S %Y-%m-%dT%H:%M:%SZ"] }
+        { cmd := "date", args := #["-u", "+%Y%m%dT%H%M%S%N %Y-%m-%dT%H:%M:%SZ"] }
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   let stamps := wsSplit (if d.exitCode == 0 then d.stdout else "run -")
-  let nanos ← IO.monoNanosNow
-  let runId := (stamps.headD "run") ++ s!"-{nanos % 100000}"
+  -- Nanoseconds after the seconds, fixed width, so run ids sort by time
+  -- within a second too; the pid, so two runs in one nanosecond still differ.
+  let runId := (stamps.headD "run") ++ s!"-{← IO.Process.getPID}"
   let ts := stamps.getD 1 "-"
   let runDir := s!"{common}/land/{runId}"
   IO.FS.createDirAll runDir
+  let alive ← IO.FS.Handle.mk s!"{runDir}/alive" .append
+  let _ ← alive.tryLock
   IO.FS.writeFile s!"{runDir}/bootstrap.log" (← trace.get)
-  return .ok { common, mainWt, runDir, runId, ts, childEnv }
+  return .ok { common, mainWt, runDir, runId, ts, childEnv, alive }
 
-/-- Keep the newest run directories and drop the rest. Eleven directories
-and 58 KB of gate logs accumulated in one scratch session with nothing
-removing them; run ids are timestamp-prefixed, so newest is last by name. -/
 def rmQuiet (p : System.FilePath) : IO Unit := do
   try IO.FS.removeDirAll p catch _ => pure ()
 
+/-- Is the run that owns this directory still running? It holds the lock on
+`alive` for its whole life, and the kernel drops that lock when the process
+ends, however it ends. A directory without the file is an older run's. A
+lock that cannot be tried is answered "live": keeping a dead run's logs a
+while longer costs disk, deleting a live run's cost a landing. -/
+def runLive (d : System.FilePath) : IO Bool := do
+  if !(← (d / "alive").pathExists) then return false
+  try
+    let h ← IO.FS.Handle.mk (d / "alive") .read
+    let got ← h.tryLock
+    if got then h.unlock
+    return !got
+  catch _ => return true
+
+/-- Keep the newest run directories and drop the rest — never a live run's,
+and never this run's own. Eleven directories and 58 KB of gate logs
+accumulated in one scratch session with nothing removing them; run ids are
+timestamp-prefixed, so newest is last by name. Fifty-five `status` calls
+during one landing once deleted that landing's directory, and the landing
+died on its next log write. A dead run's gate tree is unregistered first,
+so the directory's removal leaves git no stale worktree. -/
 def retainRuns (e : Env) (keep : Nat) : IO Unit := do
   let base : System.FilePath := s!"{e.common}/land"
   let entries ← try base.readDir catch _ => pure #[]
   let mut names : Array String := #[]
   for d in entries do
     let n := d.fileName
-    if n != "lock" && n != "ledger.jsonl" then
-      let isDir ← try (base / n).isDir catch _ => pure false
-      if isDir then names := names.push n
+    let isDir ← try (base / n).isDir catch _ => pure false
+    if isDir && n != "lock" then names := names.push n
   let sorted := names.qsort (· < ·)
   if sorted.size > keep then
     for i in [0:sorted.size - keep] do
-      rmQuiet (base / sorted[i]!)
+      let d := base / sorted[i]!
+      if d.toString == e.runDir then continue
+      if ← runLive d then continue
+      if ← (d / "tree").pathExists then
+        let _ ← try
+            IO.Process.output
+              { cmd := "git", args := #["worktree", "remove", "--force", (d / "tree").toString],
+                cwd := some e.mainWt, env := e.childEnv, stdin := .null }
+          catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+      rmQuiet d
 
 -- ## Worktree discovery
 
@@ -819,26 +853,57 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
   finally
     if ← treeLive.get then removeTree e ctr
 
-/-- One landing at a time. The lock is a directory, because creating one is
-atomic where a "does it exist" check followed by a write is not; a second
-concurrent landing used to reach the fast-forward and fail there under a
-misdiagnosis. -/
-def withLock (e : Env) (act : IO UInt32) : IO UInt32 := do
-  let lock : System.FilePath := s!"{e.common}/land/lock"
-  let got ← try
-      IO.FS.createDir lock
-      pure true
-    catch _ => pure false
+/-- The landing lock, and the record of who holds it. -/
+def lockPath (e : Env) : String := s!"{e.common}/land/landing.lock"
+def ownerPath (e : Env) : String := s!"{e.common}/land/landing.owner"
+
+/-- A `key=value` field of an owner record; empty when absent. -/
+def recField (rec key : String) : String :=
+  match (wsSplit rec).find? (·.startsWith s!"{key}=") with
+  | some w => (w.drop (key.length + 1)).toString
+  | none => ""
+
+/-- One landing at a time. The lock is `flock` on a file, which the kernel
+releases when the holder ends however it ends: the directory it replaced
+outlived a landing stopped by `timeout`, and refused every landing after it
+with nothing to say whether its owner lived. The owner record beside it
+names the holding run and its pid. A record found by a run that *got* the
+lock was left by a run that died holding it: that run is recorded as
+`abandoned`, and its gate tree removed. -/
+def withLock (e : Env) (name : String) (act : IO UInt32) : IO UInt32 := do
+  let ctr ← IO.mkRef 0
+  IO.FS.createDirAll s!"{e.common}/land"
+  let h? ← try some <$> IO.FS.Handle.mk (lockPath e) .append catch _ => pure none
+  let some h := h?
+    | say "lock" "fail" [("path", lockPath e), ("why", "the lock file cannot be opened")]
+      sayFinal .failed [("name", name), ("why", "the lock file cannot be opened")]
+      return 3
+  let got ← try h.tryLock catch _ => pure false
+  let prev := trimWs (← try IO.FS.readFile (ownerPath e) catch _ => pure "")
   if !got then
-    let owner ← try IO.FS.readFile (lock / "owner") catch _ => pure "?"
-    say "lock" "fail" [("path", lock.toString), ("owner", trimWs owner)]
-    sayFinal .refused [("why", "another landing holds the lock")]
+    say "lock" "fail" [("path", lockPath e), ("owner", prev)]
+    sayFinal .refused [("name", name), ("why", s!"another landing holds the lock ({prev}); \
+it is running: wait for it to end, or stop that process")]
     return 2
-  try IO.FS.writeFile (lock / "owner") s!"{e.runId}\n" catch _ => pure ()
+  if prev.isEmpty then say "lock" "ok" [("path", lockPath e)]
+  else
+    let deadDir := recField prev "dir"
+    let tree := s!"{deadDir}/tree"
+    if !deadDir.isEmpty && (← System.FilePath.pathExists tree) then
+      let _ ← git e ctr "lock" #["worktree", "remove", "--force", tree] (some e.mainWt)
+      pure ()
+    let ok ← writeLedger e [("ts", e.ts), ("run", recField prev "run"),
+      ("name", recField prev "name"), ("verdict", "abandoned"), ("found", e.runId),
+      ("pid", recField prev "pid"), ("dir", deadDir)]
+    say "lock" "ok" [("path", lockPath e), ("abandoned", recField prev "run"),
+      ("ledger", if ok then "ok" else "fail")]
+  let record := s!"run={e.runId} pid={← IO.Process.getPID} name={name} dir={e.runDir}\n"
+  try IO.FS.writeFile (ownerPath e) record catch _ => pure ()
   let r ← try act catch ex => do
     IO.eprintln s!"land: {ex}"
     pure 3
-  try IO.FS.removeDirAll lock catch _ => pure ()
+  try IO.FS.removeFile (ownerPath e) catch _ => pure ()
+  h.unlock
   return r
 
 -- ## land new
@@ -1680,6 +1745,49 @@ def scenarioForeignGitDir (self root : String) : IO Outcome := do
          , detail := s!"exit={code} main={after} gated={tip} target={tBefore}->{tAfter} \
 target-land-dir={touched}" }
 
+/-- Retention and listings run while a landing is inside its gates: a
+gate calls this very binary 55 times as `retire` (which prunes run
+directories) and 5 as `status`. The landing's own directory must survive,
+and the landing finish. -/
+def scenarioRetention (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/retain" "retain"
+  writeExe s!"{s.root}/prune.sh"
+    s!"#!/bin/sh\ni=0\nwhile [ $i -lt 55 ]; do \"{self}\" retire nope >/dev/null 2>&1; i=$((i+1)); done\n\
+i=0\nwhile [ $i -lt 5 ]; do \"{self}\" status >/dev/null 2>&1; i=$((i+1)); done\n"
+  let tip ← revOf s.repo "refs/heads/agent/retain"
+  let (code, out) ← landIn self s.repo #["retain"] s!"prune={s.root}/prune.sh"
+  let after ← revOf s.repo "refs/heads/main"
+  let run := match (out.splitOn "step=run result=ok id=").drop 1 |>.head? with
+    | some rest => (wsSplit rest).headD ""
+    | none => ""
+  let kept ← System.FilePath.pathExists s!"{s.repo}/.git/land/{run}"
+  return { label := "pruning and listings during a landing leave its directory, and it lands"
+         , ok := code == 0 && after == tip && !run.isEmpty && kept
+         , detail := s!"exit={code} main={after} gated={tip} run={run} kept={kept}" }
+
+/-- A landing killed inside a gate — a timeout, Ctrl-C, a killed agent —
+must not wedge the next one: the lock dies with it, and the next landing
+records the dead run and removes its gate tree. -/
+def scenarioKilled (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/killed" "k1"
+  let wt2 := s!"{s.root}/lt-k2"
+  hgitOk #["worktree", "add", "-q", "-b", "agent/k2", wt2, "main"] s.repo
+  IO.FS.writeFile s!"{wt2}/k2.txt" "k2\n"
+  hgitOk #["add", "k2.txt"] wt2
+  hgitOk #["commit", "-qm", "Add k2"] wt2
+  writeExe s!"{s.root}/die.sh" "#!/bin/sh\nkill -TERM $PPID\nsleep 1\n"
+  let (c1, _) ← landIn self s.repo #["k1"] s!"die={s.root}/die.sh"
+  let tip2 ← revOf s.repo "refs/heads/agent/k2"
+  let (c2, out2) ← landIn self s.repo #["k2"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  let ledger ← try IO.FS.readFile s!"{s.repo}/.git/land/ledger.jsonl" catch _ => pure ""
+  let wts ← worktreePaths s.repo
+  return { label := "a landing killed in its gates leaves no lock and no tree for the next"
+         , ok := c1 != 0 && c2 == 0 && after == tip2 && says out2 "abandoned="
+             && says ledger "\"verdict\":\"abandoned\"" && wts.size == 3
+         , detail := s!"first-exit={c1} second-exit={c2} main={after} gated={tip2} \
+worktrees={wts.size}" }
+
 /-- Drive the driver against throwaway repositories. `LAND_SCENARIO_BINARY`
 names another build to drive instead of this one — how a scenario is shown
 to fail on the tip before its fix. -/
@@ -1702,7 +1810,8 @@ def scratchSelftest : IO UInt32 := do
     , ("stopped", scenarioStoppedRebase), ("switched", scenarioWorktreeSwitched)
     , ("treemoved", scenarioTreeMoved), ("pushtip", scenarioPushNamesTip)
     , ("pushff", scenarioPushNotFastForward), ("union", scenarioUnionDrift)
-    , ("foreign", scenarioForeignGitDir) ]
+    , ("foreign", scenarioForeignGitDir), ("retain", scenarioRetention)
+    , ("killed", scenarioKilled) ]
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
     -- A fixture that could not be built is the scenario's failure, named,
@@ -1756,7 +1865,6 @@ def main (argv : List String) : IO UInt32 := do
     match ← mkEnv with
     | .error e => IO.eprintln s!"land: {e}"; return 3
     | .ok env =>
-      retainRuns env 50
       let landing (n : String) (m : Mode) (p : Bool) : IO UInt32 := do
         if reserved.contains n then
           IO.eprintln s!"land: {n} is a subcommand, not an agent name"
@@ -1766,17 +1874,27 @@ def main (argv : List String) : IO UInt32 := do
           say "gateset" "fail" [("why", why)]
           sayFinal .refused [("name", n), ("why", why)]
           return 2
-        | .ok (gs, gateset) => withLock env (landRun env n m p gs gateset)
+        | .ok (gs, gateset) => withLock env n (landRun env n m p gs gateset)
       let named (n : String) (act : IO UInt32) : IO UInt32 := do
         if reserved.contains n then
           IO.eprintln s!"land: {n} is a subcommand, not an agent name"
           return 3
         act
-      match args with
-      | ["status"] => landStatus env
-      | ["new", n] => named n (landNew env n)
-      | ["retire", n] => named n (landRetire env n)
-      | ["check", n] => landing n .check false
-      | [n] => landing n .land false
-      | [n, "--push"] => landing n .land true
-      | _ => IO.eprintln usage; return 3
+      let code ← match args with
+        | ["status"] => do
+          -- A listing is no run: it prunes nothing and leaves no directory,
+          -- so any number of them cannot crowd a landing's out.
+          let c ← landStatus env
+          rmQuiet env.runDir
+          pure c
+        | _ => do
+          retainRuns env 50
+          match args with
+          | ["new", n] => named n (landNew env n)
+          | ["retire", n] => named n (landRetire env n)
+          | ["check", n] => landing n .check false
+          | [n] => landing n .land false
+          | [n, "--push"] => landing n .land true
+          | _ => IO.eprintln usage; return 3
+      env.alive.unlock
+      return code
