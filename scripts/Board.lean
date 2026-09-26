@@ -722,19 +722,36 @@ def creditsOf (baseText tipText : String) : Array String :=
 no regeneration has applied, and a `# retired:` line beside its row. A file
 holding one is not what its producer writes — regeneration spends a request in
 the writing — so the base check reads it as `stale` whatever the producer's
-`--check` answers: the aggregate reads a producer by its exit status alone, and
-a producer need not know the request form. -/
+`--check` answers, for every tier file in the tree, a tier new since the base
+included (`treeVerdict`): the aggregate reads a producer by its exit status
+alone, and a producer need not know the request form. -/
 def heldRequests (t : Tsv) : Array String :=
   t.pendingLowerings.map (·.render) ++
     t.retired.filterMap fun (i, why) =>
       if t.rows.any (·.item == i) then some s!"# retired: {i} — {why}" else none
 
+/-- What the tree's copy of a baseline owes whatever the base holds: the
+format's faults (`validate`) — a duplicated item, whose floor a first reader
+picks, and a request naming a floor the file does not hold among them — and
+the requests it still holds. The base check applies it to every tier file in
+the tree, one the base does not carry included; reading the base's listing
+alone once let a new tier land holding a request, and validating nothing let
+a duplicate row hide a fall. -/
+def treeVerdict (t : Tsv) : Array String × Array String :=
+  ((validate t).map (s!"the tree's file is malformed: {·}"),
+   (heldRequests t).map fun l =>
+     s!"the tree's file still holds `{l}`, a request no regeneration has applied; \
+regenerate the tier with its producer, which spends it in the writing, or delete the line")
+
 /-- The base check for one tier, from the two texts: the result word and its
 reasons. A baseline committed at the base that the tree no longer carries is
 a fault — deleting the file was the other way to discard a floor — and a
-whole tier is retired only by its tombstone. A tree's file still holding a
-request is `stale`: whatever it would pay for, it is not a file a
-regeneration wrote. -/
+whole tier is retired only by its tombstone. A tree's file that does not read
+as the format is a fault, one that moved a floor with no new line to pay for
+it is `laundered`, and one still holding a request is `stale`: whatever it
+would pay for, it is not a file a regeneration wrote. The base's file is held
+to nothing but reading: a fault in it is main's, and no landing could clear
+it. -/
 def judgeBase (baseText : String) (tipExists : Bool) (tipText : String) :
     String × Array String :=
   if !tipExists then
@@ -745,13 +762,23 @@ retired by a `# retired-tier: <why>` tombstone in its file, never by deleting it
     | .error e, _ => ("fault", #[s!"the base's baseline does not read: {e}"])
     | _, .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
     | .ok b, .ok t =>
+      let (bad, held) := treeVerdict t
       let fs := baseFaults b t
-      let held := (heldRequests t).map fun l =>
-        s!"the tree's file still holds `{l}`, a request no regeneration has applied; \
-regenerate the tier with its producer"
-      if !fs.isEmpty then ("laundered", fs ++ held)
+      if !bad.isEmpty then ("fault", bad ++ fs ++ held)
+      else if !fs.isEmpty then ("laundered", fs ++ held)
       else if !held.isEmpty then ("stale", held)
       else ("ok", #[])
+
+/-- The base check for a tier file the base does not carry: no floor there to
+hold it to, so it is judged alone, by `treeVerdict`. -/
+def judgeNew (tipText : String) : String × Array String :=
+  match parse tipText with
+  | .error e => ("fault", #[s!"the tree's baseline does not read: {e}"])
+  | .ok t =>
+    let (bad, held) := treeVerdict t
+    if !bad.isEmpty then ("fault", bad ++ held)
+    else if !held.isEmpty then ("stale", held)
+    else ("ok", #[])
 
 /-- Render a baseline: provenance first (retirement lines among it, carried
 forward), then the sorted rows. -/

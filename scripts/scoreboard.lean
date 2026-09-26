@@ -272,8 +272,36 @@ def readListing (listing : String) : Option (Array Listed) := Id.run do
     | _ => return none
   return some out
 
+/-- The tree's copy of a baseline: `none` where there is none, and a fault
+where the name holds anything but a regular file. Only a regular file is what
+git commits as a floor: a symlink would reach the base as a link, which the
+base listing faults and no landing could then remove. -/
+def treeCopy (p : String) : IO (Except String (Option String)) := do
+  let md? ← try some <$> (System.FilePath.mk p).symlinkMetadata catch _ => pure none
+  let some md := md? | return .ok none
+  let what := match md.type with
+    | .file => none
+    | .dir => some "a directory"
+    | .symlink => some "a symlink"
+    | .other => some "a special file"
+  if let some w := what then
+    return .error s!"{p} is {w} in the tree, not a regular file, so it holds no floor this \
+check can read; failing closed — commit the tier's baseline as a file"
+  return .ok (some (← IO.FS.readFile p))
+
+/-- The tree's `tests/scoreboard/*.tsv`, direct children, spelled as the base's
+listing spells them, sorted. -/
+def treeBaselines : IO (Array String) := do
+  let dir : System.FilePath := "tests/scoreboard"
+  let mut out : Array String := #[]
+  if ← dir.isDir then
+    for e in ← dir.readDir do
+      if e.fileName.endsWith ".tsv" then out := out.push s!"tests/scoreboard/{e.fileName}"
+  return out.qsort (· < ·)
+
 /-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
-tree's copy (`judgeBase`), one porcelain line per baseline,
+tree's copy (`judgeBase`), and every tier file the tree adds judged alone
+(`judgeNew`), one porcelain line per file,
 `scoreboard: base=<sha> tier=<t> result=ok|laundered|stale|fault`. The
 ratchet compares committed files with a measurement, so it cannot see a floor
 edited down by hand, or a baseline deleted and regenerated from nothing: both
@@ -320,16 +348,39 @@ floor can be held to it; failing closed — fetch the base's objects, or run the
 full clone"
         bad := bad + 1
       | .ok baseText =>
-        let tipExists ← System.FilePath.pathExists p
-        let tipText ← readFileOr p
-        let (result, reasons) := judgeBase baseText tipExists tipText
-        IO.println s!"scoreboard: base={short} tier={tier} result={result}"
-        for r in reasons do IO.println s!"scoreboard:   {r}"
-        -- A pass prints what it credited: the weakening a human sanctions
-        -- at landing, read off the gate's own output rather than a diff.
-        if result == "ok" then
-          for c in creditsOf baseText tipText do IO.println s!"scoreboard:   {c}"
-        if result != "ok" then bad := bad + 1
+        match ← treeCopy p with
+        | .error why =>
+          IO.println s!"scoreboard: base={short} tier={tier} result=fault"
+          IO.println s!"scoreboard:   {why}"
+          bad := bad + 1
+        | .ok copy =>
+          let tipText := copy.getD ""
+          let (result, reasons) := judgeBase baseText copy.isSome tipText
+          IO.println s!"scoreboard: base={short} tier={tier} result={result}"
+          for r in reasons do IO.println s!"scoreboard:   {r}"
+          -- A pass prints what it credited: the weakening a human sanctions
+          -- at landing, read off the gate's own output rather than a diff.
+          if result == "ok" then
+            for c in creditsOf baseText tipText do IO.println s!"scoreboard:   {c}"
+          if result != "ok" then bad := bad + 1
+  -- Every tier file the base does not carry, judged alone: it has no floor at
+  -- the base, but it is the tree's committed file all the same. Reading the
+  -- base's listing alone let a new tier land holding a request.
+  let known := entries.map fun
+    | .baseline p _ => p
+    | .notAFile p _ _ => p
+  for p in ← treeBaselines do
+    if known.contains p then continue
+    let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
+    let (result, reasons) := match ← treeCopy p with
+      | .error why => ("fault", #[why])
+      | .ok none => ("fault", #[s!"{p} was listed in the tree and could not be read"])
+      | .ok (some text) => judgeNew text
+    IO.println s!"scoreboard: base={short} tier={tier} result={result}"
+    IO.println "scoreboard:   new since the base: no floor there to hold it to, so it is \
+judged alone — its format, and any request it still holds"
+    for r in reasons do IO.println s!"scoreboard:   {r}"
+    if result != "ok" then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
 -- ## The queue
@@ -509,7 +560,9 @@ def wellFormed : List String :=
 
 /-- The base check's cases: the file committed at the base, the tree's file,
 and the verdict. Each laundering case is a way a floor moved with no line
-written for it since the base; each `ok` case is a move a line pays for. -/
+written for it since the base; each `ok` case is a move a line pays for; a
+`fault` is a tree file that does not read as the format, whatever else it
+moved; a `stale` one still holds a request. -/
 def baseCases : List (String × String × String) :=
   [("clean", "clean", "ok"),
    ("clean", "raised", "ok"),
@@ -526,7 +579,8 @@ def baseCases : List (String × String × String) :=
    ("clean", "lowered", "stale"),
    ("clean", "lowered-second", "stale"),
    ("clean", "retired-pending", "stale"),
-   ("clean", "lowered-unheld", "laundered")]
+   ("clean", "lowered-unheld", "fault"),
+   ("clean", "duplicate", "fault")]
 
 def readFixture (name : String) : IO (Except String Tsv) := do
   let text ← readFileOr (fixture name)
@@ -646,11 +700,14 @@ def cliCases : List CliCase :=
      exit := 1, says := says "fault" },
    { label := "an unapplied request, the floor unmoved", extra := []
      edit := fun d _ => swapIn d probe enc (enc ++ request), exit := 1, says := says "stale" },
+   -- The request names a floor the file no longer holds, so the file does not
+   -- validate: the committed state a request carried past the fall it asked
+   -- for is.
    { label := "an unapplied request beside the fall it names", extra := []
      edit := fun d _ => do
        swapIn d probe enc (enc ++ request)
        fall d
-     exit := 1, says := says "stale" },
+     exit := 1, says := says "fault" },
    { label := "a fall paid by a new record", extra := []
      edit := fun d _ => do
        swapIn d probe enc (enc ++ "# lowered (applied): alpha 5→4 — an invented reason\n")
@@ -755,7 +812,50 @@ the base carries)"] },
        let tree ← harnessGit d #["write-tree"]
        let new ← harnessGit d #["commit-tree", tree, "-m", "a stand-in for the base"]
        replaceIn d sha new #["cat-file", "blob", s!"{sha}:{probe}"] (containsSub · "alpha\t4")
-     exit := 1, says := says "laundered" }]
+     exit := 1, says := says "laundered" },
+   -- A tier file the base does not carry has no floor there, but it is still
+   -- the tree's committed file: it must read as the format and hold no
+   -- request. Iterating the base's listing alone let a new tier land holding
+   -- a request its producer never spent.
+   { label := "an unapplied request in a tier new since the base", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / scriptPath "zz-new") trivial
+       IO.FS.writeFile (d / tsvPath "zz-new") (enc ++ request ++ "alpha\t5\n")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-new result=stale"] },
+   { label := "a retirement beside its row in a tier new since the base", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / scriptPath "zz-new") trivial
+       IO.FS.writeFile (d / tsvPath "zz-new")
+         (enc ++ "# retired: alpha — an invented reason\nalpha\t5\nbravo\t2\n")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-new result=stale"] },
+   { label := "a duplicate row in a tier new since the base", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / scriptPath "zz-new") trivial
+       IO.FS.writeFile (d / tsvPath "zz-new") (enc ++ "alpha\t5\nalpha\t4\n")
+     exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-new result=fault"] },
+   { label := "a clean tier new since the base", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / scriptPath "zz-new") trivial
+       IO.FS.writeFile (d / tsvPath "zz-new") (enc ++ "alpha\t5\n")
+     exit := 0
+     says := fun s => [s!"scoreboard: base={s} tier=zz-new result=ok",
+       "scoreboard:   new since the base: no floor there to hold it to, so it is judged \
+alone — its format, and any request it still holds"] },
+   -- The tree's own copy reads as the format too: a first reader of a
+   -- duplicated item picks one of its two floors.
+   { label := "a fall hidden behind a duplicate row", extra := []
+     edit := fun d _ => swapIn d probe "alpha\t5\n" "alpha\t5\nalpha\t4\n"
+     exit := 1, says := says "fault" },
+   -- Only a regular file is what git commits as a floor: a symlink would reach
+   -- the base as one, where no landing could hold it or remove it.
+   { label := "the tree's copy of a baseline is a symlink to the same text", extra := []
+     edit := fun d _ => do
+       IO.FS.writeFile (d / "zz-elsewhere.tsv") probeText
+       IO.FS.removeFile (d / probe)
+       let o ← IO.Process.output
+         { cmd := "ln", args := #["-s", "../../zz-elsewhere.tsv", probe], cwd := some d }
+       unless o.exitCode == 0 do throw (IO.userError s!"ln exited {o.exitCode}")
+     exit := 1, says := says "fault" }]
 
 /-- Lay out one harness repository, commit it as the base, make the tree by the
 case's edit, and run the scoreboard under test there: `none` when it answered as
@@ -1092,8 +1192,22 @@ def selftest : IO UInt32 := do
     no s!"base {b} → {t}: {got} ({joined why}), wanted {want}" (got == want)
   let cleanText ← readFileOr (fixture "clean")
   no "base: a baseline gone from the tree is a fault" ((judgeBase cleanText false "").1 == "fault")
-  no "base: an emptied baseline launders every row" ((judgeBase cleanText true "").1 == "laundered")
+  let emptied := judgeBase cleanText true ""
+  no s!"base: an emptied baseline is a fault that still names every row it would launder \
+({joined emptied.2})"
+    (emptied.1 == "fault" && (emptied.2.filter (containsSub · "is gone")).size == 3)
   no "base: an unreadable base is a fault" ((judgeBase "alpha\tnine\n" true cleanText).1 == "fault")
+  -- A tier file the base does not carry is judged alone: its format, then any
+  -- request it still holds.
+  let newVerdict (name : String) : IO String := return (judgeNew (← readFileOr (fixture name))).1
+  no "new: a clean file new since the base passes" ((← newVerdict "clean") == "ok")
+  no "new: a request it still holds is stale" ((← newVerdict "lowered") == "stale")
+  no "new: a retirement beside its row is stale" ((← newVerdict "retired-pending") == "stale")
+  no "new: a duplicate row is a fault" ((← newVerdict "duplicate") == "fault")
+  no "new: a request naming a floor the file does not hold is a fault"
+    ((← newVerdict "lowered-unheld") == "fault")
+  no "new: an empty file is a fault" ((judgeNew "").1 == "fault")
+  no "new: a tombstone passes" ((← newVerdict "tier-retired") == "ok")
   let l (o n : Int) : Lowered := { item := "alpha", old := o, new := n, why := "w", state := .applied }
   no "reach: with no lines the floor holds" (reach [] 998 == 998)
   no "reach: two records compose, in either order"
