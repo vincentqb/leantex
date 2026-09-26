@@ -16140,8 +16140,14 @@ check that fails without it.
   read as unknown commands, whose warning quoted the marker. Measured
   against lualatex (TeX Live 2026, LuaHBTeX 1.24.0): `\begin{document}`
   selects series `m` and babel's main language, and keeps the colour. So a
-  preamble series or language reaches no text, with Compat's N0100 as its
-  accounting (`compatMarkerChecks` pins that premise), and a preamble colour
+  series or a language in the preamble proper reaches no text: the `Doc` is
+  the one without it, a body `\enquote` included, with either language as
+  the main one (`compatMarkerChecks`, which the premise marker beside Elab's
+  silence names). That holds because Compat's `\selectlanguage` arm moves
+  `mainLang`, the language `\enquote` reads its quotes through, only in the
+  body. A switch in a `\begin{document}` hook still reaches the body's
+  language, and its quotes stay the main language's, as lualatex gives.
+  Compat's N0100 note is the construct's accounting, and a preamble colour
   opens the body, with the same `Doc` an `\AtBeginDocument` hook gives
   (`PDecl.bodyStart`).
 - **The rows and docstrings say what they hold** (items 8–10, 12–13).

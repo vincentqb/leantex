@@ -448,7 +448,8 @@ private structure St where
   deck : Bool := false
   /-- The main language's BCP 47 tag, from babel's package options (last
   language option = main, babel's rule): what `\enquote` reads its quote
-  delimiters through. -/
+  delimiters through. A `\selectlanguage` outside the body leaves it:
+  `\begin{document}` selects the main language again. -/
   mainLang : String := "en"
   /-- Inside the document environment: where a preamble declaration —
   `\usepackage` first among them — is a placement defect (W0340), never
@@ -2106,7 +2107,13 @@ the weight in force stands" pos
       say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" pos
         (help := "the engine ships locale records for: en, fr, de")
-    write fun st => { st with mainLang := tag }
+    -- `\enquote` reads its quotes through `mainLang`. `\begin{document}`
+    -- selects babel's main language again (measured against lualatex), so
+    -- a switch outside the body moves nothing. Under csquotes' default
+    -- lualatex keeps the main language's quotes after a body switch too;
+    -- the body's move here is that open divergence.
+    if (← get).inDoc then
+      write fun st => { st with mainLang := tag }
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
     return some (#[.ctrl ("@lang:" ++ tag) pos], k)
   | "foreignlanguage" =>

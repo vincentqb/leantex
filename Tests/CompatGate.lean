@@ -329,9 +329,11 @@ a name no document wrote, for a construct the engine knows.
 What each means there was measured against lualatex (TeX Live 2026):
 `\begin{document}` selects the normal font and babel's main language, and
 keeps the colour. So a series or a language written in the preamble proper
-reaches no text, and the document is the one without it, while `\color` is
-in force where the body begins, the reading a `\begin{document}` hook body
-already gets here. Read as documents compared whole, never as words. -/
+reaches no text, and the document is the one without it — an `\enquote` in
+the body included, whose quotes are the main language's under csquotes'
+default — while `\color` is in force where the body begins, the reading a
+`\begin{document}` hook body already gets here. Read as documents compared
+whole, never as words. -/
 def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let markers := ["@series:", "@lang:", "@ink:"]
@@ -357,6 +359,26 @@ def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((docOf "\\fontseries{b}\n").1 == (docOf "").1)
   t "preamble marker: a language switch reaches no text, as babel's does not"
     ((docOf "\\selectlanguage{french}\n").1 == (docOf "").1)
+  -- `\enquote` reads its quotes through the main language, so a body that
+  -- holds one is where a leaked switch shows. Both mirror cases, compared
+  -- whole: lualatex sets the main language's quotes either way.
+  let quoted (pre : String) : Ir.Doc :=
+    (elabStr (dvDoc pre "Alpha \\enquote{bravo} charlie.")).1
+  let babelOf (other main : String) : String :=
+    s!"\\usepackage[{other},{main}]\{babel}\n\\usepackage\{csquotes}\n"
+  for (main, other) in [("english", "french"), ("french", "english")] do
+    t s!"preamble marker (fails on base): a switch to {other} reaches no quote \
+when {main} is the main language"
+      (quoted (babelOf other main ++ s!"\\selectlanguage\{{other}}\n") ==
+        quoted (babelOf other main))
+  -- The `\begin{document}` door stays: its switch reaches the body's
+  -- language, and the quotes stay the main language's, as lualatex gives.
+  let door := babelOf "english" "french" ++ "\\AtBeginDocument{\\selectlanguage{english}}\n"
+  t "preamble marker: a switch in a \\begin{document} hook still reaches the body"
+    (quoted door != quoted (babelOf "english" "french"))
+  t "preamble marker: a switch in a \\begin{document} hook keeps the main language's quotes"
+    (Ir.blockTextList "" (quoted door).body.toList ==
+      Ir.blockTextList "" (quoted (babelOf "english" "french")).body.toList)
   -- LaTeX keeps the colour: the document is the one whose `\begin{document}`
   -- hook sets it.
   t "preamble marker (fails on base): a colour is the body's first declaration, as in LaTeX"
