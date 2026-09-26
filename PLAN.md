@@ -15627,3 +15627,152 @@ A pass prints the line under the movement it paid for.
 runs `--check` alone and owes `--check --base {main}`, which the gate list's
 `{main}` substitution already spells. CI owes the same, through the
 coordinator.
+
+
+### 2026-09-26 — the base check, round 3c: objects as committed, every tier file the tree adds, and a record that spends its base's request
+
+The round-3b review blocked `agent/sbfollow` at `50e6f95` on two items, both
+reproduced before they were fixed. Each "before" below ran the base check's
+code as `50e6f95` wrote it: the rebased `8671ac8`, whose `scoreboard.lean` and
+`Board.lean` changes against its base are identical to `50e6f95`'s, or the
+`50e6f95` binary itself (md5 `50d7efba10ac`, the same bytes the review
+measured). Each "after" ran `e187cc0` (md5 `b99aedccb6bc`). Probes and logs are
+in `leantex-evidence/sbfollow-r3c/`.
+
+**B1: the base is read as committed.** A replace ref makes git answer with
+another object's bytes, and `refs/replace/` is shared by every worktree, so
+one `git replace` from any of them laundered a fall and hid a deleted
+baseline. `gitRead` is now the base check's only git runner, and it passes
+`--no-replace-objects` on every call (`rev-parse`, `ls-tree -z`,
+`cat-file blob`). The selftest drives one CLI case per kind of object the
+check reads: a replaced blob (H7), a replaced `tests/scoreboard` tree (H7b), a
+replaced base commit. Each case first confirms through the harness's own git
+that the replacement is in effect. All three exit 0 on `8671ac8` and 1 after.
+The review's harness (`harness-adv.sh`) gives H7 and H7b 0 → 1. On the real
+repository in the land tool's layout (`replace-worktree.sh`), a detached gate
+tree runs a hand-edited `htmlreader` fall while an agent worktree holds one
+`git replace`: `50e6f95` exits 0 and `e187cc0` exits 1, `laundered`; with
+`GIT_NO_REPLACE_OBJECTS=1` both exit 1.
+
+**B2: every tier file in the tree is judged.** The check iterated the base's
+listing only. Now every `tests/scoreboard/*.tsv` the base does not carry is
+judged alone (`judgeNew`), under a `new since the base` line: it must read as
+the format (`validate`) and is `stale` while it holds a request. The tree's
+copy of a baseline the base does carry is validated too (`treeVerdict`, the
+review's follow-up 3). A duplicated item, whose floor the first reader
+picked, is now a `fault`. The verdict ranks `fault` over `laundered` over
+`stale`, and every reason is listed. Only a regular file counts as a tree
+copy (`treeCopy`, by `symlinkMetadata`). Before, a symlink to the base's own
+text passed `--base`. Read off the code rather than run: the next landing's
+base listing would fault it as a link, and no landing could then remove it.
+
+Results on the review's harness, `50e6f95` → `e187cc0`:
+
+| case | before | after |
+|---|---|---|
+| H5: a new tier holding a lowering request | 0 | 1 `stale` |
+| H5b: a new tier with a retirement beside its row | 0 | 1 `stale` |
+| H16: a fall behind a duplicate row | 0 | 1 `fault` |
+| H11: the tree's copy a symlink | 1 `laundered` | 1 `fault` |
+
+The selftest adds CLI cases for H5, H5b, H16, a new tier with a duplicate
+row, a clean new tier (exit 0, with its line) and the symlink.
+
+Three verdict words changed, each on a state that already failed. An emptied
+tree baseline and `clean → lowered-unheld` were `laundered`, and a request
+carried beside the fall it names was `stale`; all three are now `fault`.
+
+**W2: a record spends the request its base holds.** `newLowerings` cancelled
+a tree line against any base line with the same text, whatever its standing.
+So when the base held a request and the tree's regeneration wrote it back as
+a record, the base's request cancelled that record and the tool's own remedy
+ended at `laundered`. Spending the request is the act this landing adds, so
+cancellation now needs the same standing. The same shape held for retirement,
+which the review did not name. A base holding `# retired:` beside its row,
+with the tree dropping the row, was `laundered`; `newRetirements` now counts a
+base's retirement *request* as unspent. A credit that spends the base's
+request says `(spends the request the base carries)`. A held request that the
+base holds too says so, since main then carries it and every landing is
+`stale` until one spends or deletes it.
+
+The review's `wedge-real.sh`, on the real obligations tier through its
+producer:
+
+| step | `50e6f95` | `e187cc0` |
+|---|---|---|
+| W1: the tree unchanged | 1 `stale` | 1 `stale` |
+| W2: the fall made and the tier regenerated | 1 `laundered` | 0, the spend credited |
+| W3: the line deleted | 0 | 0 |
+
+The selftest holds W1–W3 and the retirement twin, both as `baseCases` and as
+CLI cases.
+
+**Follow-up 2 (H10): what a pass prints reaches a terminal as text.**
+`printable` spells out every character that acts on a terminal rather than
+printing, as `\u{hex}`: the C0 controls, DEL, the C1 controls, and the
+bidirectional and zero-width format characters. It runs at every reason,
+credit and detail print site (`printReason`). Rendered through tmux
+(`render-h10.sh`), `50e6f95`'s credit erased the `moved:` line above it. On
+`e187cc0` all three lines render and the output holds no ESC byte. CLI cases
+cover a credit and a failing producer's stderr.
+
+**Found on the rebase.** `scoreboard --selftest` ran each tier's selftest
+before anything had built the tier's imports. Parity's `ParityLib` landed on
+main, and that selftest failed on the clean rebased tree
+(`ParityCore.olean … does not exist`). The selftest now builds `tierImports`
+first, as `--check` does. With the olean moved aside, the `4cc9071` binary's
+selftest exits 1, and after the fix it exits 0 and rebuilds the olean.
+
+**Every check broken once** (`mutate.sh`). Each run applies one mutation in a
+scratch clone of `e187cc0`, runs `lake build scoreboard`, then runs the
+shipped `scoreboard --selftest`. There are 39 mutants: M1–M10, R1–R4 and
+N1–N8 (re-expressed where this round moved the code), and P1–P16 plus P16b
+for this round's checks. The selftest catches 38 of them.
+- P1–P3 cover the replace flag: removed, on `cat-file` only, on `ls-tree`
+  only.
+- P4–P7 cover new tiers not judged, their held requests or format ignored,
+  and `judgeBase` unvalidated.
+- P8–P10 cover cancelling across standings, the retirement twin, and the
+  spend unmarked.
+- P11–P12 cover printing raw text and passing C1 controls.
+- P13–P15 cover a symlink read through, the base's hold unsaid, and a new
+  tier's fault not counted.
+- P16 removes the fan-out's build with the olean absent.
+- P16b is the one survivor, and survives by construction: it removes the
+  build while the oleans are current, and a selftest cannot witness its own
+  build step then.
+
+**Open, with their sites.**
+- H13: a producer can rewrite another tier's file before the base check reads
+  it, because `main` runs `aggregate`, then `baseCheck`, on the working tree.
+  Today it is held only by land.lean's before/after status read, which fails
+  a gate that leaves the tree dirty. Defence in depth would read the tree's
+  baselines before any producer spawns, or from the commit.
+- Follow-up 4: the `names no fall` message in `validate` and the parse-level
+  messages in `parseLowered` and `parseRetired` carry no remedy. Round 3b's
+  sentence saying every one did is corrected above; the messages are open.
+- H12: a directory named like a baseline crashes the aggregate's
+  `readFileOr` before the base check runs. It fails closed (exit 1), but the
+  crash names no remedy.
+- F4 and F5 stay the human's. H14 and H15 print their credits as before.
+
+**Routed to land.lean** (`agent/land`, read at `e7f989d`).
+- `makeTree` at :567–569 runs `worktree add --detach <tree> <tip>` with
+  replacement on, so the gate tree checks out a replaced tip object's bytes.
+  Measured in a throwaway repository (`tip-checkout.sh`): a replaced tip
+  *tree* checks out the replacement, and `git status` there then reads clean,
+  so `readTree`'s `HEAD` and `statusClean` both pass it. A replaced tip blob
+  read ` M` in the same test. The fix is to pass `--no-replace-objects` to
+  every git call land makes (`sh` :106 and `git` :135, `mkEnv`'s probes :210),
+  or to set `GIT_NO_REPLACE_OBJECTS=1` in `childEnv` rather than scrubbing it
+  (`repoVarsFixed` :149, `childEnvVars` :191), which covers each gate's own
+  git too. Refusing to land while `refs/replace/` is non-empty would add a
+  second layer.
+- Round 3b's route of `--check --base {main}` is in `defaultGates` (:383),
+  and so, since `e7f989d`, is `scoreboard --selftest`, the only gate that
+  drives the base check's refusals.
+
+**Landing notes.** The new tier files on `agent/htmla11y` (`dab7c82`),
+`agent/coverage` (`6b3b17b`) and `agent/commonmark` (`b0a9854`) each read `ok`
+to `judgeNew`. AGENTS.md changes only this branch's row, so htmla11y's row
+insertion is the same keep-both conflict as before.
