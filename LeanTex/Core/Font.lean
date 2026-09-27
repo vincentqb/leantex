@@ -1141,7 +1141,7 @@ structure FontSet where
   /-- Per-face deflated program bytes, filled by the driver through its
   content-hash cache (`deflateCached` in the driver): `zdata[i]`, when
   present, is the compressed stream of the program the PDF embeds for face
-  `i` on these pages (`Pdf.faceProgram`) — one document's subset is the
+  `i` on these pages (`Pdf.facePrograms`) — one document's subset is the
   same bytes build after build, so its deflate is paid once per content,
   not per build. Empty (the default; every test constructor) means the PDF
   writer compresses inline. -/

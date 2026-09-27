@@ -175,12 +175,15 @@ def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
   keepOf ((Array.range fs.fonts.size).map fun k =>
     usedGlyphs k (fs.get k).numGlyphs pages)
 
-/-- The font program `write` embeds for face `k` on these pages: the face's
-own file minus every glyph they do not paint (`FontSubset.program`). The
-driver deflates it through its cache (`FontSet.zdata`). -/
-def faceProgram (fs : FontSet) (pages : Array PageOut) (k : Nat) : ByteArray :=
-  let f := fs.get k
-  (FontSubset.program f.data f.isCff ((usedGlyphs k f.numGlyphs pages).map (·.1))).1
+/-- The font program `write` embeds for each face it keeps on these pages,
+in `keepFaces` order: the face's own file minus every glyph they do not
+paint (`FontSubset.program`), and whether it is a subset. The driver builds
+it once, deflates it through its cache (`FontSet.zdata`), and hands it to
+`write`. -/
+def facePrograms (fs : FontSet) (pages : Array PageOut) : Array (ByteArray × Bool) :=
+  (keepFaces fs pages).map fun k =>
+    let f := fs.get k
+    FontSubset.program f.data f.isCff ((usedGlyphs k f.numGlyphs pages).map (·.1))
 
 /-- A subset's tag (ISO 32000-2 §9.6.4): six capitals, the first two the
 face's slot in the file, so no two subsets in one file share a tag, and the
@@ -1092,14 +1095,16 @@ object streams, one Identity-H CID font per face actually used (its program
 the subset of the glyphs the pages paint, `FontSubset.program`, with its
 own ToUnicode), image XObjects for every image actually
 placed, the structure tree projected from `tree`, and the document
-information the source declared (Info dictionary plus XMP). `streams` and
-`ops` are the driver's cache path: the page operators it built through
-`pageOps` (one walk, not two) and their rendered and deflated bytes. -/
+information the source declared (Info dictionary plus XMP). `streams`,
+`ops` and `programs` are the driver's cache path: the page operators it
+built through `pageOps` (one walk, not two), their rendered and deflated
+bytes, and the face programs it built through `facePrograms`. -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
-    (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[]) : ByteArray := Id.run do
+    (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
+    (programs : Array (ByteArray × Bool) := #[]) : ByteArray := Id.run do
   let np := pages.size
   let v17 := info.pdfVersion == some "1.7"
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
@@ -1113,10 +1118,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
   -- The program each kept face embeds: its own file minus every glyph no
-  -- page paints (`FontSubset.program`), named with a subset tag when it is one.
-  let programs : Array (ByteArray × Bool) := (keep.zip usedPerFont).map fun (fk, used) =>
-    let font := fs.get fk
-    FontSubset.program font.data font.isCff (used.map (·.1))
+  -- page paints (`FontSubset.program`), named with a subset tag when it is
+  -- one — the caller's when it built them (`facePrograms`), else built here.
+  let programs : Array (ByteArray × Bool) := if programs.size == nf then programs
+    else (keep.zip usedPerFont).map fun (fk, used) =>
+      let font := fs.get fk
+      FontSubset.program font.data font.isCff (used.map (·.1))
   let usedImgs := usedImagesOf imgs pages
   let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs

@@ -1678,10 +1678,13 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- compresses for itself, byte for byte.
   let bigPages := (layoutOf twoFace bigDoc geom).pages
   let cached := (Pdf.pageStreams geom twoFace bigPages).map fun d => (d, some (Flate.deflate d))
+  let keepBig := Pdf.keepFaces twoFace bigPages
+  let progs := Pdf.facePrograms twoFace bigPages
   let zFaces := (Array.range twoFace.fonts.size).map fun k =>
-    some (Flate.deflate (Pdf.faceProgram twoFace bigPages k))
-  t "pdf with cached streams and faces is the pdf without"
-    (Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached) ==
+    ((keepBig.zip progs).find? (·.1 == k)).map fun (_, p, _) => Flate.deflate p
+  t "pdf with cached streams, programs and faces is the pdf without"
+    (Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached)
+        (programs := progs) ==
       Pdf.write geom twoFace bigPages)
   -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
   -- CapHeight is the cap height), never a stand-in: the fixture face
