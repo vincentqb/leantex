@@ -22920,3 +22920,35 @@ for a long cell: 0.6 for a seven-word cell at base, with no span involved.
 - Markdown's pipe table has no span.
 - Layout's measuring pass reads a long cell narrower than `collectPara`
   sets it.
+
+
+### 2026-09-27 — a declared line is one the author ended: the paragraph's last line is prose (W0386)
+
+**The report.** The site port's build printed W0386, "a declared line
+break did not hold: 2 lines were declared, 3 ship", and the user read the
+site as broken. The page was right: an entry sets a short line, `\\`, and
+a sentence of prose that wraps at the measure, as LaTeX sets it. The first
+line ended where the author ended it; the prose after it wrapped. The
+account counted lines, so any wrap anywhere in a paragraph with a `\\` read
+as a lost declaration.
+
+**The invariant.** A declared line is one the author ended: every segment
+before the paragraph's last forced break. The last line is closed by the
+paragraph's own end, so it is prose, and it may set as many lines as it
+needs, as a paragraph with no `\\` may (`Layout.declaredReflow`,
+`lastDeclaredEnd?`). W0386 fires exactly when a break the breaker chose at
+no forced penalty lies inside a declared line; `warnReflow_accounts` now
+states the one warning against that decision. The warning still names a
+title line that does not fit its measure (the golden witness, and the
+existing `titleBreakChecks` rows, are unchanged).
+
+**Guards** (`titleBreakChecks`; the two silence rows fail at `f66f9381`):
+a held break before wrapping prose ships its first line whole, sets the
+prose on more than one line, and is silent, in a paragraph and in an item;
+a declared line that re-flows before a last line of prose is still named
+once. DiagAudit: W0386 `keep`, rung `degraded`, pinned to that block.
+
+**Measured** (the five private documents of the reference corpus, main
+against the branch, each built from one scratch copy with
+`SOURCE_DATE_EPOCH=0`, PDF and HTML): the site's W0386 is gone and no other
+diagnostic moves; all eleven artifacts are byte-identical under `cmp`.

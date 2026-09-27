@@ -8325,17 +8325,43 @@ private def declaredLines (items : Array Item) : Nat :=
     | .pen _ cost _ _ _ _ => if cost ≤ forcedCost then n + 1 else n
     | _ => n) 0
 
+/-- The forced break that ends the last line the author ended: the last
+forced break but one. The last is where the paragraph's own end closes its
+last line — `itemsOfInlines` appends it, or the author's own trailing `\\`
+stands in its place — so that line is prose, not a declared line. `none`
+when the paragraph declares fewer than two lines. -/
+private def lastDeclaredEnd? (items : Array Item) : Option Nat := Id.run do
+  let mut last : Option Nat := none
+  let mut prev : Option Nat := none
+  for k in [0:items.size] do
+    if isForced items k then
+      prev := last
+      last := some k
+  return prev
+
+/-- Did a line the author ended re-flow? A break the breaker chose at a
+forced penalty ends a declared line; a break anywhere else splits one. Only
+a split before the last declared end counts: the paragraph's last line may
+set as many lines as it needs, as a paragraph with no `\\` may, since the
+author ended every line before it and the paragraph ended that one. -/
+private def declaredReflow (items : Array Item) (breaks : Array Nat) : Bool :=
+  match lastDeclaredEnd? items with
+  | none => false
+  | some cut => breaks.any fun k => k < cut && !isForced items k
+
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
 a legal break inside it — so the remainder returns to the flush-left margin
-and the page shows one shape where another was declared. Named, not
-refused: the degraded state at full strength, since refusing the break
-would run ink off the measure instead (display type is ragged and
+and the page shows one shape where another was declared (`declaredReflow`).
+Named, not refused: the degraded state at full strength, since refusing the
+break would run ink off the measure instead (display type is ragged and
 unhyphenated, so the breaker has nowhere to put it). Silent where nothing
 was declared — a paragraph of continuous prose declares one line and may
-set as many as it needs — and silent where every declared break held. -/
-private def B.warnReflow (b : B) (declared shipped : Nat) : B :=
-  if 2 ≤ declared ∧ declared < shipped then
+set as many as it needs — where every declared break held, and where only
+the paragraph's last line, which its own end closes, sets more lines than
+one: that is the shape LaTeX sets, and it declared nothing to lose. -/
+private def B.warnReflow (b : B) (declared shipped : Nat) (reflowed : Bool) : B :=
+  if reflowed then
     let loc := match b.curFrame with
       | some n => s!" in frame {n}"
       | none => ""
@@ -8347,49 +8373,49 @@ to widen the measure, or declare a narrower face")
         (subject := b.curFrame.map toString)) }
   else b
 
-@[simp] private theorem warnReflow_pages (b : B) (d s : Nat) :
-    (b.warnReflow d s).pages = b.pages := by
+@[simp] private theorem warnReflow_pages (b : B) (d s : Nat) (r : Bool) :
+    (b.warnReflow d s r).pages = b.pages := by
   simp only [B.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_geom (b : B) (d s : Nat) :
-    (b.warnReflow d s).geom = b.geom := by
+@[simp] private theorem warnReflow_geom (b : B) (d s : Nat) (r : Bool) :
+    (b.warnReflow d s r).geom = b.geom := by
   simp only [B.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_docBg (b : B) (d s : Nat) :
-    (b.warnReflow d s).docBg = b.docBg := by
+@[simp] private theorem warnReflow_docBg (b : B) (d s : Nat) (r : Bool) :
+    (b.warnReflow d s r).docBg = b.docBg := by
   simp only [B.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_cur (b : B) (d s : Nat) :
-    (b.warnReflow d s).cur = b.cur := by
+@[simp] private theorem warnReflow_cur (b : B) (d s : Nat) (r : Bool) :
+    (b.warnReflow d s r).cur = b.cur := by
   simp only [B.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_noBreak (b : B) (d s : Nat) :
-    (b.warnReflow d s).noBreak = b.noBreak := by
+@[simp] private theorem warnReflow_noBreak (b : B) (d s : Nat) (r : Bool) :
+    (b.warnReflow d s r).noBreak = b.noBreak := by
   simp only [B.warnReflow]
   split <;> rfl
 
 /-- `warnReflow_accounts`: the declared shape and the diagnostic in the same
-step — a paragraph that declared a break and shipped more lines than it
-declared adds exactly one W0386, and one that declared none, or whose
-breaks all held, adds none. The `_accounts` shape
+step — a paragraph one of whose declared lines re-flowed adds exactly one
+W0386, and one that declared none, whose breaks all held, or whose last
+line alone set more than one line, adds none. The `_accounts` shape
 (`rewriteCtrl_accounts`, `warnSpill_accounts`): the re-flow is paid for by
-the warning, decided on the two counts the builder already holds — the
-forced breaks in the items it is about to place and the breaks the breaker
-returned — never by reading the shipped pages back afterwards. -/
-private theorem warnReflow_accounts (b : B) (declared shipped : Nat) :
-    (b.warnReflow declared shipped).diags.size =
-      b.diags.size + (if 2 ≤ declared ∧ declared < shipped then 1 else 0) := by
+the warning, decided on what the builder already holds — the forced breaks
+in the items it is about to place and the breaks the breaker returned
+(`declaredReflow`) — never by reading the shipped pages back afterwards. -/
+private theorem warnReflow_accounts (b : B) (declared shipped : Nat) (reflowed : Bool) :
+    (b.warnReflow declared shipped reflowed).diags.size =
+      b.diags.size + (if reflowed then 1 else 0) := by
   unfold B.warnReflow
   split <;> simp_all
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
     (({ b with diags := b.diags ++ j.diags }).warnReflow
-      (declaredLines j.items) breaks.size, 0, true)).1
+      (declaredLines j.items) breaks.size (declaredReflow j.items breaks), 0, true)).1
 
 /-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
 become literal text. Running content is laid out after the body, so both

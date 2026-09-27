@@ -119,7 +119,10 @@ def registry : List AuditRow :=
    ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩,
    -- A boundary refusal the rendered subset stands in for: the note names
    -- the withdrawal, and the subset's own codes carry the losses.
-   ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩]
+   ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩,
+   -- A line the author ended that the measure split; the paragraph's own
+   -- last line is prose and sets as many lines as it needs, unnamed.
+   ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

@@ -4962,6 +4962,33 @@ def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (!(layoutOf oneFace
       (declared "Coordinating Placeholder Schedules Across Several Regions")).diags.any
         (·.code == "W0386"))
+  -- The line a paragraph's own end closes is prose, not a declared line:
+  -- after the author's last `\\` it may set as many lines as it needs, as
+  -- a paragraph with no `\\` may. A held break followed by prose that
+  -- wraps is the shape LaTeX sets, and it is silent; the account still
+  -- fires for a line the author ended that did not fit, as above.
+  let prose := "Placeholder words run on past the measure here and wrap " ++
+    "onto a further line as prose does"
+  let bodyOut (body : String) : Layout.Out :=
+    layoutOf oneFace (elabStr (narrow ++ "\\begin{document}\n" ++ body ++
+      "\n\\end{document}")).1
+  let heldOut := bodyOut s!"Short Label\\\\ {prose}."
+  let heldC := censusOf #[] heldOut
+  t "a held break before wrapping prose ships the declared line whole"
+    ((heldC[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Label").map
+      (fun l => !hasStr l.text "Placeholder") |>.getD false)
+  t "a held break before wrapping prose sets the prose on more than one line"
+    (((heldC[0]?.map fun p =>
+      (p.lines.filter fun l => hasStr l.text "Placeholder" || hasStr l.text "prose").size).getD
+        0) > 1)
+  t "a held break before wrapping prose is silent"
+    (!heldOut.diags.any (·.code == "W0386"))
+  t "an item's held break before wrapping prose is silent"
+    (!(bodyOut s!"\\begin\{itemize}\\item Short Label\\\\ {prose}.\\end\{itemize}").diags.any
+      (·.code == "W0386"))
+  t "a declared line that re-flows before a last line of prose is still named"
+    (((bodyOut s!"Coordinating Placeholder Schedules Across Regions\\\\ {prose}.").diags.filter
+      (·.code == "W0386")).size == 1)
 
 /-- xcolor's `\color{n}` at the flow's top level is the document's ink:
 the declared body colour routes through the palette's one resolving site
