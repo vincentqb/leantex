@@ -3516,6 +3516,15 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a print document's marks paint in DeviceCMYK registration"
     ((outOf "bleed = 3mm, marks = cut" "\\palette{ spot = cmyk(1, 0, 0, 0) }").pages.all
       fun p => p.fills.all fun f => f.color.cmyk == some (1000, 1000, 1000, 1000))
+  -- The page ground covers the medium the bleed widens, as `\pagecolor`
+  -- paints the page's whole box: the strip exists to be inked past the trim.
+  let grounded := src "bleed = 3mm" "\\palette{ bg = #F4EDE0 }"
+  let g := Layout.Geom.ofPage (elabStr grounded).1.page
+  t "a page ground covers the bleed strip, not only the trim"
+    (let out := layoutOf oneFace (elabStr grounded).1 g
+     out.pages.size ≥ 1 && out.pages.all fun p => p.fills.any fun f =>
+      f.x == -Dim.mm 3 && f.y == -Dim.mm 3 && f.w == g.pageW + 2 * Dim.mm 3 &&
+        f.h == g.pageH + 2 * Dim.mm 3)
 
 /-- A card spelled in LaTeX draws its own printer's marks: eight hairlines
 from a `shipout/background` picture, positioned from the same lengths as

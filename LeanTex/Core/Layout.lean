@@ -737,6 +737,15 @@ structure Fill where
   color : Ir.Color
   deriving Repr, Inhabited
 
+/-- The page's ground: one fill over the whole medium, the bleed strip
+included, as `\pagecolor` paints the page's whole box — a bleed exists for
+exactly this, ink that runs past the trim so a drifting cut shows no white
+edge. Layout space is the trim's, so the medium runs `-bleed … pageW +
+bleed` (`Geom.onMedium`'s reading); with no bleed it is the page. -/
+def Geom.ground (g : Geom) (c : Ir.Color) : Fill :=
+  { x := -g.bleed, y := -g.bleed, w := g.pageW + 2 * g.bleed,
+    h := g.pageH + 2 * g.bleed, color := c }
+
 /-- The eight printer's cut marks a page ships under `\page{ marks = cut }`:
 a pure function of the trim box (`W × H`), the bleed, the gap, and the
 thickness — derived, never placed by hand, so the drawn marks and the
@@ -4228,8 +4237,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
   let fills := if delta == 0 then b.cur.fills else
     b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
   let fills := match b.pageBg.orElse (fun _ => b.docBg) with
-    | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
-                     color := c } : Fill)] ++ fills
+    | some c => #[b.geom.ground c] ++ fills
     | none => fills
   -- Picture paths ride with the fills: the same vertical-distribution
   -- shift, no pinning (chrome never draws one).
@@ -8886,7 +8894,8 @@ private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
 what `finishPage` prepends when the page (or the document) declared a
 background. -/
 private def bgFilled (g : Geom) (p : PageOut) : Prop :=
-  ∃ f ∈ p.fills.toList, f.x = 0 ∧ f.y = 0 ∧ f.w = g.pageW ∧ f.h = g.pageH
+  ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
+    f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed
 
 /-- One placement step, seen by the background invariant: geometry and
 the declared document background ride through untouched, and — when a
@@ -8930,11 +8939,9 @@ private theorem finishPage_bg (b : B) {o : Sp} :
     rcases hpb : b.pageBg with _ | c
     · rcases hdb : b.docBg with _ | c'
       · rw [hdb] at hd; simp at hd
-      · refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
-                  color := c' }, ?_, rfl, rfl, rfl, rfl⟩
+      · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
         simp [Option.orElse]
-    · refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
-                color := c }, ?_, rfl, rfl, rfl, rfl⟩
+    · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
       simp
 
 private theorem bgStep_finishPage (b : B) {o : Sp} : BgStep b (b.finishPage o) :=
@@ -8946,7 +8953,8 @@ ground the walk declared must ship that ground and not merely some fill —
 the defect this forbids is a page painted the document's colour while the
 frame declared its own. -/
 private def bgFilledWith (g : Geom) (c : Ir.Color) (p : PageOut) : Prop :=
-  ∃ f ∈ p.fills.toList, f.x = 0 ∧ f.y = 0 ∧ f.w = g.pageW ∧ f.h = g.pageH ∧
+  ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
+    f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed ∧
     f.color = c
 
 /-- **A page's own declared ground is painted, in the colour that declared
@@ -8967,8 +8975,7 @@ private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp}
   · right
     unfold bgFilledWith
     dsimp only
-    refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
-              color := c }, ?_, rfl, rfl, rfl, rfl, rfl⟩
+    refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl, rfl⟩
     rw [h]
     simp
 
@@ -9924,7 +9931,8 @@ private theorem runCore_bg
     (hbg : (doc.palette.find? "bg").isSome = true) :
     ∀ p ∈ (runCore geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
-        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
+        f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
+          f.h = geom.pageH + 2 * geom.bleed := by
   have key : ∀ (b0 c : B), BgStep b0 c →
       b0.docBg.isSome = true → b0.pages = #[] →
       ∀ x ∈ c.pages, bgFilled b0.geom x := by
@@ -9939,11 +9947,17 @@ private theorem runCore_bg
   obtain ⟨q, hq, hfills, -, -, -⟩ := runPost_pages _ p hp
   have fin : ∀ (b0 : B), bgFilled b0.geom q →
       b0.geom.pageW = geom.pageW → b0.geom.pageH = geom.pageH →
+      b0.geom.bleed = geom.bleed →
       ∃ f ∈ p.fills.toList,
-        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
-    intro b0 h hW hH
+        f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
+          f.h = geom.pageH + 2 * geom.bleed := by
+    intro b0 h hW hH hB
     obtain ⟨f, hf, hx, hy, hw, hh⟩ := h
-    exact ⟨f, hfills ▸ hf, hx, hy, hW ▸ hw, hH ▸ hh⟩
+    refine ⟨f, hfills ▸ hf, ?_, ?_, ?_, ?_⟩
+    · rw [← hB]; exact hx
+    · rw [← hB]; exact hy
+    · rw [← hW, ← hB]; exact hw
+    · rw [← hH, ← hB]; exact hh
   -- the final close, taken abstractly: splitting the giant term is the
   -- wall, so the ite is covered by a lemma over an opaque condition
   have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
@@ -9953,7 +9967,7 @@ private theorem runCore_bg
     · exact h.trans (bgStep_finishPage _)
     · exact h
   refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom ..)) ?_ rfl q hq)
-    ?_ ?_
+    ?_ ?_ ?_
   all_goals first
     | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, pdfView, hbg]
        done)
@@ -9962,8 +9976,9 @@ private theorem runCore_bg
        all_goals rfl)
 
 /-- Every page of a document that declares a `bg` palette entry ships a
-full-page fill: what the walk attaches to a page survives to that page's
-output, observed at the page background. Discharged from `Obligations`
+fill over its whole medium, the bleed strip included (`Geom.ground`): what
+the walk attaches to a page survives to that page's output, observed at the
+page background. Discharged from `Obligations`
 (arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
 page with only its lines, PLAN 2026-09-16 — is its counterexample).
 `runCore_bg` carries the pipeline's three seams; the marks step is the
@@ -9974,7 +9989,8 @@ theorem page_background_survives
     (hbg : (doc.palette.find? "bg").isSome = true) :
     ∀ p ∈ (run geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
-        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
+        f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
+          f.h = geom.pageH + 2 * geom.bleed := by
   intro p hp
   unfold run at hp
   obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
