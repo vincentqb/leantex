@@ -418,22 +418,6 @@ list.
   prose, so `Diag` must hold the read structurally before it can be stated.
   The witness meanwhile is the insert-spelled rows of the rule-(b) block and
   `themeTitleShipChecks` over the census.
-- `peer_gap_exact` — two plain peer paragraphs on one page stand exactly the
-  leading plus the declared paragraph skip apart: the peer row of
-  `Ir.rhythmGapQuanta` realized on the shipped page, which
-  `backend_gaps_agree` holds only in the table. True on every rhythm
-  fixture; blocked on the placement loops' invariant over `Acc`, written
-  inside Layout (the `lines_attributed_covers` wall).
-- `display_skips_between` — for every builtin class, the default display
-  skip read in TeX points lies inside the glue its LaTeX lineage declares
-  (sourced per class, file and line). False today for article, webpage and
-  card by the bp/pt ratio (12.045 pt against 12) and for poster by 15.97 pt;
-  a human decision (rhythm quantum or source range) before it is a proof.
-- `blockGap_owner_contract` — no base-sheet rule outranks a `blockGapCss`
-  gap rule on the element it spaces, the premise `single_owner_gap_exact`
-  needs. False today: `p`, `ul`, `ol`, `blockquote` and `h1`–`h4` rules set
-  `margin` at specificity (0,0,1) over the `:where()` rules, so Chromium
-  renders those boundaries with no gap. The fix is HtmlDoc's.
 
 ### Log
 
@@ -19414,8 +19398,9 @@ The user reported that the space around a deck's pictures is tight, and
 asked for the rhythm to be audited everywhere, in all formats, and enforced
 by theorems. The picture's own spacing is `agent/rhythm-pic`'s. This entry
 is the audit: a measured inventory of the boundaries the engine ships, a
-tier that ratchets it, the contract stated as three owed theorems, and a
-ranked worklist. It changes no engine behaviour.
+tier that ratchets it, the contract stated as three target theorems for the
+branches that fix the engine, and a ranked worklist. It changes no engine
+behaviour.
 
 **Correction to the 2026-09-24 entry "a frame is a stage".** Its last
 sentence, "the vertical-distribution question is closed", is false. Measured
@@ -19510,25 +19495,108 @@ boundaries, Σ|Δ| ≈ 310 bp; the paper's list items, 28, median −2.08 bp; it
 paragraph → heading, 8, median −6.66 bp; the deck's picture → paragraph, 6,
 median −11.34 bp.
 
-**The contract, owed** (`Obligations/Rhythm.lean`; the `Obligations` target
-now globs its directory, so `lake build Obligations` type-checks it):
+**The contract, as targets rather than debt.** Three statements over the
+engine's own functions, written here for the branches that prove them
+against the fixed engine and staged nowhere: the user has not approved
+growing the owed debt, so the `obligations` tier and `lakefile.toml` are
+main's. Each type-checks against this tree verbatim as written here (`lake
+env lean` over a scratch file outside the tree that imports `Obligations`
+and holds these blocks with open proofs), and each was evaluated on it
+(`#eval` over every class and every `blockGapKinds` row).
+`plainPara` and `inkBaselines` are `Obligations`' own.
 
-- `peer_gap_exact` — two plain peer paragraphs on one page stand exactly the
-  leading plus the declared skip apart. True on every fixture (18.000 at the
-  article base, 13.200 in slides); blocked on the placement loops' invariant.
-- `display_skips_between` — each builtin class's display skip, read in TeX
-  points, lies inside its lineage's glue (size10.clo:49; size11.clo:49 via
-  beamer.cls:155 and via moderncv.cls:62,66; beamerposter.sty:244 leaves it).
-  False today: 12.045 pt against 12 for article, webpage and card, which
-  `Ir.display_between` missed by comparing bp with `Dim.pt 12`; 29.967
-  against 14 for poster.
-- `blockGap_owner_contract` — no base-sheet rule outranks a gap rule on the
-  element it spaces. False today for `p`, `ul`, `ol`, `blockquote`, `h1`–`h4`.
+`peer_gap_exact`, for rhythm-pdf2 (owner Layout): two plain paragraphs that
+each set one line on one page stand exactly the leading plus the declared
+paragraph skip apart — the peer row of `Ir.rhythmGapQuanta` on the page,
+where `backend_gaps_agree` holds it only in the table. True on every
+fixture: 18.000 bp at the article base (12 + 6), 13.200 in slides
+(13.2 + 0). The wall is `lines_attributed_covers`'s: the invariant — between
+two plain lines the placement pass's pen advances by the leading plus the
+skips it meets, and by nothing else — is over `Acc` and the private `B`, so
+it is written inside Layout and exported as the corollary this reads.
 
-Each false statement was evaluated on this tree (`#eval` over every class
-and every `blockGapKinds` row) before it was staged. Staging lowered the
-`obligations` tier's Ir, Layout and HtmlDoc items by one each, through three
-`# lowered:` requests its writer spent.
+```lean
+theorem peer_gap_exact (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc)
+    (a b : Array Ir.Inline) (p y₁ y₂ : Dim.Sp)
+    (ha : plainPara (.para a)) (hb : plainPara (.para b))
+    (hp : geom.parskip.width = { sp := p })
+    (hflow : doc.docClass.record.model = .flow)
+    (hlines : inkBaselines (Layout.run geom fs none
+      { doc with body := #[.para a, .para b] }) = [y₁, y₂]) :
+    y₂ - y₁ = Ir.leadingFor geom.fontSize geom.leading + p
+```
+
+`display_skips_between`, for rhythm-pdf2 (owner Ir): each builtin class's
+default display skip, read in TeX points (1/72.27 in, thousandths below) at
+the class's base size, lies inside the glue its LaTeX lineage declares, and
+the skip below equals the one above. False today for article, webpage and
+card — 12.045 pt against a 12 pt ceiling, which `Ir.display_between` missed
+by comparing bp with `Dim.pt 12` — and for poster, 29.967 against 14,
+because beamerposter scales the body and not the display skips. True for
+slides (13.249) and resume (12.045). A decision comes before the proof: the
+quantized skip gives way to the source's range, or the range widens by a
+declared divergence per class. After it, the proof is `decide` over the six
+classes.
+
+```lean
+structure SourcedGlue where
+  natural : Int
+  stretch : Int
+  shrink : Int
+  source : String
+
+def displaySource : Ir.DocClass → SourcedGlue
+  | .article | .webpage | .card => ⟨10000, 2000, 5000, "size10.clo:49"⟩
+  | .resume => ⟨11000, 3000, 6000, "size11.clo:49 via moderncv.cls:62,66"⟩
+  | .slides => ⟨11000, 3000, 6000, "size11.clo:49 via beamer.cls:155"⟩
+  | .poster => ⟨11000, 3000, 6000, "size11.clo:49 via beamer.cls:155; beamerposter.sty:244"⟩
+
+def milliTexPt (v : Dim.Sp) : Int := v * 72270 / (72 * 65536)
+
+def classBase (c : Ir.DocClass) : Dim.Sp := c.record.fontSize.getD Ir.baseFontSize
+
+theorem display_skips_between (c : Ir.DocClass) :
+    (displaySource c).natural - (displaySource c).shrink
+        ≤ milliTexPt (Ir.displayAbove {} (classBase c)).width.sp ∧
+      milliTexPt (Ir.displayAbove {} (classBase c)).width.sp
+        ≤ (displaySource c).natural + (displaySource c).stretch ∧
+      milliTexPt (Ir.displayBelow {} (classBase c)).width.sp
+        = milliTexPt (Ir.displayAbove {} (classBase c)).width.sp
+```
+
+`blockGap_owner_contract`, for rhythm-html (owner HtmlDoc): no base-sheet
+rule sets the top margin of an element `blockGapCss` spaces at a higher
+specificity than the gap rule — the premise `single_owner_gap_exact` needs
+before the emitted gap is the rendered one. False today for `p`, `ul`, `ol`
+and `h1`–`h4`; true for `pre` and `table.booktabs`. (`blockquote` left
+`blockGapKinds` when the trivlist role took its boundaries.) The reader
+below parses the emitted sheet; rhythm-html's brief asks for the rule list
+from the one emitter instead, and the statement's shape stands either way.
+The reader sees specificity, not order: a `:where(p)` reset stated *after*
+the gap rules passes it and still wins the cascade, so the order half is a
+second clause or the rendered check's. After the fix the proof is `decide`
+for a fixed configuration; the general statement needs `baseCss`'s element
+rules factored out of its dependence on `cfg` and `doc`.
+
+```lean
+def cssRules (css : String) : List (List String × String) :=
+  (css.splitOn "}").filterMap fun chunk =>
+    match chunk.splitOn "{" with
+    | [sel, body] => some ((sel.splitOn ",").map (·.trimAscii.toString), body)
+    | _ => none
+
+def shadowsGap (css sel : String) : Bool :=
+  (cssRules css).any fun (sels, body) =>
+    sels.contains sel &&
+      ((body.splitOn "margin:").length > 1 || (body.splitOn "margin-top:").length > 1)
+
+theorem blockGap_owner_contract (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
+    ∀ e ∈ HtmlDoc.blockGapKinds, shadowsGap (HtmlDoc.baseCss cfg doc) e.1 = false
+```
+
+The branch's history holds the round in which the three were staged, with
+three `# lowered:` requests the writer spent; the commit that unstages them
+restores both files to main's, so the landing moves no owed record.
 
 **Routed.** To `agent/rhythm-pic`'s files (HtmlDoc): give the element rules'
 zero margins `:where()` too and state them before `blockGapCss`, so the gap
