@@ -429,16 +429,45 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Verified load-bearing: putting a bottom margin back on blockquote
   -- fails here.
   t "html heading owns its band below, followers suppressed"
-    ((plainPage.splitOn "margin: 0 0 0.725rem;").length == 2 &&
-     (plainPage.splitOn ":where(h1, h2, h3, h4) + * { margin-top: 0; }").length == 2)
-  t "html block elements own no vertical margins"
-    ((plainPage.splitOn "p { margin: 0; hyphens: auto; }").length == 2 &&
-     (plainPage.splitOn "ul, ol { margin: 0; padding-left: 1.35rem; }").length == 2 &&
-     (plainPage.splitOn "li { margin: 0; }").length == 2 &&
-     (plainPage.splitOn "blockquote { margin: 0; padding: 0 1.35rem; }").length == 2 &&
-     (plainPage.splitOn "figure.float { margin: 0 auto; }").length == 2)
-  t "html peer gap is one screen quantum, top-owned"
-    ((plainPage.splitOn ":where(* + p) { margin-top: 0.725rem; }").length == 2)
+    ((plainPage.splitOn ":where(h1, h2, h3, h4) { margin: 0 0 0.725rem; }").length == 2 &&
+     (plainPage.splitOn ":where(:is(h1, h2, h3, h4) + *) { margin-top: 0; }").length == 2)
+  t "html block elements' own margins are the emitter's zero-specificity resets"
+    ((plainPage.splitOn ":where(p, ul, ol, pre, blockquote) { margin: 0; }").length == 2 &&
+     (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
+     (plainPage.splitOn "li { margin: 0; }").length == 2)
+  t "html peer gap is the page's parskip over one screen quantum, top-owned"
+    ((plainPage.splitOn ":where(* + p) { margin-top: var(--parskip, 0.725rem); }").length == 2 &&
+     !hasStr plainPage "--parskip:")
+  -- The owner contract's text half (`HtmlDoc.blockGap_owner_contract` holds
+  -- the emitter's order): on no golden page does a base-sheet rule outside
+  -- the zero-specificity emitter declare a vertical margin on an element
+  -- the emitter spaces. Such a rule outranks every boundary rule on it:
+  -- `p { margin: 0 }` at (0,0,1) once kept every peer gap from rendering
+  -- while the sheet declared them. The subjects are read off the emitter's
+  -- own boundary rules, never a hand list.
+  let subjects : List String := HtmlDoc.blockGapRules.flatMap fun r => match r with
+    | .boundary sel _ => (sel.splitOn ",").filterMap fun part =>
+        match (part.splitOn "+").reverse with
+        | last :: _ :: _ =>
+          let s := last.trimAscii.toString
+          if s == "*" then none else some s
+        | _ => none
+    | .reset _ _ => []
+  let setsMargin (decls : String) : Bool := (decls.splitOn ";").any fun d =>
+    match d.splitOn ":" with
+    | p :: _ :: _ => ["margin", "margin-top"].contains p.trimAscii.toString
+    | _ => false
+  let mut shadows : Array String := #[]
+  for n in goldenNames do
+    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"tests/corpus/{n}.tex")
+    for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
+      if !sel.startsWith ":where(" && setsMargin decls &&
+          (sel.splitOn ",").any (subjects.contains ·.trimAscii.toString) then
+        shadows := shadows.push s!"{n}: {sel}"
+  t "html gap subjects are read off the emitter"
+    (["p", "ul", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)
+  unless shadows.isEmpty do IO.eprintln s!"  shadowing rules: {shadows.toList}"
+  t "html: no base-sheet rule outranks a gap rule on the element it spaces" shadows.isEmpty
   t "html heading gap is two screen quanta"
     ((plainPage.splitOn ":where(* + h2) { margin-top: 1.450rem; }").length == 2)
   t "html float gap keeps its token over the rhythm default"

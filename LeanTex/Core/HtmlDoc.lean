@@ -714,50 +714,89 @@ theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
     0 < gapK "caption" ∧ 0 < gapK "display" ∧ 0 < gapK "trivlist" := by decide
 
-/-- The gap rules, one adjacent-sibling rule per block element, each inside
-`:where()`: the base sheet's defaults carry zero specificity, so any
-consumer rule — a declared `\style` (emitted on the bare element selector)
-or a reader stylesheet that owns a container's spacing with `gap` — wins
-without a specificity fight, which is the HTML backend's override
-contract. The float's gaps keep their token (`--floatsep`, the same one
-the PDF path reads), and the float adds the one pair rule
-(`figure.float + *`): the gap below a float is the float's to declare, as
-the PDF walk's `addvspace` takes the larger of the float's gap and the
-next element's own — the pair rule stands later in the sheet, its value
-winning the boundary while the neighbour's own margin stays zero, so
-single ownership holds there too. -/
-def blockGapCss : String :=
-  String.join (blockGapKinds.map fun (sel, kind) =>
-    s!":where(* + {sel}) \{ margin-top: {quantaRem (gapK kind)}; }\n") ++
-  s!":where(* + figure.float) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
-  s!":where(figure.float + *) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
-  -- A display formula's block owns both its boundaries, the float's shape:
-  -- the skip above is its own `margin-top`, the skip below the follower's
-  -- (the pair rule, standing after the follower's own default so it wins
-  -- the boundary at equal specificity). The tokens are the ones the PDF
-  -- walk reads (`Ir.displayAbove`/`displayBelow`), the fallback the same
-  -- rhythm row (`display`); the `<math>` element inside carries no margin
-  -- of its own, so the boundary has exactly one emitter.
-  s!":where(* + .display) \{ margin-top: var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")}); }\n" ++
-  s!":where(.display + *) \{ margin-top: var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")}); }\n" ++
-  -- A trivlist environment — the engine role a `{center}`/`{flushleft}`/
-  -- `{flushright}` scope rides in, and `<blockquote>` — owns both its
-  -- boundaries, the display's shape: its `\topsep` on top of the peer gap,
-  -- above as its own margin, below as the follower's (the pair rule). The
-  -- token is the one the PDF walk reads (`Ir.trivlistSkip`), its fallback
-  -- the same one-quantum default, so the whole boundary is the table's
-  -- trivlist row.
-  s!":where(* + .{roleClass Ir.trivlistRole}, * + blockquote) \{ margin-top: \
-calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + \
-{quantaRem (gapK "peer")}); }\n" ++
-  s!":where(.{roleClass Ir.trivlistRole} + *, blockquote + *) \{ margin-top: \
-calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + \
-{quantaRem (gapK "peer")}); }\n" ++
-  -- The heading's band below is the heading's own (`blockGapKinds`): the
-  -- follower's default top margin is suppressed, standing last so it wins
-  -- every zero-specificity default above, and the heading rule's
-  -- margin-bottom is the boundary's one emitter.
-  ":where(h1, h2, h3, h4) + * { margin-top: 0; }\n"
+/-- One rule of the block-boundary sheet. `reset` states an element's own
+vertical margins — zero, replacing the user agent's, or a heading's band
+below; `boundary` is a boundary's one emitter, the lower side's
+`margin-top`. Both render inside `:where()` (`GapRule.render`), so the
+whole sheet stands at zero specificity and order alone ranks its rules. -/
+inductive GapRule where
+  | reset (sel margin : String)
+  | boundary (sel value : String)
+  deriving Repr, DecidableEq
+
+def GapRule.render : GapRule → String
+  | .reset sel m => s!":where({sel}) \{ margin: {m}; }\n"
+  | .boundary sel v => s!":where({sel}) \{ margin-top: {v}; }\n"
+
+def GapRule.isReset : GapRule → Bool
+  | .reset _ _ => true
+  | .boundary _ _ => false
+
+/-- The peer gap: the document's resolved `\parskip` where the page
+declares one (`--parskip`, written by `baseCss` through `parskipVar`),
+else the table's peer row — the value the PDF walk's `Rd.parskip` spends. -/
+private def peerGap : String := s!"var(--parskip, {quantaRem (gapK "peer")})"
+
+/-- A trivlist's boundary: its `\topsep` on top of the peer gap, through the
+token the PDF walk reads (`Ir.trivlistSkip`). -/
+private def trivlistGap : String :=
+  s!"calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + {peerGap})"
+
+/-- The block-boundary sheet, the one emitter of every vertical margin a
+block element carries. The resets come first: the element's own margins
+at zero specificity, so no element rule stands above a boundary rule —
+the defect this list replaced, where `p { margin: 0 }` at (0,0,1) beat
+every `:where(* + p)` and no peer gap rendered. Then one adjacent-sibling
+rule per block element (`blockGapKinds`); the float's pair (`--floatsep`),
+the display's (`Ir.displayAbove`/`displayBelow`) and the trivlist's
+(`\topsep`) — a pair rule stands later, so its value wins the boundary
+while the neighbour's own margin stays zero, the PDF walk's `addvspace`
+taking the larger; and last, the follower of a heading, whose band below
+is the heading's own (the reset's `margin-bottom`). Any consumer rule — a
+declared `\style` on the bare element or a reader stylesheet owning a
+container's spacing with `gap` — wins without a specificity fight, which
+is the HTML backend's override contract. -/
+def blockGapRules : List GapRule :=
+  [.reset "p, ul, ol, pre, blockquote" "0",
+   .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
+   .reset "figure.float" "0 auto"] ++
+  blockGapKinds.map (fun (sel, kind) =>
+    .boundary s!"* + {sel}" (if kind == "peer" then peerGap else quantaRem (gapK kind))) ++
+  [.boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
+   .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
+   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
+   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
+   .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
+   .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap,
+   .boundary ":is(h1, h2, h3, h4) + *" "0"]
+
+def blockGapCss : String := String.join (blockGapRules.map GapRule.render)
+
+/-- **Each boundary's gap is its emitter's, and it renders** (`_contract`):
+every rule of the one emitter stands at zero specificity, so order alone
+ranks them, and no reset stands after a boundary rule — the premise
+`single_owner_gap_exact` needs before the emitted gap is the rendered one;
+the heading's follower rule stands last. That no base-sheet rule outside
+the emitter declares a margin on an element it spaces is the text's to
+show, and `gapOwnerChecks` reads it off every golden page's sheet. -/
+theorem blockGap_owner_contract :
+    (blockGapRules.dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
+    blockGapRules.getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+  decide
+
+/-- The document's declared `\parskip` as the screen peer gap: its multiple
+of the print quantum at the document's size, realized in the screen's
+(`backend_gaps_agree`'s per-context unit). Written only where the page
+declares one — the `slides` and `resume` class records declare zero, as
+their PDF spends nothing between paragraphs — so an undeclared page keeps
+the peer rules' fallback. -/
+def parskipVar (page : Ir.PageSpec) : String :=
+  match page.parskip with
+  | none => ""
+  | some g =>
+    let q := Ir.rhythmQuantum page.fontSize
+    let milli := if q ≤ 0 then 0 else (g.width.sp * ((bodyLeadingMilli / 2 : Nat) : Int) / q).toNat
+    s!"    --parskip: {milliFactor milli}rem;\n"
 
 /-- The PDF backend's shipped default gap at a boundary kind: the values
 placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
@@ -3241,9 +3280,11 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- would be a value no theorem covers.
   let lt := Contrast.light
   let dk := Contrast.dark
+  let parskip := parskipVar doc.page
   ":root {\n" ++
   "    color-scheme: light dark;\n" ++
   s!"    --measure: {measureEm doc.page};\n" ++
+  parskip ++
   s!"    --ink: {cssColor lt.ink};\n" ++
   s!"    --surface: {cssColor lt.surface};\n" ++
   s!"    --muted: {cssColor lt.muted};\n" ++
@@ -3305,17 +3346,13 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- ordering covers this backend for free; the line height is the
   -- engine's one leading ratio. Hand-picked decimals here once drifted a
   -- rounding step from the scale sixty lines above the rules generated
-  -- from it. Margins are zero here and on every block element: a
-  -- boundary's gap has exactly one emitter (`blockGapCss`).
+  -- from it. Margins are not declared here or on any block element: the
+  -- resets and every boundary's one emitter are `blockGapRules`, all at
+  -- zero specificity, where an element rule here would outrank them.
   "h1, h2, h3, h4 {\n" ++
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
   s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
-  -- The band below a heading is the heading's own, one peer gap: the PDF
-  -- semantics (a heading's declared `after` replaces the peer gap), and
-  -- the one bottom-owned boundary — its follower's default top margin is
-  -- suppressed in `blockGapCss`, so it still has exactly one emitter.
-  s!"  margin: 0 0 {quantaRem (gapK "peer")};\n" ++
   "  text-wrap: balance;\n" ++
   "}\n" ++
   s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
@@ -3324,16 +3361,16 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- hyphens follows the declared language: the browser's dictionaries on
   -- the same lang= tags the engine's patterns read — one declaration, two
   -- conforming hyphenators (the agreement is about tags, never breaks).
-  "p { margin: 0; hyphens: auto; }\n" ++
-  "ul, ol { margin: 0; padding-left: 1.35rem; }\n" ++
+  "p { hyphens: auto; }\n" ++
+  "ul, ol { padding-left: 1.35rem; }\n" ++
   -- No per-item gap, as the PDF declares none: a list is one block, and
   -- its leading is its rhythm. A document declares its own through
   -- `\style{itemize}{ gap = ... }`.
   "li { margin: 0; }\n" ++
   -- A quotation moves both edges in, as the PDF sets it (classes.dtx:
-  -- `\rightmargin\leftmargin`); the browser's own quote margins would be
-  -- a second, unowned vertical emission.
-  "blockquote { margin: 0; padding: 0 1.35rem; }\n" ++
+  -- `\rightmargin\leftmargin`); its vertical margins are the gap
+  -- emitter's, as every block element's are.
+  "blockquote { padding: 0 1.35rem; }\n" ++
   "li::marker { color: var(--muted); }\n" ++
   -- The class-default list marking, per nesting level, matching the PDF
   -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
@@ -3464,7 +3501,6 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
   "  color: var(--muted); font-size: 0.8em; width: 1.5em;\n" ++
   "  position: absolute; left: 0; text-align: right; }\n" ++
-  "figure.float { margin: 0 auto; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
   s!"figure.float > figcaption \{ margin-top: var(--captionsep, {quantaRem (gapK "caption")});\n" ++

@@ -3736,9 +3736,9 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let page := (HtmlDoc.emit {} (elabStr csrc).1).1
   t "html: the trivlist owns both its boundaries at topsep over the peer gap"
     (hasStr page (":where(* + .u-trivlist-env, * + blockquote) { margin-top: " ++
-      "calc(var(--topsep, 0.725rem) + 0.725rem); }") &&
+      "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }") &&
      hasStr page (":where(.u-trivlist-env + *, blockquote + *) { margin-top: " ++
-      "calc(var(--topsep, 0.725rem) + 0.725rem); }"))
+      "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }"))
 
 /-- **A frame's content opens on a baseline below the title box, and a
 picture's bottom is a baseline** (`B.openBody`, `B.strutBelow`,

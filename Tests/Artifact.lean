@@ -1225,30 +1225,6 @@ the role is what a document declares and the engine registers, while the
 element is the emitter's choice and is resolved below. -/
 def artBandRole : String := "frametitlebg"
 
-/-- Every innermost declaration block a stylesheet carries, as its selector
-text paired with its declarations. Brace-depth scanned rather than split on
-`}`, so a nested at-rule's inner blocks come out under their own selectors
-(the backend writes the paged deck's bar inside `@media screen`) and the
-at-rule's prelude never reads as one. Total by construction: the loop is
-bounded by the length and every step advances the position. -/
-def artCssBlocks (css : String) : Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
-  let mut sels : Array String := #[]
-  let mut cur := ""
-  for c in css.toList do
-    if c == '{' then
-      sels := sels.push cur.trimAscii.toString
-      cur := ""
-    else if c == '}' then
-      let decls := cur.trimAscii.toString
-      if decls.contains ':' then
-        out := out.push ((sels.back?.getD "").trimAscii.toString, decls)
-      sels := sels.pop
-      cur := ""
-    else
-      cur := cur.push c
-  return out
-
 /-- Does this declaration list paint a background from this role's property?
 The property is read as a declaration — `background` or `background-color`
 before the colon — so a `var()` reference in a border or a shadow does not
