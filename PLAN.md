@@ -21636,3 +21636,103 @@ directory (`external --selftest`), five framed shapes and four legal
 ones (`precommit --selftest`). A rule that decides by reading
 declarations lives where declarations are readable, and says in the
 suite what the suite checks.
+
+
+### 2026-09-27 — the HTML agrees with the PDF again: list levels, a section's heading gap, a code line on paper, and a scheme gate that reads every colour
+
+review-c's RF-5 and S-1, and two items routed by site-fix and
+deck-print. Every number below is measured on the artifact: the rhythm
+tier's browser report (`scripts/rhythm.lean --html`, Chromium 151, the 74
+boundaries both backends set, each gap in its own context's quanta), a
+Chromium print read back with `pdftotext`, or the emitted sheet.
+
+- **A list's spaces are the class's `\@list⟨n⟩` in HTML too** (RF-5).
+  The PDF walk spends `Ir.listSkips`; the HTML set every item at zero and
+  every list and quotation at the peer or trivlist gap, and said "no
+  per-item gap, as the PDF declares none" (no longer true since rhythm-fix,
+  and deleted). The gap emitter now carries one rule set per list level
+  (`listRules`), read from that resolving site and converted once to the
+  screen's quanta (`screenMilli`, which the declared parskip also reads):
+  `\topsep` over the parskip in force above and below each list and
+  quotation; `\itemsep` over the item's own `\parsep` before every item
+  after the first; and `\parsep` as the paragraph gap inside items and
+  quotations — a `--parskip` scope, as `\list` makes `\parsep` the
+  `\parskip`. The level is the count of item ancestors, as `\@listdepth`
+  counts both kinds. The web's lineage owes none (`listRules_web_exact`).
+  The list rules stand after the trivlist's pair and before the headings',
+  so at a mixed boundary the larger default wins, as `\addvspace` takes
+  it. Theorems: `screenMilli_between` (a converted gap sits at most one
+  milli-rem under the print gap's exact multiple of its quantum, for every
+  size and length), `listGaps_agree`, and `blockGap_owner_contract`, now
+  over every lineage and body size. Guard: `htmlListGapChecks`, against
+  the size files' and beamer's values converted by hand.
+- **A reference list's entries stand a peer gap apart**, the paragraphs
+  `Layout.collectBibliography` sets them as; the HTML set them at zero.
+- **A section's heading opens its gap above its section** (site-fix's
+  route). A level-1 heading is its `<section>`'s first child, so
+  `* + h2` never met it: 2.34 quanta against the PDF's 4.72. The heading
+  now owns that boundary at the heading row's two quanta, its margin
+  collapsing through the section's edge — on the heading and not the
+  section, so a consumer sheet that paints its sections as bands keeps
+  them flush (the website port's build is pixel-identical at 360, 768 and
+  1280 px). Guard: `htmlSectionGapChecks`.
+- **A code block wraps a long line on paper** (deck-print's route): the
+  base sheet's print block lifts `pre`'s `overflow-x: auto`, which clips
+  on paper. A declared departure from LaTeX's verbatim, which overruns
+  the measure: only a line wider than the block moves, and every
+  character reaches the sheet — a synthetic article's long code line and
+  long identifier lost 82 of 236 letters and digits on paper at
+  `8d3df368`, none now. Guard: `printLiftChecks`, over every golden page's
+  sheet: each rule that holds on paper and scrolls has a print rule at its
+  selector that sets that overflow visible (it holds the deck stage's lift
+  on the artifact too), and the code block wraps.
+- **One scheme wherever a colour is the document's** (S-1, a false claim
+  in this file's site-fix entry). `dualScheme` now also reads every
+  coloured run the document sets through the one walk over the whole
+  document (`Ir.foldDoc`), a style's own colours (`styleColored`: a
+  heading's rule, a separator, a link's hover and focus inks, the author
+  line's and title slots' templates) and the page's loaded images through
+  their plan's alpha (`imageSeeThrough`). The judge (`schemeFailures`)
+  reads the same decision over the same image store. The claim now holds
+  as `dualScheme_contract`: a page that ships the dark variant declares no
+  palette entry, no style colour and no image that lets the ground through.
+  On the corpus one page changes (`images`, a clear raster): 43 → 42 pages
+  ship both schemes. The reviewer's probes ship both schemes at
+  `8d3df368` and one now; an opaque raster keeps both.
+
+**Measured.** The rhythm report's mean |html − pdf|: 0.697 quanta at
+`8d3df368`, 0.561 with the list levels, 0.426 with the section gap
+(within half a quantum: 46, 54, 59 of 74). Every article list and quote
+boundary stands at −0.01 q. The private reference corpus (evidence only):
+its deck ships no list in HTML and its stage fit is unchanged, both PDFs
+are byte-identical, and the paper's reference entries stand 1.11 → 0.75
+quanta from the PDF's on average; every document already shipped one
+scheme.
+
+**Correction to the brief.** The list levels alone bring the mean to
+0.561, not 0.54: a deck's list gaps are in `rem` while its type rides the
+stage in `vh`, so they reach 2.19 of the PDF's 2.45 quanta. The section
+gap takes the mean past the target.
+
+**Routed.**
+- The deck's gap unit (deck-print's route, every gap on a stage, not only
+  a list's): a stage-relative quantum for the whole emitter, measured
+  against the private deck's slide fit.
+- `\partopsep` (vspace-rhythm's RF-3): if the IR comes to record a list
+  that opens a paragraph, `HtmlDoc.listLevelRules`' list-top rule owes it.
+- `Ir.furnitureInlines` omits a style's author template and its title
+  slots, so a census through `foldDoc` misses them (Ir; `styleColored`
+  reads them itself meanwhile).
+- The reference list follows the PDF's peer gap; LaTeX's
+  `thebibliography` spends `\itemsep + \parsep`. If the PDF moves
+  (kernel-envs), the HTML rule `.bibliography > li + li` moves with it.
+- Below a heading the HTML still binds at the heading's one band
+  (`blockGapKinds`' stated cost): section-to-paragraph −1.13 q,
+  section-to-subsection −2.37 q.
+
+**The user's.** A code line wider than its block wraps on paper, where
+LaTeX lets it overrun the page; the alternative is to let it overrun, and
+lose what runs past the sheet. A page with a transparent image now has
+no dark mode, as a page with a picture has none; the alternatives are a
+light backing behind such an image in dark mode, or the derived dark
+palette site-fix named.
