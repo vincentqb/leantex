@@ -5206,6 +5206,206 @@ private def pairGroupsList (top : Bool) (acc : Array Raw) : List Raw → Array R
 
 end
 
+/-- One token of a delimited parameter text or of a use's input, as TeX
+matches them: a character, a control word, a space, or a whole group. -/
+private inductive DelimAtom where
+  | ch (c : Char)
+  | cs (name : String)
+  | sp
+  | other
+  deriving BEq
+
+/-- A use's input flattened to atoms, each with the raw it stands in and,
+for a word's character, its offset: up to the paragraph's end, where a
+delimited argument cannot reach. -/
+private def delimAtoms (xs : Array Raw) (start : Nat) : Array (DelimAtom × Nat × Nat) := Id.run do
+  let mut out := #[]
+  for h : i in [start:xs.size] do
+    match xs[i] with
+    | .word w _ =>
+      let mut o := 0
+      for c in w.toList do
+        out := out.push (.ch c, i, o)
+        o := o + 1
+    | .sym c _ => out := out.push (.ch c, i, 0)
+    | .ctrl n _ => out := out.push (.cs n, i, 0)
+    | .space => out := out.push (.sp, i, 0)
+    | .par _ => break
+    | _ => out := out.push (.other, i, 0)
+  return out
+
+/-- A refused delimited definition's parameter text: its literal run before
+the first parameter, then each parameter's delimiter. `none` when a
+parameter is undelimited or the text is not `#1…#n` in order. -/
+private def delimShape (params : Array Raw) : Option (Array DelimAtom × Array (Array DelimAtom)) :=
+  Id.run do
+  let mut lead : Array DelimAtom := #[]
+  let mut delims : Array (Array DelimAtom) := #[]
+  let mut cur : Array DelimAtom := #[]
+  let mut seen := 0
+  let mut i := 0
+  for _ in [0:params.size] do
+    match (params[i]? : Option Raw), (params[i + 1]? : Option Raw) with
+    | some (.sym '#' _), some (.word w _) =>
+      let digits := w.toList.takeWhile Char.isDigit
+      unless String.ofList digits == toString (seen + 1) do return none
+      if seen == 0 then lead := cur else delims := delims.push cur
+      seen := seen + 1
+      cur := (w.toList.drop digits.length).toArray.map .ch
+      i := i + 2
+    | some (.word w _), _ => cur := cur ++ w.toList.toArray.map .ch; i := i + 1
+    | some (.sym c _), _ => cur := cur.push (.ch c); i := i + 1
+    | some (.ctrl n _), _ => cur := cur.push (.cs n); i := i + 1
+    | some .space, _ => cur := cur.push .sp; i := i + 1
+    | some _, _ => return none
+    | none, _ => break
+  if seen == 0 then return none
+  delims := delims.push cur
+  if delims.any (·.isEmpty) then return none
+  return some (lead, delims)
+
+/-- Does `pat` stand in `atoms` at `k`? -/
+private def atomsAt (atoms : Array (DelimAtom × Nat × Nat)) (k : Nat) (pat : Array DelimAtom) :
+    Bool :=
+  (List.range pat.size).all fun j => (atoms[k + j]?.map (·.1)) == pat[j]?
+
+/-- The raws of `xs` from atom `a` up to atom `b` (exclusive), a word split
+where an atom boundary falls inside it. -/
+private def atomRaws (xs : Array Raw) (atoms : Array (DelimAtom × Nat × Nat)) (a b : Nat) :
+    Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut k := a
+  for _ in [a:b] do
+    if k ≥ b then break
+    match atoms[k]? with
+    | none => break
+    | some (_, ri, o) =>
+      match xs[ri]? with
+      | some (.word w p) =>
+        -- the run of this word's characters inside [k, b)
+        let mut n := 0
+        for _ in [k:b] do
+          if atoms[k + n]?.any (fun t => t.2.1 == ri) && k + n < b then n := n + 1 else break
+        out := out.push (.word (String.ofList ((w.toList.drop o).take n)) p)
+        k := k + n
+      | some r =>
+        out := out.push r
+        k := k + 1
+      | none => break
+  return out
+
+/-- A use of a refused delimited definition, spelled as the braced call its
+parameter text reads: the arguments TeX would bind, each a group, with the
+delimiters consumed as TeX consumes them. `none` when the input does not
+match (a delimiter missing before the paragraph's end), leaving the use as
+written. Returns the call and the index past what it consumed. -/
+private def delimCall (xs : Array Raw) (i : Nat) (name : String) (pos : Pos)
+    (shape : Array DelimAtom × Array (Array DelimAtom)) : Option (Array Raw × Nat) := Id.run do
+  let atoms := delimAtoms xs (i + 1)
+  let (lead, delims) := shape
+  unless atomsAt atoms 0 lead do return none
+  let mut k := lead.size
+  let mut args : Array Raw := #[]
+  for d in delims do
+    let mut e := k
+    let mut found := false
+    for _ in [k:atoms.size] do
+      if atomsAt atoms e d then found := true; break
+      e := e + 1
+    unless found do return none
+    args := args.push (.group (atomRaws xs atoms k e) pos)
+    k := e + d.size
+  -- What the last delimiter leaves of a word stays as that word's tail.
+  let (stop, tail) := match atoms[k]?, atoms[k - 1]? with
+    | some (_, ri, o), some (_, rj, _) =>
+      if ri == rj && o > 0 then
+        match xs[ri]? with
+        | some (.word w p) => (ri + 1, #[Raw.word (String.ofList (w.toList.drop o)) p])
+        | _ => (ri, #[])
+      else (ri, #[])
+    | none, some (_, rj, _) => (rj + 1, #[])
+    | _, _ => (i + 1, #[])
+  return some (#[Raw.ctrl name pos] ++ args ++ tail, stop)
+
+/-- The delimited definitions the rewrite refuses (W0357), by name, with
+their parameter texts: gathered whole tree, since a definition's uses
+follow it and the refusal leaves the name undefined. -/
+private def delimDefsLevel (xs : Array Raw)
+    (out : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
+    Array (String × (Array DelimAtom × Array (Array DelimAtom))) := Id.run do
+  let mut out := out
+  for h : i in [0:xs.size] do
+    if let .ctrl d _ := xs[i] then
+      if d == "def" || d == "gdef" then
+        if let some (.ctrl n _) := xs[i + 1]? then
+          let params := ((xs.extract (i + 2) xs.size).toList.takeWhile
+            fun r => !(r matches .group _ _)).toArray
+          if let some sh := delimShape params then out := out.push (n, sh)
+  return out
+
+mutual
+
+private def delimDefsRaw (out : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
+    Raw → Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+  | .group body _ => delimDefsList (delimDefsLevel body out) body.toList
+  | .env _ body _ => delimDefsList (delimDefsLevel body out) body.toList
+  | .math _ _ _ => out
+  | .word _ _ => out
+  | .space => out
+  | .par _ => out
+  | .ctrl _ _ => out
+  | .sym _ _ => out
+  | .verb _ _ _ => out
+
+private def delimDefsList (out : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
+    List Raw → Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+  | [] => out
+  | r :: rest => delimDefsList (delimDefsRaw out r) rest
+
+end
+
+/-- Every refused delimited definition in a tree (`delimDefsLevel`). -/
+private def delimitedDefs (raws : Array Raw) :
+    Array (String × (Array DelimAtom × Array (Array DelimAtom))) :=
+  delimDefsList (delimDefsLevel raws #[]) raws.toList
+
+mutual
+
+/-- Every use of a refused delimited definition spelled as its braced call
+(`delimCall`), whole tree, before the rewrite walk: the delimiter is the
+call's syntax, consumed as TeX consumes it, never ink. The definition's own
+head is not a use. -/
+-- conserves: none — a use's delimiters are syntax, not text.
+private def delimCallsRaw (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
+    Raw → Raw
+  | .group body p => .group (delimCallsList sigs body #[] body.toList 0 0) p
+  | .env n body p => .env n (delimCallsList sigs body #[] body.toList 0 0) p
+  | .math d body p => .math d body p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+private def delimCallsList (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom))))
+    (xs : Array Raw) (out : Array Raw) : List Raw → Nat → Nat → Array Raw
+  | [], _, _ => out
+  | _ :: rest, i, skip + 1 => delimCallsList sigs xs out rest (i + 1) skip
+  | .ctrl d p :: rest, i, 0 =>
+    if d == "def" || d == "gdef" then
+      match xs[i + 1]? with
+      | some (.ctrl n q) =>
+        delimCallsList sigs xs ((out.push (.ctrl d p)).push (.ctrl n q)) rest (i + 1) 1
+      | _ => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
+    else
+      match (sigs.find? (·.1 == d)).bind fun (_, sh) => delimCall xs i d p sh with
+      | some (call, stop) => delimCallsList sigs xs (out ++ call) rest (i + 1) (stop - (i + 1))
+      | none => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
+  | r :: rest, i, 0 => delimCallsList sigs xs (out.push (delimCallsRaw sigs r)) rest (i + 1) 0
+
+end
+
 /-- Glue a row of boxes can hold between two boxes: a space, or the fill
 that takes what the boxes leave of the measure (`\hfill`, `\hfil`). A
 paragraph break is not among them — it ends the line the boxes stand on. -/
@@ -5811,6 +6011,8 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws ← condDocument raws
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
+    let sigs := delimitedDefs raws
+    let raws := if sigs.isEmpty then raws else delimCallsList sigs raws #[] raws.toList 0 0
     let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList

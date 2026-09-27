@@ -84,3 +84,29 @@ def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
       (strong.any (hasStr · "Inside words."))
     t s!"and the change stops at '\\{c}'" (strong.all fun s => !hasStr s "After words.")
     t s!"a matched '\\{o}' is no unknown command" (ds.all (·.code != "W0301"))
+
+
+/-- **A refused delimited definition's use ships what its braced spelling
+ships.** TeX reads a delimited parameter up to its delimiter and consumes
+the delimiter as the call's syntax; the engine refuses the definition
+(W0357), and its use is then an unknown command whose arguments are kept as
+text. Each row pairs a delimited use with the braced call it reads as, and
+the pages must agree. The defect: the delimiter was left in the stream, so
+the page showed punctuation nobody typed. -/
+def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pre := "\\def\\probescan#1;{\\textbf{#1}}\n\\def\\probepair#1,#2\\relax{#2}\n" ++
+    "\\def\\probewrap(#1){\\emph{#1}}\n"
+  let rows := [
+    ("Scanned: \\probescan Scanned words; tail words.",
+     "Scanned: \\probescan{Scanned words} tail words."),
+    ("Paired: \\probepair Left words,Right words\\relax\\ tail.",
+     "Paired: \\probepair{Left words}{Right words}\\ tail."),
+    ("Wrapped: \\probewrap(Inner words) tail.",
+     "Wrapped: \\probewrap{Inner words} tail.")]
+  for (delimited, braced) in rows do
+    let page := pageTextOf fonts (dvDoc pre delimited)
+    t s!"a delimited use ships its braced call's page: {delimited}"
+      (page == pageTextOf fonts (dvDoc pre braced))
+  t "the definitions stay refused by name"
+    ((dvE (dvDoc pre "Body.")).any (·.code == "W0357"))
