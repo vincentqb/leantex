@@ -30,14 +30,6 @@ import scripts.Gate
 disagree about what counts. -/
 def holeLine (l : String) : Bool := bannedWord kwSorry l
 
-/-- The value of `-- <key>: <value>` when the line is one. -/
-def fieldOf (l key : String) : Option String :=
-  let t := l.trimAscii.toString
-  let pre := "-- " ++ key ++ ":"
-  if t.startsWith pre then
-    some (((t.drop pre.length).toString).trimAscii.toString)
-  else none
-
 /-- A name is registered when PLAN.md spells it backticked. -/
 def registered (plan name : String) : Bool :=
   containsSub plan ("`" ++ name ++ "`")

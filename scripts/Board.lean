@@ -991,15 +991,6 @@ def deficits (t : Tsv) : Array (String × Int) := Id.run do
 
 -- ## Obligations, read as records
 
-/-- The value of `-- <key>: <value>` when the line is one. The definition
-lives in `scripts/Gate.lean`, which is where the repository puts a predicate
-two gates must agree on; this is the name a tier reads it by. Routed:
-`scripts/owed.lean` still carries an identical copy under the name `fieldOf`
-and should drop it for `recordField` — that file is the owed ratchet and not
-this agent's. The scoreboard selftest fails in both directions until it
-does. -/
-def fieldOf := recordField
-
 structure Ob where
   name : String
   owner : String

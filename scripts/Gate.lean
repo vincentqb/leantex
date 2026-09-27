@@ -66,14 +66,8 @@ def importsObligations (l : String) : Bool :=
 owed record is written in. Two gates read it: `scripts/owed.lean`, which is
 the ratchet, and the scoreboard's obligations tier, which counts the same
 records per owner. One definition, so the two cannot disagree about what a
-record says; that is what this module is for.
-
-Named `recordField` rather than `fieldOf` only because `scripts/owed.lean`
-still declares its own `fieldOf` and that file is not this agent's to edit.
-Routed: delete owed.lean's copy and call this. The scoreboard's selftest
-carries a row that fails in both directions until that lands — if the copies
-ever disagree, and again once the copy is gone. -/
-def recordField (l key : String) : Option String :=
+record says; that is what this module is for. -/
+def fieldOf (l key : String) : Option String :=
   let t := l.trimAscii.toString
   let pre := "-- " ++ key ++ ":"
   if t.startsWith pre then some (((t.drop pre.length).toString).trimAscii.toString)

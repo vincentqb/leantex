@@ -1410,14 +1410,8 @@ the request the base carries)"])
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
-  -- Routed, as a row that fails in both directions: scripts/owed.lean is
-  -- the owed ratchet and not this agent's file, so its identical `fieldOf`
-  -- stands for now. This fails if the two readers ever disagree, and again
-  -- once owed.lean drops its copy — at which point delete this block.
-  let owedSrc ← readFileOr "scripts/owed.lean"
-  let owedHasCopy := containsSub owedSrc "def fieldOf"
-  no "routed: scripts/owed.lean no longer declares its own fieldOf — switch it to \
-Gate.recordField and delete this check" owedHasCopy
+  -- The record form the obligations tier and the owed ratchet both read,
+  -- from the one definition in scripts/Gate.lean.
   let samples : List (String × Option String) :=
     [("-- owed: t_one", some "t_one"),
      -- Leading whitespace is trimmed first, which owed.lean's own test also
@@ -1429,8 +1423,8 @@ Gate.recordField and delete this check" owedHasCopy
   for (line, want) in samples do
     let key := if containsSub line "owner" then "owner"
       else if containsSub line "blocker" then "blocker" else "owed"
-    no s!"routed: recordField disagrees with the record form on '{line}'"
-      (recordField line key == want)
+    no s!"fieldOf disagrees with the record form on '{line}'"
+      (fieldOf line key == want)
   -- Routed, the same way: `cites` loads no scoreboard module, so a
   -- backticked name of one of Board's theorems in any docstring reads to it
   -- as a phantom and fails the gate — which is the half of this row that
