@@ -140,6 +140,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureBoxChecks ref oneFace
   pictureBendChecks ref oneFace
   pictureInlineChecks ref oneFace
+  pictureKeyNameChecks ref
   trivlistChecks ref oneFace
   listRhythmChecks ref oneFace
   vspaceKeptChecks ref oneFace

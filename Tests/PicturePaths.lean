@@ -123,3 +123,20 @@ def pictureInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       !named ("Before.\n\n" ++ mark ++ "\n\nAfter."))
   t "a box and a picture on their own line are a row, not a sentence"
     (!named ("\\parbox[t]{3cm}{Lab}\n" ++ mark))
+
+
+/-- **A dropped picture key is named whole.** Every option catch-all named
+the entry's first token, so `text width=`, `text centered` and `text depth=`
+each reported as `'text'` — a key the subset reads in its colour spelling —
+and, since a picture diagnostic is keyed on its message, three losses on one
+node counted as one. Asserted over the structured diagnostics: one message
+per dropped key, each naming its key. Invented content. -/
+def pictureKeyNameChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++
+    "\\begin{tikzpicture}\n\\node[text width=2cm, text centered, text depth=1ex] at (0,0) {x};\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let ms := ((elabStr src).2.filter (·.code == "W0334")).map (·.message)
+  t "three dropped keys on one node are three named losses"
+    (ms.size == 3 && ["'text width'", "'text centered'", "'text depth'"].all fun k =>
+      ms.any (hasStr · k))

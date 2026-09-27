@@ -1433,10 +1433,18 @@ theorem merge_global_covers {global picture every own : Array (Array Tok)}
     o ∈ mergeOpts global picture every own :=
   inherit_outer_covers (inherit_outer_covers (inherit_outer_covers h hp) he) ho
 
+/-- An option entry named for a diagnostic: its whole key, as pgf reads
+`key=value` (`text width`, not `text`), else its first token. The first
+token alone reported three different dropped keys as one supported-looking
+`'text'`, one site where there were three. -/
+private def optName (opt : List Tok) : String :=
+  let key := keyPath opt
+  if key.isEmpty then (opt.head?.map tokText).getD "an empty option" else s!"'{key}'"
+
 /-- A picture-level key outside the subset, named at the bracket that
 wrote it. -/
-private def outsideOpt (o : Tok) : PDiag :=
-  (.W0334, s!"picture option {tokText o} is outside the \
+private def outsideOpt (opt : List Tok) : PDiag :=
+  (.W0334, s!"picture option {optName opt} is outside the \
 rendered picture subset; the option is dropped")
 
 /-- Substitute macros into a colour spelling and hand it to
@@ -3006,8 +3014,8 @@ is dropped")
       contents := some ls
       ev := ds.foldl Ev.diag ev
     | [] => pure ()
-    | o :: _ =>
-      ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
+    | o :: rest =>
+      ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
 picture subset; the option is dropped")
   -- pgf places a node with no `at` at the path's current point, which at
   -- the start of a node statement is the origin; a relative placement
@@ -3502,8 +3510,7 @@ the edge is not drawn")
       match evalColor cx env opt with
       | .ok c => color := c
       | .error _ =>
-        let _ := rest
-        ev := ev.diag (.W0334, s!"draw option {tokText o} is outside the \
+        ev := ev.diag (.W0334, s!"draw option {optName (o :: rest)} is outside the \
 rendered picture subset; the option is dropped")
   -- The endpoint chain: `(name|x,y)` separated by `--`.
   let readAnchor (i : Nat) : Except PDiag (Anchor × Nat) := Id.run do
@@ -3645,12 +3652,8 @@ subset; the last one is drawn")
                 ev := ev.diag (.E0333, s!"in an edge's 'draw=', {e}; the \
 colour is dropped")
             | [] => pure ()
-            | o :: _ =>
-              -- The whole key: its first word alone named `in` for
-              -- `in min distance`, a key the reader does honour.
-              let key := keyPath opt.toList
-              let named := if key.isEmpty then tokText o else s!"'{key}'"
-              ev := ev.diag (.W0334, s!"'to' option {named} is outside the \
+            | o :: rest =>
+              ev := ev.diag (.W0334, s!"'to' option {optName (o :: rest)} is outside the \
 rendered picture subset; the option is dropped")
           op := if spec.curved then .curve spec else .straight
         else if toSpec.curved then op := .curve toSpec
@@ -3713,8 +3716,8 @@ dropped")
             | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
             | [.ident "auto"] => pure ()
             | [] => pure ()
-            | o :: _ =>
-              ev := ev.diag (.W0334, s!"edge node option {tokText o} is outside \
+            | o :: rest =>
+              ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
 the rendered picture subset; the option is dropped")
         match ts[i]? with
         | some (.group body) =>
@@ -4590,12 +4593,12 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
           | some bundle => inherited := inherited ++ splitTop bundle ','
           | none =>
             if readsOpt styles #[.ident n] then inherited := inherited.push #[.ident n]
-            else diags := diags.push (outsideOpt (.ident n))
+            else diags := diags.push (outsideOpt [.ident n])
         | [] => pure ()
         | o :: rest =>
           if readsOpt styles (o :: rest).toArray then
             inherited := inherited.push (o :: rest).toArray
-          else diags := diags.push (outsideOpt o)
+          else diags := diags.push (outsideOpt (o :: rest))
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := (parseList (toks.toList.drop i) {}).drain
@@ -4637,9 +4640,9 @@ edge stands on the line")
     match opt.toList with
     | [] => pure ()
     | o :: _ =>
-      if !readsOpt styles opt then unread := unread.push (outsideOpt o)
+      if !readsOpt styles opt then unread := unread.push (outsideOpt opt.toList)
       else unless ev.readOpts do
-        unread := unread.push (.W0334, s!"picture option {tokText o} reached no path \
+        unread := unread.push (.W0334, s!"picture option {optName opt.toList} reached no path \
 or node; the option is dropped")
   let all := diags ++ st.bad ++ ev.diags ++ unread
   -- One message, once: the parse and eval sides dedupe among themselves;

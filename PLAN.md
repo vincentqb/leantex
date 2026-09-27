@@ -22451,3 +22451,17 @@ placements that name nothing, and checks that the page ships the text
 above and below the picture's fill as the note says. The private
 documents carry no such picture once their box-and-picture lines are rows,
 so their census is unchanged.
+
+
+**A dropped picture key is named whole** (fourth unit). Every option
+catch-all named the entry's first token, so `text height=`, `text depth=`
+and `text width=` each reported as `'text'`. That is a key the subset
+honours in its colour spelling. A picture diagnostic is keyed on its
+message, so three losses on one node counted as one site. One helper
+(`Picture.optName`, the key as `keyPath` reads it) now names the key at
+every catch-all: picture, node, draw, `to` and edge-label options.
+`pictureKeyNameChecks` fails on `7763299a`. On the private deck the count
+becomes honest, one group per key: W0334 rises 5 → 8 lines, from one
+`'text'` group of three sites to `'text height'` and `'text depth'` with
+three sites each. No page changed. This makes a per-key tier
+possible, which is the audit's `pickeys` proposal; it is not built here.
