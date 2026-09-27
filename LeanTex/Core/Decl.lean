@@ -492,6 +492,24 @@ private def popOne (vals : Array EVal) (op : Char) : Except String (Array EVal) 
     | some b, some a => return (vals.pop.pop).push (← applyBinOp op a b)
     | _, _ => throw "malformed expression"
 
+/-- Stack `c`, first draining every operator already on the stack that
+binds at least as tightly (never past a `(`): shunting-yard's precedence
+rule at one site, so the additive and multiplicative arms cannot drain by
+two rules that drift apart. -/
+private def pushOp (vals : Array EVal) (ops : Array Char) (c : Char) :
+    Except String (Array EVal × Array Char) := do
+  let mut vals := vals
+  let mut ops := ops
+  for _ in [0:ops.size + 1] do
+    match ops.back? with
+    | some top =>
+      if top != '(' && opPrec top ≥ opPrec c then
+        vals ← popOne vals top
+        ops := ops.pop
+      else break
+    | none => break
+  return (vals, ops.push c)
+
 /-- Parse a token stream into an expression: shunting-yard with unary
 minus, the implicit coefficient (`2 cardbleed`), and units bound where
 their number stands (`1.5ex`, spaces allowed as in TeX's `2.5 \x`). Loops
@@ -521,16 +539,9 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
     | .plus | .minus =>
       let isMinus := t == ETok.minus
       if prevOperand then
-        let c := if isMinus then '-' else '+'
-        for _ in [0:ops.size + 1] do
-          match ops.back? with
-          | some top =>
-            if top != '(' && opPrec top ≥ opPrec c then
-              vals ← popOne vals top
-              ops := ops.pop
-            else break
-          | none => break
-        ops := ops.push c
+        let (vals', ops') ← pushOp vals ops (if isMinus then '-' else '+')
+        vals := vals'
+        ops := ops'
         prevOperand := false
       else if isMinus then
         -- Unary: highest precedence, applied to the next operand alone.
@@ -538,16 +549,9 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
       -- A unary plus says nothing; it is skipped.
     | .times | .divide =>
       unless prevOperand do throw "malformed expression"
-      let c := if t == ETok.divide then '/' else '*'
-      for _ in [0:ops.size + 1] do
-        match ops.back? with
-        | some top =>
-          if top != '(' && opPrec top ≥ opPrec c then
-            vals ← popOne vals top
-            ops := ops.pop
-          else break
-        | none => break
-      ops := ops.push c
+      let (vals', ops') ← pushOp vals ops (if t == ETok.divide then '/' else '*')
+      vals := vals'
+      ops := ops'
       prevOperand := false
     | .lparen =>
       if prevOperand then throw "malformed expression"

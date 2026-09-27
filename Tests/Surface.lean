@@ -183,6 +183,15 @@ full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
     (doc.tokens.find? "gap" == some { width := .ofSp (Dim.pt 6) })
   t "parentheses group before scaling"
     (doc.tokens.find? "half" == some { width := .ofSp (Dim.pt 9) })
+  -- Precedence without parentheses: `*` and `/` bind tighter than `+` and
+  -- `-`, on either side of the operator. Every row above parenthesizes, so
+  -- the drain rule itself was unmeasured.
+  t "multiplication and division bind tighter than addition"
+    (let d := (elabStr (pre "\\tokens{ a = 4pt, l = a + 2 * a, r = 2 * a + a, \
+d = a - a / 2 }")).1
+     d.tokens.find? "l" == some { width := .ofSp (Dim.pt 12) } &&
+       d.tokens.find? "r" == some { width := .ofSp (Dim.pt 12) } &&
+       d.tokens.find? "d" == some { width := .ofSp (Dim.pt 2) })
   -- Absent is diagnosed, never defaulted: the unknown name appears in the
   -- message, and nothing resolves to zero.
   t "an unknown token in an expression is named"
