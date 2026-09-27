@@ -316,7 +316,9 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      ("\\parskip=5pt", "\\setlength{\\parskip}{5pt}"),
      ("\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{\\parskip}",
        "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}"),
-     ("\\makeatletter\\setlength{\\parskip}{\\z@}\\makeatother", "\\setlength{\\parskip}{0pt}")]
+     ("\\makeatletter\\setlength{\\parskip}{\\z@}\\makeatother", "\\setlength{\\parskip}{0pt}"),
+     ("\\makeatletter\\newlength{\\@probegap}\\setlength{\\@probegap}{7pt}" ++
+        "\\setlength{\\parskip}{\\@probegap}\\makeatother", "\\setlength{\\parskip}{7pt}")]
   for (spelled, literal) in read do
     let src := doc spelled body
     let set := pagesOf oneFace src
@@ -340,6 +342,14 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"'{pre}' is named once, on its parameter"
       ((ds.filter fun d => d.code == "W0104").map (·.subject) ==
         #[some s!"ctrl:setlength:{n}:value"])
+    t s!"'{pre}' ships the page the document ships without it" (pagesOf oneFace src == bare)
+  -- A definition's body runs where the command is used: nothing in it is
+  -- judged where it is defined, whatever it copies.
+  for pre in ["\\newcommand{\\probesize}{\\setlength{\\belowdisplayskip}{\\abovedisplayskip}}",
+      "\\newcommand{\\probesize}{\\belowdisplayskip\\abovedisplayskip}",
+      "\\newcommand{\\probesize}{\\addtolength{\\parskip}{2pt}}"] do
+    let src := doc pre body
+    t s!"'{pre}' names nothing where it is defined" (fine (dvE src))
     t s!"'{pre}' ships the page the document ships without it" (pagesOf oneFace src == bare)
   let listBody (lead : String) : String :=
     "Alpha words.\n\\begin{itemize}" ++ lead ++ "\\item One.\\item Two.\\end{itemize}\nBravo words."

@@ -3093,9 +3093,12 @@ skip amount is its fixed value, and any other name is a token of the
 document's, read where the declaration reads it. `none` for what the door
 cannot evaluate: a kernel parameter whose value it was never told (the
 class sets it), a box's dimension, and a command that computes a length
-(`\stretch`, calc's `\widthof`). -/
-private def lenValue (lens : Array (String × String)) (raws : Array Raw) : Option String :=
-  let kernel (n : String) : Bool := (paramSites.lookup n).isSome
+(`\stretch`, calc's `\widthof`). In a definition's body (`deferred`) the
+assignment runs where the command is used, so a kernel parameter is read
+there, by its name. -/
+private def lenValue (lens : Array (String × String)) (raws : Array Raw)
+    (deferred : Bool := false) : Option String :=
+  let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   let held (n : String) : Option String :=
     (if kernel n then (lens.find? (·.1 == n)).map (·.2) else none).orElse
       fun _ => kernelSkip n
@@ -3112,14 +3115,15 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw) : Opti
   | _ => lengthSrcBy ref raws
 
 /-- The names a native length spells, in order: the word runs that start
-with a letter. Units stand against their digits (`2pt`), so none is one. -/
+with a letter or `@` (a package's internal lengths). Units stand against
+their digits (`2pt`), so none is one. -/
 private def lengthNames (s : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut cur := ""
   for c in s.toList ++ [' '] do
     if c.isAlphanum || c == '@' || c == '_' then cur := cur.push c
     else
-      if !cur.isEmpty && cur.front.isAlpha then out := out.push cur
+      if !cur.isEmpty && (cur.front.isAlpha || cur.front == '@') then out := out.push cur
       cur := ""
   return out
 
@@ -3212,7 +3216,8 @@ the length keeps its value" pos
 skipped (`unreadableLength`). -/
 private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
     M (Array Raw) := do
-  if let some src := lenValue (← get).lens value then
+  let st ← get
+  if let some src := lenValue st.lens value st.inDef then
     if readsAsLength src then return ← setLength n src what pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
@@ -5767,7 +5772,9 @@ skipped, and the length keeps its value" pos
         return some (#[], k)
       | _, _ =>
         -- The value the length holds is its class's, or the addend is one
-        -- the door cannot read: the sum is unknown here.
+        -- the door cannot read: the sum is unknown here. In a definition's
+        -- body the command stands, for the use to read.
+        if (← get).inDef then return none
         return some (← unreadableLength n
           s!"\\{n} + {(rawSrc args[1]).trimAscii.toString}" pos, k)
     else return none
