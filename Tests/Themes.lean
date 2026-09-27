@@ -1543,7 +1543,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let inkCss := headCss inkHead
   t "a declared ink keeps its page in the one scheme it was judged in"
     (hasStr inkCss "color-scheme: light;" && !hasStr inkCss "prefers-color-scheme: dark" &&
-     (HtmlDoc.schemeFailures true (elabStr
+     (HtmlDoc.schemeFailures true {} (elabStr
        "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1).isEmpty)
   -- A picture's marks paint the colour they declare (black, undeclared),
   -- which the dark surface would swallow: its page keeps one scheme too.
@@ -1553,6 +1553,35 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let picCss := headCss picHead
   t "a page with a picture ships one scheme"
     (hasStr picCss "color-scheme: light;" && !hasStr picCss "prefers-color-scheme: dark")
+  -- A style's own colours and a clear image's ink paint on the ground too
+  -- (review S-1): a red heading rule, a red list marker and a link's hover
+  -- ink once shipped both schemes with the literal red in the sheet, and a
+  -- black mark on a transparent raster stood on the dark surface at about
+  -- 1:1. An opaque raster brings its own ground and keeps both.
+  let schemeCss (imgs : Image.Store) (src : String) : String :=
+    let (h, _, _) := HtmlDoc.emitTree { imgs } (elabStr src).1
+    headCss h
+  let oneScheme (css : String) : Bool :=
+    hasStr css "color-scheme: light;" && !hasStr css "prefers-color-scheme: dark"
+  let styled (decl body : String) : String :=
+    s!"\\documentclass\{article}{decl}\\begin\{document}{body}\\end\{document}"
+  t "a page whose heading rule is a declared colour ships one scheme"
+    (oneScheme (schemeCss {} (styled "\\style{section}{ rule = red }" "\\section{A}b")))
+  t "a page whose list marker is a declared colour ships one scheme"
+    (oneScheme (schemeCss {} (styled "\\style{itemize}{ marker = {\\textcolor{red}{*}} }"
+      "\\begin{itemize}\\item a\\end{itemize}")))
+  t "a page whose link hover is a declared colour ships one scheme"
+    (oneScheme (schemeCss {} (styled "\\style{nav}{ hover = red }" "x")))
+  let raster (a : Image.Alpha) : Image.Store :=
+    { entries := #[{ src := "mark.png", info := some { pxW := 4, pxH := 4, alpha := a } }] }
+  let imgSrc := "\\documentclass{article}\\usepackage{graphicx}\\begin{document}x\n\n" ++
+    "\\includegraphics{mark.png}\\end{document}"
+  t "a page with a raster that lets the ground through ships one scheme"
+    (oneScheme (schemeCss (raster (.soft ByteArray.empty 8)) imgSrc) &&
+     oneScheme (schemeCss (raster (.colorKey #[0, 0])) imgSrc) &&
+     !HtmlDoc.dualScheme (raster (.soft ByteArray.empty 8)) (elabStr imgSrc).1)
+  t "a page with an opaque raster keeps both schemes"
+    (hasStr (schemeCss (raster .opaque) imgSrc) "color-scheme: light dark;")
   -- The layering order still holds where a page ships both schemes: a
   -- declared token stands after the dark variant, so no variant beats a
   -- higher layer (the layering audit's clobber 3).

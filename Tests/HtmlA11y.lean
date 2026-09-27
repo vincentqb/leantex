@@ -20,12 +20,12 @@ the driver builds it: the document's own stylesheet mode and its images from
 `tests/corpus` (`corpusStore`). No boundary tool runs here, so a boundary
 picture is its placeholder — what a host with no tool ships. -/
 def a11yCorpusPage (n : String) :
-    IO (Ir.Doc × Array Html.Node × Array Html.Node × Array Diag) := do
+    IO (Ir.Doc × Image.Store × Array Html.Node × Array Html.Node × Array Diag) := do
   let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
   let (doc, _) ← elabFixture n src
   let store ← corpusStore doc
   let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
-  return (doc, head, body, diags)
+  return (doc, store, head, body, diags)
 
 /-- The judge's reading of one page: the stylesheet mode and the page model
 decide which elements are scroll containers. -/
@@ -45,9 +45,10 @@ def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
 * `svg` — `<svg>` with no accessible name.
 
 Sorted by check name, so a tier's rows come out in the order it writes them. -/
-def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) : List (String × Nat) :=
+def a11yDeficits (doc : Ir.Doc) (imgs : Image.Store) (body : Array Html.Node) :
+    List (String × Nat) :=
   let f := a11yFactsOf doc body
-  [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) doc).length),
+  [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) imgs doc).length),
    ("h1", if f.h1s == 1 then 0 else 1),
    ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
@@ -59,8 +60,8 @@ only: no browser, no network, no tool. -/
 def a11yCorpus : IO (Array (String × List (String × Nat))) := do
   let mut out := #[]
   for n in goldenNames do
-    let (doc, _, body, _) ← a11yCorpusPage n
-    out := out.push (n, a11yDeficits doc body)
+    let (doc, store, _, body, _) ← a11yCorpusPage n
+    out := out.push (n, a11yDeficits doc store body)
   return out
 
 /-- The `aria-label` of every `<svg>` a body carries. -/
@@ -109,7 +110,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut scrollsSeen := 0
   let mut undecodableSeen := 0
   for n in goldenNames do
-    let (doc, _, body, diags) ← a11yCorpusPage n
+    let (doc, _, _, body, diags) ← a11yCorpusPage n
     let f := a11yFactsOf doc body
     svgsSeen := svgsSeen + f.svgs
     scrollsSeen := scrollsSeen + f.scrolls

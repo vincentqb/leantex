@@ -3594,21 +3594,66 @@ the PDF path reads asks for it (`Pdf.features_agree` states the pair). -/
 def kernCss : String :=
   if Ir.features.kern then "  font-kerning: normal;\n" else ""
 
+/-- Whether a declared style paints a colour of its own outside the inline
+regions the document walk reads (`Ir.foldDoc` covers each style's font
+template and marker): a heading's rule, a title page's separator, a link's
+hover and focus inks, or a coloured run in the author line's template or a
+title slot's. -/
+def styleColored (st : ElementStyle) : Bool :=
+  st.rule.isSome || st.separator.isSome || st.hover.isSome || st.focus.isSome ||
+    ((st.authorFont.getD #[]) :: st.slots.toList.flatMap (fun s => [s.content, s.font.getD #[]])).any
+      (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)
+
+/-- Whether a loaded image paints on the page's own ground: a raster the
+page ships whose plan carries transparency (`Image.Plan.alpha`, a soft mask
+or a colour key), so its ink stands on whichever surface the scheme paints.
+An opaque raster carries its own ground. -/
+def imageSeeThrough (en : Image.Loaded) : Bool :=
+  rasterShips en && match en.info with
+    | some p => p.alpha != .opaque
+    | none => false
+
 /-- Whether the page ships the dark colour scheme. Only the engine's own
 token set has a proven dark variant (`Contrast.dark_contract`). A colour
 the document chose — a palette entry, its own or a bundle's, an epoch's
-palette, a coloured run, a rule or a picture, whose marks paint the colour
-they declare — was judged against the light ground (`Contrast`'s pairing
-judge), and the dark block would stand it on a ground no judge read it on:
-a declared ink equal to the light default read 1.00:1 there, and a
-picture's black ink about as much. Such a page declares the one scheme its
-colours were judged in. The judge (`schemeFailures`) reads this same
+palette, a coloured run anywhere the document sets one (`Ir.foldDoc`: the
+body, the furniture, a style's templates), a rule or a picture, whose marks
+paint the colour they declare, a style's own colours (`styleColored`), or
+an image that lets the ground through (`imageSeeThrough`) — was judged
+against the light ground (`Contrast`'s pairing judge) or not at all, and
+the dark block would stand it on a ground no judge read it on: a declared
+ink equal to the light default read 1.00:1 there, and a picture's or a
+clear image's black ink about as much. Such a page declares the one scheme
+its colours were judged in. The judge (`schemeFailures`) reads this same
 decision. -/
-def dualScheme (doc : Doc) : Bool :=
+def dualScheme (imgs : Image.Store) (doc : Doc) : Bool :=
   doc.palette.entries.isEmpty &&
     !Ir.foldBlocks (fun a b => a || b matches .setPalette _ || b matches .picture _ ||
-        b matches .rule _ _ _)
-      (fun a i => a || i matches .colored _ _ _) false doc.body
+        b matches .rule _ _ _) (fun a _ => a) false doc.body &&
+    !Ir.foldDoc (fun a i => a || i matches .colored _ _ _) false doc &&
+    !doc.styles.entries.any (styleColored ·.2) &&
+    !imgs.entries.any imageSeeThrough
+
+/-- **The dark variant ships only over the engine's own colours**
+(`_contract`): a page that ships it declares no palette entry, no style
+paints a colour of its own, and no image it shows lets the ground through
+— the two sources review S-1 found the decision blind to, stated over the
+decision the stylesheet and the judge both read. -/
+theorem dualScheme_contract (imgs : Image.Store) (doc : Doc) (h : dualScheme imgs doc = true) :
+    doc.palette.entries = #[] ∧
+    (∀ e ∈ doc.styles.entries, styleColored e.2 = false) ∧
+    (∀ en ∈ imgs.entries, imageSeeThrough en = false) := by
+  simp only [dualScheme, Bool.and_eq_true, Bool.not_eq_true', Array.isEmpty_iff] at h
+  obtain ⟨⟨⟨⟨hp, _⟩, _⟩, hs⟩, hi⟩ := h
+  refine ⟨hp, fun e he => ?_, fun en hen => ?_⟩
+  · cases hc : styleColored e.2
+    · rfl
+    · have : doc.styles.entries.any (styleColored ·.2) = true := Array.any_eq_true'.mpr ⟨e, he, hc⟩
+      simp [this] at hs
+  · cases hc : imageSeeThrough en
+    · rfl
+    · have : imgs.entries.any imageSeeThrough = true := Array.any_eq_true'.mpr ⟨en, hen, hc⟩
+      simp [this] at hi
 
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
@@ -3627,7 +3672,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   let lt := Contrast.light
   let dk := Contrast.dark
   let parskip := parskipVar doc.page
-  let dual := dualScheme doc
+  let dual := dualScheme cfg.imgs doc
   ":root {\n" ++
   (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
   s!"    --measure: {measureEm doc.page};\n" ++
@@ -6480,13 +6525,14 @@ def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColor
 
 /-- The pairings a page fails, in each colour scheme it ships: `themePairs`
 over `schemeColors` in light, and in dark where the page ships the dark
-variant (`dualScheme`) — a single-scheme page shows its light colours to a
-dark-mode reader, one judgement, never counted twice. A page under a
-stylesheet the engine does not own fails none, because the engine paints
-none of them. -/
-def schemeFailures (own : Bool) (doc : Doc) : List (String × String) :=
+variant (`dualScheme`, over the page's own loaded images) — a single-scheme
+page shows its light colours to a dark-mode reader, one judgement, never
+counted twice. A page under a stylesheet the engine does not own fails
+none, because the engine paints none of them. -/
+def schemeFailures (own : Bool) (imgs : Image.Store) (doc : Doc) : List (String × String) :=
   if !own then [] else
-    ([("light", Contrast.light)] ++ (if dualScheme doc then [("dark", Contrast.dark)] else [])).flatMap
+    ([("light", Contrast.light)] ++
+        (if dualScheme imgs doc then [("dark", Contrast.dark)] else [])).flatMap
       fun (scheme, base) =>
       ((themePairs (schemeColors doc base)).filter fun p =>
           Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (scheme, p.1)
