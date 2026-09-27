@@ -12,9 +12,9 @@ body impl $\frac{1}{2}$
 body impl $\dfrac{1}{2}$
 body impl $\tfrac{1}{2}$
 body refuse:W0012 $\cfrac{1}{2}$
-body refuse:W0012 $\binom{n}{k}$
-body refuse:W0012 $\dbinom{n}{k}$
-body refuse:W0012 $\tbinom{n}{k}$
+body impl $\binom{n}{k}$
+body impl $\dbinom{n}{k}$
+body impl $\tbinom{n}{k}$
 body impl $\sqrt{2}$
 body impl $\sqrt[3]{2}$
 body impl \begin{equation}x\end{equation}
@@ -64,7 +64,7 @@ body impl $a \bmod b$
 body impl $a \pmod{b}$
 body impl $a \mod b$
 body impl $a \pod{b}$
-body refuse:W0012 $\genfrac{(}{)}{0pt}{}{a}{b}$
+body impl $\genfrac{(}{)}{0pt}{}{a}{b}$
 body refuse:W0012 $\xleftarrow{f} \xrightarrow{g}$
 pre refuse:W0301 \allowdisplaybreaks
 body impl $\mathbb{R}$

@@ -7216,8 +7216,17 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .sym c => acc.push c
   | .word s => acc ++ s.quote
   | .list body => (dumpMathList (acc.push '{') body).push '}'
-  | .frac num den =>
-    ((dumpMathList (acc ++ "frac{") num ++ "}{" |> fun a =>
+  | .frac spec num den =>
+    -- A generalized fraction shows what its spec declares beyond `\frac`'s:
+    -- the delimiters, the rule in sp, and the style's rank (3 display).
+    let name (c : Option Char) : String := match c with
+      | some c => String.ofList [c]
+      | none => "."
+    let head := if spec == {} then "frac{" else
+      s!"frac[{name spec.left}{name spec.right}" ++
+        (match spec.rule with | some t => s!" rule:{t}" | none => "") ++
+        (match spec.style with | some s => s!" style:{s.rank}" | none => "") ++ "]{"
+    ((dumpMathList (acc ++ head) num ++ "}{" |> fun a =>
       dumpMathList a den)).push '}'
   | .rad deg body =>
     let acc := match deg with

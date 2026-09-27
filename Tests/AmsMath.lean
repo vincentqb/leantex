@@ -295,6 +295,87 @@ def amsIndexInkChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
       check ref s!"amsmath index: '{call}' ships its own source {leaked}" leaked.isEmpty
     | _ => pure ()
 
+/-- amsmath's fractions are rows of one generalized fraction
+(`MathParse.fracCmds`, from amsmath.sty's own `\genfrac` definitions).
+
+* **Each row is its definition**: the formula equals `\genfrac` spelled
+  with the row's arguments, written here from amsmath.sty; a row added
+  without its reference fails.
+* **A fraction spaces as the Ord its braces make**: `$x\cmd{a}{b}y$` sets
+  exactly as wide as `$x{\cmd{a}{b}}y$`, since latex.ltx and amsmath.sty
+  brace every fraction; the engine once set an Inner's thin space each side.
+* **The style is the declared one**: an inline `\dfrac`'s parts set at the
+  formula's own size, a displayed `\tfrac`'s at an inline fraction's.
+* **A stack has no rule and grows its delimiters**: `\binom` ships its
+  parentheses around stacked parts with no bar, each at least amsmath's
+  fraction delimiter size (2.40 em displayed, 1.01 em otherwise); a
+  declared thickness is the bar's; the MathML declares the same.
+
+On the base engine `\dfrac` and `\tfrac` set as `\frac` in the current
+style, silently, and `\binom` and `\genfrac` set their source as text. -/
+def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let expansions : List (String × String) := [
+    ("frac", "\\genfrac{}{}{}{}"), ("dfrac", "\\genfrac{}{}{}{0}"),
+    ("tfrac", "\\genfrac{}{}{}{1}"), ("binom", "\\genfrac{(}{)}{0pt}{}"),
+    ("dbinom", "\\genfrac{(}{)}{0pt}{0}"), ("tbinom", "\\genfrac{(}{)}{0pt}{1}")]
+  t "amsmath fractions: every row has its reference expansion, and no other"
+    (expansions.map (·.1) == MathParse.fracCmds.map (·.1))
+  let laid (src : String) : Array Layout.LineOut :=
+    bodyLines (layoutOf fs (elabStr (dvDoc "" src)).1)
+  let lineWidth (src : String) : Dim.Sp := (((laid src)[0]?).map (·.setWidth)).getD 0
+  for (cmd, gen) in expansions do
+    let (d, ds) := elabStr (dvDoc "" s!"$\\{cmd}\{a}\{b}$")
+    t s!"amsmath fraction \\{cmd}: no diagnostic" ds.isEmpty
+    t s!"amsmath fraction \\{cmd}: the formula its \\genfrac definition is"
+      ((firstFormula d).isSome &&
+        firstFormula d == firstFormula (elabStr (dvDoc "" s!"${gen}\{a}\{b}$")).1)
+    let (w, wb) := (lineWidth s!"$x\\{cmd}\{a}\{b}y$", lineWidth s!"$x\{\\{cmd}\{a}\{b}}y$")
+    t s!"amsmath fraction \\{cmd}: spaces as the Ord its braces make ({w} vs {wb})"
+      (w > 0 && w == wb)
+  let sizeOf (src : String) (c : Char) : Option Dim.Sp :=
+    ((laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
+      | .run _ _ _ _ gs sz _ _ _ _ => if gs.any (·.2 == c) then some sz else none
+      | _ => none).head?
+  let (a, x) := (MathParse.italicVar 'a', MathParse.italicVar 'x')
+  t "amsmath fraction: an inline \\dfrac's parts set at the formula's size"
+    ((sizeOf "$x\\dfrac{a}{b}$" a).isSome &&
+      sizeOf "$x\\dfrac{a}{b}$" a == sizeOf "$x\\dfrac{a}{b}$" x)
+  t "amsmath fraction: a displayed \\tfrac's parts set at an inline fraction's size"
+    ((sizeOf "$x\\frac{a}{b}$" a).isSome &&
+      sizeOf "\\[ x\\tfrac{a}{b} \\]" a == sizeOf "$x\\frac{a}{b}$" a &&
+      sizeOf "\\[ x\\tfrac{a}{b} \\]" a != sizeOf "\\[ x\\tfrac{a}{b} \\]" x)
+  let rules (src : String) : List Dim.Sp :=
+    (laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
+      | .rule _ th _ _ => some th
+      | _ => none
+  t "amsmath binom: a stack draws no rule, where a fraction draws one"
+    ((rules "$\\binom{n}{k}$").isEmpty && (rules "$\\frac{n}{k}$").length == 1)
+  t "amsmath genfrac: a declared thickness is the bar's"
+    (rules "$\\genfrac{}{}{1pt}{}{a}{b}$" == [Dim.pt 1])
+  -- The parenthesis's variant, read off the run and the face that set it.
+  let parenExtent (src : String) : Option (Int × Nat) :=
+    ((laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
+      | .run idx _ _ _ gs _ _ _ _ _ => (gs.find? (·.2 == '(')).bind fun (g, _) =>
+          (fs.fonts[idx]?).bind fun f =>
+            (f.yExtent g).map fun (lo, hi) => (hi - lo, f.unitsPerEm)
+      | _ => none).head?
+  let inl := parenExtent "$\\binom{n}{k}$"
+  let dsp := parenExtent "\\[ \\binom{n}{k} \\]"
+  t s!"amsmath binom: each parenthesis covers the fraction delimiter size \
+(inline {inl}, displayed {dsp})"
+    (match inl, dsp with
+      | some (hi, upem), some (hd, _) =>
+        hi * 100 ≥ 101 * (upem : Int) && hd * 100 ≥ 240 * (upem : Int) && hd > hi
+      | _, _ => false)
+  let html (src : String) : String := (HtmlDoc.emit {} (elabStr (dvDoc "" src)).1).1
+  t "amsmath binom: the MathML stacks with no rule between fixed-size fences"
+    (hasStr (html "$\\binom{n}{k}$") "<mfrac linethickness=\"0\">" &&
+      hasStr (html "$\\binom{n}{k}$") "minsize=\"1.01em\" maxsize=\"1.01em\">(</mo>" &&
+      hasStr (html "\\[ \\binom{n}{k} \\]") "minsize=\"2.4em\" maxsize=\"2.4em\">(</mo>")
+  t "amsmath dfrac: the MathML declares the display style"
+    (hasStr (html "$\\dfrac{a}{b}$") "<mrow displaystyle=\"true\" scriptlevel=\"0\"><mfrac>")
+
 /-- amsmath's modulo commands are their definitions (amsmath.sty), measured
 on the laid line: each formula is as wide as the definition spelled with
 the engine's own kerns (`\;` 5 mu, `\:` 4, `\,` 3, `\quad` 18) and an
@@ -339,5 +420,6 @@ def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   amsGridChecks ref fs
   amsTagChecks ref fs
   amsTagTextChecks ref
+  amsFracChecks ref fs
   amsModChecks ref fs
   amsIndexInkChecks ref fs

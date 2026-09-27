@@ -70,6 +70,45 @@ def delimMo (c : Char) : Html.Node :=
   .elem "mo" #[("stretchy", "true"), ("symmetric", "true")]
     #[.text (charText c)]
 
+/-- A `\genfrac` delimiter: stretched to exactly `size`, amsmath's fixed
+delimiter size rather than the content's reach (`minsize` and `maxsize`
+clamp an operator's stretch, MathML Core §3.2.4.2), as
+`Layout.delimAssembleTo` grows the PDF's. -/
+def sizedMo (c : Char) (size : String) : Html.Node :=
+  .elem "mo" #[("stretchy", "true"), ("symmetric", "true"), ("minsize", size),
+    ("maxsize", size)] #[.text (charText c)]
+
+/-- A fraction's declared rule as `mfrac`'s `linethickness` (MathML Core
+§3.3.2), in points to the thousandth; nothing for the face's own. -/
+def ruleAttrs : Option Int → Array (String × String)
+  | none => #[]
+  | some t =>
+    let m := max t 0 * 1000 / 65536
+    let fs := toString (m % 1000)
+    #[("linethickness", if m == 0 then "0"
+      else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt")]
+
+/-- A style switch as MathML Core's `displaystyle` and absolute
+`scriptlevel` (§2.1.6): `\displaystyle`, `\textstyle`, `\scriptstyle` and
+`\scriptscriptstyle` set a style, never a step from the current one. -/
+def styleAttrs : Option MathStyle → Array (String × String)
+  | none => #[]
+  | some (.display _) => #[("displaystyle", "true"), ("scriptlevel", "0")]
+  | some (.text _) => #[("displaystyle", "false"), ("scriptlevel", "0")]
+  | some (.script _) => #[("displaystyle", "false"), ("scriptlevel", "1")]
+  | some (.scriptscript _) => #[("displaystyle", "false"), ("scriptlevel", "2")]
+
+/-- A generalized fraction's row: its delimiters, sized as the PDF sizes
+them — 2.4 em in display style, 1.01 em otherwise — around the `mfrac`. -/
+def fracKids (disp : Bool) (spec : FracSpec) (bar : Html.Node) : Array Html.Node :=
+  let size := if (spec.style.map (·.rank == 3)).getD disp then "2.4em" else "1.01em"
+  let opened : Array Html.Node := match spec.left with
+    | some c => #[sizedMo c size]
+    | none => #[]
+  match spec.right with
+  | some c => (opened.push bar).push (sizedMo c size)
+  | none => opened.push bar
+
 /-- The script schema around a base: `msub`/`msup`/`msubsup` take children
 base, subscript, superscript (MathML Core §3.4.1.1), and a limit-taking
 atom in display style takes `munder`/`mover`/`munderover` instead
@@ -145,10 +184,12 @@ def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
       #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes disp #[] body)
-  | .frac num den =>
-    .elem "mfrac" #[]
+  | .frac spec num den =>
+    let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
       #[.elem "mrow" #[] (listNodes false #[] num),
         .elem "mrow" #[] (listNodes false #[] den)]
+    if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
+    else .elem "mrow" (styleAttrs spec.style) (fracKids disp spec bar)
   | .rad deg body =>
     radNode (listNodes disp #[] body) (listNodes false #[] deg)
   | .delim l r body =>
@@ -276,7 +317,14 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .word s => pushChars acc s.toList
   | .list body => listChars acc body
-  | .frac num den => listChars (listChars acc num) den
+  | .frac spec num den =>
+    let opened := match spec.left with
+      | some c => acc.push c
+      | none => acc
+    let withBody := listChars (listChars opened num) den
+    match spec.right with
+    | some c => withBody.push c
+    | none => withBody
   | .rad deg body => listChars (listChars acc body) deg
   | .delim l r body =>
     let opened := match l with
@@ -453,16 +501,17 @@ theorem nucNode_chars (disp : Bool) (cls : MathClass) :
     show nodeListChars c (listNodes disp #[] body).toList = listChars c body
     rw [listNodes_chars disp body #[] c]
     rfl
-  | .frac num den, c => by
-    show nodeChars
-        (nodeChars c (.elem "mrow" #[] (listNodes false #[] num)))
-        (.elem "mrow" #[] (listNodes false #[] den))
-      = listChars (listChars c num) den
-    show nodeListChars
-        (nodeListChars c (listNodes false #[] num).toList)
-        (listNodes false #[] den).toList = _
-    rw [listNodes_chars false num #[] c, listNodes_chars false den #[]]
-    rfl
+  | .frac ⟨l, r, rule, style⟩ num den, c => by
+    have bar : ∀ c', nodeListChars (nodeListChars c' (listNodes false #[] num).toList)
+        (listNodes false #[] den).toList = listChars (listChars c' num) den := by
+      intro c'
+      rw [listNodes_chars false num #[] c', listNodes_chars false den #[]]
+      rfl
+    have mo : ∀ (m : Char) (s : String) (c' : Array Char),
+        nodeChars c' (sizedMo m s) = c'.push m :=
+      fun m s c' => moLeaf_chars "mo" _ m c'
+    cases l <;> cases r <;> cases style <;>
+      simp [nucNode, nucChars, fracKids, nodeChars, nodeListChars, bar, mo]
   | .rad deg body, c => by
     show nodeChars c (radNode (listNodes disp #[] body)
         (listNodes false #[] deg)) = listChars (listChars c body) deg

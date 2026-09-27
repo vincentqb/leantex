@@ -1,12 +1,13 @@
 import LeanTex.Core.Parse
+import LeanTex.Core.Decl
 import LeanTex.Core.Math
 import LeanTex.Core.MathSymData
 import LeanTex.Core.Ir
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated
 into `Math.MList` atoms. Pure and total; the caller (the elaborator) owns
-diagnostics. A construct outside this slice — accents, `\binom`,
-`\text` with markup inside — returns `.error name`, and the formula stays
+diagnostics. A construct outside this slice — `\cfrac`, `\text` with
+markup inside — returns `.error name`, and the formula stays
 `.math` source text with a warning naming the construct: out of scope is a
 named warning, never a silent drop (PLAN M6). A ragged alignment row is
 returned as a note beside the parse, rendered padded and diagnosed. -/
@@ -279,9 +280,21 @@ not a table; `containKnownChecks` probes each name here through
 `parseMath`, so a name that stops being structural fails the suite rather
 than quietly starting to be contained. -/
 def structuralCtrl : List String :=
-  ["over", "frac", "dfrac", "tfrac", "sqrt", "ensuremath", "left", "right",
+  ["over", "genfrac", "sqrt", "ensuremath", "left", "right",
    "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor",
    "bmod", "mod", "pod", "pmod", "dotsi"]
+
+/-- The fraction commands, each the `\genfrac` row its definition is
+(amsmath.sty, TeX Live 2026: `\dfrac` is `\genfrac{}{}{}0`, `\tfrac`
+`\genfrac{}{}{}1`, `\binom` `\genfrac()\z@{}`, `\dbinom` `\genfrac(){0pt}0`,
+`\tbinom` `\genfrac(){0pt}1`; `\frac` sets the face's rule in the current
+style, as `\genfrac{}{}{}{}` does). -/
+def fracCmds : List (String × FracSpec) :=
+  let binom : FracSpec := { left := some '(', right := some ')', rule := some 0 }
+  [("frac", {}), ("dfrac", { style := some (.display false) }),
+   ("tfrac", { style := some (.text false) }),
+   ("binom", binom), ("dbinom", { binom with style := some (.display false) }),
+   ("tbinom", { binom with style := some (.text false) })]
 
 /-- amsmath's environments that build a grid inside a formula, each as the
 grid it expands to and the delimiters `\left`/`\right` grow around it
@@ -304,6 +317,7 @@ def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
 /-- Does this slice model the control word at all? -/
 def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
+    || (fracCmds.lookup n).isSome
     || (alphaCtrl.lookup n).isSome
     || (accentCtrl.lookup n).isSome
     || (ctrlSpace.lookup n).isSome
@@ -635,13 +649,76 @@ private def readDelim (toks : Array MTok) (i : Nat) (cmd : String) :
     | none => throw s!"'\\{cmd} \\{n}'"
   | _ => throw s!"'\\{cmd}' without a delimiter"
 
+/-- What an argument of `\genfrac`'s spec spells, skipping one leading space:
+a braced group's tokens, or the one token that stands unbraced (amsmath's
+own `\binom` is `\genfrac()\z@{}`), and the index past it. -/
+private def readSpecArg (toks : Array MTok) (i : Nat) :
+    Except String (Array MTok × Nat) := do
+  let j := if toks[i]? == some .ws then i + 1 else i
+  match toks[j]? with
+  | some .openGrp =>
+    let stop := skipTokGroup toks j
+    unless stop ≥ j + 2 && toks[stop - 1]? == some .closeGrp do
+      throw "an unbalanced group"
+    return (toks.extract (j + 1) (stop - 1), stop)
+  | some .closeGrp | none => throw "'\\genfrac' without its arguments"
+  | some t => return (#[t], j + 1)
+
+/-- `\genfrac{left}{right}{thickness}{style}`, read into the spec its two
+operands set under: a delimiter as `\left` reads one (empty or `.` for
+none), a thickness in an absolute unit (empty for the face's rule, zero for
+a stack), and amsmath's `\@mathstyle` digit (empty for the current style;
+0 display, 1 text, 2 script, any other scriptscript, as its `\ifcase`
+reads). The index is past the fourth argument. -/
+private def readGenfracSpec (toks : Array MTok) (i : Nat) :
+    Except String (FracSpec × Nat) := do
+  let delim (arg : Array MTok) : Except String (Option Char) :=
+    match arg.toList.filter (· != .ws) with
+    | [] => .ok none
+    | [.ch c] => match delimChar c with
+      | some d => .ok d
+      | none => .error s!"'\\genfrac' with the delimiter '{String.ofList [c]}'"
+    | [.ctrl n] => match ctrlAtom.lookup n with
+      | some (_, c) => .ok (some c)
+      | none => .error s!"'\\genfrac' with the delimiter '\\{n}'"
+    | _ => .error "'\\genfrac' with a delimiter it cannot read"
+  let (a1, j1) ← readSpecArg toks i
+  let (a2, j2) ← readSpecArg toks j1
+  let (a3, j3) ← readSpecArg toks j2
+  let (a4, j4) ← readSpecArg toks j3
+  let left ← delim a1
+  let right ← delim a2
+  let spelled (arg : Array MTok) : Option String :=
+    arg.foldl (fun s t => match s, t with
+      | some s, .ch c => some (s.push c)
+      | some s, .ws => some s
+      | _, _ => none) (some "")
+  let rule ← match spelled a3 with
+    | some "" => pure none
+    | some s => match Decl.parseLength s with
+      | some l =>
+        if l.em == 0 && l.ex == 0 then pure (some l.sp)
+        else throw s!"'\\genfrac' with the font-relative thickness '{s}'"
+      | none => throw s!"'\\genfrac' with the thickness '{s}'"
+    | none => throw "'\\genfrac' with a thickness it cannot read"
+  let style ← match spelled a4 with
+    | some "" => pure none
+    | some "0" => pure (some (.display false))
+    | some "1" => pure (some (.text false))
+    | some "2" => pure (some (.script false))
+    | some s =>
+      if s.length == 1 && s.all Char.isDigit then pure (some (.scriptscript false))
+      else throw s!"'\\genfrac' with the style '{s}'"
+    | none => throw "'\\genfrac' with a style it cannot read"
+  return ({ left, right, rule, style }, j4)
+
 /-- What a `{`-opened level will become when it closes, or what an argument
 just parsed is for. -/
 private inductive Dest where
   | grp
   | script (isSup : Bool)
-  | fracNum
-  | fracDen (num : MList)
+  | fracNum (spec : FracSpec)
+  | fracDen (spec : FracSpec) (num : MList)
   | sqrtBody (deg : MList)
   /-- A math alphabet's argument: its letters remap
   (`Math.MathAlphabet.apply`) when the argument closes. -/
@@ -674,7 +751,7 @@ private structure PFrame where
 private def closeLevel (overNum : Option (Array MItem)) (acc : Array MItem) : MList :=
   match overNum with
   | some num =>
-    .cons (.atom .inner (.frac (MList.ofList num.toList) (MList.ofList acc.toList))
+    .cons (.atom .inner (.frac {} (MList.ofList num.toList) (MList.ofList acc.toList))
       .nil .nil false) .nil
   | none => MList.ofList acc.toList
 
@@ -706,10 +783,13 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
     | .grp :: more =>
       arg := .cons (.atom .ord (.list arg) .nil .nil false) .nil
       rest := more
-    | .fracNum :: more =>
-      return (acc, .fracDen arg :: more)
-    | .fracDen num :: more =>
-      arg := .cons (.atom .inner (.frac num arg) .nil .nil false) .nil
+    | .fracNum spec :: more =>
+      return (acc, .fracDen spec arg :: more)
+    | .fracDen spec num :: more =>
+      -- Every LaTeX fraction command braces its fraction (latex.ltx's and
+      -- amsmath.sty's `\frac` is `{…\over…}`, `\genfrac` `{{…}}`), so it
+      -- spaces as the Ord atom a braced subformula is (TeXbook ch. 17).
+      arg := .cons (.atom .ord (.frac spec num arg) .nil .nil false) .nil
       rest := more
     | .sqrtBody deg :: more =>
       arg := .cons (.atom .ord (.rad deg arg) .nil .nil false) .nil
@@ -952,11 +1032,10 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       overNum := some acc
       acc := #[]
       i := i + 1
-    | .ctrl "frac" | .ctrl "dfrac" | .ctrl "tfrac" =>
-      -- \dfrac/\tfrac force display/text style in LaTeX; this slice sets
-      -- them as \frac, the style the formula is already in.
-      pending := .fracNum :: pending
-      i := i + 1
+    | .ctrl "genfrac" =>
+      let (spec, j) ← readGenfracSpec toks (i + 1)
+      pending := .fracNum spec :: pending
+      i := j
     | .ctrl "sqrt" =>
       let mut j := i + 1
       let mut deg : Array MItem := #[]
@@ -1109,6 +1188,11 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         notes := notes.push (.styleDropped s!"the colour '{name}'")
         i := j
       else
+      match fracCmds.lookup n with
+      | some spec =>
+        pending := .fracNum spec :: pending
+        i := i + 1
+      | none =>
       match alphaCtrl.lookup n with
       | some a =>
         pending := .alpha a :: pending

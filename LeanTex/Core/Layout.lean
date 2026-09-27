@@ -2423,21 +2423,17 @@ private def variantLadder (e : MathEnv) (g : Nat) : List (Nat × Int) :=
     | none => [(g, 0)]
   else vs.toList
 
-/-- Assemble a laid `\left…\right` body between its grown delimiters
-(TeXbook Appendix G rule 19 with plain TeX's `\delimiterfactor` 901 and
-`\delimitershortfall` 5 pt at the 10 pt base): the delimiter grows through
-the face's variants until it covers the body's reach from the axis, and
-the chosen glyph centres its ink on the axis. The empty `.` delimiter is a
-`\nulldelimiterspace` kern. -/
-private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
-    (bItems : Array Item) (missing0 : Array (Nat × Char)) :
-    Array Item × Array (Nat × Char) := Id.run do
+/-- Assemble a laid body between delimiters grown to `target`, the least
+extent a delimiter's variant may have: the chosen glyph centres its ink on
+the axis, and an empty (`.`) side is a `\nulldelimiterspace` kern when
+`nullKern`, nothing otherwise (`\genfrac` sets that space to zero). -/
+private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
+    (target : Sp) (nullKern : Bool) (bItems : Array Item)
+    (missing0 : Array (Nat × Char)) : Array Item × Array (Nat × Char) := Id.run do
   let axis := e.constAt size e.consts.axisHeight
   let (bTop, bBot) := mathItemsExtent e.font bItems
-  let δ := max (bTop - axis) (axis - bBot)
-  let target := max (2 * δ * 901 / 1000) (2 * δ - size / 2)
   let targetDu := target * (e.font.unitsPerEm : Int) / size
-  let nd := size * 12 / 100
+  let nd := if nullKern then size * 12 / 100 else 0
   let mut items : Array Item := #[]
   let mut missing := missing0
   let mut top := bTop
@@ -2474,6 +2470,19 @@ private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
   | none => items := items.push (mathKern e size nd)
   items := items ++ struts e (raise + top) (raise + bot)
   return (items, missing)
+
+/-- Assemble a laid `\left…\right` body between its grown delimiters
+(TeXbook Appendix G rule 19 with plain TeX's `\delimiterfactor` 901 and
+`\delimitershortfall` 5 pt at the 10 pt base): the delimiter grows through
+the face's variants until it covers the body's reach from the axis. -/
+private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
+    (bItems : Array Item) (missing0 : Array (Nat × Char)) :
+    Array Item × Array (Nat × Char) :=
+  let axis := e.constAt size e.consts.axisHeight
+  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let δ := max (bTop - axis) (axis - bBot)
+  delimAssembleTo e size raise l r (max (2 * δ * 901 / 1000) (2 * δ - size / 2)) true
+    bItems missing0
 
 /-- Assemble laid grid cells (TeXbook ch. 22's `\halign` rule: each column
 as wide as its widest cell): cells padded into their columns per the grid
@@ -2547,40 +2556,55 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
-constants): numerator shifted up, denominator shifted down, the bar
-`fractionRuleThickness` thick with its middle on the axis, the shifts
-opened until the spec's minimum gaps clear the ink, both parts centred
-over the bar, and plain TeX's `\nulldelimiterspace` (1.2 pt at the 10 pt
-base) each side. -/
+constants): numerator shifted up, denominator shifted down, and plain TeX's
+`\nulldelimiterspace` (1.2 pt at the 10 pt base) on each side that carries
+no delimiter (`ndLeft`/`ndRight`; `\genfrac@choice` kerns it away beside
+one). Under a rule — the face's `fractionRuleThickness`, or `rule` sp — the
+bar's middle is on the axis and the shifts open until the fraction gaps
+clear the ink; under none (`rule` 0, `\atop`'s case, rule 15c) the stack
+constants place the parts and a shortfall of the stack gap opens both
+shifts by half of it. Both parts centre over the width the bar would take. -/
 private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
+    (rule : Option Int) (ndLeft ndRight : Bool)
     (numItems denItems : Array Item) : Array Item :=
   let axis := e.constAt size e.consts.axisHeight
-  let θ := e.constAt size e.consts.fractionRuleThickness
-  let u0 := e.constAt size (if display then e.consts.fractionNumeratorDisplayStyleShiftUp
-    else e.consts.fractionNumeratorShiftUp)
-  let v0 := e.constAt size (if display then e.consts.fractionDenominatorDisplayStyleShiftDown
-    else e.consts.fractionDenominatorShiftDown)
-  let gapN := e.constAt size (if display then e.consts.fractionNumDisplayStyleGapMin
-    else e.consts.fractionNumeratorGapMin)
-  let gapD := e.constAt size (if display then e.consts.fractionDenomDisplayStyleGapMin
-    else e.consts.fractionDenominatorGapMin)
+  let θ := max 0 (rule.getD (e.constAt size e.consts.fractionRuleThickness))
   let (numTop, numBot) := mathItemsExtent e.font numItems
   let (denTop, denBot) := mathItemsExtent e.font denItems
-  let u := max u0 (axis + θ / 2 + gapN - numBot)
-  let v := max v0 (denTop + gapD - (axis - θ / 2))
+  let (u, v) :=
+    if θ == 0 then
+      let u0 := e.constAt size (if display then e.consts.stackTopDisplayStyleShiftUp
+        else e.consts.stackTopShiftUp)
+      let v0 := e.constAt size (if display then e.consts.stackBottomDisplayStyleShiftDown
+        else e.consts.stackBottomShiftDown)
+      let φ := e.constAt size (if display then e.consts.stackDisplayStyleGapMin
+        else e.consts.stackGapMin)
+      let short := φ - ((u0 + numBot) - (denTop - v0))
+      if short > 0 then (u0 + short / 2, v0 + (short - short / 2)) else (u0, v0)
+    else
+      let u0 := e.constAt size (if display then e.consts.fractionNumeratorDisplayStyleShiftUp
+        else e.consts.fractionNumeratorShiftUp)
+      let v0 := e.constAt size (if display then e.consts.fractionDenominatorDisplayStyleShiftDown
+        else e.consts.fractionDenominatorShiftDown)
+      let gapN := e.constAt size (if display then e.consts.fractionNumDisplayStyleGapMin
+        else e.consts.fractionNumeratorGapMin)
+      let gapD := e.constAt size (if display then e.consts.fractionDenomDisplayStyleGapMin
+        else e.consts.fractionDenominatorGapMin)
+      (max u0 (axis + θ / 2 + gapN - numBot), max v0 (denTop + gapD - (axis - θ / 2)))
   let numW := mathItemsWidth numItems
   let denW := mathItemsWidth denItems
   let ruleW := max numW denW
   let nd := size * 12 / 100
   let numPad := Math.ColAlign.pad .center ruleW numW
   let denPad := Math.ColAlign.pad .center ruleW denW
-  (#[mathKern e size nd, mathKern e size numPad]
+  let bar : Array Item :=
+    if θ == 0 then #[] else #[Item.rule ruleW θ (raise + axis - θ / 2) e.color, mathKern e size (-ruleW)]
+  (#[mathKern e size (if ndLeft then nd else 0), mathKern e size numPad]
       ++ raiseItems (raise + u) numItems)
-    ++ (#[mathKern e size (ruleW - numPad - numW), mathKern e size (-ruleW),
-          Item.rule ruleW θ (raise + axis - θ / 2) e.color,
-          mathKern e size (-ruleW), mathKern e size denPad]
+    ++ (#[mathKern e size (ruleW - numPad - numW), mathKern e size (-ruleW)] ++ bar ++
+        #[mathKern e size denPad]
       ++ raiseItems (raise - v) denItems)
-    ++ #[mathKern e size (ruleW - denPad - denW), mathKern e size nd]
+    ++ #[mathKern e size (ruleW - denPad - denW), mathKern e size (if ndRight then nd else 0)]
     ++ struts e (raise + u + numTop) (raise - v + denBot)
 
 /-- Assemble a laid radical (MATH spec radical constants): the radicand
@@ -2885,12 +2909,29 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     return (items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground e.attr), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
-  | .frac num den =>
-    let (numItems, m1) := layMathTail e st.fracNum 0
+  | .frac spec num den =>
+    -- `\genfrac`'s style argument sets the whole construct in its style
+    -- (amsmath.sty `\@mathstyle`), the parts in that style's fraction
+    -- styles; its delimiters are grown to LuaTeX's `\Umathfractiondelsize`
+    -- (luaotfload's FractionDelimiterDisplayStyleSize 2.40 and
+    -- FractionDelimiterSize 1.01 of the style's size, measured under
+    -- unicode-math) and abut the fraction, whose null space beside each
+    -- is kerned away (`\genfrac@choice`).
+    let fst := spec.style.getD st
+    let size := e.sizeAt fst
+    let display := fst.rank == 3
+    let (numItems, m1) := layMathTail e fst.fracNum 0
       (Math.degrade num.classes) none (#[], acc.2) num
-    let (denItems, m2) := layMathTail e st.fracDen 0
+    let (denItems, m2) := layMathTail e fst.fracDen 0
       (Math.degrade den.classes) none (#[], m1) den
-    (acc.1 ++ fracAssemble e (e.sizeAt st) (st.rank == 3) raise numItems denItems, m2)
+    if spec.left.isNone && spec.right.isNone then
+      (acc.1 ++ fracAssemble e size display raise spec.rule true true numItems denItems, m2)
+    else
+      let bar := fracAssemble e size display 0 spec.rule spec.left.isNone spec.right.isNone
+        numItems denItems
+      let (items, missing) := delimAssembleTo e size raise spec.left spec.right
+        (size * (if display then 240 else 101) / 100) false bar m2
+      (acc.1 ++ items, missing)
   | .rad deg body =>
     let (bItems, m1) := layMathTail e st.cramp 0
       (Math.degrade body.classes) none (#[], acc.2) body

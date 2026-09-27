@@ -12,7 +12,7 @@ para
 center
   para
     formula display "\\sum _{k=1}^{n} k = \\frac {n(n+1)}{2}"
-      op:lim:∑^{ord:𝑛}_{ord:𝑘 rel:= ord:1} ord:𝑘 rel:= inner:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2}
+      op:lim:∑^{ord:𝑛}_{ord:𝑘 rel:= ord:1} ord:𝑘 rel:= ord:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2}
 para
   text "The paragraph continues after the display, still in the body face."
 -- diagnostics

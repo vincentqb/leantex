@@ -2048,7 +2048,7 @@ def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let structuralParses (n : String) : Bool :=
     let src := match n with
       | "over" => "$a \\over b$"
-      | "frac" | "dfrac" | "tfrac" => s!"$\\{n}\{a}\{b}$"
+      | "genfrac" => "$\\genfrac{(}{)}{0pt}{}{a}{b}$"
       | "left" | "right" => "$\\left( a \\right)$"
       | "limits" => "$\\sum\\limits_k a$"
       | "nolimits" => "$\\sum\\nolimits_k a$"

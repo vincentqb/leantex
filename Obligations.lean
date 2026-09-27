@@ -929,7 +929,7 @@ cannot read a fraction as a product. Stated as the inequality rather than as
 a spelling, because what is owed is the separation and not the separator. -/
 theorem formulaFloor_separates (num den : Math.MList)
     (hn : Ir.formulaFloor num ≠ "") (hd : Ir.formulaFloor den ≠ "") :
-    Ir.formulaFloor (.cons (.atom .inner (.frac num den) .nil .nil false) .nil)
+    Ir.formulaFloor (.cons (.atom .ord (.frac {} num den) .nil .nil false) .nil)
       ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
   sorry
 

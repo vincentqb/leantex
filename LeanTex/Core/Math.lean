@@ -798,6 +798,19 @@ theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
       next =>
         exact List.mem_cons_of_mem x (ih hp)
 
+/-- What `\genfrac` declares beside its two operands (amsmath.sty:
+`\genfrac{left}{right}{thickness}{style}{num}{den}`, of which `\frac`,
+`\dfrac`, `\tfrac`, `\binom`, `\dbinom` and `\tbinom` are rows): the
+delimiters around the fraction, `none` the empty one; the rule, `none` the
+face's own and `some t` a thickness in sp, where 0 stacks the operands with
+no rule; and the style the construct sets in, `none` the current one. -/
+structure FracSpec where
+  left : Option Char := none
+  right : Option Char := none
+  rule : Option Int := none
+  style : Option MathStyle := none
+  deriving Repr, BEq, Inhabited
+
 mutual
 
 /-- What an atom sets: one scalar, an upright word (a function name), a
@@ -811,10 +824,11 @@ inductive MNucleus where
   | sym (c : Char)
   | word (s : String)
   | list (body : MList)
-  /-- `\frac`/`\over`: numerator over denominator, positioned from the
-  MATH constants, spaced as one Inner atom (TeXbook ch. 17 — fractions and
-  `\left…\right` groups are Inner). -/
-  | frac (num den : MList)
+  /-- A generalized fraction: numerator over denominator, positioned from
+  the MATH constants — the fraction constants under a rule, the stack
+  constants under none — between the delimiters and in the style its spec
+  declares (TeXbook Appendix G rule 15; `\genfrac`). -/
+  | frac (spec : FracSpec) (num den : MList)
   /-- `\sqrt[deg]{body}`: `deg` is `.nil` for the plain square root. -/
   | rad (deg : MList) (body : MList)
   /-- `\left l body \right r`: `none` is the empty `.` delimiter. -/
@@ -998,7 +1012,16 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.scalarsList acc body
-  | .frac num den => MList.scalarsList (MList.scalarsList acc num) den
+  | .frac spec num den =>
+    -- In reading order, delimiters around the parts: the formula floor reads
+    -- this walk (`Ir.formulaFloor`), so `\binom{n}{k}` reads `(nk)`.
+    let acc := match spec.left with
+      | some c => acc.push c
+      | none => acc
+    let acc := MList.scalarsList (MList.scalarsList acc num) den
+    match spec.right with
+    | some c => acc.push c
+    | none => acc
   | .rad deg body => MList.scalarsList (MList.scalarsList acc deg) body
   | .delim l r body =>
     let acc := match l with
@@ -1050,7 +1073,7 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .sym c => .sym (a.apply c)
   | .word s => .word s
   | .list body => .list (a.remapList body)
-  | .frac num den => .frac (a.remapList num) (a.remapList den)
+  | .frac spec num den => .frac spec (a.remapList num) (a.remapList den)
   | .rad deg body => .rad (a.remapList deg) (a.remapList body)
   | .delim l r body => .delim l r (a.remapList body)
   | .accent mark stretch body => .accent mark stretch (a.remapList body)

@@ -32,6 +32,15 @@ structure MathConsts where
   upperLimitBaselineRiseMin : Int
   lowerLimitGapMin : Int
   lowerLimitBaselineDropMin : Int
+  /-- The stack constants place a rule-less fraction's parts (`\binom`,
+  `\genfrac` with a zero thickness): TeXbook Appendix G rule 15's
+  `\atop` case, in OpenType's names (MATH spec, MathConstants). -/
+  stackTopShiftUp : Int
+  stackTopDisplayStyleShiftUp : Int
+  stackBottomShiftDown : Int
+  stackBottomDisplayStyleShiftDown : Int
+  stackGapMin : Int
+  stackDisplayStyleGapMin : Int
   fractionNumeratorShiftUp : Int
   fractionNumeratorDisplayStyleShiftUp : Int
   fractionDenominatorShiftDown : Int
@@ -83,6 +92,12 @@ private def parseMath (b : ByteArray) : Option MathConsts := do
     upperLimitBaselineRiseMin := value 68
     lowerLimitGapMin := value 72
     lowerLimitBaselineDropMin := value 76
+    stackTopShiftUp := value 80
+    stackTopDisplayStyleShiftUp := value 84
+    stackBottomShiftDown := value 88
+    stackBottomDisplayStyleShiftDown := value 92
+    stackGapMin := value 96
+    stackDisplayStyleGapMin := value 100
     fractionNumeratorShiftUp := value 120
     fractionNumeratorDisplayStyleShiftUp := value 124
     fractionDenominatorShiftDown := value 128

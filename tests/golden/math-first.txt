@@ -12,7 +12,7 @@ para
 center
   para
     formula display "\\frac {a + b}{c}"
-      inner:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}
+      ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}
 para
   text "with its bar from the resolved face’s own constants."
 -- diagnostics
