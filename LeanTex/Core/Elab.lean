@@ -2472,11 +2472,13 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
 
 /-- Discharges the knot's termination goals: navigate the lexicographic
 tuple to the strictly-decreasing component; the strict fact is a `have`
-standing beside each recursive call. -/
+standing beside each recursive call. The goals arrive already cleaned by
+the elaborator's own termination-goal cleanup, so no second simp pass runs
+first: that pass over every goal cost the knot more than 10,000 of its
+200,000 heartbeats (judged by deletion and rebuild). -/
 macro "knot_dec" : tactic =>
   `(tactic| (
-    simp_wf
-    <;> first
+    first
       | (apply Prod.Lex.right; apply Prod.Lex.right; apply Prod.Lex.left
          assumption)
       | (apply Prod.Lex.right; apply Prod.Lex.right; apply Prod.Lex.right
