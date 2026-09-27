@@ -6918,6 +6918,16 @@ def plainTextOne (x : Inline) : String :=
 
 end
 
+/-- The words a picture's labels set, in shape order, joined: what a sighted
+reader reads in the drawing. The one reading a picture's name takes, whoever
+draws it — the SVG's accessible name (`HtmlDoc.pictureName`), and the text
+alternative of the image the boundary returns for it, so a picture routed
+there keeps the name its own labels give it. -/
+def Pic.Picture.said (pic : Pic.Picture) : String :=
+  String.intercalate ", " (pic.labelContents.toList.filterMap fun content =>
+    let s := plainText content
+    if s.toList.any (!·.isWhitespace) then some s.trimAscii.toString else none)
+
 /-- A role is a name around content, never content: the census reads
 straight through it, so no annotation can add or hide a character. -/
 theorem role_plaintext (n : String) (body : Array Inline) :

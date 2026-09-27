@@ -7270,7 +7270,9 @@ formula {floorWording (Parse.rawSrc raws)}")])
 in the document's census" pos
       (help := "the box is measured and placed by the engine; \\caption or \
 alt text names it for assistive technology")
-    return blocks.push (.para #[.image img {} ""])
+    -- The image carries the name the picture's own labels give it
+    -- (`Ir.Pic.Picture.said`), as the subset's drawing would have been named.
+    return blocks.push (.para #[.image img {} pic.said])
   for (code, msg) in pdiags do
     -- A note names a decision, not a construct outside the subset, so the
     -- subset's reach is no help to it.

@@ -5130,12 +5130,10 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh" ++
       #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
         (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
 
-/-- The words a picture's labels set, as the SVG sets them (`labelPiece`),
-in shape order, joined. -/
-def pictureSaid (pic : Ir.Pic.Picture) : String :=
-  String.intercalate ", " (pic.labelContents.toList.filterMap fun content =>
-    let s := String.join (content.toList.map labelPiece)
-    if nonBlank s then some s.trimAscii.toString else none)
+/-- The words a picture's labels set, as the SVG sets them: the IR's one
+reading (`Ir.Pic.Picture.said`), which the image of a picture drawn at the
+boundary carries as its text alternative too. -/
+def pictureSaid (pic : Ir.Pic.Picture) : String := pic.said
 
 /-- What a picture says in words: its labels (`pictureSaid`) — the text a
 sighted reader sees in the drawing. With none, the picture is named by what

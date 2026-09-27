@@ -6064,6 +6064,21 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let nativePage := censusOf (coveredColorsOf withdrawn) (layoutOf oneFace withdrawn)
   t "a withdrawn request ships as the subset's ink and no box"
     ((nativePage[0]?.map fun p => p.images == 0 && p.paths ≥ 1) == some true)
+  -- A routed picture keeps the name its labels give it: the image the
+  -- boundary returns carries those words as its text alternative, where the
+  -- subset's drawing was named by them; an unlabelled one is judged as any
+  -- boundary picture is.
+  let (named, _, _) := firstPass (pic ""
+    ("\\node at (0,0) {Alpha};\\node at (2,0) {Beta};" ++
+      "\\draw[rounded corners] (0,0) rectangle (3,1);"))
+  let altOf (d : Ir.Doc) : Array String := d.body.filterMap fun b => match b with
+    | .para #[.image s _ alt] => if s.startsWith Ir.picSrcPrefix then some alt else none
+    | _ => none
+  let judged (d : Ir.Doc) : Nat := (Ir.picAltDiags d (fun _ => none) (fun _ => true)).size
+  t "a routed picture's image is named by its labels"
+    (altOf named == #["Alpha, Beta"] && judged named == 0)
+  t "an unlabelled routed picture is still judged for its alternative"
+    (altOf doc == #[""] && judged doc == 1)
   -- What the subset draws whole never asks the tool.
   let (whole, wholeDs, wholeRs) := firstPass (pic "" "\\draw (0,0) rectangle (3,1);")
   t "a picture the subset draws whole stays native on the first pass"
