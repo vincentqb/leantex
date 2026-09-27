@@ -202,3 +202,43 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match svgHeight "vowel", svgHeight "vowelp" with
      | some a, some b => decide (b - a - deeper ≤ 70 ∧ deeper - (b - a) ≤ 70)
      | _, _ => false)
+
+
+/-- **A node's `align=` sets its lines as the key says, and `every text node
+part` is read** (tikz.code.tex: `align` chooses `left`, `flush left`,
+`right`, `flush right`, `center` or `flush center`; `every text node part`
+is the style the text part of every node runs). Lines broken with `\\` stand
+flush left, flush right or centred within the widest line, and the block
+stays where centring put it. The defect named both as dropped keys. Asserted
+over the shipped lines. Invented content. -/
+def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let node (pre opts : String) : String :=
+    picDoc pre "" ("\\node" ++ opts ++ " at (0,0) {Longer first line\\\\ short};")
+  let lines (src : String) : Option (Layout.LineOut × Layout.LineOut) := do
+    let (doc, _) := elabMeasured oneFace src
+    let page ← (layoutOf oneFace doc).pages[0]?
+    let a ← page.lines.find? fun l => hasStr (lineText l) "Longer"
+    let b ← page.lines.find? fun l => hasStr (lineText l) "short"
+    pure (a, b)
+  let centred := lines (node "" "")
+  t "align=left sets the lines flush left, the widest where centring put it"
+    ((match lines (node "" "[align=left]"), centred with
+      | some (a, b), some (c, _) => near a.x b.x && near a.x c.x
+      | _, _ => false) && !picLoss (node "" "[align=left]"))
+  t "align=right sets them flush right"
+    ((match lines (node "" "[align=right]"), centred with
+      | some (a, b), some (c, _) => near (a.x + a.setWidth) (b.x + b.setWidth) && near a.x c.x
+      | _, _ => false) && !picLoss (node "" "[align=right]"))
+  let part (v : String) : String :=
+    node s!"\\tikzset\{every text node part/.style=\{align={v}}}" ""
+  t "every text node part reaches every node's text"
+    ((match lines (part "flush left") with
+      | some (a, b) => near a.x b.x
+      | none => false) && !picLoss (part "flush left") && !picLoss (part "center"))
+  let edge := picDoc "" "" "\\draw (0,0) -- node[align=left] {Longer first line\\\\ short} (6,0);"
+  t "an edge label's lines stand flush as its align= says"
+    ((match lines edge with
+      | some (a, b) => near a.x b.x
+      | none => false) && !picLoss edge)

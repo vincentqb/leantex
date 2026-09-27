@@ -886,6 +886,9 @@ structure Cx where
   everyNode : Array (Array Tok) := #[]
   /-- What `every path/.style={...}` declared: the same level for a path. -/
   everyPath : Array (Array Tok) := #[]
+  /-- What `every text node part/.style={...}` declared: the keys every
+  node's text reads, at the level of `every node`. -/
+  everyText : Array (Array Tok) := #[]
   /-- `node distance`: the separation a relative placement (`right=of a`)
   puts between the two node centres, vertical then horizontal, as pgf
   spells the pair. pgf's `positioning` library measures *border* to
@@ -1037,6 +1040,9 @@ two key paths the option loops read (pgf manual §12.4.1 — every X is
 executed inside the X's own scope). -/
 def everyNodeKey : String := "every node"
 def everyPathKey : String := "every path"
+/-- The style the text part of every node runs (tikz.code.tex): the keys a
+node's text reads, such as `align=`. -/
+def everyTextKey : String := "every text node part"
 
 /-- Is this token that symbol? A structural match rather than `==`, which
 for a recursive inductive's derived `BEq` is compiled by well-founded
@@ -1128,12 +1134,12 @@ def keyName (ts : List Tok) : Option String := Id.run do
   return if name.isEmpty then none else some name
 
 /-- A key path this reader can honour: a single word, which an option
-bracket can apply by name, or one of the two `every X` levels the option
+bracket can apply by name, or one of the three `every X` levels the option
 loops read. Any other path (`every label`, a two-word name no bracket can
 spell) is left unread, so the line that wrote it names the loss — storing a
 bundle nothing will ever look up would drop it in silence. -/
 private def readableKey (n : String) : Bool :=
-  n == everyNodeKey || n == everyPathKey || !n.contains ' '
+  n == everyNodeKey || n == everyPathKey || n == everyTextKey || !n.contains ' '
 
 /-- One definition entry as a key path, a handler name, and the handler's
 group: `every node/.style={draw}` reads as `every node`, `style`, `draw`. -/
@@ -2592,6 +2598,35 @@ def fontLines (sts : Array Ir.Style) (lines : Array LabelLine) : Array LabelLine
   else lines.map fun (xs, rel) =>
     (if xs.isEmpty then xs else sts.foldr (fun st inner => #[.styled st inner]) xs, rel)
 
+/-- The line alignment an `align=` value chooses (tikz.code.tex, the `align`
+choice key), as the side each line stands flush to: `.west` for left,
+`.east` for right, `.center` for centred. `left` and `flush left` set lines
+broken with `\\` alike, as do their siblings; the spellings differ only in
+how TeX breaks a paragraph of declared width. -/
+def textAlignOf : List Tok → Option Ir.Pic.LabelAlign
+  | [.ident "left"] | [.ident "flush", .ident "left"] => some .west
+  | [.ident "right"] | [.ident "flush", .ident "right"] => some .east
+  | [.ident "center"] | [.ident "flush", .ident "center"] => some .center
+  | _ => none
+
+/-- A node's centred lines set flush to one side of its text box, as
+`align=` asks: each moves to stand that edge on the box's, and the widest
+line — the box's width — stays exactly where centring put it, so the block
+and the node's extent do not move. A line anchored any other way stands as
+it was. -/
+def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
+    (ls : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
+  let w := ls.foldl (fun w s => match s with
+    | .label _ _ content _ sz a => if a == .center then max w (m content sz).w else w
+    | .rect .. | .circle .. | .frame .. | .edge .. => w) 0
+  ls.map fun s => match s with
+    | .label x y c col sz a =>
+      if a != .center then s
+      else if al == .west then .label (x - w / 2) y c col sz .west
+      else if al == .east then .label (x + w / 2) y c col sz .east
+      else s
+    | .rect .. | .circle .. | .frame .. | .edge .. => s
+
 /-- A relative placement's direction: the `positioning` keys this subset
 reads — the four sides and the four corners. Public because the placement
 facts range over it: a statement needs a name to talk about. -/
@@ -2775,7 +2810,7 @@ def readsNodeOpt (opt : Array Tok) : Bool :=
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
       "inner sep", "inner xsep", "inner ysep", "node contents", "font",
-      "text height", "text depth"].contains (keyPath ts) ||
+      "text height", "text depth", "align"].contains (keyPath ts) ||
       (readLineWidth ts).isSome
 
 /-- An entry some statement of this subset reads: what a declaration made
@@ -2965,6 +3000,8 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- against the node's own face, once its label is measured.
   let mut textHt : Option (List Tok) := none
   let mut textDp : Option (List Tok) := none
+  -- `align=`: the side the text's lines stand flush to (centred by default).
+  let mut textAlign : Ir.Pic.LabelAlign := .center
   let mut minW : Sp := 0
   let mut minH : Sp := 0
   -- `inner sep` as the document set it, per axis; `none` is pgf's default,
@@ -3019,7 +3056,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut place : Option (Dir × String × (Sp × Sp)) := none
   let mut contents : Option (Array LabelLine) := none
   let (gOuter, pOuter) := outerRead readsNodeOpt cx.global cx.opts
-  for opt in mergeOpts gOuter pOuter cx.everyNode own do
+  for opt in mergeOpts gOuter pOuter (cx.everyNode ++ cx.everyText) own do
     match readPlace dsc opt.toList with
     | some p => place := some p
     | none =>
@@ -3039,6 +3076,12 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
 picture subset; the switch is dropped")
     | .ident "text" :: .ident "height" :: .sym '=' :: rest => textHt := some rest
     | .ident "text" :: .ident "depth" :: .sym '=' :: rest => textDp := some rest
+    | .ident "align" :: .sym '=' :: rest =>
+      match textAlignOf rest with
+      | some a => textAlign := a
+      | none =>
+        ev := ev.diag (.W0334, s!"node option 'align={String.join (rest.map tokText)}' \
+is outside the rendered picture subset; the lines stay centred")
     | .ident "text" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
@@ -3301,10 +3344,11 @@ here); its outline is not drawn")
         | .ok (lines, mdiags) =>
           ev := mdiags.foldl Ev.diag ev
           -- A declared text box moves the letters to its baseline; the
-          -- engine's own placement moves nothing.
-          let placed := stackLabels sx (sy + (base - baseOff)) cx.bodySize scale color
-            .center lines ev.shapes
-          ev := { ev with shapes := placed }
+          -- engine's own placement moves nothing. `align=` then stands
+          -- each line flush within the box.
+          let placed := alignLabels cx.metric textAlign
+            (stackLabels sx (sy + (base - baseOff)) cx.bodySize scale color .center lines #[])
+          ev := { ev with shapes := ev.shapes ++ placed }
           return ev
   | .error d =>
     return (if unresolved then { ev with deferred := ev.deferred + 1 } else ev).diag d
@@ -3704,7 +3748,7 @@ picture subset; the edge is not drawn")
         return .error (unreachedName (ev.gapped || cx.parseGap) nm)
   let mut pts : Array Anchor := #[]
   let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat ×
-    Option Ir.Pic.LabelAlign × Bool)) := #[]
+    Option Ir.Pic.LabelAlign × Bool × Ir.Pic.LabelAlign)) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
@@ -3800,7 +3844,7 @@ outside the rendered picture subset; the edge is not drawn")
       -- an in-path `node[...] {...}`: an edge label at the segment's
       -- midpoint; a placement option (`right`, …) loses only itself
       let mut mid : Option (Array LabelLine × Ir.Color × Nat ×
-        Option Ir.Pic.LabelAlign × Bool) := none
+        Option Ir.Pic.LabelAlign × Bool × Ir.Pic.LabelAlign) := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
         -- An edge label reads its own bracket alone: neither the picture's
@@ -3817,6 +3861,11 @@ the rendered picture subset; the keys are dropped")
         -- midpoint where no `auto` is in force.
         let mut malign : Option Ir.Pic.LabelAlign := none
         let mut mLeft := autoLeft
+        -- `align=`: the side the label's lines stand flush to.
+        let mut mtext : Ir.Pic.LabelAlign := .center
+        -- An edge label is a node: what `every text node part` declared
+        -- reaches its text, and its own bracket follows.
+        let mut mopts : Array (Array Tok) := cx.everyText
         if ts[i]? == some (.sym '[') then
           let mut j := i + 1
           let mut inner : Array Tok := #[]
@@ -3830,39 +3879,46 @@ the rendered picture subset; the keys are dropped")
             return ev.diag (.E0333, "an edge node's options miss their ']'; the \
 edge is not drawn")
           i := j + 1
-          for opt in splitTop inner ',' do
-            match opt.toList with
-            | .ident "font" :: .sym '=' :: rest =>
-              let (sz, sts, unread) := readFont cx rest
-              mscale := (sz.map fun k => k * factor / 1000).getD factor
-              mstyles := sts
-              for w in unread do
-                ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
+          mopts := mopts ++ splitTop inner ','
+        for opt in mopts do
+          match opt.toList with
+          | .ident "font" :: .sym '=' :: rest =>
+            let (sz, sts, unread) := readFont cx rest
+            mscale := (sz.map fun k => k * factor / 1000).getD factor
+            mstyles := sts
+            for w in unread do
+              ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
 the rendered picture subset; the switch is dropped")
-            | .ident "text" :: .sym '=' :: rest =>
-              match evalColor cx env rest.toArray with
-              | .ok c => mcolor := c
-              | .error e =>
-                ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
+          | .ident "text" :: .sym '=' :: rest =>
+            match evalColor cx env rest.toArray with
+            | .ok c => mcolor := c
+            | .error e =>
+              ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
 dropped")
-            -- placement: pgf §17.5.2 — `right` is anchor=west, the label
-            -- standing right of the point, and so around
-            | [.ident "right"] => malign := some .west
-            | [.ident "left"] => malign := some .east
-            | [.ident "above"] => malign := some .south
-            | [.ident "below"] => malign := some .north
-            -- The label's own side, on top of whatever the path set.
-            | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
-            | [.ident "auto"] => pure ()
-            | [] => pure ()
-            | o :: rest =>
-              ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
+          | .ident "align" :: .sym '=' :: rest =>
+            match textAlignOf rest with
+            | some a => mtext := a
+            | none =>
+              ev := ev.diag (.W0334, s!"edge node option 'align={String.join (rest.map tokText)}' \
+is outside the rendered picture subset; the lines stay centred")
+          -- placement: pgf §17.5.2 — `right` is anchor=west, the label
+          -- standing right of the point, and so around
+          | [.ident "right"] => malign := some .west
+          | [.ident "left"] => malign := some .east
+          | [.ident "above"] => malign := some .south
+          | [.ident "below"] => malign := some .north
+          -- The label's own side, on top of whatever the path set.
+          | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
+          | [.ident "auto"] => pure ()
+          | [] => pure ()
+          | o :: rest =>
+            ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
 the rendered picture subset; the option is dropped")
         match ts[i]? with
         | some (.group body) =>
           let (lines, mdiags) := nodeLabel cx env body
           ev := mdiags.foldl Ev.diag ev
-          mid := some (fontLines mstyles lines, mcolor, mscale, malign, mLeft)
+          mid := some (fontLines mstyles lines, mcolor, mscale, malign, mLeft, mtext)
           i := i + 1
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
@@ -3899,14 +3955,14 @@ edge is not drawn")
           | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         else
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-        if let some (lines, mc, msc, mal, mlf) := mid then
+        if let some (lines, mc, msc, mal, mlf, mta) := mid then
           -- A label that declared no placement of its own takes the side
           -- `auto` computes from this segment's direction, and the segment's
           -- midpoint where no `auto` is in force.
           let al := mal.getD
             (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
-          labels := stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
-            cx.bodySize msc mc al lines labels
+          labels := labels ++ alignLabels cx.metric mta
+            (stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2) cx.bodySize msc mc al lines #[])
       | .curve spec =>
         -- Absolute tangents anchor each end on its border along its own
         -- angle and aim the controls along those angles. Relative ones
@@ -3934,16 +3990,16 @@ edge is not drawn")
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
-        if let some (lines, mc, msc, mal, mlf) := mid then
+        if let some (lines, mc, msc, mal, mlf, mta) := mid then
           -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint. `auto`
           -- reads the chord's direction rather than the tangent at that
           -- point: the four cardinal anchors cannot tell the two apart
           -- for any curve this subset's control distance produces.
           let al := mal.getD
             (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
-          labels := stackLabels
+          labels := labels ++ alignLabels cx.metric mta (stackLabels
             ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc al lines labels
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc al lines #[])
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them.
@@ -4764,6 +4820,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    opts := inherited
                    everyNode := everyOf everyNodeKey
                    everyPath := everyOf everyPathKey
+                   everyText := everyOf everyTextKey
                    dist := dist
                    math := math
                    argStyles := argStyles
