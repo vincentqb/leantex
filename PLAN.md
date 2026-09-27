@@ -22629,3 +22629,96 @@ at its line but is not attributed to the pictures it affects, so they stay
 native. A node declaring both minimums keeps its declared outline when its
 text is wider (pgf grows it), which moves the private deck if changed. And
 `text width` natively needs a line breaker the picture walk cannot reach.
+
+
+### 2026-09-27 — kerns reach the page, spaces kern as lualatex's do, and a face embeds as the subset it paints
+
+**The defect.** The layout folded GPOS pair kerns into glyph advances, but
+the PDF writer painted nominal widths and believed its pen stood where
+the layout's did: a kern never reached a page, a centred line came out
+wider than it measured, and at the next absolute `Tm` — any change of
+face, size or colour — the drift was absorbed, so text after an italic or
+inline-math run overlapped the word before it (a space before an italic
+title in the private reference corpus's reference list vanished).
+
+**The invariant, and where it stands.** Placement is the viewer's
+arithmetic over what the file states (ISO 32000-2 §9.4.4), never the
+writer's belief: `PdfContent` models the pen in millionths from the
+file's own spellings (`Sp.toPtMilli`, `pdfWidthμ`) and writes a `TJ`
+number before each glyph whose start would otherwise miss the layout's —
+`nudge_between` and `place_between` bound the miss by half a thousandth
+of the run's size. `kern_measure_exact` (renamed from its old `_in_measure` spelling to the
+`_exact` shape it always was) keeps the
+breaker's widths the exact sum the run carries. The artifact tier holds
+every golden fixture's every painted glyph to its layout x
+(`artGlyphPlacementOffences`); `kernPlacementChecks` holds the kerned
+fixture and the centred line through the shipped CLI. AGENTS.md's
+obligation table carries the class as a row.
+
+**Kern data.** `parseKernSubs` reads PairPos subtables behind extension
+lookups (GPOS type 9): Fira Sans keeps all its pairs there.
+
+**Space kerns.** luaotfload applies a face's pairs with its space glyph
+to the interword glue beside a glyph (the fontloader's space-kern
+trigger): `(g, space)` from the face before the space, `(space, g)` from
+the face after, the width moving and the stretch and shrink staying. The
+item fold now does the same through `pairKern` (which `kernVal` reads
+too), against a word's glyph only — a formula, an icon or a mark beside
+a space never counts (`ItemsAcc.wordEnd`). `features_agree` now covers
+`pairKern`. Measured on lualatex at 10 pt, Source Serif Pro: `T a` 2.14,
+`a V` 2.03, `V a` 1.94, `T T` 1.95 against a 2.33 pt space; the engine's
+synthetic probe now matches lualatex's within-line word starts to 0.000
+pt (0.90 p50, 3.33 max before). A face may kern period and comma with
+the space through class 0 of a class-pair subtable: luaotfload applies
+it, and HarfBuzz does not (its class-0 shortcut in PairPosFormat2), so
+hb-shape is no oracle for these pairs. *Declared departure:* where the faces on the two sides of a space
+differ in scale, luaotfload scales both values by the left face's
+factor; here each keeps its own face's — different only where both
+sides kern and their scales differ.
+
+**Subsets.** `FontSubset.program` builds the program a file embeds: the
+face's tables minus the layout ones no viewer reads (GSUB, GPOS, GDEF,
+BASE, JSTF, MATH, kern, and a DSIG it would invalidate), and its
+outlines minus every glyph the pages never paint, glyph ids kept (a bare
+`endchar` in CFF, whose CharStrings INDEX is rewritten in place with each
+Top DICT offset past it respelled in its own width; a zero-length `loca`
+entry in `glyf`, closed under composite components). What it cannot read
+with certainty keeps the face's bytes for that part: a kept CFF glyph the
+outline decoder cannot read whole (seac composes from other glyphs), a
+CID-keyed CFF, a variable face, a result the face parser will not read
+back. A subset carries a six-capital tag (§9.6.4) whose first two
+letters are its slot, so no two in one file share one. The driver builds
+each program once (`Pdf.facePrograms`) and deflates it through its
+content-hash cache. The artifact tier holds every painted glyph of every
+fixture to the face's own outline (`Ink.Src.cmdsAt`), a tagged program
+to a strict subset, and an untagged one to a face whose every drawn
+glyph is painted. Measured: the 82 corpus fixtures that build are
+pixel-identical at 110 dpi before and after (`pdftoppm`, compared
+byte-wise), and their PDFs total 8.2 MB against 42.7 MB; every page of
+the private reference corpus is pixel-identical too, its files 2.6–3.6×
+smaller. Bench, interleaved and warm (median of 15, ms, before/after):
+paragraphs 77/76, lorem 347/349, underline 551/549, paper 175/178.
+
+**Still owed.** A subset here still carries every subroutine, every glyph
+name and the whole `cmap` and `hmtx`, so it stands several times
+lualatex's (which writes a CID-keyed bare CFF). The next steps, in order
+of what they save: subroutines no kept glyph calls reduced to `return`,
+`post` format 3 for TrueType, a bare CID-keyed CFF.
+
+**Declined, measured.** Protrusion on ragged and last lines: in the
+private paper 3 of 160 matched lines hang left in lualatex and sit flush
+here (at most 0.43 pt), while the private deck — which lualatex sets
+with no protrusion at all — agrees on all 54 matched
+lines, and would stop agreeing wherever a ragged line opens with a
+protruding glyph. The brief's condition (both move toward lualatex) does
+not hold.
+
+**Routed.** The space factor: `\nonfrenchspacing` is LaTeX's default and
+the engine sets every interword space alike (Compat's rows say "uniform
+here either way"). lualatex adds a third of the space after a sentence
+end (TeXbook p. 76; `a.` then `b` in Fira Sans at 10 pt is 3.533 = 2.65
++ 0.883 pt) and scales the stretch by the space factor. In the private
+paper a word after a sentence end on its line starts 1.25 pt (median)
+earlier than lualatex's; before one, 0.20 pt. It needs Layout's
+interword glue, a declaration channel for `\frenchspacing` (babel and
+polyglossia set it per language), and Compat's two rows.
