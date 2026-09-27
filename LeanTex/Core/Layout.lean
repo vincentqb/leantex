@@ -904,15 +904,19 @@ theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
       h.2.2.2, rfl, rfl, rfl⟩
 
 /-- **The trim a page's drawn rules declare.** A document that draws its own
-printer's marks from a shipout hook (`Ir.PageSpec.drawn`) declares the trim
-they mark. When the rules are exactly `cutMarks` of one trim — the inset
-read off the leftmost top mark's centre line, the thickness off its width,
-the gap off its length, both inside the geometry `cutmarks_in_bleed_covers`
-needs, so the drawn set is one those theorems hold of — the medium's trim
-lies that far in (`Geom.trimInset`). Any other drawing declares no trim,
-and a page with a declared bleed already names its own. -/
+printer's marks from a shipout hook (`Ir.PageSpec.drawn`) and declares its
+page boxes in a spelling the engine cannot evaluate (`trimMarked`: a page
+attribute assigned at shipout) has its boxes stand for the trim the marks
+cut. When the rules are exactly `cutMarks` of one trim — the inset read off
+the leftmost top mark's centre line, the thickness off its width, the gap
+off its length, both inside the geometry `cutmarks_in_bleed_covers` needs,
+so the drawn set is one those theorems hold of — the medium's trim lies
+that far in (`Geom.trimInset`). Any other drawing declares no trim, a page
+with a declared bleed already names its own, and marks drawn on a page
+that declares no box declare none: LaTeX's file then has no box but the
+medium, and so has this one. -/
 def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
-  guard (spec.bleed == 0 && spec.drawn.size == 8)
+  guard (spec.bleed == 0 && spec.trimMarked && spec.drawn.size == 8)
   let lead ← spec.drawn.foldl (fun m r =>
     if r.y == 0 && r.w < r.h && m.all (r.x < ·.x) then some r else m) none
   let t := lead.w

@@ -215,6 +215,13 @@ structure PageSpec where
   twin has no page corner to anchor it to — the recorded divergence cut
   marks and page boxes already make. -/
   drawn : Array DrawnRule := #[]
+  /-- The document declares page boxes in a spelling the engine cannot
+  evaluate — a page attribute assigned at shipout, as `\pdfvariable
+  pageattr` is, whose values an `\edef` computes — so the trim its drawn
+  cut marks cut stands for them (`Layout.drawnTrim`). Undeclared, drawn
+  marks declare no trim, as in LaTeX, whose file then has no box but the
+  medium. Natively `\page{ trim = marks }`. -/
+  trimMarked : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).

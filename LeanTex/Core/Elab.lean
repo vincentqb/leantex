@@ -675,7 +675,7 @@ def pageKeys : List String :=
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
-   "furnituregap", "headsep", "footskip", "rule"]
+   "furnituregap", "headsep", "footskip", "rule", "trim"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
 claim the page as declared (`sawPage` in `elabDoc`), keeping every value
@@ -9750,6 +9750,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | _ =>
         let msg := s!"'rule' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
         evs := say evs .E0323 msg
+    -- The page's trim is the one its drawn cut marks cut (`Ir.PageSpec.trimMarked`).
+    | "trim", .ident v =>
+      match v with
+      | "marks" => spec := { spec with trimMarked := true }
+      | _ => evs := say evs .E0323 s!"'trim' in '\\page' expects 'marks', got '{v}'"
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
@@ -9836,7 +9841,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight",
-               "mark-gap", "mark-thickness", "modulo", "rule"].contains ·)) pos))
+               "mark-gap", "mark-thickness", "modulo", "rule", "trim"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343). A
     -- `rule` adds a drawing rather than setting a value, so a second one

@@ -3261,6 +3261,17 @@ private def addToHook (pos : Pos) : M Unit :=
     "'\\AddToHook' registers code on a kernel hook; the engine has no \
 hook machinery; skipped" pos
 
+/-- Does hook code assign a page attribute (`\pdfvariable pageattr` or
+`\pdfpageattr`)? That is how a document declares its page boxes at
+shipout — values the engine cannot evaluate when an `\edef` computes them,
+but a declaration all the same (`Ir.PageSpec.trimMarked`). -/
+private def assignsPageAttr (code : Array Raw) : Bool :=
+  let toks := code.filter fun r => !(r matches .space)
+  toks.any (· matches .ctrl "pdfpageattr" _) ||
+    (List.range toks.size).any fun i => match toks[i]?, toks[i + 1]? with
+      | some (.ctrl "pdfvariable" _), some (.word "pageattr" _) => true
+      | _, _ => false
+
 /-- A shipout picture flattened to TeX's own shape, a token stream with its
 group and environment brackets explicit, so reading it is one pass over a
 sequence rather than a recursion over what drawing macros expand to. -/
@@ -5007,6 +5018,13 @@ face serves every language, so the binding is dropped" pos
         became s!"\\AddToHook\{{hook}}" native pos
         return some (← synthAt native pos, k)
       | none => pure ()
+    -- A page attribute assigned at shipout declares the page's boxes in
+    -- values the engine cannot evaluate: the hook stays skipped, and named
+    -- (W0104), and the trim the page's drawn cut marks cut stands for the
+    -- boxes (`Ir.PageSpec.trimMarked`, `Layout.drawnTrim`).
+    if hook == "shipout/before" && assignsPageAttr (codeArgs.getD 0 #[]) then
+      addToHook pos
+      return some (← synthAt "\\page{ trim = marks }" pos, k)
     addToHook pos
     return some (#[], k)
   | "newlength" =>

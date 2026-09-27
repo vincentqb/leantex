@@ -3534,11 +3534,13 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
 
 /-- A card spelled in LaTeX draws its own printer's marks: eight hairlines
 from a `shipout/background` picture, positioned from the same lengths as
-the trim. The drawing is read as the rules it draws (`Ir.PageSpec.drawn`),
-and rules that are exactly a trim's cut marks declare that trim and its
-bleed (`Layout.drawnTrim`): the marks ship where they were drawn, in their
-ink, the text stays where the geometry put it, and the file names the trim.
-Invented lengths and names throughout. -/
+the trim, and declares its page boxes at shipout, as a page attribute. The
+drawing is read as the rules it draws (`Ir.PageSpec.drawn`), and rules that
+are exactly a trim's cut marks stand for the boxes the engine cannot
+evaluate (`Layout.drawnTrim`): the marks ship where they were drawn, in
+their ink, the text stays where the geometry put it, and the file names the
+trim. Marks drawn on a page that declares no box declare none, as in
+LaTeX. Invented lengths and names throughout. -/
 def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pre (draw : String) : String :=
@@ -3568,15 +3570,19 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     hmark "\\dimexpr\\paperw-\\stub\\relax" "\\dimexpr\\paperh-\\bl-0.5\\hair\\relax" ++
     "\\end{picture}}" ++
     "\\AddToHook{shipout/background}{\\put(0pt,-\\paperh){\\color{allplates}\\drawmarks}}"
-  let (doc, ds) := elabStr (pre marks)
+  -- The boxes the card declares at shipout, as a page attribute: values the
+  -- engine does not evaluate, a declaration all the same.
+  let boxes := "\\AddToHook{shipout/before}{\\pdfvariable pageattr{/TrimBox [8.5 8.5 260.5 152.5]}}"
+  let (doc, ds) := elabStr (pre (marks ++ boxes))
   let geom := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom
   let bl := Dim.mm 3
   let hair := Dim.pt 1 / 4
   let want := Layout.cutMarks (Dim.inch 7 / 2) (Dim.inch 2) bl (bl - Dim.mm 1) hair
     (Ir.Color.ofCmyk 1000 1000 1000 1000)
-  t "a drawn picture's rules are read, and the hook names no loss"
-    (doc.page.drawn.size == 8 && !(ds.any fun d => d.code == DiagCode.W0104.code))
+  t "a drawn picture's rules are read; the page attribute is the one hook named"
+    (doc.page.drawn.size == 8 && doc.page.trimMarked &&
+      (ds.filter fun d => d.code == DiagCode.W0104.code).size == 1)
   t "rules that are a trim's cut marks declare the trim, inside the medium"
     (Layout.drawnTrim doc.page == some (bl, bl - Dim.mm 1, hair) &&
      geom.trimInset == bl && geom.bleed == 0 &&
@@ -3595,6 +3601,15 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      bytesContain pdf s!"/BleedBox {bleedBox.render}" &&
      bytesContain pdf s!"/ArtBox {trim.render}" &&
      bytesContain pdf s!"/MediaBox {media.render}")
+  -- review CF-2: marks drawn on a page that declares no box declare no
+  -- trim, as in LaTeX, whose file then has no box but the medium.
+  let (bare, bareDs) := elabStr (pre marks)
+  let bareGeom := Layout.Geom.ofPage bare.page
+  let barePdf := pdfText (Pdf.write bareGeom oneFace (layoutOf oneFace bare bareGeom).pages bare.info)
+  t "marks drawn with no declared page box declare no trim, as lualatex's file has none"
+    (bare.page.drawn.size == 8 && !bare.page.trimMarked && Layout.drawnTrim bare.page == none &&
+     bareGeom.trimInset == 0 && !bytesContain barePdf "/TrimBox" &&
+     !(bareDs.any fun d => d.code == DiagCode.W0104.code))
   -- A drawing that marks no trim ships as drawn and declares none.
   let (lone, _) := elabStr (pre ("\\AddToHook{shipout/background}" ++
     "{\\put(0pt,-\\paperh){\\color{allplates}\\put(\\bl,\\bl){\\rule{\\stub}{\\hair}}}}"))
