@@ -133,9 +133,37 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       "$\\begin{cases} a & b \\\\ c & d \\end{cases}$")).1).1
       "padding-top: calc(0.5ex + 0.120em)")
 
+/-- `\tag{t}` stands in the number's place — `(t)`, or `t` under `\tag*` —
+and steps no counter; a label binds to the tag, so `\eqref` reads it
+(amsldoc §3.4). Where no number is rendered yet (an alignment's rows) the
+tag is named, never set inside the formula. -/
+def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
+  let v (c : Char) : Char := MathParse.italicVar c
+  let src := dvDoc "" ("\\begin{equation}x\\tag{5}\\label{e}\\end{equation}\n" ++
+    "\\begin{equation}y\\end{equation}\n" ++
+    "\\begin{equation*}z\\tag*{A}\\end{equation*}\n\n\\eqref{e}")
+  let (doc, ds) := elabStr src
+  t "amsmath tag: no diagnostic" ds.isEmpty
+  let page := squash (pageTextOf fs src)
+  t s!"amsmath tag: the tag stands in the number's place, steps no counter, and \
+\\eqref reads it (got '{page}')"
+    (page == String.ofList [v 'x', '(', '5', ')', v 'y', '(', '1', ')', v 'z', 'A',
+      '(', '5', ')'])
+  let html := (HtmlDoc.emit {} doc).1
+  t "amsmath tag: the HTML number spans carry the tags"
+    (hasStr html "<span class=\"eqnum\">(5)</span>" &&
+      hasStr html "<span class=\"eqnum\">(1)</span>" &&
+      hasStr html "<span class=\"eqnum\">A</span>")
+  let aligned := dvDoc "" "\\begin{align*}x &= y\\tag{3}\\end{align*}"
+  t "amsmath tag: an alignment's tag is named, never set inside the formula"
+    ((warnCodes aligned).contains "W0015" && !(pageTextOf fs aligned).contains '3')
+
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"amsmath: serif unparsable: {e}")
   let fs ← mathSetOf (oneFaceOf serif)
   amsGridChecks ref fs
+  amsTagChecks ref fs

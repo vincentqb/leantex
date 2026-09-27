@@ -1309,7 +1309,9 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     if numbered then
       warnOnce ctx ("math:eqnum:" ++ name) .W0015
         s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
-        (help := s!"'\{{name}*}' spells the unnumbered form, which renders the same")
+        (help := if (alignEnvs.lookup name).any (·.2)
+          then some s!"'\{{name}*}' spells the unnumbered form, which renders the same"
+          else none)
     return .formula true (Parse.rawSrc body) l
   | .error what =>
     let src := Parse.rawSrc body
@@ -2032,15 +2034,19 @@ private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBindin
 
 /-- Strip a display-math body's metadata before the math parser sees it:
 top-level `\label{...}` keys (returned for binding to the display's
-number) and `\nonumber`/`\notag` (amsldoc §3: a numbered form opts out).
-Neither is mathematics; left in place they would push the whole formula
-into the W0012 source-text degradation — with the label spelled inside
-the rendered text. -/
+number), `\nonumber`/`\notag` (amsldoc §3: a numbered form opts out), and
+the first `\tag{t}`/`\tag*{t}` (amsldoc §3.4: the tag takes the number's
+place, parenthesised unless starred, and steps no counter). None is
+mathematics; left in place they would push the whole formula into the
+W0012 source-text degradation — with the label spelled inside the
+rendered text — or set a tag inside the formula. A second `\tag` stays, so
+the containment that names it still does. -/
 private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
-    EM (Array Raw × Array String × Bool) := do
+    EM (Array Raw × Array String × Bool × Option (String × Bool)) := do
   let mut out : Array Raw := #[]
   let mut keys : Array String := #[]
   let mut nonum := false
+  let mut tag : Option (String × Bool) := none
   let mut i : Nat := 0
   repeat
     if h : i < body.size then
@@ -2054,6 +2060,18 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
         | _ =>
           diag ctx .E0304 "'\\label' needs a {key} group" pos
           i := i + 1
+      | .ctrl "tag" pos =>
+        let j := skipSpaces body (i + 1)
+        let (star, k) := match body[j]? with
+          | some (.word "*" _) => (true, skipSpaces body (j + 1))
+          | _ => (false, j)
+        match body[k]?, tag with
+        | some (.group tagRaw _), none =>
+          tag := some (argText ctx tagRaw, star)
+          i := k + 1
+        | _, _ =>
+          out := out.push (.ctrl "tag" pos)
+          i := i + 1
       | .ctrl "nonumber" _ =>
         nonum := true
         i := i + 1
@@ -2064,7 +2082,7 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
         out := out.push r
         i := i + 1
     else break
-  return (out, keys, nonum)
+  return (out, keys, nonum, tag)
 
 /-- A decimal factor of a named measure, in permille: `0.48\textwidth`,
 `.5\linewidth`, or a bare suffix (a factor of one, as TeX reads a
@@ -3321,26 +3339,29 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
         -- A display in an inline position (a caption, an item label) has
-        -- no block to hang a number on: it sets unnumbered, named.
-        let (cleaned, keys, _) ← stripMathMeta ctx body
+        -- no block to hang a number on: it sets unnumbered, named — a
+        -- `\tag` as much as a counter's number.
+        let (cleaned, keys, _, tag) ← stripMathMeta ctx body
         let mut acc := acc
         for key in keys do
           recordLabel ctx key (← get).refTarget pos
           acc := acc.push (.label key)
-        if numbered then
+        if numbered || tag.isSome then
           warnOnce ctx ("math:eqnum:" ++ name) .W0015
             s!"equation numbers are not rendered here; '\{{name}}' sets unnumbered" pos
-            (help := s!"'\{{name}}*' spells the unnumbered form, which renders the same")
+            (help := if numbered
+              then some s!"'\{{name}}*' spells the unnumbered form, which renders the same"
+              else none)
         let x ← elabMathInline ctx true cleaned pos
         elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
       else if let some (kind, numbered) := alignEnvs.lookup name then
         let acc := flushText acc sb
-        let (cleaned, keys, _) ← stripMathMeta ctx body
+        let (cleaned, keys, _, tag) ← stripMathMeta ctx body
         let mut acc := acc
         for key in keys do
           recordLabel ctx key none pos
           acc := acc.push (.label key)
-        let x ← elabMathEnv ctx name kind numbered cleaned pos
+        let x ← elabMathEnv ctx name kind (numbered || tag.isSome) cleaned pos
         elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
       else
         match he : lookupUserEnv ctx name with
@@ -6832,9 +6853,17 @@ the engine's own step, mono at footnotesize" (some pos)
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
-  let (cleaned, keys, nonum) ← stripMathMeta ctx body
+  let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
   let inl ← elabMathInline ctx true cleaned pos
-  if numbered && !nonum then
+  if let some (t, star) := tag then
+    -- `\tag{t}` stands in the number's place, `(t)` unless starred, and
+    -- steps no counter (amsldoc §3.4); a label binds to it, so `\ref`
+    -- sets `t` and `\eqref` `(t)`, as it would a number.
+    for key in keys do
+      recordLabel ctx key (some { kind := some .equation, num := t }) pos
+    let content := keys.map (Ir.Inline.label ·) |>.push inl
+    blocks := blocks.push (.equation (if star then t else s!"({t})") content)
+  else if numbered && !nonum then
     -- The display takes the next equation number (amsldoc §3);
     -- its labels bind to it, scoped to the environment as
     -- LaTeX's \refstepcounter group is.
@@ -6860,10 +6889,10 @@ number. -/
 private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Raw) (pos : Pos) (blocks : Array Block) :
     EM (Array Block) := do
-  let (cleaned, keys, _) ← stripMathMeta ctx body
+  let (cleaned, keys, _, tag) ← stripMathMeta ctx body
   for key in keys do
     recordLabel ctx key none pos
-  let inl ← elabMathEnv ctx n kind numbered cleaned pos
+  let inl ← elabMathEnv ctx n kind (numbered || tag.isSome) cleaned pos
   let content := keys.map (Ir.Inline.label ·) |>.push inl
   return blocks.push (.center #[.para content])
 
