@@ -839,8 +839,8 @@ deleted outright and the gate stayed green.
 Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
-  ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "htmla11y", "htmlreader",
-   "obligations", "parity", "purity", "rhythm"]
+  ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "external", "htmla11y",
+   "htmlreader", "obligations", "parity", "purity", "rhythm"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,
 and their absence reports `missing`, which the aggregate does not gate — so
