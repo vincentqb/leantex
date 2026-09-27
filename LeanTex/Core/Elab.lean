@@ -2430,9 +2430,10 @@ resolution renders it. A star asks for the full author list; one `[...]`
 note is the note after the citation, two are the notes before and after
 (natbib.sty `\NAT@@citetp`), and a noted `\cite` is the parenthetical form
 in either mode (natbib.sty `\NAT@cites`). The keys are read raw — a key is
-a name, not text. Returns the node — none when the group is missing, named
-E0304 — and the index past what was read. Outside the knot, which stands
-at its heartbeat budget: the arm there only dispatches. -/
+a name, not text; `\nocite`'s keys only enter the list. Returns the node —
+none when the group is missing, named E0304 — and the index past what was
+read. Outside the knot, which stands at its heartbeat budget: the arm there
+only dispatches. -/
 private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     (base : Ir.CiteForm) (pos : Pos)
     (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
@@ -2460,6 +2461,13 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     else
       let keys := (((argText ctx body).splitOn ",").map (·.trimAscii.toString)).filter
         (!·.isEmpty)
+      if base.cmd == .nocite then
+        -- No ink, so nothing for the no-bibliography judge; a space before it
+        -- swallows the spaces after it (latex.ltx `\@bsphack`/`\@esphack`).
+        let j4 := skipSpaces raws (j3 + 1)
+        have hj4 := skipSpaces_ge raws (j3 + 1)
+        return (some (.cite form keys.toArray),
+          if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
       -- Recorded for the no-bibliography judge (elabDoc): a citation cannot
       -- be judged where it stands, because its `\bibliography` may follow it.
       recordCiteSites ctx keys pos

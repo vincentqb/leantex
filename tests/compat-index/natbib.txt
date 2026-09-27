@@ -30,7 +30,7 @@ body impl \citeyear{k}
 body impl \citeyearpar{k}
 body impl \citetext{priv.\ comm.}
 body impl \citenum{k}
-body refuse:W0301 \nocite{k}
+body impl \nocite{k}
 pre refuse:W0301 \defcitealias{k}{ali}
 body refuse:W0301 \citetalias{k}
 body refuse:W0301 \citepalias{k}

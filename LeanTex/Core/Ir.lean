@@ -2330,8 +2330,9 @@ which parts print and whether brackets wrap them: `\citet` (textual),
 `\citep` (parenthetical), `\cite` (`auto`: textual in author-year mode,
 parenthetical in numbers mode, natbib.sty `\NAT@cites`), `\citealt` and
 `\citealp` (the two without brackets), `\citeauthor`, `\citeyear`,
-`\citeyearpar`, `\citenum` (the list position alone), and `\citetext`
-(its note in the citation brackets, no key). Which punctuation draws them
+`\citeyearpar`, `\citenum` (the list position alone), `\citetext`
+(its note in the citation brackets, no key), and the kernel's `\nocite`
+(its keys enter the list, and nothing prints). Which punctuation draws them
 is the bibliography's to decide (`Bib.renderCite`). -/
 inductive CiteCmd where
   | textual
@@ -2344,6 +2345,7 @@ inductive CiteCmd where
   | yearPar
   | num
   | text
+  | nocite
   deriving Repr, BEq, Inhabited
 
 /-- What a citation declares beside its keys: the command, the starred
@@ -2362,9 +2364,10 @@ structure CiteForm where
 
 /-- natbib's citation commands (natbib.sty's command table), each with the
 form it selects: `\citefullauthor` is `\citeauthor*` there, and the
-capitalized five are the only ones natbib defines. The one naming site —
-the elaborator reads a command through it and the dump spells a form back
-through it. -/
+capitalized five are the only ones natbib defines; the kernel's `\cite` and
+`\nocite` are read through the same rows, with natbib or without it. The
+one naming site — the elaborator reads a command through it and the dump
+spells a form back through it. -/
 def natbibCites : List (String × CiteForm) :=
   [("citet", { cmd := .textual }), ("citep", { cmd := .paren }),
    ("cite", { cmd := .auto }), ("citealt", { cmd := .alt }),
@@ -2372,6 +2375,7 @@ def natbibCites : List (String × CiteForm) :=
    ("citefullauthor", { cmd := .author, full := true }),
    ("citeyear", { cmd := .year }), ("citeyearpar", { cmd := .yearPar }),
    ("citenum", { cmd := .num }), ("citetext", { cmd := .text }),
+   ("nocite", { cmd := .nocite }),
    ("Citet", { cmd := .textual, up := true }), ("Citep", { cmd := .paren, up := true }),
    ("Citealt", { cmd := .alt, up := true }), ("Citealp", { cmd := .alp, up := true }),
    ("Citeauthor", { cmd := .author, up := true })]

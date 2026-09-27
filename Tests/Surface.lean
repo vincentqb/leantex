@@ -4537,7 +4537,8 @@ def plainnatChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
 
 /-- Entries whose label names and year coincide, so plainnat.bst's
 `forward.pass`/`reverse.pass` give them letters, one more year by the same
-names, and one other author: invented people and titles. -/
+names, one other author, and two entries the `\nocite` rows name:
+invented people and titles. -/
 def natbibLabelBib : String :=
   "@article{gam2019a, author = {Gil Gamma and Hal Eta}, title = {An early invented result},\n\
     journal = {Journal of Examples}, year = {2019}}\n\
@@ -4546,7 +4547,9 @@ def natbibLabelBib : String :=
   @article{gam2020, author = {Gil Gamma and Hal Eta}, title = {A third invented result},\n\
     journal = {Journal of Examples}, year = {2020}}\n\
   @book{iota2018, author = {Ivy Iota}, title = {An Invented Book}, publisher = {Example Press},\n\
-    year = {2018}}\n"
+    year = {2018}}\n\
+  @misc{kap2017, author = {Kai Kappa}, title = {An invented note}, year = {2017}}\n\
+  @misc{lam2016, author = {Lu Lambda}, title = {An entry no citation names}, year = {2016}}\n"
 
 /-- The calls the letter rows set, one paragraph each (`natbibSrc`). -/
 def natbibLabelCalls : List String :=
@@ -4612,6 +4615,72 @@ def natbibLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     for want in list, k in [0:list.length] do
       t s!"natbib letters {pre} + {style}: entry {k + 1} reads '{want}' ({entries[k]?.getD ""})"
         (entries[k]? == some want && hasStr html want)
+
+/-- The `\nocite` rows, one document each: the preamble, the style, the
+calls, and the lines lualatex set for them and for the whole reference list
+(TeX Live 2026: natbib 8.31b, bibtex 0.99e, through `pdftotext`). -/
+def nociteModes : List (String × String × List String × List String × List String) :=
+  let calls := ["\\citep{iota2018}", "\\nocite{kap2017}", "\\citep{gam2020}",
+    "x\\nocite{kap2017} y"]
+  let star := ["\\citep{iota2018}", "\\nocite{*}", "\\citep{gam2020}"]
+  let iota := "Ivy Iota. An Invented Book. Example Press, 2018."
+  let kap := "Kai Kappa. An invented note, 2017."
+  let gam := "Gil Gamma and Hal Eta. A third invented result. Journal of Examples, 2020."
+  let lam := "Lu Lambda. An entry no citation names, 2016."
+  let early := "Gil Gamma and Hal Eta. An early invented result. Journal of Examples, 2019"
+  let later := "Gil Gamma and Hal Eta. A later invented result. Journal of Examples, 2019"
+  [("\\usepackage[numbers]{natbib}", "unsrtnat", calls,
+    ["L1 [1] end.", "L2 end.", "L3 [3] end.", "L4 x y end."],
+    [s!"[1] {iota}", s!"[2] {kap}", s!"[3] {gam}"]),
+   ("\\usepackage{natbib}", "plainnat", calls,
+    ["L1 [Iota, 2018] end.", "L2 end.", "L3 [Gamma and Eta, 2020] end.", "L4 x y end."],
+    [gam, iota, kap]),
+   ("\\usepackage[numbers]{natbib}", "unsrtnat", star,
+    ["L1 [1] end.", "L2 end.", "L3 [4] end."],
+    [s!"[1] {iota}", s!"[2] {early}.", s!"[3] {later}.", s!"[4] {gam}", s!"[5] {kap}",
+     s!"[6] {lam}"]),
+   ("\\usepackage{natbib}", "plainnat", star,
+    ["L1 [Iota, 2018] end.", "L2 end.", "L3 [Gamma and Eta, 2020] end."],
+    [s!"{early}a.", s!"{later}b.", gam, iota, kap, lam]),
+   ("", "plain", ["\\cite{iota2018}", "\\nocite{kap2017}", "\\cite{gam2020}"],
+    ["L1 [2] end.", "L2 end.", "L3 [1] end."],
+    [s!"[1] {gam}", s!"[2] {iota}", s!"[3] {kap}"])]
+
+/-- **`\nocite` adds its entries to the list and prints nothing**: a key it
+names takes its place in first-citation order, `*` names every entry of the
+`.bib` in its order there, and the command sets no ink — a space before it
+swallows the spaces after it, as `\@esphack` does. On the page and in the
+HTML, with natbib in both modes and without it; a key no entry answers is
+named once, and a `\nocite` in a document with no bibliography is silent,
+as LaTeX is. -/
+def nociteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geometry := "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}"
+  for (pre, style, calls, lines, list) in nociteModes do
+    let (doc, eds) := elabStr (natbibSrc (pre ++ geometry) style calls)
+    let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+    let out := bodyLines (layoutOf oneFace doc)
+    let page := out.map lineInk
+    let entries := (bibEntryLines out).map fun e => String.intercalate " " (e.toList.map lineInk)
+    let html := htmlVisibleText (HtmlDoc.emit {} doc).1
+    let tag := s!"nocite {pre} + {style} {calls[1]?.getD ""}"
+    t s!"{tag}: no diagnostic" (ds.isEmpty && !eds.any (·.code == "W0301"))
+    for want in lines do
+      t s!"{tag}: the page sets '{want}'" (page.contains want)
+      t s!"{tag}: the html reads '{want}'" (hasStr html want)
+    t s!"{tag}: the list is lualatex's ({entries.toList})" (entries.toList == list)
+    for want in list do
+      t s!"{tag}: the html list reads '{want}'" (hasStr html want)
+  let (doc, _) := elabStr (natbibSrc "\\usepackage[numbers]{natbib}" "unsrtnat"
+    ["\\nocite{missing2000}"])
+  let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+  t "nocite: a key no entry answers is named once, keyed to it, and prints nothing"
+    ((ds.filter (·.code == "W0351")).map (·.subject) == #[some "missing2000"] &&
+      ((bodyLines (layoutOf oneFace doc)).map lineInk).contains "L1 end.")
+  let (_, eds) := elabStr
+    "\\documentclass{article}\n\\begin{document}\nA \\nocite{k} b.\n\\end{document}\n"
+  t "nocite: with no bibliography it is silent, as LaTeX is"
+    (!eds.any fun d => d.code == "W0351" || d.code == "W0301")
 
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a

@@ -346,16 +346,16 @@ private structure Switches where
 private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
   let brackets := match f.cmd with
     | .textual | .paren | .auto | .yearPar | .text => true
-    | .alt | .alp | .author | .year | .num => false
+    | .alt | .alp | .author | .year | .num | .nocite => false
   { numeric := p.numbers || f.cmd == .num
     wrap := match f.cmd with
       | .paren | .alp | .yearPar | .num | .text => true
       | .auto => p.numbers
-      | .textual | .alt | .author | .year => false
+      | .textual | .alt | .author | .year | .nocite => false
     part := match f.cmd with
       | .author => .names
       | .year | .yearPar => .year
-      | .textual | .paren | .auto | .alt | .alp | .num | .text => .both
+      | .textual | .paren | .auto | .alt | .alp | .num | .text | .nocite => .both
     op := if brackets then p.open else ""
     cl := if brackets then p.close else "" }
 
@@ -418,12 +418,14 @@ command table): `\citep` wraps its keys in the brackets with `sep` between
 them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
 (`Doe [2024]`), the `alt`/`alp` forms drop the brackets, `\citeauthor` and
 `\citeyear` print one part, `\citenum` the list position in either mode,
-and `\citetext` its note between the brackets. The output is text and
-links over text only — no `.cite`, no `.ref` — which is `renderCite_plain`,
-the leaf fact `apply_no_cite` rests on. -/
+`\citetext` its note between the brackets, and `\nocite` nothing: its keys
+only enter the list (`citedKeys`). The output is text and links over text
+only — no `.cite`, no `.ref` — which is `renderCite_plain`, the leaf fact
+`apply_no_cite` rests on. -/
 def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
   if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
+  else if f.cmd == .nocite then #[]
   else finish p f (switches p f) (parts.foldl (citeStep p f (switches p f)) {})
 
 /-- An en dash between page numbers: `45--67` and `45-67` both print
@@ -830,14 +832,26 @@ and that text. -/
 
 /-- First-citation order: the keys the document cites, in order of first
 appearance, each once — the sequence citation-order lists are sorted by
-and numeric labels index into. A leaf projection of `Ir.foldDoc`, the one
-collect traversal, over every region `resolveDoc` rewrites. -/
-def citedKeys (doc : Ir.Doc) : Array String :=
+and numeric labels index into — among the citations `keep` admits (every
+one by default; `\nocite`'s count, as they do for BibTeX). A leaf
+projection of `Ir.foldDoc`, the one collect traversal, over every region
+`resolveDoc` rewrites. -/
+def citedKeys (doc : Ir.Doc) (keep : Ir.CiteForm → Bool := fun _ => true) : Array String :=
   Ir.foldDoc
     (fun out x => match x with
-      | .cite _ keys =>
-        keys.foldl (fun out k => if out.contains k then out else out.push k) out
+      | .cite f keys =>
+        if keep f then keys.foldl (fun out k => if out.contains k then out else out.push k) out
+        else out
       | _ => out) #[] doc
+
+/-- `\nocite{*}`'s key, BibTeX's `\citation{*}`: every entry of the `.bib`
+enters the list where it stands, in the database's order, after the keys
+cited before it — a key already in the sequence keeps its place. -/
+def expandStar (entries : Array Entry) (cited : Array String) : Array String :=
+  cited.foldl (fun out k =>
+    if k == "*" then
+      entries.foldl (fun out e => if out.contains e.key then out else out.push e.key) out
+    else if out.contains k then out else out.push k) #[]
 
 /-- The comparison a sort order names, over entries carrying their
 first-citation position. Citation order compares the positions, which are
@@ -1340,15 +1354,18 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
         pure (some Style.unsrtnat)
   let style := declared.getD Style.unsrtnat
   let p := CitePunct.ofDoc doc.natbib declared
-  let cited := citedKeys doc
+  let cited := expandStar entries (citedKeys doc)
+  let shown := citedKeys doc (·.cmd != .nocite)
   let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id
   unless requested.isEmpty do
     for k in cited do
       if (findEntry k).isNone then
+        let (cmd, loss) := if shown.contains k then ("cite", "it shows as '?'")
+          else ("nocite", "\\nocite adds nothing for it")
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
-          bibliography; it shows as '?'"
+          bibliography; {loss}"
           (help := s!"add an entry with key '{k}' to the .bib file, or fix the \
-            spelling in \\cite")
+            spelling in \\{cmd}")
           (subject := some k))
   let resolved := resolveEntries style cited findEntry
   let find : Resolver := fun k => resolved.find? (·.key == k)
@@ -1449,6 +1466,8 @@ theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
   unfold renderCite
   split
   · exact emit_plain _ _ (by simp)
+  split
+  · simp
   · refine finish_plain _ _ _ _ ?_
     exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => a.out.all plainCite = true)
       (by simp) (fun _ b hb => citeStep_plain p f _ b _ hb)

@@ -30,5 +30,5 @@ body refuse:W0301 \footcite{k}
 body refuse:W0301 \fullcite{k}
 body impl \citeauthor{k}
 body impl \citeyear{k}
-body refuse:W0301 \nocite{k}
+body impl \nocite{k}
 body refuse:W0301 \citetitle{k}
