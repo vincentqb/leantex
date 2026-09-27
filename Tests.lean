@@ -179,6 +179,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   settleChecks ref
   quoteChecks ref oneFace
   kernelThmChecks ref
+  kernelVerseChecks ref oneFace
   refChecks ref oneFace
   titleChecks ref
   outlineChecks ref

@@ -113,3 +113,34 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr page "<div class=\"u-thm u-trivlist-env\">")
   t "html: the head is strong, the number upright"
     (hasStr page "<strong>Theorem <span class=\"up\">1.1</span></strong><strong>.</strong>")
+
+
+/-- **`verse` is a quotation of lines**: a block of its own between the
+paragraphs around it, both margins in by the list indent, each `\\` a new
+line one leading below the last (latex.ltx `verse`: `\list` with
+`\rightmargin\leftmargin`, `\\` as `\@centercr`), and HTML's
+`<blockquote>`. On the merge base the environment was unknown and its lines
+merged into the paragraph before it. Invented content. -/
+def kernelVerseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "" "Alder opens.\n\\begin{verse}\nBirch is a line of verse\\\\\nCedar is the next line\n\\end{verse}\nDogwood closes.\n"
+  let (doc, ds) := elabStr src
+  t "verse: the environment elaborates clean"
+    (ds.all fun d => d.severity != .warning && d.severity != .error)
+  let geom := Layout.Geom.ofPage doc.page
+  let ls := bodyLines (layoutOf oneFace doc geom)
+  let lineWith (w : String) : Option Layout.LineOut := ls.find? fun l => hasStr (lineText l) w
+  t "verse: its lines are not the paragraph before"
+    ((lineWith "Birch").any fun l => (lineText l).startsWith "Birch")
+  t "verse: both margins move in by the list indent"
+    (["Birch", "Cedar"].all fun w => (lineWith w).any fun l =>
+      l.x == geom.hmargin + geom.listIndent &&
+        decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
+  t "verse: each \\\\ opens the next line one leading below"
+    (match lineWith "Birch", lineWith "Cedar" with
+     | some a, some b => b.y - a.y == Ir.leadingFor geom.fontSize geom.leading
+     | _, _ => false)
+  t "verse: the text after it keeps the full measure"
+    ((lineWith "Dogwood").any fun l => l.x == geom.hmargin)
+  t "html: verse is a blockquote"
+    (hasStr (HtmlDoc.emit {} doc).1 "<blockquote>")

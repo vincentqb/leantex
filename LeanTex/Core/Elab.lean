@@ -4662,7 +4662,7 @@ theorem take_args_consumes_forward
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "figure",
-   "figure*", "table", "table*", "quote", "quotation", "abstract", "ifbackend",
+   "figure*", "table", "table*", "quote", "quotation", "verse", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
@@ -7379,11 +7379,17 @@ private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM 
 
 /-- The node a block-sequence wrapper environment ships: `{quote}` and
 `{quotation}` are one node (they differ only in `\listparindent`, which
-nothing here binds to — the constructor's docstring), `{abstract}` is
+nothing here binds to — the constructor's docstring), `{verse}` is that
+node too (latex.ltx: `\list{}{\itemsep\z@ \itemindent -1.5em
+\listparindent\itemindent \rightmargin\leftmargin \advance\leftmargin
+1.5em}` under `\let\\\@centercr`: both margins in, each `\\` a new line at
+the leading, a stanza a paragraph — what a quotation of lines sets; a line
+too long for the measure wraps at the quotation's margin, where LaTeX hangs
+it 1.5 em further, the one thing the node cannot say), `{abstract}` is
 article's unnumbered titled block, and `{appendices}` wraps nothing — its
 meaning is the numbering scope `enterAppendicesIf` carries, so its blocks
-splice. One def outside the knot: the three environments share one branch
-and one recursion site there. -/
+splice. One def outside the knot: the environments share one branch and
+one recursion site there. -/
 def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
   if n == "abstract" then blocks.push (.abstract inner)
   else if n == "appendices" then blocks ++ inner
@@ -8860,7 +8866,8 @@ the text width; the box takes the whole measure" pos
         = nestedParsList (body.extract k body.size).toList := slicePars_zero _
     let inner ← elabBlocksGo ctx (body.extract k body.size) 0 #[] #[] (← get).flowGen
     blocks := blocks ++ (← thmClose ctx n o inner pos)
-  else if n == "quote" || n == "quotation" || n == "abstract" || n == "appendices" then
+  else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
+      || n == "appendices" then
     -- Three same-shaped block-sequence wrappers, one branch and one
     -- recursion site (the knot compiles as one LCNF unit; a branch per
     -- wrapper is what its budget cannot afford): the node each ships is
