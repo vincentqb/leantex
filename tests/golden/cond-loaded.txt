@@ -1,14 +1,18 @@
 class article
 page 612x792 vmargin 72 hmargin 150
+meta title "A Load Probe"
+center
+  section* 0
+    text "A Load Probe"
 para
   text "Loaded branch ships."
 para
   text "Unloaded branch ships."
 -- diagnostics
-note[N0114] 7:27 '\@ifpackageloaded': 'graphicx' is loaded by the end of the preamble, so the first branch is kept
-note[N0114] 8:29 '\@ifpackageloaded': no package 'tabularx' is loaded by the end of the preamble, so only the second branch is kept
-note[N0100] 5:1 '\usepackage{graphicx}' → nothing: the engine does this itself
-note[N0100] 6:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 7:1 '\newcommand{\probeloaded}' → \define \probeloaded() {...}
-note[N0100] 8:1 '\newcommand{\probeunloaded}' → \define \probeunloaded() {...}
-note[N0100] 9:1 '\makeatother' → nothing: @-names are always readable here
+note[N0114] 9:27 '\@ifpackageloaded': 'graphicx' is loaded by the end of the preamble, so the first branch is kept
+note[N0114] 10:29 '\@ifpackageloaded': no package 'tabularx' is loaded by the end of the preamble, so only the second branch is kept
+note[N0100] 7:1 '\usepackage{graphicx}' → nothing: the engine does this itself
+note[N0100] 8:1 '\makeatletter' → nothing: @-names are always readable here
+note[N0100] 9:1 '\newcommand{\probeloaded}' → \define \probeloaded() {...}
+note[N0100] 10:1 '\newcommand{\probeunloaded}' → \define \probeunloaded() {...}
+note[N0100] 11:1 '\makeatother' → nothing: @-names are always readable here

@@ -1,10 +1,13 @@
 % Invented text. \ifx compares two macros' meanings: equal texts keep the
 % first branch, different texts the second.
 \documentclass{article}
+\title{A Meaning Probe}
+\date{}
 \newcommand{\probeone}{same}
 \newcommand{\probetwo}{same}
 \newcommand{\probethree}{other}
 \begin{document}
+\maketitle
 \ifx\probeone\probetwo Equal branch ships.\else Equal branch hidden.\fi
 
 \ifx\probeone\probethree Unequal branch hidden.\else Unequal branch ships.\fi

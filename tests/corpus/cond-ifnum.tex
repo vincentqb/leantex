@@ -1,8 +1,11 @@
 % Invented text. \ifnum compares integers, here one a macro holds: a
 % relation that holds keeps the first branch, one that fails the second.
 \documentclass{article}
+\title{A Number Probe}
+\date{}
 \newcommand{\probelevel}{3}
 \begin{document}
+\maketitle
 \ifnum\probelevel>2 Holding branch ships.\else Holding branch hidden.\fi
 
 \ifnum\probelevel<2 Failing branch hidden.\else Failing branch ships.\fi

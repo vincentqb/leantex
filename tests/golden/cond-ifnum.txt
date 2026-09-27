@@ -1,10 +1,14 @@
 class article
 page 612x792 vmargin 72 hmargin 150
+meta title "A Number Probe"
+center
+  section* 0
+    text "A Number Probe"
 para
   text "Holding branch ships."
 para
   text "Failing branch ships."
 -- diagnostics
-note[N0114] 6:1 '\ifnum\probelevel>2' reads 3 > 2, which holds, so the branch before '\else' is kept
-note[N0114] 8:1 '\ifnum\probelevel<2' reads 3 < 2, which fails, so only the '\else' branch is kept
-note[N0100] 4:1 '\newcommand{\probelevel}' → \define \probelevel() {...}
+note[N0114] 9:1 '\ifnum\probelevel>2' reads 3 > 2, which holds, so the branch before '\else' is kept
+note[N0114] 11:1 '\ifnum\probelevel<2' reads 3 < 2, which fails, so only the '\else' branch is kept
+note[N0100] 6:1 '\newcommand{\probelevel}' → \define \probelevel() {...}

@@ -1,12 +1,16 @@
 class article
 page 612x792 vmargin 72 hmargin 150
+meta title "A Flag Probe"
+center
+  section* 0
+    text "A Flag Probe"
 para
   text "Setter branch ships."
 para
   text "Initial branch ships."
 -- diagnostics
-note[N0114] 5:1 '\newif\ifprobeset': '\ifprobeset' is resolved from here on, initially false
-note[N0114] 6:1 '\newif\ifprobeleft': '\ifprobeleft' is resolved from here on, initially false
-note[N0114] 7:1 '\probesettrue': '\ifprobeset' is true from here on
-note[N0114] 9:1 '\ifprobeset' is true here, so the branch before '\else' is kept
-note[N0114] 11:1 '\ifprobeleft' is false here, so only the '\else' branch is kept
+note[N0114] 7:1 '\newif\ifprobeset': '\ifprobeset' is resolved from here on, initially false
+note[N0114] 8:1 '\newif\ifprobeleft': '\ifprobeleft' is resolved from here on, initially false
+note[N0114] 9:1 '\probesettrue': '\ifprobeset' is true from here on
+note[N0114] 12:1 '\ifprobeset' is true here, so the branch before '\else' is kept
+note[N0114] 14:1 '\ifprobeleft' is false here, so only the '\else' branch is kept

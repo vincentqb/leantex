@@ -2,12 +2,15 @@
 % package the preamble loads keeps the true branch, one it never loads the
 % false branch.
 \documentclass{article}
+\title{A Load Probe}
+\date{}
 \usepackage{graphicx}
 \makeatletter
 \newcommand{\probeloaded}{\@ifpackageloaded{graphicx}{Loaded branch ships.}{Loaded branch hidden.}}
 \newcommand{\probeunloaded}{\@ifpackageloaded{tabularx}{Unloaded branch hidden.}{Unloaded branch ships.}}
 \makeatother
 \begin{document}
+\maketitle
 \probeloaded
 
 \probeunloaded

@@ -1,12 +1,16 @@
 class article
 page 612x792 vmargin 72 hmargin 150
+meta title "A Meaning Probe"
+center
+  section* 0
+    text "A Meaning Probe"
 para
   text "Equal branch ships."
 para
   text "Unequal branch ships."
 -- diagnostics
-note[N0114] 8:1 '\ifx\probeone\probetwo' compares two equal definitions, so the branch before '\else' is kept
-note[N0114] 10:1 '\ifx\probeone\probethree' compares two different definitions, so only the '\else' branch is kept
-note[N0100] 4:1 '\newcommand{\probeone}' → \define \probeone() {...}
-note[N0100] 5:1 '\newcommand{\probetwo}' → \define \probetwo() {...}
-note[N0100] 6:1 '\newcommand{\probethree}' → \define \probethree() {...}
+note[N0114] 11:1 '\ifx\probeone\probetwo' compares two equal definitions, so the branch before '\else' is kept
+note[N0114] 13:1 '\ifx\probeone\probethree' compares two different definitions, so only the '\else' branch is kept
+note[N0100] 6:1 '\newcommand{\probeone}' → \define \probeone() {...}
+note[N0100] 7:1 '\newcommand{\probetwo}' → \define \probetwo() {...}
+note[N0100] 8:1 '\newcommand{\probethree}' → \define \probethree() {...}

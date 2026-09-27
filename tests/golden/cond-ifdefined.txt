@@ -1,10 +1,14 @@
 class article
 page 612x792 vmargin 72 hmargin 150
+meta title "A Definedness Probe"
+center
+  section* 0
+    text "A Definedness Probe"
 para
   text "Defined branch ships."
 para
   text "Absent branch ships."
 -- diagnostics
-note[N0114] 6:1 '\ifdefined\probedefined': '\probedefined' is defined, so the branch before '\else' is kept
-note[N0114] 8:1 '\ifdefined\probeabsent': '\probeabsent' is not defined, so only the '\else' branch is kept
-note[N0100] 4:1 '\newcommand{\probedefined}' → \define \probedefined() {...}
+note[N0114] 9:1 '\ifdefined\probedefined': '\probedefined' is defined, so the branch before '\else' is kept
+note[N0114] 11:1 '\ifdefined\probeabsent': '\probeabsent' is not defined, so only the '\else' branch is kept
+note[N0100] 6:1 '\newcommand{\probedefined}' → \define \probedefined() {...}

@@ -1,8 +1,11 @@
 % Invented text. \ifdefined reads the document's own definitions: a name the
 % preamble defines keeps the first branch, a name nobody defines the second.
 \documentclass{article}
+\title{A Definedness Probe}
+\date{}
 \newcommand{\probedefined}{x}
 \begin{document}
+\maketitle
 \ifdefined\probedefined Defined branch ships.\else Defined branch hidden.\fi
 
 \ifdefined\probeabsent Absent branch hidden.\else Absent branch ships.\fi
