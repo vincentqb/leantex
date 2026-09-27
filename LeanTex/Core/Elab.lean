@@ -11021,7 +11021,8 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
           else none
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
           (if est.isSome then
-            s!"'\{{envName}}' is built in; this definition is ignored, its declarations styling the built-in"
+            s!"'\{{envName}}' is built in; this definition's heading and body size are \
+declarations styling the built-in, its vertical skips the engine's own"
           else
             s!"'\{{envName}}' is built in; this definition is ignored")
           (some ⟨s.ctx.file, npos⟩)

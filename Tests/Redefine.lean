@@ -171,3 +171,33 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "a body placed inside a group is refused where it stands, and nothing of it leaks"
     ((dvE boxed).any (·.code == "W0104") &&
       !hasStr (pageTextOf fonts boxed) "BODY" && hasStr (pageTextOf fonts boxed) "Middle words")
+
+
+/-- **Owed: a redefined abstract's vertical skips.** A venue's
+`\renewenvironment{abstract}` declares its own skips — a `\vskip` above
+the heading, a `\vspace` between the heading and the `quote` its body sets
+in, a `\vskip` below — and LaTeX adds each, the `\vspace` surviving the
+quote's `\addvspace` (latex.ltx `\@vspace` appends `\vskip\z@`). The
+engine places the abstract by its own rhythm (Layout's `.abstract` arm),
+so two redefinitions differing in one declared skip ship one page. This
+row is that fact parked, read in both directions: it holds `true` while
+the pages agree, and the engine honouring the skip turns the check red
+until the row flips — the W0303 clause naming the skips retiring with it.
+Measured against lualatex on a synthetic probe, baselines in bp: heading
+to body 24.16 there, 18.40 here; last body line to the next paragraph
+26.40 there, 18.00 here. -/
+def abstractSkipsOwed : Bool := true
+
+/-- The parked row's judge: the page under two declared heading gaps. -/
+def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let venue (gap : String) : String :=
+    "\\documentclass{article}\\renewenvironment{abstract}{\\centerline{\\large\\bf Abstract}" ++
+      "\\vspace{" ++ gap ++ "}\\begin{quote}}{\\par\\end{quote}}" ++
+      "\\begin{document}\\begin{abstract}Placeholder summary words.\\end{abstract}\n\n" ++
+      "Plain body words after.\\end{document}"
+  let ignored := shippedLines fonts (venue "1ex") == shippedLines fonts (venue "4ex")
+  check ref "a redefined abstract's declared skips are owed (parked, read both ways)"
+    (ignored == abstractSkipsOwed)
+  check ref "the refusal names the skips it leaves to the engine exactly while they are owed"
+    (((dvE (venue "1ex")).any fun d =>
+      d.code == "W0303" && hasStr d.message "vertical skips") == abstractSkipsOwed)
