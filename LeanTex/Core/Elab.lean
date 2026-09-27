@@ -12333,14 +12333,14 @@ private def definedEnvName : List Raw → Option String
 
 mutual
 
-/-- **Only a definer judges its bodies.** The parse keeps an environment
-opened in one of an environment definer's bodies and closed in the other as
-two halves (`Parse.splitOpen`, `Parse.splitClose`), because LaTeX balances
-them where the environment is used. A refused definition — a built-in name,
-W0303's — ignores its bodies, so its halves raise nothing and ship nothing;
-every other definition's halves settle to the tree a plain parse builds, the
-open half closed at its body's brace and the close half dropped, with that
-parse's diagnostics. A package file's splice drops them, as it drops its
+/-- **Only a definer judges its bodies.** The parse keeps an environment or
+math opened in one of an environment definer's bodies and closed in the
+other as two halves (`Parse.splitOpen`, `Parse.splitClose`), because LaTeX
+balances them where the environment is used. A refused definition — a
+built-in name, W0303's — ignores its bodies, so its halves raise nothing
+and ship nothing; every other definition's halves settle to the tree a
+plain parse builds, the open half closed at its body's brace and the close
+half dropped, with that parse's diagnostics. A package file's splice drops them, as it drops its
 parse's (`Cli.Input.expandLocalSty`). `skip` counts the groups a refused
 definition still holds at this level: its name and its two bodies. -/
 -- conserves: none — settling rebuilds the parse's recovery tree by design.
@@ -12372,11 +12372,10 @@ private def settleOne (file : String) (ds : Array Diag) : Raw → Array Raw × A
     match Parse.splitOpen? n, Parse.splitClose? n with
     | some e, _ =>
       let (body', ds) := settleList file 0 #[] ds body.toList
-      (#[.env e body' p], if quiet then ds else
-        ds.push (Parse.unclosedAtBrace file (.env e) p))
+      let (rs, d) := Parse.settleOpenHalf file e body' p
+      (rs, if quiet then ds else ds.push d)
     | none, some e =>
-      (#[], if quiet then ds else
-        ds.push (Parse.unmatchedEnd file e p))
+      (#[], if quiet then ds else ds.push (Parse.closeHalfDiag file e p))
     | none, none =>
       let (body', ds) :=
         settleList ((Parse.inputEnvFile? n).getD file) 0 #[] ds body.toList

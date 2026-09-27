@@ -21020,3 +21020,14 @@ reference is the shipped CLI's comparison, and each guard fails at
   claim holds by the lexer's construction. `reservedEnvNameChecks` holds
   each name to that alphabet and each old spelling to an unknown
   environment's diagnostics and page.
+
+- **The refused-definition class is every split shape, not one.** A
+  definer body's half is now any frame its body's brace cuts — an
+  environment, or math opened with `$`, `\(` or `\[` — and a `\)` or `\]`
+  met at a body's own brace level is the close half (`Parse.Stop.halfName`,
+  `halfStop`; `settleOpenHalf` and `closeHalfDiag` give the plain parse's
+  node and diagnostic back). So `\renewenvironment{abstract}{\[}{\]}` is
+  W0303 alone, as its `center` form already was. `refusedEnvChecks` ranges
+  over `builtinEnvNames` × `splitShapes` (240 assertions fail at
+  `ae063c0b`); an accepted definition of each shape keeps its parse's
+  E0201, parked shape by shape in `splitPairingOwed`.

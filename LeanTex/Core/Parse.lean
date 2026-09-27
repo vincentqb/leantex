@@ -47,11 +47,12 @@ second is balanced where the environment is used, never inside one body. -/
 def envDefiners : List String :=
   ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
 
-/-- A definer body's half of an environment its other body completes, kept
-by name for the definer to judge. The name holds a space, which no word
-token holds (`Lex`: a word is a run of characters neither special nor
-white space), and a document's environment name is one word (`envName`),
-so no document can spell one. -/
+/-- A definer body's half of a construct its other body completes — an
+environment, or math opened with `$`, `\(` or `\[` — kept by name for the
+definer to judge. The name holds a space, which no word token holds (`Lex`:
+a word is a run of characters neither special nor white space), and a
+document's environment name is one word (`envName`), so no document can
+spell one. -/
 def splitOpen (name : String) : String := "open " ++ name
 def splitClose (name : String) : String := "close " ++ name
 
@@ -60,6 +61,23 @@ def splitOpen? (n : String) : Option String :=
 
 def splitClose? (n : String) : Option String :=
   if n.startsWith "close " then some ((n.drop "close ".length).toString) else none
+
+/-- The name a half of a frame carries: the environment's name, or the
+delimiter that opened the math. -/
+def Stop.halfName : Stop → String
+  | .env n => n
+  | .math => "$"
+  | .parenMath => "\\("
+  | .displayMath => "\\["
+  | .brace => "{"
+
+/-- The frame a half's name records (`Stop.halfName` read back): a name is
+an environment's unless it spells a math delimiter, which no word can. -/
+def halfStop (name : String) : Stop :=
+  if name == "$" then .math
+  else if name == "\\(" then .parenMath
+  else if name == "\\[" then .displayMath
+  else .env name
 
 /-- The two diagnostics a definer's settled halves raise (`Elab.settleSplits`)
 are the parse's own, built here once. -/
@@ -127,6 +145,18 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
 private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : Diag :=
   Diag.of code msg (some ⟨file, pos⟩)
 
+/-- An open half settled to what a plain parse makes of it: its frame
+closed at the body's brace, with that parse's diagnostic. -/
+def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : Array Raw × Diag :=
+  let stop := halfStop name
+  ((⟨stop, pos, #[], false⟩ : Frame).close body, unclosedAtBrace file stop pos)
+
+/-- The diagnostic a plain parse raises at a close half. -/
+def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
+  match halfStop name with
+  | .env n => unmatchedEnd file n pos
+  | s => err file .E0202 s!"unexpected {s.name}" pos
+
 /-- `{name}` after `\begin` or `\end`; returns the name and the next index. -/
 private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
     String × Nat × Array Diag :=
@@ -170,9 +200,9 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
             | some f =>
               if f.stop == .brace then break
               match body, f.stop with
-              | true, .env n =>
+              | true, s =>
                 frames := frames.pop
-                acc := f.outer.push (.env (splitOpen n) acc f.openPos)
+                acc := f.outer.push (.env (splitOpen s.halfName) acc f.openPos)
               | _, _ =>
                 diags := diags.push (unclosedAtBrace file f.stop f.openPos)
                 frames := frames.pop
@@ -206,6 +236,8 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
           if f.stop == .parenMath then
             frames := frames.pop
             acc := f.close acc
+          else if f.body then
+            acc := acc.push (.env (splitClose Stop.parenMath.halfName) #[] pos)
           else
             diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
         | none =>
@@ -219,6 +251,8 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
           if f.stop == .displayMath then
             frames := frames.pop
             acc := f.close acc
+          else if f.body then
+            acc := acc.push (.env (splitClose Stop.displayMath.halfName) #[] pos)
           else
             diags := diags.push (err file .E0202 "unexpected '\\]'" pos)
         | none =>
