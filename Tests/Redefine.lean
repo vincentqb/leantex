@@ -104,14 +104,56 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "a scoped skip ships the page its native kind token ships"
     (shippedLines fonts (dvDoc "\\captionsetup[table]{skip=3pt}\n" body) ==
       shippedLines fonts (dvDoc "\\tokens{ tablecaptionsep = 3pt }\n" body))
-  let venue := "\\setlength{\\abovecaptionskip}{8pt}\\setlength{\\belowcaptionskip}{0pt}\n" ++
-    "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{0pt}" ++
+  -- A venue's table redefinition swaps the two skips. Which of them faces
+  -- the table is the caption's side and the position it is placed for:
+  -- the kernel's `\@makecaption` sets `\abovecaptionskip` above a caption
+  -- and `\belowcaptionskip` below it, so under the kernel the swapped
+  -- 8pt stands between a caption above and its table; the caption
+  -- package's `tableposition=top` sets `\abovecaptionskip` there instead
+  -- and puts the 8pt above the caption. Two builds, each against the
+  -- native spelling of what LaTeX places (lualatex, caption top to first
+  -- row: 20.50bp and 11.96bp).
+  let swap := "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{0pt}" ++
     "\\setlength{\\belowcaptionskip}{8pt}\\@float{table}}{\\end@float}\n"
-  t "a table redefined around the kernel's float core ships its scoped caption gaps"
+  let venue := "\\setlength{\\abovecaptionskip}{8pt}\\setlength{\\belowcaptionskip}{0pt}\n" ++ swap
+  let packaged := "\\usepackage[tableposition=top]{caption}\n" ++ venue
+  t "under the kernel, the swapped skip below a caption above its table faces the table"
     (shippedLines fonts (dvDoc venue body) ==
-      shippedLines fonts (dvDoc "\\tokens{ captionsep = 8pt, tablecaptionsep = 0pt }\n" body))
+      shippedLines fonts (dvDoc "\\tokens{ captionsep = 8pt, tablecaptionsep = 8pt }\n" body))
+  t "under caption's tableposition=top, the skip above the caption faces the table"
+    (shippedLines fonts (dvDoc packaged body) ==
+      shippedLines fonts (dvDoc ("\\tokens{ captionsep = 8pt, tablecaptionsep = 0pt, " ++
+        "tablebelowcaptionskip = 8pt }\n") body))
+  let capTop (c : Array CensusPage) : Option Dim.Sp := lineYOf c 0 "Table words"
+  let (kernelGap, _) := gaps venue
+  let (pkgGap, _) := gaps packaged
+  t "the two placements part the caption from its table by the swapped 8pt"
+    (match kernelGap, pkgGap with
+     | some k, some p => k - p == Dim.pt 8
+     | _, _ => false)
+  t "the caption package sets the swapped 8pt above the caption, the kernel sets none"
+    (match capTop (censusOfSrc fonts (dvDoc packaged body)),
+        capTop (censusOfSrc fonts (dvDoc venue body)) with
+     | some p, some k => p - k == Dim.pt 8
+     | _, _ => false)
+  let belowBody := "Opening words.\n\n\\begin{table}\\begin{tabular}{ll}Alpha & Beta\\\\" ++
+    "\\end{tabular}\\caption{Table words.}\\end{table}\n\nClosing words."
+  t "under the kernel, a caption below its table faces it with the skip above the caption"
+    (shippedLines fonts (dvDoc venue belowBody) ==
+      shippedLines fonts (dvDoc ("\\tokens{ captionsep = 8pt, tablecaptionsep = 0pt, " ++
+        "tablebelowcaptionskip = 8pt }\n") belowBody))
+  t "the caption package's default position faces the object with the skip above the caption"
+    (shippedLines fonts (dvDoc ("\\usepackage{caption}\n" ++ venue) body) ==
+      shippedLines fonts (dvDoc packaged body))
+  t "a declared bottom position places a caption above as the kernel does"
+    (shippedLines fonts (dvDoc ("\\usepackage{caption}\\captionsetup[table]{position=bottom}\n" ++
+        venue) body) == shippedLines fonts (dvDoc venue body))
   t "a table redefined around the kernel's float core is no refusal"
     (!((dvE (dvDoc venue body)).any (·.code == "W0303")))
+  let html (pre : String) : String := (HtmlDoc.emit {} (elabStr (dvDoc pre body)).1).1
+  t "the HTML table caption above its table reads the skip its placement faces there"
+    (hasStr (html venue) "--ltx-capsep-top: var(--tablebelowcaptionskip, var(--belowcaptionskip, 0px))" &&
+      hasStr (html packaged) "--ltx-capsep-top: var(--tablecaptionsep, var(--captionsep,")
   let selfRef := "\\captionsetup[table]{skip=\\abovecaptionskip}\n"
   t "a skip set to the caption skip itself changes nothing and is honoured"
     (shippedLines fonts (dvDoc selfRef body) == shippedLines fonts (dvDoc "" body) &&
@@ -128,6 +170,33 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the HTML table caption reads the table's own gap before the document's"
     (hasStr html "--tablecaptionsep: 3pt" &&
       hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")
+
+
+/-- **Owed: the kernel's order for the document's own caption skips.** A
+document without the caption package that sets `\abovecaptionskip` and
+`\belowcaptionskip` in its preamble has them placed as the kernel's
+`\@makecaption` places them: above and below the caption, so a caption
+above its table sits on `\belowcaptionskip`. A float-core redefinition
+declares that order for its kind (`captionScopeChecks`); a preamble
+`\setlength` does not yet — `Compat`'s `\setlength` arms read
+`\abovecaptionskip` as the object-binding `captionsep` and drop
+`\belowcaptionskip` with a note — so the caption keeps
+`\abovecaptionskip` on its table side. Measured against lualatex on a
+synthetic probe, caption top to first row in bp: 11.53 there, 21.00
+here. Read in both directions: the row holds while the declaration ships
+the object-binding page, and turns red when the kernel's order lands. -/
+def globalCaptionSkipsOwed : Bool := true
+
+/-- The parked row's judge: the page under the declared skips against the
+page of their object-binding reading. -/
+def globalCaptionSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let body := "Opening words.\n\n\\begin{table}\\caption{Table words.}" ++
+    "\\begin{tabular}{ll}Alpha & Beta\\\\\\end{tabular}\\end{table}\n\nClosing words."
+  let declared := shippedLines fonts (dvDoc
+    "\\setlength{\\abovecaptionskip}{8pt}\\setlength{\\belowcaptionskip}{0pt}\n" body)
+  let objectBound := shippedLines fonts (dvDoc "\\tokens{ captionsep = 8pt }\n" body)
+  check ref "a document's own caption skips are owed the kernel's order (parked, read both ways)"
+    ((declared == objectBound) == globalCaptionSkipsOwed)
 
 
 /-- **environ's `\NewEnviron` defines the environment it names.** Its code

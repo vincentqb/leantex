@@ -10525,6 +10525,8 @@ structure PreState where
   fonts : FontSpec := {}
   palette : Palette := {}
   tokens : Tokens := {}
+  /-- Caption positions `\captionsetup` declared (`Doc.captionPos`). -/
+  captionPos : Array (String × Ir.CaptionPos) := #[]
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
   headFrom : Nat := 1
@@ -11314,26 +11316,24 @@ tool = none refuses the boundary")
     return s
   | .captionsetup scope unclosed body pos =>
     -- The caption package's option interface (caption manual §2–4).
-    -- `position`/`tableposition`/`figureposition` declare which side
-    -- captions will stand on, so the package can put the skip
-    -- between caption and object (§2.2: the option does not move
-    -- the caption — placement stays source order there too). This
-    -- engine binds `captionsep` to the object side of a caption
-    -- wherever the source puts it, so those declarations already
-    -- hold. `skip` is that gap's own value (caption manual §2.2:
-    -- `skip=` sets `\abovecaptionskip`, the object-side skip), so a
-    -- length declares the `captionsep` token; `margin` is the
-    -- caption's own both-side margin (§2.4), the `captionmargin`
-    -- token. A `[float type]` scope (§4) declares the kind's own token
-    -- instead (`tablecaptionsep`), which only that kind reads
-    -- (`Ir.captionTokenOf`); a type the engine has no float for names its
-    -- keys unhonoured rather than reach every kind. A length reads as
-    -- the document's other lengths do — a literal, or an expression over
-    -- the declared tokens — and `skip=\abovecaptionskip` is the gap set to
-    -- itself, which the package evaluates where the caption is set: a
-    -- no-op. Every other key, and an honoured key whose value no length
-    -- reading carries (a {left,right} pair), is named and ignored (W0354),
-    -- one warning per key.
+    -- `skip` and `aboveskip` set `\abovecaptionskip`, `belowskip` sets
+    -- `\belowcaptionskip` (caption3.sty's option declarations): the
+    -- `captionsep` and `belowcaptionskip` tokens, the two skips
+    -- `Ir.captionSides` places. `position`/`tableposition`/`figureposition`
+    -- declare the side captions are placed for (§2.2: the option does not
+    -- move a caption, it tells the package which way its skips face), the
+    -- document's `Doc.captionPos`. `margin` is the caption's own both-side
+    -- margin (§2.4), the `captionmargin` token. A `[float type]` scope (§4)
+    -- declares the kind's own token or position (`tablecaptionsep`),
+    -- which only that kind reads; a type the engine has no float for
+    -- names its keys unhonoured rather than reach every kind. A length
+    -- reads as the document's other lengths do — a literal, or an
+    -- expression over the declared tokens — and a skip set to its own
+    -- register (`skip=\abovecaptionskip`) is the gap set to itself, which
+    -- the package evaluates where the caption is set: a no-op. Every
+    -- other key, and an honoured key whose value no reading carries (a
+    -- {left,right} pair, an unknown position), is named and ignored
+    -- (W0354), one warning per key.
     if let some bpos := unclosed then
       warnUnclosed s.ctx "'\\captionsetup'" bpos
     let kind? : Option (Option Ir.FloatKind) := scope.map Ir.FloatKind.ofCaptionType?
@@ -11344,22 +11344,23 @@ tool = none refuses the boundary")
         let parts := entry.splitOn "="
         let key := (parts.headD "").trimAscii.toString
         if key.isEmpty then continue
+        let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
         let honouredToken ← do
-          -- skip= is the object-side gap (\abovecaptionskip); margin= the
-          -- caption's own both-side margin (caption manual §2.2, §2.4).
-          -- Each honoured key is one token, the styling door both
-          -- backends read.
-          let tokenOf := [("skip", "captionsep"), ("margin", "captionmargin")]
+          -- Each honoured length key is one token, the styling door both
+          -- backends read, beside the register it sets.
+          let tokenOf := [("skip", ("captionsep", "abovecaptionskip")),
+            ("aboveskip", ("captionsep", "abovecaptionskip")),
+            ("belowskip", ("belowcaptionskip", "belowcaptionskip")),
+            ("margin", ("captionmargin", ""))]
           match tokenOf.lookup key, kind? with
           | some _, some none => pure false
-          | some tok, _ =>
+          | some (tok, reg), _ =>
             let tok := match kind? with
               | some (some k) => k.captionScope ++ tok
               | _ => tok
-            let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
             -- premise: captionScopeChecks — a skip set to the caption skip
             -- itself ships the page the document ships without it
-            if key == "skip" && value == "\\abovecaptionskip" then pure true
+            if !reg.isEmpty && value == s!"\\{reg}" then pure true
             else
               let glue := (Decl.parseGlue value).orElse fun _ =>
                 match Decl.parseLengthExpr (s.ctx.tokens.entries ++ s.ctx.engineTokens)
@@ -11374,8 +11375,21 @@ tool = none refuses the boundary")
                 pure true
               | none => pure false
           | none, _ => pure false
-        unless honouredToken ||
-            ["position", "tableposition", "figureposition"].contains key do
+        -- caption3.sty: `tableposition`/`figureposition` are
+        -- `\captionsetup*[table|figure]{position=…}`, whatever scope the
+        -- key is written under.
+        let posScope : Option String := match key, kind? with
+          | "tableposition", _ => some "table"
+          | "figureposition", _ => some "figure"
+          | "position", some (some k) => some k.captionScope
+          | "position", none => some ""
+          | _, _ => none
+        let mut honouredPos := false
+        if let some sc := posScope then
+          if let some p := Ir.CaptionPos.ofKey? value then
+            s := { s with captionPos := (s.captionPos.filter (·.1 != sc)).push (sc, p) }
+            honouredPos := true
+        unless honouredToken || honouredPos do
           let head := match scope with
             | some sc => s!"'\\captionsetup[{sc}]'"
             | none => "'\\captionsetup'"
@@ -12352,6 +12366,7 @@ declare \\assert\{ pages <= N } to take control" }
     fonts := fonts
     palette := palette
     tokens := tokens
+    captionPos := s.captionPos
     head := head
     foot := foot
     logo := logo

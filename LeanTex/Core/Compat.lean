@@ -3570,11 +3570,14 @@ private def floatCoreDecls (kind : String) : List Raw → Option (List (String �
 `\renewenvironment{table}{\setlength{\abovecaptionskip}{…}…\@float{table}}
 {\end@float}`, which swaps the caption skips for tables — is a scoped
 declaration over the built-in float, not a new environment: the float
-stays the engine's, and each `\abovecaptionskip` becomes the kind's own
-caption gap (`Ir.captionTokenOf`), which no other kind reads. The
-caption's text side (`\belowcaptionskip`) is the float separation here,
-said once in the translation's own note. Any other shape is not the idiom
-and stays the elaborator's refusal (W0303). -/
+stays the engine's, and each skip becomes the kind's own token
+(`tablecaptionsep`, `tablebelowcaptionskip`), which no other kind reads.
+Which of them faces the table is the caption's side and the position it
+is placed for (`Ir.captionSides`): the caption package's, declared where
+the document declares it; without the package, the kernel's own
+`\@makecaption` order, declared here as `position=bottom` for the kind.
+Any other shape is not the idiom and stays the elaborator's refusal
+(W0303). -/
 private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : Pos) :
     M (Option (Array Raw × Nat)) := do
   let some kind := Ir.FloatKind.ofCaptionType? envName | return none
@@ -3587,19 +3590,22 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
   let some (.group endB _) := raws[e]? | return none
   match items endB, floatCoreDecls envName (items beginB) with
   | [.ctrl "end@float" _], some decls =>
+    let entries := decls.map fun (r, v) =>
+      let tok := if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"
+      s!"{kind.captionScope}{tok} = {lengthSrc v}"
+    -- premise: captionScopeChecks — the kernel's order is declared only
+    -- where no caption package places the skips, which the loads read
+    -- over the whole preamble say
+    let packaged := (← get).loads.pkgs.any fun (p, _) => p == "caption" || p == "subcaption"
+    let natives := if entries.isEmpty then [] else
+      s!"\\tokens\{ {String.intercalate ", " entries} }" ::
+        (if packaged then [] else [s!"\\captionsetup[{envName}]\{position=bottom}"])
     let mut out : Array Raw := #[]
-    let mut natives : Array String := #[]
-    for (r, v) in decls do
-      if r == "abovecaptionskip" then
-        let native := s!"\\tokens\{ {kind.captionScope}captionsep = {lengthSrc v} }"
-        natives := natives.push native
-        out := out ++ (← synthAt native pos)
-    let far := if decls.any (·.1 == "belowcaptionskip") then
-        "; its \\belowcaptionskip is the caption's text side, the float separation here"
-      else ""
+    for native in natives do
+      out := out ++ (← synthAt native pos)
     let what := if natives.isEmpty then s!"the built-in \{{envName}}"
-      else String.intercalate " " natives.toList
-    became s!"\\renewenvironment\{{envName}}" (what ++ far) pos
+      else String.intercalate " " natives
+    became s!"\\renewenvironment\{{envName}}" what pos
     return some (out, e + 1)
   | _, _ => return none
 

@@ -5261,6 +5261,8 @@ private structure Rd where
   pats : Option Hyphen.Patterns := none
   fs : FontSet
   styles : Ir.Styles := {}
+  /-- The caption positions the document declares (`Ir.captionPosOf`). -/
+  captionPos : Array (String × Ir.CaptionPos) := #[]
   /-- The document's resolved main locale: what the class furniture the
   walk generates (the abstract heading, caption prefixes) is worded in. -/
   locale : Locale := Locale.en
@@ -6348,8 +6350,8 @@ separation ([node distance = ...])")) }
   { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic leaf) }
 
 /-- What a captioned float stacks, top to bottom. Position decides where
-the caption and the object stand, never which gaps are paid — that is the
-conservation `floatPlan_gaps_conserved` states. -/
+the caption and the object stand, never which gaps are paid — that is what
+`floatPlan_gaps_exact` states. -/
 private inductive FloatSlot where
   | gap (g : Glue)
   | caption
@@ -6357,19 +6359,20 @@ private inductive FloatSlot where
 
 /-- The float's vertical plan, in physical top-to-bottom order: a
 text-side gap (`floatsep`), the caption and its object in source order
-with the object-side gap (`captionsep`) between them, a text-side gap.
-The gap is on the float side of the caption whichever side the caption
-stands — LaTeX's `\abovecaptionskip`/`\belowcaptionskip` shape with the
-caption package's `tableposition=top` swap (the sourcing note at
-`Ir.captionSepDefault`). A bare float pays no caption gap. The float arm
-folds over this plan, so the theorems below range over what runs. -/
-private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep : Glue) :
+with the object-side skip between them, a text-side gap. The caption's
+other skip stands on its text side, inside the float, beside the float
+separation — LaTeX's float box holds both caption skips and `\intextsep`
+stands outside it. Which skip faces the object is `Ir.captionSides`'
+choice; undeclared it is `captionsep` whichever side the caption stands,
+the other 0pt. A bare float pays no caption skip. The float arm folds over
+this plan, so the theorems below range over what runs. -/
+private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep farSep : Glue) :
     List FloatSlot :=
   if !hasCaption then [.gap floatSep, .object, .gap floatSep]
   else if capAbove then
-    [.gap floatSep, .caption, .gap capSep, .object, .gap floatSep]
+    [.gap (floatSep.add farSep), .caption, .gap capSep, .object, .gap floatSep]
   else
-    [.gap floatSep, .object, .gap capSep, .caption, .gap floatSep]
+    [.gap floatSep, .object, .gap capSep, .caption, .gap (floatSep.add farSep)]
 
 /-- The gaps a plan pays, in order. -/
 private def FloatSlot.gaps (plan : List FloatSlot) : List Glue :=
@@ -6377,20 +6380,21 @@ private def FloatSlot.gaps (plan : List FloatSlot) : List Glue :=
     | .gap g => some g
     | _ => none
 
-/-- Caption-position conservation: a captioned float pays exactly the gap
-sequence text-side, object-side, text-side whichever side its caption
-stands — `capAbove` reorders the caption and the object, never the gaps.
-So the total vertical space a captioned float consumes is
-`floatsep + body + captionsep + caption + floatsep` regardless of caption
-position: "above" and "below" are indistinguishable in rhythm terms. -/
-private theorem floatPlan_gaps_conserved (capAbove : Bool) (floatSep capSep : Glue) :
-    FloatSlot.gaps (floatPlan capAbove true floatSep capSep)
-      = [floatSep, capSep, floatSep] := by
+/-- **A caption above its object pays the mirror image of one below it**:
+the float separation on both text sides, the object-side skip between the
+caption and its object, and the caption's text-side skip beside the float
+separation on the caption's own side — `capAbove` reorders the caption
+and the object, never which gaps are paid. With the text-side skip at its
+undeclared 0pt, the float's extent is caption-position-independent. -/
+private theorem floatPlan_gaps_exact (capAbove : Bool) (floatSep capSep farSep : Glue) :
+    FloatSlot.gaps (floatPlan capAbove true floatSep capSep farSep)
+      = if capAbove then [floatSep.add farSep, capSep, floatSep]
+        else [floatSep, capSep, floatSep.add farSep] := by
   cases capAbove <;> rfl
 
 /-- A bare float pays the text-side gaps and nothing else. -/
-private theorem floatPlan_bare_gaps (capAbove : Bool) (floatSep capSep : Glue) :
-    FloatSlot.gaps (floatPlan capAbove false floatSep capSep)
+private theorem floatPlan_bare_gaps (capAbove : Bool) (floatSep capSep farSep : Glue) :
+    FloatSlot.gaps (floatPlan capAbove false floatSep capSep farSep)
       = [floatSep, floatSep] := by
   cases capAbove <;> rfl
 
@@ -7425,8 +7429,8 @@ private def collectBlock (r : Rd) (a : Acc)
     collectTable r a cols padL padR rows rules indent false
   | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound
-    -- `captionsep` from the content on its object side (the sourced side
-    -- rule lives at `Ir.caption_gaps_rhythm`); the body centres, the
+    -- to the content by the skip `Ir.captionSides` puts on its object side
+    -- (`floatPlan`); the body centres, the
     -- figure convention the old center-wrapping gave. Both gaps are
     -- `\addvspace`-style: an element's own space, never stacked onto a
     -- neighbour's. The caption sets with its number in front —
@@ -7445,14 +7449,19 @@ private def collectBlock (r : Rd) (a : Acc)
     let caption := Ir.numberedCaption r.locale kind num (markContent caption)
     let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
       (Ir.floatSepDefault r.geom.fontSize))
-    let capSep := r.resolve ((Ir.captionTokenOf a.tokens kind "captionsep").getD
-      (Ir.captionSepDefault r.geom.fontSize))
+    -- The caption's two skips: the one facing the object and the one on
+    -- its text side, as its side and declared position place them.
+    let skip (s : Ir.CaptionSkip) : Glue :=
+      r.resolve ((s.find? a.tokens kind).getD (s.default r.geom.fontSize))
+    let (objSkip, farSkip) := Ir.captionSides (Ir.captionPosOf r.captionPos kind) capAbove
+    let capSep := skip objSkip
+    let farSep := skip farSkip
     let a := a.pushOp .floatOpen
     -- The float's caption and body are box content, not galley lines: the
     -- sub-walk runs under a marked reader so no line of them is counted
     -- by the line-number census (`Rd.inFloat`).
     let rf := { r with inFloat := true }
-    let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
+    let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
@@ -9747,6 +9756,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   let cover := design.cover
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
                    styles := doc.styles
+                   captionPos := doc.captionPos
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
                    lists := doc.docClass.record.lists

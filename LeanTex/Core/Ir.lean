@@ -5002,6 +5002,96 @@ reaches a figure. -/
 def captionTokenOf (tokens : Tokens) (kind : FloatKind) (key : String) : Option SymGlue :=
   tokens.find? (kind.captionScope ++ key) <|> tokens.find? key
 
+/-- Where a document tells the caption package a float type's captions
+stand, so it can place their two skips (caption manual §2.2, `position`;
+caption3.sty `\DeclareCaptionPosition`). `auto` is the package's default
+(caption3.sty `\SetCaptionDefault{position}{auto}`): a caption with nothing
+before it in its float (`\prevdepth` still at the list's start,
+`\caption@autoposition`) is taken for a top one, which is the engine's
+`capAbove`. The kernel's `\@makecaption` (article.cls) places the skips as
+`bottom` does. -/
+inductive CaptionPos where
+  | top
+  | bottom
+  | auto
+  deriving Repr, BEq, Inhabited
+
+/-- A position as caption3.sty spells it: `top`, `t`, `above`; `bottom`,
+`b`, `below`; `auto`, `a`. -/
+def CaptionPos.ofKey? : String → Option CaptionPos
+  | "top" | "t" | "above" => some .top
+  | "bottom" | "b" | "below" => some .bottom
+  | "auto" | "a" => some .auto
+  | _ => none
+
+/-- `\caption@iftop`: is a caption standing on `capAbove`'s side placed as
+a top one? -/
+def CaptionPos.placedTop : CaptionPos → Bool → Bool
+  | .top, _ => true
+  | .bottom, _ => false
+  | .auto, capAbove => capAbove
+
+/-- The position a float kind's captions are placed for: the kind's own
+declaration (`\captionsetup[table]{position=…}`, `tableposition=`), else
+the document's (`\captionsetup{position=…}`, keyed `""`), else `auto`. -/
+def captionPosOf (decl : Array (String × CaptionPos)) (kind : FloatKind) : CaptionPos :=
+  (((decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == ""))).map (·.2)).getD .auto
+
+/-- LaTeX's two caption skips (article.cls §\@makecaption, which sets
+`\abovecaptionskip` above a caption and `\belowcaptionskip` below it):
+`above` is the engine's `captionsep`, its default the rhythm quantum
+standing in for the class's 10pt (`captionSepDefault`); `below` is the
+`belowcaptionskip` token, its default the class's own 0pt. -/
+inductive CaptionSkip where
+  | above
+  | below
+  deriving Repr, BEq, Inhabited
+
+/-- The tokens a skip reads for a float kind, in lookup order: the kind's
+own before the document's, `captionTokenOf`'s order. -/
+def CaptionSkip.keys (s : CaptionSkip) (kind : FloatKind) : List String :=
+  let base := match s with
+    | .above => "captionsep"
+    | .below => "belowcaptionskip"
+  [kind.captionScope ++ base, base]
+
+/-- A skip's declared value for a float kind, if the document declares one. -/
+def CaptionSkip.find? (s : CaptionSkip) (tokens : Tokens) (kind : FloatKind) : Option SymGlue :=
+  (s.keys kind).findSome? tokens.find?
+
+/-- A skip's value where the document declares none. -/
+def CaptionSkip.default (s : CaptionSkip) (size : Sp) : SymGlue :=
+  match s with
+  | .above => captionSepDefault size
+  | .below => {}
+
+/-- **A caption's two skips, by the side it stands on and the side it is
+placed for**: the skip between the caption and its object, then the one on
+its text side. caption.sty's `\caption@makecaption` sets `\belowcaptionskip`
+above and `\abovecaptionskip` below a caption placed as a top one, and the
+kernel's order (`\abovecaptionskip` above, `\belowcaptionskip` below) for
+a bottom one; so the object faces `\abovecaptionskip` exactly when the
+caption stands where it is placed for. The one resolving site both
+backends read: `Layout`'s float arm and `HtmlDoc`'s caption rules. -/
+def captionSides (pos : CaptionPos) (capAbove : Bool) : CaptionSkip × CaptionSkip :=
+  if pos.placedTop capAbove == capAbove then (.above, .below) else (.below, .above)
+
+/-- Undeclared — the package's `auto`, and the engine's default — a
+caption's object faces `\abovecaptionskip` (`captionsep`) whichever side it
+stands on, and its text side `\belowcaptionskip`: the gap binds a caption
+to what it captions. -/
+theorem captionSides_auto_exact (capAbove : Bool) :
+    captionSides .auto capAbove = (.above, .below) := by
+  cases capAbove <;> rfl
+
+/-- A declared position fixes the skips to the caption's own edges, so a
+caption on the other side of its object reads them crosswise: under the
+kernel's order (`bottom`) a caption above a table has `\belowcaptionskip`,
+not `\abovecaptionskip`, between it and the table. -/
+theorem captionSides_declared_exact (pos : CaptionPos) (h : pos ≠ .auto) :
+    captionSides pos true = (captionSides pos false).swap := by
+  cases pos <;> first | rfl | exact absurd rfl h
+
 /-- A listing caption with its number prefix set in front: the
 figure-caption shape (`captionPrefix`'s own spelling, classes.dtx
 §\@makecaption) with the locale's listing word — "Listing 1: text" —
@@ -5944,6 +6034,10 @@ structure Doc where
   fonts : FontSpec := {}
   palette : Palette := {}
   tokens : Tokens := {}
+  /-- The caption positions the document declares (`captionPosOf` reads
+  them): a float type's scope, or `""` for every type, and where its
+  captions are placed for. -/
+  captionPos : Array (String × CaptionPos) := #[]
   /-- `\runninghead` / `\runningfoot`: one line of inline content each, laid
   out in the margin after the body, when the page count is known. -/
   head : Option (Array Inline) := none
@@ -13369,7 +13463,13 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
      | some f => s!"palette covered {f}%\n"
      | none => "")
   let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>
-    s!"token {n} {dumpGlue g}\n")
+    s!"token {n} {dumpGlue g}\n") ++
+    String.join (doc.captionPos.toList.map fun (scope, p) =>
+      let pos := match p with
+        | .top => "top"
+        | .bottom => "bottom"
+        | .auto => "auto"
+      s!"caption-position {if scope.isEmpty then "*" else scope} {pos}\n")
   let runLines :=
     (match doc.head with
      | some xs => "runninghead\n" ++ dumpInlines "  " xs

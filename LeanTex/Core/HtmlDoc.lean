@@ -3664,14 +3664,25 @@ private def floatKindClass : Ir.FloatKind → String
   | .algorithm => "algorithm-float"
 
 /-- Each float kind reads its own caption tokens before the document's,
-the order `Ir.captionTokenOf` resolves them in on the page: one
-custom-property indirection per kind, so a `\captionsetup[table]` gap
-reaches tables and no figure. -/
-private def captionScopeCss : String :=
-  let gap := quantaRem (gapK "caption")
+the order `Ir.CaptionSkip.keys` resolves them in on the page, and places
+them by the kind's declared position (`Ir.captionSides`, the one resolving
+site): one custom-property indirection per kind and side — `--ltx-capsep`
+facing the object and `--ltx-capfar` on the text side for a caption below,
+the `-top` pair for one above — so a `\captionsetup[table]` gap reaches
+tables and no figure. -/
+private def captionScopeCss (pos : Array (String × Ir.CaptionPos)) : String :=
+  let chain (s : Ir.CaptionSkip) (k : Ir.FloatKind) : String :=
+    let dflt := match s with
+      | .above => quantaRem (gapK "caption")
+      | .below => "0px"
+    (s.keys k).foldr (fun key acc => s!"var(--{key}, {acc})") dflt
   String.join ([Ir.FloatKind.figure, .table, .sub, .algorithm].map fun k =>
+    let p := Ir.captionPosOf pos k
+    let (obj, far) := Ir.captionSides p false
+    let (objTop, farTop) := Ir.captionSides p true
     let s := k.captionScope
-    s!"figure.{floatKindClass k} \{ --ltx-capsep: var(--{s}captionsep, var(--captionsep, {gap}));\n" ++
+    s!"figure.{floatKindClass k} \{ --ltx-capsep: {chain obj k}; --ltx-capfar: {chain far k};\n" ++
+    s!"  --ltx-capsep-top: {chain objTop k}; --ltx-capfar-top: {chain farTop k};\n" ++
     s!"  --ltx-capmargin: var(--{s}captionmargin, var(--captionmargin, 0px)); }\n")
 
 /-- The base stylesheet. Small on purpose: a generated document should not
@@ -3911,12 +3922,15 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  position: absolute; left: 0; text-align: right; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
-  captionScopeCss ++
+  captionScopeCss doc.captionPos ++
   "figure.float > figcaption { margin-top: var(--ltx-capsep);\n" ++
-  "  padding: 0 var(--ltx-capmargin);\n" ++
+  "  padding: 0 var(--ltx-capmargin) var(--ltx-capfar);\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
+  -- The text-side skip is padding: it stands inside the float, beside
+  -- the float's own separation, and a margin there would collapse into it.
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
-  "  margin-bottom: var(--ltx-capsep); }\n" ++
+  "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
+  "  margin-bottom: var(--ltx-capsep-top); }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
