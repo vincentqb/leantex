@@ -1251,9 +1251,9 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .float k n ca body caption =>
     out.push (.float k n ca (resolveBlocks p find items #[] body.toList)
       (resolveArr p find caption))
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     out.push (.table cols pl pr
-      (rows.map fun row => row.map (resolveArr p find)) rules)
+      (rows.map fun row => row.map (resolveArr p find)) rules spans)
   -- A citation resolves inside a line and its comment, as in a cell.
   | .algorithm n sm lines =>
     out.push (.algorithm n sm (lines.map fun l =>
@@ -1656,7 +1656,7 @@ theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveCols_pending p find items cols.toList #[] _ q h
-  | .table _ _ _ rows _ =>
+  | .table _ _ _ rows _ _ =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
     exact tableRows_pending p find rows.toList _ q h

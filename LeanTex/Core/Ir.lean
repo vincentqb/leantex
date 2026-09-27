@@ -3660,6 +3660,21 @@ inductive TableRule where
   | gap (space : SymGlue)
   deriving Repr, BEq, Inhabited
 
+/-- `\multicolumn{n}{spec}{…}`: the cell at `col` (0-based) of row `row`
+spans `n` columns and sets by its own column `spec` (its alignment, and a
+`p{…}` width when it declares one). The `n − 1` cells it covers stay in
+`rows`, empty, so rectangularity holds as before and every text walk reads
+the spanning text once. Its width follows TeX's rule for a spanned entry
+(tex.web §801, $w_j=\max_{i≤j}(w_{ij}-\sum_{i≤k<j}(t_k+w_k))$): a span
+enters no single column's maximum, and when it is wider than the columns it
+covers plus their gaps, the excess goes to the last covered column. -/
+structure ColSpan where
+  row : Nat
+  col : Nat
+  n : Nat
+  spec : ColSpec
+  deriving Repr, BEq, Inhabited
+
 /-- The row index of the first `mid` rule in document order, if any: the
 List companion of the header scan below, so the two facts about it are
 inductions. -/
@@ -4325,9 +4340,11 @@ inductive Block where
   so every walk below may trust `cols.size`. `rules` are drawn before the
   content row of their index (`rows.size` = after the last); order within
   one index is document order. `padLeft`/`padRight` are the outer
-  `tabColSep` pads, deleted by `@{}` as in LaTeX. -/
+  `tabColSep` pads, deleted by `@{}` as in LaTeX. `spans` are the
+  `\multicolumn` cells (`ColSpan`); the cells they cover are empty in `rows`. -/
   | table (cols : Array ColSpec) (padLeft : Bool) (padRight : Bool)
       (rows : Array (Array (Array Inline))) (rules : Array (Nat × TableRule))
+      (spans : Array ColSpan)
   /-- `{figure}`/`{table}`: a captioned object. A single-pass engine has
   nowhere for a float to float, so it stands where written, centred, set
   off from the text by `floatsep` with its caption bound `captionsep` from
@@ -4686,7 +4703,7 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .pagebreak => (c, .pagebreak)
   | .rule col nm th => (c, .rule col nm th)
   | .picture p => (c, .picture p)
-  | .table cols pl pr rows rules => (c, .table cols pl pr rows rules)
+  | .table cols pl pr rows rules spans => (c, .table cols pl pr rows rules spans)
   -- Lines hold inlines: no float can nest in an algorithm.
   | .algorithm n sm lines => (c, .algorithm n sm lines)
   -- A reference list is not a float: it consumes no number and holds none.
@@ -4757,7 +4774,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .pagebreak => out
   | .rule _ _ _ => out
   | .picture _ => out
-  | .table _ _ _ _ _ => out
+  | .table _ _ _ _ _ _ => out
   | .algorithm _ _ _ => out
   | .bibliography _ _ _ => out
   | .float kind num _ body _ =>
@@ -4831,7 +4848,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
   | .algorithm _ _ _
   | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ =>
     exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
   | .list o items =>
     obtain ⟨n, hc, hn⟩ := numberFloatItems_exact k c #[] out items.toList
@@ -7018,7 +7035,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .framefoot content => foldInlineList fi (fb acc b) content.toList
   | .float _ _ _ body caption =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
-  | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
+  | .table _ _ _ rows _ _ => foldTableRows fi (fb acc b) rows.toList
   | .algorithm _ _ lines => foldAlgLines fi (fb acc b) lines.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
@@ -7212,7 +7229,7 @@ def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
     let r := w.openBlock ctx acc b
     w.closeBlock ctx
       (foldCtxBlockList w r.2 (foldCtxInlineList w r.2 r.1 caption.toList) body.toList) b
-  | .table _ _ _ rows _ =>
+  | .table _ _ _ rows _ _ =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxTableRows w r.2 r.1 rows.toList) b
   | .algorithm _ _ lines =>
@@ -7446,7 +7463,7 @@ theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → �
       CtxFold.ofFold_closeBlock]
     rw [foldCtxInlineList_covers fb fi _ caption.toList,
       foldCtxBlockList_covers fb fi _ body.toList]
-  | .table _ _ _ rows _ =>
+  | .table _ _ _ rows _ _ =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxTableRows_covers fb fi _ rows.toList
@@ -7644,7 +7661,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .only _ body => navLinkList out body.toList
   | .nav _ body => navLinkList out body.toList
   | .frame title _ _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
-  | .table _ _ _ rows _ => navLinkRows out rows.toList
+  | .table _ _ _ rows _ _ => navLinkRows out rows.toList
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
   | .algorithm _ _ lines => navLinkAlgLines out lines.toList
   -- a resolved entry's content carries its URL and anchor links
@@ -8116,12 +8133,14 @@ def dumpBlock (ind : String) (b : Block) : String :=
             s!" ({x1.toPtString},{y1.toPtString})~({x2.toPtString},{y2.toPtString})")
         s!"{ind}  edge{pts}{Pic.paintDump (some st) none}\
 {if tip.isSome then " tip" else ""}\n")
-  | .table cols padL padR rows rules =>
+  | .table cols padL padR rows rules spans =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")
     let ruleLines := String.join (rules.toList.map fun (i, r) =>
       s!"{ind}  rule {i} {dumpTableRule r}\n")
-    dumpTableRows (ind ++ "  ") (s!"{ind}table {pads}\n" ++ ruleLines) rows.toList
+    let spanLines := String.join (spans.toList.map fun sp =>
+      s!"{ind}  span {sp.row}:{sp.col} x{sp.n} {dumpColSpec sp.spec}\n")
+    dumpTableRows (ind ++ "  ") (s!"{ind}table {pads}\n" ++ ruleLines ++ spanLines) rows.toList
   | .float kind num capAbove body caption =>
     let k := match kind with
       | .figure => "figure"
@@ -8561,7 +8580,7 @@ def maxStepBlock : Block → Nat
   | .picture _ => 1
   -- A cell's content may step (an overlay reveal per row); the caption is
   -- furniture and does not multiply pages, as a frame title does not.
-  | .table _ _ _ rows _ => maxStepTableRows rows.toList
+  | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
   | .float _ _ _ body _ => maxStepBlockList body.toList
   -- A reference list is furniture like a section title: no overlay inside.
   | .bibliography _ _ _ => 1
@@ -8733,8 +8752,8 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   -- Cells cover as paragraphs do and dim in place: only colours change, so
   -- no step can reflow the grid. Rules are decorative ink and keep their
   -- weight; the caption covers and dims with its float.
-  | .table cols pl pr rows rules =>
-    .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules
+  | .table cols pl pr rows rules spans =>
+    .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules spans
   | .float fk num ca body caption =>
     .float fk num ca (dimBlockList cover k pending #[] body.toList)
       (if pending then
@@ -8903,7 +8922,7 @@ def unwrapItemStep : Block → Block
   -- A cell holds inlines and a caption is furniture: no item paragraph can
   -- hide below either, so both nodes pass whole (float body walked: a
   -- listed figure body may hold a list).
-  | .table cols pl pr rows rules => .table cols pl pr rows rules
+  | .table cols pl pr rows rules spans => .table cols pl pr rows rules spans
   | .float k n ca body caption => .float k n ca (unwrapItemStepList #[] body.toList) caption
   -- A reference list holds entries, never item paragraphs.
   | .bibliography src style items => .bibliography src style items
@@ -9055,7 +9074,7 @@ def blockTextOne (acc : String) : Block → String
   -- Every cell's text is census content — the conservation the user reads
   -- as "no cell silently vanished". The caption counts with its float,
   -- before the body, as a frame's title does.
-  | .table _ _ _ rows _ => blockTextTableRows acc rows.toList
+  | .table _ _ _ rows _ _ => blockTextTableRows acc rows.toList
   | .float _ _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
   -- Every entry's text is census content, in list order.
   | .bibliography _ _ items => blockTextBibItems acc items.toList
@@ -9255,7 +9274,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .rule _ _ _ => out
   | .picture _ => out
   -- Cells and captions hold inline content; no heading can stand in either.
-  | .table _ _ _ _ _ => out
+  | .table _ _ _ _ _ _ => out
   | .float _ _ _ body _ => headingLevelList out body.toList
   -- The References heading is its own .section block; the list holds none.
   | .bibliography _ _ _ => out
@@ -9319,7 +9338,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .logo _ => out
   | .rule _ _ _ => out
   | .picture _ => out
-  | .table _ _ _ rows _ => footnoteTableRows out rows.toList
+  | .table _ _ _ rows _ _ => footnoteTableRows out rows.toList
   | .algorithm _ _ lines => footnoteAlgLines out lines.toList
   -- the caption counts with its float, before the body, as its text does
   | .float _ _ _ body caption =>
@@ -9873,7 +9892,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
     show algLineText acc (dimAlgLines cover k pending #[] lines.toList).toList = _
     rw [dimAlgLines_text cover k pending lines.toList #[] acc]
     rfl
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     rw [dimBlock]
     simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
       blockTextTableRows]
@@ -10036,7 +10055,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
   | .pagebreak
   | .setPalette _ | .setTokens _ | .algorithm _ _ _
-  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _
+  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _
   | .bibliography _ _ _ => rfl
 
 theorem unwrapItemStepItems_text (items : List (Array Block))
@@ -10104,7 +10123,7 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .bibliography _ _ _ | .algorithm _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ => rfl
   | .list o items =>
     simp [numberFloatOne, blockTextOne,
       numberFloatItems_text c #[] items.toList, blockTextItems]
@@ -10307,8 +10326,8 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .picture p =>
     (.picture { p with shapes := recolorRolesShapes recolor pal ground #[] p.shapes.toList },
       pal)
-  | .table cols pl pr rows rules =>
-    (.table cols pl pr (recolorRolesTableRows recolor pal ground #[] rows.toList) rules, pal)
+  | .table cols pl pr rows rules spans =>
+    (.table cols pl pr (recolorRolesTableRows recolor pal ground #[] rows.toList) rules spans, pal)
   | .float fk num ca body caption =>
     let r := recolorRolesList repal recolor pal ground #[] body.toList
     (.float fk num ca r.1
@@ -10660,7 +10679,7 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
       (recolorRolesAlgLines recolor pal ground #[] lines.toList).toList = _
     rw [recolorRolesAlgLines_text recolor pal ground lines.toList #[] acc]
     rfl
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesTableRows_text recolor pal ground rows.toList #[] acc,
@@ -10737,7 +10756,7 @@ def keptBy (t : String) : Block → Bool
   | .alt _ _ _ _
   | .frame _ _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak | .algorithm _ _ _
-  | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
+  | .table _ _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
 
 mutual
 
@@ -10777,7 +10796,7 @@ def keepForOne (t : String) : Block → Block
   | .picture p => .picture p
   -- Cells hold inlines: no conditional can nest in a table. A float's
   -- body is blocks, so the walk carries in, as through a frame.
-  | .table c pl pr rows rules => .table c pl pr rows rules
+  | .table c pl pr rows rules spans => .table c pl pr rows rules spans
   -- Lines hold inlines: no conditional can nest in an algorithm.
   | .algorithm n sm lines => .algorithm n sm lines
   | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
@@ -10866,7 +10885,7 @@ def textLeavesOne (acc : List String) : Block → List String
   -- Each cell is one leaf: it survives a backend's view whole or not at
   -- all, which is what the conservation theorem needs to range over. The
   -- caption is a leaf beside its float's body, as a frame's title is.
-  | .table _ _ _ rows _ => textLeavesTableRows acc rows.toList
+  | .table _ _ _ rows _ _ => textLeavesTableRows acc rows.toList
   | .algorithm _ _ lines => algTextLeaves acc lines.toList
   | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
   -- Each entry is one leaf, as a cell is: it survives a backend's view
@@ -10934,7 +10953,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .frame _ _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .algorithm _ _ _
-  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .pagebreak
   | .bibliography _ _ _ => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
 
@@ -11077,7 +11096,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
       textLeavesList_acc (plainText title :: acc) body.toList,
       textLeavesList_acc [plainText title] body.toList]
     simp
-  | .table c pl pr rows rules =>
+  | .table c pl pr rows rules spans =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesTableRows_acc acc rows.toList
   | .float k n ca body caption =>
@@ -11208,7 +11227,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
   | .pagebreak =>
     intro s hs
     simp [textLeavesOne] at hs
-  | .table c pl pr rows rules =>
+  | .table c pl pr rows rules spans =>
     -- kept whole by every backend: its own leaves survive untouched
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
@@ -11470,7 +11489,7 @@ def onlyFreeOne : Block → Bool
   | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
-  | .table _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
+  | .table _ _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
 
 def onlyFreeItems : List (Array Block) → Bool
   | [] => true
@@ -11514,7 +11533,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .pagebreak => rfl
   | .rule c n th => rfl
   | .picture p => rfl
-  | .table c pl pr rows rules => rfl
+  | .table c pl pr rows rules spans => rfl
   | .algorithm n sm lines => rfl
   | .bibliography src style items => rfl
   | .list o items =>
@@ -12420,8 +12439,8 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .framefoot content => .framefoot (mapInlines f content)
   | .float k num ca body caption =>
     .float k num ca (mapBlockList f #[] body.toList) (mapInlines f caption)
-  | .table c pl pr rows rules =>
-    .table c pl pr (mapTableRows f #[] rows.toList) rules
+  | .table c pl pr rows rules spans =>
+    .table c pl pr (mapTableRows f #[] rows.toList) rules spans
   | .algorithm n sm lines => .algorithm n sm (mapAlgLines f #[] lines.toList)
   | .logo content => .logo (mapInlines f content)
   | .bibliography src style items =>
@@ -12789,7 +12808,7 @@ theorem mapBlock_text (f : Inline → Inline)
       (mapBlockList f #[] body.toList).toList = _
     rw [mapInlines_text f hf caption, mapBlockList_text f hf body.toList #[]]
     rfl
-  | .table c pl pr rows rules =>
+  | .table c pl pr rows rules spans =>
     show blockTextTableRows acc (mapTableRows f #[] rows.toList).toList = _
     rw [mapTableRows_text f hf rows.toList #[]]
     rfl
@@ -13588,7 +13607,7 @@ def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option R
   | .para _ | .list _ _ | .center _ | .ragged _ _ | .quote _ | .abstract _
   | .titled _ _ _ | .role _ _ | .spaced _ _ | .columns _ | .step _ _ _
   | .alt _ _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
-  | .framefoot _ | .table _ _ _ _ _ | .algorithm _ _ _ | .logo _
+  | .framefoot _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => (out, float)
 

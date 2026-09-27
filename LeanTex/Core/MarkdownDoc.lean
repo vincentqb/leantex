@@ -225,7 +225,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- Markdown's own table is the pipe table: one line per row, the GFM
   -- separator (which plays the head rule) after the first, alignment from
   -- the column spec. booktabs' rule weights have no markdown spelling.
-  | .table cols _ _ rows _ =>
+  | .table cols _ _ rows _ _ =>
     let line (row : Array (Array Inline)) : String :=
       "| " ++ String.intercalate " | " (row.toList.map inlineText) ++ " |"
     let sep := "|" ++ String.join (cols.toList.map fun c =>
@@ -454,7 +454,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
       (acc ++ if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n")
       body.toList)
-  | .table _ _ _ rows _ => by
+  | .table _ _ _ rows _ _ => by
     simp only [blockInto]
     split
     · exact append_nil acc
@@ -701,7 +701,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .logo _, _, h => h
   | .rule _ _ _, _, h => h
   | .picture _, _, h => h
-  | .table _ _ _ _ _, _, h => h
+  | .table _ _ _ _ _ _, _, h => h
   | .float _ _ _ body _, out, h => headingLevelList_mem x body.toList out h
 
 private theorem headingLevelItems_mem (x : Nat) :

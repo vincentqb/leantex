@@ -1322,7 +1322,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "tabular elaborates to a rectangular table without errors"
     (errCodes tabSrc == [] &&
      match (elabStr tabSrc).1.body with
-     | #[.table cols true true rows #[]] =>
+     | #[.table cols true true rows #[] #[]] =>
        cols == #[{ width := .natural, align := .left },
                  { width := .natural, align := .left }] &&
        rows.map (·.map Ir.plainText) == #[#["a", "b"], #["c", "d"]]
@@ -1336,12 +1336,12 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "classic tabular rules are typed rules, not unknown commands"
     (!ctDs.any (·.code == "W0301") &&
      match ctDoc.body with
-     | #[.table _ _ _ _ rules] =>
+     | #[.table _ _ _ _ rules _] =>
        rules == #[(0, .mid), (1, .cmid 1 2 false false), (2, .mid)]
      | _ => false)
   t "multicolumn keeps only its cell text"
     (match ctDoc.body with
-     | #[.table cols _ _ rows _] =>
+     | #[.table cols _ _ rows _ _] =>
        let s := String.join (rows.toList.map fun r =>
          String.join (r.toList.map Ir.plainText))
        -- the span is lost, the short row padded to the grid, and W0337 says so

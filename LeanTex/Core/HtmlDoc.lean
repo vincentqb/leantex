@@ -5572,7 +5572,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   | .picture pic => pictureSvg cfg pic
   -- booktabs' formal table: `tableNode` above, where the header projection
   -- theorem (`th_iff_header_row`) can read the row builder.
-  | .table cols padL padR rows rules => tableNode cfg cols padL padR rows rules
+  | .table cols padL padR rows rules _ => tableNode cfg cols padL padR rows rules
   -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
   -- object; the caption keeps its source-order side. The gaps are the
   -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with

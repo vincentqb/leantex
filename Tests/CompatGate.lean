@@ -307,7 +307,7 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (oneDoc, _) := elabStr (dvDoc "" "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")
   t "fragment arm, one column: the row's cells stay in their columns"
     (match oneDoc.body with
-     | #[.table _ _ _ rows _] => rows.map (·.map Ir.plainText) == #[#["Right", "b", "c"]]
+     | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.plainText) == #[#["Right", "b", "c"]]
      | _ => false)
   -- The kept text is walked like any group: inside a definition body, its
   -- `#1` is the definition's parameter.
@@ -316,7 +316,7 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fragment arm (fails on base): a parameter in the kept text is the definition's parameter"
     (!defDs.any (·.code == "E0311") &&
       match defDoc.body with
-      | #[.table _ _ _ rows _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
+      | #[.table _ _ _ rows _ _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
       | _ => false)
   -- What the span line says, held at each shape of span: its text fills
   -- one cell, and any cell written after it moves left by the columns it
@@ -328,7 +328,7 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (spanDoc, _) := elabStr (dvDoc "" s!"\\begin\{tabular}\{lll}\n{row} \\\\\n\\end\{tabular}")
     t s!"fragment arm, {what}: the text fills one cell, and only a later cell moves"
       (match spanDoc.body with
-       | #[.table _ _ _ rows _] => rows.map (·.map Ir.plainText) == #[want]
+       | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.plainText) == #[want]
        | _ => false)
 
 /-! # One span, one visible line

@@ -2122,7 +2122,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .framefoot content => textAndMath out content
   -- Every cell's text, and a caption's, reaches the scalar census: the
   -- fallback scan must see a glyph before layout asks a face for it.
-  | .table _ _ _ rows _ => scalarTextTableRows out rows.toList
+  | .table _ _ _ rows _ _ => scalarTextTableRows out rows.toList
   -- The generated keyword words, the io/comment punctuation, and — when
   -- lines are numbered — the digits, plus each line's own content and
   -- comment: generated text must be covered exactly as caption prefixes.
@@ -2312,7 +2312,7 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .framefoot content => weightKeysInlineList acc {} content.toList
   | .float _ _ _ body caption =>
     weightKeysBlockList (weightKeysInlineList acc {} caption.toList) body.toList
-  | .table _ _ _ rows _ => weightKeysTableRows acc rows.toList
+  | .table _ _ _ rows _ _ => weightKeysTableRows acc rows.toList
   -- A line's content and comment set at the base style; the generated
   -- keyword bold is a corner face, not an off-corner key.
   | .algorithm _ _ lines =>
@@ -7401,7 +7401,7 @@ private def collectCentered (r : Rd) (a : Acc)
       | .picture pic => collectPicture r a pic indent true
       -- A table under \centering (or in a float's centred body) centres
       -- as one box in the measure; its cells keep their own alignment.
-      | .table cols pl pr rows rules =>
+      | .table cols pl pr rows rules _ =>
         collectTable r a cols pl pr rows rules indent true
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
@@ -7677,7 +7677,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.
     collectPicture r a pic indent false
-  | .table cols padL padR rows rules =>
+  | .table cols padL padR rows rules _ =>
     collectTable r a cols padL padR rows rules indent false
   | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound

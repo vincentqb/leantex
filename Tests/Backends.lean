@@ -866,7 +866,7 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- splitting it at the pipe.
   let pipe : Ir.Doc := {
     body := #[.table #[default, default] false false
-      #[#[#[.text "a|b"], #[.text "c"]]] #[]] }
+      #[#[#[.text "a|b"], #[.text "c"]]] #[] #[]] }
   t "a cell containing a pipe keeps its row"
     (((MarkdownDoc.emit pipe).splitOn "| a\\|b | c |").length == 2)
 
@@ -2404,7 +2404,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (tableGroupsOne #[] allHead == #[#["colgroup", "thead"]] &&
       (cellFactsOne "" #[] allHead).all (·.tag == "th"))
   -- The empty table: nothing to group.
-  let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)])
+  let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
   t "an empty table ships its colgroup and no row group"
     (tableGroupsOne #[] empty == #[#["colgroup"]])
   -- The fixture's census: the first table heads one row of three, the
@@ -2414,7 +2414,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, body, _) := HtmlDoc.emitTree {} fixture
   let cells := cellFactsList "" #[] body.toList
   let declared := Ir.foldBlocks (fun n b => match b with
-    | .table _ _ _ rows _ => n + rows.foldl (fun m r => m + r.size) 0
+    | .table _ _ _ rows _ _ => n + rows.foldl (fun m r => m + r.size) 0
     | _ => n) (fun n _ => n) 0 fixture.body
   t "tables fixture: every declared cell ships once"
     (cells.size == declared && declared == 18)

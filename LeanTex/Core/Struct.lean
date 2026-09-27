@@ -277,7 +277,7 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .setTokens _ => out
   | .rule _ _ _ => out
   | .picture _ => out.push (.node .figure #[.leaf 0 .picture])
-  | .table _ _ _ rows _ => out.push (.node .table (rowsRaw #[] rows.toList))
+  | .table _ _ _ rows _ _ => out.push (.node .table (rowsRaw #[] rows.toList))
   -- the caption stands first whatever `capAbove` says: census order is
   -- `blocksText`'s, and a caption's placement is the page's, not the tree's
   | .float _ _ _ body caption =>
@@ -931,7 +931,7 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .picture pic =>
     simp [blockRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
       leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, blockTextOne]
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [rowsRaw_text]
     rfl
@@ -1257,7 +1257,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne_leaf_exact,
     headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
     headingsList_cons_exact, headingLevelOne]
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
     rw [rowsRaw_headings]
@@ -1572,7 +1572,7 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
   | .rule c n th => rfl
   | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact,
     Leaf.imageCensus, imagesList_nil_exact, imagesList_cons_exact, foldBlock]
-  | .table cols pl pr rows rules =>
+  | .table cols pl pr rows rules spans =>
     simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [rowsRaw_images]
     rfl
@@ -1853,7 +1853,7 @@ theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .setTokens tk => simp [blockRaw]
   | .rule c nm th => simp [blockRaw]
   | .picture p => simp [blockRaw]
-  | .table cols pl pr rows rules => simp [blockRaw]
+  | .table cols pl pr rows rules spans => simp [blockRaw]
   | .float fk num ca body caption => simp [blockRaw]
   | .bibliography src style items =>
     simp only [blockRaw]; exact bibRaw_acc out items.toList

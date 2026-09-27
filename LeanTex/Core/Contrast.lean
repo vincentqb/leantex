@@ -812,7 +812,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .setTokens _ => acc
   -- Every cell is page text at the body size, judged in whatever colour
   -- wraps it; a caption is page text beside its float's body.
-  | .table _ _ _ rows _ =>
+  | .table _ _ _ rows _ _ =>
     rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
   -- A line's content and comment are page text, judged in whatever colour
   -- wraps them; the generated keyword and comment furniture takes the

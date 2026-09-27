@@ -7026,7 +7026,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       "a row carries fewer cells than the column spec; it is \
   padded with empty cells" pos
   rows := Ir.padTableRows rows cols.size
-  blocks := blocks.push (.table cols padL padR rows rules)
+  blocks := blocks.push (.table cols padL padR rows rules #[])
   return blocks
 
 /-- One listing block from a lexically blind capture. `{verbatim}` is the
