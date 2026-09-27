@@ -21338,3 +21338,114 @@ at its SVG's left edge (at the base too).
 title band — which the HTML cannot without a layout pass or a second copy
 of the title in the tree — and whether a frame that overruns its sheet by
 less than its safe area may take that room, as now, or should continue.
+
+
+
+### 2026-09-27 — amsmath's tag is text and its fractions are one \genfrac: review-b AMS-1, and the fraction nucleus
+
+review-b's AMS-1 found two silent losses in the landed `\tag`: its
+argument shipped as source (`($\ast$)`, `(\textbf {C})`), and
+`\[ … \tag{A} \]` dropped the tag. pkg-amsmath's report added a third:
+`\dfrac` and `\tfrac` set as `\frac` in the current style, and nothing
+the index checks saw it. All three are fixed, each behind a guard that
+fails on `ae063c0b`. With the engine files put back to that sha and the
+tests at this branch's tip, 34 of the new checks fail, at least one per
+defect named here; those that pass there are controls (tag-free bodies,
+index rows that already held, a spacing that a source-text floor also
+satisfies), and the one that passed by accident, a stack drawing no rule,
+now also reads its glyphs.
+
+**`\[` is `equation*`.** amsmath defines it so
+(`\DeclareRobustCommand{\[}{\begin{equation*}}`), and the block arm now
+calls `equation*`'s own arm. The defect was a destructuring that dropped
+the tag stripped from the body: two arms, one consumer. The guard is the
+spelling itself: six bodies elaborate to one document and one set of
+codes under both spellings.
+
+**A tag is text.** `\tagform@` sets its argument in
+`\hbox{\normalfont(#1)}`. `Ir.Block.equation`'s number is now
+`Array Inline`; a counter's number is one text run, so every document
+without a tag is unchanged (goldens byte-identical at that commit). The
+argument elaborates as inline content with its edge spaces dropped, and
+the parentheses join its first and last text runs, so `\tag{5}` ships the
+ink a counter's `(5)` does. Every walk that reads a block's inlines reads
+the number: both folds and `foldCtxBlock_covers`, `mapBlock` (so a `\ref`
+in a tag resolves) and `mapBlock_text`, footnotes, nav links, role
+recolouring and the contrast judge it must agree with, citation
+resolution and `resolveBlock_pending`, the face and fallback
+precomputes, `Struct`'s label node and its three census theorems, both
+backends and the markdown twin. The overlay walks keep the number whole,
+as they kept the string.
+
+**Every fraction is a row of one generalized fraction.**
+`MNucleus.frac` carries a `FracSpec` — delimiters, a rule (the face's,
+a thickness, or 0 for a stack), a style — and `MathParse.fracCmds` is the
+table of amsmath's six definitions; `\genfrac` reads its four arguments,
+braced or single tokens as amsmath's own `\binom` spells them. Four
+things follow from the definitions, each measured against lualatex
+(unicode-math, Fira Math, Source Serif; `r8-ams-tag/cmp`):
+
+- latex.ltx and amsmath brace every fraction, so a fraction command's
+  atom is the Ord a braced subformula is, not TeX's bare Inner. The gap
+  between `x` and `\frac{a}{b}` was 2.58 bp (a thin space and the null
+  delimiter space); it is 1.08, against lualatex's 1.59, whose remaining
+  0.4 bp is the italic correction this engine does not apply. Goldens
+  change `inner:frac` to `ord:frac` and nothing else (7 lines).
+- The style argument sets the whole construct: an inline `\dfrac`'s
+  parts now set at the formula's size (glyph box ratio 1.00, as
+  lualatex), a displayed `\tfrac`'s at script size.
+- A zero thickness is TeX's `\atop` case over the MATH stack constants,
+  which `Font` now reads (offsets 80–100, Fira Math's six checked
+  against an independent struct read and against LuaTeX's own
+  `\Umathstack…` values).
+- Delimiters grow to LuaTeX's `\Umathfractiondelsize` — measured 24.09,
+  10.14 and 7.10 pt at a 10.04 pt size under unicode-math, which is 2.40
+  and 1.01 of the style's size — and replace the fraction's null space on
+  their side, as `\genfrac@choice` kerns it away. Inline and displayed
+  `\binom` pick the variants lualatex picks (342 and 413 font units).
+
+Every document of the private reference corpus, five, is byte-identical
+at `ae063c0b` and at `62d1a294` (`cmp` of each PDF and each HTML built,
+from scratch copies): none of them sets a fraction beside an Ord or uses
+a tag. The compat index gains three tag rows and flips four fraction rows
+(amsmath 36 of 57 → 43 of 60); coverage 806/1567 → 813/1570.
+
+**Compound.** An implemented amsmath row now ships no control word its
+call spells, on the page or in the HTML (`amsIndexInkChecks`): the class
+the tag's argument belonged to, where recognising a command still
+changed the document, so `compatRowEffect` held, and the change was the
+command's own spelling set as text. It holds for all 42 `impl` rows and
+fails on the two argument rows at base. It is amsmath's today; across
+every package it is the rung owner's rule to adopt (see below).
+
+**Corrections to the brief.** An `impl` row cannot fail at base through
+the index's own predicate when the defect is a drop: a dropped tag still
+changes the document. The rows are paired with the checks above, which
+fail at base; the `\[` row's guard is the spelling equality.
+
+**Targets, not staged:**
+
+- Numbered `align`/`gather`/`multline` (W0015), unchanged from the
+  pkg-amsmath entry's design. The grid assembly computes each row's
+  baseline privately (`gridAssemble`'s `ys`), and the tags need exactly
+  those baselines, so the first step is returning them.
+- A `\ref` to a tag with markup sets its plain text (`RefBinding.num` is
+  a string): `\tag{\textbf{C}}` referenced reads a roman C.
+- A tag in a display that stands inline (`\parbox{…}{\[ … \]}`) is still
+  contained by the math parser (W0389), where the inline `equation*` arm
+  names W0015; one accounting is owed there.
+- The null delimiter space scales with the math size here and is a fixed
+  1.2 pt in LaTeX (0.11 bp at this pair); italic correction is not
+  applied between a letter and a following construct.
+- `\cfrac`, `smallmatrix` and the kernel's four style switches: the
+  style now travels in `FracSpec`; a style nucleus would carry it for
+  the rest.
+
+**Routed.** "An `impl` row ships no source spelling of its call" as a
+rule over every index file belongs to the rung owner
+(`compatIndexChecks`, coverage-honest's vocabulary); verbatim-like rows
+(`\verb`, listings) would need their declared exception.
+
+**The user's.** None of the three fixes departs from LaTeX. The one
+reading a user might question is that every fraction lost its thin
+spaces: that is LaTeX's spacing, measured.
