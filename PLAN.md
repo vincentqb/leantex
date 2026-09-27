@@ -20296,3 +20296,65 @@ context: an unresolved citation key, a missing alt text. Others are real:
 The rule "an `impl` row fires no loss whose subject names its construct"
 reads subjects the way `coverage` does, so it belongs to the rung owner.
 It is not added here: added now, it would turn siblings' rows red.
+
+
+### 2026-09-27 — a refusal adds no ink and raises no error, a file ends at its terminator, and a skipped statement never leaves a value stale
+
+Six elaboration losses from the warnings audit, each fixed as a class and
+held by a check quantified over the class, every one broken once through the
+shipped path. Probes and lualatex references are synthetic.
+
+- **Only a definer judges its bodies.** The split-group idiom
+  (`\newenvironment{x}{\begin{center}}{\end{center}}`) failed the build
+  because `Parse.parse` framed each body as document text (E0201, E0205)
+  before any definer ran — the audit's reading, that the refused bodies were
+  elaborated, was wrong: the W0303 arm never elaborated them. The parse now
+  keeps such an environment inside an environment definer's bodies as two
+  halves (`Parse.envDefiners`, `@open:`/`@close:` names no source can spell),
+  and `Elab.settleSplits`, the first step of `prepare`, gives a refused
+  definition's halves nothing to say and settles every other definition's
+  to the tree and diagnostics a plain parse made (dropped in package files,
+  as their parse diagnostics are). `refusedEnvChecks` ranges over
+  `builtinEnvNames`: each built-in, redefined with the idiom, builds with
+  W0303 alone and ships the page of the document without it. Pairing an
+  accepted definition's halves stays open (`splitPairingOwed`, a row that
+  fails once it lands): the halves elaborate under two argument scopes.
+- **A file is read up to its live `\endinput`.** The conditional pass
+  honours it at a spliced file's own top level (`St.fileTop`): a terminator
+  whose condition holds ends the file — the load-guard idiom works both
+  ways — and one in a group, a macro expansion or the document's own file
+  passes through. A cut that drops lines is one N0100 (`ctrl:endinput`).
+  It lives in the conditional pass rather than at splice time because only
+  that pass knows whether a guarded terminator runs. `endInputChecks`, three
+  sty-parity fixtures. The terminator's same-line tail is not walked (its
+  `\fi` closes with the file), a structural-recursion limit.
+- **Each conditional form has a golden fixture** (`cond-*.tex`, five forms,
+  both branches), asserted on the page by `condBranchRow`.
+- **A matched `\begingroup … \endgroup` (or `\bgroup … \egroup`) is the
+  brace group it is** (`Compat.pairGroupsList`, after the conditionals). A
+  pair at the preamble's own top level stands as written: a group there is
+  content in a flat list of declarations (E0313). W0361 now names the
+  construct that really blocks a title-block redefinition.
+- **A refused delimited macro's delimiters are its call's syntax.**
+  `Compat.delimCallsList` spells each use as the braced call its parameter
+  text reads (a leading literal, one delimiter per parameter), so the
+  recovery keeps the arguments and never the punctuation. Checked
+  metamorphically: each use ships its braced spelling's page.
+- **Register arithmetic on a length the document set is evaluated.**
+  Modelled, not re-classed: `Compat.setLength` records each length's value
+  source, and `\advance`/`\multiply`/`\divide`/`\addtolength` emit the same
+  native assignment over an expression the length grammar already reads. A
+  paragraph skip advanced by 20pt now sets 34.0 bp apart against lualatex's
+  33.87 (14.0 before). A length the rewrite never set (a class default, a
+  list parameter) stays W0104, whose `config` class then understates a
+  modelled page length's loss: the residue a `degraded` code would name.
+
+Both private reference documents build with unchanged pages (8, 35), text,
+rasters at 110 dpi and HTML (pdfinfo, pdftotext, `pdftoppm -r 110` and
+`cmp`, base `b312cf2b` against this branch, PDF and HTML); the terminator
+is no longer a refused internal in either, and the paper's W0361 names its
+next blocker. Left open: the
+N0020 `honoured:` count still reads the N0100 notes (the splice record
+carries no count; a per-file tally from `say` is the shape, owed by the
+change that stops emitting those notes), and a refused macro's use still
+reads "unknown command".
