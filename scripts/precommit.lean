@@ -1201,14 +1201,17 @@ def obRecordFaults (lines : Array String) : Array (Nat × String × Nat) := Id.r
       if n != 1 then out := out.push (from_ + 1, k, n)
   return out
 
-/-- The top-level `def` name a test-file line binds, for the Support-rule
-gate: only unindented `def`/`private def`, so a nested helper or a prose
-mention never counts. -/
+/-- The top-level `def` name a line binds, dots included, for the three
+gates that need to know which definition a line stands inside: only
+unindented `def`/`private def`, so a nested helper or a prose mention never
+counts. The name is the whole declared one — truncating it at the first dot
+made every `Foo.bar` in the tree read as `Foo`, so two files declaring
+different members of one namespace read as one helper declared twice. -/
 def topLevelDefName (l : String) : Option String :=
   let t := stripLineComment l
   if t.startsWith "def " || t.startsWith "private def " then
     let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
-    let n := (rest.takeWhile isWordChar).toString
+    let n := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
     if n.isEmpty then none else some n
   else none
 
@@ -1453,6 +1456,14 @@ def selftest : IO UInt32 := do
     ("-- def commented := 1", false),
     ("definition prose speaking of def forms", false),
     ("theorem def_named_thing : True := trivial", false)]
+
+  -- The whole declared name, dots included. Truncated at the dot, two files
+  -- declaring different members of one namespace read as one helper declared
+  -- twice, and the Support-rule gate names a helper nobody wrote.
+  expect "topLevelDefName keeps the namespace"
+    (fun l => topLevelDefName l == some "ArtRun.isArtifact") [
+    ("def ArtRun.isArtifact (r : ArtRun) : Bool := r.marks.any ArtMark.isArtifact", true),
+    ("def ArtRun (r : ArtRun) : Bool := true", false)]
 
   expect "quadraticPrepend" quadraticPrepend [
     -- the walks this tree has produced, all of which must fire
@@ -2195,10 +2206,7 @@ def main (args : List String) : IO UInt32 := do
       let mut cur := ""
       for i in [0:lines.size] do
         let l := lines[i]!
-        let t := stripLineComment l
-        if t.startsWith "def " || t.startsWith "private def " then
-          let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
-          cur := (rest.takeWhile isWordChar).toString
+        if let some n := topLevelDefName l then cur := n
         if bareStateMutation l && !compatStateDoors.contains cur then
           say s!"pre-commit: bare state mutation outside a door, in `{cur}` ({f}:{i + 1}):
   {l.trimAscii}
@@ -2244,9 +2252,8 @@ def main (args : List String) : IO UInt32 := do
       for i in [0:lines.size] do
         let l := lines[i]!
         let t := stripLineComment l
-        if t.startsWith "def " || t.startsWith "private def " then
-          let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
-          cur := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
+        if let some n := topLevelDefName l then
+          cur := n
           curWalk := hasWord t "Inline" || hasWord t "Block"
           -- a signature split across lines (the leaf-function spelling)
           -- keeps contributing to the walk judgement until its `:=`
