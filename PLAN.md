@@ -23163,3 +23163,79 @@ paragraph end. The lexer now emits the control space and takes the next
 line's whitespace as a comment's end does (`wsTok true`); `\r\n` endings
 included. Two rows in `textSymChecks`, both failing at `fd6e1267`; the
 flashtex document it alone blocked moves 1 → 2 (159 at 2).
+
+
+### 2026-09-27 — every breakage the user reported is a row, and a row closes only on a run that failed
+
+The user's rule, applied to the history as well as to what comes next: a
+reported breakage gets assertions, theorems or tests that reproduce it, so
+the error is never seen again. Six read-only passes over the plan, the
+commit messages, the coordinator's briefs and ledger, and the review files
+found 38 reports, from 2026-09-16 to today: a viewer that dropped two
+headings, six defects on one green page, a site port's doubled gap, the
+five round-4 bugs, the tight space around a picture, two unapproved pushes,
+the card, the site. A defect an agent found on the user's documents with
+no report from the user is not a row (the 0-of-41-pages audit found
+thirteen); the user's own reports are.
+
+`Tests/Reports.lean` holds each as a row: its date, the report in abstract
+words (the construct, never the document), pins to its guards, the
+acceptance runs no in-tree check can see, and a state. A pin is
+`DiagAudit.Pin`, so it resolves or does not compile: `thm%` carries the
+proof, `check%` elaborates the block and resolves only while the suite
+calls it. The check resolver now counts whole names (`wordCount`) and
+reads neither registry: `splitOn` counted a name standing inside a longer
+one, and a registry's own mention, as a call. A row is closed only as
+`guarded` — the tree its guards failed on (the broken commit, or this tree
+with the fix reverted) and whose record says so: a reviewer's, the
+author's, or this audit's. The rest stays visible. `unwitnessed` (a guard,
+no failing run on record) and `owed` (no guard yet: the owner, and the
+name the guard lands under) are counts `reportChecks` holds in both
+directions, and an owed name that appears in the tree fails the suite
+until its row is promoted — the `siteAccounting` shape, so a landing that
+closes a report cannot leave the row saying it is open. At this commit:
+22 guarded (8 by a reviewer's run, 9 by the author's, 5 by this audit's),
+10 unwitnessed, 2 answered, 4 owed.
+
+**What the audit's own runs found.** Each was a revert mutant of the
+`ae063c0b` engine tree in a scratch clone, through `lake test`:
+
+- One report had no guard at all. A deck's HTML front page once rendered
+  nearly blank: a title page inside the author's own frame opened a frame
+  inside it, and HTML stacked two viewport-high stages. The fix changed no
+  golden, which its entry called the tell. `nestedStageChecks` asserts over
+  the typed HTML tree, for each spelling in both slide classes, that no
+  stage stands inside a stage and that the HTML has as many stages as the
+  PDF has pages, and that no golden fixture nests one. With the flatten
+  reverted, all six idiom rows fail with the reported shape: 3 stages, 1
+  nested, 2 pages.
+- A sibling spelling is live. A titled frame around the title page still
+  nests a stage in HTML, and ships three PDF pages where lualatex's beamer
+  ships two (measured on a synthetic source). It is parked in the guard as
+  a row that fails once `Elab.flattenFrame` reaches it. The command form
+  `\frame{…}` is an unknown command (two W0301s, one stage): a coverage
+  gap, not a report.
+- Four more reports closed on failing runs: the TJ bound (R01,
+  `pdfStreamChecks`), the shipped face's precedence and the twin's link
+  name (R14, `fallbackChecks`, `mdNameChecks`), a bottom margin on a block
+  rule (R12, `htmlRhythmChecks`), and the deck's snap axis (R16,
+  `deckCssChecks`).
+- Two credited guards cannot see their report. `single_owner_gap_exact` is
+  `max 0 g = g ∧ 0 + g = g`: arithmetic over the encoding, with no emitter
+  in it, so R12 is held by the check that reads the emitted sheet. And the
+  axis mutant of R16 left both deck theorems proved. `warnReflow_accounts`
+  is private, so nothing outside Layout can pin it.
+
+**Recorded, not re-run.** The author's and reviewer's shas come from each
+guard's introducing commit (`git log -S`: its parent for a before-run,
+itself for a revert) and from the review files. Nobody recorded a failing
+run for the ten `unwitnessed` rows; each becomes `guarded` by one revert
+run, and the baseline falls with it.
+
+**Owed.** R35: the pushes. The harness guard stands, and the cause is
+unproven; a pre-push hook is the user's call. R36: the settings, owed by
+settings-lengths (`paramSiteChecks`) and settings-pkgs
+(`abstractRedefChecks`). R37: the card, owed by card-fix, with no guard
+named yet. R38: the site, owed by site-fix (`pictureSvg_overflow_contract`,
+`blockGap_owner_contract`). Landing any of these fails `reportChecks`
+until the row names its pins and the run that saw them fail: one edit.
