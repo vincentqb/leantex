@@ -22465,3 +22465,92 @@ becomes honest, one group per key: W0334 rises 5 → 8 lines, from one
 `'text'` group of three sites to `'text height'` and `'text depth'` with
 three sites each. No page changed. This makes a per-key tier
 possible, which is the audit's `pickeys` proposal; it is not built here.
+
+
+
+### 2026-09-27 — pictures, round 7: a declared picture key is read, and a node stands on its text box
+
+The user's rule for this round is that a declared setting is implemented,
+not reported as ignored. The private reference corpus dropped five picture
+keys (W0334): a named line width, `font=`, `text height`/`text depth`, and
+`every text node part`. The flashtex TikZ probes add `rectangle` on a
+`\draw` and `-- cycle` (E0333, which failed the build). All seven are now
+read. On the private deck W0334 falls 8 → 0, and on the paper 3 → 0, in
+PDF and HTML. Every other code's count and both page counts are unchanged.
+
+- **Line widths** (`ef206eab`). tikz.code.tex (lines 1575–1581) defines the
+  seven named widths as `line width=` styles. `Picture.lineWidthStyles` is
+  that table, with `thin` and `thick` read from the IR's two constants.
+  `readLineWidth` is the one reader. Every stroke site reads it: a path, an
+  operation, a node, the picture's bracket, `every path` and a `\tikzset`
+  line. The vocabulary checks (`readsPathOpt`/`readsNodeOpt`) read it too,
+  so an outer width reaches the paths below it. The IR already carried a
+  width, so no backend changed. On the private deck the HTML's 78 strokes
+  go from 0.4 pt to 0.6 pt, the reference's width.
+- **`font=`** (`fea90695`). TikZ runs a `font=` value before a node's text.
+  `Picture.readFont` reads the value as switches. A size is a step of the
+  document's ladder, `Cx.ladder` = `PageSpec.scale`, which is where a venue's
+  refused `\@setfontsize` redefinitions are read out (`Ir.PageSpec.scale`'s
+  own rule: never `sizeScale` directly). Any other switch is a declaration
+  from the elaborator's table (`Cx.declStyles` = `Elab.declStyles`), and
+  `fontLines` wraps the label in it. The paper's three losses had a
+  different cause from the one the audit guessed. They were not
+  multi-switch values: the venue's style redefines `\small`, and the
+  picture's macro table expanded that body into the key. `macroTable` now
+  leaves the font reader's names alone, as the elaborator does. An
+  unreadable switch is named alone, and the rest still applies.
+- **The text box** (`8648e6e1`, review F9). pgf builds a node around its
+  text box, whose `\ht` and `\dp` `text height`/`text depth` set
+  (tikz.code.tex, `\tikz@fig@continue`).
+  - *Declared.* A declared box is TikZ's exactly. The node centres the box,
+    the letters stand on its baseline, and each anchor is one inner sep
+    beyond it. `em` and `ex` resolve against the node's face
+    (`readNodeDim`, `LabelInk.ex`).
+  - *Undeclared.* The engine keeps its seat (the face's band centred on the
+    node, `labelBaseline`) and the anchors on that band's border. The room a
+    picture reserves is now the glyphs' own box: `LabelInk.boxHeight` and
+    `boxDepth`, measured per glyph by `Layout.labelGlyphExtent`. A label's
+    ink box is `Ir.Pic.labelGlyphBox`, which covers its anchor
+    (`labelGlyphBox_covers_anchor`). So a label with no descender keeps one
+    inner sep below it, not the face's descent as well.
+  - *Measured.* On the deck's bare-label frames the gap from the lowest
+    label's baseline to the next text went 45 → 41 px against lualatex's 42,
+    and 45 → 41 against 43 (110 dpi).
+- **`align=` and `every text node part`** (`5996addb`). The text-part style
+  is readable, and its keys reach every node, edge labels included, at the
+  level of `every node`. `align=` (left, right, center, and their flush
+  spellings) stands each centred line flush within the widest one
+  (`alignLabels`). The widest line stays where centring put it, so neither
+  the block nor the node's extent moves.
+- **`rectangle` and `-- cycle`** (`b836a45a`). A `\draw` rectangle is a
+  stroked `.frame`: one closed outline, with every corner joined in both
+  backends. `cycle` draws the side back to the current subpath's start. A
+  side that does not start where the last ended opens a new subpath, as
+  pgf moves to a node's border. The first side is split at its midpoint,
+  so the PDF strokes the polygon as one subpath and does not cap its first
+  corner twice. No `PathSeg` constructor was needed.
+
+**Guards** (Tests/PictureKeys.lean). They are `pictureWidthChecks`,
+`pictureFontChecks`, `pictureTextBoxChecks`, `pictureAlignChecks` and
+`pictureClosedPathChecks`. Each asserts over `Layout.Out`, the SVG tree or
+the PDF path operators, and fails on the engine before its unit. Each was
+broken once through the shipped path; the logs are in the evidence
+directory. `elabMeasured` (Tests/Support.lean) is the driver's measured
+elaboration, now shared.
+
+**A finding for the user: native first now flips two probes.** A picture
+the subset drew nothing of went whole to the lualatex boundary. The flashtex
+grid and transform probes were drawn that way, exactly. Their rectangles are
+now native, so the subset draws them and names the grid and the `scope` as
+lost. Under the standing "native first" order this is by design, but it is a
+visible loss wherever a tool was available. The choice between that order
+and "a picture with any named loss goes to the boundary when a tool is
+declared" belongs to the user.
+
+**Not done.** Picture labels are still not judged for contrast (the
+`.picture` arms of `Contrast.usesBlock` and `Ir.recolorRolesBlock`). The
+reason is recorded, not guessed. A judge alone would add pairing warnings to
+both private documents, and no realization path exists for a label's
+literal colour. Whether diagram text is WCAG 1.4.3's "incidental" text is
+the user's call. `Contrast.UseCx.style`'s `.size` arm still reads
+`sizeScale`, not the document's ladder.
