@@ -3510,6 +3510,78 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((outOf "bleed = 3mm, marks = cut" "\\palette{ spot = cmyk(1, 0, 0, 0) }").pages.all
       fun p => p.fills.all fun f => f.color.cmyk == some (1000, 1000, 1000, 1000))
 
+/-- A card spelled in LaTeX draws its own printer's marks: eight hairlines
+from a `shipout/background` picture, positioned from the same lengths as
+the trim. The drawing is read as the rules it draws (`Ir.PageSpec.drawn`),
+and rules that are exactly a trim's cut marks declare that trim and its
+bleed (`Layout.drawnTrim`): the marks ship where they were drawn, in their
+ink, the text stays where the geometry put it, and the file names the trim.
+Invented lengths and names throughout. -/
+def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pre (draw : String) : String :=
+    "\\documentclass{article}\\usepackage{geometry}\\usepackage[cmyk]{xcolor}" ++
+    "\\newlength{\\trimw}\\newlength{\\trimh}\\newlength{\\bl}\\newlength{\\paperw}" ++
+    "\\newlength{\\paperh}\\newlength{\\hair}\\newlength{\\stub}" ++
+    "\\setlength{\\trimw}{3.5in}\\setlength{\\trimh}{2in}\\setlength{\\bl}{3mm}" ++
+    "\\setlength{\\paperw}{\\trimw+2\\bl}\\setlength{\\paperh}{\\trimh+2\\bl}" ++
+    "\\setlength{\\hair}{0.25pt}\\setlength{\\stub}{1mm}" ++
+    "\\geometry{paperwidth=\\paperw, paperheight=\\paperh, margin=8mm}" ++
+    "\\definecolor{allplates}{cmyk}{1,1,1,1}\\pagestyle{empty}" ++ draw ++
+    "\\begin{document}\\noindent Placeholder Name\\end{document}"
+  let vmark (x y : String) : String :=
+    s!"\\put({x},{y})\{\\rule\{\\hair}\{\\stub}}"
+  let hmark (x y : String) : String :=
+    s!"\\put({x},{y})\{\\rule\{\\stub}\{\\hair}}"
+  let marks :=
+    "\\newcommand{\\drawmarks}{\\begin{picture}(0,0)" ++
+    vmark "\\dimexpr\\bl-0.5\\hair\\relax" "0pt" ++
+    vmark "\\dimexpr\\bl-0.5\\hair\\relax" "\\dimexpr\\paperh-\\stub\\relax" ++
+    vmark "\\dimexpr\\paperw-\\bl-0.5\\hair\\relax" "0pt" ++
+    vmark "\\dimexpr\\paperw-\\bl-0.5\\hair\\relax" "\\dimexpr\\paperh-\\stub\\relax" ++
+    hmark "0pt" "\\dimexpr\\bl-0.5\\hair\\relax" ++
+    hmark "\\dimexpr\\paperw-\\stub\\relax" "\\dimexpr\\bl-0.5\\hair\\relax" ++
+    hmark "0pt" "\\dimexpr\\paperh-\\bl-0.5\\hair\\relax" ++
+    hmark "\\dimexpr\\paperw-\\stub\\relax" "\\dimexpr\\paperh-\\bl-0.5\\hair\\relax" ++
+    "\\end{picture}}" ++
+    "\\AddToHook{shipout/background}{\\put(0pt,-\\paperh){\\color{allplates}\\drawmarks}}"
+  let (doc, ds) := elabStr (pre marks)
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf oneFace doc geom
+  let bl := Dim.mm 3
+  let hair := Dim.pt 1 / 4
+  let want := Layout.cutMarks (Dim.inch 7 / 2) (Dim.inch 2) bl (bl - Dim.mm 1) hair
+    (Ir.Color.ofCmyk 1000 1000 1000 1000)
+  t "a drawn picture's rules are read, and the hook names no loss"
+    (doc.page.drawn.size == 8 && !(ds.any fun d => d.code == DiagCode.W0104.code))
+  t "rules that are a trim's cut marks declare the trim, inside the medium"
+    (Layout.drawnTrim doc.page == some (bl, bl - Dim.mm 1, hair) &&
+     geom.trimInset == bl && geom.bleed == 0 &&
+     geom.pageW == Dim.inch 7 / 2 + 2 * bl && geom.pageH == Dim.inch 2 + 2 * bl)
+  t "the drawn marks ship on every page where they were drawn, in their ink"
+    (out.pages.size ≥ 1 && out.pages.all fun p =>
+      want.all fun f => p.fills.any fun g =>
+        g.x == f.x + bl && g.y == f.y + bl && g.w == f.w && g.h == f.h &&
+          g.color == f.color)
+  t "the text keeps the margin the geometry measured from the medium"
+    (lineXOf (censusOf #[] out) 0 "Placeholder" == some (Dim.mm 8))
+  let pdf := pdfText (Pdf.write geom oneFace out.pages doc.info)
+  let (media, bleedBox, trim) := Pdf.pageBoxes (Dim.inch 7 / 2) (Dim.inch 2) bl
+  t "the file names the trim the marks cut"
+    (bytesContain pdf s!"/TrimBox {trim.render}" &&
+     bytesContain pdf s!"/BleedBox {bleedBox.render}" &&
+     bytesContain pdf s!"/ArtBox {trim.render}" &&
+     bytesContain pdf s!"/MediaBox {media.render}")
+  -- A drawing that marks no trim ships as drawn and declares none.
+  let (lone, _) := elabStr (pre ("\\AddToHook{shipout/background}" ++
+    "{\\put(0pt,-\\paperh){\\color{allplates}\\put(\\bl,\\bl){\\rule{\\stub}{\\hair}}}}"))
+  let loneGeom := Layout.Geom.ofPage lone.page
+  t "a drawing that marks no trim declares none"
+    (Layout.drawnTrim lone.page == none && loneGeom.trimInset == 0)
+  t "and ships as drawn, from the medium's corner"
+    ((layoutOf oneFace lone loneGeom).pages.all fun p => p.fills.any fun f =>
+      f.x == bl && f.w == Dim.mm 1 && f.h == hair && f.y == lone.page.height - bl - hair)
+
 /-- A driver option asks for nothing the page shows: geometry's and crop's
 driver names (`dvips=false`, `pdftex`, `driver=...`) and geometry's
 `verbose` pass with no loss named, because the build with them ships the

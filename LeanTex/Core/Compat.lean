@@ -3257,6 +3257,184 @@ private def addToHook (pos : Pos) : M Unit :=
     "'\\AddToHook' registers code on a kernel hook; the engine has no \
 hook machinery; skipped" pos
 
+/-- A shipout picture flattened to TeX's own shape, a token stream with its
+group and environment brackets explicit, so reading it is one pass over a
+sequence rather than a recursion over what drawing macros expand to. -/
+private inductive PicTok where
+  | ctrl (n : String)
+  | chr (c : Char)
+  | bgroup
+  | egroup
+  | benv (n : String)
+  | eenv (n : String)
+  | other
+  deriving Inhabited, BEq
+
+mutual
+/-- The flat stream of a raw list; a control word goes through `onCtrl`,
+which is where a drawing macro's body may be spliced. -/
+private def picFlatList (onCtrl : String → Array PicTok → Array PicTok) :
+    List Raw → Array PicTok → Array PicTok
+  | [], acc => acc
+  | r :: rest, acc => picFlatList onCtrl rest (picFlatOne onCtrl r acc)
+termination_by structural l _ => l
+
+private def picFlatOne (onCtrl : String → Array PicTok → Array PicTok) :
+    Raw → Array PicTok → Array PicTok
+  | .word w _, acc => w.toList.foldl (fun a c => a.push (.chr c)) acc
+  | .sym c _, acc => acc.push (.chr c)
+  | .space, acc => acc
+  | .par _, acc => acc
+  | .ctrl n _, acc => onCtrl n acc
+  | .group body _, acc => (picFlatList onCtrl body.toList (acc.push .bgroup)).push .egroup
+  | .env n body _, acc =>
+    (picFlatList onCtrl body.toList (acc.push (.benv n))).push (.eenv n)
+  | _, acc => acc.push .other
+termination_by structural r _ => r
+end
+
+/-- A picture length as a native expression: `\dimexpr` and `\relax` are
+TeX's brackets around the arithmetic, a coefficient against a name is a
+product (`0.5\x` is `0.5 * x`), and a name is a declared length or nothing
+this reading takes. -/
+private def picExpr (lengths : Array String) (ts : Array PicTok) : Option String := Id.run do
+  let mut s := ""
+  let mut prevNum := false
+  for t in ts do
+    match t with
+    | .ctrl "dimexpr" | .ctrl "relax" => pure ()
+    | .ctrl n =>
+      unless lengths.contains n do return none
+      s := s ++ (if prevNum then " * " else "") ++ n
+      prevNum := false
+    | .chr c =>
+      s := s.push c
+      prevNum := c.isDigit || c == '.'
+    | _ => return none
+  let out := s.trimAscii.toString
+  return some (if out.isEmpty then "0pt" else out)
+
+/-- An offset added to an origin, both native expressions. -/
+private def picShift (origin e : String) : String :=
+  if e.startsWith "-" then s!"({origin}) - ({(e.drop 1).toString})" else s!"({origin}) + ({e})"
+
+/-- **A shipout picture's rules** (the kernel's `shipout/background` and
+`shipout/foreground` pictures, whose reference point is the page's top-left
+corner, y up): `\put(x,y){...}` moves the reference point for its group,
+`\color{c}` inks the rest of its group, `\rule{w}{h}` stands with its
+lower-left corner on the point, a `picture` environment opens a group at
+the point, and a drawing macro — a parameterless definition whose body
+draws — is read one level deep, where shipout expands it. Each rule is
+`(x, y, w, h, colour)` in native expressions over the lengths the document
+declared (`lengths`). Anything else — text, another command, a picture
+offset, a length the document never declared — reads nothing: `none`, and
+the hook stays skipped by name. -/
+private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array String)
+    (code : Array Raw) : Option (Array (String × String × String × String × String)) := Id.run do
+  let flat0 := picFlatList (fun n acc => acc.push (.ctrl n))
+  let draws (body : Array Raw) : Bool :=
+    (flat0 body.toList #[]).any fun t => t == .ctrl "put" || t == .ctrl "rule"
+  let toks := picFlatList (fun n acc => match look n with
+    | some body => if draws body then flat0 body.toList acc else acc.push (.ctrl n)
+    | none => acc.push (.ctrl n)) code.toList #[]
+  -- the frame stack: each open group's reference point and ink
+  let mut stack : Array (String × String × String) := #[("0pt", "0pt", "black")]
+  let mut mode : Nat := 0
+  let mut buf : Array PicTok := #[]
+  let mut first : Array PicTok := #[]
+  let mut name := ""
+  let mut rules : Array (String × String × String × String × String) := #[]
+  for t in toks do
+    let (ox, oy, ink) := stack.back?.getD ("0pt", "0pt", "black")
+    if mode == 13 then
+      -- after a picture's size: an offset pair is a reference point this
+      -- reading does not move
+      if t == .chr '(' then return none
+      mode := 0
+    match mode with
+    | 0 =>
+      match t with
+      | .ctrl "put" => mode := 1
+      | .ctrl "color" => mode := 5
+      | .ctrl "rule" => mode := 7
+      | .ctrl "relax" => pure ()
+      | .bgroup => stack := stack.push (ox, oy, ink)
+      | .egroup =>
+        if stack.size ≤ 1 then return none
+        stack := stack.pop
+      | .benv "picture" =>
+        stack := stack.push (ox, oy, ink)
+        mode := 11
+      | .eenv "picture" =>
+        if stack.size ≤ 1 then return none
+        stack := stack.pop
+      | _ => return none
+    | 1 =>
+      unless t == .chr '(' do return none
+      buf := #[]
+      mode := 2
+    | 2 =>
+      if t == .chr ',' then
+        first := buf
+        buf := #[]
+        mode := 3
+      else if t == .chr ')' || t == .bgroup || t == .egroup then return none
+      else buf := buf.push t
+    | 3 =>
+      if t == .chr ')' then
+        let (some px, some py) := (picExpr lengths first, picExpr lengths buf) | return none
+        first := #[]
+        buf := #[]
+        stack := stack.push (picShift ox px, picShift oy py, ink)
+        mode := 4
+      else if t == .bgroup || t == .egroup then return none
+      else buf := buf.push t
+    | 4 =>
+      unless t == .bgroup do return none
+      mode := 0
+    | 5 =>
+      unless t == .bgroup do return none
+      name := ""
+      mode := 6
+    | 6 =>
+      match t with
+      | .chr c => name := name.push c
+      | .egroup =>
+        stack := stack.pop.push (ox, oy, name.trimAscii.toString)
+        mode := 0
+      | _ => return none
+    | 7 =>
+      unless t == .bgroup do return none
+      buf := #[]
+      mode := 8
+    | 8 =>
+      if t == .egroup then
+        first := buf
+        buf := #[]
+        mode := 9
+      else if t == .bgroup then return none
+      else buf := buf.push t
+    | 9 =>
+      unless t == .bgroup do return none
+      buf := #[]
+      mode := 10
+    | 10 =>
+      if t == .egroup then
+        let (some w, some h) := (picExpr lengths first, picExpr lengths buf) | return none
+        rules := rules.push (ox, oy, w, h, ink)
+        first := #[]
+        buf := #[]
+        mode := 0
+      else if t == .bgroup then return none
+      else buf := buf.push t
+    | 11 =>
+      unless t == .chr '(' do return none
+      mode := 12
+    | 12 => if t == .chr ')' then mode := 13
+    | _ => return none
+  -- the stream ends where it began: every group closed, no command half read
+  if (mode == 0 || mode == 13) && stack.size == 1 then return some rules else return none
+
 /-- `\pagecolor[model]{colour}` sets the page background from here on
 (xcolor manual §2.6); the engine's page background is the palette's `bg`
 role, the one resolving site both backends read, so the contrast contracts
@@ -4806,9 +4984,27 @@ face serves every language, so the binding is dropped" pos
       return some (← documentMetadata (rawSrc args[0]) pos, k)
     else return none
   | "AddToHook" =>
-    let (_, j) := takeGroups raws start 1
+    let (hookArgs, j) := takeGroups raws start 1
     let (_, j) := takeOpt raws j
-    let (_, k) := takeGroups raws j 1
+    let (codeArgs, k) := takeGroups raws j 1
+    let hook := rawSrc (hookArgs.getD 0 #[])
+    if hook == "shipout/background" || hook == "shipout/foreground" then
+      let st ← get
+      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
+        | some (some v) => some v.raws
+        | _ => none
+      -- the lengths this level declared before the hook: what a rule's
+      -- coordinates may name
+      let lengths := (Array.range start).filterMap fun i => match raws[i]? with
+        | some (Raw.ctrl "newlength" _) => (takeGroups raws (i + 1) 1).1[0]?.bind ctrlName
+        | _ => none
+      match shipoutRules look lengths (codeArgs.getD 0 #[]) with
+      | some rules =>
+        let entries := rules.map fun (x, y, w, h, c) => s!"rule = \"{x}; {y}; {w}; {h}; {c}\""
+        let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
+        became s!"\\AddToHook\{{hook}}" native pos
+        return some (← synthAt native pos, k)
+      | none => pure ()
     addToHook pos
     return some (#[], k)
   | "newlength" =>

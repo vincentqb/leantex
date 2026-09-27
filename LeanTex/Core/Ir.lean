@@ -90,6 +90,19 @@ offset floor, so the mark survives either process. This engine reads
 `\page{ mark-thickness = ... }` overrides. -/
 def cutMarkThickness : Sp := pt 1 / 2
 
+/-- One rule a document draws on every page from a shipout hook
+(`\AddToHook{shipout/background}{\put(x,y){\rule{w}{h}}}`, the kernel's
+picture whose reference point is the page's top-left corner): its box in
+medium coordinates, x right and y down from the medium's top-left corner,
+and the palette name it is inked in. -/
+structure DrawnRule where
+  x : Sp
+  y : Sp
+  w : Sp
+  h : Sp
+  color : String
+  deriving Repr, BEq, Inhabited
+
 /-- Page geometry, as declared by `\page`. -/
 structure PageSpec where
   width : Sp := pt 612
@@ -195,6 +208,13 @@ structure PageSpec where
   declared values mean equal visual gaps; a surviving difference is
   N0021. -/
   footskip : Option Sp := none
+  /-- The rules the document draws on every page (`DrawnRule`), in the
+  order drawn. Eight that are exactly the cut marks of one trim declare
+  that trim (`Layout.drawnTrim`). Only the paged artifact draws them: a
+  rule anchored to the page's corner is a paged-media fact, and the HTML
+  twin has no page corner to anchor it to — the recorded divergence cut
+  marks and page boxes already make. -/
+  drawn : Array DrawnRule := #[]
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).
@@ -12958,6 +12978,8 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       | some g => s!" parskip {dumpGlue g}"
       | none => "") ++
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
+    String.join (doc.page.drawn.toList.map fun r =>
+      s!" drawn {r.x.toPtString} {r.y.toPtString} {r.w.toPtString} {r.h.toPtString} {r.color}") ++
     (if doc.page.marks then " marks cut" else "") ++
     (if doc.page.markGap != cutMarkGap
       then s!" mark-gap {doc.page.markGap.toPtString}" else "") ++

@@ -72,6 +72,10 @@ structure Geom where
   /-- The cut marks' declared thickness (`Ir.cutMarkThickness` holds the
   default and its source). -/
   markThick : Sp := Ir.cutMarkThickness
+  /-- How far inside the medium a trim the document's own drawn marks cut
+  lies (`drawnTrim`), on a page that declares no bleed: the medium stays
+  the page, and only the file's boxes name the trim. -/
+  trimInset : Sp := 0
   /-- The band a page footer reserves above the bottom margin: what its ink
   and body-side gap need beyond the margin. Zero when there is no footer or
   the margin already holds it, so an undeclared page is unchanged.
@@ -332,28 +336,6 @@ theorem offMedium_agree (g : Geom) (x w : Sp) :
     simp only [Bool.and_eq_true, decide_eq_true_eq]
     omega
   exact key g.bleed g.pageW x w
-
-/-- Resolve a document's `\page` declaration into layout geometry. One source
-of truth: layout reads geometry only from here. -/
-def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
-  { base with
-    pageW := spec.width
-    pageH := spec.height
-    hmargin := spec.hmargin
-    vmargin := spec.vmargin
-    fontSize := spec.fontSize
-    listIndent := listIndentFor spec.fontSize
-    leading := spec.leading
-    parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
-    hyphenate := spec.hyphenate.getD base.hyphenate
-    justify := spec.justify.getD base.justify
-    protrude := spec.protrude.getD base.protrude
-    expand := spec.expand.getD base.expand
-    bleed := spec.bleed
-    marks := spec.marks
-    markGap := spec.markGap
-    markThick := spec.markThickness
-    scale := spec.scale }
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit
@@ -865,6 +847,55 @@ theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
   · exact ⟨_, List.mem_toArray.mpr
       (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))))),
       h.2.2.2, rfl, rfl, rfl⟩
+
+/-- **The trim a page's drawn rules declare.** A document that draws its own
+printer's marks from a shipout hook (`Ir.PageSpec.drawn`) declares the trim
+they mark. When the rules are exactly `cutMarks` of one trim — the inset
+read off the leftmost top mark's centre line, the thickness off its width,
+the gap off its length, both inside the geometry `cutmarks_in_bleed_covers`
+needs, so the drawn set is one those theorems hold of — the medium's trim
+lies that far in (`Geom.trimInset`). Any other drawing declares no trim,
+and a page with a declared bleed already names its own. -/
+def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
+  guard (spec.bleed == 0 && spec.drawn.size == 8)
+  let lead ← spec.drawn.foldl (fun m r =>
+    if r.y == 0 && r.w < r.h && m.all (r.x < ·.x) then some r else m) none
+  let t := lead.w
+  let b := lead.x + t / 2
+  let g := b - lead.h
+  guard (t % 2 == 0 && 0 < t && 0 ≤ g && t ≤ 2 * g && g < b)
+  let marks := cutMarks (spec.width - 2 * b) (spec.height - 2 * b) b g t Ir.Color.black
+  let same (r : Ir.DrawnRule) (f : Fill) : Bool :=
+    r.x == f.x + b && r.y == f.y + b && r.w == f.w && r.h == f.h
+  guard (spec.drawn.all fun r => marks.any (same r ·))
+  guard (marks.all fun f => spec.drawn.any (same · f))
+  return (b, g, t)
+
+/-- Resolve a document's `\page` declaration into layout geometry. One source
+of truth: layout reads geometry only from here. A page whose drawn rules are
+a trim's cut marks (`drawnTrim`) keeps its medium as the page — the rules
+stand where the document drew them — and records the trim's inset, the one
+thing the file must add (`Pdf.pageBoxes`). -/
+def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
+  { base with
+    pageW := spec.width
+    pageH := spec.height
+    hmargin := spec.hmargin
+    vmargin := spec.vmargin
+    fontSize := spec.fontSize
+    listIndent := listIndentFor spec.fontSize
+    leading := spec.leading
+    parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
+    hyphenate := spec.hyphenate.getD base.hyphenate
+    justify := spec.justify.getD base.justify
+    protrude := spec.protrude.getD base.protrude
+    expand := spec.expand.getD base.expand
+    bleed := spec.bleed
+    marks := spec.marks
+    markGap := spec.markGap
+    markThick := spec.markThickness
+    trimInset := ((drawnTrim spec).map (·.1)).getD 0
+    scale := spec.scale }
 
 /-- A path on the page, in layout coordinates (y down): what a picture's
 node outlines — and, as the subset grows, its edges — become. The
@@ -9076,14 +9107,20 @@ theorem addMarks_mem (out : Out) (m : Array Fill) (p : PageOut)
 
 /-- The mark fills a document's pages take: the derived eight when marks
 are declared and the declared gap fits inside the bleed (`cutMarks`),
-nothing otherwise. Painted in the registration reading
+nothing otherwise, painted in the registration reading
 (`Ir.Color.registration`): CMYK 1,1,1,1 when the document declares print
-colours, black otherwise. -/
+colours, black otherwise. Then the rules the document drew itself
+(`Ir.PageSpec.drawn`), each on every page at the medium point it named, in
+the ink it named. -/
 private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
-  if geom.marks && geom.markGap < geom.bleed && 0 < geom.markThick then
-    cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
-      (Ir.Color.registration (doc.palette.entries.any (·.2.cmyk.isSome)))
-  else #[]
+  let marks := if geom.marks && geom.markGap < geom.bleed && 0 < geom.markThick then
+      cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
+        (Ir.Color.registration (doc.palette.entries.any (·.2.cmyk.isSome)))
+    else #[]
+  marks ++ doc.page.drawn.map fun r =>
+    ({ x := r.x - geom.bleed, y := r.y - geom.bleed, w := r.w, h := r.h,
+       color := ((doc.palette.entries.find? (·.1 == r.color)).map (·.2)).getD Ir.Color.black }
+      : Fill)
 
 /-- The document as the paged backend reads it: backend conditionals
 resolved at the entry (`Ir.keepFor_covers` is why dropping here cannot

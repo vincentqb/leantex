@@ -1162,8 +1162,14 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- §14.11.2), so an empty dictionary already declares all boxes equal
     -- — and the zero-bleed output stays byte-identical.
     let b := geom.bleed
-    let (media, bleedBox, trim) := pageBoxes geom.pageW geom.pageH b
-    let boxes : Array (String × PdfRead.Obj) := if b == 0 then #[] else
+    -- A trim the document's own drawn marks cut (`Geom.trimInset`) is the
+    -- same arithmetic from the other side: the medium is the page, the trim
+    -- lies the inset inside it.
+    let inset := if b == 0 then geom.trimInset else 0
+    let (media, bleedBox, trim) :=
+      if 0 < inset then pageBoxes (geom.pageW - 2 * inset) (geom.pageH - 2 * inset) inset
+      else pageBoxes geom.pageW geom.pageH b
+    let boxes : Array (String × PdfRead.Obj) := if b == 0 && !(0 < inset) then #[] else
       #[("TrimBox", trim.obj), ("BleedBox", bleedBox.obj), ("ArtBox", trim.obj)]
     let xobj : Array (String × PdfRead.Obj) := if ni == 0 then #[] else
       #[("XObject", .dict (t.imgIds.zipIdx.map fun (id, n) =>

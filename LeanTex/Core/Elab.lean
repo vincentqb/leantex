@@ -675,7 +675,7 @@ def pageKeys : List String :=
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
-   "furnituregap", "headsep", "footskip"]
+   "furnituregap", "headsep", "footskip", "rule"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
 claim the page as declared (`sawPage` in `elabDoc`), keeping every value
@@ -9590,7 +9590,7 @@ private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Un
   modify fun st => applyEvent ctx st (.scalar decl key value pos)
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
-    (pos : Pos) : PageSpec × Array PEvent := Id.run do
+    (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be a declared token or an expression over them
   -- (`\geometry{paperheight=\bleedingheight}`), which parses as glue: it
   -- is a dimension when nothing font-relative or infinite rides in it —
@@ -9716,6 +9716,20 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else
         evs := evs.push
           (.say (Decl.wrongType ctx.file "page" "mark-thickness" "a dimension" v pos))
+    -- A rule drawn on every page, as a shipout picture draws it
+    -- (`Ir.DrawnRule`): `"x; y; w; h; colour"`, the lower-left corner from
+    -- the page's top-left with y up, as the kernel's picture reads it. The
+    -- box is stored y down from the medium's top-left corner.
+    | "rule", .str s =>
+      match s.splitOn ";" |>.map (·.trimAscii.toString) with
+      | [x, y, w, h, c] =>
+        match [x, y, w, h].map fun p => (Decl.parseValue p tokens).bind asDim with
+        | [some x, some y, some w, some h] =>
+          spec := { spec with drawn := spec.drawn.push ⟨x, -(y + h), w, h, c⟩ }
+        | _ => evs := say evs .E0323 s!"'rule' in '\\page' expects four dimensions, got '{s}'"
+      | _ =>
+        let msg := s!"'rule' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
+        evs := say evs .E0323 msg
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
@@ -9802,10 +9816,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight",
-               "mark-gap", "mark-thickness", "modulo"].contains ·)) pos))
+               "mark-gap", "mark-thickness", "modulo", "rule"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
-    -- the entry applied: record it, and warn if it overwrote (W0343).
-    if evs.size == before then
+    -- the entry applied: record it, and warn if it overwrote (W0343). A
+    -- `rule` adds a drawing rather than setting a value, so a second one
+    -- overwrites nothing.
+    if evs.size == before && e.key != "rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   return (spec, evs)
 
@@ -10798,7 +10814,7 @@ private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState :=
 private def stepPage (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
-  let pe := applyPage s.ctx s.page pb.1 pos
+  let pe := applyPage s.ctx s.page pb.1 pos s.tokens.entries
   -- Only geometry keys claim the page: `\page{ parskip = ... }` keeps the
   -- Bringhurst default margin standing (≈ the `!sawPage` branch after the
   -- fold).
