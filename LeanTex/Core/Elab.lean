@@ -276,6 +276,40 @@ theorem runShape_add_monotone (s : RunShape) (b : Bool) :
     (s.withRun → (s.add b).withRun) ∧ (s.withoutRun → (s.add b).withoutRun) := by
   cases b <;> simp [RunShape.add]
 
+/-- The counters the flow keeps (ltcounts.dtx), in document order, and
+the heading-number state they render through. -/
+structure Counters where
+  /-- The section counters in flow order, levels 1–3: elaboration is one
+  pass in document order, so stepping them here is exactly LaTeX's
+  \refstepcounter sequence. -/
+  secNums : Nat × Nat × Nat := (0, 0, 0)
+  /-- LaTeX's `secnumdepth` counter: the deepest level a heading numbers
+  at, and above which it neither numbers nor steps (ltsect.dtx `\@sect`).
+  3 is article's (classes.dtx), and the three counters stop there. -/
+  secDepth : Int := 3
+  /-- Declared heading-number formats, one per level, last wins — the
+  flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
+  it stands, as LaTeX's redefinition applies from its own position. Empty
+  for a level means the class default (classes.dtx §Sectioning). -/
+  secFmts : Array (Nat × Array SecPart) := #[]
+  /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …)
+  and the section counter restarted — a from-here-forward flow state, the
+  `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
+  inAppendix : Bool := false
+  /-- The equation counter, per document (amsmath's `\numberwithin` is not
+  modelled; a document that declares it keeps the per-document numbers). -/
+  eqNum : Nat := 0
+  /-- The listing counter, per document: every captioned listing takes the
+  next number in flow order, exactly the equation counter's fold
+  (listings steps `\thelstlisting` per captioned listing). -/
+  lstNum : Nat := 0
+  /-- The footnote counter, per document, stepped by `Ir.footnoteMark`:
+  `\footnote[n]` overrides without stepping, so
+  `Ir.footnote_numbers_gapless` is the numbering this fold realizes.
+  Per-chapter numbering waits for a real report class (a `ClassRecord`
+  field then). -/
+  fnNum : Nat := 0
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -380,36 +414,11 @@ structure ESt where
   declares — the standing value is then the bundle's — so `\theme` after
   `\theme` never claims the document declared what a bundle did. -/
   declaredKeys : Array (String × String) := #[]
-  /-- The section counters in flow order, levels 1–3: elaboration is one
-  pass in document order, so stepping them here is exactly LaTeX's
-  \refstepcounter sequence. -/
-  secNums : Nat × Nat × Nat := (0, 0, 0)
-  /-- LaTeX's `secnumdepth` counter: the deepest level a heading numbers
-  at, and above which it neither numbers nor steps (ltsect.dtx `\@sect`).
-  3 is article's (classes.dtx), and the three counters stop there. -/
-  secDepth : Int := 3
-  /-- Declared heading-number formats, one per level, last wins — the
-  flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
-  it stands, as LaTeX's redefinition applies from its own position. Empty
-  for a level means the class default (classes.dtx §Sectioning). -/
-  secFmts : Array (Nat × Array SecPart) := #[]
-  /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …)
-  and the section counter restarted — a from-here-forward flow state, the
-  `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
-  inAppendix : Bool := false
-  /-- The equation counter, per document (amsmath's `\numberwithin` is not
-  modelled; a document that declares it keeps the per-document numbers). -/
-  eqNum : Nat := 0
-  /-- The listing counter, per document: every captioned listing takes the
-  next number in flow order, exactly the equation counter's fold
-  (listings steps `\thelstlisting` per captioned listing). -/
-  lstNum : Nat := 0
-  /-- The footnote counter, per document, stepped by `Ir.footnoteMark`:
-  `\footnote[n]` overrides without stepping, so
-  `Ir.footnote_numbers_gapless` is the numbering this fold realizes.
-  Per-chapter numbering waits for a real report class (a `ClassRecord`
-  field then). -/
-  fnNum : Nat := 0
+  /-- LaTeX's counters and the heading numbers they render, apart: the
+  inline elaboration knot's compile grows with this structure's fields and
+  stands at its heartbeat budget, so state the knot never reads is a record
+  of its own (`Counters`). -/
+  ctr : Counters := {}
   /-- The binding of the nearest preceding numbered thing — what a `\label`
   declared here binds to: the rendered number with the kind of what it
   names (`Ir.RefBinding`). A heading sets it for the flow after it; a bare
@@ -2557,7 +2566,7 @@ theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
 
 mutual
 /-- Render one level's heading number: the declared format when one
-stands (`ESt.secFmts`, last declaration wins), the class default
+stands (`Counters.secFmts`, last declaration wins), the class default
 otherwise. `fuel` bounds `\the<counter>` references between formats —
 a self-referential chain cannot outrun it — and an exhausted budget
 falls back to the counter's bare arabic value. -/
@@ -2640,7 +2649,8 @@ private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
 scope, the `\logo`/body-`\palette` model, never a brace revert. -/
 private def applySecFmt (lvl : Nat) (parts : Array SecPart) : EM Unit :=
   modify fun st =>
-    { st with secFmts := (st.secFmts.filter (·.1 != lvl)).push (lvl, parts) }
+    { st with ctr := { st.ctr with
+        secFmts := (st.ctr.secFmts.filter (·.1 != lvl)).push (lvl, parts) } }
 
 /-- The counter-command names (ltcounts.dtx), one gate for the
 block-shape judgement and the block walk's arm. -/
@@ -2656,8 +2666,8 @@ makes the counter the current `\ref` target (`\@currentlabel` is
 Nats; a negative result clamps to zero. -/
 private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
   let st ← get
-  let (s1, s2, s3) := st.secNums
-  let cur : Int := Int.ofNat (counterAt st.secNums lvl)
+  let (s1, s2, s3) := st.ctr.secNums
+  let cur : Int := Int.ofNat (counterAt st.ctr.secNums lvl)
   let v : Int := match name with
     | "setcounter" => n
     | "addtocounter" => cur + n
@@ -2668,9 +2678,9 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
     | 1 => if step then (v, 0, 0) else (v, s2, s3)
     | 2 => if step then (s1, v, 0) else (s1, v, s3)
     | _ => (s1, s2, v)
-  modify fun st => { st with secNums := nums }
+  modify fun st => { st with ctr := { st.ctr with secNums := nums } }
   if name == "refstepcounter" then
-    let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel lvl
+    let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel lvl
     -- A bare counter step numbers no node: what a label here names has no
     -- kind, so the binding is kindless — a `\cref` to it is W0380.
     modify fun st => { st with refTarget := some { kind := none, num := num } }
@@ -2678,23 +2688,24 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
 /-- The counters besides the sections that the flow keeps (ltcounts.dtx):
 `secnumdepth`, how deep headings number; `footnote` and `equation`, the
 last number each gave. Each is its reader and its writer over the state. -/
-private def flowCounter? (ctr : String) : Option ((ESt → Int) × (ESt → Int → ESt)) :=
+private def flowCounter? (ctr : String) :
+    Option ((Counters → Int) × (Counters → Int → Counters)) :=
   match ctr with
-  | "secnumdepth" => some (fun st => st.secDepth, fun st v => { st with secDepth := v })
-  | "footnote" => some (fun st => st.fnNum, fun st v => { st with fnNum := v.toNat })
-  | "equation" => some (fun st => st.eqNum, fun st v => { st with eqNum := v.toNat })
+  | "secnumdepth" => some (fun c => c.secDepth, fun c v => { c with secDepth := v })
+  | "footnote" => some (fun c => c.fnNum, fun c v => { c with fnNum := v.toNat })
+  | "equation" => some (fun c => c.eqNum, fun c v => { c with eqNum := v.toNat })
   | _ => none
 
 /-- Set, add to or step a flow counter, as `applyCounter` does a section's:
 a count below zero clamps to zero, and the depth may go negative, as
 LaTeX's `-1` turns every heading's number off. -/
-private def applyFlowCounter (name : String) (rw : (ESt → Int) × (ESt → Int → ESt))
-    (n : Int) : EM Unit :=
-  modify fun st =>
-    rw.2 st (match name with
+private def applyFlowCounter (name : String)
+    (rw : (Counters → Int) × (Counters → Int → Counters)) (n : Int) : EM Unit :=
+  modify fun st => { st with
+    ctr := rw.2 st.ctr (match name with
       | "setcounter" => n
-      | "addtocounter" => rw.1 st + n
-      | _ => rw.1 st + 1)
+      | "addtocounter" => rw.1 st.ctr + n
+      | _ => rw.1 st.ctr + 1) }
 
 /-- One counter command with its arguments starting at `i` (just past
 the control word): scan, apply over the section counters, name any
@@ -2788,9 +2799,9 @@ private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
 /-- Step the footnote counter through `Ir.footnoteMark` and return the
 mark's number: an override is itself and steps nothing. -/
 private def footnoteStepNum (override : Option Nat) : EM Nat := do
-  let k0 := (← get).fnNum
+  let k0 := (← get).ctr.fnNum
   let (num, fn) := Ir.footnoteMark k0 override
-  modify fun st => { st with fnNum := fn }
+  modify fun st => { st with ctr := { st.ctr with fnNum := fn } }
   return num
 
 /-- The missing-group diagnostic the two note arms share, outside the knot. -/
@@ -4790,27 +4801,27 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
 not number. classes.dtx §Sectioning: `\thesection` is `\arabic{section}`
 (`\Alph` after `\appendix`), each deeper level prefixes its parent, a
 starred form neither numbers nor steps, and neither does a heading deeper
-than `secnumdepth` (`ESt.secDepth`: 3, article's, unless the document sets
+than `secnumdepth` (`Counters.secDepth`: 3, article's, unless the document sets
 it), so `\paragraph` and below never number. A document's own
-`\renewcommand{\the<counter>}{...}` format (`ESt.secFmts`) renders
+`\renewcommand{\the<counter>}{...}` format (`Counters.secFmts`) renders
 instead where one stands. Stepping a level zeroes the deeper
 ones, so `2.1` after a fresh `\section` is impossible by construction. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
   if starred || !ctx.numberHeadings || level == 0 || level > 3 ||
-      (level : Int) > st.secDepth then
+      (level : Int) > st.ctr.secDepth then
     return none
-  let (s1, s2, s3) := st.secNums
+  let (s1, s2, s3) := st.ctr.secNums
   let nums := match level with
     | 1 => (s1 + 1, 0, 0)
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
-  let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel level
+  let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
   -- The heading is the numbered thing in force from here on: a \label in
   -- the flow after it binds to this number, as a heading (`\cref` says
   -- "section").
-  modify fun st => { st with secNums := nums
+  modify fun st => { st with ctr := { st.ctr with secNums := nums }
                              refTarget := some { kind := some .heading, num := num } }
   return some num
 
@@ -6944,8 +6955,8 @@ the engine's own step, mono at footnotesize" (some pos)
     content := (s.drop afterOpt).toString
   let spec : Ir.ListingSpec ← match caption with
     | some cap => do
-      let num := (← get).lstNum + 1
-      modify fun st => { st with lstNum := num }
+      let num := (← get).ctr.lstNum + 1
+      modify fun st => { st with ctr := { st.ctr with lstNum := num } }
       match label with
       | some key =>
         -- The anchor rides in the caption, as an equation's rides in its
@@ -6999,8 +7010,8 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     -- The display takes the next equation number (amsldoc §3);
     -- its labels bind to it, scoped to the environment as
     -- LaTeX's \refstepcounter group is.
-    let num := (← get).eqNum + 1
-    modify fun st => { st with eqNum := num }
+    let num := (← get).ctr.eqNum + 1
+    modify fun st => { st with ctr := { st.ctr with eqNum := num } }
     for key in keys do
       recordLabel ctx key (some { kind := some .equation, num := toString num }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
@@ -7274,8 +7285,8 @@ knot so the shared arm stays three lines. -/
 private def enterAppendicesIf (b : Bool) : EM (Option ((Nat × Nat × Nat) × Bool)) := do
   if !b then return none
   let st ← get
-  modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
-  return some (st.secNums, st.inAppendix)
+  modify fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+  return some (st.ctr.secNums, st.ctr.inAppendix)
 
 /-- Leave the `{appendices}` scope: restore what `enterAppendicesIf` saved
 (`\@ppsavesec`/`\@pprestoresec`), so numbering after the environment
@@ -7283,7 +7294,8 @@ continues where it left off. -/
 private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM Unit :=
   match saved with
   | none => pure ()
-  | some s => modify fun st => { st with inAppendix := s.2, secNums := s.1 }
+  | some s =>
+    modify fun st => { st with ctr := { st.ctr with inAppendix := s.2, secNums := s.1 } }
 
 /-- The node a block-sequence wrapper environment ships: `{quote}` and
 `{quotation}` are one node (they differ only in `\listparindent`, which
@@ -9253,7 +9265,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- Not a heading: a declaration affecting every heading after it,
         -- from here forward in flow order (the scope model body \palette
         -- landed) — the counter restarts and level-1 numbers letter.
-        modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
+        modify fun st =>
+          { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "pause" then
         -- The rest of this scope reveals one step later. Numbering is
