@@ -2195,7 +2195,7 @@ scoped custom property the HTML path declares both carry the one
 solver's answer. -/
 def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- Each needs a move past four JNDs (ΔEOK 0.12–0.44) to meet 4.5:1, so a
+  -- Each needs a move past four JNDs (ΔEOK 0.13–0.44) to meet 4.5:1, so a
   -- document that sets the role on that ground keeps the declared ink and
   -- warns. Whether a bundle should ship another ink there is the user's.
   let beyondBound : List (String × String × String) :=

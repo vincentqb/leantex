@@ -5806,6 +5806,15 @@ def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     t "the HTML paragraph and the HTML label carry the role's one ink"
       (spanHas "Softtext" (HtmlDoc.cssColor soft) && runHas "Softlabel" (HtmlDoc.cssColor soft))
   | _, _ => failures ref "one ink: no text runs to compare the HTML against"
+  -- Parked, routed to the SVG label emitter (`HtmlDoc.labelNodesOne`): a
+  -- role-named label on a node's fill paints `var(--role, declared)`, and
+  -- the page's realized `--role` wins there, while the PDF paints the
+  -- declared ink the fill's ground keeps. The node ground owes a scope, or
+  -- the label the IR's literal. A row failing in both directions: the fix
+  -- fails it until the row goes.
+  let filledLabelParked := true
+  t "parked: an HTML label on a node's fill still reads the page's role ink"
+    (runHas "Filllabel" "var(--soft" == filledLabelParked)
 
 /-- **A node's text is inline content, so its styles reach both artifacts.**
 The defect: `\textbf{…}` in a node body set in the regular weight where

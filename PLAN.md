@@ -21083,3 +21083,136 @@ reference is the shipped CLI's comparison, and each guard fails at
   braced call's arguments as text where lualatex ships `[inner words]`;
   defining it natively needs its unmatched uses (a TeX error) kept loud
   rather than read as an undelimited call.
+
+
+### 2026-09-27 — a repair is barely different: one ink bound for every colour the contract moves
+
+Review INK-1 blocked the contrast repair of a mix on the user's rule 2 (a
+departure from LaTeX is allowed only when it is measurably better and
+barely different, with the bound declared beside it): `Contrast.remix`
+moved the palette fixture's pale inline mix from 40% to 97%, ΔEOK 0.263,
+with no warning. Role realization had the same shape — the moloch
+frame-title witness moved its accent 0.155, a pale grey test role 0.33.
+Both repairs now answer to one declared bound, and past it the colour
+ships as xcolor computes it and the pairing warning fires.
+
+**The bound.** The distance is ΔEOK, the Euclidean distance in Oklab (CSS
+Color 4 §20.3), over the engine's own integer `labOf`, squared so the
+comparison takes no root (`Contrast.deltaEOkSq`). Its unit is the JND CSS
+Color 4 §14.2.1 states for it: "one JND is an OkLCh difference of 0.02"
+(`okJnd`). A repair may move a declared colour four JNDs, ΔEOK 0.08
+(`inkBoundJnds`, `inkBoundSq`): a difference a reader sees only beside the
+original, the colour still the one its name says. Four is a declared
+reading of "barely different", not a measurement, and it is the user's to
+change: it is the smallest whole number of JNDs that keeps every repair
+the private reference deck makes (the largest, its one mix, moves 0.078)
+and it refuses both fixture mixes the review flagged (0.263, 0.122). Two
+JNDs would warn on that deck's mix; eight would admit the moloch witness.
+- `remix_between`: a re-weighted mix meets its requirement and lies within
+  the bound of xcolor's value of the declared mix; `remix_mem` keeps its
+  statement, both corollaries of one `remix_parts`.
+- `realize_between`: a realized colour meets its requirement and lies
+  within the bound of the declared one. `realize` is now the unbounded
+  solver (`realizeNearest`, `realizeNearest_meets`) kept only inside the
+  bound; `realize_meets_contract` is the first half, and
+  `realize_id_of_passing` is untouched, so every kernel check over the
+  shipped bundles reads the values it read.
+- Past the bound: W0315 (a run) or W0345 (a design site) with the declared
+  colour, and one help the seven judges share (`lowHelp`; for a mix, the
+  weight): the nearest legible colour, its distance and the bound — the
+  repair a document can write itself.
+
+Broken once through the path that ships (scratch clone of the tip): the
+bound at 100 JNDs fails every guard below under `lake test`; `realize`
+without its filter fails `realize_between` in `lake build`, and `remix`
+without its conjunct fails `remix_parts`.
+
+**A correction to the brief.** "The orange's lightening, ΔE 0.071 on the
+bar" pairs the synthetic accent `#D8691F` (the realized-agree fixture)
+with the moloch witness's output `#D8894A`. The witness realizes moloch's
+own bundle accent, `#A55A13`, which moves 0.155. The synthetic accent's
+own moves are 0.012 (its bar), 0.042 (its block bar), 0.062 (its standout
+ground) and 0.071 (its page, darker). No user statement gives a number
+for "barely different"; the four JNDs above are this entry's reading.
+
+**Every engine departure in colour, audited.** Measured with the engine's
+`labOf` (moves) and WCAG ratios, base `ae063c0b`.
+
+| departure | site | measured move | now |
+|---|---|---|---|
+| a role's lightness on a ground (N0022) | `Contrast.realize`, seven judges | private deck 0.007–0.039; shipped bundles' content colours on their own title bar or standout ground 0.13–0.44 | bounded; the ten bundle pairs past it are `beyondBound` rows in `realizedChecks`, a registry failing both ways |
+| a mix's weight (N0022) | `Contrast.remix`, `useStep` | private deck 0.078; fixtures 0.263, 0.122 | bounded |
+| design-site inks: frame-title, standout, title page, titled bars | the step judges, through `realize` | as roles | bounded |
+| beamer's `transparent` covering | Compat `setbeamercovered`, `Design.cover` | the bundle's 31% or the default 38% against beamer's 15%: 0.06–0.27 | fixed: `transparent` is `transparent=15`, the key's default (beamerbaseoverlay.sty); the Oklab cover at 15% lies 0.004–0.037 from beamer's sRGB mixin on a white page |
+| covering with nothing declared | `coveredFractionDefault` | beamer hides; the engine dims (dim-not-hide) | a standing design decision, not a bound |
+| moloch's accent | `Theme.moloch` | moloch's `#EB811B` → the bundle's `#A55A13`, 0.167 | recorded: a bundle value past the bound, the user's (below) |
+| the HTML page when none is declared | `light.surface` | white → `#FAFAF9`, 0.015 | inside the bound |
+| print colours | `realize`/`remix` refuse CMYK | none: a print colour keeps its components and warns | unchanged |
+
+**One expression on one ground is one ink.** The realization walk left
+pictures whole, so a repaired expression shipped its repaired ink in text
+and its declared one in picture labels on the same page (review INK-2):
+four mix labels and seven accent label runs in the private deck's PDF,
+where its HTML already resolved the accent's labels through the realized
+custom property — two inks across the artifacts too. `recolorRolesShapes`
+now gives each label, content and own ink, the plan's lookup on the
+ground under its anchor: a node's own fill (`Pic.fillUnder`, the last
+filled shape drawn before it that holds the anchor), else the ground the
+picture stands on. The census theorem's picture arm is unchanged (labels
+are not running text). Parked and routed: an SVG label emits a role as
+`var(--role, literal)`, so on a node's fill the page's realized `--role`
+wins in the HTML while the PDF paints the declared ink the fill keeps —
+`HtmlDoc.labelNodesOne` owes the node ground a scope or the literal; the
+row is in `oneInkChecks` and fails both ways.
+
+**Guards** (each fails at `ae063c0b`, run on base's engine with this
+branch's tests in a scratch clone; identifier stubs where a test names a
+new definition):
+- `inkBoundChecks` (Tests/Themes.lean): a mix inside the bound ships one
+  re-weighted ink in the PDF run and the HTML span, within the bound; a
+  mix past it ships xcolor's value in both and warns with the weight to
+  write; a `transparent` covering sets 15% and its covered run lies within
+  the bound of beamer's covered colour. Base fails the four past-bound
+  rows and the covering rows.
+- `realizedChecks`' registry, the pale-role, frame-title and title-page
+  rows past the bound, and moloch's accent warning on its own bar and
+  standout ground: 21 rows fail at base.
+- `oneInkChecks` (Tests/Surface.lean): the mix's and the role's label runs
+  carry their text runs' inks in the PDF and in the HTML's SVG runs; a
+  label on a node's fill keeps the declared ink. Base fails the four
+  one-ink rows; a tip with the picture arm reverted fails the same four,
+  and one with `fillUnder` blind fails the fill row.
+
+**Measured on the private reference documents** (the engine at `ae063c0b`
+against this branch, scratch copies, PDF and HTML; md5 of the written
+files, the porcelain census, Chromium 151 through Playwright 1.62.0, and
+the PDF's text fills):
+- deck: 35 pages both; census identical but for one W0345 fewer in each
+  artifact (the covered accent's state change, which beamer's 15% now
+  clears); its four repairs unchanged. Its label runs now ship their text
+  runs' inks in both artifacts: no text ink is PDF-only any more but a
+  label-only mix and the default ink. The two pages that cover content
+  now set it at the lualatex reference's faintness (rasters in the
+  evidence directory).
+- paper, card, résumé, website source: PDF and HTML byte-identical.
+- Tiers unchanged; the reader matrix moved only its source key, the same
+  six known cells failing.
+
+**Open, and the user's.**
+- The bound's size: four JNDs (ΔEOK 0.08) is this entry's reading of
+  "barely different"; `inkBoundJnds` is the one place to change it.
+- Beyond the bound the declared colour ships. Shipping the *bounded*
+  improvement instead — the colour moved exactly to the bound toward
+  legibility, still warned — would satisfy rule 2 as well and help the
+  reader more; it is a named rule not built here.
+- The shipped bundles' content colours fail their own title bars and
+  standout grounds by moves past the bound (`beyondBound`, ten rows): a
+  moloch deck's `\alert` in a frame title now ships the bundle accent at
+  2.42:1 and warns, where it shipped a 0.155 repair. moloch's own
+  `#EB811B` reads 4.57:1 on that bar and 2.62:1 on the page; the bundle's
+  `#A55A13` is a 0.167 departure from it made for the page. Whether a
+  bundle ships moloch's value, keeps its own, or declares a bar ink is the
+  user's.
+- Picture labels are still judged by nothing: a label-only pairing (the
+  private deck's one) ships unjudged. `Pic.fillUnder` is the ground the
+  judge's picture arm would read.
