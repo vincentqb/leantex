@@ -159,3 +159,38 @@ def paramDemoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (reprStr (layoutOf oneFace dSty).pages == reprStr (layoutOf oneFace dOwn).pages)
   t "a parameter set in a style file is a note there and a warning in the document"
     ((named dsSty).map (·.severity) == #[.note] && (named dsOwn).map (·.severity) == #[.warning])
+
+
+/-- **A redefined `\normalsize` sets the document's display skips, and a
+size command in the preamble sets nothing.** `\begin{document}` runs
+`\normalsize` (measured under lualatex), so the display skips a venue's
+redefinition assigns are the body's — the page is the one their native
+tokens set, and not the one the same redefinition without them sets — and a
+`\normalsize` or `\small` standing at the preamble's top level is gone by
+the first line, as LaTeX's is, said in a note instead of an unknown-command
+warning. Asserted on the shipped page. -/
+def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let body := "Alpha words before the display, long enough to fill a line of text here.\n" ++
+    "\\[ x = y \\]\nBravo words after the display."
+  let redef (skips : String) : String :=
+    "\\makeatletter\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt\n" ++
+      skips ++ "}\\makeatother"
+  let skips := "\\abovedisplayskip 3\\p@ \\@plus 2\\p@ \\@minus 1\\p@\n" ++
+    "\\abovedisplayshortskip \\z@ \\@plus 3\\p@\n\\belowdisplayskip \\abovedisplayskip\n"
+  let native := "\\page{ fontsize = 10pt, leading = 0.913 }" ++
+    "\\tokens{ abovedisplayskip = 3pt plus 2pt minus 1pt, belowdisplayskip = abovedisplayskip }"
+  let set := pagesOf oneFace (doc (redef skips) body)
+  t "a redefined \\normalsize sets the page its native size and display skips set"
+    (set == pagesOf oneFace (doc native body))
+  t "a redefined \\normalsize's display skips move the page"
+    (set != pagesOf oneFace (doc (redef "") body))
+  for name in ["normalsize", "small"] do
+    let src := doc s!"\\{name}" body
+    t s!"a preamble '\\{name}' sets the page the document sets without it"
+      (pagesOf oneFace src == pagesOf oneFace (doc "" body))
+    t s!"a preamble '\\{name}' says what LaTeX does with it, and is not unknown"
+      ((dvE src).any (·.subject == some s!"ctrl:nothing:size:{name}") &&
+        !(dvE src).any (·.code == "W0301"))

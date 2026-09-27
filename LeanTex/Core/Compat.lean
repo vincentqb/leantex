@@ -592,6 +592,10 @@ private structure St where
   wherever the group is set; only one outside every group stays in force
   until `\begin{document}`. -/
   inGroup : Bool := false
+  /-- The rewrite is of a whole document — its stream holds the `document`
+  environment — rather than of a value's text re-read on its own, whose top
+  level is inline content (`preambleProper`). -/
+  wholeDoc : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -876,6 +880,13 @@ the author, the date and a running head. -/
 private def preambleProper : M Bool := do
   let st ← get
   return !st.inDoc && !st.inDef && !st.seam && !st.inGroup
+
+/-- The preamble proper of a whole document. A value's text re-read on its
+own (a style's font template, a KOMA font argument) is inline content at its
+top level, never a preamble, so what LaTeX's `\begin{document}` resets —
+the size a `\large` there declares — is discarded only here. -/
+private def docPreamble : M Bool := do
+  return (← get).wholeDoc && (← preambleProper)
 
 /-- The top-level brace groups of a feature value:
 `{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
@@ -3005,7 +3016,7 @@ it. -/
 private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
   let st ← get
-  let preamble ← preambleProper
+  let preamble ← docPreamble
   let own := s!"\\tokens\{ {n} = {src} }"
   let emit (native : String) : M (Array Raw) := do
     became what native pos
@@ -3060,6 +3071,90 @@ private def lenOperand (lens : Array (String × String)) : List Raw → Option S
   | [.sym '-' _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | _ => none
+/-- One TeX parameter assignment, as TeX scans it (TeXbook ch. 24:
+⟨variable⟩[=]⟨value⟩, and `\advance`⟨variable⟩[by]⟨value⟩): the parameter,
+whether the value adds to it, and the raws of the value. -/
+structure TexAssign where
+  name : String
+  add : Bool
+  value : Array Raw
+  deriving Repr
+
+/-- A unit or glue keyword inside a value (plain.tex's `\p@` and `\z@`,
+ltdefns.dtx's `\@plus` and `\@minus`), never a register. -/
+private def valueCtrl (n : String) : Bool :=
+  n == "p@" || n == "z@" || n == "@plus" || n == "@minus"
+
+private def isSign : Raw → Bool
+  | .sym '-' _ | .sym '+' _ | .word "-" _ | .word "+" _ => true
+  | _ => false
+
+/-- Where one dimension ends: an optional sign, then a factor with its unit
+(`4pt`, `2\p@`, `2 pt`), a factor of a register (`.5\leftmargin`), or a
+register alone. -/
+private def dimenEnd (raws : Array Raw) (i : Nat) : Nat :=
+  let i := skipSpaces raws i
+  let i := if (raws[i]?.map isSign).getD false then skipSpaces raws (i + 1) else i
+  match raws[i]? with
+  | some (.ctrl _ _) => i + 1
+  | some (.word w _) =>
+    if w.toList.any Char.isAlpha then i + 1
+    else
+      let j := skipSpaces raws (i + 1)
+      match raws[j]? with
+      | some (.ctrl _ _) => j + 1
+      | some (.word u _) => if u.toList.all Char.isAlpha then j + 1 else i + 1
+      | _ => i + 1
+  | _ => i
+
+/-- Past an optional glue keyword (`plus`, or its sanitised `\@plus`) and
+the dimension after it. -/
+private def afterKey (raws : Array Raw) (k : Nat) (key : String) : Nat :=
+  let j := skipSpaces raws k
+  match raws[j]? with
+  | some (.ctrl c _) => if c == "@" ++ key then dimenEnd raws (j + 1) else k
+  | some (.word w _) => if w == key then dimenEnd raws (j + 1) else k
+  | _ => k
+
+/-- Where a glue value ends: a register it copies (`\itemsep \parsep`), or
+a dimension with its optional `plus` and `minus` parts. -/
+private def glueEnd (raws : Array Raw) (i : Nat) : Nat :=
+  let i := skipSpaces raws i
+  let rubber (k : Nat) : Nat := afterKey raws (afterKey raws k "plus") "minus"
+  match raws[i]? with
+  | some (.ctrl r _) => if valueCtrl r then rubber (i + 1) else i + 1
+  | _ =>
+    let d := dimenEnd raws i
+    if d == i then i else rubber d
+
+/-- The parameter assignments `raws` spells from `i`, in order, and where
+they stop: at the end, or at the first construct that assigns no length
+parameter `paramSites` knows. -/
+private def readAssigns (raws : Array Raw) (i : Nat) : Array TexAssign × Nat := Id.run do
+  let mut out : Array TexAssign := #[]
+  let mut j := skipSpaces raws i
+  for _ in [0:raws.size] do
+    match raws[j]? with
+    | some (.ctrl "advance" _) =>
+      let t := skipSpaces raws (j + 1)
+      let some (.ctrl n _) := raws[t]? | break
+      let v0 := skipSpaces raws (t + 1)
+      let v0 := if raws[v0]? matches some (.word "by" _) then v0 + 1 else v0
+      let e := glueEnd raws v0
+      if e ≤ v0 then break
+      out := out.push { name := n, add := true, value := raws.extract v0 e }
+      j := skipSpaces raws e
+    | some (.ctrl n _) =>
+      if (paramSites.lookup n).isNone then break
+      let v0 := skipSpaces raws (j + 1)
+      let v0 := if raws[v0]? matches some (.sym '=' _) then v0 + 1 else v0
+      let e := glueEnd raws v0
+      if e ≤ v0 then break
+      out := out.push { name := n, add := false, value := raws.extract v0 e }
+      j := skipSpaces raws e
+    | _ => break
+  return (out, j)
+
 /-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
@@ -4851,6 +4946,13 @@ and \\tokens declare the design directly")
       sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
       return some (#[], k)
     | none =>
+    -- A size command at the preamble's top level sets nothing LaTeX keeps:
+    -- `\begin{document}` runs `\normalsize` (measured under lualatex: the
+    -- preamble's `\baselineskip` and display skips are gone in the body).
+    if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
+      discard s!"\\{name}" "'\\begin{document}' runs '\\normalsize', which sets the size again"
+        ("size:" ++ name) pos
+      return some (#[], start)
     match meaningFree.lookup name with
     | some (n, note) =>
       let (_, k) := takeGroups raws start n
@@ -5448,18 +5550,25 @@ skipped, and the length keeps its value" pos
     -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
     -- baselines at 10.95pt and the rhythm unit follows. The body's
     -- trailing display-skip internals are TeX the engine does not run;
-    -- the translation note names what was taken.
+    -- the translation note names what was taken. The display skips it
+    -- assigns are the document's (`\begin{document}` runs `\normalsize`),
+    -- so they are its tokens; the short skips are never selected here
+    -- (`Ir.displaySkipDefault`), so only the long ones are taken.
     if !xparse && cmd == "normalsize" then
       if let some (.group sbody _) := raws[js]? then
         let b := skipSpaces sbody 0
         if let some (.ctrl "@setfontsize" _) := sbody[b]? then
-          let (fsArgs, _) := takeGroups sbody (b + 1) 3
+          let (fsArgs, afterFs) := takeGroups sbody (b + 1) 3
           if h : fsArgs.size ≥ 3 then
             if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
               if sz > 0 && ld > 0 then
                 let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
+                let skips := (readAssigns sbody afterFs).1.filterMap fun a =>
+                  if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _))
+                  then some s!"{a.name} = {lengthSrc a.value}" else none
                 let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
-leading = {milliStr factor} }"
+leading = {milliStr factor} }" ++
+                  (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
                 became "\\renewcommand{\\normalsize}" native pos
                 return some (← synthAt native pos, js + 1)
     if name == "providecommand" && (← get).bound.contains cmd then
@@ -6683,7 +6792,8 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
       | none => out ++ running ++ preSide ++ bodySide
   let st0 : St :=
     { file := file, provideKeeps := provideKeeps, warned := warned,
-      boundaryOpen := !boundaryRefused raws }
+      boundaryOpen := !boundaryRefused raws,
+      wholeDoc := raws.any (· matches .env "document" _ _) }
   let (out, st) := go.run st0
   (out, st.diags, st.warned)
 
