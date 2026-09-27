@@ -19717,3 +19717,93 @@ against `b312cf2b`, medians of 5: paragraphs 86→84, lorem 321→326,
 underline 499→498, themed 77→76, themed html 77→71, paper 154→156, paper
 html 143→151 ms. Noise, not signal, at this sample size; no run moved
 more than 5%.
+
+
+### 2026-09-27 — minimal code in the scripts: five copies retired, and the class of each one checked
+
+The user asked for the tree to be audited for minimal code and compound
+engineering, and for the fixes to be applied. This entry is the scripts half:
+every `scripts/*.lean` no other round-6 row owns, `land`/`LandCore` aside.
+
+**What the audit measured.** Every top-level definition in those 37 files,
+with its reference count across the tree; every definition name declared in
+two of them, with both bodies; every four-line window appearing twice; every
+script nothing in the tree names. The scans are in
+`leantex-evidence/r6-minimal-scripts/`.
+
+Three negatives worth recording, because each was a candidate the audit
+closed rather than a stone left unturned. No script is dead: every one is
+named by AGENTS.md, by PLAN, by a sibling script, by a generated module's
+header, or by `Scoreboard.declaredTiers`, which is how `diagdebt`,
+`obligations` and `purity` are reached — by convention, so a grep for their
+names finds nothing. No `partial` anywhere. One dead definition, in
+`ParityCore`, now gone.
+
+**Five copies, and why each was a defect rather than a redundancy.**
+
+An owed record's `-- <key>: <value>` line had two readers and three
+definitions: `Gate.recordField`, `owed.lean`'s own `fieldOf`, and a
+`Board.lean` alias. The module the definition lives in exists precisely so
+two gates cannot disagree about what a record says, and the copies made that
+guarantee rest on a scoreboard row that failed in both directions until they
+went. They are one definition now, under the name both readers already used,
+and the row is retired as its own comment instructed.
+
+The parity ladder's order, line and placement levels each ask what the lines
+of a page are, and `linesOf` and `placedLines` each built that partition from
+the run array in thirteen identical lines. The ladder's whole claim is that
+the levels agree about a line; the agreement held because two copies matched.
+`runLines` owns the partition. `parity --check` passes and
+`tests/scoreboard/parity.tsv` does not move, which is the measurement that
+the reading did not change.
+
+Three gates in the pre-commit hook track which definition a line stands
+inside, and two of the three copies truncated the name at the first dot. That
+is a fault: every `ArtRun.x1` in the tree reads as `ArtRun`, so two files
+declaring different members of one namespace read to the Support-rule gate as
+one helper declared twice, and it would have named a helper nobody wrote.
+Nothing collides in the tree today, which is why it had never fired. The one
+definition returns the whole name, and the selftest pins it — with the dot
+dropped again the selftest exits 1 naming that check.
+
+Six tier producers each wrote nine lines around their assertions: a failure
+list, a recorder, and a tail that prints and picks the exit code. A producer
+that recorded a failure and still exited 0 would have read like the others.
+`Scoreboard.tierSelftest` owns the frame; each producer is now
+`tierSelftest "<tier>" fun no => do` and its assertions. Every one of the six
+`--selftest` runs exits 0 and prints bytes identical to before.
+
+**What was captured, so the classes cannot recur.** The frame class is a hook
+check: a `scripts/*.lean` importing the scoreboard format module may not open
+its own failure list, with the aggregate the one allowlisted site and its
+reason where it stands — its success line counts cases its own body binds.
+Broken once through the path that ships: the frame put back into `htmla11y`
+makes `precommit --tree` exit 1 naming that site. The truncation class is the
+selftest case that pins the name. The record-reader class keeps the
+scoreboard's agreement check, now reading the one definition.
+
+**Declined, with the price.** The xorshift64\* generator stands in four
+places: `Tests/Support.lean` and the three fuzz oracles. The oracles import
+only `LeanTex`, so `lake build` is all they need; the shared home is in the
+test library, and taking it would make a deep oracle wait on the suite. Four
+copies of six lines is the cheaper side of that trade.
+
+**Routed, with sites.** `hasCmd` (`bench.lean`, `html-oracle.lean`) and
+`haveTool` (`ink-oracle.lean`, `parity-regen.lean`) are one question — is this
+tool on the host — under two names and two mechanisms: running the tool with
+`--version`, and `command -v`. They disagree for a tool that has no
+`--version`. There is no home for a script helper outside the four declared
+libraries, which is the same wall the generator hit.
+`parity-measure.lean` walks every Type0 font to its `/W` entry twice, in
+`widthMapSizes` and `widthEntryShape`; the shared walk would return a triple,
+which reads worse than the seven duplicated lines, so it stands.
+
+**A decision that is the user's.** `lake build` builds neither the script
+libraries nor the gate binaries: `defaultTargets` is `["leantex"]`. Board's own
+docstring records what that cost — a branch's `lake build` passed over a
+syntactically broken `Board.lean`, and the tier mechanism now names build
+targets per tier to work around it. Listing the libraries and gate binaries in
+`defaultTargets` would make one `lake build` cover them, at the cost of every
+build paying for them, and it would give the fuzz oracles and the four
+`hasCmd`/`haveTool` sites a shared home that needs no extra build step. Worth
+deciding rather than inheriting.
