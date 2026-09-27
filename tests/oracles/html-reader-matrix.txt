@@ -2,7 +2,7 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)
 date: 2026-09-27
-src-key: 5afe03e51307c186
+src-key: 3f39546a7396659e
 fixtures: 82 built, unbuilt: theme-modern
 
 [feature]
@@ -15,10 +15,7 @@ mathml            pass          untested
 lang              pass          untested
 landmarks         pass          untested
 snaps             pass          untested
-color-scheme      fail:diagram+2  untested
-#   chromium diagram: mixed: light rgb(20, 20, 26) on rgb(250, 250, 249) 17.56:1, dark rgb(20, 20, 26) on rgb(24, 24, 27) 1.04:1
-#   chromium palette: default tokens: light rgb(24, 24, 27) on rgb(250, 250, 249) 16.96:1, dark rgb(24, 24, 27) on rgb(24, 24, 27) 1.00:1
-#   chromium resume: default tokens: light rgb(24, 24, 27) on rgb(250, 250, 249) 16.96:1, dark rgb(24, 24, 27) on rgb(24, 24, 27) 1.00:1
+color-scheme      pass          untested
 reduced-motion    pass          untested
 print             pass          untested
 no-script         pass          untested
@@ -47,7 +44,7 @@ diagram-overflow  pass          untested      load,fonts,lang,landmarks,color-sc
 diagram-refused   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-scm       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-tikzset   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-diagram           fail:color-scheme  untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 eqnum             pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 figures           fail:images   untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 fill              pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
@@ -83,7 +80,7 @@ outline           pass          untested      load,fonts,lang,landmarks,color-sc
 overlays-blocks   pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 overlays          pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 overprint         pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
-palette           fail:color-scheme  untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+palette           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 paragraphs        pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 poster-headline   pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 poster            pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
@@ -91,7 +88,7 @@ quote-deck        pass          untested      load,fonts,lang,landmarks,snaps,co
 quotes            pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 redefine          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 resume-data       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-resume            fail:color-scheme  untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+resume            pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 subfigures        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 tables-ragged     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 tables            pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
