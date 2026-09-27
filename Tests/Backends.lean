@@ -1678,7 +1678,8 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- compresses for itself, byte for byte.
   let bigPages := (layoutOf twoFace bigDoc geom).pages
   let cached := (Pdf.pageStreams geom twoFace bigPages).map fun d => (d, some (Flate.deflate d))
-  let zFaces := twoFace.fonts.map fun f => some (Flate.deflate f.data)
+  let zFaces := (Array.range twoFace.fonts.size).map fun k =>
+    some (Flate.deflate (Pdf.faceProgram twoFace bigPages k))
   t "pdf with cached streams and faces is the pdf without"
     (Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached) ==
       Pdf.write geom twoFace bigPages)

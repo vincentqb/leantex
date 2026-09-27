@@ -64,7 +64,7 @@ inductive Cmd where
   | line (x y : Int)
   | quad (cx cy x y : Int)
   | cube (c1x c1y c2x c2y x y : Int)
-  deriving Inhabited
+  deriving Inhabited, BEq
 
 /-- A decoded outline: its commands, and the lowest y any point reaches —
 control points included, so by the convex-hull property the curve itself
@@ -444,7 +444,7 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
 
 /-- Entries of a CFF INDEX as absolute (start, end) byte ranges, plus the
 offset just past the INDEX. -/
-private def parseIndex (b : ByteArray) (pos : Nat) :
+def parseIndex (b : ByteArray) (pos : Nat) :
     Option (Array (Nat × Nat) × Nat) := Id.run do
   if pos + 2 > b.size then
     return none
@@ -915,6 +915,20 @@ def Src.yExtentAt (s : Src) (g : Nat) : Option (Int × Int) :=
       none
     else
       (glyfOutline b glyf loca long numGlyphs g).map (·.yExtent)
+
+/-- Glyph `g`'s outline commands, or `none` where the decoder cannot read
+it: the glyph a font subset must carry unchanged for every glyph a page
+paints. An empty glyph (a space) is the empty outline. -/
+def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
+  match s with
+  | .opaque => none
+  | .cffSrc b c => do
+    let cs ← c.charStrings[g]?
+    let o ← runCharstring b c cs
+    some o.cmds
+  | .glyfSrc b glyf loca long numGlyphs =>
+    if g ≥ numGlyphs then none
+    else (glyfOutline b glyf loca long numGlyphs g).map (·.cmds)
 
 /-- Merged ink intervals of glyph `g` inside the underline band, or `none`
 where the outline could not be decoded and the caller must fall back. Total

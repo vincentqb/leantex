@@ -615,6 +615,17 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: a face with no pairs answers 0 for every pair"
     ((osans.kernData.get).1.isEmpty && (osans.kernData.get).2.isEmpty &&
       osans.kernAdv ((osans.gid 'T').getD 0) ((osans.gid 'a').getD 0) == 0)
+  -- A subset (FontSubset.program) keeps a composite's components: Open
+  -- Sans draws 'é' from 'e' and an accent, and the subset holding 'é'
+  -- alone draws it exactly as the face does, while an unused 'x' is empty.
+  let osE := (osans.gid 'é').getD 0
+  let (osProg, osSub) := FontSubset.program osans.data false #[osE]
+  let osSrc := Ink.Src.make osans.data false osans.numGlyphs
+  let osEmb := Ink.Src.make osProg false osans.numGlyphs
+  t "subset: a composite the page paints keeps its components"
+    (osSub && ((osEmb.cmdsAt osE).map (·.size != 0)) == some true &&
+      osEmb.cmdsAt osE == osSrc.cmdsAt osE &&
+      osEmb.cmdsAt ((osans.gid 'x').getD 0) == some #[] && osProg.size < osans.data.size)
   -- Fira Sans keeps every kern lookup behind an extension (GPOS type 9):
   -- read through the hop, its pairs answer hb-shape's own numbers (Te −55,
   -- AV −14, LT −83, aa −5 at upem 1000, HH none); without it the face read

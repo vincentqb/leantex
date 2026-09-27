@@ -1,6 +1,7 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.Flate
 import LeanTex.Core.Font
+import LeanTex.Core.FontSubset
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.PdfContent
@@ -173,6 +174,22 @@ contract below can quantify over the writer's own decision, not a copy. -/
 def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
   keepOf ((Array.range fs.fonts.size).map fun k =>
     usedGlyphs k (fs.get k).numGlyphs pages)
+
+/-- The font program `write` embeds for face `k` on these pages: the face's
+own file minus every glyph they do not paint (`FontSubset.program`). The
+driver deflates it through its cache (`FontSet.zdata`). -/
+def faceProgram (fs : FontSet) (pages : Array PageOut) (k : Nat) : ByteArray :=
+  let f := fs.get k
+  (FontSubset.program f.data f.isCff ((usedGlyphs k f.numGlyphs pages).map (·.1))).1
+
+/-- A subset's tag (ISO 32000-2 §9.6.4): six capitals, the first two the
+face's slot in the file, so no two subsets in one file share a tag, and the
+rest a digest of the glyphs it keeps, so one subset is always spelled the
+same. -/
+def subsetTag (k : Nat) (used : Array Nat) : String :=
+  let h := used.foldl (fun h g => (h * 31 + g + 1) % 456976) 7
+  let v := k % 676 * 456976 + h
+  String.ofList ((List.range 6).reverse.map fun i => Char.ofNat (65 + v / 26 ^ i % 26))
 
 theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) : ∀ k ∈ keepFaces fs pages, k < fs.fonts.size := by
@@ -1071,8 +1088,9 @@ theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     | mk xs => cases xs <;> simp
 
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
-object streams, one Identity-H CID font per face actually used (fully
-embedded, with its own ToUnicode), image XObjects for every image actually
+object streams, one Identity-H CID font per face actually used (its program
+the subset of the glyphs the pages paint, `FontSubset.program`, with its
+own ToUnicode), image XObjects for every image actually
 placed, the structure tree projected from `tree`, and the document
 information the source declared (Info dictionary plus XMP). `streams` and
 `ops` are the driver's cache path: the page operators it built through
@@ -1094,6 +1112,11 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let remap := remapOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
+  -- The program each kept face embeds: its own file minus every glyph no
+  -- page paints (`FontSubset.program`), named with a subset tag when it is one.
+  let programs : Array (ByteArray × Bool) := (keep.zip usedPerFont).map fun (fk, used) =>
+    let font := fs.get fk
+    FontSubset.program font.data font.isCff (used.map (·.1))
   let usedImgs := usedImagesOf imgs pages
   let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs
@@ -1134,7 +1157,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let fontObjs : List (Nat × PdfRead.Obj) := (List.range nf).flatMap fun k =>
     let font := fs.get keep[k]!
     let used := usedPerFont[k]!
-    let baseFont := font.psName
+    let baseFont := if (programs[k]?.map (·.2)).getD false
+      then s!"{subsetTag k (used.map (·.1))}+{font.psName}" else font.psName
     let ascent1000 := font.ascent * 1000 / font.unitsPerEm
     let descent1000 := font.descent * 1000 / font.unitsPerEm
     -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
@@ -1418,14 +1442,15 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
+    let prog := (programs[k]?.map (·.1)).getD font.data
     let tuData := (toUnicode usedPerFont[k]!).toUTF8
     rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
-    let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {font.data.size}"
-    -- The driver may have deflated this face already, through its
+    let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {prog.size}"
+    -- The driver may have deflated this program already, through its
     -- content-hash cache; the writer then only picks the smaller spelling.
     rows := rows.push (match fs.zdata[keep[k]!]?.getD none with
-      | some z => zRow (t.fileId k) ffDict font.data z
-      | none => flateRow (t.fileId k) ffDict font.data)
+      | some z => zRow (t.fileId k) ffDict prog z
+      | none => flateRow (t.fileId k) ffDict prog)
 
   rows := rows.push (flateRow t.xmpId "/Type /Metadata /Subtype /XML" (xmpPacket info).toUTF8)
   rows := rows.push (flateRow t.objStmId

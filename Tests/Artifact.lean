@@ -1090,6 +1090,63 @@ def artGlyphPlacementOffences (laid : Array Dim.Sp) (painted : Array (Dim.Sp × 
 def artPaintedGlyphs (p : ArtPage) : Array (Dim.Sp × Dim.Sp) :=
   p.runs.flatMap fun r => r.glyphs.map fun (x, _) => (x, r.size)
 
+/-- A font name without its subset tag, the six capitals and a plus a
+subset's name opens with (ISO 32000-2 §9.6.4). -/
+def artBaseName (n : String) : String :=
+  let cs := n.toList
+  if cs.length > 7 && cs[6]? == some '+' && (cs.take 6).all Char.isUpper then
+    String.ofList (cs.drop 7)
+  else n
+
+/-- Each face the pages' own resources name, as the file states it: its
+descriptor's `/FontName`, the program its `FontFile2`/`FontFile3` stream
+carries, and every glyph id the pages' text operators paint in it
+(`Identity-H` spells a glyph in two bytes). A placed PDF figure's fonts
+live in its form's resources and are the figure's, not the engine's. -/
+def artEmbedded (pdf : ByteArray) :
+    Except String (Array (String × ByteArray × Array Nat)) := do
+  let es := (← PdfRead.objects pdf).val
+  let deref := PdfCensus.deref es
+  let mut faces : Std.HashMap Nat String := {}
+  let mut painted : Std.HashMap Nat (Array Nat) := {}
+  for e in es do
+    unless e.val.get? "Type" == some (.name "Page") do continue
+    let res := deref ((e.val.get? "Resources").getD .null)
+    let mut names : Std.HashMap String Nat := {}
+    if let .dict fs := deref ((res.get? "Font").getD .null) then
+      for (nm, v) in fs do
+        let cid := match deref ((deref v).get? "DescendantFonts" |>.getD .null) with
+          | .arr xs => deref (xs[0]?.getD .null)
+          | d => d
+        let fd := deref ((cid.get? "FontDescriptor").getD .null)
+        let some (.name fn) := fd.get? "FontName" | throw s!"{nm}: its descriptor has no name"
+        let some (.ref pn _) := (fd.get? "FontFile2").orElse fun _ => fd.get? "FontFile3"
+          | throw s!"{fn}: no embedded program"
+        names := names.insert nm pn
+        faces := faces.insert pn fn
+    let some (.ref cn _) := e.val.get? "Contents" | throw "a page has no /Contents reference"
+    let some c := es.find? (·.num == cn) | throw "a page's /Contents names no object"
+    let .ok (some data) := c.decoded | throw "a page content stream does not decode"
+    let mut cur : Option Nat := none
+    let mut stack : Array CTok := #[]
+    for tok in scanContent data do
+      match tok with
+      | .op o =>
+        if o == "Tf" then
+          cur := (stack.findSome? fun | .name n => some n | _ => none).bind names.get?
+        else if o == "TJ" || o == "Tj" then
+          if let some pn := cur then
+            for s in stack do
+              if let .hex d := s then painted := painted.insert pn (painted.getD pn #[] ++ artCodes d)
+        stack := #[]
+      | t => stack := stack.push t
+  let mut out : Array (String × ByteArray × Array Nat) := #[]
+  for (pn, fn) in faces.toArray.qsort (fun a b => a.1 < b.1) do
+    let some pe := es.find? (·.num == pn) | throw s!"{fn}: its program names no object"
+    let .ok (some bytes) := pe.decoded | throw s!"{fn}: its program does not decode"
+    out := out.push (fn, bytes, painted.getD pn #[])
+  return out
+
 /-- The artifact tier over the golden corpus: every fixture built the way
 the driver builds it, its bytes read back, and every claim judged on what
 they paint. A recorded offence inverts the judgement — the row must still
@@ -1107,6 +1164,7 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut bandsSeen := 0
   let mut multiPage := 0
   let mut contentPaths := 0
+  let mut subsets := 0
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, diags) ← elabFixture n src
@@ -1132,6 +1190,31 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         (rd.pages.flatMap artPaintedGlyphs)
       t s!"artifact {n}: every glyph starts where the layout put it: {placed.toList.take 3}"
         placed.isEmpty
+      -- The embedded programs: every glyph the pages paint is drawn as the
+      -- face draws it, and a program named a subset is one.
+      match artEmbedded pdf with
+      | .error e => t s!"artifact {n}: its fonts read back: {e}" false
+      | .ok faces =>
+        for (fn, prog, gids) in faces do
+          match fs.fonts.find? (·.psName == artBaseName fn) with
+          | none => t s!"artifact {n}: {fn} names a face of the set" false
+          | some f =>
+            let src := Ink.Src.make f.data f.isCff f.numGlyphs
+            let emb := Ink.Src.make prog f.isCff f.numGlyphs
+            let lost := gids.filter fun g => emb.cmdsAt g != src.cmdsAt g
+            t s!"artifact {n}: {fn} draws every glyph the pages paint as its face does: \
+{lost.toList.take 5}" lost.isEmpty
+            if artBaseName fn != fn then
+              subsets := subsets + 1
+              let dropped := (List.range f.numGlyphs).any fun g =>
+                g != 0 && !gids.contains g && emb.cmdsAt g == some #[] && src.cmdsAt g != some #[]
+              t s!"artifact {n}: {fn} is named a subset and is one"
+                (prog.size < f.data.size && dropped)
+            else
+              let spared := (List.range f.numGlyphs).filter fun g =>
+                g != 0 && !gids.contains g && src.cmdsAt g != some #[]
+              t s!"artifact {n}: {fn} embeds whole only when its pages paint every glyph \
+it draws: {spared.take 5}" spared.isEmpty
       for prop in artProps do
         let offs := artOffences rd prop
         if artKnownOffences.any fun (f, q, _) => f == n && q == prop then
@@ -1143,6 +1226,7 @@ fires — delete its row from artKnownOffences" (!offs.isEmpty)
   t s!"artifact corpus: furniture bands are reached ({bandsSeen})" (0 < bandsSeen)
   t s!"artifact corpus: multi-page fixtures are read ({multiPage})" (1 < multiPage)
   t s!"artifact corpus: content paths and images are reached ({contentPaths})" (0 < contentPaths)
+  t s!"artifact corpus: embedded faces are subsets ({subsets})" (0 < subsets)
 
 /-- Each claim broken once, on a file the real writer produced, and each
 one's untouched control passing. The mutation moves ink or re-identifies a
@@ -2081,7 +2165,7 @@ def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
   match artDescriptorFlags (← IO.FS.readBinFile (dir / "out" / "fonts.pdf")) with
   | .error e => t s!"artifact pitch: fonts.pdf reads back: {e}" false
   | .ok fds =>
-    let flagsOf (n : String) : Option Int := (fds.find? (·.1 == n)).map (·.2)
+    let flagsOf (n : String) : Option Int := (fds.find? (artBaseName ·.1 == n)).map (·.2)
     t s!"artifact pitch: fonts.pdf declares Source Code Pro fixed-pitch: {fds}"
       ((flagsOf "SourceCodePro-Regular").map (· % 2 == 1) == some true)
     t s!"artifact pitch: fonts.pdf declares Source Serif Pro proportional: {fds}"

@@ -143,14 +143,14 @@ def deflateCached (bytes : ByteArray) : IO ByteArray := do
   catch _ => pure ()
   return z
 
-/-- The per-face deflated streams `Pdf.write` embeds, through the cache —
+/-- The per-face deflated programs `Pdf.write` embeds, through the cache —
 for the faces it will embed (`Pdf.keepFaces`) and no other: hashing a
 face the file never carries is the whole cost of a one-page build. -/
-def fontZdata (fs : Font.FontSet) (keep : Array Nat) : IO (Array (Option ByteArray)) := do
+def fontZdata (fs : Font.FontSet) (pages : Array Layout.PageOut) : IO (Array (Option ByteArray)) := do
   let mut zdata : Array (Option ByteArray) := Array.replicate fs.fonts.size none
-  for k in keep do
-    if let some f := fs.fonts[k]? then
-      zdata := zdata.set! k (some (← deflateCached f.data))
+  for k in Pdf.keepFaces fs pages do
+    if k < fs.fonts.size then
+      zdata := zdata.set! k (some (← deflateCached (Pdf.faceProgram fs pages k)))
   return zdata
 
 /-- The scan is the host's answer and the parses are the filesystem's, so
@@ -1196,7 +1196,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- Font files and content streams deflate through the content-hash
         -- cache: a face, or a page unchanged since the last build, reads
         -- its stream back instead of compressing it.
-        let fs := { fs with zdata := ← fontZdata fs (Pdf.keepFaces fs out.pages) }
+        let fs := { fs with zdata := ← fontZdata fs out.pages }
         -- The structure tree the pages' `leaf` indices name: the one the
         -- layout attributed against (`Layout.pdfView`), projected once.
         let tree := Struct.ofDoc (Layout.pdfView doc)

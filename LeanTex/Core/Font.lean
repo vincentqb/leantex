@@ -1138,12 +1138,13 @@ structure FontSet where
   MATH table. `none` sets a formula as its glyph text (`Ir.formulaFloor`)
   with the W0003 warning. -/
   math : Option Nat := none
-  /-- Per-face deflated file bytes, filled by the driver through its
+  /-- Per-face deflated program bytes, filled by the driver through its
   content-hash cache (`deflateCached` in the driver): `zdata[i]`, when
-  present, is the compressed stream the PDF embeds for `fonts[i].data` —
-  a font's bytes never change between builds, so its deflate is paid once
-  per content, not per build. Empty (the default; every test constructor)
-  means the PDF writer compresses inline. -/
+  present, is the compressed stream of the program the PDF embeds for face
+  `i` on these pages (`Pdf.faceProgram`) — one document's subset is the
+  same bytes build after build, so its deflate is paid once per content,
+  not per build. Empty (the default; every test constructor) means the PDF
+  writer compresses inline. -/
   zdata : Array (Option ByteArray) := #[]
   deriving Inhabited
 
