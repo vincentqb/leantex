@@ -46,7 +46,7 @@ def readers : List String := ["chromium", "firefox"]
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
   ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps",
-   "color-scheme", "reduced-motion", "print", "print-spill", "no-script"]
+   "color-scheme", "reduced-motion", "print", "print-spill", "print-sheets", "no-script"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -60,8 +60,9 @@ def hasCmd (cmd : String) : IO Bool := do
     return (← IO.Process.output { cmd, args := #["--version"] }).exitCode == 0
   catch _ => return false
 
-/-- The reader `print-spill` reads paper with, as the tools line records it:
-`pdftotext -v`'s first line, or `pdftotext absent`. -/
+/-- The reader the print judgements (`print-spill`, `print-sheets`) read
+paper with, as the tools line records it: `pdftotext -v`'s first line, or
+`pdftotext absent`. -/
 def pdftotextVersion : IO String := do
   try
     let out ← IO.Process.output { cmd := "pdftotext", args := #["-v"] }
@@ -319,24 +320,31 @@ const noScriptRead = () => {
 
 const cell = (r) => r.n === 0 ? 'na' : r.ok ? 'pass' : 'fail:' + clean(r.why);
 
-// A printed deck loses nothing: a stage whose content runs past its sheet
-// continues on the next one, so every character the page lays out reaches
-// paper. The sheet is the page's own @page size, the page is printed as a
-// reader prints it (the page's size preferred, backgrounds off), and paper
-// is read back with pdftotext. The census is letters and digits, NFKC and
-// case folded — the multiset the page lays out against the multiset on
-// paper, so a list marker or a hyphen the print adds cannot mask a loss,
-// and a math italic or a small capital is the letter it spells. Only a deck
-// with a stage taller than its sheet exercises it: elsewhere nothing can
-// reach a sheet's edge. Playwright prints to PDF in Chromium alone.
+// A printed deck loses nothing and wastes nothing. The deck is printed once,
+// as a reader prints it: the sheet the page's own @page size, the size
+// preferred, backgrounds off; paper is read back with pdftotext, one page
+// per form feed. Two judgements, one construct each:
+//  - print-spill: a stage whose content runs past its sheet continues on
+//    the next, so every letter and digit the page lays out reaches paper —
+//    the multiset, NFKC and case folded, so a list marker or a hyphen the
+//    print adds cannot mask a loss, and a math italic or a small capital is
+//    the letter it spells. Only a deck with a stage taller than its sheet
+//    exercises it: elsewhere nothing can reach a sheet's edge.
+//  - print-sheets: no sheet goes to paper blank — one with no letter or
+//    digit is allowed only for a stage that lays out none. A stage's
+//    padding alone once took a sheet of its own, and so did the tail of a
+//    stage that opened below a heading instead of on a sheet of its own.
+// Playwright prints to PDF in Chromium alone.
 const census = (s) => {
   const m = new Map();
   for (const c of s.normalize('NFKC').toLowerCase())
     if (/[\p{L}\p{N}]/u.test(c)) m.set(c, (m.get(c) || 0) + 1);
   return m;
 };
-const printSpill = async (page, name, fx) => {
-  if (name !== 'chromium') return { ok: true, n: 0, why: '' };
+const inked = (s) => /[\p{L}\p{N}]/u.test(s);
+const printDeck = async (page, name, fx) => {
+  const none = { ok: true, n: 0, why: '' };
+  if (name !== 'chromium') return { spill: none, sheets: none };
   const size = await page.evaluate(() => {
     const find = (rules) => {
       for (const r of rules) {
@@ -349,26 +357,37 @@ const printSpill = async (page, name, fx) => {
     return '';
   });
   const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec(size.trim());
-  if (!pt) return { ok: false, n: 1, why: `no @page size in points (${size})` };
+  if (!pt) {
+    const bad = { ok: false, n: 1, why: `no @page size in points (${size})` };
+    return { spill: bad, sheets: bad };
+  }
   const sheetH = +pt[2] * 4 / 3;
   await page.setViewportSize({ width: Math.round(+pt[1] * 4 / 3), height: Math.round(sheetH) });
   const laid = await page.evaluate((h) => {
     const stages = [...document.querySelectorAll('section.slide, section.section-page')];
     return { spill: stages.filter(s =>
         Math.max(s.scrollHeight, s.getBoundingClientRect().height) > h + 1).length,
+      bare: stages.filter(s => !/[\p{L}\p{N}]/u.test(s.innerText)).length,
       text: document.querySelector('main').innerText };
   }, sheetH);
-  if (laid.spill === 0) return { ok: true, n: 0, why: '' };
   const pdf = path.join(dir, fx + '.printed.pdf');
   await page.pdf({ path: pdf, preferCSSPageSize: true });
   let paper;
   try { paper = execFileSync('pdftotext', ['-enc', 'UTF-8', pdf, '-'], { encoding: 'utf8' }); }
-  catch (e) { return { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) }; }
+  catch (e) {
+    const bad = { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) };
+    return { spill: bad, sheets: bad };
+  }
+  const sheets = paper.split('\f').slice(0, -1);
+  const blank = sheets.filter(t => !inked(t)).length;
+  const sheetsCell = { ok: blank <= laid.bare, n: 1,
+    why: `${blank} of ${sheets.length} sheets blank, ${laid.bare} stage(s) with no text` };
+  if (laid.spill === 0) return { spill: none, sheets: sheetsCell };
   const want = census(laid.text), got = census(paper);
   const lost = [...want].filter(([c, n]) => (got.get(c) || 0) < n);
   const short = lost.reduce((a, [c, n]) => a + n - (got.get(c) || 0), 0);
-  return { ok: lost.length === 0, n: 1,
-    why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` };
+  return { sheets: sheetsCell, spill: { ok: lost.length === 0, n: 1,
+    why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` } };
 };
 
 async function runReader(name) {
@@ -414,7 +433,10 @@ async function runReader(name) {
       out(fx, name, 'reduced-motion', cell(await page.evaluate(mediaChecks['reduced-motion'])));
       await page.emulateMedia({ reducedMotion: 'no-preference', media: 'print' });
       out(fx, name, 'print', cell(await page.evaluate(mediaChecks.print, light.deck)));
-      out(fx, name, 'print-spill', cell(light.deck ? await printSpill(page, name, fx) : { n: 0 }));
+      const printed = light.deck ? await printDeck(page, name, fx)
+        : { spill: { n: 0 }, sheets: { n: 0 } };
+      out(fx, name, 'print-spill', cell(printed.spill));
+      out(fx, name, 'print-sheets', cell(printed.sheets));
     } catch (e) {
       out(fx, name, 'error', 'fail:' + clean(String(e.message).split('\n')[0]));
     }
