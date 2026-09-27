@@ -3100,17 +3100,16 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw) : Opti
     (if kernel n then (lens.find? (·.1 == n)).map (·.2) else none).orElse
       fun _ => kernelSkip n
   let unknown (n : String) : Bool := kernel n || n == "ht" || n == "wd" || n == "dp"
+  let ref (n : String) (arg : Bool) : Option String :=
+    if arg then none
+    else match held n with
+      | some v => some s!"({v})"
+      | none => if unknown n then none else some n
   match raws.filter (!· matches .space) with
   | #[.ctrl n _] =>
     -- One name alone copies its value whole, glue included.
-    match held n with
-    | some v => some v
-    | none => if unknown n then none else some n
-  | _ => lengthSrcBy (fun n arg =>
-      if arg then none
-      else match held n with
-        | some v => some s!"({v})"
-        | none => if unknown n then none else some n) raws
+    (held n).orElse fun _ => lengthSrcBy ref raws
+  | _ => lengthSrcBy ref raws
 
 /-- The names a native length spells, in order: the word runs that start
 with a letter. Units stand against their digits (`2pt`), so none is one. -/

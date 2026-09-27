@@ -315,7 +315,8 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      ("\\parskip 6pt plus 1pt", "\\setlength{\\parskip}{6pt plus 1pt}"),
      ("\\parskip=5pt", "\\setlength{\\parskip}{5pt}"),
      ("\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{\\parskip}",
-       "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}")]
+       "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}"),
+     ("\\makeatletter\\setlength{\\parskip}{\\z@}\\makeatother", "\\setlength{\\parskip}{0pt}")]
   for (spelled, literal) in read do
     let src := doc spelled body
     let set := pagesOf oneFace src
