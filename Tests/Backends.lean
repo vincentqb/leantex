@@ -603,6 +603,65 @@ def htmlSectionGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a section's heading owns the heading gap above its section"
     (hasStr page ":where(* + section[id] > h2:first-child) { margin-top: 1.450rem; }")
 
+/-- Every innermost declaration block of a stylesheet with the at-rule
+preludes enclosing it, outermost first: `artCssBlocks`' scan, keeping what
+it drops — whether a rule holds on paper. -/
+def cssBlocksIn (css : String) : Array (List String × String × String) := Id.run do
+  let mut out : Array (List String × String × String) := #[]
+  let mut sels : Array String := #[]
+  let mut cur := ""
+  for c in css.toList do
+    if c == '{' then
+      sels := sels.push cur.trimAscii.toString
+      cur := ""
+    else if c == '}' then
+      let decls := cur.trimAscii.toString
+      if decls.contains ':' then
+        out := out.push (sels.pop.toList.filter (·.startsWith "@"),
+          (sels.back?.getD "").trimAscii.toString, decls)
+      sels := sels.pop
+      cur := ""
+    else
+      cur := cur.push c
+  return out
+
+/-- **A box the sheet scrolls on screen has its lift on paper** (AGENTS: a
+scroll box owes its print lift; deck-print routed the code block's): on
+every golden page's own sheet, each rule that holds on paper and declares
+an overflow `auto` or `scroll` has a rule at its selector inside
+`@media print` that sets that overflow `visible` — the deck's stage grows
+(`HtmlDoc.print_lifts_stage_bounds_covers`), and a code block wraps its
+long line inside the box, since paper has no scroll and a scroll box clips
+there. It fails on `8d3df368`, whose print block left every `pre` at
+`overflow-x: auto`. The rendered half is a Chromium print of a long code
+line, censused against the page (evidence only). -/
+def printLiftChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let sets (decls prop : String) (vals : List String) : Bool :=
+    (decls.splitOn ";").any fun d => match d.splitOn ":" with
+      | [p, v] => p.trimAscii.toString == prop && vals.contains v.trimAscii.toString
+      | _ => false
+  let print (ctx : List String) : Bool := ctx.any (·.startsWith "@media print")
+  let mut scrolls := 0
+  let mut missing : Array String := #[]
+  let mut wraps := true
+  for n in goldenNames do
+    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"tests/corpus/{n}.tex")
+    let blocks := cssBlocksIn (HtmlDoc.baseCss {} doc)
+    for (ctx, sel, decls) in blocks do
+      if print ctx || ctx.any (·.startsWith "@media screen") then continue
+      for axis in ["overflow", "overflow-x", "overflow-y"] do
+        if sets decls axis ["auto", "scroll"] then
+          scrolls := scrolls + 1
+          unless blocks.any (fun (c, s, d) => print c && s == sel && sets d axis ["visible"]) do
+            missing := missing.push s!"{n}: {sel} {axis}"
+    wraps := wraps && blocks.any fun (c, s, d) =>
+      print c && s == "pre" && sets d "white-space" ["pre-wrap"]
+  unless missing.isEmpty do IO.eprintln s!"  unlifted scroll boxes: {missing.toList}"
+  t "print lift: the corpus sheets declare scroll boxes at all" (scrolls > 0)
+  t "print lift: every box a sheet scrolls on screen grows or wraps on paper" missing.isEmpty
+  t "print lift: a code block wraps a long line on paper" wraps
+
 /-- Article sections become anchored containers: `<section id="slug">` wraps
 the heading and its content, ids stay unique under repeated titles, and an
 in-page `\href{#...}` has a real target. Invented titles throughout. -/

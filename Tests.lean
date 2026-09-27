@@ -35,6 +35,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlRhythmChecks ref
   htmlListGapChecks ref
   htmlSectionGapChecks ref
+  printLiftChecks ref
   classHookChecks ref
   runinChecks ref
   abstractChecks ref

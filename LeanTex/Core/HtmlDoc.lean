@@ -3884,6 +3884,12 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   ".equation > .math { flex: 1 1 auto; text-align: center; }\n" ++
   "@media print {\n" ++
   "  body { background: #fff; color: #000; padding: 0; }\n" ++
+  -- Paper has no scroll, and a scroll box is monolithic there, so it
+  -- clips what runs past it: on paper a code block wraps a line wider than
+  -- itself inside the box instead. A departure from LaTeX's verbatim, which
+  -- overruns the measure: only such a line moves, and every character
+  -- reaches the sheet.
+  "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
