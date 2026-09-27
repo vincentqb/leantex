@@ -44,18 +44,89 @@ def citeKeywords : List (String × (CitePunct → CitePunct)) :=
    ("authoryear", fun p => { p with numbers := false }),
    ("numbers", fun p => { p with numbers := true })]
 
+/-- `\setcitestyle`'s `key=value` declarations (natbib.sty `\setcitestyle`:
+`open`, `close`, `aysep`, `yysep`, `notesep`, `citesep`), the values
+`\bibpunct` sets by position. -/
+def citeKeys : List (String × (CitePunct → String → CitePunct)) :=
+  [("open", fun p v => { p with «open» := v }), ("close", fun p v => { p with close := v }),
+   ("aysep", fun p v => { p with aysep := v }), ("yysep", fun p v => { p with yysep := v }),
+   ("notesep", fun p v => { p with notesep := v }),
+   ("citesep", fun p v => { p with sep := v })]
+
+/-- A value as TeX reads a delimited argument: one outer brace group is
+stripped (`open={(}` is `(`), anything else is kept as written. -/
+def stripGroup (v : String) : String := Id.run do
+  let cs := v.toList
+  unless cs.head? == some '{' && cs.getLast? == some '}' do return v
+  let mut depth : Int := 0
+  let mut k := 0
+  for c in cs do
+    k := k + 1
+    if c == '{' then depth := depth + 1
+    else if c == '}' then
+      depth := depth - 1
+      if depth == 0 && k < cs.length then return v
+  return String.ofList (cs.drop 1 |>.dropLast)
+
+/-- A `key=value` declaration's key and value, when it is one. -/
+private def keyValue? (d : String) : Option (String × String) :=
+  match d.splitOn "=" with
+  | k :: v :: rest => some (k, stripGroup (String.intercalate "=" (v :: rest)))
+  | _ => none
+
+/-- Does natbib read this declaration — a keyword, a key it knows, or a
+door word? Exactly as written: natbib compares whole items, so ` round`
+after a comma and a space is a word it does not know. -/
+def CitePunct.reads (d : String) : Bool :=
+  d == "nobibstyle" || d == "bibstyle" || (citeKeywords.lookup d).isSome ||
+    ((keyValue? d).bind fun (k, _) => citeKeys.lookup k).isSome
+
 /-- One declaration over the punctuation and natbib's `\bibstyle` door, the
 door a bibliography style's own punctuation comes through at
 `\begin{document}`: `nobibstyle` closes it and `bibstyle` reopens it
-(natbib's option names), a keyword updates the punctuation, and anything
-else leaves both as they were — natbib reads an unknown keyword as
-nothing. -/
+(natbib's option names), a keyword or a `key=value` updates the
+punctuation, and anything else leaves both as they were — natbib reads an
+unknown item as nothing. -/
 def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
   if d == "nobibstyle" then (st.1, false)
   else if d == "bibstyle" then (st.1, true)
-  else match citeKeywords.lookup d with
-    | some f => (f st.1, st.2)
-    | none => st
+  else match citeKeywords.lookup d, keyValue? d with
+    | some f, _ => (f st.1, st.2)
+    | none, some (k, v) =>
+      match citeKeys.lookup k with
+      | some f => (f st.1 v, st.2)
+      | none => st
+    | none, none => st
+
+/-- The items of a `\setcitestyle` list, split where natbib's `\@for` splits
+them — at commas outside braces — and kept exactly as written. -/
+def citeItems (src : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut depth : Int := 0
+  for c in src.toList do
+    if c == ',' && depth == 0 then
+      out := out.push cur
+      cur := ""
+    else
+      if c == '{' then depth := depth + 1
+      else if c == '}' then depth := depth - 1
+      cur := cur.push c
+  return (out.push cur).filter (!·.isEmpty)
+
+/-- natbib's package options in its own declaration order (natbib.sty's
+`\DeclareOption`s — `\ProcessOptions` runs them in this order, whatever
+order a load lists them in), each as the declarations it executes in
+`\setcitestyle`'s vocabulary: `numbers` is `numbers` with `square`, `comma`
+and `nobibstyle` there. -/
+def natbibOptions : List (String × List String) :=
+  [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
+   ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
+   ("round", ["round", "nobibstyle"]), ("square", ["square", "nobibstyle"]),
+   ("angle", ["angle", "nobibstyle"]), ("curly", ["curly", "nobibstyle"]),
+   ("comma", ["comma", "nobibstyle"]), ("semicolon", ["semicolon", "nobibstyle"]),
+   ("colon", ["semicolon", "nobibstyle"]),
+   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"])]
 
 /-- How the reference list is ordered: `citation` keeps first-citation
 order (the "unsrt" in `unsrtnat`); `authorYear` sorts by the label names,

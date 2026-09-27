@@ -34,8 +34,16 @@ body refuse:W0301 \nocite{k}
 pre refuse:W0301 \defcitealias{k}{ali}
 body refuse:W0301 \citetalias{k}
 body refuse:W0301 \citepalias{k}
-pre refuse:W0301 \setcitestyle{square}
-pre refuse:W0301 \bibpunct{(}{)}{;}{a}{,}{,}
+pre impl \setcitestyle{square}
+pre impl \setcitestyle{numbers}
+pre impl \setcitestyle{authoryear}
+pre impl \setcitestyle{open={(},close={)}}
+pre impl \setcitestyle{aysep={},yysep={;}}
+pre impl \setcitestyle{notesep={; },citesep={;}}
+pre refuse:W0101 \setcitestyle{super}
+body refuse:W0340 \setcitestyle{square}
+pre impl \bibpunct{(}{)}{;}{a}{,}{,}
+pre impl \bibpunct[; ]{[}{]}{,}{n}{}{,}
 pre impl \usepackage[numbers]{natbib}
 pre impl \usepackage[authoryear]{natbib}
 pre impl \usepackage[round]{natbib}

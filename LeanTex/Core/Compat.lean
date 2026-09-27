@@ -4,6 +4,7 @@ import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.Ir
 import LeanTex.Core.TitleTemplate
+import LeanTex.Core.BibStyle
 
 namespace LeanTex.Core.Compat
 
@@ -1373,22 +1374,6 @@ engine does not have; continuous numbers in the left margin stand" pos
     "usepackage:lineno" pos
   return out
 
-/-- natbib's package options in its own declaration order (natbib.sty's
-`\DeclareOption`s — `\ProcessOptions` runs them in this order, whatever
-order a load lists them in), each as the declarations it executes in
-`\setcitestyle`'s vocabulary: `numbers` is `numbers` with `square`, `comma`
-and `nobibstyle` there. `nobibstyle`/`bibstyle` are natbib's own names for
-closing and reopening the door a bibliography style's punctuation comes
-through (`Bib.CitePunct.step` reads them). -/
-def natbibOptions : List (String × List String) :=
-  [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
-   ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
-   ("round", ["round", "nobibstyle"]), ("square", ["square", "nobibstyle"]),
-   ("angle", ["angle", "nobibstyle"]), ("curly", ["curly", "nobibstyle"]),
-   ("comma", ["comma", "nobibstyle"]), ("semicolon", ["semicolon", "nobibstyle"]),
-   ("colon", ["semicolon", "nobibstyle"]),
-   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"])]
-
 /-- Carry natbib declarations to the document: the `@natbib` marker, one
 word per declaration, replayed at `\begin{document}` — where natbib reads
 the bibliography style back from the `.aux` — for the body elaborator to
@@ -1402,16 +1387,67 @@ natbib's order. An option outside the punctuation vocabulary (`sort`,
 `compress`, `super`, `longnamesfirst`, …) is named and dropped. -/
 private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   let given := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-  let decls := natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
+  let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
     if given.contains o then acc.appendList ds else acc
-  let dropped := given.filter fun o => !natbibOptions.any (·.1 == o)
+  let dropped := given.filter fun o => !Bib.natbibOptions.any (·.1 == o)
   unless dropped.isEmpty do
     say .W0101 s!"'natbib' options without a native equivalent were dropped: \
-{String.intercalate ", " dropped}" pos
+{String.intercalate ", " dropped}" pos (subject := some "usepackage:natbib")
   became (if given.isEmpty then s!"\\{name}\{natbib}" else s!"\\{name}[{opt}]\{natbib}")
     "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer decls pos
   return #[]
+
+/-- `\setcitestyle{…}` and `\bibpunct[notesep]{open}{close}{sep}{mode}{aysep}{yysep}`
+(natbib manual §2.5): in the preamble, natbib's declarations with its
+`\bibstyle` door closed, as `\NAT@@setcites` closes it there. `\bibpunct`
+is the same seven values by position — mode `n` numbers, `s` superscript
+numbers (set on the baseline here, named), anything else author-year. An
+item natbib does not read — natbib compares whole items, so a space after
+a comma makes a word it does not know — is named and dropped, as natbib
+drops it silently. In the body natbib applies them from where they stand;
+the engine reads natbib's punctuation for the whole document, so a body
+declaration is named (W0340) and its groups consumed. -/
+private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let punct := name == "bibpunct"
+  let (opt, j) := if punct then takeOpt raws start else (none, start)
+  let (args, k) := takeGroups raws j (if punct then 6 else 1)
+  if args.size != (if punct then 6 else 1) then return none
+  if (← get).inDoc then
+    sayOnce ("ctrl:" ++ name) .W0340
+      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
+    return some (#[], k)
+  -- natbib's values are token lists — `notesep={; }` keeps its space — and
+  -- `rawSrc` trims every group, so the source is read one group deep as
+  -- written.
+  let verbatim (body : Array Raw) : String := body.foldl (init := "") fun s r =>
+    let t := match r with
+      | .group g _ => "{" ++ rawSrcList g.toList ++ "}"
+      | r => rawSrcOne r
+    s ++ t
+  let src (i : Nat) : String := verbatim (args.getD i #[])
+  let notesep := if opt.isSome then
+      verbatim (raws.extract (skipSpaces raws start + 1) (j - 1)) else ", "
+  let decls := if punct then
+      #["open=" ++ src 0, "close=" ++ src 1, "citesep=" ++ src 2,
+        if (src 3).trimAscii.toString == "n" || (src 3).trimAscii.toString == "s" then
+          "numbers" else "authoryear",
+        "aysep=" ++ src 4, "yysep=" ++ src 5, "notesep=" ++ notesep]
+    else Bib.citeItems (src 0)
+  let dropped := decls.filter (!Bib.CitePunct.reads ·)
+  unless dropped.isEmpty do
+    say .W0101 s!"'\\{name}' keywords without a native equivalent were dropped: \
+{String.intercalate ", " (dropped.toList.map fun d => s!"'{d}'")}" pos
+      (help := "natbib reads each keyword exactly as written, so write no space after a comma")
+      (subject := some ("ctrl:" ++ name))
+  if punct && (src 3).trimAscii.toString == "s" then
+    say .W0101 s!"'\\bibpunct' superscript citations are set on the baseline" pos
+      (subject := some "ctrl:bibpunct")
+  became s!"\\{name}" "natbib's citation punctuation, read at \\begin{document}" pos
+  natbibDefer (#["nobibstyle"] ++ decls) pos
+  return some (#[], k)
 
 /-- lineno's switch and modulo commands (lineno.sty, the user-commands
 section), natively the declared page keys. `\linenumbers` and
@@ -4369,6 +4405,7 @@ engine reads one .bib per document, so it is skipped" pos
           (help := "merge the entries into the first .bib file")
       return some (#[], k)
     else return none
+  | "setcitestyle" | "bibpunct" => natbibStyleArm name pos raws start
   | "bibliographystyle" =>
     -- LaTeX reads the style anywhere before the `.aux` is written, and
     -- natbib reads it back at `\begin{document}`. The preamble elaborator

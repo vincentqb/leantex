@@ -4115,6 +4115,34 @@ def natbibModes : List (String × String × List (Option String)) :=
     [some "[Alpha et al., 2019; Delta, 2021]", some "Alpha et al. [2019]",
      some "Alpha et al. [2019]"])]
 
+/-- natbib's preamble declarations, one configuration per row: the
+preamble after `\usepackage{natbib}`, the style, and the lines lualatex set
+for `\citep{alpha2019,delta2021}`, `\citet{alpha2019}` and
+`\citep[see][p.~5]{alpha2019}`. A preamble declaration closes natbib's
+`\bibstyle` door, so what it leaves unset keeps natbib's load value; natbib
+reads each item exactly as written, so the space in `authoryear, square`
+makes a word it drops and the brackets stay round. -/
+def natbibDecls : List (String × String × List String) :=
+  [("\\setcitestyle{authoryear,round,semicolon}", "plainnat",
+    ["(Alpha et al., 2019; Delta, 2021)", "Alpha et al. (2019)",
+     "(see Alpha et al., 2019, p. 5)"]),
+   ("\\setcitestyle{numbers,square}", "unsrtnat",
+    ["[1; 2]", "Alpha et al. [1]", "[see 1, p. 5]"]),
+   ("\\bibpunct{(}{)}{;}{a}{,}{,}", "plainnat",
+    ["(Alpha et al., 2019; Delta, 2021)", "Alpha et al. (2019)",
+     "(see Alpha et al., 2019, p. 5)"]),
+   ("\\setcitestyle{aysep={},notesep={; },citesep={;}}", "plainnat",
+    ["(Alpha et al. 2019; Delta 2021)", "Alpha et al. (2019)",
+     "(see Alpha et al. 2019; p. 5)"]),
+   ("\\setcitestyle{authoryear, square}", "plainnat",
+    ["(Alpha et al., 2019; Delta, 2021)", "Alpha et al. (2019)",
+     "(see Alpha et al., 2019, p. 5)"]),
+   ("\\bibpunct[: ]{[}{]}{,}{n}{}{,}", "unsrtnat",
+    ["[1, 2]", "Alpha et al. [1]", "[see 1: p. 5]"]),
+   ("\\setcitestyle{square}", "plainnat",
+    ["[Alpha et al., 2019; Delta, 2021]", "Alpha et al. [2019]",
+     "[see Alpha et al., 2019, p. 5]"])]
+
 /-- The calls as one document, each in its own paragraph `Lk <call> end.`;
 the style is declared in the preamble, where natbib reads it back at
 `\begin{document}`. -/
@@ -4177,6 +4205,23 @@ def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
       if let some w := want then
         t s!"natbib mode '{pre}' + {style}: line {k} sets '{w}'"
           (lines.contains s!"L{k} {w} end." && hasStr html s!"L{k} {w} end.")
+  for (decl, style, wants) in natbibDecls do
+    let (lines, html, _) := shipped ("\\usepackage{natbib}" ++ decl) style
+      ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}", "\\citep[see][p.~5]{alpha2019}"]
+    for want in wants, k in [1:4] do
+      t s!"natbib {decl} + {style}: line {k} sets '{want}'"
+        (lines.contains s!"L{k} {want} end." && hasStr html s!"L{k} {want} end.")
+  -- The item natbib drops is named where it stands, under its command's key;
+  -- in the body, where the engine does not read it, the declaration is named.
+  let dropped := (elabStr (natbibSrc "\\usepackage{natbib}\\setcitestyle{authoryear, square}"
+    "plainnat" ["x"])).2
+  t "natbib: an item natbib does not read is named, keyed to its command"
+    (dropped.any fun d => d.code == "W0101" && d.subject == some "ctrl:setcitestyle")
+  let body := (elabStr (natbibSrc "\\usepackage{natbib}" "plainnat"
+    ["\\setcitestyle{square}"])).1
+  t "natbib: a body declaration leaves no ink and no punctuation"
+    (body.natbib == some #[] && !hasStr (Ir.plainText (body.body.flatMap fun b =>
+      match b with | Ir.Block.para xs => xs | _ => #[])) "square")
   let (miss, _, _) := shipped "\\usepackage[numbers]{natbib}" "unsrtnat" ["\\citep{missing2000}"]
   t "natbib: an unresolved key prints [?], the separators a resolved one has"
     (miss.contains "L1 [?] end.")
