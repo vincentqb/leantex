@@ -250,6 +250,12 @@ in this repo; refer to the private reference corpus abstractly.
   198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
   fields: state the knot never reads goes in a record of its own
   (`Counters` is the shape), never a new top-level field.
+- `Elab`'s block knot (the mutual block around `elabBlocksGo`) is at its
+  compiler budget. An arm's new logic goes in a helper outside it
+  (`tikzArm`, `boxOptsArm`), and no knot function gains a parameter: one
+  on `columnsGo` alone tipped the knot's compilation past the default
+  200000 heartbeats. A value an inner walk needs travels in the raws
+  (`Compat.columnsRowPos`) instead.
 - A cache over an external tool caches the tool's *whole* answer, not
   only the answer that succeeded. A verdict remembered for the drawn case
   and dropped for the refused one means the slow path is the one that
