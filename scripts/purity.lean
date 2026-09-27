@@ -86,10 +86,7 @@ def measureTier : IO (Array String × Array Row) := do
     { item := "non-total-definitions-absent", value := debtCap - partials },
     { item := "open-holes-outside-staging-absent", value := debtCap - holes }])
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "purity" fun no => do
   -- The counter counts code tokens, and agrees with the hook's predicate
   -- because it *is* the hook's predicate. One line each way.
   no "counter: a definition is an occurrence" (bannedWord kwPartial (kwPartial ++ " def f := 0"))
@@ -100,12 +97,6 @@ def selftest : IO UInt32 := do
   no "staging: a nested obligation is staged" (staged "Obligations/Layout.lean")
   no "staging: a library module is not" (!staged "LeanTex/Core/Ir.lean")
   no "encoding: one occurrence is below the ceiling" (debtCap - (1 : Int) < debtCap)
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "purity selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "purity" (.headroom debtCap) measureTier selftest args

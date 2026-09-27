@@ -94,10 +94,7 @@ def measureTier : IO (Array String × Array Row) := do
 (verdict impl or inert:, the one definition the coverage tier shares); \
 refuse: {totalRefuse}; other verdicts: {totalRows - totalImpl - totalRefuse}"], rows)
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "compat" fun no => do
   let text := "# source: an invented manual §1\n\
 body impl \\zzone{x}\n\
 body refuse:W0301 \\zztwo\n\
@@ -129,12 +126,6 @@ body inert:binds \\zzfour\n\
     (after.impl > before.impl)
   no "a refusal becoming an implementation lowers the refusal count -- which \
 is why it is not an item" (after.refuse < before.refuse)
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "compat selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "compat" (.pairs "impl" "rows") measureTier selftest args

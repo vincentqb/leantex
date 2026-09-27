@@ -48,10 +48,7 @@ scripts/owed.lean rejects these too, so the count here would disagree with the g
   return (#[s!"# open: {obs.size} obligations over {owners.size} owner modules, \
 {readyCount} with no other open obligation in the blocker"], rows)
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "obligations" fun no => do
   let src := "-- owed: t_a\n-- owner: M.One\n-- source: S\n-- blocker: needs t_b\n\
 -- goldens: no\n-- owed: t_b\n-- owner: M.Two\n-- source: S\n-- blocker: a kernel wall\n\
 -- goldens: no\n"
@@ -74,12 +71,6 @@ def selftest : IO UInt32 := do
   -- as a higher number.
   no "encoding: discharging raises the value"
     (debtCap - (1 : Int) > debtCap - (2 : Int))
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "obligations selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "obligations" (.headroom debtCap) measureTier selftest args

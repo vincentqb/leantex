@@ -45,10 +45,7 @@ subjects owed by {debt} of them",
 AGENTS.md prescribes adding a row to route a fix"], #[
     { item := "subject-debt-absent", value := debtCap - Int.ofNat debt }])
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "diagdebt" fun no => do
   -- The registries are read as values, so these are facts about the module
   -- and not about its formatting: a reflowed row cannot move them.
   no "subjectDebt is a non-empty list of codes" (!subjectDebt.isEmpty)
@@ -69,12 +66,6 @@ def selftest : IO UInt32 := do
     (!rows.any fun r => containsSub r.item "site")
   no "the site-collision count is still reported, as provenance"
     (prov.any (containsSub · "site collisions"))
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "diagdebt selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "diagdebt" (.headroom debtCap) measureTier selftest args

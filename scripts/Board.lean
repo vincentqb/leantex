@@ -1216,6 +1216,22 @@ def tierMain (tier : String) (enc : Encoding)
     (args : List String) : IO UInt32 :=
   tierMainAt (tsvPath tier) tier enc measure selftest args
 
+/-- A tier producer's `--selftest`: run `body` with a recorder, print every
+failure it recorded, and exit on whether there were any. Five producers wrote
+this frame out in nine identical lines each, so a producer that reported a
+failure differently — or swallowed one — would have looked like the others.
+One frame: a tier's selftest is its assertions and nothing else. -/
+def tierSelftest (tier : String) (body : (String → Bool → IO Unit) → IO Unit) :
+    IO UInt32 := do
+  let fails ← IO.mkRef ([] : List String)
+  body fun why ok => unless ok do fails.modify (why :: ·)
+  let failed := (← fails.get).reverse
+  if failed.isEmpty then
+    IO.println s!"{tier} selftest: all passed"
+    return 0
+  for f in failed do IO.eprintln s!"FAIL {f}"
+  return 1
+
 end Scoreboard
 
 /-! ## The HTML freshness key, built hermetically

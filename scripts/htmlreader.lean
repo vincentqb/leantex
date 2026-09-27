@@ -128,10 +128,7 @@ no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean
     s!"# src-key: {(matrixKey text).getD "absent"} — the HTML the browser saw, \
 rebuilt and compared on every --check"], rows)
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "htmlreader" fun no => do
   let text := "target: chromium\n\
 tools: invented\n\
 \n\
@@ -173,12 +170,6 @@ alpha       pass       untested\n"
   no "key: reordering changes it"
     (contentKey a != contentKey #[("y", "2".toUTF8), ("x", "1".toUTF8)])
   no "key: 16 hex digits" ((contentKey a).length == 16)
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "htmlreader selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmlreader" (.pairs "pass" "rows") measureTier selftest args
