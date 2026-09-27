@@ -23,12 +23,9 @@ name = "LeanTex"
 # type-checked, proofs open. Not a default target: `lake build` and
 # `lake test` never see it, nothing in LeanTex/ may import it (the
 # pre-commit hook and scripts/owed.lean both check), and the ratchet in
-# scripts/owed.lean keeps the debt from growing unnamed. The glob takes the
-# files under Obligations/ too, so `lake build Obligations` type-checks
-# every staged statement, not only the root's.
+# scripts/owed.lean keeps the debt from growing unnamed.
 [[lean_lib]]
 name = "Obligations"
-globs = ["Obligations", "Obligations.+"]
 
 [[lean_exe]]
 name = "leantex"
