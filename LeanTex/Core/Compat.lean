@@ -569,6 +569,9 @@ private structure St where
   /-- The macro whose definition is being settled, when it is: its
   decisions are named as the definition's, not a use's. -/
   settling : Option String := none
+  /-- The conditional pass reads a spliced file's own top level, the list
+  where a live `\endinput` ends the file. -/
+  fileTop : Bool := false
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand`'s keep-existing policy reads. Separate from
   `binds`, which the conditional pass fills for the whole document
@@ -2032,6 +2035,21 @@ private def condMark : M CondMark := do
   let st ← get
   return { undo := st.undo.size, globals := st.globals.size, picBound := st.picBound.size }
 
+/-- Set whether the pass reads a spliced file's top level, returning the
+value it replaces. -/
+private def swapTop (b : Bool) : M Bool := do
+  let old := (← get).fileTop
+  write fun st => { st with fileTop := b }
+  return old
+
+/-- Does `r` stand on source line `l`? A space rides with its neighbours; a
+paragraph break ends the line. -/
+private def onLine (l : Nat) : Raw → Bool
+  | .space => true
+  | .par _ => false
+  | .word _ p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p
+  | .verb _ _ p => p.line == l
+
 /-- A brace group closes. What it bound stays bound — the flat reading of
 `binds` — but no value set inside it is read past it: the group is as often
 an argument (a hook) whose definitions are not in force here as a TeX group
@@ -2155,6 +2173,25 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
       let out := if more.all CondOpen.keeps then out.push (.ctrl "fi" pos) else out
       condList ex raws out more rest (i + 1) 0
     | _ :: more => condList ex raws out more rest (i + 1) 0
+  | .ctrl "endinput" pos :: rest, i, 0 => do
+    -- TeX reads the rest of the line, then no more of the file (TeXbook
+    -- ch. 20). Only a file's own top level is cut: elsewhere the name
+    -- passes through to be named where it stands. The walk ends here, so
+    -- the conditionals the line closes close with it, and what else the
+    -- line holds stands as written.
+    if !(stack.all CondOpen.keeps) then
+      condList ex raws out stack rest (i + 1) 0
+    -- premise: endInputChecks — a wrapper's top level is a file's own text,
+    -- the one list TeX stops reading at a terminator
+    else if (← get).fileTop then
+      let line := rest.takeWhile (onLine pos.line)
+      if (rest.drop line.length).any fun r => !(r matches .space | .par _) then
+        became "\\endinput" s!"the end of '{(← get).file}': its later lines are not read" pos
+          (subject := some "ctrl:endinput")
+      return out ++ (line.filter fun r =>
+        !(r matches .ctrl "fi" _ | .ctrl "else" _ | .ctrl "or" _)).toArray
+    else
+      condList ex raws (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
   | .ctrl n pos :: rest, i, 0 => do
     let st ← get
     -- `\unless` before a head reverses the head's test (e-TeX).
@@ -2296,12 +2333,16 @@ group at all. -/
 private def condOne (ex : String → Pos → M (Option (Array Raw))) : Raw → M Raw
   | .group body p => do
     let m ← condMark
+    let top ← swapTop false
     let body' ← condList ex body #[] [] body.toList 0 0
+    let _ ← swapTop top
     condCloseGroup m
     return .group body' p
   | .math d body p => do
     let m ← condMark
+    let top ← swapTop false
     let body' ← condList ex body #[] [] body.toList 0 0
+    let _ ← swapTop top
     condCloseEnv m
     return .math d body' p
   | .env n body p => do
@@ -2309,7 +2350,9 @@ private def condOne (ex : String → Pos → M (Option (Array Raw))) : Raw → M
     | some f =>
       let saved := (← get).file
       write fun st => { st with file := f }
+      let top ← swapTop true
       let body' ← condList ex body #[] [] body.toList 0 0
+      let _ ← swapTop top
       write fun st => { st with file := saved }
       return .env n body' p
     | none =>
@@ -2318,7 +2361,9 @@ private def condOne (ex : String → Pos → M (Option (Array Raw))) : Raw → M
       if pictureEnvs.contains n then
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
+      let top ← swapTop false
       let body' ← condList ex body #[] [] body.toList 0 0
+      let _ ← swapTop top
       condCloseEnv m
       write fun st => { st with inPicture := inPic }
       return .env n body' p
@@ -2349,7 +2394,9 @@ private def condExpandAt (bound : Nat) (n : String) (pos : Pos) : M (Option (Arr
     if !(v.live || inPic) || own then return none
     if _h : v.serial < bound then
       write fun s => { s with useSite := some (site.getD pos) }
+      let top ← swapTop false
       let out ← condList (fun m p => condExpandAt v.serial m p) v.raws #[] [] v.raws.toList 0 0
+      let _ ← swapTop top
       write fun s => { s with useSite := site }
       return some out
     else if v.live then

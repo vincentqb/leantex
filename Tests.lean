@@ -21,6 +21,7 @@ import Tests.DiagAudit
 import Tests.MathSym
 import Tests.AmsMath
 import Tests.Refusal
+import Tests.EndInput
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -203,6 +204,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   packageCodeChecks ref oneFace
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref
+  endInputChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
