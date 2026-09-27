@@ -1734,13 +1734,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!60}{b} " ++
       "\\textcolor{alpha!60}{c} \\textcolor{alpha!60}{d}")).size == 1)
   -- The one line carries the count: each later coloured run of the pairing
-  -- is a note under the same subject, and the tally puts the total on every
-  -- one of them. A run whose words split into several leaves is one site.
+  -- is a note under the same subject, and the tally puts the total on the
+  -- first line and 0 on each note, so the lines add up to the runs. A run
+  -- whose words split into several leaves is one site.
   let fourRuns := ((elabStr (paleUse ("\\textcolor{alpha!60}{a} " ++
       "\\textcolor{alpha!60}{b \\textbf{bb} b} \\textcolor{alpha!60}{c} " ++
       "\\textcolor{alpha!60}{d}"))).2.filter (·.code == "W0315"))
   t "a repeated pairing's line counts its four coloured runs"
-    (fourRuns.size == 4 && fourRuns.all (·.sites == 4) &&
+    (fourRuns.size == 4 && (fourRuns.map (·.sites)).toList == [4, 0, 0, 0] &&
       (fourRuns.filter (·.severity == .warning)).size == 1 &&
       (match fourRuns[0]? with
        | some d => d.subject.isSome && fourRuns.all (·.subject == d.subject)
