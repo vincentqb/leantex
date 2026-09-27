@@ -21943,3 +21943,76 @@ Each was also broken once through the path that ships:
   18.66/19.26 bp, against lualatex's 14.62.
 - deck, card, résumé and site: PDFs byte-identical; their HTML differs
   only in the caption stylesheet.
+
+
+
+### 2026-09-27 — a declared length lands where LaTeX's own code puts it, and what LaTeX discards is discarded
+
+The user's rule, verbatim: "i see a lot of warnings about settings being
+ignored across documents. that's terrible." The warnings were the visible
+half. The worse half printed nothing: every `\setlength` became a token of
+its name and a translation note said so, whether or not a site read the
+token — `\leftmargini`, `\itemsep`, `\parsep`, `\footnotesep`, `\parindent`
+were declared and never read, and the note claimed they had been
+translated. A lie in a note outranks a warning, because it is believed.
+
+**What LaTeX does was measured, not recalled** (lualatex on synthetic
+probes, `\showthe` inside and outside lists). A preamble `\baselineskip`
+and both display skips are gone in the body: `\begin{document}` runs
+`\normalsize`. A preamble `\itemsep`, `\parsep`, `\leftmargin` and
+`\itemindent` reach no list: `\list` and the class's `\@listi` set them
+again at every list. `\leftmargini`, `\partopsep`, `\labelsep`,
+`\labelwidth`, `\footnotesep`, `\columnsep`, `\arraycolsep`, `\jot`,
+`\unitlength` and `\parindent` stand. And the trap that decides a venue
+style: a class's `\normalsize` does `\let\@listi\@listI`, so a preamble
+`\@listi` stands only when the document's own `\normalsize` omits that —
+as the venue styles that redefine both do.
+
+**One table, one door.** `Compat.paramSites` gives each kernel and
+booktabs length its site: a page key, a token an engine site reads, a list
+level's indent, reset by `\normalsize`, reset by `\@listi`, or unmodelled
+with what LaTeX does with it. `setLength` is the door every spelling goes
+through (`\newlength`, `\setlength`, `\skip\footins`), `nameParam` the one
+door for the loss, and `readAssigns` the one reader for TeX's own
+`⟨parameter⟩[=]⟨value⟩` and `\advance`, used where style files spell
+parameters without `\setlength`: a `\normalsize` redefinition's display
+skips become the document's tokens, and a redefined `\@listi` … `\@listiv`
+becomes its level's style — indent, opening space, and `\itemsep` plus
+`\parsep` as the gap — computed at the preamble's end over the values the
+enclosing level left, as `\list` computes them. Counters took the same
+shape: a preamble `\setcounter` was an unknown command; it now moves to the
+body's start, where the one counter arm reads it, and that arm keeps
+`secnumdepth` (a heading above it neither numbers nor steps, `\@sect`),
+`footnote` and `equation`.
+
+**The check is the table's, quantified** (`paramSiteChecks`, over
+`Layout.Out`): a carried row sets exactly the page its native spelling sets
+and a different page from the document without it, so a row naming a token
+nobody reads cannot pass; a reset row sets the page the document sets
+without it; an unmodelled row is named once. The probes close against the
+rows in both directions. `listLevelChecks`, `sizeCommandChecks` and
+`counterChecks` hold the other doors the same way, against documents
+spelled natively or by hand.
+
+**Measured on the private reference corpus** (builds of scratch copies,
+base `da9b049d` against this branch, PDF and HTML): the deck, card, résumé
+and site ship byte-identical pages and HTML; the paper's pages 2–8 move,
+because its style's display skips now reach its displays in place of the
+engine's default, and the gap below a display moved 4–6pt toward the
+lualatex reference (baseline to baseline, measured with `pdftotext
+-bbox-layout` on both). Its unknown-command warnings in this family went from three to
+none, and the five "register arithmetic is not supported" notes inside its
+list-level macros became what they are: the arithmetic is read, and
+`\labelwidth`, which no engine site reads, is named once per level.
+
+**Left, with sites.** `\flushbottom` (`Compat.configSkip`) belongs to the
+page model. `\parindent` needs a first-line indent in both backends and a
+`\noindent` fact on the paragraph; until then a nonzero one is named, and
+a zero one is honoured. `\footnotesep` and `\labelsep` are sourced
+constants in `Layout` (`fontSize * 665 / 1000`, `fontSize / 2`) a token
+read would carry. `\partopsep` needs the IR to record whether a list opens
+after a blank line. The engine's list realization adds the outer
+`\parskip` to neither the opening space nor the closing one, where LaTeX
+adds it to both. `\fontseries` inside a `\style` font template ships its
+marker as text (found on the way; the template reader does not read the
+`@series:` marker the arm emits).
