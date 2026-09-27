@@ -3960,6 +3960,36 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "a deck's items stand beamer's itemsep apart, its list beamer's topsep from the text"
     (steps deck words == [dlead + Dim.pt 3, dlead + Dim.pt 3, dlead + Dim.pt 3])
 
+/-- **An explicit `\vspace` is never absorbed by an element's space**
+(`addvspace_after_vspace_exact`). LaTeX's `\@vspace` ends with
+`\vskip\z@skip` (latex.ltx:9362-9390), so the `\addvspace` of the list, the
+trivlist or the heading after it finds a zero `\lastskip` and adds. Asserted
+over `Layout.Out` as pairs of builds differing only in the skip: the
+element's first line moves by the skip's whole width and nothing above it
+moves. lualatex moves each of these by 12 pt (11.95 bp, TeX Live 2026).
+Invented words. -/
+def vspaceKeptChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (body : String) : String :=
+    "\\documentclass{article}\\begin{document}Alpha.\n\n" ++ body ++ "\n\nCharlie.\n\\end{document}"
+  let at2 (src : String) : Option (Dim.Sp × Dim.Sp) := do
+    let c := censusOfSrc oneFace src
+    pure (← lineYOf c 0 "Alpha.", ← lineYOf c 0 "Bravo")
+  let elements : List (String × String) :=
+    [("itemize", "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}"),
+     ("enumerate", "\\begin{enumerate}\n\\item Bravo.\n\\end{enumerate}"),
+     ("quote", "\\begin{quote}\nBravo.\n\\end{quote}"),
+     ("center", "\\begin{center}\nBravo.\n\\end{center}"),
+     ("flushleft", "\\begin{flushleft}\nBravo.\n\\end{flushleft}"),
+     ("section", "\\section*{Bravo}")]
+  for (name, el) in elements do
+    for skip in ["\\vspace{12pt}", "\\bigskip"] do
+      match at2 (doc el), at2 (doc (skip ++ "\n" ++ el)) with
+      | some (a0, b0), some (a1, b1) =>
+        t s!"{skip} before {name} moves it by the skip's whole width"
+          (a1 == a0 && b1 - b0 == Dim.pt 12)
+      | _, _ => t s!"{skip} before {name}: the fixture lays out" false
+
 /-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
 break between a heading and the first lines of its text (`\@xsect`'s
 `\nobreak`, `\@afterheading`'s `\clubpenalty`), so a heading that would be a

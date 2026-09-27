@@ -5110,7 +5110,8 @@ as it goes, because what the gap is depends on everything declared between
 two lines. The rules are LaTeX's. `\vspace` is a `\vskip`: it adds. An
 element's own space — a heading's `before`, a list's `topsep` — is an
 `\addvspace`: against glue already owed it takes the larger, so a list's
-bottom space and the heading after it do not stack. `parskip`, the default
+bottom space and the heading after it do not stack; after a `\vspace` it
+adds (`addvspace_after_vspace_exact`). `parskip`, the default
 between peers, is paid only when nothing was declared. `wantDefault` marks a
 peer boundary, `owed` is the glue sequence, `flushGap` pays it when the next
 line comes. -/
@@ -5259,15 +5260,28 @@ private def Acc.wantGap (a : Acc) : Acc := { a with wantDefault := true }
 private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
   { a with owed := a.owed.push g, declaredSkip := true }
 
+/-- `\vspace`: LaTeX's `\@vspace` (latex.ltx:9362-9390) is `\vskip #1` then
+`\vskip\z@skip`, so the last skip it leaves reads zero and the next
+`\addvspace` adds to it rather than comparing with it
+(`addvspace_after_vspace_exact`). A primitive `\vskip` — a heading's
+after-skip — leaves its own width as the last skip. -/
+private def Acc.vspace (a : Acc) (g : Glue) : Acc :=
+  { a with owed := (a.owed.push g).push {}, declaredSkip := true }
+
 /-- `\addvspace`: an element's own space. Against glue already owed it takes
 the larger (by natural width, as LaTeX compares them), so two elements
 meeting do not pay both their spaces — unless the owed glue's natural width
 is zero, where it adds: ltspace.dtx tests `\ifdim\lastskip=\z@` first, so
-a `\vspace{\fill}` standing before a list or a `center` keeps its fil. -/
+a `\vspace{\fill}` standing before a list or a `center` keeps its fil, and
+a `\vspace` (`Acc.vspace`) is never absorbed. Appended so, the element's
+own convention governs the boundary it now opens: the peer default a
+document skip stacks for a following paragraph (`declaredSkip`) is not
+the element's, which stands its space in place of the default as it does
+after a paragraph — a trivlist and a list re-declare theirs. -/
 private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
   match a.owed.back? with
   | some last =>
-    if last.width == 0 then { a with owed := a.owed.push g }
+    if last.width == 0 then { a with owed := a.owed.push g, declaredSkip := false }
     else if last.width < g.width then { a with owed := a.owed.pop.push g } else a
   | none => { a with owed := #[g] }
 
@@ -5299,6 +5313,20 @@ edge. The `\trivlist` role (`{center}`, `{flush…}`) keeps the peer gap, and
 its quantized `\topsep`, until its HTML half moves with it. -/
 private def Acc.listSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true, trivOwed := true }
+
+/-- **An explicit `\vspace` is never absorbed by an element's space**
+(`_exact`): after a `\vspace`, each element door — `\addvspace`, a
+trivlist's `\topsep`, a list's — appends its glue, so the document's skip
+stands whole beside it. LaTeX's `\@vspace` closes with `\vskip\z@skip`, so
+`\addvspace` takes its `\ifdim\lastskip=\z@` arm (latex.ltx:9321); measured
+under lualatex, `\vspace{12pt}` before a list, a `{center}` or a heading
+moves it by exactly 12 pt (`vspaceKeptChecks`). -/
+private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
+    ((a.vspace v).addvspace g).owed = (a.vspace v).owed.push g ∧
+    ((a.vspace v).trivSpace g).owed = (a.vspace v).owed.push g ∧
+    ((a.vspace v).listSpace g).owed = (a.vspace v).owed.push g := by
+  have h := addvspace_zero_adds_exact (a.vspace v) g {} (by simp [Acc.vspace]) rfl
+  exact ⟨h, h, h⟩
 
 /-- The glue one boundary pays: the declared glue owed, and — when a
 document skip stands in it at a peer boundary — the page's parskip *on top
@@ -5342,16 +5370,17 @@ place of* the 6 pt parskip it displaced, so inserting 3 pt of glue made the
 two paragraphs 3 pt *closer*. Positive glue cannot do that under any
 convention. The two parskips' non-negativity — the engine's peer gap and
 TeX's (`Geom.texParskip`) — are the hypotheses: a page declaring negative
-parskip could narrow a gap by opening one, as it could in TeX. -/
+parskip could narrow a gap by opening one, as it could in TeX. Stated over
+`Acc.vspace`, the door `\vspace` and `\smallskip` ship through. -/
 private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
     (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width)
     (hq : (0 : Int) ≤ (r.resolve r.geom.texParskip).width) :
-    (a.gapGlue r).width ≤ ((a.vskip g).gapGlue r).width := by
-  have hf : ((a.vskip g).owed.foldl Glue.add {}) = (a.owed.foldl Glue.add {}).add g := by
-    simp [Acc.vskip]
-  have hd : (a.vskip g).declaredSkip = true := rfl
-  have hw : (a.vskip g).wantDefault = a.wantDefault := rfl
-  have ht : (a.vskip g).trivOwed = a.trivOwed := rfl
+    (a.gapGlue r).width ≤ ((a.vspace g).gapGlue r).width := by
+  have hf : ((a.vspace g).owed.foldl Glue.add {}) = (a.owed.foldl Glue.add {}).add g := by
+    simp [Acc.vspace, Glue.add]
+  have hd : (a.vspace g).declaredSkip = true := rfl
+  have hw : (a.vspace g).wantDefault = a.wantDefault := rfl
+  have ht : (a.vspace g).trivOwed = a.trivOwed := rfl
   have hpar : (0 : Int) ≤ (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip).width := by
     split <;> assumption
   simp only [Acc.gapGlue, hf, hd, hw, ht, Bool.and_true]
@@ -6213,9 +6242,11 @@ private def Acc.displaySkips (a : Acc) (r : Rd) : Glue × Glue :=
 
 /-- A display formula's block: its centred line stands inside the display
 skips, paid as the formula's own space — `\addvspace`, so the skip above
-takes the larger of itself and whatever is already owed (a heading's
-`after`, a `\vspace`) and never stacks onto the peer gap (`flushGap`
-pays owed glue instead of the default: `display_skip_single_emitter`),
+takes the larger of itself and an element's space already owed (a
+heading's `after`), adds after a `\vspace` as every element's space does
+(`addvspace_after_vspace_exact`), and never stacks onto the peer gap
+(`flushGap` pays owed glue instead of the default:
+`display_skip_single_emitter`),
 and the skip below is owed to whatever line follows, as TeX's
 `\belowdisplayskip` is glue on the vertical list the next paragraph
 sits after. Both the unnumbered shape (`Ir.displayContent?`) and the
@@ -7144,16 +7175,18 @@ private def collectBlock (r : Rd) (a : Acc)
   | .bibliography _ _ items => collectBibliography r a items indent
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font.
-    -- Standing on its own — `\vspace`, a skip macro, `Ir.gapBlock` — it is a
-    -- `\vskip`: it adds to any other declared glue, and at a peer boundary
-    -- to the page's parskip, which TeX contributes when the *following*
-    -- paragraph starts and which no declared skip can displace
-    -- (`skip_monotone`). Carrying a body it is instead that element's own
-    -- space — an `\addvspace`, like a role's or a list's `before` — and
-    -- stands in place of the peer default as those do, so one rhythm
-    -- spelled upstream and at the use site ships the same positions.
-    let a := a.vskip (r.resolve before.value)
-    let a := if body.isEmpty then a else { a with declaredSkip := false }
+    -- Standing on its own — `\vspace`, a skip macro, `Ir.gapBlock` — it is
+    -- LaTeX's `\vspace` (`Acc.vspace`): it adds to any other declared glue,
+    -- and at a peer boundary to the page's parskip, which TeX contributes
+    -- when the *following* paragraph starts and which no declared skip can
+    -- displace (`skip_monotone`); and an element's space after it adds too
+    -- (`addvspace_after_vspace_exact`). Carrying a body it is instead that
+    -- element's own space — an `\addvspace`, like a role's or a list's
+    -- `before` — and stands in place of the peer default as those do, so
+    -- one rhythm spelled upstream and at the use site ships the same
+    -- positions.
+    let a := if body.isEmpty then a.vspace (r.resolve before.value)
+      else { a.vskip (r.resolve before.value) with declaredSkip := false }
     collectBlocks r a body indent
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
