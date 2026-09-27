@@ -300,6 +300,7 @@ def Cause.owner (set : String) (definer : String → Option String) : Cause → 
     | some "pkg:amsmath" => "pkg-amsmath"
     | some "pkg:amssymb" | some "pkg:amsfonts" => "pkg-amssymb"
     | some "pkg:tikz" => "warn-pic"
+    | some "primitive" => "warn-elab (a TeX primitive)"
     | some d => s!"coverage-honest ({d})"
     | none => "coverage-honest (unindexed: in no denominator)"
   | .font _ => "minimal-core (Font*, FontDb)"
@@ -587,6 +588,21 @@ def summary (ms : Array Measure) : String := Id.run do
       toString (inn.filter (fun m => (causes m).isEmpty)).size]
   return out
 
+/-- The construct a compat-index row documents, read off its example: the
+first control word that is not `\begin`/`\end`, else the first environment
+it opens — so `\begin{tabular}{ll}\multirow{2}{*}{a}…` documents
+`\multirow`, and `\begin{align*}x\end{align*}` documents `align*`. A
+heuristic over the row's text, stated as one: the index has no field that
+names the construct. -/
+def rowConstruct (ex : String) : Option String :=
+  let words := ((ex.splitOn "\\").drop 1).map fun w =>
+    String.ofList (w.toList.takeWhile Char.isAlpha)
+  match words.find? (fun w => !w.isEmpty && w != "begin" && w != "end") with
+  | some w => some ("ctrl:" ++ w)
+  | none => match ex.splitOn "\\begin{" with
+    | _ :: env :: _ => some ("env:" ++ ((env.splitOn "}").headD ""))
+    | _ => none
+
 /-- Where the tree's own indexes place a construct: the kernel's documented
 command list (`tests/coverage/latex2e-index.txt`, with its manual chapter),
 or the package whose compat index names it (`tests/compat-index/<pkg>.txt`,
@@ -602,16 +618,12 @@ def indexOwnersOf (kernel : String) (pkgs : Array (String × String)) :
     match l.splitOn "\t" with
     | name :: chapter :: _ => m := m.insert ("ctrl:" ++ name) s!"kernel ({chapter})"
     | _ => pure ()
+  for p in Compat.texPrimitives do
+    unless m.contains ("ctrl:" ++ p) do m := m.insert ("ctrl:" ++ p) "primitive"
   for (pkg, text) in pkgs do
     for l in text.splitOn "\n" do
       if l.startsWith "#" then continue
-      let ex := String.intercalate " " ((l.splitOn " ").drop 2)
-      let key := match ex.splitOn "\\begin{" with
-        | _ :: env :: _ => some ("env:" ++ ((env.splitOn "}").headD ""))
-        | _ => match ex.splitOn "\\" with
-          | _ :: rest :: _ => some ("ctrl:" ++ String.ofList (rest.toList.takeWhile Char.isAlpha))
-          | _ => none
-      if let some k := key then
+      if let some k := rowConstruct (String.intercalate " " ((l.splitOn " ").drop 2)) then
         unless m.contains k do m := m.insert k ("pkg:" ++ pkg)
   return m
 
@@ -769,15 +781,21 @@ Mono\" }\nx")
       #[("unknown: ctrl:a", 2, 1), ("unknown: env:b", 1, 0)])
   -- Attribution, off the indexes' own row shapes.
   let owners := indexOwnersOf "# head\nbibitem\tEnvironments\tcall\n"
-    #[("natbib", "# src\nbody impl \\citep{k}\nbody refuse:W0301 \\citeauthor{k}\n"),
+    #[("multirow", "body refuse:W0301 \\begin{tabular}{ll}\\multirow{2}{*}{a} & b\\end{tabular}\n"),
+      ("natbib", "# src\nbody impl \\citep{k}\nbody refuse:W0301 \\citeauthor{k}\n"),
       ("amsmath", "body impl \\begin{align*}x\\end{align*}\n"),
       ("zz", "body impl \\citep{k}\n")]
   expect "a kernel row names its chapter"
     (owners.get? "ctrl:bibitem" == some "kernel (Environments)")
+  expect "a TeX primitive the kernel index does not name is one"
+    (owners.get? "ctrl:fontname" == some "primitive")
+  expect "a row documents its first command, not the environment it stands in"
+    (owners.get? "ctrl:multirow" == some "pkg:multirow" && owners.get? "env:tabular" == none)
   expect "a package row names its package, refused or not"
     (owners.get? "ctrl:citep" == some "pkg:natbib"
       && owners.get? "ctrl:citeauthor" == some "pkg:natbib")
-  expect "an environment row is keyed as one" (owners.get? "env:align*" == some "pkg:amsmath")
+  expect "a row with no command documents its environment"
+    (owners.get? "env:align*" == some "pkg:amsmath")
   expect "the first index to name a construct keeps it" (owners.get? "ctrl:citep" != some "pkg:zz")
   expect "a construct no index names is unindexed" (owners.get? "env:description" == none)
   expect "an unindexed unknown feeds the programme, saying so"
