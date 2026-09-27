@@ -490,8 +490,9 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
         let nm := (s.stack.findSome? ctName?).getD ""
         s := { s with font := fonts[nm]?, face := nm, size := (ns[0]?).getD s.size }
       else if o == "Tz" then
-        -- The operand is a percentage; the scale is kept in per mille.
-        s := { s with th := (((ns[0]?).getD (Dim.pt 100)) * 10) / Dim.spPerPt }
+        -- The operand is a percentage; the scale is kept in per mille,
+        -- rounded: `98.7` reads 6468403 sp, which truncates to 986.
+        s := { s with th := (((ns[0]?).getD (Dim.pt 100)) * 10 + Dim.spPerPt / 2) / Dim.spPerPt }
       else if o == "TJ" || o == "Tj" then
         for it in s.stack do
           match it with
@@ -1046,6 +1047,49 @@ alike, since a picture that will overrun is a layout finding. -/
 def artAccounted (diags : Array Diag) : Bool :=
   diags.any fun d => artOverflowCodes.contains d.code
 
+/-- Where the layout put each glyph of a page, in PDF user space and in
+stream order: the line's x, the segments before it, and the glyph's laid
+advance from its run's start under the line's expansion, by the rule
+`Layout.setLine` scales a run by (`w + w·f/1000`). -/
+def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id.run do
+  let mut out : Array Dim.Sp := #[]
+  for l in p.lines do
+    let mut x := geom.bleed + l.x
+    for s in l.segs do
+      match s with
+      | .run _ _ _ w glyphs _ _ _ _ _ =>
+        let mut adv : Dim.Sp := 0
+        for (_, _, a) in glyphs do
+          out := out.push (x + adv + adv * l.expand / 1000)
+          adv := adv + a
+        x := x + w
+      | .gap w _ => x := x + w
+      | .rule w _ _ _ => x := x + w
+      | .image _ w _ => x := x + w
+  return out
+
+/-- Glyphs whose painted start misses the layout's: the file's pen, glyph
+by glyph — each with the size its run is set at — against `artLaidGlyphs`,
+beyond what the file can state: half a thousandth of that size (a `TJ`
+number's resolution, `Pdf.place_between`'s bound) plus the precision a
+coordinate is spelled at (`artSpellSlack`). A count that differs is an
+offence of its own. -/
+def artGlyphPlacementOffences (laid : Array Dim.Sp) (painted : Array (Dim.Sp × Dim.Sp)) :
+    Array String := Id.run do
+  if laid.size != painted.size then
+    return #[s!"{painted.size} glyphs painted where the layout placed {laid.size}"]
+  let mut out : Array String := #[]
+  for h : k in [0:laid.size] do
+    let (x, size) := painted[k]!
+    let d := x - laid[k]
+    if d.natAbs > (artSpellSlack + size / 2000).natAbs then
+      out := out.push s!"glyph {k}: painted {(d : Dim.Sp).toPtString}pt from its layout x"
+  return out
+
+/-- A page's painted glyph starts, in stream order, each with its run's size. -/
+def artPaintedGlyphs (p : ArtPage) : Array (Dim.Sp × Dim.Sp) :=
+  p.runs.flatMap fun r => r.glyphs.map fun (x, _) => (x, r.size)
+
 /-- The artifact tier over the golden corpus: every fixture built the way
 the driver builds it, its bytes read back, and every claim judged on what
 they paint. A recorded offence inverts the judgement — the row must still
@@ -1084,6 +1128,10 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       for p in rd.pages do
         bandsSeen := bandsSeen + p.bands.size
         contentPaths := contentPaths + (p.boxes.filter fun b => !b.isArtifact).size
+      let placed := artGlyphPlacementOffences (out.pages.flatMap (artLaidGlyphs geom))
+        (rd.pages.flatMap artPaintedGlyphs)
+      t s!"artifact {n}: every glyph starts where the layout put it: {placed.toList.take 3}"
+        placed.isEmpty
       for prop in artProps do
         let offs := artOffences rd prop
         if artKnownOffences.any fun (f, q, _) => f == n && q == prop then
@@ -2085,41 +2133,6 @@ def artKernSrc : String :=
   "Yo Yo Tw Tw Ty Vo Vo Wo Wo LT LT Ly Ly To Te Ta and \\emph{Wave} Ta To, Ty Tw Yo.\n" ++
   "\\begin{center}\nTaTaTaTaTaTaTaTaTaTa\n\\end{center}\n\\end{document}\n"
 
-/-- Where the layout put each glyph of a page, in PDF user space and in
-stream order: the line's x, the segments before it, and the glyph's laid
-advance from its run's start under the line's expansion, by the rule
-`Layout.setLine` scales a run by (`w + w·f/1000`). -/
-def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id.run do
-  let mut out : Array Dim.Sp := #[]
-  for l in p.lines do
-    let mut x := geom.bleed + l.x
-    for s in l.segs do
-      match s with
-      | .run _ _ _ w glyphs _ _ _ _ _ =>
-        let mut adv : Dim.Sp := 0
-        for (_, _, a) in glyphs do
-          out := out.push (x + adv + adv * l.expand / 1000)
-          adv := adv + a
-        x := x + w
-      | .gap w _ => x := x + w
-      | .rule w _ _ _ => x := x + w
-      | .image _ w _ => x := x + w
-  return out
-
-/-- Glyphs whose painted start misses the layout's: the file's pen, glyph
-by glyph, against `artLaidGlyphs`, beyond the precision a coordinate is
-spelled at (`artSpellSlack`). A count that differs is an offence of its
-own. -/
-def artGlyphPlacementOffences (laid painted : Array Dim.Sp) : Array String := Id.run do
-  if laid.size != painted.size then
-    return #[s!"{painted.size} glyphs painted where the layout placed {laid.size}"]
-  let mut out : Array String := #[]
-  for h : k in [0:laid.size] do
-    let d := painted[k]! - laid[k]
-    if d.natAbs > artSpellSlack.natAbs then
-      out := out.push s!"glyph {k}: painted {(d : Dim.Sp).toPtString}pt from its layout x"
-  return out
-
 /-- Runs that start inside the rendered extent of the run before them on
 the same baseline in another face: where a font change once absorbed the
 kerns dropped before it. Within one face a positive `TJ` number is a kern
@@ -2147,9 +2160,8 @@ def kernPlacementChecks (ref : IO.Ref (List String)) : IO Unit := do
   | .error e => t s!"kerns: the kerned page reads back: {e}" false
   | .ok pages =>
     t "kerns: the fixture ships one page" (pages.size == 1 && out.pages.size == 1)
-    let painted := pages.flatMap (·.runs.flatMap (·.glyphs.map (·.1)))
     let laid := out.pages.flatMap (artLaidGlyphs geom)
-    let offs := artGlyphPlacementOffences laid painted
+    let offs := artGlyphPlacementOffences laid (pages.flatMap artPaintedGlyphs)
     t s!"kerns: every glyph starts where the layout put it: {offs.toList.take 5}"
       (!laid.isEmpty && offs.isEmpty)
     let faceOffs := artFaceChangeOffences pages
