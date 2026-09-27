@@ -20181,3 +20181,118 @@ both directions, so neither can drift from the face or the table.
   Appendix G, rule 13): lualatex moves Fira Math's ∑ 0.02 bp off its
   line's baseline (pdftotext -bbox), which `mathsym` leaves out because the
   order level groups a line by exact baseline.
+
+
+### 2026-09-27 — amsmath: its grids are one table of their definitions, a tag stands in the number's place, and mod is its kerns
+
+The amsmath index held 15 of 54 rows implemented. It holds 36 of 57 now
+(`scripts/compat.lean`), and the coverage headline is 566/1343 = 42.1%
+(`scripts/coverage.lean`; the kernel half rose by 2 because `\bmod` and
+`\pmod` are latex.ltx's too).
+
+**How the rows were ranked.** Neither private reference document needs a
+refused amsmath row. Measured at `b312cf2b`, both fire no W0012 and no
+W0015. Their math is `align*`, `equation` with `\eqref`, `\text` and
+`\left…\right`, all implemented already. So the order is what a typical
+paper uses, weighed against cost: `cases`, the matrices,
+`aligned`/`split`, `\tag`, numbered `align`, `\binom`, the modulo
+commands and the dots.
+
+**What landed.**
+
+- **The in-formula grids are data.** `MathParse.gridEnvs` has one row
+  per environment: `cases`, `matrix` and its five delimited forms,
+  `aligned`, `gathered`, `split` and `\substack`. Each row is the grid its
+  amsmath.sty definition builds, plus the delimiters `\left`/`\right`
+  grow around it. One resolver reads the table, and no `Ir` or `MNucleus`
+  constructor was added. `Tests/AmsMath.lean` quantifies over the table:
+  - each row equals its amsmath.sty expansion, spelled with the engine's
+    own `array` and `\left…\right`, or with the display alignment of the
+    same column model;
+  - a row added without its reference fails;
+  - the laid page and the HTML tree ship exactly the row's cells between
+    its delimiters, with no diagnostic.
+
+  amsmath's alignments set their cells in display style wherever they
+  stand (`$\m@th\displaystyle{##}$` in `\start@aligned` and `gathered`),
+  so an inline `aligned` now does too, in the PDF and in MathML.
+- **`cases` stands its rows `\arraystretch` 1.2 apart.**
+  `GridKind.array` carries its stretch in permille. The PDF assembly
+  scales the row pitch by it (latex.ltx `\@arstrutbox`). MathML cells of
+  a stretched array take the extra as padding on top of Core's 0.5ex.
+  This field is where a document's own `\arraystretch` would land.
+- **A lone fence keeps its own size in MathML.** MathML Core's operator
+  dictionary makes every fence stretchy. Beside a `cases` brace, `f(x)`'s
+  parentheses grew to 43 CSS px in Chromium; they are 17 px now. An `mo`
+  emitted for a lone scalar declares `stretchy="false"`. Only
+  `\left`/`\right` stretch, as in TeX.
+- **`\tag{t}` and `\tag*{t}`.** The tag sets `(t)`, or `t` for the
+  starred form, in the number's place. It steps no counter, and it binds
+  its labels, so `\eqref` reads `(t)` and `\ref` reads `t` (amsldoc §3.4).
+  Where no number is rendered yet (an alignment's rows, a display in an
+  inline position) the tag is named under W0015 and is never set inside
+  the formula. On base, `\tag*{A}` was set as the mathematics `∗𝐴`.
+- **`\bmod`, `\mod`, `\pod`, `\pmod`**, from amsmath.sty's kerns. The
+  parser now receives `\if@display`.
+- **The five semantic dots.** Each is set as the glyph amsmath `\let`s it
+  to, and `\dotsi` is `\!\cdots`.
+
+**Measured against lualatex** on synthetic fixtures (unicode-math, Fira
+Math, Source Serif), in bp from pdftotext glyph boxes:
+
+- Glyph text and reading order are equal.
+- Every gap agrees once it is scaled by the engine's math size. On this
+  face pair that size is 0.9013 of lualatex's 10 bp, because
+  `Math.mathSize` matches x-heights by design. A parity reading of math
+  must scale by it, or every math gap reads 10% short.
+- After scaling:
+  - `aligned`/`split` row pitch: 13.52 bp against 15.00 × 0.9013, exact;
+  - `cases` pitch: 12.98 bp against 14.40 × 0.9013, exact;
+  - modulo gaps: within 0.05 bp;
+  - `pmatrix` column pitch: 14.18 bp against 14.37. `\arraycolsep` is a
+    fixed 5 pt in LaTeX; here it is 18 mu, which is size-relative.
+- Two gaps remain:
+  - `\substack` row pitch is 7.79 against 6.94. LuaTeX's `subarray`
+    spaces its rows by the stack constants (`\Umathstacknumup` +
+    `\Umathstackdenomdown`), while the engine uses the script leading.
+  - Display skips are the rhythm branches' business.
+
+Both private documents build to byte-identical PDFs at base and at head,
+still 8 and 35 pages with an identical census. Their HTML differs only by
+the new `stretchy="false"` attributes: 75 in the paper, 116 in the deck.
+
+**Targets, not staged** (no obligation debt added):
+
+- **Numbered `align`/`gather`/`multline`** (W0015, the most-used amsmath
+  row still refused). The shape is TeX's own: an `\halign` row is a line.
+  - The IR carries a number, or none, per row.
+  - Layout sets each row as its own display line, at the column offsets
+    every row shares, with the tag on its baseline.
+  - HTML emits one row per equation row, with the tag in a final track.
+  - The owners are `Ir`, Layout's vertical placement (rhythm-pdf2) and
+    HtmlDoc's equation CSS (rhythm-html), so it is next round's.
+- **One generalized fraction.** `\dfrac` and `\tfrac` are marked `impl`,
+  but they set as `\frac` in the current style, so an inline `\dfrac`
+  sets at text size. That is a silent divergence, and nothing the index
+  checks catches it.
+  - amsmath defines `\frac`, `\dfrac`, `\tfrac`, `\binom`, `\dbinom` and
+    `\tbinom` through `\genfrac`. One nucleus (delimiters, rule, style)
+    makes all seven rows of one table.
+  - A rule-less fraction needs the MATH table's Stack* constants, which
+    `Font.lean` does not read yet; MathML sets `mfrac linethickness="0"`.
+  - A style nucleus would also give `smallmatrix`, `\cfrac` and the
+    kernel's four style switches.
+- `subequations`, `\numberwithin`, `\intertext`, `alignat`/`flalign`, and
+  `\overset`/`\underset`. The last two need `\limits` distinct from
+  `\displaylimits`, and today they are one Bool.
+
+**Routed.** 15 of 362 implemented compat rows, across all packages, fire
+a code of loss `dropped`, `pending` or `degraded` (measured by a probe
+over every index file). None of the 15 is amsmath's. Some are the probe's
+context: an unresolved citation key, a missing alt text. Others are real:
+- `\tcp*` draws E0304;
+- three tikz rows drop the option they exist to test.
+
+The rule "an `impl` row fires no loss whose subject names its construct"
+reads subjects the way `coverage` does, so it belongs to the rung owner.
+It is not added here: added now, it would turn siblings' rows red.
