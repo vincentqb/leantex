@@ -3990,6 +3990,39 @@ def vspaceKeptChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
           (a1 == a0 && b1 - b0 == Dim.pt 12)
       | _, _ => t s!"{skip} before {name}: the fixture lays out" false
 
+/-- **A fill-centred block stands where its content stands alone.** LaTeX's
+`\vspace*{\fill}` anchors the page top with a zero rule (`\@vspacer`,
+latex.ltx:9374-9390), so the `\topsep` a trivlist or a list opens after it
+stays on the page, as its closing one does, and the two fils split the
+rest: the block stands where its bare line stands. A face closed by
+`\pagebreak` is its own page, so a second face stands where the same face
+stands on a page of its own. Asserted over `Layout.Out`; lualatex puts each
+pair at the same baseline, 0.00 bp apart (TeX Live 2026). Invented words. -/
+def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let y (src : String) (page : Nat) (word : String) : Option Dim.Sp :=
+    lineYOf (censusOfSrc oneFace src) page word
+  let sandwich (inner : String) : String :=
+    "\\vspace*{\\fill}\n" ++ inner ++ "\n\n\\vspace*{\\fill}"
+  let bare := y (doc "" (sandwich "Alpha words.")) 0 "Alpha"
+  for (name, inner) in [("center", "\\begin{center}\nAlpha words.\n\\end{center}"),
+      ("flushleft", "\\begin{flushleft}\nAlpha words.\n\\end{flushleft}"),
+      ("itemize", "\\begin{itemize}\n\\item Alpha words.\n\\end{itemize}"),
+      ("quote", "\\begin{quote}\nAlpha words.\n\\end{quote}")] do
+    t s!"a fill-centred {name} stands where its bare line stands"
+      (bare.isSome && y (doc "" (sandwich inner)) 0 "Alpha" == bare)
+  let face (size w1 w2 : String) : String :=
+    "\\vspace*{\\fill}\n\\begin{center}\n\\begin{minipage}{\\textwidth}\n\\" ++ size ++ "\n" ++
+      w1 ++ "\\\\\n" ++ w2 ++ "\n\\end{minipage}\n\\end{center}\n\\vspace*{\\fill}\n\\pagebreak\n"
+  let card := "\\usepackage{geometry}\\geometry{paperwidth=4in, paperheight=2.5in, margin=0.3in}"
+  let alone := y (doc card (face "large" "Delta words" "Echo words")) 0 "Delta"
+  let second := y (doc card (face "LARGE" "Alpha words" "Bravo words" ++
+    face "large" "Delta words" "Echo words")) 1 "Delta"
+  t "a second face stands where the same face stands on a page of its own"
+    (alone.isSome && second == alone)
+
 /-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
 break between a heading and the first lines of its text (`\@xsect`'s
 `\nobreak`, `\@afterheading`'s `\clubpenalty`), so a heading that would be a

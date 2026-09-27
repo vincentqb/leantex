@@ -4684,6 +4684,17 @@ private def B.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
            prevRuleOnly := false
            skip := b.skip.add g }
 
+/-- The pending skip a fresh page keeps. TeX discards glue at the top of a
+page up to its first box or rule, and `\vspace*`'s zero rule is one
+(`\@vspacer`, latex.ltx:9374-9390): what follows it stays, the `\topsep`
+of a `{center}` or a list after `\vspace*{\fill}` included. The engine
+reads a fil in the pending skip as that anchor — `B.commit` counts it,
+since `\vspace*{\fill}` is how a fil reaches a page's top — so its natural
+width stays with it; with no fil the skip is discarded, as TeX discards
+it. A spill clears the skip (`finishPage`), so glue after a break is never
+kept. -/
+private def B.topKept (b : B) : Sp := if b.skip.fil then b.skip.width else 0
+
 /-- The fit-or-spill skeleton every committed band takes — the one
 spelling of `overflow ≤ shrink ∨ noBreak → commit | close and retry`:
 commit at `stepY b` when the band's ink past `bottom` is within the
@@ -4757,9 +4768,10 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand, counted := counted, leaf := leaf }
   -- The first baseline is the body top plus the larger of the body's
-  -- metric ascent and the line's own leaded above (`first_baseline_declared`).
+  -- metric ascent and the line's own leaded above (`first_baseline_declared`),
+  -- and the pending skip an anchor keeps (`B.topKept`).
   b.fitCommit mk
-    (fun b => b.geom.bodyTop + max b.ascent box.above)
+    (fun b => b.geom.bodyTop + max b.ascent box.above + b.topKept)
     (fun b => b.y + b.skip.width
       + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
     -- Below the reopened frame chrome: interline from the chrome's own
@@ -4816,14 +4828,16 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
 /-- The first baseline, declared: on a fresh page the line lands at the
 body top plus the larger of the body's metric ascent and the line's own
 leaded above — today's `\topskip`-shaped rule restated over metric
-ascent. Constant for a document unless a taller first line honestly needs
-more; what furniture symmetry measures to. -/
+ascent — and below whatever pending skip an anchor keeps (`B.topKept`:
+none unless a fil stands in it). Constant for a document unless a taller
+first line honestly needs more, or the page opens on a `\vspace*{\fill}`;
+what furniture symmetry measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (hcur : b.cur.lines.isEmpty = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
       some (b.geom.bodyTop + max b.ascent
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs).above) := by
+          b.geom.leading size segs).above + b.topKept) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
@@ -5346,12 +5360,33 @@ private def Acc.gapGlue (a : Acc) (r : Rd) : Glue :=
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   if a.wantDefault && a.declaredSkip then par.add declared else declared
 
-/-- Emit the gap owed, just before a line is placed. -/
+/-- Emit the gap owed, just before a line is placed. A stacked boundary
+ships as two items, the peer mark first and the declared glue after it,
+whose sum is the boundary's glue (`flushGap_items_exact`): on a page that
+holds nothing yet, glue is discarded until a fil anchors what follows it
+(`B.topKept`), and the peer mark — the engine's separator between two
+paragraphs, standing where TeX would indent — has nothing above it there
+to separate from. -/
 private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
+  let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   let a := if a.owed.isEmpty then
       (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
+    else if a.wantDefault && a.declaredSkip then
+      { a with ops := (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) }
     else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false }
+
+/-- **A stacked boundary's two items are its glue** (`_exact`): the peer mark
+and the declared glue `flushGap` ships at a peer boundary with a document
+skip owed add up to `gapGlue`, which the placement sums (`Glue.add_assoc`),
+so splitting the boundary moves nothing a page does not open on. -/
+private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
+    (hs : (a.wantDefault && a.declaredSkip) = true) :
+    let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
+    (a.flushGap r).ops = (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) ∧
+      par.add (a.owed.foldl Glue.add {}) = a.gapGlue r := by
+  intro par
+  exact ⟨by simp [Acc.flushGap, ho, hs, par], by simp [Acc.gapGlue, hs, par]⟩
 
 /-- Glue's width grows by a non-negative addend on the right. -/
 private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
@@ -8115,7 +8150,12 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- The page being built (index `pages.size`) and everything after
     -- carry this content; a later span overrides.
     logoSpans := logoSpans.push (b.pages.size, c)
-  | .skip g => b := { b with skip := b.skip.add g }
+  | .skip g =>
+    -- Glue reaching a page that holds nothing yet is discarded, as TeX's
+    -- page builder discards it, until a fil anchors what follows
+    -- (`B.topKept`): only then does the page keep its pending skip.
+    unless (b.cur.lines.isEmpty || b.freshStart) && !(b.skip.fil || g.fil) do
+      b := { b with skip := b.skip.add g }
   | .bodyOpen g => b := b.openBody fs g
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
@@ -8145,11 +8185,16 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     max b.prevDepth (barBottom - b.y),
                     max b.prevBelow (barBottom - b.y)) }
   | .colOpen =>
+    -- On a fresh page nothing stands above the columns: their bottom starts
+    -- at the body top, never at the last page's last line, which
+    -- `B.contentEnd` would otherwise read as this page's content end.
+    let fresh := b.cur.lines.isEmpty || b.freshStart
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       prevRule := b.prevRuleOnly, skip := b.skip
-      fresh := b.cur.lines.isEmpty || b.freshStart
-      bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
+      fresh := fresh
+      bottomY := if fresh then b.geom.bodyTop else b.y
+      bottomDepth := if fresh then 0 else b.prevDepth, bottomBelow := b.prevBelow
       bottomRule := b.prevRuleOnly }
   | .colNext =>
     if let some save := colSaves.back? then
