@@ -9607,7 +9607,11 @@ nothing otherwise, painted in the registration reading
 (`Ir.Color.registration`): CMYK 1,1,1,1 when the document declares print
 colours, black otherwise. Then the rules the document drew itself
 (`Ir.PageSpec.drawn`), each on every page at the medium point it named, in
-the ink it named. -/
+the ink it named — read through the one resolving site every colour
+expression takes (`Ir.Palette.resolve`: a declared entry, xcolor's base
+names, a `!` mix), so `\color{red}` in a shipout picture is xcolor's red.
+A name that resolves to nothing paints black, and `drawnInkDiags` names
+it. -/
 private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
   let marks := if geom.marks && geom.markGap < geom.bleed && 0 < geom.markThick then
       cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
@@ -9615,8 +9619,19 @@ private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
     else #[]
   marks ++ doc.page.drawn.map fun r =>
     ({ x := r.x - geom.bleed, y := r.y - geom.bleed, w := r.w, h := r.h,
-       color := ((doc.palette.entries.find? (·.1 == r.color)).map (·.2)).getD Ir.Color.black }
+       color := (doc.palette.resolve r.color).getD Ir.Color.black }
       : Fill)
+
+/-- W0304 for each colour a drawn rule names that resolves to nothing: the
+rules drawn in it paint black (`markFillsOf`), named once per name, keyed
+as the text colour's miss is (`palette:` and the name). -/
+def drawnInkDiags (doc : Doc) : Array Diag :=
+  (doc.page.drawn.map (·.color)).foldl (fun (acc : Array String) c =>
+      if (doc.palette.resolve c).isNone && !acc.contains c then acc.push c else acc) #[]
+    |>.map fun c => Diag.of .W0304
+      s!"'{c}' is not a colour here; the rules the page draws in it paint black"
+      (help := "declare colours with \\palette{ name = #RRGGBB }")
+      (subject := some ("palette:" ++ c))
 
 /-- The document as the paged backend reads it: backend conditionals
 resolved at the entry (`Ir.keepFor_covers` is why dropping here cannot
@@ -9815,6 +9830,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
         else ds
       | _, _ => ds
     | none => ds) preDiags
+  let preDiags := preDiags ++ drawnInkDiags doc
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent

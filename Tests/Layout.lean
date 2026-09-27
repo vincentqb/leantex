@@ -3528,6 +3528,7 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let t := check ref
   let pre (draw : String) : String :=
     "\\documentclass{article}\\usepackage{geometry}\\usepackage[cmyk]{xcolor}" ++
+    "\\usepackage{calc}" ++
     "\\newlength{\\trimw}\\newlength{\\trimh}\\newlength{\\bl}\\newlength{\\paperw}" ++
     "\\newlength{\\paperh}\\newlength{\\hair}\\newlength{\\stub}" ++
     "\\setlength{\\trimw}{3.5in}\\setlength{\\trimh}{2in}\\setlength{\\bl}{3mm}" ++
@@ -3588,6 +3589,22 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "and ships as drawn, from the medium's corner"
     ((layoutOf oneFace lone loneGeom).pages.all fun p => p.fills.any fun f =>
       f.x == bl && f.w == Dim.mm 1 && f.h == hair && f.y == lone.page.height - bl - hair)
+  -- review CF-3: xcolor's own names reach a drawn rule through the one
+  -- resolving site, and a name that resolves to nothing is named — never a
+  -- silent black.
+  let stub (ink : String) : String := pre ("\\AddToHook{shipout/background}" ++
+    s!"\{\\put(0pt,-\\paperh)\{\\color\{{ink}}\\put(\\bl,\\bl)\{\\rule\{\\stub}\{\\hair}}}}")
+  let (redDoc, _) := elabStr (stub "red")
+  t "a drawn rule in xcolor's red paints xcolor's red"
+    ((layoutOf oneFace redDoc).pages.all fun p => p.fills.any fun f =>
+      f.w == Dim.mm 1 && f.h == hair && f.color == ({ r := 255, g := 0, b := 0 } : Ir.Color))
+  let (missDoc, missDs) := elabStr (stub "nosuchink")
+  let missOut := layoutOf oneFace missDoc
+  t "a drawn rule in a name that is no colour paints black and says so, once, by name"
+    ((missOut.pages.all fun p => p.fills.any fun f =>
+      f.w == Dim.mm 1 && f.color == Ir.Color.black) &&
+     ((missDs ++ missOut.diags).filter fun d =>
+       d.code == "W0304" && d.subject == some "palette:nosuchink").size == 1)
 
 /-- A document declares its PDF version (`\DocumentMetadata{pdfversion =
 1.7}`): the file then is PDF 1.7 — its header, and a structure tree in
