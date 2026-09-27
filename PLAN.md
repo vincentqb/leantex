@@ -19662,3 +19662,58 @@ centred and quoted block about 4 bp past LaTeX's), the quantized heading
 skips, the display skip's unit and poster value, and the page model's text
 block (the first baseline stands 52.1 bp above article.cls's). Each is a
 new deliberate divergence or its removal — a human gate.
+
+
+### 2026-09-27 — five enforcement sites became one, and one scan says what nothing reads
+
+Minimal code and compound engineering applied to the unowned Core and Cli
+modules. The finding that ran through every unit: the repeated shape here
+is not a duplicated *function* but a duplicated *enforcement site* — one
+rule spelled once per case that could break it. That shape is invisible to
+review (each copy reads correct) and it fails by omission (a new case
+arrives with its own copy, or with one comparison missing). Four such
+rules now have one site each.
+
+- **The text area.** `Check.Shipped.ofOut` compared a segment's ink box to
+  the four margins three times, once per ink-bearing kind, differing only
+  in the rectangle. `worstOvershoot` takes the rectangle; the kinds differ
+  only in the box they hand it. The running worst is one pair with one
+  writer instead of two values that had to agree.
+- **Operator precedence.** `Decl.exprParse`'s additive and multiplicative
+  arms each carried shunting-yard's drain loop verbatim. `pushOp` owns it.
+- **An atom joining a math list.** Three arms of `MathParse.parseToks`
+  spelled "push it, or resolve it through the pending chain". `joinAtom`
+  owns it.
+- **Four big-endian bytes.** The RFC 1950 Adler trailer twice in Flate and
+  `Image.pushU32`; `Flate.pushBe32` owns the spelling. Two spellings
+  stay, for stated reasons: `Pdf`'s `be4` returns a `List UInt8` for row
+  concatenation (and drops a `% 256` the others keep), and
+  `PlanParams.serialize` writes its bytes inside an array literal a
+  serialization theorem reads.
+
+**What the refactors measured.** Two of the four rules were unguarded.
+Disabling the precedence drain entirely left the whole suite green — every
+existing row parenthesized — and a rule or an image box past any margin
+was untested. Both now have a row that fails in both directions: green
+against the pre-refactor code (so the refactor is behaviour-preserving)
+and red when one comparison is dropped. The other two were already pinned
+by goldens (ignoring `pending` in `joinAtom` turns four red).
+
+**Dead code.** `MdParse.htmlBlockAt` and `Pdf.ratObj` had no reference in
+the tree. A scan of every top-level `def`/`abbrev` in these modules found
+only those two, so the modules are lean; the scan itself is the artifact
+worth keeping, and it belongs in the hook. Its two failure modes are
+worth recording because both produced a *clean* answer: a name matched
+with `[^A-Za-z0-9_.]` before it never sees dot-notation uses and reports
+every namespaced definition as dead, and a `?` in a name is a regex
+quantifier, so `u16be?` searched for `u16b`. A scan that gates must
+handle both, or it reports 105 dead definitions of which 2 are real.
+
+**Behaviour.** Goldens byte-identical, `lake test` green, zero build
+warnings at every commit. `scripts/flate-fuzz.lean` passes (it needs
+`scripts/gen-lorem.lean` run first: the bench inputs are gitignored and
+absent in a fresh worktree). `scripts/bench.lean` in scratch clones, head
+against `b312cf2b`, medians of 5: paragraphs 86→84, lorem 321→326,
+underline 499→498, themed 77→76, themed html 77→71, paper 154→156, paper
+html 143→151 ms. Noise, not signal, at this sample size; no run moved
+more than 5%.
