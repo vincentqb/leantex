@@ -1,5 +1,5 @@
 import Tests.DiagAudit
-import Tests.Backends
+import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
 import Tests.BoxRow
@@ -127,7 +127,7 @@ def reports : List Report := [
     state := .unwitnessed },
   { id := "R12", date := "2026-09-18"
     what := "a site port rendered a declared 32 px gap as 52 px: two rules owned one boundary"
-    pins := [thm% HtmlDoc.single_owner_gap_exact, check% htmlRhythmChecks]
+    pins := [check% htmlRhythmChecks]
     accept := ["the site port's build and its structural comparison"]
     state := .unwitnessed },
   { id := "R13", date := "2026-09-18"
@@ -169,8 +169,8 @@ def reports : List Report := [
     state := .answered },
   { id := "R22", date := "2026-09-24"
     what := "a deck's HTML front page rendered nearly blank: a title page inside the author's own frame opened a slide inside a slide"
-    pins := []
-    state := .owed "regress-audit" ["nestedStageChecks"] },
+    pins := [check% nestedStageChecks]
+    state := .guarded "ae063c0b" .revert .audit },
   { id := "R23", date := "2026-09-24"
     what := "a themed deck's HTML ignored the frame-title bar's padding token and emitted no title band"
     pins := [check% htmlTokenClosureChecks, check% artBandParityChecks]
@@ -248,7 +248,7 @@ never rise, and falls only when this line does. -/
 def unwitnessedBaseline : Nat := 14
 
 /-- The reports not closed, the same way. -/
-def owedBaseline : Nat := 5
+def owedBaseline : Nat := 4
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
 

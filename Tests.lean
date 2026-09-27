@@ -30,6 +30,7 @@ import Tests.PictureKeys
 import Tests.TextSym
 import Tests.InlineVerb
 import Tests.OwnBib
+import Tests.Regress
 import Tests.Reports
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -248,6 +249,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inlineAttributionChecks ref oneFace pats
   loadedTestChecks ref oneFace
   packageCodeChecks ref oneFace
+  nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref
   groupPrimitiveChecks ref
