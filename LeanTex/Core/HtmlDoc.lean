@@ -812,7 +812,7 @@ items' and quotations' paragraphs stand `\parsep` apart, each list and
 quotation stands `\topsep` from its neighbours above and below, and each
 item after the first opens `\itemsep`. -/
 private def listLevelRules (pre : String) (g : Nat × Nat × Nat) : List GapRule :=
-  [.parskip s!"{pre}li, {pre}blockquote > *" (milliRem g.2.2),
+  [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *" (milliRem g.2.2),
    .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace g.1),
    .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace g.1),
    .boundary s!"{pre}li + {itemSubject}" (listSpace g.2.1)]
@@ -833,12 +833,14 @@ private def gapResets : List GapRule :=
    .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
    .reset "figure.float" "0 auto"]
 
-/-- The boundaries the list levels stand after: the peer elements', then
-the trivlist's pair. -/
+/-- The boundaries the list levels stand after: the peer elements', the
+reference list's entries — a peer gap apart, the paragraphs
+`Layout.collectBibliography` sets them as — then the trivlist's pair. -/
 private def gapBeforeLists : List GapRule :=
   (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
     .boundary s!"* + {sel}" peerGap) ++
-  [.boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
+  [.boundary ".bibliography > li + li" peerGap,
+   .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
    .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
 
 /-- The boundaries the list levels stand before: the headings', the float's

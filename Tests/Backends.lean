@@ -518,10 +518,12 @@ RF-5): the sheet realizes each level's `\topsep`, `\itemsep` and `\parsep`
 in the screen's quanta — the values the size files and beamer source,
 hand-converted here (size10.clo and size12.clo:216-233,
 beamerbaselocalstructure.sty:152-163; one quantum is 6, 7.2 and 6.6 pt of
-print and 0.725 rem of screen), never read back from the emitter — and the
-web's lineage keeps its lists a peer gap apart and its items a leading. It
-fails on the sheet that set every item at zero (`8d3df368`). The rendered
-half is the rhythm tier's browser report (`scripts/rhythm.lean --html`). -/
+print and 0.725 rem of screen), never read back from the emitter — the
+web's lineage keeps its lists a peer gap apart and its items a leading,
+and a reference list's entries stand a peer gap apart, as the PDF walk
+sets them. It fails on the sheet that set every item at zero
+(`8d3df368`). The rendered half is the rhythm tier's browser report
+(`scripts/rhythm.lean --html`). -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (cls : String) : String := (HtmlDoc.emit {} (elabStr (s!"\\documentclass{cls}" ++
@@ -531,30 +533,35 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let art := page "{article}"
   t "html a 10pt list's items stand itemsep over the item's parsep apart"
     (hasStr art s!":where(li + {item}) \{ margin-top: {space "0.483"}; }" &&
-     hasStr art ":where(li, blockquote > *) { --parskip: 0.483rem; }")
+     hasStr art s!":where({item}, blockquote > *) \{ --parskip: 0.483rem; }")
   t "html a 10pt list and quote stand topsep over the parskip in force from their neighbours"
     (hasStr art (":where(* + ul:not(.bibliography), * + ol:not(.algorithm):not(.algorithm *), " ++
       s!"* + blockquote) \{ margin-top: {space "0.966"}; }") &&
      hasStr art (":where(ul:not(.bibliography) + *, ol:not(.algorithm):not(.algorithm *) + *, " ++
       s!"blockquote + *) \{ margin-top: {space "0.966"}; }"))
   t "html a nested 10pt list reads its own level"
-    (hasStr art ":where(li li, li blockquote > *) { --parskip: 0.241rem; }" &&
+    (hasStr art s!":where(li {item}, li blockquote > *) \{ --parskip: 0.241rem; }" &&
      hasStr art s!":where(li li + {item}) \{ margin-top: {space "0.241"}; }" &&
      hasStr art s!"li * + blockquote) \{ margin-top: {space "0.483"}; }")
   let art12 := page "[12pt]{article}"
   t "html a 12pt list reads size12's spacing"
-    (hasStr art12 ":where(li, blockquote > *) { --parskip: 0.503rem; }" &&
+    (hasStr art12 s!":where({item}, blockquote > *) \{ --parskip: 0.503rem; }" &&
      hasStr art12 s!"* + blockquote) \{ margin-top: {space "1.006"}; }")
   let deck := page "{beamer}"
   t "html a deck's list reads beamer's spacing"
-    (hasStr deck ":where(li, blockquote > *) { --parskip: 0.000rem; }" &&
+    (hasStr deck s!":where({item}, blockquote > *) \{ --parskip: 0.000rem; }" &&
      hasStr deck s!":where(li + {item}) \{ margin-top: {space "0.329"}; }" &&
      hasStr deck s!"* + blockquote) \{ margin-top: {space "0.329"}; }")
   let web := page "{webpage}"
   t "html a webpage's lists keep the peer gap and its items a leading"
-    (!hasStr web "li + li" && !hasStr web "--parskip:" &&
+    (!hasStr web "li + li:" && !hasStr web "--parskip:" &&
      hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
      hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
+  -- The reference list's entries are the paragraphs the PDF walk sets a
+  -- peer gap apart (`Layout.collectBibliography`), outside every list
+  -- level's item scope.
+  t "html a reference list's entries stand the page's peer gap apart"
+    (hasStr art ":where(.bibliography > li + li) { margin-top: var(--parskip, 0.725rem); }")
 
 /-- Article sections become anchored containers: `<section id="slug">` wraps
 the heading and its content, ids stay unique under repeated titles, and an
