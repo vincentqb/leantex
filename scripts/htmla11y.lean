@@ -57,10 +57,7 @@ def facts (body : Array Html.Node) (own : Bool := true) (deck : Bool := true) :
     HtmlDoc.A11yFacts :=
   HtmlDoc.a11yFacts own deck body
 
-def a11ySelftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
   -- h1: exactly one, and a hidden one is not handed to assistive technology.
   let h1 := a11yEl "h1" #[] #[.text "Title"]
   no "h1: none counts none" ((facts #[a11yEl "p"]).h1s == 0)
@@ -147,12 +144,6 @@ def a11ySelftest : IO UInt32 := do
     (rows.map (·.value) == #[debtCap - 2, debtCap - 1, debtCap])
   no "rows: items are <fixture>.<check>"
     (rows.map (·.item) == #["p.contrast", "p.h1", "p.img"])
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "htmla11y selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmla11y" (.headroom debtCap) a11yMeasure a11ySelftest args

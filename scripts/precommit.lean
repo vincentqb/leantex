@@ -1201,6 +1201,19 @@ def obRecordFaults (lines : Array String) : Array (Nat × String × Nat) := Id.r
       if n != 1 then out := out.push (from_ + 1, k, n)
   return out
 
+/-- The failure list a hand-written selftest frame opens, and an import of the
+scoreboard format module. Both spelled by concatenation, so this file's own
+gate does not read its own pattern as a site. -/
+def failureList : String := "IO.mkRef ([]" ++ " : List String)"
+
+def boardImport : String := "import scripts" ++ ".Board"
+
+/-- The one script that opens its own failure list. `scripts/scoreboard.lean`
+is the aggregate, and its success line counts the cases its own body binds —
+the malformations, the well-formed states, the base and CLI cases — so no
+caller outside it can supply that line. -/
+def selftestFrameAllow : List String := ["scripts/scoreboard.lean"]
+
 /-- The top-level `def` name a line binds, dots included, for the three
 gates that need to know which definition a line stands inside: only
 unindented `def`/`private def`, so a nested helper or a prose mention never
@@ -2304,6 +2317,27 @@ def main (args : List String) : IO UInt32 := do
   A helper used by two check blocks moves to Tests/Support.lean the moment
   the second caller appears (AGENTS.md, Conventions).
   Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
+
+  -- The same rule one directory over: a tier producer's `--selftest` is its
+  -- assertions, and the frame around them — the failure list, the recorder,
+  -- the print-and-exit tail — is `Scoreboard.tierSelftest`. Six producers
+  -- wrote those nine lines out by hand before it existed, which is what let
+  -- them differ: a producer that recorded a failure and still exited 0 read
+  -- exactly like the others. The failure list is the frame's tell.
+  for f in (← System.FilePath.readDir "scripts") do
+    let p := ("scripts/" ++ f.fileName)
+    unless !p.endsWith ".lean" || selftestFrameAllow.contains p do
+      let lines := (← IO.FS.readFile p).splitOn "\n"
+      unless !lines.any (fun l => (l.trimAscii.toString).startsWith boardImport) do
+        for l in lines do
+          if containsSub (stripLineComment l) failureList then
+            say s!"pre-commit: {p} opens its own failure list:
+  {l.trimAscii}
+  A tier producer's selftest is `tierSelftest \"<tier>\" fun no => do` and its
+  assertions; the frame around them lives in scripts/Board.lean, so every
+  producer reports and exits the same way.
+  Fix: call `tierSelftest`, or allowlist this file in selftestFrameAllow
+  (scripts/precommit.lean) with the reason it cannot."
 
   -- The owed record's shape, whole tree and ahead of the ratchet: a record
   -- carries exactly one of each field. owed.lean reads five consecutive
