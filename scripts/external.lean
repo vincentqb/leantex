@@ -107,7 +107,40 @@ def unknownsIn (ds : Array Diag) : Array String := Id.run do
 
 -- ## The tier
 
+/-- The files this repository wrote beside the vendored ones. Every other
+file below the corpus directory is upstream's, pinned in `SHA256SUMS`. -/
+def ownFiles : List String := ["SHA256SUMS", "documents.txt", "PROVENANCE.txt"]
+
+/-- Where the corpus directory `root` stops holding upstream's bytes, read in
+both directions: a pinned file whose bytes are not its pin's, or that is
+gone, and a file no pin names. The digest is `sha256Hex`, so the check is
+hermetic: no tool answers for it. -/
+def sumFaults (root : String) : IO (Array String) := do
+  let sums := root ++ "/SHA256SUMS"
+  let entries ← match parsePins sums (← readFileOr sums) with
+    | .ok es => pure es
+    | .error e => return #[e]
+  let mut faults : Array String := #[]
+  for e in entries do
+    let p := root ++ "/" ++ e.path
+    if e.path.startsWith "/" || (e.path.splitOn "..").length > 1 then
+      faults := faults.push s!"{sums}: '{e.path}' leaves the corpus directory"
+    else if !(← System.FilePath.pathExists p) then
+      faults := faults.push s!"{p}: pinned in {sums}, and absent"
+    else if sha256Hex (← IO.FS.readBinFile p) != e.pin then
+      faults := faults.push s!"{p}: not the bytes its pin in {sums} names"
+  for f in ← System.FilePath.walkDir root do
+    unless ← f.isDir do
+      let rel := (f.toString.drop (root.length + 1)).toString
+      unless ownFiles.contains rel || entries.any (·.path == rel) do
+        faults := faults.push s!"{f}: in the corpus directory, and pinned by no line of {sums}"
+  return faults
+
 def measureTier : IO (Array String × Array Row) := do
+  let faults ← sumFaults corpusDir
+  unless faults.isEmpty do
+    throw (IO.userError s!"external: {faults.size} fault(s) in the vendored bytes:\n  \
+{"\n  ".intercalate faults.toList}")
   let docs ← match parseList (← IO.FS.readFile documentsPath) with
     | .ok ds => pure ds
     | .error e => throw (IO.userError s!"{documentsPath}: {e}")
@@ -805,6 +838,31 @@ Mono\" }\nx")
   expect "a work directory inside this checkout is refused"
     ((← outsideCheckouts "tests") matches .error _)
   expect "one under /tmp is not" ((← outsideCheckouts "/tmp") matches .ok _)
+  -- The vendored bytes, each fault once, through a real directory.
+  IO.FS.withTempDir fun dir => do
+    let root := dir.toString
+    let put (rel body : String) : IO Unit := IO.FS.writeFile (root ++ "/" ++ rel) body
+    IO.FS.createDirAll (root ++ "/sub")
+    for f in ownFiles do put f ""
+    put "a.tex" "alpha\n"
+    put "sub/b.tex" "beta\n"
+    let sums := pinnedEntry (sha256Hex "alpha\n".toUTF8) "a.tex" ++ "\n" ++
+      pinnedEntry (sha256Hex "beta\n".toUTF8) "sub/b.tex" ++ "\n"
+    put "SHA256SUMS" sums
+    expect "the pinned bytes verify" (← sumFaults root).isEmpty
+    put "sub/b.tex" "betb\n"
+    expect "one changed byte is a fault" ((← sumFaults root).size == 1)
+    put "sub/b.tex" "beta\n"
+    put "sub/c.tex" "gamma\n"
+    expect "a file no pin names is a fault" ((← sumFaults root).size == 1)
+    IO.FS.removeFile (root ++ "/sub/c.tex")
+    IO.FS.removeFile (root ++ "/a.tex")
+    expect "a pinned file gone is a fault" ((← sumFaults root).size == 1)
+    put "a.tex" "alpha\n"
+    put "SHA256SUMS" (sums ++ pinnedEntry (sha256Hex "x".toUTF8) "../x.tex" ++ "\n")
+    expect "a pin leaving the directory is a fault" ((← sumFaults root).size == 1)
+    put "SHA256SUMS" (sums ++ "a.tex\n")
+    expect "a line that is no pin is a fault" ((← sumFaults root).size == 1)
   let bad ← fails.get
   if bad.isEmpty then
     IO.println "external: selftest ok"

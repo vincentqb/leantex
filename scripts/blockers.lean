@@ -85,8 +85,10 @@ class the document loads → the LaTeX kernel → a package the document loads �
 unattributed.
 -/
 import LeanTex
+import scripts.Board
 
 open LeanTex.Core
+open Scoreboard (sha256Hex Entry pinnedEntry parsePins)
 
 def blockersPath : String := "tests/coverage/blockers.tsv"
 
@@ -637,99 +639,9 @@ def texLine : IO String := do
 
 -- ## The manifest, pinned
 
-def rotr (x n : UInt32) : UInt32 := (x >>> n) ||| (x <<< (32 - n))
-
-/-- SHA-256's round constants (FIPS 180-4 §4.2.2). -/
-def sha256K : Array UInt32 := #[
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]
-
-/-- SHA-256 (FIPS 180-4), as 64 lowercase hex digits. Computed here over the
-bytes the ranking reads, so what a pin is checked against is what is
-ranked, and no tool on `PATH` answers for it. -/
-def sha256Hex (msg : ByteArray) : String := Id.run do
-  let mut data := msg.push 0x80
-  while data.size % 64 != 56 do
-    data := data.push 0
-  let bits : UInt64 := msg.size.toUInt64 * 8
-  for i in [0:8] do
-    data := data.push (bits >>> ((7 - i).toUInt64 * 8)).toUInt8
-  let mut h : Array UInt32 := #[0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
-  let mut w : Array UInt32 := Array.replicate 64 0
-  for blk in [0:data.size / 64] do
-    for t in [0:16] do
-      let o := blk * 64 + 4 * t
-      w := w.set! t ((data[o]!.toUInt32 <<< 24) ||| (data[o + 1]!.toUInt32 <<< 16)
-        ||| (data[o + 2]!.toUInt32 <<< 8) ||| data[o + 3]!.toUInt32)
-    for t in [16:64] do
-      let x := w[t - 15]!
-      let y := w[t - 2]!
-      let s0 := rotr x 7 ^^^ rotr x 18 ^^^ (x >>> 3)
-      let s1 := rotr y 17 ^^^ rotr y 19 ^^^ (y >>> 10)
-      w := w.set! t (w[t - 16]! + s0 + w[t - 7]! + s1)
-    let mut a := h[0]!
-    let mut b := h[1]!
-    let mut c := h[2]!
-    let mut d := h[3]!
-    let mut e := h[4]!
-    let mut f := h[5]!
-    let mut g := h[6]!
-    let mut k := h[7]!
-    for t in [0:64] do
-      let t1 := k + (rotr e 6 ^^^ rotr e 11 ^^^ rotr e 25) + ((e &&& f) ^^^ (~~~e &&& g))
-        + sha256K[t]! + w[t]!
-      let t2 := (rotr a 2 ^^^ rotr a 13 ^^^ rotr a 22) + ((a &&& b) ^^^ (a &&& c) ^^^ (b &&& c))
-      k := g
-      g := f
-      f := e
-      e := d + t1
-      d := c
-      c := b
-      b := a
-      a := t1 + t2
-    h := #[h[0]! + a, h[1]! + b, h[2]! + c, h[3]! + d, h[4]! + e, h[5]! + f, h[6]! + g,
-      h[7]! + k]
-  let digits := "0123456789abcdef".toList.toArray
-  let mut out := ""
-  for x in h do
-    for i in [0:8] do
-      out := out.push digits[((x >>> ((7 - i).toUInt32 * 4)) &&& 0xf).toNat]!
-  return out
-
-/-- One declared public document: a path relative to the distribution's root
-and the sha256 of the bytes it held when it was declared. The line is
-`sha256sum`'s own format, `<64 hex>  <path>`, so a pin is made, and can be
-checked, by that one standard command run from the root. -/
-structure Entry where
-  pin : String
-  path : String
-deriving BEq
-
-def pinnedEntry (pin path : String) : String := pin ++ "  " ++ path
-
-/-- The manifest's entries. A line that is not a pinned entry is a fault, not
-a skip: an unpinned document is what a substituted one looks like. -/
-def parseManifest (text : String) : Except String (Array Entry) := Id.run do
-  let mut out : Array Entry := #[]
-  let mut n := 0
-  for l in text.splitOn "\n" do
-    n := n + 1
-    if l.trimAscii.isEmpty || l.startsWith "#" then continue
-    let pin := (l.take 64).toString
-    let rest := (l.drop 64).toString
-    if pin.length == 64 && pin.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f'))
-        && rest.startsWith "  " && rest.length > 2 then
-      out := out.push { pin, path := (rest.drop 2).toString }
-    else
-      return .error s!"{manifestPath}:{n}: not `<sha256>  <path>`; every entry carries its pin"
-  return .ok out
+/-- The manifest's entries: `sha256sum`'s format, one pinned document per
+line, a path relative to the distribution's root. -/
+def parseManifest (text : String) : Except String (Array Entry) := parsePins manifestPath text
 
 /-- The manifest's entries, each resolved inside a root and read once. An
 entry that is absolute, that leaves every root once its symlinks are
@@ -815,8 +727,6 @@ document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
   return 0
 
 -- ## Selftest
-
-def containsSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
 /-- A link at an output's name into a checkout — a symlink, one that points
 at nothing yet, a hard link, a symlink at `<out>.neither` — through both
