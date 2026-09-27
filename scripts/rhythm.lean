@@ -52,19 +52,25 @@ fails is measured as absent — the engine set the construct inline, or
 merged two blocks — and never compared: its "gap" would be another
 quantity, and one that happened to equal the reference would count.
 
-The tier: one pair per fixture and boundary class,
-`<fixture>/<class>.within` of `<fixture>/<class>.boundaries` — how many of
-that class's boundaries ship within `toleranceMilliBp` of the reference.
+The tier: per fixture and boundary class, `<fixture>/<class>.boundaries`,
+the boundaries declared, and two counts of them: `.within`, how many ship
+within `toleranceMilliBp` of the reference, and `.near`, how many within
+`nearMilliBp`, half the rhythm quantum.
 The reference is what LaTeX does, not what the engine must do: a boundary
 the engine sets differently on purpose counts as outside, and the ratchet
 holds the count from falling, never from rising.
 
-One comparison level, with its blind spots declared: it sees each declared
-boundary's gap to within the tolerance, and nothing else — not a difference
-under half a bp, not horizontal placement, not a boundary no fixture
-declares, not line pitch inside a block. `--selftest` holds the pair the
-first blind spot owes: two gaps under the tolerance apart read equal here
-and unequal to the exact comparison above it.
+Two comparison levels, each with its blind spots declared. `.within` sees
+each declared boundary's gap to within the tolerance, and nothing else —
+not a difference under half a bp, not horizontal placement, not a boundary
+no fixture declares, not line pitch inside a block. Nor does it see a gap
+move while it stays outside the tolerance: a quoted block's boundaries once
+went from 1.9 bp short of lualatex's to 4.1 bp past it under an unchanged
+count. `.near` sees that move, and is blind inside its own band.
+`--selftest` holds the pair each level owes: two gaps under the tolerance
+apart read equal under `.within` and unequal to the exact comparison above
+it, and two gaps inside the band read equal under `.near` and unequal under
+`.within`.
 -/
 import Tests.Artifact
 import scripts.Board
@@ -82,6 +88,14 @@ inside this tolerance cannot be seen there; and the two engines' units
 differ by 0.375 % (TeX's pt is 1/72.27 in, this engine's 1/72 in), which is
 0.1 bp on a 27 bp gap — inside it. -/
 def toleranceMilliBp : Int := 500
+
+/-- The second band, in thousandths of a bp: half the rhythm quantum at the
+article base (`Ir.rhythmQuantum` of `Ir.baseFontSize` is 6 bp). The engine
+sets its gaps on that grid, so a gap rounded from lualatex's to the grid
+stands at most this far from it. A constant, not the function read at run
+time, so an engine change cannot move the band; the selftest fails once the
+premise does. -/
+def nearMilliBp : Int := 3000
 
 /-- sp per bp, and the conversion to thousandths of a bp, rounded half away
 from zero so a value reads the same whichever side of zero it is. -/
@@ -574,6 +588,8 @@ def Measured.within (m : Measured) (tol : Int := toleranceMilliBp) : Bool :=
   | .ok e => (e - m.row.milliBp).natAbs ≤ tol.natAbs
   | .error _ => false
 
+def Measured.near (m : Measured) : Bool := m.within nearMilliBp
+
 /-- A fixture measured, or the fault that stops it being measured: no
 reference, a reference of another source, a failed premise. -/
 def measureFixture (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
@@ -628,11 +644,12 @@ def measureAll : IO (Except (Array String) (Array Measured)) := do
     | .error e => faults := faults.push e
   return (if faults.isEmpty then .ok out else .error faults)
 
-/-- The tier's rows: per fixture and class, the boundaries within tolerance
-and the boundaries declared. -/
+/-- The tier's rows: per fixture and class, the boundaries declared and how
+many of them are within each band. -/
 def rowsOf (ms : Array Measured) : Array Row := Id.run do
   let mut keys : Array String := #[]
   let mut within : Array Int := #[]
+  let mut near : Array Int := #[]
   let mut total : Array Int := #[]
   for m in ms do
     let k := s!"{m.fixture}/{m.row.spec.cls}"
@@ -642,12 +659,15 @@ def rowsOf (ms : Array Measured) : Array Row := Id.run do
     if i == keys.size then
       keys := keys.push k
       within := within.push 0
+      near := near.push 0
       total := total.push 0
     total := total.modify i (· + 1)
     if m.within then within := within.modify i (· + 1)
+    if m.near then near := near.modify i (· + 1)
   let mut rows : Array Row := #[]
   for i in [0:keys.size] do
     rows := rows.push { item := s!"{keys[i]!}.within", value := within[i]! }
+    rows := rows.push { item := s!"{keys[i]!}.near", value := near[i]! }
     rows := rows.push { item := s!"{keys[i]!}.boundaries", value := total[i]! }
   return rows
 
@@ -659,9 +679,11 @@ def tierMeasure : IO (Array String × Array Row) := do
   | .ok ms =>
     let n := (← fixtureNames).size
     let w := (ms.filter (·.within)).size
+    let nr := (ms.filter (·.near)).size
     return (#[s!"# source: {n} fixtures under {rhythmDir}, {ms.size} declared boundaries, \
-{w} within {showMilli toleranceMilliBp} bp of lualatex's; the engine measured in process from \
-Layout.Out over the shipped faces, the reference committed beside each fixture as numbers"],
+{w} within {showMilli toleranceMilliBp} bp of lualatex's and {nr} within {showMilli nearMilliBp}; \
+the engine measured in process from Layout.Out over the shipped faces, the reference committed \
+beside each fixture as numbers"],
       rowsOf ms)
 
 /-- Every boundary, printed: the report the ranking is read from. -/
@@ -671,13 +693,14 @@ def table : IO UInt32 := do
     for f in faults do IO.eprintln s!"rhythm: fault: {f}"
     return 2
   | .ok ms =>
-    IO.println "fixture\tclass\tmarker\tkind\tengine_bp\treference_bp\tdelta_bp\twithin"
+    IO.println "fixture\tclass\tmarker\tkind\tengine_bp\treference_bp\tdelta_bp\twithin\tnear"
     for m in ms do
       let (e, d) := match m.engine with
         | .ok e => (showMilli e, showMilli (e - m.row.milliBp))
         | .error why => (s!"none ({why})", "-")
       IO.println s!"{m.fixture}\t{m.row.spec.cls}\t{m.row.spec.marker}\t{m.row.spec.kind.name}\t\
-{e}\t{showMilli m.row.milliBp}\t{d}\t{if m.within then "yes" else "no"}"
+{e}\t{showMilli m.row.milliBp}\t{d}\t{if m.within then "yes" else "no"}\t\
+{if m.near then "yes" else "no"}"
     return 0
 
 /-- A fixture's engine pages, printed line by line: what a declaration's
@@ -1283,18 +1306,28 @@ def selftest : IO UInt32 := do
   -- The comparison level and its blind spot: under the tolerance apart reads
   -- equal here and unequal to the exact comparison above it; over it, unequal.
   let row : RefRow := { spec := s1, milliBp := 18000 }
-  let near : Measured := { fixture := "f", row, engine := .ok 18400 }
-  let far : Measured := { fixture := "f", row, engine := .ok 18600 }
-  no "level: 0.4 bp apart is within the tolerance" near.within
-  no "level: 0.4 bp apart is not exact (the level above sees it)" (!near.within 0)
-  no "level: 0.6 bp apart is outside the tolerance" (!far.within)
-  no "level: an unmeasured engine side is outside" (!({ near with engine := .error "x" } : Measured).within)
-  -- The rows: a pair per fixture and class, in the order first met.
-  let rs := rowsOf #[near, far, { near with row := { row with spec := { s1 with cls := "a-b" } } }]
-  no s!"rows: pairs of within/boundaries: {rs.map (fun r => (r.item, r.value))}"
+  let at04 : Measured := { fixture := "f", row, engine := .ok 18400 }
+  let at06 : Measured := { fixture := "f", row, engine := .ok 18600 }
+  let at29 : Measured := { fixture := "f", row, engine := .ok 15100 }
+  let at31 : Measured := { fixture := "f", row, engine := .ok 21100 }
+  let unmeasured : Measured := { at04 with engine := .error "x" }
+  no "level: 0.4 bp apart is within the tolerance" at04.within
+  no "level: 0.4 bp apart is not exact (the level above sees it)" (!at04.within 0)
+  no "level: 0.6 bp apart is outside the tolerance" (!at06.within)
+  no "level: an unmeasured engine side is outside" (!unmeasured.within)
+  no "band: 0.4 and 2.9 bp apart are both near (it is blind between them)" (at04.near && at29.near)
+  no "band: 0.4 and 2.9 bp apart differ under within (the level above sees it)"
+    (at04.within && !at29.within)
+  no "band: 3.1 bp apart is outside it" (!at31.near)
+  no "band: an unmeasured engine side is outside it" (!unmeasured.near)
+  no "band: half the rhythm quantum at the article base"
+    (nearMilliBp == milliBpOfSp (Ir.rhythmQuantum Ir.baseFontSize) / 2)
+  -- The rows: three per fixture and class, in the order first met.
+  let rs := rowsOf #[at04, at06, at31, { at04 with row := { row with spec := { s1 with cls := "a-b" } } }]
+  no s!"rows: within, near and boundaries: {rs.map (fun r => (r.item, r.value))}"
     (rs.map (fun r => (r.item, r.value)) ==
-      #[("f/par-par.within", 1), ("f/par-par.boundaries", 2),
-        ("f/a-b.within", 1), ("f/a-b.boundaries", 1)])
+      #[("f/par-par.within", 1), ("f/par-par.near", 2), ("f/par-par.boundaries", 3),
+        ("f/a-b.within", 1), ("f/a-b.near", 1), ("f/a-b.boundaries", 1)])
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "rhythm selftest: all passed"
