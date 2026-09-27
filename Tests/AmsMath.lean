@@ -86,6 +86,14 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     ((elabStr alignedFrac).2.isEmpty && oneSize (glyphSizes alignedFrac))
   t "amsmath alignment: the HTML table restores display style inline"
     (hasStr (HtmlDoc.emit {} (elabStr alignedFrac).1).1 "<mtable displaystyle=\"true\">")
+  -- A lone fence never grows: TeX stretches a delimiter only under
+  -- `\left`/`\right`, while MathML Core's operator dictionary makes every
+  -- fence stretchy, so beside a grown brace `f(x)`'s parentheses ballooned.
+  let fx := (HtmlDoc.emit {} (elabStr (dvDoc ""
+    "\\[ f(x) = \\begin{cases} 1 & a \\\\ 0 & b \\end{cases} \\]")).1).1
+  t "amsmath grids: a lone fence keeps its size beside a grown one in HTML"
+    (hasStr fx "<mo stretchy=\"false\">(</mo>" &&
+      hasStr fx "<mo stretchy=\"true\" symmetric=\"true\">{</mo>")
 
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with

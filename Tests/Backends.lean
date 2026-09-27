@@ -41,9 +41,9 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       "<mrow><mo stretchy=\"true\" symmetric=\"true\">(</mo><mi mathvariant=\"normal\">𝑥</mi><mo stretchy=\"true\" symmetric=\"true\">)</mo></mrow>")
   t "display limits are munderover: base, under, over"
     (has "\\[ \\sum_{i}^{n} \\]"
-      "<munderover><mo>∑</mo><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mi mathvariant=\"normal\">𝑛</mi></mrow></munderover>")
+      "<munderover><mo stretchy=\"false\">∑</mo><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mi mathvariant=\"normal\">𝑛</mi></mrow></munderover>")
   t "inline limits ride beside as msubsup"
-    (has "$\\sum_{i}^{n}$" "<msubsup><mo>∑</mo>")
+    (has "$\\sum_{i}^{n}$" "<msubsup><mo stretchy=\"false\">∑</mo>")
   t "an accent is mover accent=true, non-stretching for \\hat"
     (has "$\\hat{x}$"
       "<mover accent=\"true\"><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mo stretchy=\"false\">̂</mo></mover>")

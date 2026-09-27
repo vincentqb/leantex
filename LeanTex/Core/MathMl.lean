@@ -125,8 +125,12 @@ display style — while an `array` keeps text style, as the PDF's cell
 style rule does. -/
 def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
   | .sym c =>
+    -- A lone scalar never grows: TeX stretches a delimiter only under
+    -- `\left`/`\right` (`delimMo`), and MathML Core's dictionary makes every
+    -- fence stretchy, so an `mo` from here declares it cannot.
     let tag := leafTag cls c
-    .elem tag (if tag == "mi" then #[("mathvariant", "normal")] else #[])
+    .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
+        else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes disp #[] body)
