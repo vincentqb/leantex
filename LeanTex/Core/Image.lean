@@ -1798,11 +1798,6 @@ recomputation's value, keeping the artifact a function of the document
 and the font environment. The magic carries a format version: a change
 here orphans old entries rather than misreading them. -/
 
-private def pushU32 (b : ByteArray) (v : Nat) : ByteArray :=
-  ((((b.push (UInt8.ofNat (v / 16777216 % 256))).push
-    (UInt8.ofNat (v / 65536 % 256))).push
-    (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256)))
-
 /-- `LTIMG3`, the magic-and-format-version the decoder checks: version 3 is
 the typed plan (three tag bytes for the three sums, the ledger, the
 orientation), so every `LTIMG1` and `LTIMG2` entry is a miss. -/
@@ -1856,22 +1851,22 @@ def encodeBin (i : Plan) : ByteArray := Id.run do
   out := out.push (filterTag i.filter)
   out := out.push (alphaTag i.alpha)
   out := out.push (if i.recoded then 1 else 0)
-  out := pushU32 out i.pxW
-  out := pushU32 out i.pxH
-  out := pushU32 out i.dpiX
-  out := pushU32 out i.dpiY
-  out := pushU32 out i.bitDepth
-  out := pushU32 out i.orientation
-  out := pushU32 out iccN
-  out := pushU32 out palette.size
-  out := pushU32 out profile.size
-  out := pushU32 out keys.size
-  out := pushU32 out softBpc
-  out := pushU32 out plane.size
-  out := pushU32 out i.data.size
-  out := pushU32 out i.losses.size
+  out := Flate.pushBe32 out i.pxW
+  out := Flate.pushBe32 out i.pxH
+  out := Flate.pushBe32 out i.dpiX
+  out := Flate.pushBe32 out i.dpiY
+  out := Flate.pushBe32 out i.bitDepth
+  out := Flate.pushBe32 out i.orientation
+  out := Flate.pushBe32 out iccN
+  out := Flate.pushBe32 out palette.size
+  out := Flate.pushBe32 out profile.size
+  out := Flate.pushBe32 out keys.size
+  out := Flate.pushBe32 out softBpc
+  out := Flate.pushBe32 out plane.size
+  out := Flate.pushBe32 out i.data.size
+  out := Flate.pushBe32 out i.losses.size
   for v in keys do
-    out := pushU32 out v
+    out := Flate.pushBe32 out v
   for l in i.losses do
     out := out.push (lossTag l)
   return out ++ palette ++ profile ++ plane ++ i.data

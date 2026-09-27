@@ -246,6 +246,18 @@ def adler32 (data : ByteArray) : Nat := Id.run do
     i := stop
   return ((s >>> 32) * 65536 + (s &&& 0xFFFFFFFF)).toNat
 
+/-- Four bytes of `v`'s low 32 bits, most significant first, pushed onto
+`b`. One site for the spelling: RFC 1950's Adler trailer, the image cache's
+fixed-width header fields and a synthetic sfnt's offsets are the same four
+divisions, and a copy that drops a `% 256` is a byte wrong on the boundary
+rather than obviously broken. Here beside `fnv64` and `contentKey`, the
+byte-level answers the modules above this one share.
+-/
+def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
+  (((b.push (UInt8.ofNat (v / 16777216 % 256))).push
+    (UInt8.ofNat (v / 65536 % 256))).push
+    (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256))
+
 /-- A zlib stream of stored blocks: bytes back into a shape `/FlateDecode`
 accepts, without owning a compressor. -/
 def deflateStored (raw : ByteArray) : ByteArray := Id.run do
@@ -266,12 +278,7 @@ def deflateStored (raw : ByteArray) : ByteArray := Id.run do
     i := i + len
     if final then
       break
-  let a := adler32 raw
-  out := out.push (UInt8.ofNat (a / 16777216 % 256))
-  out := out.push (UInt8.ofNat (a / 65536 % 256))
-  out := out.push (UInt8.ofNat (a / 256 % 256))
-  out := out.push (UInt8.ofNat (a % 256))
-  return out
+  return pushBe32 out (adler32 raw)
 
 /-! ## Deflate: a real compressor (RFC 1951)
 
@@ -650,12 +657,7 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
         w := w.push (dist - (distBase[di]?.getD 0)) deb
   w := w.push (litCodes[256]?.getD 0) (litLens[256]?.getD 0)
   let mut out := w.flush
-  let a := adler32 raw
-  out := out.push (UInt8.ofNat (a / 16777216 % 256))
-  out := out.push (UInt8.ofNat (a / 65536 % 256))
-  out := out.push (UInt8.ofNat (a / 256 % 256))
-  out := out.push (UInt8.ofNat (a % 256))
-  return out
+  return pushBe32 out (adler32 raw)
 
 /-- FNV-1a over bytes: the content hash the PDF trailer ID and the
 driver's content-keyed caches share. Not cryptographic — a fingerprint
