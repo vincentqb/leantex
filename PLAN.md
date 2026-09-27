@@ -20588,3 +20588,72 @@ its ground and ink is honoured in both colour schemes: the deck no longer
 takes the stylesheet's dark surface in dark mode, and a dark variant of a
 declared theme is not invented. `r-stretch` needs a spelling. Overview and
 the speaker window stay declined.
+
+
+### 2026-09-27 — the site port broke on a wrapper; the HTML now renders the gaps it declares, and a declared page keeps its one scheme
+
+The user reported the site port broken after a rebuild. Reproduced by
+building scratch copies of the port with the engine at the sha that stood
+when the port was last tuned (`8f85338c`, read off main's reflog), at
+`f9ebb1e5` and at `da9b049d`, running the port's own comparison and
+measuring in Chromium 151 at 360, 768 and 1280 CSS px. The build output the
+user saw reproduces exactly at the last two. What broke: every `{center}`
+had gained a `<div class="u-trivlist-env">` around its own element
+(76306d0d, found by `git bisect run` over a structural predicate), so the
+port's child-combinator rules stopped matching, its opening band lost its
+layout in every viewport and the page grew 322 px shorter. Nothing between
+the tuned sha and `f9ebb1e5` broke the structure.
+
+Four units, each guarded before its fix and each guard failing at
+`da9b049d`:
+
+- **An engine role that only spaces is a class, never an element**
+  (`withClass`): the trivlist role rides the environment's own element.
+  `trivlistChecks` holds that the environment and its declaration
+  (`\centering`, `\raggedright`, `\raggedleft`) ship one element tree once
+  classes are dropped, and that a center environment's element is
+  `<main>`'s own child. The port's out-of-repo build, rerun: its opening
+  band is pixel-identical to the tuned build at every width. One residual,
+  and it is the engine's rhythm rather than the break: the trivlist's pair
+  rule now gives the section after the environment its `\topsep` over the
+  peer gap, 23.19 CSS px the tuned build did not have — LaTeX spends the
+  same boundary as the larger of the two skips.
+- **A picture's declared box is a size, not a clip** (review F5): the SVG
+  carries `overflow="visible"` as its own presentation attribute
+  (`pictureSvg_overflow_contract`). A node beside its declared box painted 0
+  of 416 pixels in Chromium before, 82 after.
+- **Every declared block gap renders** (review F6): the element rules'
+  margins moved into one zero-specificity emitter, `blockGapRules`, resets
+  first — `p { margin: 0 }` at (0,0,1) had outranked every `:where(* + p)`,
+  so no peer, heading-above, display, float or trivlist-below gap rendered
+  and paragraphs ran together. `blockGap_owner_contract` proves the order by
+  `decide` over the emitter's list; `htmlRhythmChecks` reads every golden
+  page's base sheet for a rule outside the emitter that declares a margin
+  on an element it spaces, with the subjects read off the emitter (the
+  statement rhythm-audit staged in prose, in the emitter form it asked
+  for). The peer gap is the page's resolved parskip (`--parskip`), so
+  `slides` and `resume`, whose records declare zero, keep none. The rhythm
+  tier's browser report over its 74 boundaries both backends set: the
+  HTML's mean distance from the PDF falls from 1.129 to 0.531 quanta, 30
+  nearer, none further.
+- **A page with declared colours ships one scheme** (`dualScheme`): the
+  dark block had stood declared inks on the dark surface (1.00:1 in
+  Chromium). The dark variant now ships only where every colour the page
+  paints is the engine's own token set, the set `dark_contract` covers.
+  The htmla11y tier's contrast deficits fall from 72 to 0; the oracle's
+  colour-scheme cells all pass.
+
+Measured on the private reference corpus (evidence only): the deck's HTML
+slide fit is unchanged, and the paper's HTML gains its paragraph gaps.
+
+**Routed.** The PDF of the port now opens its second page with a one-line
+widow: the engine has no widow or club control at all, and the trivlist
+space exposed it (Layout, the page breaker). The gap above a heading that
+opens a `<section>` still does not render, because the heading is its
+section's first child and `:where(* + h2)` never matches it (HtmlDoc's
+sectioning, a `* + section` rule whose value follows the heading row).
+
+**For the human.** A document with declared colours no longer gets a dark
+mode. The alternative is a derived dark palette — each declared colour
+realized against the dark ground, the way the title page's roles already
+are — which is a design choice, not a repair.

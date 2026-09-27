@@ -778,7 +778,7 @@ ranks them, and no reset stands after a boundary rule — the premise
 `single_owner_gap_exact` needs before the emitted gap is the rendered one;
 the heading's follower rule stands last. That no base-sheet rule outside
 the emitter declares a margin on an element it spaces is the text's to
-show, and `gapOwnerChecks` reads it off every golden page's sheet. -/
+show, and `htmlRhythmChecks` reads it off every golden page's sheet. -/
 theorem blockGap_owner_contract :
     (blockGapRules.dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
     blockGapRules.getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
