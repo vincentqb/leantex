@@ -122,29 +122,31 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[a11yEl "pre" #[("tabindex", "0")]]).scrollsUnreachable == 0)
   no "scroll: under a stylesheet the engine does not own, nothing is declared"
     ((facts #[a11yEl "pre", stage #[]] (own := false)).scrolls == 0)
-  -- contrast: the engine's own tokens pass both schemes; a declared ink
-  -- keeps its value in dark mode and fails there; a themed deck's declared
-  -- ink stands on its declared ground, which the stage paints in both
-  -- schemes (`HtmlDoc.stageGround`).
+  -- contrast: the engine's own tokens pass both schemes; a declared
+  -- colour keeps its page in the one scheme it was judged in
+  -- (`HtmlDoc.dualScheme`), judged once there, and fails it only where it
+  -- fails its own ground; a themed deck ships no dark stage, and its
+  -- declared ink stands on its declared ground (`HtmlDoc.stageGround`).
   let plain := (elabStr (dvDoc "" "x")).1
   no s!"contrast: an undeclared page passes both schemes: {HtmlDoc.schemeFailures true plain}"
     (HtmlDoc.schemeFailures true plain).isEmpty
   let inked := (elabStr (dvDoc "\\palette{ ink = #18181B }\n" "x")).1
-  no s!"contrast: a declared ink fails dark text: {HtmlDoc.schemeFailures true inked}"
-    ((HtmlDoc.schemeFailures true inked).contains ("dark", "text") &&
-     !(HtmlDoc.schemeFailures true inked).any (·.1 == "light"))
+  no s!"contrast: a declared ink keeps its one scheme and passes it: {HtmlDoc.schemeFailures true inked}"
+    (!HtmlDoc.dualScheme inked && (HtmlDoc.schemeFailures true inked).isEmpty)
+  let pale := (elabStr (dvDoc "\\palette{ ink = #D4D4D8 }\n" "x")).1
+  no s!"contrast: a declared ink that fails its ground fails once: {HtmlDoc.schemeFailures true pale}"
+    ((HtmlDoc.schemeFailures true pale).contains ("light", "text") &&
+     !(HtmlDoc.schemeFailures true pale).any (·.1 == "dark"))
   no "contrast: a stylesheet the engine does not own claims nothing"
-    (HtmlDoc.schemeFailures false inked).isEmpty
+    (HtmlDoc.schemeFailures false pale).isEmpty
   let deck := (elabStr (dvDeck "" "\\begin{frame}{T}\nx\n\\end{frame}")).1
-  -- The deck's stage paints the bundle's declared page in both schemes, as
-  -- the PDF does, so its declared ink reads on it; what the dark scheme
-  -- still fails there is its own chrome token.
-  no s!"contrast: the default deck bundle's page stands in dark mode, under the \
-scheme's own accent: {HtmlDoc.schemeFailures true deck}"
-    ((HtmlDoc.schemeFailures true deck).contains ("dark", "accent") &&
-     !(HtmlDoc.schemeFailures true deck).contains ("dark", "text"))
-  no s!"contrast: the default deck bundle's ink stands on its declared ground in both \
-schemes: {HtmlDoc.schemeFailures true deck}"
+  -- The deck's stage paints the bundle's declared page, as the PDF does, so
+  -- its declared ink reads on it, in the one scheme the page ships.
+  no s!"contrast: a deck bundle's colours ship no dark stage: \
+{HtmlDoc.schemeFailures true deck}"
+    (!HtmlDoc.dualScheme deck && !(HtmlDoc.schemeFailures true deck).any (·.1 == "dark"))
+  no s!"contrast: the default deck bundle's ink stands on its declared ground in every \
+scheme it ships: {HtmlDoc.schemeFailures true deck}"
     (!(HtmlDoc.schemeFailures true deck).contains ("dark", "text") &&
      !(HtmlDoc.schemeFailures true deck).contains ("light", "text"))
   -- The rows: one per check per page, sorted, headroom.

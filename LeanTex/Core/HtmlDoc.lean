@@ -3264,6 +3264,19 @@ the PDF path reads asks for it (`Pdf.features_agree` states the pair). -/
 def kernCss : String :=
   if Ir.features.kern then "  font-kerning: normal;\n" else ""
 
+/-- Whether the page ships the dark colour scheme. Only the engine's own
+token set has a proven dark variant (`Contrast.dark_contract`). A colour
+the document chose — a palette entry, its own or a bundle's, an epoch's
+palette, a coloured run — was judged against the light ground
+(`Contrast`'s pairing judge), and the dark block would stand it on a
+ground no judge read it on: a declared ink equal to the light default read
+1.00:1 there. Such a page declares the one scheme its colours were judged
+in. The judge (`schemeFailures`) reads this same decision. -/
+def dualScheme (doc : Doc) : Bool :=
+  doc.palette.entries.isEmpty &&
+    !Ir.foldBlocks (fun a b => a || b matches .setPalette _)
+      (fun a i => a || i matches .colored _ _ _) false doc.body
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -3281,8 +3294,9 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   let lt := Contrast.light
   let dk := Contrast.dark
   let parskip := parskipVar doc.page
+  let dual := dualScheme doc
   ":root {\n" ++
-  "    color-scheme: light dark;\n" ++
+  (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
   s!"    --measure: {measureEm doc.page};\n" ++
   parskip ++
   s!"    --ink: {cssColor lt.ink};\n" ++
@@ -3295,6 +3309,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
   "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
   "}\n" ++
+  (if !dual then "" else
   "@media (prefers-color-scheme: dark) {\n" ++
   "  :root {\n" ++
   s!"    --ink: {cssColor dk.ink};\n" ++
@@ -3308,15 +3323,15 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"    --tint: {cssColor dk.tint};\n" ++
   s!"    --rule: {cssColor dk.rule};\n" ++
   "  }\n" ++
-  "}\n" ++
-  -- The document's own declarations, AFTER the dark variant: a declared
-  -- palette key or token is the document's value in BOTH colour schemes,
-  -- so a themed deck's --muted in dark mode is the theme's, not the
-  -- scheme default's. The scheme blocks above are defaults for what the
-  -- document left undeclared; a media query adds no specificity, so at
-  -- the shared :root specificity source order is the whole cascade here
-  -- — the same equal-specificity, order-decides contract the declared
-  -- stylesheet link relies on below.
+  "}\n") ++
+  -- The document's own declarations, after the dark variant: a declared
+  -- token or font is the document's value in every scheme the page
+  -- ships. A page with a declared colour ships one scheme (`dualScheme`),
+  -- so the dark variant never stands a declared colour on a ground no
+  -- judge read it on; a media query adds no specificity, so at the shared
+  -- :root specificity source order is the whole cascade here — the same
+  -- equal-specificity, order-decides contract the declared stylesheet
+  -- link relies on below.
   (let tv := tokenVars cfg doc
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
@@ -6125,12 +6140,16 @@ def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColor
     tint := tok "tint" base.tint
     rule := tok "rule" base.rule }
 
-/-- The pairings a page fails, over both colour schemes: `themePairs` over
-`schemeColors` in light and in dark. A page under a stylesheet the engine
-does not own fails none, because the engine paints none of them. -/
+/-- The pairings a page fails, in each colour scheme it ships: `themePairs`
+over `schemeColors` in light, and in dark where the page ships the dark
+variant (`dualScheme`) — a single-scheme page shows its light colours to a
+dark-mode reader, one judgement, never counted twice. A page under a
+stylesheet the engine does not own fails none, because the engine paints
+none of them. -/
 def schemeFailures (own : Bool) (doc : Doc) : List (String × String) :=
   if !own then [] else
-    [("light", Contrast.light), ("dark", Contrast.dark)].flatMap fun (scheme, base) =>
+    ([("light", Contrast.light)] ++ (if dualScheme doc then [("dark", Contrast.dark)] else [])).flatMap
+      fun (scheme, base) =>
       ((themePairs (schemeColors doc base)).filter fun p =>
           Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (scheme, p.1)
 

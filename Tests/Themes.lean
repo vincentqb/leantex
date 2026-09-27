@@ -1522,28 +1522,43 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((darkBlock.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.dark.accent}").length == 2)
   t "light accent comes from the proven constant"
     ((page.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.light.accent}").length == 2)
-  -- A declared palette key is the document's value in BOTH schemes: the
-  -- custom-property block is emitted after the dark variant, so at the
-  -- shared :root specificity source order gives dark mode the theme's
-  -- --muted, not the scheme default (the layering audit's clobber 3: a
-  -- variant must never beat a higher layer). Judged over the typed head
-  -- tree the backend emits, never an IR dump.
+  -- A page that declares a colour ships one scheme (`HtmlDoc.dualScheme`):
+  -- only the engine's own token set has a proven dark variant, and the
+  -- dark block once stood a declared ink equal to the light default on
+  -- the dark surface at 1.00:1. A themed deck declares its colours through
+  -- its bundle, so it too keeps the scheme its colours were judged in.
+  -- Judged over the typed head tree the backend emits, never an IR dump.
   let (deckHead, _, _) := HtmlDoc.emitTree {} (elabStr
     ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
      "\\begin{frame}{T}x\\end{frame}\\end{document}")).1
-  let deckCss := deckHead.foldl (init := "") fun acc n => match n with
+  let headCss (h : Array Html.Node) : String := h.foldl (init := "") fun acc n => match n with
     | Html.Node.style s => acc ++ s
     | _ => acc
+  let deckCss := headCss deckHead
   let themeMuted := match Theme.moloch.palette.find? "muted" with
     | some c => s!"--muted: {HtmlDoc.cssColor c};"
     | none => "no muted key"
   let darkMuted := s!"--muted: {HtmlDoc.cssColor Contrast.dark.muted};"
-  t "the deck declares the theme muted once and the dark variant's once"
-    ((deckCss.splitOn themeMuted).length == 2 &&
-     (deckCss.splitOn darkMuted).length == 2)
-  t "the theme's custom properties come after the dark variant in the cascade"
-    (match (deckCss.splitOn darkMuted)[1]? with
-     | some after => (after.splitOn themeMuted).length == 2
+  t "a themed deck declares its muted once and ships no dark variant"
+    ((deckCss.splitOn themeMuted).length == 2 && (deckCss.splitOn darkMuted).length == 1 &&
+     hasStr deckCss "color-scheme: light;" && !hasStr deckCss "prefers-color-scheme: dark")
+  let (inkHead, _, _) := HtmlDoc.emitTree {} (elabStr
+    "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1
+  let inkCss := headCss inkHead
+  t "a declared ink keeps its page in the one scheme it was judged in"
+    (hasStr inkCss "color-scheme: light;" && !hasStr inkCss "prefers-color-scheme: dark" &&
+     (HtmlDoc.schemeFailures true (elabStr
+       "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1).isEmpty)
+  -- The layering order still holds where a page ships both schemes: a
+  -- declared token stands after the dark variant, so no variant beats a
+  -- higher layer (the layering audit's clobber 3).
+  let (tokHead, _, _) := HtmlDoc.emitTree {} (elabStr
+    "\\documentclass{article}\\tokens{ topsep = 3pt }\\begin{document}x\\end{document}").1
+  let tokCss := headCss tokHead
+  t "a declared token comes after the dark variant in the cascade"
+    (hasStr tokCss "color-scheme: light dark;" &&
+     match (tokCss.splitOn "prefers-color-scheme: dark")[1]? with
+     | some after => hasStr after "--topsep:"
      | none => false)
   t "an undeclared document emits no empty custom-property block"
     (let (plainHead, _, _) := HtmlDoc.emitTree {} (elabStr "x").1

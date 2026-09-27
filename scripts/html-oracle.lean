@@ -222,6 +222,7 @@ const checks = {
 const readColors = () => {
   const b = getComputedStyle(document.body);
   return { bg: b.backgroundColor, fg: b.color,
+    scheme: getComputedStyle(document.documentElement).colorScheme,
     deck: /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType) };
 };
 
@@ -240,14 +241,19 @@ const contrast = (fg, bg) => {
 // Body text against the body surface in both schemes: at least SC 1.4.3's
 // 4.5:1 in each, and the scheme contract as the stylesheet states it — the
 // dark block is a default for what the document left undeclared, a declared
-// value is the document's in both schemes.
+// value is the document's in both schemes, and a page that declares one
+// scheme (`color-scheme: light`, a page with colours of its own) shows a
+// dark-mode reader exactly its light colours.
 const judgeSchemes = (light, dark) => {
+  const single = !/dark/.test(light.scheme || '');
   const inkDeclared = light.fg !== lightInk, surfaceDeclared = light.bg !== lightSurface;
   const cl = contrast(light.fg, light.bg), cd = contrast(dark.fg, dark.bg);
-  const expected = !inkDeclared && !surfaceDeclared ? dark.bg === darkSurface && dark.fg === darkInk
+  const expected = single ? dark.bg === light.bg && dark.fg === light.fg
+    : !inkDeclared && !surfaceDeclared ? dark.bg === darkSurface && dark.fg === darkInk
     : inkDeclared && surfaceDeclared ? dark.bg === light.bg && dark.fg === light.fg
     : true;
-  const arm = !inkDeclared && !surfaceDeclared ? 'default tokens' : inkDeclared && surfaceDeclared ? 'declared colours' : 'mixed';
+  const arm = single ? 'one scheme' : !inkDeclared && !surfaceDeclared ? 'default tokens'
+    : inkDeclared && surfaceDeclared ? 'declared colours' : 'mixed';
   return { ok: cl >= 4.5 && cd >= 4.5 && expected, n: 1,
     why: `${arm}: light ${light.fg} on ${light.bg} ${cl.toFixed(2)}:1, dark ${dark.fg} on ${dark.bg} ${cd.toFixed(2)}:1` };
 };
