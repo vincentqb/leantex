@@ -19911,3 +19911,168 @@ work.
   W0361, N0114 (the refusal and conditional fixes), N0022, W0315, W0385
   (the ink fixes), N0102, W0334 (the picture fixes), and W0301/W0302 once
   the coverage tier grows an item that ranks unknown names.
+
+
+
+### 2026-09-27 — an external corpus: flashtex's tests built by both engines, and the part that needs neither held as a tier
+
+Asked: "import tests and examples like those in flashtex and build them
+here to see what you get." flashtex is MIT (Copyright (c) 2026 flash-tex),
+so its documents may enter the tree with the licence. Until now the only
+public corpus was the blocker ranking's, 45 documents, 31 of them one
+package's pictures, which its own header calls a smoke test.
+
+**The corpus.** `tests/external/flashtex/` holds 216 documents from six of
+flashtex's sets, at their upstream paths (upstream commit `bb853342`):
+real-world (26), divergence-probes (52, one construct each), proof-corpus
+(10), the amsmath (59) and amssymb (39) corpora, and the TikZ probes (30).
+With them come the inputs their directories hold, the three fixture
+READMEs, the upstream `LICENSE` verbatim, `SHA256SUMS` over the upstream
+bytes (`sha256sum -c SHA256SUMS` in that directory checks all 225), and a
+`PROVENANCE.txt` naming what was taken and what was left. The rule for
+entry is that lualatex (TeX Live 2026) builds the document under
+`-halt-on-error`, so every document is in the denominator; 216 of 220 pass
+it. Left out: one probe lualatex refuses, and three real-world fixtures
+flashtex's README names as a user's own document — this tree's fixtures
+are invented. Not taken: flashtex's pdfLaTeX reference PDFs (another
+engine's output) and its bundled fonts (GUST licence). flashtex's own
+expectations are recorded in the provenance. Its fixture sets are held
+at L0–L4 against pdfLaTeX; its package corpora pin word positions to
+0.5 bp.
+
+**The report**, `scripts/external.lean --report <work> [<list>]`. It is
+never a gate, because it needs lualatex, poppler and the host's fonts.
+It builds each document four times, each in a copy of the document's
+directory: the engine to PDF, to HTML, and to PDF with the face pinned to
+Latin Modern; and lualatex, twice. Per document it records:
+- the exit codes;
+- the census by code and declared loss;
+- the page counts (`pdfinfo`);
+- the letters the two PDFs share (`pdftotext`);
+- the raster RMSE per page, at 72 dpi in grey, both pages padded with
+  white.
+
+Each failure gets a cause class — crash, refusal, unknown construct, font,
+HTML, or a layout difference in pages, text or raster — and a worklist
+ranks the causes by documents held back and `sole`. Three measurement
+decisions, each checked against the pages:
+
+- *Letters, not words, and only letters and digits.* lualatex sets
+  these documents in Type 1 Latin Modern with no `/ToUnicode`
+  (`pdffonts` on `min-quote`: `uni no`). pdftotext then drops an
+  apostrophe (`don't` reads `dont`, `min-curly-quote`), and it joins the
+  words around a symbol it cannot map (`b ⊞ c ⊠ d` reads `bcd`, amssymb
+  `01-bin-boxes`). A word measure put 34 of 39 amssymb probes below
+  950‰. The letter measure puts 29 there, and it is blind to punctuation
+  and symbols by declaration.
+- *The Latin Modern pin.* A document that declares no `\fonts` gets
+  DejaVu Sans (`FontDb.defaultFamilies`), while lualatex sets a LaTeX
+  class in Latin Modern. Layout causes are read off the pinned build, so
+  the one decision is reported once, not charged to every document. Its
+  measured effect is small: the median raster RMSE is 57‰ unpinned
+  against 53‰ pinned, lower on 827 of 896 documents, and no exit code
+  changes. The rest of the raster difference is layout.
+- *Attribution from the tree's own indexes.* A construct's owner comes
+  from `tests/coverage/latex2e-index.txt` (the kernel, by manual
+  chapter), `Compat.texPrimitives`, or the `tests/compat-index/<pkg>.txt`
+  whose row documents it, read as the row example's first command. It
+  does not come from `blockers --rank`'s definer scan: that run was
+  killed at 5 minutes on 1,125 documents, because `ownerOf` rescans every
+  definer file for every (document, construct) pair. The indexes are also
+  the denominators the coverage programme counts. So a construct neither
+  names is reported as *unindexed*, which is a finding about the
+  denominators.
+
+Work directories are refused inside any leantex checkout, and each
+document's is numbered, never named.
+
+**The tier.** `external` holds the part that needs neither fonts nor TeX.
+Each committed document is elaborated in-process through the driver's own
+input splice: lex, parse, `Input.expandInputs`, `Input.resolveData`,
+`Elab.runRaws`. Every read is a file beside the document. The value is 2
+for no error and no unknown construct, 1 for no error, and 0 for an error.
+The baseline holds 216 items: 140 at 2, 25 at 1 and 51 at 0, in 5 s.
+The tier's premise is that a 0 is a refusal. The report checks it on
+every run, where both readings exist:
+- on the 216 committed documents, elaboration alone and the shipped
+  build agree on all 216;
+- on the full clone they disagree on 1 of 1,031. There a TAB inside
+  `lstlisting` reaches the face as U+0009 and fails the build at layout
+  (E0405, a font error elaboration cannot see).
+
+Broken once, through the paths that ship:
+- `\zzundefinedcmd` in one fixture fails `external --check` and
+  `scoreboard --check` (min-quote 2 → 1);
+- swapping the standing rule's two tests fails the selftest;
+- so do a premise mutant and a row-construct mutant.
+
+The tier is discovered from its baseline and is not yet in
+`Scoreboard.declaredTiers`, because rhythm's name edits the same line.
+Declaring it is routed.
+
+**What we get**, from the full clone (commit `58ed3c7c`; 1,125 distinct
+entry documents in 25 sets, 12 min 27 s at 48 in flight):
+- **Reference builds:** lualatex builds 1,031. Of the 94 it does not
+  build, 48 are tracing oracles (microtype, paragraph) that stop at a
+  `\show…` (`! OK.` under `-halt-on-error`), and 21 are unicode-tex
+  fixtures naming fonts this host lacks (a fontspec error).
+- **The engine's builds:** of the 1,031, it builds 896 and refuses 135,
+  with no crash and no timeout. HTML's exit equals PDF's on all 1,031.
+  455 documents show no cause at all.
+- **Documents per cause class:** unknown construct 310, letters below
+  950‰ 222, page count 146, raster above 150‰ 145, refusal 134, font 7.
+  With Latin Modern pinned, pages agree on 750 of 896, 100 are longer
+  and 46 shorter.
+- **The refusals are mostly two classes:**
+  - 88 of the 135 fail only because an unknown environment's body
+    cascades into a dropped-loss error (E0336, E0311, E0312). The
+    environments are `longtable` 26, `multicols` 23, `description` 15,
+    `thebibliography` 9 and the environment form of a size switch 6.
+    This is warn-elab's invariant, a refusal never raises an error, one
+    step wider: an unknown environment never fails the build.
+  - 31 are E0309, an unknown class: `standalone` 30, `amsart` 1. The
+    names were read from the rendered message, because E0309 carries no
+    structured `refused` name.
+- **Unknown constructs:** 78 distinct constructs (307 document
+  occurrences) are in no denominator. Among them are the kernel
+  environments `description` and `thebibliography`, the environment
+  forms of declarations (`small`, `Large`), and the environments of
+  longtable, multicol and amsthm, packages no compat index covers
+  (coverage.lean leaves environments to the compat index, and no index
+  holds the kernel's).
+- **A tabular below block level:** a `tabular` inside a brace group
+  (`{\small\begin{tabular}…}`, `{\setlength{…}\begin{tabular}…}`) or
+  inside another tabular's cell reads as an unknown environment and
+  cascades (E0336, E0311). This hits 8 tabular-corpus documents. Of the
+  27 documents where `\hline` reads as unknown, 22 are inside an unknown
+  `longtable` and 4 inside such a `tabular`.
+
+**Routed.**
+- The coordinator: add `"external"` to `declaredTiers`
+  (`scripts/Board.lean:841`), in the same edit as `"rhythm"`.
+- minimal-scripts:
+  - move `namesLeantex`/`Dest` out of `scripts/blockers.lean` into a
+    shared library, since external.lean restates the checkout rule;
+  - memoize `ownerOf` by (construct, load set).
+- minimal-core: make `Main.frontend`'s elaboration sequence a Cli library
+  function. external.lean composes the same five calls, and would drift.
+- warn-elab:
+  - the unknown-environment cascade;
+  - the tabular below block level;
+  - E0309's missing `refused`;
+  - the environment form of declarations.
+- The listing path: the TAB (E0405).
+- coverage-honest:
+  - a denominator for the kernel's environments;
+  - indexes for longtable, multicol and amsthm;
+  - the unindexed list, in the evidence directory.
+- rhythm-pdf2: the page-count differences.
+
+**The user's decisions:**
+- the default face of a LaTeX class that declares no `\fonts`, which
+  is a divergence from LaTeX;
+- `standalone`, a page cut to its content's box, which is a page-model
+  question;
+- whether to import more sets. The tabular corpus (129 documents) and
+  the render-pipeline oracle suites (464) build from the clone, with the
+  same tool, today.
