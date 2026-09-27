@@ -6869,10 +6869,10 @@ an ordinary paragraph. A declared caption margin (caption manual §2.4,
 narrower-measure shape; undeclared, the full measure. `rf` is the in-float
 reader the caller marked, so no line of the caption is counted by the
 line-number census. -/
-private def collectFloatCaption (r rf : Rd) (a : Acc) (caption : Array Inline)
+private def collectFloatCaption (r rf : Rd) (a : Acc) (kind : Ir.FloatKind) (caption : Array Inline)
     (capLeaf : Option Nat) (capSpan : Nat) (indent : Sp) : Acc :=
   if caption.isEmpty then a else
-  let cmargin := ((a.tokens.find? "captionmargin").map
+  let cmargin := ((Ir.captionTokenOf a.tokens kind "captionmargin").map
     (fun g => (r.resolve g).width)).getD 0
   let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
   -- measured only (does it fit one line?), never shipped: no attribution
@@ -7445,7 +7445,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let caption := Ir.numberedCaption r.locale kind num (markContent caption)
     let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
       (Ir.floatSepDefault r.geom.fontSize))
-    let capSep := r.resolve ((a.tokens.find? "captionsep").getD
+    let capSep := r.resolve ((Ir.captionTokenOf a.tokens kind "captionsep").getD
       (Ir.captionSepDefault r.geom.fontSize))
     let a := a.pushOp .floatOpen
     -- The float's caption and body are box content, not galley lines: the
@@ -7455,7 +7455,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g
-        | .caption => collectFloatCaption r rf a caption capLeaf capSpan indent
+        | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
         | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
   | .frame title standout valign breakable body =>

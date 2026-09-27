@@ -3527,6 +3527,55 @@ rule; \\allow{E0113} accepts the loss")
     | none => dropped ""
   | none => dropped ""
 
+/-- The declarations standing in front of a float's kernel core when they
+are the whole begin body: each a `\setlength` of one of the two caption
+skips, then `\@float{kind}` (latex.ltx defines the float environments as
+exactly that core). -/
+private def floatCoreDecls (kind : String) : List Raw → Option (List (String × Array Raw))
+  | [.ctrl "@float" _, .group n _] =>
+    if (rawSrc n).trimAscii.toString == kind then some [] else none
+  | .ctrl "setlength" _ :: .group reg _ :: .group v _ :: rest =>
+    let skip := (ctrlName reg).filter fun r => r == "abovecaptionskip" || r == "belowcaptionskip"
+    skip.bind fun r => (floatCoreDecls kind rest).map ((r, v) :: ·)
+  | _ => none
+
+/-- A float redefined around its own kernel core — the venue idiom
+`\renewenvironment{table}{\setlength{\abovecaptionskip}{…}…\@float{table}}
+{\end@float}`, which swaps the caption skips for tables — is a scoped
+declaration over the built-in float, not a new environment: the float
+stays the engine's, and each `\abovecaptionskip` becomes the kind's own
+caption gap (`Ir.captionTokenOf`), which no other kind reads. The
+caption's text side (`\belowcaptionskip`) is the float separation here,
+said once in the translation's own note. Any other shape is not the idiom
+and stays the elaborator's refusal (W0303). -/
+private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : Pos) :
+    M (Option (Array Raw × Nat)) := do
+  let some kind := Ir.FloatKind.ofCaptionType? envName | return none
+  unless envName == "table" || envName == "figure" do return none
+  let items (xs : Array Raw) : List Raw := xs.toList.filter fun r =>
+    match r with | .space | .par _ => false | _ => true
+  let b := skipSpaces raws j
+  let some (.group beginB _) := raws[b]? | return none
+  let e := skipSpaces raws (b + 1)
+  let some (.group endB _) := raws[e]? | return none
+  match items endB, floatCoreDecls envName (items beginB) with
+  | [.ctrl "end@float" _], some decls =>
+    let mut out : Array Raw := #[]
+    let mut natives : Array String := #[]
+    for (r, v) in decls do
+      if r == "abovecaptionskip" then
+        let native := s!"\\tokens\{ {kind.captionScope}captionsep = {lengthSrc v} }"
+        natives := natives.push native
+        out := out ++ (← synthAt native pos)
+    let far := if decls.any (·.1 == "belowcaptionskip") then
+        "; its \\belowcaptionskip is the caption's text side, the float separation here"
+      else ""
+    let what := if natives.isEmpty then s!"the built-in \{{envName}}"
+      else String.intercalate " " natives.toList
+    became s!"\\renewenvironment\{{envName}}" (what ++ far) pos
+    return some (out, e + 1)
+  | _, _ => return none
+
 /-- LaTeX's documented sectioning idiom (ltsect.dtx; clsguide, "Defining
 new sectioning commands"): a definer whose whole body is one
 `\@startsection{name}{level}{indent}{beforeskip}{afterskip}{style}` call
@@ -4109,6 +4158,9 @@ the definition is skipped" pos
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
     let (dflt, j) := takeOpt raws j
+    if name == "renewenvironment" && count.isNone && dflt.isNone then
+      if let some (out, k) ← floatRedef? envName.trimAscii.toString raws j pos then
+        return some (out, k)
     let n := (count.bind String.toNat?).getD 0
     let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
       else String.ofList (List.replicate n 'm')

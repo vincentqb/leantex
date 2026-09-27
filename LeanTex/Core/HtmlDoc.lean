@@ -3655,6 +3655,25 @@ theorem dualScheme_contract (imgs : Image.Store) (doc : Doc) (h : dualScheme img
     · have : imgs.entries.any imageSeeThrough = true := Array.any_eq_true'.mpr ⟨en, hen, hc⟩
       simp [this] at hi
 
+/-- The class a float kind's `<figure>` carries: the selector its caption
+scope's rule addresses. A figure is the plain float. -/
+private def floatKindClass : Ir.FloatKind → String
+  | .figure => "float"
+  | .table => "table-float"
+  | .sub => "subfloat"
+  | .algorithm => "algorithm-float"
+
+/-- Each float kind reads its own caption tokens before the document's,
+the order `Ir.captionTokenOf` resolves them in on the page: one
+custom-property indirection per kind, so a `\captionsetup[table]` gap
+reaches tables and no figure. -/
+private def captionScopeCss : String :=
+  let gap := quantaRem (gapK "caption")
+  String.join ([Ir.FloatKind.figure, .table, .sub, .algorithm].map fun k =>
+    let s := k.captionScope
+    s!"figure.{floatKindClass k} \{ --ltx-capsep: var(--{s}captionsep, var(--captionsep, {gap}));\n" ++
+    s!"  --ltx-capmargin: var(--{s}captionmargin, var(--captionmargin, 0px)); }\n")
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -3892,11 +3911,12 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  position: absolute; left: 0; text-align: right; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
-  s!"figure.float > figcaption \{ margin-top: var(--captionsep, {quantaRem (gapK "caption")});\n" ++
-  "  padding: 0 var(--captionmargin, 0px);\n" ++
+  captionScopeCss ++
+  "figure.float > figcaption { margin-top: var(--ltx-capsep);\n" ++
+  "  padding: 0 var(--ltx-capmargin);\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
-  s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
-  s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++
+  "figure.float > figcaption:first-child { margin-top: 0;\n" ++
+  "  margin-bottom: var(--ltx-capsep); }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
@@ -5507,11 +5527,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       else #[Html.elem "figcaption"
         (inlines cfg (Ir.numberedCaption cfg.locale kind num caption))]
     let kids := blockNodesInto cfg.into #[] body.toList
-    let cls := match kind with
-      | .table => "float table-float"
-      | .figure => "float"
-      | .sub => "float subfloat"
-      | .algorithm => "float algorithm-float"
+    let kindCls := floatKindClass kind
+    let cls := if kind == .figure then "float" else "float " ++ kindCls
     Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
       #[("class", cls)]
   -- The reference list: one item per resolved entry, carrying the anchor

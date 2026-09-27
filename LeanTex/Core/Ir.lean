@@ -4976,6 +4976,32 @@ def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option Nat)
   | some p => (Inline.text p :: caption.toList).toArray
   | none => caption
 
+/-- The float type a caption setting may be scoped to, as the caption
+package names it (`\captionsetup[table]{...}`, caption manual §4): a
+kind's own tokens carry this prefix (`tablecaptionsep`). subcaption's two
+sub types are the engine's one sub kind. -/
+def FloatKind.captionScope : FloatKind → String
+  | .figure => "figure"
+  | .table => "table"
+  | .sub => "sub"
+  | .algorithm => "algorithm"
+
+/-- The kind a caption package float type names, if the engine has it. -/
+def FloatKind.ofCaptionType? : String → Option FloatKind
+  | "figure" => some .figure
+  | "table" => some .table
+  | "subfigure" | "subtable" => some .sub
+  | "algorithm" => some .algorithm
+  | _ => none
+
+/-- A caption token as one float kind reads it: the kind's own
+(`tablecaptionsep`, what `\captionsetup[table]` or a venue's table-only
+`\abovecaptionskip` declares), else the document's (`captionsep`). The one
+resolving site both backends read, so a setting scoped to tables never
+reaches a figure. -/
+def captionTokenOf (tokens : Tokens) (kind : FloatKind) (key : String) : Option SymGlue :=
+  tokens.find? (kind.captionScope ++ key) <|> tokens.find? key
+
 /-- A listing caption with its number prefix set in front: the
 figure-caption shape (`captionPrefix`'s own spelling, classes.dtx
 §\@makecaption) with the locale's listing word — "Listing 1: text" —

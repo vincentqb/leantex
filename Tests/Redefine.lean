@@ -66,3 +66,65 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let (bad, badDs) := elabStr ("\\documentclass{article}\\style{abstract}{ body-size = big }" ++ body)
   t "an unknown body size is named and leaves the built-in's"
     (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0323"))
+
+
+/-- The baseline distance on page 0 from the first line holding `a` to the
+first holding `b`. -/
+private def gapBetween (c : Array CensusPage) (a b : String) : Option Dim.Sp :=
+  match lineYOf c 0 a, lineYOf c 0 b with
+  | some ya, some yb => some (yb - ya)
+  | _, _ => none
+
+/-- **A caption setting scoped to a float type reaches that type alone.**
+The caption package's `\captionsetup[table]{skip=...}` sets the table
+caption's gap and leaves figures at theirs (caption manual §4); the engine
+read the scope and dropped it, so a table-only gap moved every figure's
+caption too. A venue's table redefinition around the kernel's float core
+(`\@float{table}` … `\end@float`) swapping the two caption skips is the
+same scoped declaration, and `skip=\abovecaptionskip` sets the gap to
+itself. Read off the shipped page: the caption's baseline to its object's. -/
+def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let body := "Opening words.\n\n\\begin{table}\\caption{Table words.}" ++
+    "\\begin{tabular}{ll}Alpha & Beta\\\\\\end{tabular}\\end{table}\n\n" ++
+    "\\begin{figure}Figure body words.\\caption{Figure words.}\\end{figure}\n\nClosing words."
+  let gaps (pre : String) : Option Dim.Sp × Option Dim.Sp :=
+    let c := censusOfSrc fonts (dvDoc pre body)
+    (gapBetween c "Table words" "Alpha", gapBetween c "Figure body" "Figure words")
+  let (tDef, fDef) := gaps ""
+  let (tScoped, fScoped) := gaps "\\captionsetup[table]{skip=3pt}\n"
+  let (tNative, _) := gaps "\\tokens{ captionsep = 3pt }\n"
+  t "a table-scoped skip sets the table caption's gap"
+    (tScoped.isSome && tScoped == tNative && tScoped != tDef)
+  t "a table-scoped skip leaves the figure caption's gap alone"
+    (fScoped.isSome && fScoped == fDef)
+  let (tFig, fFig) := gaps "\\captionsetup[figure]{skip=3pt}\n"
+  t "a figure-scoped skip sets the figure caption's gap and leaves the table's"
+    (tFig == tDef && fFig.isSome && fFig != fDef)
+  t "a scoped skip ships the page its native kind token ships"
+    (shippedLines fonts (dvDoc "\\captionsetup[table]{skip=3pt}\n" body) ==
+      shippedLines fonts (dvDoc "\\tokens{ tablecaptionsep = 3pt }\n" body))
+  let venue := "\\setlength{\\abovecaptionskip}{8pt}\\setlength{\\belowcaptionskip}{0pt}\n" ++
+    "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{0pt}" ++
+    "\\setlength{\\belowcaptionskip}{8pt}\\@float{table}}{\\end@float}\n"
+  t "a table redefined around the kernel's float core ships its scoped caption gaps"
+    (shippedLines fonts (dvDoc venue body) ==
+      shippedLines fonts (dvDoc "\\tokens{ captionsep = 8pt, tablecaptionsep = 0pt }\n" body))
+  t "a table redefined around the kernel's float core is no refusal"
+    (!((dvE (dvDoc venue body)).any (·.code == "W0303")))
+  let selfRef := "\\captionsetup[table]{skip=\\abovecaptionskip}\n"
+  t "a skip set to the caption skip itself changes nothing and is honoured"
+    (shippedLines fonts (dvDoc selfRef body) == shippedLines fonts (dvDoc "" body) &&
+     !((dvE (dvDoc selfRef body)).any (·.code == "W0354")))
+  let reg := "\\newlength{\\placeholdergap}\\setlength{\\placeholdergap}{3pt}\n" ++
+    "\\captionsetup[table]{skip=\\placeholdergap}\n"
+  t "a skip naming a declared length reads its value"
+    ((gaps reg).1 == tScoped)
+  let (tOther, fOther) := gaps "\\captionsetup[lstlisting]{skip=3pt}\n"
+  t "a scope the engine has no float for reaches no float, and is named"
+    (tOther == tDef && fOther == fDef &&
+      (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any (·.code == "W0354"))
+  let html := (HtmlDoc.emit {} (elabStr (dvDoc "\\captionsetup[table]{skip=3pt}\n" body)).1).1
+  t "the HTML table caption reads the table's own gap before the document's"
+    (hasStr html "--tablecaptionsep: 3pt" &&
+      hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")

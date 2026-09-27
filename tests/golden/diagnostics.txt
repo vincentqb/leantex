@@ -399,7 +399,7 @@ warning[W0352]: malformed .bib entry: in 'broken': unreadable value for 'year'; 
 warning[W0353]: bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat'
   help: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv
 ── W0354 (config) a caption option the engine does not honour; named and ignored
-warning[W0354]: '\captionsetup' key 'labelfont' is not honoured; the caption keeps its declared layout
+warning[W0354]: '\captionsetup[table]' key 'labelfont' is not honoured; the caption keeps its declared layout
   help: \tokens{ captionsep = ... } declares the caption gap
 ── W0355 (config) a theme's slides furniture cannot draw under the class in force
 warning[W0355]: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it

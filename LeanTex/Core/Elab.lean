@@ -10483,7 +10483,7 @@ inductive PDecl where
   | page (src : Option String) (pos : Pos)
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
-  | captionsetup (unclosed : Option Pos) (body : Option String) (pos : Pos)
+  | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url`/`\nolinkurl` set in. Legal in
   the preamble, where url.sty documents it, and in the body, where the inline
   arm reads it. -/
@@ -10743,17 +10743,21 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
         else if name == "captionsetup" then
           let mut j := i
           let mut unclosed : Option Pos := none
+          let mut scope : Option String := none
           match scanBracketArg preamble j pos with
-          | .took j' => j := j'
+          | .took j' =>
+            let b := skipSpaces preamble j
+            scope := some (rawSrc (preamble.extract (b + 1) (j' - 1))).trimAscii.toString
+            j := j'
           | .unclosed bpos => unclosed := some bpos
           | .content => pure ()
           j := skipSpaces preamble j
           match preamble[j]? with
           | some (.group gbody _) =>
             i := j + 1
-            out := out.push (.captionsetup unclosed (some (rawSrc gbody)) pos)
+            out := out.push (.captionsetup scope unclosed (some (rawSrc gbody)) pos)
           | _ =>
-            out := out.push (.captionsetup unclosed none pos)
+            out := out.push (.captionsetup scope unclosed none pos)
         else if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
             || name == "SetKwFunction" || name == "SetKwData" then
           let j := skipSpaces preamble i
@@ -11290,7 +11294,7 @@ tool = none refuses the boundary")
     -- Read off the scanned declarations by `elabDoc`, which opens the body
     -- with it; the fold has nothing to apply.
     return s
-  | .captionsetup unclosed body pos =>
+  | .captionsetup scope unclosed body pos =>
     -- The caption package's option interface (caption manual §2–4).
     -- `position`/`tableposition`/`figureposition` declare which side
     -- captions will stand on, so the package can put the skip
@@ -11300,15 +11304,21 @@ tool = none refuses the boundary")
     -- wherever the source puts it, so those declarations already
     -- hold. `skip` is that gap's own value (caption manual §2.2:
     -- `skip=` sets `\abovecaptionskip`, the object-side skip), so a
-    -- literal length declares the `captionsep` token; `margin` is the
+    -- length declares the `captionsep` token; `margin` is the
     -- caption's own both-side margin (§2.4), the `captionmargin`
-    -- token. Every other key — and an honoured key whose value the
-    -- length parser cannot carry (a register, a {left,right} pair) —
-    -- is named and ignored (W0354), one warning per key. The
-    -- `[float type]` scope changes nothing in that judgment, so it is
-    -- skipped.
+    -- token. A `[float type]` scope (§4) declares the kind's own token
+    -- instead (`tablecaptionsep`), which only that kind reads
+    -- (`Ir.captionTokenOf`); a type the engine has no float for names its
+    -- keys unhonoured rather than reach every kind. A length reads as
+    -- the document's other lengths do — a literal, or an expression over
+    -- the declared tokens — and `skip=\abovecaptionskip` is the gap set to
+    -- itself, which the package evaluates where the caption is set: a
+    -- no-op. Every other key, and an honoured key whose value no length
+    -- reading carries (a {left,right} pair), is named and ignored (W0354),
+    -- one warning per key.
     if let some bpos := unclosed then
       warnUnclosed s.ctx "'\\captionsetup'" bpos
+    let kind? : Option (Option Ir.FloatKind) := scope.map Ir.FloatKind.ofCaptionType?
     match body with
     | some src =>
       let mut s := s
@@ -11320,24 +11330,37 @@ tool = none refuses the boundary")
           -- skip= is the object-side gap (\abovecaptionskip); margin= the
           -- caption's own both-side margin (caption manual §2.2, §2.4).
           -- Each honoured key is one token, the styling door both
-          -- backends read; a value the length parser cannot carry (a
-          -- register, a {left,right} pair) falls through to W0354.
+          -- backends read.
           let tokenOf := [("skip", "captionsep"), ("margin", "captionmargin")]
-          match tokenOf.lookup key with
-          | some tok =>
+          match tokenOf.lookup key, kind? with
+          | some _, some none => pure false
+          | some tok, _ =>
+            let tok := match kind? with
+              | some (some k) => k.captionScope ++ tok
+              | _ => tok
             let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
-            match Decl.parseGlue value with
-            | some g =>
-              let tokens := s.tokens.declare tok g
-              s := { s with tokens := tokens, ctx := { s.ctx with tokens := tokens } }
-              noteDeclared s.ctx "tokens" tok
-              pure true
-            | none => pure false
-          | none => pure false
+            if key == "skip" && value == "\\abovecaptionskip" then pure true
+            else
+              let glue := (Decl.parseGlue value).orElse fun _ =>
+                match Decl.parseLengthExpr (s.ctx.tokens.entries ++ s.ctx.engineTokens)
+                    (String.join (value.splitOn "\\")) with
+                | .ok g => some g
+                | .error _ => none
+              match glue with
+              | some g =>
+                let tokens := s.tokens.declare tok g
+                s := { s with tokens := tokens, ctx := { s.ctx with tokens := tokens } }
+                noteDeclared s.ctx "tokens" tok
+                pure true
+              | none => pure false
+          | none, _ => pure false
         unless honouredToken ||
             ["position", "tableposition", "figureposition"].contains key do
+          let head := match scope with
+            | some sc => s!"'\\captionsetup[{sc}]'"
+            | none => "'\\captionsetup'"
           warnOnce s.ctx ("captionsetup:" ++ key) .W0354
-            s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \
+            s!"{head} key '{key}' is not honoured; the caption keeps \
 its declared layout" pos
             (help := "\\tokens{ captionsep = ... } declares the caption gap")
       return s

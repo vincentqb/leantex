@@ -870,14 +870,24 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\captionsetup{tableposition=top}")).2.all
       (·.severity == .note))
   t "compat captionsetup names an unhonoured key once"
-    (warnCodes (pre ("\\captionsetup[table]{skip=\\abovecaptionskip}\n" ++
-      "\\captionsetup[subtable]{skip=\\abovecaptionskip}")) == ["W0354"] &&
+    (warnCodes (pre ("\\captionsetup[table]{labelfont=bf}\n" ++
+      "\\captionsetup[subtable]{labelfont=bf}")) == ["W0354"] &&
      ((elabStr (pre "\\captionsetup[table]{labelfont=bf}")).2.map (·.message)).any
       (fun m => (m.splitOn "'labelfont'").length == 2))
-  t "compat captionsetup skip declares the caption gap"
-    ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep"
+  -- A `[float type]` scope declares the kind's own token, which only that
+  -- kind reads (`Ir.captionTokenOf`): a table-only skip never reaches the
+  -- document's `captionsep`, so no figure moves.
+  t "compat captionsetup skip declares the scoped caption gap"
+    ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "tablecaptionsep"
         == some { width := { sp := Dim.pt 10 } } &&
+     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep").isNone &&
      (elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.all (·.severity == .note))
+  -- The caption package applies an option where a caption is set, so a
+  -- skip set to `\abovecaptionskip` is that gap set to itself: honoured,
+  -- and it moves nothing.
+  t "compat captionsetup skip set to the caption skip itself is honoured"
+    (warnCodes (pre ("\\captionsetup[table]{skip=\\abovecaptionskip}\n" ++
+      "\\captionsetup[subtable]{skip=\\abovecaptionskip}")) == [])
   -- margin= is the caption's both-side margin (caption manual §2.4): one
   -- token, read by the float caption's measure and the HTML figcaption
   -- padding alike; the package-option spelling routes through the same
