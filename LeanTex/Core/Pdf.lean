@@ -111,14 +111,6 @@ private def ratString (p q : Int) : String :=
     let frs := (frs.dropEndWhile (· == '0')).toString
     s!"{sign}{ip}.{frs}"
 
-/-- `ratString`'s value as an object, integer when its spelling is one —
-`ptObj`'s reason. -/
-private def ratObj (p q : Int) : PdfRead.Obj :=
-  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
-  if v % 1000000000 == 0 then
-    .int (if p < 0 && v != 0 then -(v / 1000000000 : Int) else (v / 1000000000 : Int))
-  else .real (ratString p q)
-
 /-- A PDF string object from a spelling that already carries its
 delimiters (`(text)` or `<hex>`) — what `pdfTextString` and `pdfString`
 produce, kept verbatim as `Obj.str` does. -/

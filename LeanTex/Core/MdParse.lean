@@ -465,9 +465,6 @@ def htmlEndsIn (cs : Array Char) (i : Nat) (e : HtmlEnd) : Bool := Id.run do
       if ends.any (litAt cs k ·) then return true
     return false
 
-/-- Does an HTML block start at `i` (§4.6)? -/
-def htmlBlockAt (cs : Array Char) (i : Nat) : Bool := (htmlBlockKind cs i).isSome
-
 /-- Conditions 1–6 only: what may interrupt a paragraph. Condition 7 may
 not, and reading it as an interrupter refused a paragraph line holding a
 bare `<span>`. -/
