@@ -85,6 +85,86 @@ def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"and the change stops at '\\{c}'" (strong.all fun s => !hasStr s "After words.")
     t s!"a matched '\\{o}' is no unknown command" (ds.all (·.code != "W0301"))
 
+/-- The laid-out lines of a source, baseline and text: what a claim that two
+spellings set one page reads. -/
+def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
+  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
+
+/-- A bare use of an environment the engine gives a meaning, with the
+arguments and body it needs to build. -/
+def blockUse (n : String) : String :=
+  let body := match n with
+    | "itemize" | "enumerate" => "\\item One item"
+    | "minipage" => "{4cm}Mini words."
+    | "ifbackend" => "{pdf}Backend words."
+    | "tabular" => "{ll}Left & Right\\\\"
+    | "tabular*" => "{8cm}{ll}Left & Right\\\\"
+    | "align" | "align*" => "x &= y"
+    | "gather" | "gather*" | "equation" | "equation*" | "displaymath" => "x = y"
+    | "block" | "alertblock" | "exampleblock" => "{Block title}Block words."
+    | _ => "Block words."
+  s!"\\begin\{{n}}{body}\\end\{{n}}"
+
+/-- The spellings of a scope group: the brace pair, and each group
+primitive pair. -/
+def groupSpellings : List (String × String) :=
+  ("{", "}") :: Compat.groupPrimitives.map fun (o, c) => (s!"\\{o} ", s!"\\{c} ")
+
+/-- **A block inside a group stays a block.** A scope group — a brace pair,
+`\begingroup … \endgroup`, `\bgroup … \egroup` — scopes declarations and
+nothing else (TeXbook ch. 5), so a block environment, a heading or a
+display inside one ships the page, the HTML and the diagnostics of the
+document without the group; with a size declaration inside, the text is
+unchanged. Quantified over the engine's block environments
+(`Elab.builtinEnvNames` read by `Elab.bodyIsBlock`) and the group spellings.
+The defect: the group was inline content, so a list or table inside one
+failed the build, a quote lost its block and an equation its number. -/
+def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let envs := Elab.builtinEnvNames.filter fun n => Elab.bodyIsBlock #[.env n #[] {}]
+  let uses := envs.map (fun n => (n, blockUse n)) ++
+    [("section", "\\section{Grouped head}"), ("display", "\\[ x = y \\]"),
+     ("verbatim", "\\begin{verbatim}code words\\end{verbatim}")]
+  let doc (b : String) := dvDoc "" ("Lead words.\n\n" ++ b ++ "\nAfter words.")
+  let mut bareFails : List String := []
+  for (n, use) in uses do
+    let bare := doc use
+    let dsB := dvE bare
+    if dsB.any (·.severity == .error) then
+      bareFails := bareFails ++ [n]
+      continue
+    let htmlB := (HtmlDoc.emit {} (elabStr bare).1).1
+    for (o, c) in groupSpellings do
+      let grouped := doc (o ++ use ++ c)
+      let dsG := dvE grouped
+      t s!"'{o}' around '{n}' builds" (dsG.all (·.severity != .error))
+      t s!"'{o}' around '{n}' raises nothing the bare use does not"
+        (dsG.all fun d => dsB.any (·.code == d.code))
+      t s!"'{o}' around '{n}' ships the bare use's page"
+        (pageLines fonts grouped == pageLines fonts bare)
+      t s!"'{o}' around '{n}' ships the bare use's HTML"
+        ((HtmlDoc.emit {} (elabStr grouped).1).1 == htmlB)
+      let sized := doc (o ++ "\\small " ++ use ++ c)
+      let dsS := dvE sized
+      t s!"'{o}\\small' around '{n}' builds" (dsS.all (·.severity != .error))
+      t s!"'{o}\\small' around '{n}' raises nothing the bare use does not"
+        (dsS.all fun d => dsB.any (·.code == d.code))
+      t s!"'{o}\\small' around '{n}' ships the bare use's text"
+        (pageTextOf fonts sized == pageTextOf fonts bare)
+      t s!"and the size stops at the group's edge ('{o}', '{n}')"
+        (lineSizeOf (censusOfSrc fonts sized) 0 "After words." ==
+          lineSizeOf (censusOfSrc fonts bare) 0 "After words.")
+  t s!"every bare use builds, so no row is judged vacuously: {bareFails}" bareFails.isEmpty
+  for (o, c) in groupSpellings do
+    let wrap (b : String) := dvDoc s!"\\newcommand\{\\probeblock}[1]\{{b}}\n"
+      "Lead words.\n\n\\probeblock{Cell words}\n\nAfter words."
+    let tab := "\\begin{tabular}{l}#1\\end{tabular}"
+    let grouped := wrap (o ++ "\\small " ++ tab ++ c)
+    t s!"a macro body holding '{o}' around a table builds"
+      ((dvE grouped).all (·.severity != .error))
+    t s!"and ships the unwrapped body's text ('{o}')"
+      (pageTextOf fonts grouped == pageTextOf fonts (wrap tab))
+
 
 /-- **A refused delimited definition's use ships what its braced spelling
 ships.** TeX reads a delimited parameter up to its delimiter and consumes
@@ -112,12 +192,7 @@ def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     ((dvE (dvDoc pre "Body.")).any (·.code == "W0357"))
 
 
-/-- The laid-out lines of a source, baseline and text: what a claim that two
-spellings set one page reads. -/
-def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
-  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
-
-/-- **Register arithmetic on a length the document set is evaluated, not
+/-- Register arithmetic on a length the document set is evaluated, not
 skipped.** TeX's `\advance`, `\multiply`, `\divide` and LaTeX's
 `\addtolength` change the value a later layout reads; skipping them left
 the earlier value standing, silently, and a paragraph skip advanced by 20pt

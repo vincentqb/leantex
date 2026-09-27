@@ -9001,12 +9001,14 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' (raws.extract 0 i
           ++ splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size) i
           blocks cur gen'
-      else if body.any isCenteringRaw && !isArgument cur then
-        -- A scope group carrying a `\centering` declaration is a block
-        -- scope: the declaration needs blocks to centre, and the group's
-        -- edge is exactly how far it reaches. An argument group is the
-        -- command's, as in the par splice above; its own block sequence,
-        -- so the declaration stops at the closing brace.
+      else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
+        -- A scope group carrying a `\centering` declaration, or holding
+        -- block content — a list, a table, a heading, a display — is a
+        -- block scope: a group scopes declarations and nothing else
+        -- (TeXbook ch. 5), so the blocks inside stay blocks and a
+        -- declaration reaches exactly to the group's edge. An argument
+        -- group is the command's, as in the par splice above; its own
+        -- block sequence, so the declaration stops at the closing brace.
         let blocks ← flushPara ctx' blocks cur
         let inner ← elabBlocksGo ctx' body 0 #[] #[] (← get).flowGen
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
