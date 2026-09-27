@@ -1,0 +1,15 @@
+# source: environ.sty v0.3 (2014/05/04), its documented commands: \NewEnviron
+# and \RenewEnviron {name}[n][default]{code}[final code], which collect the
+# environment's body into \BODY; \environbodyname{\cmd}, which renames \BODY;
+# and \environfinalcode{code}, which sets the default final code.
+# An environment whose code places \BODY once at its top level is the
+# kernel's \newenvironment with the body standing there — the code before
+# \BODY its begin code, the code after it and the final code its end code —
+# and it elaborates as one. A \BODY inside a group (a box around the whole
+# body) or placed twice has no begin and end to split into, and is refused
+# where it stands (W0104). The two settings stay refused by name.
+pre impl \NewEnviron{placeholder}{Lead \BODY}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
+pre impl \RenewEnviron{placeholder}{\BODY Tail}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
+pre refuse:W0104 \NewEnviron{placeholder}{\fbox{\BODY}}
+pre refuse:W0301 \environbodyname{\CONTENT}
+pre refuse:W0301 \environfinalcode{x}

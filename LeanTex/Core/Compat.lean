@@ -43,7 +43,7 @@ def nativePackages : List String :=
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
-   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno"]
+   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -3527,6 +3527,33 @@ rule; \\allow{E0113} accepts the loss")
     | none => dropped ""
   | none => dropped ""
 
+/-- Does environ's `\BODY` stand anywhere in the tree, a group or an
+environment down included? -/
+private def mentionsBody : List Raw → Bool
+  | [] => false
+  | .ctrl "BODY" _ :: _ => true
+  | .group body _ :: rest => mentionsBody body.toList || mentionsBody rest
+  | .env _ body _ :: rest => mentionsBody body.toList || mentionsBody rest
+  | .math _ body _ :: rest => mentionsBody body.toList || mentionsBody rest
+  | _ :: rest => mentionsBody rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- environ's `\BODY` placed once at the top level of a definition's code:
+the code before it and the code after it, an environment's begin and end
+code with the body standing between them. `none` when `\BODY` is absent,
+stands inside a group, or stands twice. -/
+def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
+  (code.findIdx? (· matches .ctrl "BODY" _)).bind fun i =>
+    let before := code.extract 0 i
+    let after := code.extract (i + 1) code.size
+    if mentionsBody before.toList || mentionsBody after.toList then none
+    else some (before, after)
+
 /-- The declarations standing in front of a float's kernel core when they
 are the whole begin body: each a `\setlength` of one of the two caption
 skips, then `\@float{kind}` (latex.ltx defines the float environments as
@@ -4168,6 +4195,40 @@ the definition is skipped" pos
     became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
     write fun st => { st with bodyNext := 2 }
     return some (← synthAt native pos, j)
+  | "NewEnviron" | "RenewEnviron" =>
+    -- environ.sty's definer (`\env@new`): the begin code collects the
+    -- environment's body into `\BODY` and runs the code, the end code runs
+    -- the final code. With `\BODY` once at the code's top level that is the
+    -- kernel's `\newenvironment` with the body standing there, so it takes
+    -- the native definer's spelling, the code group announced as a macro
+    -- body, and the elaborator splits it at `\BODY` (`bodySlot?`), a
+    -- following `[final code]` joining the end. A `\BODY` inside a group
+    -- (a box around the whole body) or placed twice has no begin and end
+    -- to split into: refused where it stands, the construct consumed whole.
+    let (args, j) := takeGroups raws (skipStar raws start) 1
+    let envName := rawSrc (args.getD 0 #[])
+    let (count, j) := takeOpt raws j
+    let (dflt, j) := takeOpt raws j
+    let b := skipSpaces raws j
+    match raws[b]? with
+    | some (.group code _) =>
+      if (bodySlot? code).isSome then
+        let n := (count.bind String.toNat?).getD 0
+        let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
+          else String.ofList (List.replicate n 'm')
+        let native := s!"\\defineenv\{{envName}}({signature spec})"
+        became s!"\\{name}\{{envName}}" (native ++ " {code before \\BODY} {code after it}") pos
+        write fun st => { st with bodyNext := 1 }
+        return some (← synthAt native pos, j)
+      else
+        let (_, k) := takeOpt raws (b + 1)
+        sayOnce ("ctrl:" ++ name) .W0104
+          s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
+environment's body stands between its begin and its end code here, so the definition is \
+skipped" pos
+          (help := "write the code around \\BODY at the definition's top level")
+        return some (#[], k)
+    | _ => return none
   | "ifdefined" | "ifcsname" | "ifx" =>
     -- A TeX conditional is configuration for machinery that is not here.
     -- Skipped whole, both branches: elaborating either would only warn

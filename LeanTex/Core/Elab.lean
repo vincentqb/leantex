@@ -10627,12 +10627,29 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
               k := k + 1
             | none => break
           let k2 := skipSpaces preamble k
-          let endRaws : Option (Array Raw) := match preamble[k2]? with
-            | some (.group e _) => some e
-            | _ => none
-          i := if endRaws.isSome then k2 + 1 else k
-          out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
-            beginRaws endRaws pos)
+          -- environ's spelling (`\NewEnviron`, which Compat gives the
+          -- native head): one code body with `\BODY` at its top level is
+          -- the begin code before it and the end code after it, a
+          -- following `[final code]` joining the end.
+          match beginRaws.bind Compat.bodySlot? with
+          | some (bb, ee) =>
+            let fb := skipSpaces preamble k
+            let (final, kf) := match preamble[fb]? with
+              | some (.sym '[' _) =>
+                match closeBracketFrom preamble (fb + 1) with
+                | some c => (preamble.extract (fb + 1) c, c + 1)
+                | none => (#[], k)
+              | _ => (#[], k)
+            i := kf
+            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
+              (some bb) (some (ee ++ final)) pos)
+          | none =>
+            let endRaws : Option (Array Raw) := match preamble[k2]? with
+              | some (.group e _) => some e
+              | _ => none
+            i := if endRaws.isSome then k2 + 1 else k
+            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
+              beginRaws endRaws pos)
         | _ =>
           out := out.push (.defineEnv none "" none none pos)
           i := j + 1

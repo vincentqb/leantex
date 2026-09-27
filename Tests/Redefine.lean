@@ -128,3 +128,46 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the HTML table caption reads the table's own gap before the document's"
     (hasStr html "--tablecaptionsep: 3pt" &&
       hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")
+
+
+/-- **environ's `\NewEnviron` defines the environment it names.** Its code
+places the collected body at `\BODY` (environ.sty's `\env@new`); with
+`\BODY` once at the code's top level that is the kernel's
+`\newenvironment` with the body standing there, and a `[final code]`
+joins the end. The package was refused on load and the definer went
+unknown, so a venue's environment was never defined and its uses set as
+an unknown wrapper. Read off the shipped page, against the kernel
+spelling. -/
+def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let use := "\\begin{placeholder}Middle words\\end{placeholder}"
+  let doc (pre body : String) : String := dvDoc ("\\usepackage{environ}\n" ++ pre) body
+  -- The parts in reading order, whatever the space between them (that is
+  -- the kernel spelling's own business, which the pairs below hold equal).
+  let inOrder (s : String) (parts : List String) : Bool :=
+    (parts.foldl (fun (acc : Option String) p => acc.bind fun rest =>
+      match rest.splitOn p with
+      | _ :: after :: more => some (String.intercalate p (after :: more))
+      | _ => none) (some s)).isSome
+  let defined := doc "\\NewEnviron{placeholder}{Lead words \\BODY}[ Tail words]\n" use
+  let kernel := doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" use
+  t "a NewEnviron environment ships what its kernel spelling ships"
+    (shippedLines fonts defined == shippedLines fonts kernel &&
+      inOrder (pageTextOf fonts defined) ["Lead words", "Middle words", "Tail words"])
+  t "the package, the definer and the use raise nothing unknown"
+    (!((dvE defined).any fun d => ["W0103", "W0301", "W0302"].contains d.code))
+  let arg := doc "\\NewEnviron{placeholder}[1]{#1: \\BODY}\n"
+    "\\begin{placeholder}{Name}Middle words\\end{placeholder}"
+  let argKernel := doc "\\newenvironment{placeholder}[1]{#1: }{}\n"
+    "\\begin{placeholder}{Name}Middle words\\end{placeholder}"
+  t "a NewEnviron argument reaches its code as the kernel spelling's does"
+    (shippedLines fonts arg == shippedLines fonts argKernel)
+  let renew := doc "\\RenewEnviron{placeholder}{\\BODY Tail words}\n" use
+  t "RenewEnviron is the same definer"
+    (shippedLines fonts renew ==
+      shippedLines fonts (doc "\\renewenvironment{placeholder}{}{ Tail words}\n" use) &&
+     inOrder (pageTextOf fonts renew) ["Middle words", "Tail words"])
+  let boxed := doc "\\NewEnviron{placeholder}{\\fbox{\\BODY}}\n" use
+  t "a body placed inside a group is refused where it stands, and nothing of it leaks"
+    ((dvE boxed).any (·.code == "W0104") &&
+      !hasStr (pageTextOf fonts boxed) "BODY" && hasStr (pageTextOf fonts boxed) "Middle words")
