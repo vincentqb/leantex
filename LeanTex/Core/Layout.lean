@@ -4836,6 +4836,43 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
       Nat.not_lt.mpr hi]
 
+/-- **A centred page's leftover splits evenly above and below its content's
+box, to within one sp** (`_exact`), stated at the page close that ships it.
+With no fil glue, no shrink given and no note block, every line below the
+pinned chrome moves by one shift, and that shift — the space above the
+content — and the space left between the content's end (`B.contentEnd`)
+and the floor differ by at most the scaled point the halving assigns below.
+The bottom is the box's, as beamer centres its frame's `\vbox`: the last
+line's depth or a picture's declared box, and the closing space the content
+keeps (a trivlist's `\topsep`). `VDist.center_split_exact` is the halving's
+arithmetic; this is the page it realizes. -/
+private theorem finishPage_center_exact (b : B) (owed : Sp)
+    (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
+    (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
+    (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
+    (hl : 0 ≤ noteFloor b.geom b.footins b.notesH - b.contentEnd owed) :
+    (∀ i, b.pinnedLines ≤ i →
+      ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
+        (b.cur.lines[i]?.map fun l => l.y +
+          VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed))) ∧
+    VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+      ≤ (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+        - VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed) ∧
+    (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+        - VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+      ≤ VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+        + 1 := by
+  refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
+  have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
+    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+  unfold B.finishPage B.noteLines
+  simp only [hcond, hsf, hfil, hpn, hv, Bool.false_eq_true, ite_false, ite_true,
+    Array.append_empty, Nat.add_zero,
+    Nat.lt_irrefl, Array.back?_push, Option.bind_some]
+  split <;> split <;>
+    simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
+      Nat.not_lt.mpr hi]
+
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
 

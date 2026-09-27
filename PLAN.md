@@ -20901,3 +20901,53 @@ line's own baseline less half the band's depth, read from `Layout.Out`, so
 the line lands in the middle of the band whatever the geometry, and a guard
 fails if the page stops having a band or a body line. Halving the lift
 makes the mutant pass the judge, which fails the suite.
+
+
+**The centred page, stated where it ships.** `finishPage_center_exact`
+holds for a page that closes with `.center` and no fil, no shrink and no
+note block. Every line below the pinned chrome moves by one shift. That
+shift, which is the space above the content, and the space between
+`B.contentEnd` and the floor differ by at most the scaled point that the
+halving assigns below. `VDist.center_split_exact` stays the arithmetic.
+This theorem is about the page close itself, so the page cannot go back
+to measuring to its lowest line while the statement still stands. The
+break: putting the lowest-line measure back into `finishPage` fails the
+build at this theorem.
+
+**Routed, with sites.**
+- *The `[c]` area's floor and moloch's footline.* This is the page model,
+  which is card-fix's row this round. Every centred frame now stands 10–19
+  px high at 110 dpi, and nothing cancels it any more. beamer's
+  `\textheight` is the paper height less `\footheight` and `\headheight`
+  (beamerbaseframecomponents.sty:163-182). `\footheight` is the footline's
+  height and depth plus 4 pt, 11.455 pt for moloch at 10pt (lualatex,
+  `\savepos`). The engine ends the area at `Ir.slidesVMargin`, 26.4 bp above
+  the page bottom. moloch sets its frame number in `\tiny`, with the
+  baseline 4 pt above the page bottom and the number 5 pt from the right
+  paper edge (beamerouterthememoloch.sty:113-125). The engine sets `small`,
+  with the number's ink bottom at half the margin and its right edge at the
+  text block (`bandSlotX_right_pinned`). The floor and the number move
+  together, or centred content collides with the number.
+- *The article paragraph model.* By rule 2, article's `\parskip` is
+  `0pt plus 1pt` and its `\parindent` is 15, 17 pt or 1.5em
+  (size10/11/12.clo:90). The engine sets block paragraphs with a 6 bp gap
+  and no indent. Doing it right touches three other areas:
+  - the `parindent` token, which Compat already writes and nothing reads
+    (settings-lengths);
+  - the markdown surface's paragraphs, which match pandoc's template in
+    block style;
+  - the HTML's `text-indent`.
+
+  One piece of it is here already: the skip that stacks on a list's space
+  is TeX's own.
+- *Display skips, heading skips and `display_skips_between`.* These are
+  coupled to `rhythmGapQuanta` and `backend_gaps_agree` exactly as the
+  trivlist row is. The one change is the agreement layer carrying exact
+  ratios. The title block follows the venue style that the private
+  paper's `\maketitle` redefinition is being wired to (settings-pkgs).
+- *`peer_gap_exact`.* Not attempted. Its invariant is the whole run's pen
+  advance, which is `lines_attributed_covers`'s wall.
+- *To settings-lengths.* A `\@list⟨n⟩` redefinition carries LaTeX's list
+  semantics, so it should feed `Ir.listSkips` as a per-level override. It
+  should not feed `\style{itemize⟨n⟩}{ before, gap }`, whose declared
+  values are whole gaps.
