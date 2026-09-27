@@ -2980,6 +2980,14 @@ private def signature (spec : String) : String := Id.run do
     s!"a{k + 1}{if c == 'o' then "?" else ""}: content"
   String.intercalate ", " params
 
+/-- The output drivers geometry and crop choose among (geometry manual §5.1,
+"Driver options"; crop.dtx's driver options): each says how a DVI or PDF
+backend is handed the paper size and the marks, which this engine — its
+own PDF writer — decides itself. So a driver option, under any value, asks
+for nothing the page shows, and it passes without a loss to name. -/
+private def driverOptions : List String :=
+  ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "vtex", "driver"]
+
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}`, `\newgeometry{...}`
 → `\page{...}`. `textwidth`/`textheight` pass through to the `\page` keys
 of the same names (geometry manual §5.2: they size the body; the engine
@@ -3006,6 +3014,9 @@ private def geometry (opts : String) (pos : Pos)
       else if f == "noheadfoot" || f == "nohead" || f == "nofoot" then
         -- Asks for no running furniture, the state the engine starts from.
         pure ()
+      -- premise: driverOptionChecks — a driver option or `verbose` ships
+      -- the page the document ships without it
+      else if driverOptions.contains f || f == "verbose" then pure ()
       else dropped := dropped.push f
     | k :: v =>
       let k := k.trimAscii.toString
@@ -3019,7 +3030,10 @@ private def geometry (opts : String) (pos : Pos)
       -- into an error. It stays a drop, and the warning names the spelling
       -- — for a key the engine otherwise reads, "footskip" alone would
       -- point the author at the wrong half of the assignment.
-      if v.startsWith "\\dimexpr" then
+      -- premise: driverOptionChecks — a driver option or `verbose` ships
+      -- the page the document ships without it
+      if driverOptions.contains k || k == "verbose" then pure ()
+      else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
       else if ["margin", "vmargin", "hmargin", "width", "height",
           "textwidth", "textheight", "headsep", "footskip"].contains k then
@@ -3064,10 +3078,11 @@ keeps its dimensions — and `off` is the declared way back
 `cross`/`frame` are mark styles the engine does not draw, the sheet
 sizes and `center` enlarge the medium around the page (this engine's
 medium is trim plus the declared `\page{ bleed }`), and `info`/`noinfo`,
-`axes`, the physical transforms (`mirror`, `rotate`, `invert`,
-`notext`), and the driver names configure machinery the engine does not
-model. `noaxes` asks for the state the engine is already in and passes
-silently. Option list: crop.dtx v1.10 (Melchior Franz). -/
+`axes`, and the physical transforms (`mirror`, `rotate`, `invert`,
+`notext`) configure machinery the engine does not model. `noaxes` asks
+for the state the engine is already in, and a driver name
+(`driverOptions`) for nothing the page shows; both pass silently. Option
+list: crop.dtx v1.10 (Melchior Franz). -/
 private def crop (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{crop}") (key : String := "usepackage:crop") :
     M (Array Raw) := do
@@ -3078,6 +3093,9 @@ private def crop (opts : String) (pos : Pos)
     if o == "cam" then mode := some true
     else if o == "off" then mode := some false
     else if o == "noaxes" then pure ()
+    -- premise: driverOptionChecks — a driver option ships the page the
+    -- document ships without it
+    else if driverOptions.contains o then pure ()
     else if !o.isEmpty then dropped := dropped.push o
   unless dropped.isEmpty do
     say .W0101 s!"crop options without a native equivalent were dropped: \

@@ -3510,6 +3510,36 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((outOf "bleed = 3mm, marks = cut" "\\palette{ spot = cmyk(1, 0, 0, 0) }").pages.all
       fun p => p.fills.all fun f => f.color.cmyk == some (1000, 1000, 1000, 1000))
 
+/-- A driver option asks for nothing the page shows: geometry's and crop's
+driver names (`dvips=false`, `pdftex`, `driver=...`) and geometry's
+`verbose` pass with no loss named, because the build with them ships the
+bytes the build without them ships — the two-builds shape of a gate that
+silences, the premise `Compat.driverOptions` stands on. -/
+def driverOptionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (pre : String) : String :=
+    s!"\\documentclass\{article}{pre}\\begin\{document}Placeholder text.\\end\{document}"
+  let pdfOf (s : String) : ByteArray :=
+    let doc := (elabStr s).1
+    let geom := Layout.Geom.ofPage doc.page
+    Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info
+  let sheet := "\\geometry{paperwidth=3in, paperheight=2in, margin=0.25in}"
+  let bare := src ("\\usepackage{geometry}" ++ sheet)
+  let driven := src ("\\usepackage[dvips=false,pdftex=false,vtex=false,luatex,verbose]" ++
+    "{geometry}" ++ sheet)
+  t "geometry's driver options and verbose name no loss"
+    (!(warnCodes driven).contains "W0101")
+  t "geometry's driver options ship the page without them"
+    (pdfOf driven == pdfOf bare)
+  let cropBare := src ("\\usepackage[cam]{crop}\\page{ bleed = 3mm }")
+  let cropDriven := src ("\\usepackage[cam,pdftex,dvips]{crop}\\page{ bleed = 3mm }")
+  t "crop's driver options name no loss"
+    (!(warnCodes cropDriven).contains "W0101")
+  t "crop's driver options ship the page without them"
+    (pdfOf cropDriven == pdfOf cropBare)
+  t "an option with meaning is still named"
+    ((warnCodes (src "\\usepackage[showframe]{geometry}")).contains "W0101")
+
 /-- The poster's legibility floor, judged over the shipped pages. The floor
 is derived from the calibration the class already sources — beamerposter's
 scale-1 normalsize at the 3.5 mrad fluent-reading bound (Legge & Bigelow
