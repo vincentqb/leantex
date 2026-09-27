@@ -5971,12 +5971,15 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (_, refusedDs) := elabStr (dvDoc "\\pictures{ tool = none }\n" (sets ++ outside))
   t "tool = none makes a body-level set line an unknown command again"
     (refusedDs.any (·.code == "W0301"))
-  -- Native first: what the subset draws, it draws, and what it refused is
-  -- named beside it. Only a picture it draws nothing of routes.
+  -- A picture the subset draws partly, with no tool to draw it — this face
+  -- fulfils nothing, as a machine with no tool and a cold cache does not:
+  -- its request is withdrawn and the subset's drawing is what ships, the
+  -- refusal named beside it. The first pass routes it whole
+  -- (`pictureRouteChecks`).
   let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (partDoc, partDs) := elabStr (dvDoc "" partly)
-  t "a picture the subset draws partly stays native, its refusal named"
+  t "with no tool, a picture the subset draws partly is the subset's, its refusal named"
     (partDoc.pictureSrcs.isEmpty && partDs.any (·.code == "W0334") &&
      partDoc.body.any fun b => match b with | .picture _ => true | _ => false)
   t "the partly-drawn picture ships its ink"
@@ -5985,10 +5988,11 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((Ir.pictureRefs bodyDoc).size == 1 && bodyDoc.pictureSrcs.size == 1)
   -- A boundary failure is a dropped loss, not a degraded one: `degraded`
   -- promises the reader sees "something stands here", and an empty
-  -- unlabelled box is the one thing that does not. Native is tried first,
-  -- so a picture only reaches the boundary when the engine drew nothing of
-  -- it — no part of it was drawn, so there is nothing to fall back to — and
-  -- the run fails rather than shipping a page that reads as intentional.
+  -- unlabelled box is the one thing that does not. A picture the engine drew
+  -- part of never meets it — its request is withdrawn and that drawing ships
+  -- (N0419) — so the failure is left for a picture the engine drew nothing
+  -- of, where there is nothing to fall back to, and the run fails rather
+  -- than shipping a page that reads as intentional.
   let failed := DriverDiag.boundaryFailed "lualatex"
     "! Package pgf Error: Unknown arrow tip kind 'scmarrow'."
   t "a boundary failure is an error the document must declare to accept"
@@ -6001,6 +6005,91 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the HTML converter gap is a different code, and still a warning"
     ((DriverDiag.boundarySvgMissing "not found").code == "W0378" &&
      DiagCode.W0378.loss == .degraded)
+
+/-- **The boundary draws what the subset would draw with a loss** — the
+invariant whose absence let a picture the boundary drew whole ship natively
+with parts missing (square corners for rounded ones, a frame without its
+grid, one shape of five transformed ones). A picture the rendered subset
+draws with a named loss states one request on the first pass, as one it
+draws nothing of always did, so the page is TikZ's wherever a tool draws
+it; one it draws whole stays native; and a request no tool drew is
+withdrawn (`Cli.Boundary.withdraw`), the subset's drawing shipping with its
+refusals named exactly as the refused door names them. The page claims read
+`Layout.Out`: a drawn request ships one image box and none of the subset's
+ink, a withdrawn one the subset's ink and no box. -/
+def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let firstPass (src : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
+    let (toks, lds) := Lex.lex "t" src
+    let (raws, pds) := Parse.parse "t" toks
+    Elab.runRawsSpanned "t" raws (lds ++ pds)
+  let pic (pre body : String) : String :=
+    dvDoc pre ("\\begin{tikzpicture}" ++ body ++ "\\end{tikzpicture}")
+  let native (d : Ir.Doc) : Array Ir.Pic.Picture := d.body.filterMap fun b =>
+    match b with | .picture p => some p | _ => none
+  let pictureDiags (ds : Array Diag) : Array (String × Option String × String) :=
+    (ds.filter fun d => d.code == "W0334" || d.code == "E0333").map
+      fun d => (d.code, d.subject, d.message)
+  let probes : List (String × String) :=
+    [("rounded corners", "\\draw[rounded corners] (0,0) rectangle (3,1);"),
+     ("a grid beside a frame", "\\draw[help lines] (0,0) grid (4,3);" ++
+       "\\draw[thick] (0,0) rectangle (4,3);"),
+     ("scoped transforms", "\\draw (0,0) rectangle (1,1);\\begin{scope}[xshift=2cm]" ++
+       "\\draw[red] (0,0) rectangle (1,1);\\end{scope}")]
+  for (name, body) in probes do
+    let (doc, ds, rs) := firstPass (pic "" body)
+    t s!"a picture the subset draws with a loss routes whole: {name}"
+      ((Ir.pictureRefs doc).size == 1 && ds.any (·.code == "N0023") &&
+       (pictureDiags ds).isEmpty && (native doc).isEmpty)
+    t s!"its request is the one a refusal withdraws: {name}"
+      (rs.fallbacks == (Ir.pictureRefs doc).map (·.1))
+    let (closed, closedDs) := elabStr (pic "\\pictures{ tool = none }\n" body)
+    let (drawn, drawnDs) := elabStr (pic "" body)
+    t s!"withdrawn, it is the refused door's drawing and diagnostics: {name}"
+      (!(native closed).isEmpty && native drawn == native closed &&
+       !(pictureDiags closedDs).isEmpty && pictureDiags drawnDs == pictureDiags closedDs &&
+       drawn.pictureSrcs.isEmpty)
+  -- The page, both ways, off one first pass: the boundary's answer in the
+  -- store ships as its box, and the withdrawn picture as the subset's ink.
+  let rounded := pic "" "\\draw[rounded corners] (0,0) rectangle (3,1);"
+  let (doc, _, _) := firstPass rounded
+  let src := ((Ir.imageRefs doc).find? (·.startsWith Ir.picSrcPrefix)).getD ""
+  let store : Image.Store :=
+    { entries := #[{ src := src, info := some ({ pxW := 300, pxH := 100 } : Image.Plan) }] }
+  let drawnPage := censusOf (coveredColorsOf doc) (layoutOf oneFace doc (imgs := store))
+  t "a drawn request ships as one box and none of the subset's ink"
+    ((drawnPage[0]?.map fun p => p.images == 1 && p.paths == 0 && p.fills == 0) == some true)
+  let (withdrawn, _) := elabStr rounded
+  let nativePage := censusOf (coveredColorsOf withdrawn) (layoutOf oneFace withdrawn)
+  t "a withdrawn request ships as the subset's ink and no box"
+    ((nativePage[0]?.map fun p => p.images == 0 && p.paths ≥ 1) == some true)
+  -- What the subset draws whole never asks the tool.
+  let (whole, wholeDs, wholeRs) := firstPass (pic "" "\\draw (0,0) rectangle (3,1);")
+  t "a picture the subset draws whole stays native on the first pass"
+    ((Ir.pictureRefs whole).isEmpty && wholeRs.fallbacks.isEmpty &&
+     (native whole).size == 1 && wholeDs.all (·.code != "N0023"))
+  -- A note names a decision, not missing ink: it routes nothing.
+  t "only a content loss is a loss the boundary is asked to avoid"
+    (Picture.namesLoss #[(.W0334, "x")] && Picture.namesLoss #[(.E0333, "x")] &&
+     Picture.namesLoss #[(.W0012, "x")] && !Picture.namesLoss #[(.N0114, "x")] &&
+     !Picture.namesLoss #[])
+  -- The withdrawal decision: a refused request the subset can stand in for
+  -- is withdrawn with one note at its span, in the tool's words where it
+  -- ran; any other refusal stands.
+  let span : Span := ⟨"t", ⟨3, 1⟩⟩
+  let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
+  let cold := DriverDiag.boundaryToolUnavailable "lualatex"
+  let w := Boundary.withdraw "lualatex" #["aa"] #[(a, cold), (b, cold)] #[] #[(a, span)]
+  t "a refusal of a picture the subset draws in part withdraws its request"
+    (w.ids == #["aa"] && w.standing.map (·.1) == #[b] &&
+     (w.notes.map fun d => (d.code, d.subject, d.span)) == #[("N0419", some a, some span)])
+  let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure."
+  let w2 := Boundary.withdraw "lualatex" #["aa"] #[(a, failed)]
+    #[(a, "! Package pgf Error: an invented failure.")] #[]
+  t "a tool that ran and drew nothing is quoted in the withdrawal's note"
+    (w2.standing.isEmpty && w2.notes.all fun d =>
+      d.code == "N0419" && hasStr (d.help.getD "") "an invented failure")
 
 /-- The three levels a picture's option entries are read under, read off the
 page the engine ships rather than the IR: **picture < every X < the

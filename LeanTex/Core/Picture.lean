@@ -36,6 +36,16 @@ open LeanTex.Core LeanTex.Core.Dim
 adds the environment's position. -/
 abbrev PDiag := DiagCode × String
 
+/-- **Does the native drawing lose something the document declared?** A
+content loss is one whose floor is not inert (`Loss.floor`): `dropped`,
+`pending` and `degraded` — a shape, a construct or a formula TikZ itself
+would draw. A `standard`, `config` or `info` diagnostic names a decision or
+a standard the declaration already meets, so the boundary would draw the
+same page and routing there would only trade the engine's ink for an
+opaque box. -/
+def namesLoss (ds : Array PDiag) : Bool :=
+  ds.any fun d => d.1.floor != .inert
+
 /-- One micro-token of picture source. The lexer's words run punctuation
 together (`++(0.92,0.92);` is one word), so `ofRaws` re-splits them into
 numbers, identifiers, and single symbols; braces arrive pre-matched as
@@ -4713,7 +4723,7 @@ def readMacro (line : String) : Option Macro := Id.run do
 /-- The macro table one picture reads: the document's definitions, less
 every name the walk owns and every name the picture binds for itself, and
 less any whose definition this reader cannot read. `names` is the document's
-reachable set as the elaborator collected it (`Elab.Ctx.picMacros`), one
+reachable set as the elaborator collected it (`Elab.PicCtx.macros`), one
 entry per name, in document order.
 
 A font switch is the font reader's (`readFont`), as it is the elaborator's:

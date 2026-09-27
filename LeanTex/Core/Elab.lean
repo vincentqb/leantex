@@ -93,6 +93,49 @@ structure ThmDecls where
 /-- amsthm is loaded: some `\theoremstyle` has been declared. -/
 def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
 
+/-- What the picture arm reads, as one field of `Ctx`: the block knot copies
+every `Ctx` field at each `{ ctx with … }`, and its compilation is at its
+budget (AGENTS.md), so the picture context travels as one value — the
+`SpanRecords` shape. -/
+structure PicCtx where
+  /-- The boundary tool in force: the external TeX that draws pictures
+  outside the rendered subset. Open by default — the tool belongs to the
+  build environment exactly as fonts do, and the driver alone decides
+  fulfilment (`boundary_request_env_free`) — so the declaration
+  (`\pictures{ tool = lualatex }`, or TikZ's own `\tikzexternalize`
+  spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
+  boundary: `none` here is the declared refusal. -/
+  tool : Option String := some "lualatex"
+  /-- The boundary requests fulfilment withdrew: pictures the rendered
+  subset draws in part whose request no tool drew (`Cli.Boundary.withdraw`).
+  Each is drawn natively on the elaboration the driver runs with them, its
+  refusals named as a refused door names them. Empty on the first pass,
+  which states every request from the document alone. -/
+  withdrawn : Array String := #[]
+  /-- The preamble declarations a boundary standalone needs beyond the
+  document's design — non-native package loads and the tikz-family set
+  lines, as written (`Compat.boundaryDecls`). The font roles and the
+  palette are not carried here: the request site (`Ir.pictureRefs`) reads
+  them off the finished `Doc`, after contrast realization. -/
+  preamble : String := ""
+  /-- The document's own macro definitions for the boundary standalone, as
+  written (`macroScan`). One entry per name; the request site carries the
+  subset a picture body reaches. -/
+  macros : Array (String × String) := #[]
+  /-- The key lists the document's `\tikzset` lines wrote, in source order
+  and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
+  definitions are what every picture's own option block starts from, so a
+  style reaches its picture whether it was declared in the preamble or
+  beside the figure. Set once by the elaborator, as `preamble` is. -/
+  sets : Array (Array Raw) := #[]
+  /-- How a node label's content measures at a per-mille size: the face,
+  arriving as a function rather than a font set, because the elaborator has
+  no face of its own and does not acquire one by knowing this. The driver
+  resolves it and passes it in; the default answers nothing, which is what a
+  first pass — the one that discovers which face the document declared —
+  must use. -/
+  metric : Ir.Pic.LabelMetric := fun _ _ => {}
+
 /-- A user command sees only commands defined before it: `limit` bounds the
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
@@ -156,37 +199,9 @@ structure Ctx where
   way in, so a nested conditional that empties the set is diagnosed where
   it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
   backendTargets : List String := Ir.backendNames
-  /-- The boundary tool in force: the external TeX that draws pictures
-  outside the rendered subset. Open by default — the tool belongs to the
-  build environment exactly as fonts do, and the driver alone decides
-  fulfilment (`boundary_request_env_free`) — so the declaration
-  (`\pictures{ tool = lualatex }`, or TikZ's own `\tikzexternalize`
-  spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
-  boundary: `none` here is the declared refusal. -/
-  picTool : Option String := some "lualatex"
-  /-- The preamble declarations a boundary standalone needs beyond the
-  document's design — non-native package loads and the tikz-family set
-  lines, as written (`Compat.boundaryDecls`). The font roles and the
-  palette are not carried here: the request site (`Ir.pictureRefs`) reads
-  them off the finished `Doc`, after contrast realization. -/
-  picPreamble : String := ""
-  /-- The document's own macro definitions for the boundary standalone, as
-  written (`macroScan`). One entry per name; the request site carries the
-  subset a picture body reaches. -/
-  picMacros : Array (String × String) := #[]
-  /-- The key lists the document's `\tikzset` lines wrote, in source order
-  and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
-  definitions are what every picture's own option block starts from, so a
-  style reaches its picture whether it was declared in the preamble or
-  beside the figure. Set once by the elaborator, as `picPreamble` is. -/
-  picSets : Array (Array Raw) := #[]
-  /-- How a node label's content measures at a per-mille size: the face,
-  arriving as a function rather than a font set, because the elaborator has
-  no face of its own and does not acquire one by knowing this. The driver
-  resolves it and passes it in; the default answers nothing, which is what a
-  first pass — the one that discovers which face the document declared —
-  must use. -/
-  picMetric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- The picture arm's context (`PicCtx`): the boundary door, the withdrawn
+  requests, the standalone's material and the label measurement. -/
+  pic : PicCtx := {}
   /-- A definition body read the way its use will read it, at the definition
   (rule (b)'s trial, `gateRedefB`): document content, whatever file defined
   it. A command a style file defines is called from the document's own text,
@@ -257,6 +272,9 @@ structure SpanRecords where
   whether it named a role: the contrast judge's `-->`, and the expression
   it names for a colour that carries no role. -/
   colors : Array (String × Color × Bool × Span) := #[]
+  /-- The boundary pictures the rendered subset draws in part, by picture
+  id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
+  fallbacks : Array String := #[]
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -4476,7 +4494,7 @@ a side channel, never slide content" pos
         "not inside inline content")
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if Compat.nativeSetCtrls.contains name ||
-      (ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then
+      (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
     -- A tikz-family set line is not unknown wherever it stands. Its group
     -- addresses the picture machinery, never the sentence: kept as text it
     -- printed the definition's own source into the paragraph. The engine
@@ -7208,39 +7226,51 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula {floorWording (Parse.rawSrc raws)}")])
   let (pic, pdiags) :=
-    Picture.elabPicture ctx.palette body mathOf ctx.picSets ctx.picMetric
-      ctx.picMacros argStyles ctx.page.scale declStyles
-  -- **Native first; the boundary is the fallback.** What the engine's own
-  -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
-  -- the constructs it refused are named beside the shapes that landed
-  -- (W0334), exactly as a refused boundary has always reported them. Only
-  -- a picture the subset draws *nothing* of goes whole to the real TikZ at
-  -- the edge and comes back as an opaque measured box (PLAN, Heavy
-  -- machinery: isolate, then absorb) — routing every imperfect picture
-  -- there instead turned visible output into an empty box the moment the
-  -- boundary failed, which is the trade this ordering refuses.
+    Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
+      ctx.pic.macros argStyles ctx.page.scale declStyles
+  -- **The boundary draws what the subset would draw with a loss.** A
+  -- picture the subset draws whole stays native: the engine owns that ink.
+  -- One it draws nothing of, or draws with a named loss
+  -- (`Picture.namesLoss`), goes to the real TikZ at the edge, so the page is
+  -- LaTeX's rather than a departure the tool could have avoided (PLAN,
+  -- Heavy machinery: isolate, then absorb). The subset's drawing is kept
+  -- as the request's fallback, not thrown away: when fulfilment draws
+  -- nothing — no tool on this machine and a cold cache, or a tool that
+  -- failed — the driver withdraws the request and elaborates again with its
+  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`, N0419), and the drawing
+  -- ships with its refusals named exactly as `\pictures{ tool = none }`
+  -- names them. So a boundary failure never costs a page the subset could
+  -- draw in part — the trade that once made native-first the rule.
   -- The tool is the build environment's, exactly as fonts are: the request
   -- rides the IR — content hash of the wrapped standalone source — and the
   -- driver fulfils it, cached by content, so a warm cache needs no TeX
   -- installed and a machine with none gets the driver's W0379 with the
-  -- placeholder. `\pictures{ tool = none }` is the declared refusal that
-  -- keeps the subset's named diagnostics instead. The trust label: the
-  -- engine claims placement and measurement of the returned box, never its
-  -- contents.
-  if ctx.picTool.isSome && !body.isEmpty && pic.shapes.isEmpty then
-    let tool := ctx.picTool.getD "lualatex"
-    let body := Parse.rawSrc body
-    let id := Ir.picHash body
+  -- placeholder where the subset drew nothing. `\pictures{ tool = none }`
+  -- is the declared refusal that keeps the subset's named diagnostics
+  -- instead. The trust label: the engine claims placement and measurement
+  -- of the returned box, never its contents.
+  let src := Parse.rawSrc body
+  let id := Ir.picHash src
+  -- premise: pictureRouteChecks — a routed picture's losses are never dropped
+  -- in silence: a drawn request ships the boundary's box, and a withdrawn one
+  -- the refused door's drawing with the refused door's diagnostics.
+  if ctx.pic.tool.isSome && !body.isEmpty &&
+      (pic.shapes.isEmpty ||
+        (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
+    let tool := ctx.pic.tool.getD "lualatex"
+    let img := Ir.picSrcPrefix ++ id
     modify fun st =>
-      if st.pictures.any (fun p => p.1 == id) then st
-      else { st with pictures := st.pictures.push (id, body) }
-    recordImageSpan ctx (Ir.picSrcPrefix ++ id) pos
+      let st := if st.pictures.any (fun p => p.1 == id) then st
+        else { st with pictures := st.pictures.push (id, src) }
+      if pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
+      else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
+    recordImageSpan ctx img pos
     warnOnce ctx ("picture:boundary:" ++ id) .N0023
       s!"this picture is drawn by {tool} at the boundary; its text is not \
 in the document's census" pos
       (help := "the box is measured and placed by the engine; \\caption or \
 alt text names it for assistive technology")
-    return blocks.push (.para #[.image (Ir.picSrcPrefix ++ id) {} ""])
+    return blocks.push (.para #[.image img {} ""])
   for (code, msg) in pdiags do
     -- A note names a decision, not a construct outside the subset, so the
     -- subset's reach is no help to it.
@@ -11845,9 +11875,9 @@ the built-in's heading and margins stand{replaced}"
         | some ("tool", v) =>
           let v := v.trimAscii.toString
           if v == "none" then
-            s := { s with ctx := { s.ctx with picTool := none } }
+            s := { s with ctx := { s.ctx with pic := { s.ctx.pic with tool := none } } }
           else if picTools.contains v then
-            s := { s with ctx := { s.ctx with picTool := some v } }
+            s := { s with ctx := { s.ctx with pic := { s.ctx.pic with tool := some v } } }
           else
             diag s.ctx .E0321
               s!"cannot read a boundary tool for 'tool' in 'pictures': '{v}'" pos
@@ -12086,7 +12116,7 @@ remark; the style in force stands" pos
     -- (`tool = none`) makes only the ones the engine does not read unknown
     -- again.
     if Compat.nativeSetCtrls.contains name ||
-        (s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name) then
+        (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
       return s
     -- Unknown preamble commands are configuration, not content: their
     -- arguments are skipped with them, never elaborated as stray text.
@@ -12613,7 +12643,8 @@ def enginePictures (blocks : Array Block) : Nat :=
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[]) :
     EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -12665,10 +12696,10 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
       | _ => fam) (← get).urlFamily
   modify fun st => { st with urlFamily := urlFamily0 }
   let s ← decls.foldlM applyDecl
-    { ctx := { file := file, picTool := picTool0, picPreamble := picPre
-               picMetric := picMetric
-               picMacros := picMacros
-               picSets := picSets.map (·.2) } }
+    { ctx := { file := file
+               pic := { tool := picTool0, preamble := picPre, metric := picMetric
+                        withdrawn := picWithdrawn, macros := picMacros
+                        sets := picSets.map (·.2) } } }
   -- What a `\tikzset` left unread is named at the line that wrote it, and
   -- the gate is *who drew the picture* — read below, off the elaborated
   -- body, once the drawings are facts rather than a configuration.
@@ -12803,10 +12834,11 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
   let blocks := Ir.numberFloats (← elabBlocks ctx (opening ++ body))
   -- **Whatever drew a picture, the keys that drawing did not read are
   -- named.** A `\tikzset` entry outside the rendered subset has exactly one
-  -- other reader: the real TikZ, and only for a picture that went *whole*
-  -- to the boundary (`tikzArm` routes there only when the subset drew
-  -- nothing of it). So the loss is real as soon as the engine drew one
-  -- picture itself — whatever `\pictures{ tool = ... }` nominally says, and
+  -- other reader: the real TikZ, and only for a picture that went to the
+  -- boundary (`tikzArm` routes there what the subset draws nothing of, or
+  -- draws with a loss it names). So the loss is real as soon as the engine
+  -- drew one picture itself — whatever `\pictures{ tool = ... }` nominally
+  -- says, and
   -- a mixed document is the case that matters, since one boundary picture
   -- buys no silence for the twelve beside it. The gate the refusal used to
   -- carry claimed the boundary read them whenever a tool was configured;
@@ -13012,13 +13044,13 @@ declare \\assert\{ pages <= N } to take control" }
     asserts := asserts
     allow := allow
     natbib := (← get).natbib
-    pictureTool := ctx.picTool
+    pictureTool := ctx.pic.tool
     pictureSrcs := (← get).pictures
-    picturePreamble := ctx.picPreamble
+    picturePreamble := ctx.pic.preamble
     -- Request material, so a document that states no request carries none:
     -- a `\newcommand` is otherwise a change to every document's `Doc`, and
     -- the definer family's whole point is that it moves no ink by itself.
-    pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.picMacros
+    pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
     salvage := (← get).salvage
     body := blocks
   }
@@ -13046,6 +13078,11 @@ structure ReqSpans where
   /-- Each image source's first span — file images and boundary pictures
   alike: where the driver's per-picture W0376 and E0382 point. -/
   images : Array (String × Span) := #[]
+  /-- The boundary pictures the rendered subset draws in part, by picture
+  id: a request here that no tool draws is withdrawn, and the picture is
+  drawn natively instead (`Cli.Boundary.withdraw`, and `runRaws` for a
+  caller that fulfils nothing). -/
+  fallbacks : Array String := #[]
   /-- Each reference key's first site: where W0349 points. -/
   refs : Array (String × Span) := #[]
   /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
@@ -13223,9 +13260,11 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 
-/-- Elaborate prepared input against a measurement. -/
+/-- Elaborate prepared input against a measurement, with the boundary
+requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
 def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[]) :
     Doc × Array Diag × ReqSpans :=
   let raws := p.raws
   let compatDiags := p.compatDiags
@@ -13234,7 +13273,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   let ((doc, table), st) :=
-    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric).run
+    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric picWithdrawn).run
       { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
@@ -13251,6 +13290,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
+      fallbacks := st.spans.fallbacks
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
         fun (out, seen) (key, _, pos) =>
           if seen.contains key then (out, seen)
@@ -13278,11 +13318,20 @@ def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :
 
 /-- The span-free face: what every caller that fulfils no file requests
 reads — with the unresolved-reference judge run over the elaborated
-document, since no bibliography resolution follows here. -/
+document, since no bibliography resolution follows here. Fulfilling
+nothing, it has no boundary tool either, so it withdraws every request the
+rendered subset can stand in for (`ReqSpans.fallbacks`) and elaborates
+again, as the driver does on a machine with no tool and a cold cache
+(`Cli.Boundary.withdraw`): the document it returns is the page such a build
+ships, the subset's drawing with its refusals named. The first pass — the
+requests, stated from the document alone — is `runRawsSpanned`'s. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Doc × Array Diag :=
-  let (doc, diags, rs) := runRawsSpanned file raws earlier picMetric
+  let p := prepare file raws
+  let first := runPrepared file p earlier picMetric
+  let (doc, diags, rs) := if first.2.2.fallbacks.isEmpty then first
+    else runPrepared file p earlier picMetric first.2.2.fallbacks
   (doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
 
 def run (file input : String) : Doc × Array Diag :=

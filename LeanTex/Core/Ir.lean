@@ -12059,7 +12059,11 @@ here: the request is formed in the pure core (`Elab`'s picture arm routes
 on the door's presence — a declaration value — and
 `wrapStandalone`/`picHash` take no tool), which cannot read PATH, so
 whether a tool exists on the machine decides *fulfilment* only — run,
-serve from the warm cache, or W0379 (`Main.resolvePictures`). The
+serve from the warm cache, or W0379 (`Main.resolvePictures`) — and, for a
+picture the rendered subset draws in part, withdrawal: a request no tool
+drew is withdrawn and a second elaboration draws that picture natively
+(`Cli.Boundary.withdraw`). Every request is still stated by the first
+elaboration, from the document alone. The
 executable half — pinning the default tool elaborates to the identical
 `Doc` — runs in `boundaryChecks`. -/
 theorem boundary_request_env_free (doc : Doc) (t : Option String) :

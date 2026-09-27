@@ -164,6 +164,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   boxArgChecks ref oneFace
   phantomChecks ref oneFace
   pictureDefnReachChecks ref oneFace
+  pictureRouteChecks ref oneFace
   pictureEveryLevelChecks ref oneFace
   pictureStyleHandlerChecks ref oneFace
   pictureNodePlaceChecks ref oneFace

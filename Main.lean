@@ -449,7 +449,9 @@ against a stat-only witness of the tool binary (`ToolProbe.identify`,
 `PicCache.versionStep`), so a build whose pictures all replay starts no
 process at all. A request nothing can fulfil is W0379, per picture; each
 such
-picture then ships as the placeholder box the diagnostic names. A tool that
+picture then ships as the placeholder box the diagnostic names — unless the
+rendered subset draws it in part, when `Boundary.withdraw` withdraws the
+request and the subset's drawing ships instead (N0419). A tool that
 is not installed lands there and not on E0382: only a clean exit names a
 version (`PicCache.probed_present_exact`), so a picture no tool ever looked
 at is never reported as one the tool drew nothing for. Failures of
@@ -471,9 +473,9 @@ through the boundary: tool, version, the picture's id and its request
 key, size. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
-    IO (Array PicResult × Array (String × Diag)) := do
+    IO (Array PicResult × Array (String × Diag) × Array (String × String)) := do
   let refs := Ir.pictureRefs doc
-  if refs.isEmpty then return (#[], #[])
+  if refs.isEmpty then return (#[], #[], #[])
   let spanFor (hash : String) : Option Span :=
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
@@ -489,6 +491,9 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     stamp (ToolProbe.probeVersion tool)
   let mut results : Array PicResult := #[]
   let mut refused : Array (String × Diag) := #[]
+  -- The tool's own last words for each request it ran on and drew nothing
+  -- for: what a withdrawn picture's note carries (`Boundary.withdraw`).
+  let mut said : Array (String × String) := #[]
   for (id, wrapped) in refs do
     let src := Ir.picSrcPrefix ++ id
     -- The cache key is the *request* — the body wrapped with the design it
@@ -535,6 +540,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
         -- exactly this version: its own words, the same code, the same
         -- dropped loss — one attempt per request, not one per build.
         refused := refused.push (src, DriverDiag.boundaryFailed tool says (spanFor id))
+        said := said.push (src, says)
         ui.phase "boundary"
           s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
           (← since t0)
@@ -561,18 +567,20 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           ui.phase "boundary"
             s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes"
             (← since t0)
-        | .refused said =>
-          IO.FS.writeFile slot said
-          refused := refused.push (src, DriverDiag.boundaryFailed tool said (spanFor id))
+        | .refused words =>
+          IO.FS.writeFile slot words
+          refused := refused.push (src, DriverDiag.boundaryFailed tool words (spanFor id))
+          said := said.push (src, words)
           ui.phase "boundary"
             s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing"
             (← since t0)
-        | .inconclusive said =>
+        | .inconclusive words =>
           -- Nothing the machine did is written: the next build retries.
-          refused := refused.push (src, DriverDiag.boundaryFailed tool said (spanFor id))
+          refused := refused.push (src, DriverDiag.boundaryFailed tool words (spanFor id))
+          said := said.push (src, words)
         -- The scratch directory is per-content and spent either way.
         try IO.FS.removeDirAll work catch _ => pure ()
-  return (results, refused)
+  return (results, refused, said)
 
 /-- Where the image cache files a plan: beside the font and boundary
 caches, keyed by the *content* (so a re-exported file under the same name
@@ -808,10 +816,11 @@ from a config: the artifact stays a function of the document and the font
 environment (`artifact_flag_free`). -/
 def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     (earlier : Array Diag) (spliced : Array (String × Option String × Pos))
-    (metric : Ir.Pic.LabelMetric) (phases : Bool := true) :
+    (metric : Ir.Pic.LabelMetric) (phases : Bool := true)
+    (withdrawn : Array String := #[]) :
     IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
   let t ← IO.monoMsNow
-  let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric
+  let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric withdrawn
   -- N0020 says a `.sty` was read and how much of it took; its counts
   -- are read off the elaborated diagnostics, so it is built after them.
   -- A record from inside an `\input` wrapper names that file, not the
@@ -944,10 +953,29 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     ui.summary file 1 (← since t0)
     return 1
   | some front =>
+    let allowAll := ui.cfg.bestEffort
+    -- **The boundary answers before the document's diagnostics are read.**
+    -- A request no tool drew, for a picture the rendered subset draws in
+    -- part, is withdrawn (`Boundary.withdraw`) and the document elaborated
+    -- again with it, so what is resolved below is the page that ships: the
+    -- subset's drawing with its refusals named, never a placeholder the
+    -- subset could have filled. A document already failing asks nothing of
+    -- the tool — its build stops at the first resolution either way.
+    let failing := (Diag.resolveAll front.doc.allow allowAll front.diags).errors > 0
+    let (pics, refused, said) ← if failing then pure (#[], #[], #[])
+      else resolvePictures ui front.doc front.spans.images
+    let w := Boundary.withdraw (front.doc.pictureTool.getD "lualatex")
+      front.spans.fallbacks refused said front.spans.images
+    let front ← if w.ids.isEmpty then pure front else do
+      let t ← IO.monoMsNow
+      let (doc, diags, spans) ← elaborate ui file front.prepared front.earlier front.spliced
+        (front.provisional.getD (fun _ _ => {})) (phases := false) (withdrawn := w.ids)
+      ui.phase "withdraw" s!"{w.ids.size} pictures drawn by the rendered subset" (← since t)
+      pure { front with doc := doc, diags := diags ++ w.notes, spans := spans }
+    let refused := w.standing
     let doc := front.doc
     let diags := front.diags
     let reqSpans := front.spans
-    let allowAll := ui.cfg.bestEffort
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
     let mut warnings : Nat := 0
@@ -1011,11 +1039,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let t ← IO.monoMsNow
         let (doc2, _, _) ←
           elaborate ui file front.prepared front.earlier front.spliced metric
-            (phases := false)
+            (phases := false) (withdrawn := w.ids)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         pure doc2
       let t ← IO.monoMsNow
-      let (pics, refused) ← resolvePictures ui doc reqSpans.images
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused
       -- The alt judge's picture face, after fulfilment: a picture the
       -- tool failed on ships a placeholder box, not an image, and E0382

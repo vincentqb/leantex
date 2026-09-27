@@ -183,6 +183,10 @@ note[N0114]: '\@ifpackageloaded': 'booktabs' is loaded here, so the first branch
 note[N0114]: '\IfPackageLoadedF': no package 'wideframe' is loaded by the end of the preamble, so its branch is kept
 ── N0200 (info) page set short: its skips gave their shrink
 note[N0200]: page 1 set 6pt short: its skips gave 40% of their 16pt of shrink
+note[N0200]: page 1 set 7pt short: its skips gave 45% of their 16pt of shrink
+── N0419 (info) a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it
+note[N0419]: no boundary tool drew this picture, so the rendered subset draws it; what the subset leaves out is named beside it
+  help: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
 ── W0001 (config) content after \end{document} is ignored
 warning[W0001]: content after '\end{document}' is ignored
 ── W0003 (degraded) no math face available; math set as plain text

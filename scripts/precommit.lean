@@ -947,9 +947,6 @@ structure PremiseRow where
 below and read by hand; none can carry an in-place marker yet, because the
 engine files belong to other slices. -/
 def premiseRegistry : List PremiseRow := [
-  { file := "LeanTex/Core/Elab.lean", site := "ctx.picTool.isSome && !body.isEmpty"
-    pin := some "pictureKeyGateChecks"
-    why := "the two-build table: one extra tool = none line, byte-identical PDFs" },
   { file := "LeanTex/Core/Elab.lean", site := "Compat.boundaryCtrls.contains name"
     pin := none
     why := "premise false when no picture reached the boundary: the set lines \

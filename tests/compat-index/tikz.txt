@@ -45,7 +45,10 @@
 # Under the declared refusal \pictures{ tool = none } the subset's own
 # diagnostics stand instead: W0334 per construct, W0362 for an all-refused
 # picture, W0301 for the set lines (witnessed in Tests/Surface.lean's
-# pictureElabChecks — a per-row preamble cannot be spelled here).
+# pictureElabChecks — a per-row preamble cannot be spelled here). A picture
+# the subset draws with a named loss routes whole too; where no tool draws
+# it — and these probes fulfil nothing — its request is withdrawn and the
+# subset's drawing ships with its diagnostics, so those rows are refusals.
 body impl \begin{tikzpicture}\fill (0,0) rectangle (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) -- (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\node at (0,0) {x};\end{tikzpicture}

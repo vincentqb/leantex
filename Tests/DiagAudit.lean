@@ -116,7 +116,10 @@ def registry : List AuditRow :=
    -- A rewrite's note beside the refusal of what it produced, and a
    -- picture's constructs beside its placeholder: the siteAccounting rows.
    ⟨.N0100, .merge, .rewritten, check% siteAccountingChecks⟩,
-   ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩]
+   ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩,
+   -- A boundary refusal the rendered subset stands in for: the note names
+   -- the withdrawal, and the subset's own codes carry the losses.
+   ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

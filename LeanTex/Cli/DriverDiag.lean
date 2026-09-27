@@ -125,19 +125,20 @@ subset; a placeholder box marks its place"
 placeholder; a warm cache needs no tool")
 
 /-- **E0382: a boundary render that failed is a dropped loss, not a
-degraded one.** `degraded` is declared as *the reader sees "something
-stands here"* — a substituted face, source text, a box carrying its
-code — and that is the one thing a failed boundary picture does not do:
-the box it leaves is empty and unlabelled, so the page reads as
-intentional while a whole diagram is gone. The native subset is tried
-first now, so a picture reaches the boundary only when the engine drew
-nothing of it: no part of it was drawn, so there is nothing to fall back
-to, and nothing honest to put in the box that the engine did not invent. So
-the loss is loud where it can be loud without inventing ink — the run fails,
-and no artifact is written, which is the engine's standing contract for a
-dropped loss. `\allow{E0382}` is the declared door for a document that
-accepts the empty box. `logTail` is the tool's own last words, and `span`
-is where the picture stands. -/
+degraded one** — where nothing else can stand in its place. `degraded` is
+declared as *the reader sees "something stands here"* — a substituted face,
+source text, a box carrying its code — and that is the one thing a failed
+boundary picture does not do: the box it leaves is empty and unlabelled, so
+the page reads as intentional while a whole diagram is gone. A picture the
+rendered subset draws in part never reaches this code: its request is
+withdrawn and the subset's drawing ships (N0419, `Boundary.withdraw`). So
+E0382 is left for a picture the engine drew nothing of, where there is
+nothing to fall back to and nothing honest to put in the box that the
+engine did not invent. So the loss is loud where it can be loud without
+inventing ink — the run fails, and no artifact is written, which is the
+engine's standing contract for a dropped loss. `\allow{E0382}` is the
+declared door for a document that accepts the empty box. `logTail` is the
+tool's own last words, and `span` is where the picture stands. -/
 def boundaryFailed (tool : String) (logTail : String) (span : Option Span := none) : Diag :=
   Diag.of .E0382
     s!"'{tool}' drew nothing for this picture; the page would carry an empty box"
@@ -145,6 +146,27 @@ def boundaryFailed (tool : String) (logTail : String) (span : Option Span := non
     (help := if logTail.isEmpty then
         s!"{tool}'s log says nothing usable; \\allow\{E0382} accepts the empty box"
       else s!"{tool} says: {logTail}")
+
+/-- N0419: a boundary request no tool drew, for a picture the rendered
+subset draws in part. The request is withdrawn and the subset's drawing
+ships, its refusals named beside it exactly as `\pictures{ tool = none }`
+names them — so this is a note, not a loss: the losses are those refusals.
+`said` is the tool's own last words where it ran and drew nothing, and
+absent where no tool ran at all. -/
+def boundaryWithdrawn (tool : String) (said : Option String) (src : String)
+    (span : Option Span := none) : Diag :=
+  let direct := "\\pictures{ tool = none } draws every picture this way, asking no tool"
+  Diag.of .N0419
+    ((match said with
+      | some _ => s!"'{tool}' drew nothing for this picture"
+      | none => "no boundary tool drew this picture") ++
+      ", so the rendered subset draws it; what the subset leaves out is named beside it")
+    span
+    (help := some (match said with
+      | some w => (if w.isEmpty then s!"{tool}'s log says nothing usable" else s!"{tool} says: {w}") ++
+          "; " ++ direct
+      | none => s!"install {tool} to draw it whole, and a warm cache needs no tool; " ++ direct))
+    (subject := some src)
 
 /-- W0378: the PDF→SVG converter for the HTML artifact is not runnable;
 the page shows each picture's text alternative instead. -/

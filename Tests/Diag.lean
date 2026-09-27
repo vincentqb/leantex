@@ -127,6 +127,15 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
           (Ir.picHash "\\draw (0,0) circle (1);") with
       | .error d => return #[d]
       | .ok _ => return #[]),
+    -- The withdrawal chain as the driver runs it: the cold decision's own
+    -- refusal, for a request the elaborator recorded as a picture the
+    -- subset draws in part, is withdrawn and noted.
+    (.N0419, fun dir => do
+      let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
+      let src := Ir.picSrcPrefix ++ id
+      match ← Boundary.coldPicture dir "lualatex" id with
+      | .error d => return (Boundary.withdraw "lualatex" #[id] #[(src, d)] #[] #[]).notes
+      | .ok _ => return #[]),
     (.W0011, fun _ => do
       let faces ← FontDb.scanRoots [testFonts]
       return (← FontEnv.resolveMath faces (some "Open Sans") none false #[] #[] #[]).diags),
@@ -493,6 +502,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
   -- W0379 is the driver's: a stated request no available tool can fulfil.
   | .W0379 => probed .W0379
+  -- N0419 is the driver's: that refusal, for a picture the rendered subset
+  -- draws in part, withdraws the request.
+  | .N0419 => probed .N0419
   -- E0382 is the driver's too: the tool ran and drew nothing, a dropped
   -- loss, so the run fails unless the document declares acceptance.
   | .E0382 => #[DriverDiag.boundaryFailed "lualatex"
