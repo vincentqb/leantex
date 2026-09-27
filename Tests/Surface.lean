@@ -3539,7 +3539,7 @@ def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
     "say \"hi\" and don't", "2021--2024", "a---b", "wait...", "-.-.", "([\"'"]
   t "smartPunct idempotent on the ligature corpus"
     (punctSamples.all fun s =>
-      Elab.smartPunct (Elab.smartPunct s) == Elab.smartPunct s)
+      Ir.smartPunct (Ir.smartPunct s) == Ir.smartPunct s)
 
 /-- The picture subset's boundary is named, never silent: a construct
 outside the subset is W0334 naming it, an unreadable expression, range, or
@@ -4358,6 +4358,80 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "natbib list html: a numbered entry's label and text are the list grid's two columns"
     (hasStr nhtml "<li id=\"ref-e1\"><span class=\"bib-marker\">[1]</span> <span class=\"bib-entry\">" &&
      hasStr nhtml "grid-template-columns: subgrid;")
+
+/-- BibTeX's own sentence case, row by row: a title as a `.bib` spells it,
+and what `"t" change.case$` returned for it under bibtex 0.99d (TeX Live
+2026), through a one-function style writing `title "t" change.case$` for
+each of these invented values. -/
+def sentenceCaseRows : List (String × String) :=
+  [("The Shape of $(a, B)$ Pairs in the Folded Lattice",
+    "The shape of $(a, b)$ pairs in the folded lattice"),
+   ("{QRS}olver: Many-Sided Examples", "{QRS}olver: Many-sided examples"),
+   ("{WXYZ}: Wandering Based Invented Estimates",
+    "{WXYZ}: Wandering based invented estimates"),
+   ("Folded Paper Cranes: Red, Green and Blue",
+    "Folded paper cranes: Red, green and blue"),
+   ("{A}BC Def Ghi", "{A}bc def ghi"),
+   ("Title:No Space After", "Title:no space after"),
+   ("Title: {B}raced After Colon", "Title: {B}raced after colon"),
+   ("La {\\'E}cole et l{\\'E}t{\\'e}", "La {\\'e}cole et l{\\'e}t{\\'e}"),
+   ("{\\'E}cole First", "{\\'E}cole first"),
+   ("Study: {\\'E}cole After Colon", "Study: {\\'E}cole after colon"),
+   ("A {B}ig {Deal} In {LaTeX}", "A {B}ig {Deal} in {LaTeX}"),
+   ("Part One: Part Two: Part Three", "Part one: Part two: Part three"),
+   ("Colon at End:", "Colon at end:"),
+   ("Q {\\AA}ngstr{\\\"O}m {\\OE}uvre {\\L}ukasz", "Q {\\aa}ngstr{\\\"o}m {\\oe}uvre {\\l}ukasz"),
+   ("Ends With {Brace}: And More", "Ends with {Brace}: And more"),
+   ("  Leading Spaces Title", "Leading spaces title"),
+   ("X {\\bf Bold Word} Y", "X {\\bf bold word} y"),
+   ("Hyphen-Word And-More", "Hyphen-word and-more"),
+   ("Colon: {\\'E}t{\\'E} {\\\"U}ber", "Colon: {\\'E}t{\\'e} {\\\"u}ber"),
+   ("Nested {Outer {Inner} Word}: Next", "Nested {Outer {Inner} Word}: Next"),
+   ("{Word}: Then {W}ord", "{Word}: Then {W}ord"),
+   ("\\LaTeX{} Macro Title", "\\latex{} macro title"),
+   ("Mixed \\emph{Emph Word} Here", "Mixed \\emph{Emph Word} here")]
+
+/-- **A reference-list entry's text is set as the body's**: a title takes
+BibTeX's own sentence case, row for row; a `.bib` value's TeX quote and dash
+ligatures read as the body's typographic punctuation; a `$…$` span is a
+formula, the spaces around it kept, an escaped dollar text; and on the page
+and in the HTML the curly quotes ship and the span sets as math — where the
+list once printed the dollars, the backticks and the straight quotes. -/
+def bibTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for (v, want) in sentenceCaseRows do
+    t s!"bib text: sentence case of '{v}' is bibtex's '{want}'" (Bib.sentenceCase v == want)
+  t "bib text: TeX's quote ligatures read as curly quotes"
+    (Bib.fieldInlines "Smart ``first, then `second' last'' and `this'" ==
+      #[.text "Smart “first, then ‘second’ last” and ‘this’"])
+  let spans := Bib.fieldInlines "The shape of $(a, b)$ pairs"
+  t "bib text: a $…$ span is a formula between its text, the spaces kept"
+    (match spans with
+     | #[.text "The shape of ", .formula false "(a, b)" _, .text " pairs"] => true
+     | _ => false)
+  t "bib text: an escaped dollar and an unclosed one stay text"
+    (Bib.fieldInlines "costs \\$5, or $x" == #[.text "costs $5, or $x"])
+  let bib := "@article{q1, author = {Ann Author}, title = {On {\\'E}tudes of $(a, B)$ \
+    and ``Quoted'' Things}, journal = {Journal of Examples}, year = {2020}}\n"
+  let (doc, _) := elabStr "\\documentclass{article}\n\\usepackage{natbib}\n\
+    \\bibliographystyle{unsrtnat}\n\\begin{document}\nL1 \\citep{q1} end.\n\n\
+    \\bibliography{refs}\n\\end{document}\n"
+  let (doc, ds) := Bib.apply #[("refs", bib)] doc
+  let fs ← mathSetOf oneFace
+  let out := layoutOf fs doc
+  let entry := (bibEntryLines (bodyLines out)).foldl (fun s e =>
+    e.foldl (fun s l => s ++ lineText l ++ " ") s) ""
+  t s!"bib text: the page ships the entry's curly quotes and no dollar ({entry})"
+    (hasStr entry "“quoted” things" && !hasStr entry "$" && !hasStr entry "``" &&
+      hasStr entry "On études of")
+  t "bib text: the span sets in the math face on the page"
+    ((bibEntryLines (bodyLines out)).any fun e => e.any fun l => l.segs.any fun s =>
+      match s with
+      | .run idx _ _ _ glyphs _ _ _ _ _ => fs.math == some idx && !glyphs.isEmpty
+      | _ => false)
+  let html := (HtmlDoc.emit {} doc).1
+  t "bib text: the HTML entry carries the formula as MathML and the curly quotes"
+    (hasStr html "<math" && hasStr html "“quoted” things" && ds.isEmpty)
 
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a

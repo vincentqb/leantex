@@ -1,5 +1,6 @@
 import LeanTex.Core.Bib
 import LeanTex.Core.Ir
+import LeanTex.Core.MathParse
 
 /-! A bibliography style, decomposed the way biblatex decomposed `.bst`
 files: five independent pure choices — how a citation renders inline, how
@@ -250,7 +251,7 @@ the author field through `labelNames`, or the key itself when no author
 is there — visible, never silently empty. -/
 def citeAuthors (e : Entry) : String :=
   match e.field? "author" with
-  | some a => labelNames a
+  | some a => Ir.smartPunct (labelNames a)
   | none => e.key
 
 /-- The anchor an entry's reference-list item carries and its citations
@@ -274,7 +275,7 @@ structure Resolved where
 key when no author is there, as `citeAuthors` does. -/
 def citeFullAuthors (e : Entry) : String :=
   match e.field? "author" with
-  | some a => fullNames a
+  | some a => Ir.smartPunct (fullNames a)
   | none => e.key
 
 /-- What one key prints: its names and year, its names alone, or its year
@@ -401,6 +402,65 @@ turns `--` into an en dash; a single `-` between digits is promoted here. -/
 private def pageRange (v : String) : String :=
   String.intercalate "–" (((text v).splitOn "-").filter (!·.isEmpty))
 
+/-- A stored value split at its `$…$` spans: `(true, source)` for each span,
+`(false, text)` between them. An escaped `\$` is text, and an unclosed span
+keeps its dollar and stays text. -/
+def mathSpans (v : String) : Array (Bool × String) := Id.run do
+  let cs := v.toList.toArray
+  let mut out : Array (Bool × String) := #[]
+  let mut cur := ""
+  let mut inMath := false
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if c == '\\' then
+        cur := cur.push c
+        if let some d := cs[i + 1]? then cur := cur.push d
+        i := i + 2
+      else if c == '$' then
+        unless cur.isEmpty do out := out.push (inMath, cur)
+        cur := ""
+        inMath := !inMath
+        i := i + 1
+      else
+        cur := cur.push c
+        i := i + 1
+    else break
+  let tail := if inMath then "$".append cur else cur
+  return if tail.isEmpty then out else out.push (false, tail)
+
+/-- One `$…$` span as the elaborator sets inline math: the math parser's
+atoms when it can model the span, else the span's floor, which `analyse`
+names (W0012). -/
+def formulaOf (src : String) : Ir.Inline :=
+  let (toks, _) := Lex.lex "" ("$" ++ src ++ "$")
+  match (Parse.parse "" toks).1.toList with
+  | [.math false body _] =>
+    match MathParse.parseMath false body with
+    | .ok (l, _) => .formula false (Parse.rawSrc body) l
+    | .error _ => .math false (Parse.rawSrc body)
+  | _ => .math false src
+
+/-- A stored value as the reference list sets it — the `.bbl` is body text to
+LaTeX, so the body's rules: the plain text `text` reads, then the body's
+typographic punctuation (`Ir.smartPunct`: TeX's quote and dash ligatures),
+each `$…$` span a formula. -/
+def fieldInlines (v : String) : Array Ir.Inline := Id.run do
+  let spans := mathSpans v
+  let mut out : Array Ir.Inline := #[]
+  let mut pending := ""
+  for (math, s) in spans, k in [0:spans.size] do
+    if math then
+      unless pending.isEmpty do out := out.push (.text (Ir.smartPunct pending))
+      pending := ""
+      out := out.push (formulaOf s)
+    else
+      let t := textSpan s (lead := k != 0)
+      pending := pending ++ (if k + 1 == spans.size then t.trimAsciiEnd.toString else t)
+  unless pending.isEmpty do out := out.push (.text (Ir.smartPunct pending))
+  return out
+
 /-- One field of one entry, by kind: THE field renderer — every entry type
 renders through this one function, and what varies per type is only the
 order that calls it. An absent field renders empty and its sentence slot
@@ -408,22 +468,22 @@ closes over it. -/
 def renderField (nf : NameFormat) (e : Entry) : Field → Array Ir.Inline
   | .authors =>
     match e.field? "author" with
-    | some a => #[.text (nf.renderList a)]
+    | some a => #[.text (Ir.smartPunct (nf.renderList a))]
     | none =>
       -- plainnat falls back to editors before giving up (format.authors
       -- then format.editors in FUNCTION {book}).
       match e.field? "editor" with
-      | some ed => #[.text (nf.renderList ed ++ ", editors")]
+      | some ed => #[.text (Ir.smartPunct (nf.renderList ed ++ ", editors"))]
       | none => #[]
   | .title emph =>
     match e.field? "title" with
     | some t =>
-      if emph then #[.styled .emph #[.text (text t)]]
-      else #[.text (text (sentenceCase t))]
+      if emph then #[.styled .emph (fieldInlines t)]
+      else fieldInlines (sentenceCase t)
     | none => #[]
   | .journal =>
     match e.field? "journal" with
-    | some j => #[.styled .emph #[.text (text j)]]
+    | some j => #[.styled .emph (fieldInlines j)]
     | none => #[]
   | .volumePages =>
     let vol := (e.field? "volume").map text
@@ -438,7 +498,7 @@ def renderField (nf : NameFormat) (e : Entry) : Field → Array Ir.Inline
       #[.text (v ++ n ++ p)]
   | .booktitle =>
     match e.field? "booktitle" with
-    | some b => #[.text "In ", .styled .emph #[.text (text b)]]
+    | some b => #[.text "In ", .styled .emph (fieldInlines b)]
     | none => #[]
   | .pages =>
     match e.field? "pages" with
@@ -446,35 +506,35 @@ def renderField (nf : NameFormat) (e : Entry) : Field → Array Ir.Inline
     | none => #[]
   | .publisher =>
     match e.field? "publisher" with
-    | some p => #[.text (text p)]
+    | some p => fieldInlines p
     | none => #[]
   | .address =>
     match e.field? "address" with
-    | some a => #[.text (text a)]
+    | some a => fieldInlines a
     | none => #[]
   | .edition =>
     match e.field? "edition" with
-    | some ed => #[.text (text ed ++ " edition")]
+    | some ed => fieldInlines (ed ++ " edition")
     | none => #[]
   | .howpublished =>
     match e.field? "howpublished" with
-    | some h => #[.text (text h)]
+    | some h => fieldInlines h
     | none => #[]
   | .school =>
     match e.field? "school" with
-    | some s => #[.text s!"PhD thesis, {text s}"]
+    | some s => fieldInlines s!"PhD thesis, {s}"
     | none => #[.text "PhD thesis"]
   | .reportNumber =>
     match e.field? "number" with
-    | some n => #[.text s!"Technical report {text n}"]
+    | some n => fieldInlines s!"Technical report {n}"
     | none => #[.text "Technical report"]
   | .institution =>
     match e.field? "institution" with
-    | some i => #[.text (text i)]
+    | some i => fieldInlines i
     | none => #[]
   | .note =>
     match e.field? "note" with
-    | some n => #[.text (text n)]
+    | some n => fieldInlines n
     | none => #[]
   | .year =>
     match e.field? "year" with
@@ -1137,7 +1197,16 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
           (subject := some k))
   let resolved := resolveEntries style cited findEntry
   let find : Resolver := fun k => resolved.find? (·.key == k)
-  return (p, find, bibItems p style resolved, diags)
+  let items := bibItems p style resolved
+  -- A `$…$` span the math parser cannot model sets as its floor (`formulaOf`):
+  -- named once per spelling, as the elaborator names one in the body.
+  let floors := items.foldl (fun acc it => Ir.foldInlines (fun acc x => match x with
+    | .math _ src => if acc.contains src then acc else acc.push src
+    | _ => acc) acc it.content) (#[] : Array String)
+  for src in floors do
+    diags := diags.push (Diag.of .W0012 s!"math in a reference-list entry is not \
+      rendered yet; the formula sets as its text content" (subject := some ("math:" ++ src)))
+  return (p, find, items, diags)
 
 def apply (sources : Array (String × String)) (doc : Ir.Doc) : Ir.Doc × Array Diag :=
   match analyse sources doc with

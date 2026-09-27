@@ -6741,6 +6741,43 @@ theorem floorInk_degraded_covers (src : String) :
    fun _ => floorInk_mem src⟩
 
 
+/-- Typographic punctuation, applied to ordinary text. `--` and `---` are the
+dashes an author means when they type them; `...` is an ellipsis. TeX's quote
+ligatures come first (TeXbook ch. 2: ``` `` ``` and `''` are how quotation
+marks are typed; Appendix F's Computer Modern ligature table adds the single
+`` ` `` → ‘ and the Spanish pairs !+backtick → ¡, ?+backtick → ¿); a straight
+double quote or lone apostrophe
+becomes the directional pair, chosen by what precedes it (so an apostrophe in
+"don't" closes). Literal text (mono, verbatim) is exempt — that is where a
+straight quote or backtick is the point. -/
+def smartPunct (s : String) : String :=
+  String.ofList (go s.toList [])
+where
+  /-- `prev` is the output so far, reversed: its head is the character just
+  emitted, which is what decides quote direction. Two-character ligatures
+  match before the single-character arms. -/
+  go : List Char → List Char → List Char
+    | [], prev => prev.reverse
+    | '-' :: '-' :: '-' :: rest, prev => go rest ('—' :: prev)
+    | '-' :: '-' :: rest, prev => go rest ('–' :: prev)
+    | '.' :: '.' :: '.' :: rest, prev => go rest ('…' :: prev)
+    | '`' :: '`' :: rest, prev => go rest ('“' :: prev)
+    | '`' :: rest, prev => go rest ('‘' :: prev)
+    | '\'' :: '\'' :: rest, prev => go rest ('”' :: prev)
+    | '!' :: '`' :: rest, prev => go rest ('¡' :: prev)
+    | '?' :: '`' :: rest, prev => go rest ('¿' :: prev)
+    | '"' :: rest, prev =>
+      let opening := match prev with
+        | [] => true
+        | c :: _ => c == ' ' || c == '(' || c == '[' || c == '—' || c == '–'
+      go rest ((if opening then '“' else '”') :: prev)
+    | '\'' :: rest, prev =>
+      let opening := match prev with
+        | [] => true
+        | c :: _ => c == ' ' || c == '(' || c == '[' || c == '“'
+      go rest ((if opening then '‘' else '’') :: prev)
+    | c :: rest, prev => go rest (c :: prev)
+
 -- Display-only printers. Structural recursion through `List`, so no `partial`.
 
 mutual

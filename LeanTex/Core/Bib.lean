@@ -370,17 +370,13 @@ def accentOf (mark base : Char) : Char :=
 private def isAccentMark (c : Char) : Bool :=
   c == '\'' || c == '`' || c == '"' || c == '^' || c == '~'
 
-/-- The plain text of a stored value: braces dropped, `\'{e}`-style accents
-composed, one-character word commands replaced, `~` a space (the tie is not
-modelled — stated, not hidden), `---`/`--` the em and en dash, whitespace
-runs one space. An unknown `\command` keeps its name as text, so nothing a
-value spells goes silently missing. Not handled, deliberately: math (`$…$`
-stays literal) and accents outside `accentTable`. -/
-def text (v : String) : String := Id.run do
+/-- `text` without the trim: a span of a value that math interrupts keeps the
+space it opens or closes with — `lead` keeps a leading one too. -/
+def textSpan (v : String) (lead : Bool := false) : String := Id.run do
   let cs := v.toList.toArray
   let mut out := ""
   let mut i := 0
-  let mut lastWs := true
+  let mut lastWs := !lead
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
@@ -461,35 +457,64 @@ def text (v : String) : String := Id.run do
         out := out.push c
         i := i + 1
     else break
-  return out.trimAscii.toString
+  return out
 
-/-- BibTeX's `"t" change.case$` (btxhak §change.case$): the sentence case
-plainnat's `format.title` applies — everything lowercased except the first
-character, a character following `: `, and anything brace-protected. -/
+/-- The plain text of a stored value: braces dropped, `\'{e}`-style accents
+composed, one-character word commands replaced, `~` a space (the tie is not
+modelled — stated, not hidden), `---`/`--` the em and en dash, whitespace
+runs one space. An unknown `\command` keeps its name as text, so nothing a
+value spells goes silently missing. Math and TeX's quote ligatures are the
+reference list's to set (`BibStyle.fieldInlines`); accents outside
+`accentTable` keep their base letter. -/
+def text (v : String) : String := (textSpan v).trimAscii.toString
+
+/-- BibTeX's `"t" change.case$` (bibtex.web, the title-lowering case of
+its change-case procedure): the sentence case plainnat's `format.title` applies. At
+brace depth zero a letter lowercases unless it is the value's first
+character or follows a colon and white space; a closing brace forgets the
+colon. A brace group stays as written, except a special character — a
+group opening `{\` — which lowercases its letters outside its control
+words and turns the five foreign-letter words (`\AA`, `\AE`, `\L`, `\O`,
+`\OE`) into their lowercase words, unless it stands where a kept letter
+would. Only ASCII letters change, as in bibtex 0.99d. The value is read as
+BibTeX's `.bib` reader leaves it: surrounding white space trimmed. -/
 def sentenceCase (v : String) : String := Id.run do
-  let cs := v.toList.toArray
+  let cs := v.trimAscii.toString.toList.toArray
   let mut out := ""
-  let mut depth := 0
-  let mut keepNext := true
-  for i in [0:cs.size] do
+  let mut depth : Nat := 0
+  let mut prevColon := false
+  let mut special := false
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
+      let kept := i == 0 || (prevColon && i > 0 && isWs (cs[i - 1]?.getD 'x'))
       if c == '{' then
+        if depth == 0 then
+          special := !kept && cs[i + 1]? == some '\\'
         depth := depth + 1
         out := out.push c
+        i := i + 1
       else if c == '}' then
         depth := depth - 1
+        if depth == 0 then special := false
+        prevColon := false
         out := out.push c
-      else if depth > 0 then
-        out := out.push c
-      else if keepNext then
-        out := out.push c
-        if !isWs c then keepNext := false
+        i := i + 1
+      else if depth == 0 then
+        out := out.push (if kept then c else c.toLower)
+        if c == ':' then prevColon := true
+        else if !isWs c then prevColon := false
+        i := i + 1
+      else if special && c == '\\' then
+        let (word, j) := readWhile cs (i + 1) Char.isAlpha
+        let word := if ["AA", "AE", "L", "O", "OE"].contains word then word.toLower else word
+        out := out.push '\\' ++ word
+        i := if word.isEmpty then i + 1 else j
       else
-        if c == ':' then
-          if h2 : i + 1 < cs.size then
-            if isWs cs[i + 1] then keepNext := true
-        out := out.push c.toLower
+        out := out.push (if special then c.toLower else c)
+        i := i + 1
+    else break
   return out
 
 /-! ## Names
