@@ -50,6 +50,12 @@ in this repo; refer to the private reference corpus abstractly.
   guarantee? Prints every owed obligation (a type-checked statement whose
   proof is open, staged under `Obligations/`) with owner, source, and
   blocker. Exits non-zero only when the ratchet is violated.
+- `lake env lean --run` interprets the `.olean` files as they stand and
+  rebuilds none of them, so build the libraries a script imports first
+  (`lake build scoreboard` for `scripts.Board`). A script library built
+  against an older `LeanTex` structure crashes the interpreter with a bare
+  segfault: `Ir.Pic.LabelInk` gaining fields took `scripts/html-oracle.lean`
+  down that way.
 - Performance claims come only from `scripts/bench.lean` (vs lualatex on the
   corpus), never from reasoning about the code.
 

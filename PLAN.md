@@ -22554,3 +22554,11 @@ both private documents, and no realization path exists for a label's
 literal colour. Whether diagram text is WCAG 1.4.3's "incidental" text is
 the user's call. `Contrast.UseCx.style`'s `.size` arm still reads
 `sizeScale`, not the document's ladder.
+
+
+**Correction, 2026-09-27.** `b35d8777`'s message says the interpreted
+oracle segfaults at this tree, on a node label standing on a fill. The cause
+was a stale `scripts/Board.olean`, which `lake env lean --run` loads as it
+stands. It had been built against the three-field `LabelInk`. After
+`lake build scoreboard`, the interpreted run writes a matrix byte-identical
+to the committed one. The rule is now a sentence in AGENTS.md, Build / test.
