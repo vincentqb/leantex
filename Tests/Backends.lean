@@ -1005,8 +1005,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "html { scroll-snap-type: x mandatory; overflow-y: clip; }" &&
      has deckPage "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }")
   t "the deck is a row: main flex, each section one viewport of it"
-    (has deckPage ("main { max-width: none; margin: 0; display: flex; " ++
-       "align-items: flex-start;") &&
+    (has deckPage "main { display: flex; align-items: flex-start; }" &&
+     has deckPage "main { max-width: none; margin: 0; font-size: " &&
      has deckPage ("section.slide, section.section-page { width: 100vw; " ++
        "flex: 0 0 100vw; height: 100dvh; overflow-y: auto;"))
   t "the deck glide ships with its reduced-motion guard"
@@ -1016,10 +1016,22 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the deck slide fills the viewport as an opaque column on the declared ground"
     (has deckPage ("background: var(--bg, var(--surface)); color: var(--fg, var(--ink)); " ++
       "display: flex; flex-direction: column;"))
-  t "the deck prints as the handout, one card per page"
-    (has deckPage "@media print" &&
-     has deckPage "break-inside: avoid" &&
-     has deckPage "section.slide { break-after: page; }")
+  -- Print pages the stages: the stage, its type and its furniture hold on
+  -- both media (the `@media screen, print` block), the sheet is the PDF's
+  -- page (160 × 90 mm, the MediaBox's own points), each top-level page of
+  -- the deck opens a sheet, and the card the handout drew is gone.
+  let printOf (page : String) : String :=
+    (((page.splitOn "@media print {").getD 1 "").splitOn "\n}\n").headD ""
+  let stageOf (page : String) : String :=
+    (((page.splitOn "@media screen, print {").getD 1 "").splitOn "@media screen {").headD ""
+  t "the deck prints its stages, one per sheet, on the PDF's page"
+    (has (printOf deckPage) "@page { size: 453.543pt 255.118pt; margin: 0; }" &&
+     has (printOf deckPage) "main > * + * { break-before: page; }" &&
+     has (printOf deckPage) "print-color-adjust: exact" &&
+     has (stageOf deckPage) "section.slide, section.section-page { width: 100vw;" &&
+     has (stageOf deckPage) "main { max-width: none; margin: 0; font-size: " &&
+     !has (stageOf deckPage) "scroll-snap" &&
+     !has (printOf deckPage) "border:" && !has deckPage "section.slide { break-after: page; }")
   -- No push, no sticky stage, no view-timeline gate in a stepless deck:
   -- the scroll itself is the motion, and the frame sections are the snap
   -- pages on every path (the progress hairline's own scroll() gate is
@@ -1060,16 +1072,17 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- different width (16:9 is 160×90 mm, 14:9 is 140×90) emit identical
   -- screen decks, so the screen rendering never reads the stage width;
   -- the third stage differing keeps the comparison honest (16:10's
-  -- 100 mm height moves the vh). Print is the handout — a paged medium
-  -- with a stage — so its measure legitimately reads the page and stays
-  -- outside this property.
+  -- 100 mm height moves the vh). Print is a paged medium with a stage —
+  -- its sheet is the PDF's page (`deckPageRule`, in points) — so its
+  -- measure legitimately reads the page and stays outside this property:
+  -- the screen deck is the stage block and the screen block, up to print.
   t "the deck page carries no stage millimetre" (!has deckPage "mm")
   let deckAt (ratio : String) : String :=
     (HtmlDoc.emit {} (elabStr
       (s!"\\documentclass[aspectratio={ratio}]\{slides}\n" ++
         "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")).1).1
   let screenOf (page : String) : String :=
-    (((page.splitOn "@media screen {").getD 1 "").splitOn "@media print").headD ""
+    (((page.splitOn "@media screen, print {").getD 1 "").splitOn "@media print").headD ""
   t "equal-height stages emit one screen deck: the width is never read"
     (screenOf (deckAt "169") != "" &&
      screenOf (deckAt "169") == screenOf (deckAt "149") &&
@@ -1103,7 +1116,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- duplicates nothing on its way through the gate grouping. Each rule
   -- renders on one line, so the parse is line-local: the body between a
   -- line's last `{` and first `}`.
-  let rules := HtmlDoc.deckRules "4.311vh" 38 3
+  let rules := HtmlDoc.deckRules "4.311vh" "453.543pt 255.118pt" 38 3
   let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
   let emitted := ((HtmlDoc.emitDeckRules rules).splitOn "\n").flatMap fun l =>
     if (l.splitOn "{").length ≥ 2 && (l.splitOn "}").length ≥ 2 then

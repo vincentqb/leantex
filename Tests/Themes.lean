@@ -2558,9 +2558,9 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (count ".step { opacity: 100%; animation: none; }" == 1 &&
      count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; }" == 1 &&
      count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
-  t "print shows every step uncovered on one card, spacers hidden"
+  t "print shows every step uncovered on its stage's own sheet, spacers hidden"
     (count ".snap { display: none; }" == 3 &&
-     count "* + .slide-track { margin-top:" == 1 &&
+     count "main > * + * { break-before: page; }" == 1 &&
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
       (s.splitOn "ltx-uncover").length == 1))
@@ -2935,11 +2935,11 @@ def deckLogoChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "the strip is decorative furniture at the default alignment, beamer's corner"
     (hasStr html "class=\"slide-logo\" role=\"presentation\" aria-hidden=\"true\"" &&
      hasStr html "justify-content: flex-end")
-  t "the stylesheet pins the strip to the stage's bottom band, in print too"
-    (hasStr html (".slide-logo { position: absolute; bottom: var(--safearea, 6vmin); " ++
-       "left: var(--safearea, 6vmin); right: var(--safearea, 6vmin); display: flex; }") &&
-     hasStr html (".slide-logo { position: absolute; bottom: 1.4rem; " ++
-       "left: 1.8rem; right: 1.8rem; display: flex; }"))
+  let stageBlock :=
+    (((html.splitOn "@media screen, print {").getD 1 "").splitOn "@media screen {").headD ""
+  t "the stylesheet pins the strip to the stage's bottom band, on paper too"
+    (hasStr stageBlock (".slide-logo { position: absolute; bottom: var(--safearea, 6vmin); " ++
+       "left: var(--safearea, 6vmin); right: var(--safearea, 6vmin); display: flex; }"))
   -- Alignment is one declared value, projected by each backend.
   let (cdoc, cds) := elabStr (mk "\\theme{default}\\style{logo}{ align = center }")
   let cout := layoutOf oneFace cdoc

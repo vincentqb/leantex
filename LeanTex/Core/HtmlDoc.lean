@@ -912,9 +912,9 @@ extent; the shifts, measure and
 inner sep are `em` of the body size, the unit the deck's type scales in, so
 the box keeps its place as the stage scales. The slot's content takes its
 own template alone, as on the page: the heading's size and weight are the
-slot's (`Config.slotTitle`). Emitted for the paged deck's screen only — in a
-printed handout a slide is flow, and the slots stand in their declared
-order. -/
+slot's (`Config.slotTitle`). Emitted for the paged deck, on screen and on
+paper alike: a printed deck pages the stage itself (`deckPageRule`), so
+the slots stand where the stage puts them. -/
 def titleSlotCss (doc : Doc) : String :=
   let slots := ((doc.styles.find? "titlepage").getD {}).slots
   if slots.isEmpty || doc.docClass != .slides then "" else
@@ -945,7 +945,7 @@ def titleSlotCss (doc : Doc) : String :=
     s!"  transform: translate(-{decMilli (Ir.shareOf pl.anchor.hshares 100000)}%, \
 -{decMilli (Ir.shareOf pl.anchor.vshares 100000)}%);\n" ++
     s!"  padding: {emOf sep};{width} }\n" ++ size
-  "@media screen { section.slide.title-page { position: relative; }\n" ++
+  "@media screen, print { section.slide.title-page { position: relative; }\n" ++
   String.join rules ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] h1 {\n" ++
   "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
@@ -998,11 +998,11 @@ def themeCss (doc : Doc) : String :=
     s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     "section.slide > header h2 { color: inherit; font-size: 1em; }\n" ++
-    -- On the paged deck the slide is the viewport, cornerless: the bar
-    -- squares off with it and bleeds through the safe-area padding,
-    -- negating exactly the token the slide pads by.
+    -- On the paged deck the slide is the viewport — on paper the page —
+    -- cornerless: the bar squares off with it and bleeds through the
+    -- safe-area padding, negating exactly the token the slide pads by.
     (if doc.docClass == .slides then
-      "@media screen { section.slide > header { border-radius: 0;\n" ++
+      "@media screen, print { section.slide > header { border-radius: 0;\n" ++
       -- The deck sets type on `main` in `vh`, so the bar retakes the title
       -- step in `em` to ride the stage rather than pinning to the root.
       s!"  font-size: {stepFactor "Large"}em;\n" ++
@@ -1773,11 +1773,16 @@ inductive Gate where
 
 /-- The media partition a rule is emitted into: the screen deck, the
 screen deck under `prefers-reduced-motion: reduce` (CSS Media Queries 5
-§12.1), or the printed handout. -/
+§12.1), the printed deck, or `stage` — both media, the rules that make a
+frame a stage wherever it is one: its box, its type, its furniture. The
+printed deck is the screen deck's stage paged, reveal.js's `?print-pdf`
+without its layout pass: the page is the stage (`deckPageRule`), so a
+length stated as a share of the stage means the same on paper. -/
 inductive Part where
   | screen
   | reduce
   | print
+  | stage
   deriving Repr, DecidableEq
 
 /-- One deck rule — what a string concatenation used to spell, as a
@@ -1823,14 +1828,16 @@ def emitGates (rules : List DeckRule) : String :=
     String.join (Feature.all.map fun f =>
       block ("not " ++ f.test) (group (.unsupported f)))
 
-/-- The deck stylesheet from its typed rules: the screen partition with
-its gates, then the reduced-motion partition *after* the blocks it
-reverts (equal specificity, source order decides — CSS Cascade 5 §6.4),
-then the print partition. Every rule is emitted exactly once, in its
-declared partition and gate; the Tests deck block pins the declaration
-multiset against the typed set. -/
+/-- The deck stylesheet from its typed rules: the stage partition under
+both media first, then the screen partition with its gates, then the
+reduced-motion partition *after* the blocks it reverts (equal specificity,
+source order decides — CSS Cascade 5 §6.4), then the print partition.
+Every rule is emitted exactly once, in its declared partition and gate;
+the Tests deck block pins the declaration multiset against the typed
+set. -/
 def emitDeckRules (rules : List DeckRule) : String :=
   let part (p : Part) := rules.filter (fun r => r.part == p)
+  "@media screen, print {\n" ++ emitGates (part .stage) ++ "}\n" ++
   "@media screen {\n" ++
     emitGates (part .screen) ++
     "@media (prefers-reduced-motion: reduce) {\n" ++
@@ -1871,7 +1878,8 @@ snap page, as the PDF repeats it on every page of the frame. -/
 def deckLogoRule : DeckRule :=
   { selector := [.lit ".slide-logo"]
     decls := [("position", "absolute"), ("bottom", safeareaVar),
-      ("left", safeareaVar), ("right", safeareaVar), ("display", "flex")] }
+      ("left", safeareaVar), ("right", safeareaVar), ("display", "flex")]
+    part := .stage }
 
 /-- The stage's ground and ink: the declared pair in force where the stage
 stands — the document's (`:root`, `paletteVars`) or a body epoch's (the
@@ -1906,7 +1914,8 @@ def deckStageRule : DeckRule :=
       ("height", "100dvh"), ("overflow-y", "auto"),
       ("background", stageGround), ("color", stageInk), ("display", "flex"),
       ("flex-direction", "column"), ("padding", safeareaVar),
-      ("position", "relative")] }
+      ("position", "relative")]
+    part := .stage }
 
 /-- The deck's base screen rules — the floor every browser gets, no
 feature gate anywhere. The scroll space is horizontal and snaps
@@ -1933,22 +1942,28 @@ def deckBase (bodyVh : String) : List DeckRule :=
   [ { selector := [.lit "html"]
       decls := [("scroll-snap-type", "x mandatory"), ("overflow-y", "clip")] },
     deckGlideRule,
-    { selector := [.lit "body"], decls := [("padding", "0")] },
+    { selector := [.lit "body"], decls := [("padding", "0")], part := .stage },
     { selector := [.lit "main"]
-      decls := [("max-width", "none"), ("margin", "0"), ("display", "flex"),
-        ("align-items", "flex-start"), ("font-size", bodyVh)] },
+      decls := [("max-width", "none"), ("margin", "0"), ("font-size", bodyVh)]
+      part := .stage },
+    { selector := [.lit "main"]
+      decls := [("display", "flex"), ("align-items", "flex-start")] },
     deckStageRule,
     deckSnapDoor,
     deckLogoRule,
     { selector := [.lit "section.section-page"]
-      decls := [("justify-content", "center"), ("align-items", "center")] },
-    { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] },
-    { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")] },
-    { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")] },
+      decls := [("justify-content", "center"), ("align-items", "center")]
+      part := .stage },
+    { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")]
+      part := .stage },
+    { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")]
+      part := .stage },
+    { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
+      part := .stage },
     { selector := [.lit "section.slide > header"]
-      decls := [("max-height", titlebandVar)] },
+      decls := [("max-height", titlebandVar)], part := .stage },
     { selector := [.lit "section.slide > header h2"]
-      decls := [("font-size", scaleSize "Large" "em")] } ]
+      decls := [("font-size", scaleSize "Large" "em")], part := .stage } ]
 
 /-- `deckGlideRule`'s reduced-motion counterpart: the deck pages jump
 instead of gliding. -/
@@ -2392,39 +2407,43 @@ def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
     stepFloorCovered coveredPct ::
     (stepFixed ++ stepSnapped maxSteps ++ stepRecovered coveredPct maxSteps)
 
-/-- The print partition: the handout, one bordered card per frame
-(Tufte: the handout is the document) — the logo prints with its card,
-absolute in the card's padding box as it is absolute in the stage's safe
-area (furniture on paper too, `position: relative` on the card anchors
-it) — and for a stepped deck the snap
-spacers hide, the wrapper takes the card gap its section can no longer
-claim as `* + section.slide` (it is the wrapper's first child), and
-every step prints at full colour: paper has no steps to reveal (the
-user's own rule, beside the unconditional covered floor it was written
-against). -/
+/-- The printed deck's page: the stage the PDF pages on, as `@page`'s
+size with no margin — reveal.js's print export without its layout pass.
+The size is the PDF's own MediaBox in CSS `pt` (the engine's point is
+PostScript's, 1/72 in, and `Sp.toPtString` is the formatter `Pdf.ptObj`
+writes the box with — `deckPageSize` — so the two artifacts' pages are one
+value printed twice). With the page area the stage, every length the deck
+states as a share of the stage (`deckStageMilli`, in `vw`/`dvh`) and the
+stage-ratio type in `vh` mean on paper what they mean on screen (CSS
+Values 4 §6.1.2: in paged media the viewport-percentage lengths are
+relative to the page area). -/
+def deckPageRule (size : String) : DeckRule :=
+  { selector := [.lit "@page"], decls := [("size", size), ("margin", "0")]
+    part := .print }
+
+/-- The page size `deckPageRule` declares, from the document's stage: the
+two numbers `Pdf.ptObj` writes the MediaBox with. -/
+def deckPageSize (page : PageSpec) : String :=
+  s!"{page.width.toPtString}pt {page.height.toPtString}pt"
+
+/-- The print partition: the screen deck's stages, paged — the stage
+partition carries their box, type and furniture onto paper. Every
+top-level page of the deck (a frame, a stepped frame's track, a section
+page) starts a sheet of its own, the first excepted, so no blank sheet
+leads or trails; a stage never splits; and it keeps its declared ground
+(`print-color-adjust: exact`, CSS Color Adjustment 1 §3.1: the ground is
+the author's, not decoration a reader's toner setting may drop). For a
+stepped deck the snap spacers hide and every step prints at full colour:
+paper has no steps to reveal (the user's own rule, beside the
+unconditional covered floor it was written against). -/
 def deckPrint (maxSteps : Nat) : List DeckRule :=
-  [ { selector := [.lit "section.slide"]
-      decls := [("border", s!"{slideBorderPx}px solid var(--rule)"),
-        ("border-radius", s!"{slideRadiusPx}px"),
-        ("padding", s!"{slidePadV} {slidePadH}"),
-        ("margin", "0"), ("break-inside", "avoid"),
-        ("position", "relative")]
+  [ { selector := [.lit "main > * + *"], decls := [("break-before", "page")]
       part := .print },
-    { selector := [.lit ".slide-logo"]
-      decls := [("position", "absolute"), ("bottom", slidePadV),
-        ("left", slidePadH), ("right", slidePadH), ("display", "flex")]
-      part := .print },
-    { selector := [.lit "* + section.slide"]
-      decls := [("margin-top", slidePadV)]
-      part := .print },
-    { selector := [.lit "section.slide"]
-      decls := [("break-after", "page")]
+    { selector := [.lit "section.slide, section.section-page"]
+      decls := [("break-inside", "avoid"), ("print-color-adjust", "exact")]
       part := .print } ] ++
     (if 2 ≤ maxSteps then
       [ { selector := [.lit ".snap"], decls := [("display", "none")]
-          part := .print },
-        { selector := [.lit "* + .slide-track"]
-          decls := [("margin-top", slidePadV)]
           part := .print },
         { selector := [.lit ".step"], decls := [("opacity", "100%")]
           part := .print } ]
@@ -2432,18 +2451,19 @@ def deckPrint (maxSteps : Nat) : List DeckRule :=
 
 /-- Every rule of the deck's stylesheet, in emission order. The
 parameters are the whole document-dependence: the stage-ratio type size,
-the design's covered fraction, and the deck's maximum step count. -/
-def deckRules (bodyVh : String) (coveredPct maxSteps : Nat) : List DeckRule :=
+the printed page's size, the design's covered fraction, and the deck's
+maximum step count. -/
+def deckRules (bodyVh pageSize : String) (coveredPct maxSteps : Nat) : List DeckRule :=
   deckBase bodyVh ++ deckReduce ++
     (if 2 ≤ maxSteps then stepRules coveredPct maxSteps ++ altRules maxSteps else []) ++
-    deckPrint maxSteps
+    deckPageRule pageSize :: deckPrint maxSteps
 
 /-- The one case split over the deck's rule set: every deck theorem
 below quantifies over `deckRules` through this. A new rule family is a
 new hypothesis here — the compiler names every theorem it now owes. The
 step hypotheses receive the fact that the steps shipped (`2 ≤ ms`), so a
 theorem may cite a step rule's membership. -/
-private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : Nat}
+private theorem deckRules_forall {P : DeckRule → Prop} {v pg : String} {cp ms : Nat}
     (hbase : ∀ r ∈ deckBase v, P r)
     (hreduce : ∀ r ∈ deckReduce, P r)
     (hkey : 2 ≤ ms → P (stepKeyframes cp))
@@ -2454,11 +2474,12 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : N
     (hrecovered : 2 ≤ ms → ∀ k, P (stepRecoverFloorRule cp ms k))
     (haltfix : 2 ≤ ms → ∀ r ∈ altReduceFixed, P r)
     (haltsnap : 2 ≤ ms → ∀ k, ∀ r ∈ altSnapRules ms k, P r)
+    (hpage : ∀ s, P (deckPageRule s))
     (hprint : ∀ r ∈ deckPrint ms, P r) :
-    ∀ r ∈ deckRules v cp ms, P r := by
+    ∀ r ∈ deckRules v pg cp ms, P r := by
   intro r hr
-  simp only [deckRules, List.mem_append] at hr
-  rcases hr with ((h | h) | h) | h
+  simp only [deckRules, List.mem_append, List.mem_cons] at hr
+  rcases hr with ((h | h) | h) | (rfl | h)
   · exact hbase r h
   · exact hreduce r h
   · split at h
@@ -2477,6 +2498,7 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : N
       · exact haltfix hms r h
       · exact haltsnap hms _ r h
     case isFalse => cases h
+  · exact hpage pg
   · exact hprint r h
 
 /-- The two reduce-partition alternation rules, as a case split: both are
@@ -2502,18 +2524,18 @@ private theorem altSnapRules_cases {P : DeckRule → Prop} {ms k : Nat}
   rcases hr with rfl | rfl | rfl | rfl <;> assumption
 
 /-- Family memberships, spelled once against the append spine. -/
-private theorem mem_deckRules_base {r : DeckRule} {v : String} {cp ms : Nat}
-    (h : r ∈ deckBase v) : r ∈ deckRules v cp ms := by
+private theorem mem_deckRules_base {r : DeckRule} {v pg : String} {cp ms : Nat}
+    (h : r ∈ deckBase v) : r ∈ deckRules v pg cp ms := by
   simp only [deckRules, List.mem_append]
   exact Or.inl (Or.inl (Or.inl h))
 
-private theorem mem_deckRules_reduce {r : DeckRule} {v : String} {cp ms : Nat}
-    (h : r ∈ deckReduce) : r ∈ deckRules v cp ms := by
+private theorem mem_deckRules_reduce {r : DeckRule} {v pg : String} {cp ms : Nat}
+    (h : r ∈ deckReduce) : r ∈ deckRules v pg cp ms := by
   simp only [deckRules, List.mem_append]
   exact Or.inl (Or.inl (Or.inr h))
 
-private theorem mem_deckRules_step {r : DeckRule} {v : String} {cp ms : Nat}
-    (hms : 2 ≤ ms) (h : r ∈ stepRules cp ms) : r ∈ deckRules v cp ms := by
+private theorem mem_deckRules_step {r : DeckRule} {v pg : String} {cp ms : Nat}
+    (hms : 2 ≤ ms) (h : r ∈ stepRules cp ms) : r ∈ deckRules v pg cp ms := by
   simp only [deckRules, List.mem_append]
   refine Or.inl (Or.inr ?_)
   split
@@ -2542,7 +2564,7 @@ private theorem deckPrint_subset {ms : Nat} : ∀ r ∈ deckPrint ms, r ∈ deck
 the closed families by `decide`, the parameter-carrying ones by `rfl` —
 their checks never read a parameter (values are compared by name
 equality only; ordinal chunks carry no syntax). -/
-private theorem deckRules_check {p : DeckRule → Bool} (v : String) (cp ms : Nat)
+private theorem deckRules_check {p : DeckRule → Bool} (v pg : String) (cp ms : Nat)
     (hbase : ∀ r ∈ deckBase v, p r = true)
     (hreduce : ∀ r ∈ deckReduce, p r = true)
     (hkey : p (stepKeyframes cp) = true)
@@ -2553,11 +2575,12 @@ private theorem deckRules_check {p : DeckRule → Bool} (v : String) (cp ms : Na
     (hrecovered : ∀ k, p (stepRecoverFloorRule cp ms k) = true)
     (haltfix : ∀ r ∈ altReduceFixed, p r = true)
     (haltsnap : ∀ k, ∀ r ∈ altSnapRules ms k, p r = true)
+    (hpage : ∀ s, p (deckPageRule s) = true)
     (hprint : ∀ r ∈ deckPrint 2, p r = true) :
-    ∀ r ∈ deckRules v cp ms, p r = true :=
+    ∀ r ∈ deckRules v pg cp ms, p r = true :=
   deckRules_forall hbase hreduce (fun _ => hkey) (fun _ => hrkey) (fun _ => hcov)
     (fun _ => hfix) (fun _ _ => hsnapped _) (fun _ _ => hrecovered _)
-    (fun _ => haltfix) (fun _ k => haltsnap k)
+    (fun _ => haltfix) (fun _ k => haltsnap k) hpage
     (fun r hr => hprint r (deckPrint_subset r hr))
 
 /-- Membership in the base family, for the rules with a parametric
@@ -2566,26 +2589,33 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : String}
     (h1 : P { selector := [.lit "html"]
               decls := [("scroll-snap-type", "x mandatory"), ("overflow-y", "clip")] })
     (h2 : P deckGlideRule)
-    (h3 : P { selector := [.lit "body"], decls := [("padding", "0")] })
+    (h3 : P { selector := [.lit "body"], decls := [("padding", "0")], part := .stage })
     (h4 : P { selector := [.lit "main"]
-              decls := [("max-width", "none"), ("margin", "0"), ("display", "flex"),
-                ("align-items", "flex-start"), ("font-size", v)] })
+              decls := [("max-width", "none"), ("margin", "0"), ("font-size", v)]
+              part := .stage })
+    (h4a : P { selector := [.lit "main"]
+               decls := [("display", "flex"), ("align-items", "flex-start")] })
     (h5 : P deckStageRule)
     (h6 : P deckSnapDoor)
     (h6a : P deckLogoRule)
     (h7 : P { selector := [.lit "section.section-page"]
-              decls := [("justify-content", "center"), ("align-items", "center")] })
-    (h8 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] })
-    (h9 : P { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")] })
-    (h10 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")] })
+              decls := [("justify-content", "center"), ("align-items", "center")]
+              part := .stage })
+    (h8 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")]
+              part := .stage })
+    (h9 : P { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")]
+              part := .stage })
+    (h10 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
+               part := .stage })
     (h11 : P { selector := [.lit "section.slide > header"]
-               decls := [("max-height", titlebandVar)] })
+               decls := [("max-height", titlebandVar)], part := .stage })
     (h12 : P { selector := [.lit "section.slide > header h2"]
-               decls := [("font-size", scaleSize "Large" "em")] }) :
+               decls := [("font-size", scaleSize "Large" "em")], part := .stage }) :
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+    rfl <;>
     assumption
 
 /-- `deck_css_partition`'s per-rule check: a rule whose syntax uses a
@@ -2600,12 +2630,12 @@ is emitted inside that feature's supported block, and — contrapositively
 a browser lacking F never parses a rule that needs it, and never loses a
 rule that does not. `_covers`'s grade, over the whole rule set: a new
 rule enters the contract the moment it is written. -/
-theorem deck_css_partition (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms, gateRespects r = true :=
-  deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+theorem deck_css_partition (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
 
 /-- The Baseline floor: the property names the base, the `@supports not`
 blocks, the reduced-motion partition and the print handout may use.
@@ -2618,9 +2648,13 @@ properties (Chromium 49+, Firefox 31+, Safari 9.1+), `@supports` itself
 opacity, and the fragmentation properties print engines honour
 (`break-*`). The `dvh` unit rides several values (Chromium 108+,
 Firefox 101+, Safari 15.4+; 2022). The box offset properties (`bottom`,
-`left`, `right`) are CSS 2. The selector side of the floor is
-`deck_css_partition`; attribute selectors (`[data-snap]`,
-`[data-deck-script]`) are CSS 2. -/
+`left`, `right`) are CSS 2. The printed page's `size` (CSS Paged Media 3
+§7) and `print-color-adjust` (CSS Color Adjustment 1 §3.1) are print-only
+and degrade to the reader's own page and toner setting where unsupported
+— measured honoured by Chromium 151 (the page size and the grounds of a
+printed deck, `print-color-adjust` with backgrounds off). The selector
+side of the floor is `deck_css_partition`; attribute selectors
+(`[data-snap]`, `[data-deck-script]`) are CSS 2. -/
 def baselineProps : List String :=
   ["scroll-snap-type", "scroll-snap-align", "scroll-snap-stop",
    "scroll-behavior", "padding", "margin", "margin-top", "max-width",
@@ -2629,6 +2663,7 @@ def baselineProps : List String :=
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
+   "break-before", "size", "print-color-adjust",
    "bottom", "left", "right"]
 
 /-- Is the rule part of the floor — the CSS every engine applies? The
@@ -2644,13 +2679,13 @@ property the floor uses is in the declared, sourced `baselineProps` — a
 browser with no gated feature at all still understands every rule it is
 given. `_mem`'s grade: each floor property is drawn from the declared
 set. -/
-theorem floor_is_baseline (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms,
+theorem floor_is_baseline (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
-  deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
 
 /-- Content, as the floor theorems see it: the frame stages and the
 steps — the fragments that address what the deck *shows*. -/
@@ -2675,15 +2710,15 @@ the page's other group is showing in its place, which is a contract about
 *which* of two, not about visibility. `alt_backend_agree` is that
 contract; extending `contentFrags` to cover the groups would make this
 theorem false while saying nothing truer. -/
-theorem floor_hides_nothing (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms,
+theorem floor_hides_nothing (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
       (!(targetsContent r) ||
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
-  deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
 
 /-- The opacity values a rule sets. -/
 def opacityValues (r : DeckRule) : List String :=
@@ -2693,15 +2728,15 @@ def opacityValues (r : DeckRule) : List String :=
 sets is full or the design's own covered fraction — never below it, and
 never a hide wearing a dim's clothes. `_mem`'s grade: each value is
 drawn from the two the design allows. -/
-theorem floor_opacity_mem (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms, ∀ o ∈ opacityValues r,
+theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms, ∀ o ∈ opacityValues r,
       o = "100%" ∨ o = s!"{cp}%" := by
-  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · exact deckBase_cases (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -2724,19 +2759,17 @@ theorem floor_opacity_mem (v : String) (cp ms : Nat) :
     rcases hr with rfl | rfl <;> exact fun o ho => nomatch ho
   · exact fun _ k => altSnapRules_cases (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+  · exact fun _ o ho => nomatch ho
   · intro r hr
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl | rfl | rfl) | h2
-    · exact fun o ho => nomatch ho
-    · exact fun o ho => nomatch ho
+    rcases hr2 with (rfl | rfl) | h2
     · exact fun o ho => nomatch ho
     · exact fun o ho => nomatch ho
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
-        rcases h2 with rfl | rfl | rfl
-        · exact fun o ho => nomatch ho
+        rcases h2 with rfl | rfl
         · exact fun o ho => nomatch ho
         · exact fun o ho => Or.inl (List.mem_singleton.mp ho)
       · cases h2
@@ -2753,14 +2786,14 @@ node absent) every step stands at full colour and the deck is the
 pure-CSS pager — the covered state a script cannot uncover is never
 declared. The dimming half of `floor_hides_nothing` made exact.
 `_contract`'s grade. -/
-theorem floor_covered_script_gated (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms,
+theorem floor_covered_script_gated (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
-  deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers: the base
 sheet's global reduce block strips `animation` and `transition`;
@@ -2784,9 +2817,11 @@ def guardCovers (g r : DeckRule) : Bool :=
         (renderSel r.selector).toList)
 
 /-- Is every motion property the rule declares guarded by some rule of
-the searched set's reduce partition? -/
+the searched set's reduce partition? The reduce and print partitions are
+exempt — the guards themselves, and paper, which has no motion; a stage
+rule plays on screen too, so it owes its guard like a screen rule. -/
 def motionGuarded (rules : List DeckRule) (r : DeckRule) : Bool :=
-  r.part != Part.screen ||
+  (r.part == Part.reduce || r.part == Part.print) ||
     r.decls.all fun d =>
       !(motionProps.contains d.1) ||
         rules.any fun g => guardCovers g r && g.decls.contains (d.1, motionOff d.1)
@@ -2798,7 +2833,7 @@ private theorem motionGuarded_of_guard {rules : List DeckRule} {r g : DeckRule}
       (guardCovers g r && g.decls.contains (d.1, motionOff d.1)) = true) :
     motionGuarded rules r = true := by
   unfold motionGuarded
-  cases hpart : (r.part != Part.screen)
+  cases hpart : (r.part == Part.reduce || r.part == Part.print)
   · rw [Bool.false_or, List.all_eq_true]
     intro d hd
     cases hmp : motionProps.contains d.1
@@ -2813,24 +2848,24 @@ selector and setting the property back to its static value: a guard is
 not a suffix a definition happens to end with; it is a rule the reduce
 partition must contain, and the partition is emitted after the blocks it
 reverts (`emitDeckRules`; CSS Cascade 5 §6.4). `_contract`'s grade. -/
-theorem guards_by_construction (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms, motionGuarded (deckRules v cp ms) r = true := by
+theorem guards_by_construction (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms, motionGuarded (deckRules v pg cp ms) r = true := by
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
-    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) ?_
+    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) ?_
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
         (mem_deckRules_reduce (by decide)) (by decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
     rcases hr with rfl
     rfl
   · intro hms r hr
-    have hstep : stepGuard ∈ deckRules v cp ms :=
+    have hstep : stepGuard ∈ deckRules v pg cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
-    have hend : stepRecoverGuard ∈ deckRules v cp ms :=
+    have hend : stepRecoverGuard ∈ deckRules v pg cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
     rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
@@ -2844,14 +2879,12 @@ theorem guards_by_construction (v : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl | rfl | rfl) | h2
-    · rfl
-    · rfl
+    rcases hr2 with (rfl | rfl) | h2
     · rfl
     · rfl
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
-        rcases h2 with rfl | rfl | rfl <;> rfl
+        rcases h2 with rfl | rfl <;> rfl
       · cases h2
 
 /-- Every step of every stepped frame is reachable in the floor: for
@@ -2862,9 +2895,9 @@ concretely `k = n`, the `data-snapped` value the script writes when the
 reader's key lands that snap point. The uncover set `uncoveredBy k` is
 the selector's own data: the `:is()` alternatives render from it
 (`SelChunk.stepAlts`). `_covers`'s grade. -/
-theorem snapped_uncovers_every_step (v : String) (cp ms n : Nat)
+theorem snapped_uncovers_every_step (v pg : String) (cp ms n : Nat)
     (h2 : 2 ≤ n) (hn : n ≤ ms) :
-    ∃ k, n ≤ k ∧ stepSnappedRule k ∈ deckRules v cp ms ∧ n ∈ uncoveredBy k := by
+    ∃ k, n ≤ k ∧ stepSnappedRule k ∈ deckRules v pg cp ms ∧ n ∈ uncoveredBy k := by
   refine ⟨n, Nat.le_refl n, ?_, ?_⟩
   · refine mem_deckRules_step (Nat.le_trans h2 hn) ?_
     simp only [stepRules, stepSnapped, List.mem_cons, List.mem_append,
@@ -2887,13 +2920,13 @@ On the floor the spacers hide (`stepSnapHide`) and the stage takes the
 frame's one snap (`stepTrackFloorSnap`): one snap point per frame.
 `_covers`'s grade over the partition: each fact is the membership of the
 rule that carries it, in the gate that scopes it. -/
-theorem snap_pages_partition_frames (v : String) (cp ms : Nat) (hms : 2 ≤ ms) :
-    (deckSnapDoor ∈ deckRules v cp ms ∧ deckSnapDoor.requires = .base ∧
+theorem snap_pages_partition_frames (v pg : String) (cp ms : Nat) (hms : 2 ≤ ms) :
+    (deckSnapDoor ∈ deckRules v pg cp ms ∧ deckSnapDoor.requires = .base ∧
       ("scroll-snap-align", "start") ∈ deckSnapDoor.decls) ∧
-    (stepSnapHide ∈ deckRules v cp ms ∧
+    (stepSnapHide ∈ deckRules v pg cp ms ∧
       stepSnapHide.requires = .unsupported .viewTimeline ∧
       ("display", "none") ∈ stepSnapHide.decls) ∧
-    (stepTrackFloorSnap ∈ deckRules v cp ms ∧
+    (stepTrackFloorSnap ∈ deckRules v pg cp ms ∧
       stepTrackFloorSnap.requires = .unsupported .viewTimeline ∧
       ("scroll-snap-align", "start") ∈ stepTrackFloorSnap.decls) :=
   ⟨⟨mem_deckRules_base (by simp [deckBase]), rfl, by decide⟩,
@@ -2907,14 +2940,14 @@ an engine parses; its census against the IR is the emission conservation
 the census checks pin (`censusTable` in Tests). Stated as the projection
 statement the theorem-layers rule asks for; `_text`'s grade, the census
 contribution being empty. -/
-theorem deck_text_path_free (v : String) (cp ms : Nat) :
-    ∀ r ∈ deckRules v cp ms,
+theorem deck_text_path_free (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
-  deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
 
 /-- A length's share of the deck stage, in milli-percent: the one
 projection every deck emission rides when it states a PDF stage length
@@ -3149,12 +3182,12 @@ page per frame (and per overlay step), the scroll itself the motion —
 paging natively on ←/→, Shift+wheel and swipe, and on every other key
 through the constant script (`deckScript`); the scroller is the root
 (`html` carries `scroll-snap-type`, which UAs apply to the viewport —
-Scroll Snap 1 §4.1), so the keys need no focus. In print it is the
-linear handout, one bordered card per page (Tufte: the handout is the
-document). A section page is one snap page like any frame, its content
-centred on both axes. Every other class keeps the card rendering on
-both media: deck rules and the script are the slides class's own, which
-is what keeps the site port's webpage output unchanged. -/
+Scroll Snap 1 §4.1), so the keys need no focus. In print the stages page:
+one frame or section page per sheet, the sheet the PDF's own page
+(`deckPageRule`). A section page is one snap page like any frame, its
+content centred on both axes. Every other class keeps the card rendering
+on both media: deck rules and the script are the slides class's own,
+which is what keeps the site port's webpage output unchanged. -/
 private def slideCss (doc : Doc) : String :=
   -- The handout card, today's rendering, byte for byte: the only-media
   -- form for every non-deck class, the print twin for the deck.
@@ -3176,7 +3209,7 @@ private def slideCss (doc : Doc) : String :=
     headerH2 ++
       emitDeckRules (deckRules
         s!"{milliFactor (deckStageMilli doc.page.fontSize doc.page.height).toNat}vh"
-        (Design.ofDoc doc).coveredFraction maxSteps)
+        (deckPageSize doc.page) (Design.ofDoc doc).coveredFraction maxSteps)
   else handout ++ headerH2
 
 /-- Whether the document carries a listing whose apparatus the stylesheet
