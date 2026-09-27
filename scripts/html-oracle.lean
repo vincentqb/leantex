@@ -46,7 +46,7 @@ def readers : List String := ["chromium", "firefox"]
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
   ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps",
-   "color-scheme", "reduced-motion", "print", "no-script"]
+   "color-scheme", "reduced-motion", "print", "print-spill", "no-script"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -59,6 +59,15 @@ def hasCmd (cmd : String) : IO Bool := do
   try
     return (← IO.Process.output { cmd, args := #["--version"] }).exitCode == 0
   catch _ => return false
+
+/-- The reader `print-spill` reads paper with, as the tools line records it:
+`pdftotext -v`'s first line, or `pdftotext absent`. -/
+def pdftotextVersion : IO String := do
+  try
+    let out ← IO.Process.output { cmd := "pdftotext", args := #["-v"] }
+    let line := (((out.stderr ++ out.stdout).splitOn "\n").headD "").trimAscii.toString
+    return if line.isEmpty then "pdftotext absent" else line
+  catch _ => return "pdftotext absent"
 
 -- ## The checked-in file
 
@@ -146,6 +155,7 @@ facts. Every check reads the live page — computed style, layout boxes,
 `document.fonts`, the FontFaceSet, media emulation — never the source. -/
 def probeJs : String := r#"
 const path = require('path');
+const { execFileSync } = require('child_process');
 const pw = require(process.env.PW_MODULE);
 const dir = process.argv[2];
 const fixtures = process.argv.slice(3);
@@ -309,6 +319,58 @@ const noScriptRead = () => {
 
 const cell = (r) => r.n === 0 ? 'na' : r.ok ? 'pass' : 'fail:' + clean(r.why);
 
+// A printed deck loses nothing: a stage whose content runs past its sheet
+// continues on the next one, so every character the page lays out reaches
+// paper. The sheet is the page's own @page size, the page is printed as a
+// reader prints it (the page's size preferred, backgrounds off), and paper
+// is read back with pdftotext. The census is letters and digits, NFKC and
+// case folded — the multiset the page lays out against the multiset on
+// paper, so a list marker or a hyphen the print adds cannot mask a loss,
+// and a math italic or a small capital is the letter it spells. Only a deck
+// with a stage taller than its sheet exercises it: elsewhere nothing can
+// reach a sheet's edge. Playwright prints to PDF in Chromium alone.
+const census = (s) => {
+  const m = new Map();
+  for (const c of s.normalize('NFKC').toLowerCase())
+    if (/[\p{L}\p{N}]/u.test(c)) m.set(c, (m.get(c) || 0) + 1);
+  return m;
+};
+const printSpill = async (page, name, fx) => {
+  if (name !== 'chromium') return { ok: true, n: 0, why: '' };
+  const size = await page.evaluate(() => {
+    const find = (rules) => {
+      for (const r of rules) {
+        if (r instanceof CSSPageRule) return r.style.getPropertyValue('size');
+        if (r.cssRules) { const s = find(r.cssRules); if (s) return s; }
+      }
+      return '';
+    };
+    for (const sheet of document.styleSheets) { const s = find(sheet.cssRules); if (s) return s; }
+    return '';
+  });
+  const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec(size.trim());
+  if (!pt) return { ok: false, n: 1, why: `no @page size in points (${size})` };
+  const sheetH = +pt[2] * 4 / 3;
+  await page.setViewportSize({ width: Math.round(+pt[1] * 4 / 3), height: Math.round(sheetH) });
+  const laid = await page.evaluate((h) => {
+    const stages = [...document.querySelectorAll('section.slide, section.section-page')];
+    return { spill: stages.filter(s =>
+        Math.max(s.scrollHeight, s.getBoundingClientRect().height) > h + 1).length,
+      text: document.querySelector('main').innerText };
+  }, sheetH);
+  if (laid.spill === 0) return { ok: true, n: 0, why: '' };
+  const pdf = path.join(dir, fx + '.printed.pdf');
+  await page.pdf({ path: pdf, preferCSSPageSize: true });
+  let paper;
+  try { paper = execFileSync('pdftotext', ['-enc', 'UTF-8', pdf, '-'], { encoding: 'utf8' }); }
+  catch (e) { return { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) }; }
+  const want = census(laid.text), got = census(paper);
+  const lost = [...want].filter(([c, n]) => (got.get(c) || 0) < n);
+  const short = lost.reduce((a, [c, n]) => a + n - (got.get(c) || 0), 0);
+  return { ok: lost.length === 0, n: 1,
+    why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` };
+};
+
 async function runReader(name) {
   let browser;
   try {
@@ -352,6 +414,7 @@ async function runReader(name) {
       out(fx, name, 'reduced-motion', cell(await page.evaluate(mediaChecks['reduced-motion'])));
       await page.emulateMedia({ reducedMotion: 'no-preference', media: 'print' });
       out(fx, name, 'print', cell(await page.evaluate(mediaChecks.print, light.deck)));
+      out(fx, name, 'print-spill', cell(light.deck ? await printSpill(page, name, fx) : { n: 0 }));
     } catch (e) {
       out(fx, name, 'error', 'fail:' + clean(String(e.message).split('\n')[0]));
     }
@@ -598,6 +661,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         | none =>
           let why := ((probe.unavailable.find? (·.1 == r)).map (·.2)).getD "no row from the probe"
           tools := tools ++ s!"  {r} untested ({why})"
+      tools := tools ++ s!"  {← pdftotextVersion}"
     IO.FS.createDirAll "tests/oracles"
     IO.FS.writeFile matrixPath (renderMatrix probe fixtures unbuilt tools date srcKey)
     IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"
