@@ -667,7 +667,15 @@ change and what the pair is. Read in both directions by
 `siteAccountingChecks`: a row whose collision closes fails the suite, so a
 row is a migration step and not a parking space. -/
 def siteAccounting : List (String × String × String) :=
-  []
+  [("N0100", "W0319", "LeanTex/Core/Compat.lean, the \\usetheme rewrite: its translation \
+note stands beside the refusal of the theme it produced, one construct accounted twice; say \
+the translation in the refusal, or note it only when the theme resolves"),
+   ("N0100", "W0361", "LeanTex/Core/Compat.lean and Elab.lean, the \\renewcommand rewrite: \
+its translation note stands beside the refusal of the definition it produced; the same fold \
+as the row above, one class"),
+   ("W0334", "W0362", "LeanTex/Core/Elab.lean, the picture diagnostics loop: each refused \
+construct is reported at the picture's position, where W0362 already names the picture's \
+placeholder; name the constructs in W0362, or report each at its own span")]
 
 /-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
 count — the mechanical first cut the user asked for, needing no judgement
@@ -692,8 +700,10 @@ rule — `\zztrack[16]{...}` drew `W0301` (the command, counted, subject
 `ctrl:zztrack`) and a second code (its `[...]` run, uncounted, no subject) at
 one span, and the same arm drew `W0370` beside that code calling a *known*
 pending construct "unknown command". Both rows closed when the run's fate
-became a clause of the command's own message; the table is empty, which is
-the state it is supposed to reach.
+became a clause of the command's own message. Run over the whole golden
+corpus as well as the probes, it found three more that no probe reproduced,
+two of them one class: a rewrite's translation note beside the refusal of
+what the rewrite produced.
 
 Collisions that stand today are registered in `siteAccounting` with the file
 that owes the change, read in both directions so a closed row cannot linger.
@@ -702,8 +712,15 @@ span — so each row says which it is. -/
 def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut seen : List (String × String) := []
+  let mut sources : Array (String × Array Diag) := #[]
   for (src, what) in siteAccountingProbes do
-    let (_, ds) := elabStr src
+    sources := sources.push (what, (elabStr src).2)
+  -- The whole corpus as well as the probes: a collision a probe never
+  -- reproduced is still one site named twice.
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    sources := sources.push (s!"fixture {n}", (← elabFixture n src).2)
+  for (what, ds) in sources do
     for pair in siteCollisions ds do
       unless seen.contains pair do seen := pair :: seen
       unless siteAccounting.any (fun r => r.1 == pair.1 && r.2.1 == pair.2) do
