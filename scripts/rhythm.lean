@@ -1217,10 +1217,7 @@ measurement differs from the committed file"
 
 /-! ## Selftest -/
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   let bp (n : Int) : Int := n * spPerBp
   -- Units: sp to thousandths of a bp, rounded symmetrically, and back.
   no "units: 12 bp is 12.000" (showMilli (milliBpOfSp (bp 12)) == "12.000")
@@ -1328,12 +1325,6 @@ def selftest : IO UInt32 := do
     (rs.map (fun r => (r.item, r.value)) ==
       #[("f/par-par.within", 1), ("f/par-par.near", 2), ("f/par-par.boundaries", 3),
         ("f/a-b.within", 1), ("f/a-b.near", 1), ("f/a-b.boundaries", 1)])
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "rhythm selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 end Rhythm
 
