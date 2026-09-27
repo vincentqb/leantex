@@ -785,6 +785,19 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
      | _, _ => false)
   t "a trailing fill alone moves nothing"
     ((linesOf (doc "hello\n\\vspace*{\\fill}")).map (·.y) == top.map (·.y))
+  -- A fill before an element's own space survives it: LaTeX's `\addvspace`
+  -- adds when the last skip's natural width is zero (ltspace.dtx,
+  -- `\ifdim\lastskip=\z@`), so a trivlist between two fills stands where
+  -- its two spaces spelled as plain skips stand.
+  let spaced (body : String) : String :=
+    "\\documentclass{article}\\setlength{\\topsep}{7pt}\\setlength{\\partopsep}{0pt}" ++
+      s!"\\begin\{document}{body}\\end\{document}"
+  let viaTrivlist := linesOf (spaced
+    "\\vspace*{\\fill}\n\\begin{center}hello\\end{center}\n\\vspace*{\\fill}")
+  let viaSkips := linesOf (spaced
+    "\\vspace*{\\fill}\\vspace{7pt}\n\nhello\n\n\\vspace{7pt}\\vspace*{\\fill}")
+  t "a fill before a trivlist's space keeps its share of the page"
+    (!viaTrivlist.isEmpty && viaTrivlist.map (·.y) == viaSkips.map (·.y))
   -- A minipage is one column of declared width: the column model reused,
   -- not a parallel box model.
   t "minipage is one column of its declared width"

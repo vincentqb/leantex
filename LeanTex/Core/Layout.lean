@@ -5113,11 +5113,24 @@ private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
 
 /-- `\addvspace`: an element's own space. Against glue already owed it takes
 the larger (by natural width, as LaTeX compares them), so two elements
-meeting do not pay both their spaces. -/
+meeting do not pay both their spaces — unless the owed glue's natural width
+is zero, where it adds: ltspace.dtx tests `\ifdim\lastskip=\z@` first, so
+a `\vspace{\fill}` standing before a list or a `center` keeps its fil. -/
 private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
   match a.owed.back? with
-  | some last => if last.width < g.width then { a with owed := a.owed.pop.push g } else a
+  | some last =>
+    if last.width == 0 then { a with owed := a.owed.push g }
+    else if last.width < g.width then { a with owed := a.owed.pop.push g } else a
   | none => { a with owed := #[g] }
+
+/-- **A fill owed before an element's space survives it** (`_exact`): against
+a last skip of zero natural width `\addvspace` appends, exactly as LaTeX's
+`\ifdim\lastskip=\z@` arm does, so the fil a centring sandwich stands on is
+never displaced by the `\topsep` of what it centres. -/
+private theorem addvspace_zero_adds_exact (a : Acc) (g last : Glue)
+    (hl : a.owed.back? = some last) (h0 : last.width = 0) :
+    (a.addvspace g).owed = a.owed.push g := by
+  simp [Acc.addvspace, hl, h0]
 
 /-- A trivlist's own space (`\topsep`, `Ir.trivlistSkip`): an `\addvspace`,
 so two trivlists meeting pay the larger of their spaces once — and paid on
