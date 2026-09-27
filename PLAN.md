@@ -19396,18 +19396,21 @@ head), and the five user bugs hold (pages 14, 15 and 17 inspected).
 
 The user reported that the space around a deck's pictures is tight, and
 asked for the rhythm to be audited everywhere, in all formats, and enforced
-by theorems. The picture's own spacing is `agent/rhythm-pic`'s. This entry
+by theorems. The picture's own spacing is the picture-rhythm entry's, above. This entry
 is the audit: a measured inventory of the boundaries the engine ships, a
 tier that ratchets it, the contract stated as three target theorems for the
 branches that fix the engine, and a ranked worklist. It changes no engine
 behaviour.
 
 **Correction to the 2026-09-24 entry "a frame is a stage".** Its last
-sentence, "the vertical-distribution question is closed", is false. Measured
-below: the frame title stands 18.04 bp closer to the first body line than
-beamer/moloch sets it, a list item 3.34 bp closer, and a centred frame's one
-line 14.1 bp higher. The question is open, and this entry and
-`agent/rhythm-pic`'s own are where it is worked.
+sentence, "the vertical-distribution question is closed", is false.
+Measured before the picture-rhythm landing, the frame title stood 18.04 bp
+closer to the first body line than beamer/moloch sets it, a list item
+3.34 bp closer, and a centred frame's one line 14.1 bp higher; on that
+landing the first body line stands 1.00 bp further from the title than
+moloch sets it, the list item is unchanged, and the centred line stands
+7.4 bp high. The question is open, and this entry and the picture-rhythm
+entry above are where it is worked.
 
 **The instrument.** `scripts/rhythm.lean`. A fixture under `tests/rhythm/`
 is a LaTeX document both engines compile (or, for a class LaTeX has no
@@ -19437,31 +19440,54 @@ would be a line pitch, and one that happened to match would count.
 within/boundaries`: per fixture and class, how many of the declared
 boundaries ship within 0.5 bp of lualatex's (one pixel of the 110 dpi review
 raster is 0.65 bp; the two engines' points differ by 0.375 %, 0.1 bp on a
-27 bp gap). Today 9 of 98, over 17 fixtures and 80 classes. The reference
+27 bp gap), and, as `.near`, how many within 3 bp — half the rhythm quantum
+at the article base (`Ir.rhythmQuantum` at 10 bp is 6 bp), the furthest a
+gap stands from LaTeX's once it is rounded to the engine's grid. Today 9
+within and 30 near of 98, over 17 fixtures and 80 classes. The reference
 is what LaTeX does, not what the engine must do, so the ratchet holds the
-count from falling and records every rise. One comparison level, blind to a
-difference under the tolerance, to horizontal placement, and to any boundary
-no fixture declares; `rhythm --selftest` holds the pair the first owes
-(0.4 bp apart: equal here, unequal to the exact comparison above it), and
-round-trips the `.ref` record with every field empty. Broken once through
-`scoreboard --check`: an edited fixture faults, a reference moved out of
-tolerance regresses, and one moved in is `stale`.
+counts from falling and records every rise. Two comparison levels, each
+blind to a difference inside its band, to horizontal placement, and to any
+boundary no fixture declares; `rhythm --selftest` holds the pair each owes
+(0.4 bp apart: equal under `.within`, unequal to the exact comparison above
+it; 0.4 and 2.9 bp: equal under `.near`, unequal under `.within`), pins the
+band's premise to `Ir.rhythmQuantum`, and round-trips the `.ref` record
+with every field empty. Broken once each through `scoreboard --check`: an
+edited fixture faults, a reference moved out of tolerance regresses, one
+moved in is `stale`, and a band narrowed to 2 bp regresses five `.near`
+items and fails `scoreboard --selftest` on its premise.
 
-**What it measured** (engine against lualatex, bp; the full table is
-`rhythm --table`, and the HTML columns are `rhythm --html <dir>`):
+**What it measured** (engine against lualatex, bp, on the picture-rhythm
+landing; a value in parentheses is the engine's before it. The full table
+is `rhythm --table`, and the HTML columns are `rhythm --html <dir>`):
 
 | boundary | engine | lualatex | owner |
 |---|---|---|---|
-| frame title → first line, moloch `[t]` | 13.667 | 31.709 | rhythm-pic, frame placement |
-| item → item, article | 12.000 | 19.925 | rhythm-pic, trivlist family |
+| frame title → first line, moloch `[t]` | 32.707 (13.667) | 31.709 | rhythm-pdf2, frame placement |
+| frame title → first line, plain beamer | 26.260 (14.226) | 19.648 | rhythm-pdf2, frame placement |
+| item → item, article | 12.000 | 19.925 | rhythm-pdf2, lists |
 | paragraph → section heading | 28.347 | 36.593 | heading tokens; a human decision |
-| picture in `center` → paragraph (`below`) | 15.879 | 19.925 | rhythm-pic |
+| paragraph → `quote`, `quote` → paragraph | 24.000 (18.000) | 19.925 | rhythm-pdf2: article's peer gap on the topsep |
+| picture in `center` → paragraph (`below`) | 24.000 (15.879) | 19.925 | the same |
 | paragraph → paragraph, `article` | 18.000 | 11.955 | compat's class rewrite; a human decision |
 | display above / below | 24.000 / 24.926 | 21.918 | `Ir.displaySkipDefault`; a human decision |
-| float picture → caption below | 15.879 | 21.918 | the float path |
+| float picture → caption below | 18.000 (15.879) | 21.918 | the float path |
 | date → abstract | 17.012 | 35.865 | `Ir.titleBlockAfter` |
 | verbatim line pitch | 9.600 | 11.955 | the code block's size |
 | poster block title → body | 44.784 | 27.859 | the poster class |
+
+**Rebased onto the picture-rhythm landing**, the tier as it stood then
+regenerated byte for byte — no item rose and none fell — while 20 of the 98
+boundaries moved. Its `.within` count cannot see a gap move outside the
+tolerance, which is why `.near` exists: the band applied to the `--table`
+output before the landing and after it counts 31 and 30. Six boundaries
+enter the band: moloch's
+title → body (−18.04 → +1.00 bp), its two columns' first lines (−17.9 →
++1.1 and +1.2), plain beamer's title → block (−11.40 → +0.63), and a
+centred image's two boundaries. Seven leave it, all in article: the
+topsep now stacks on article's 6 bp peer gap, so a centred or quoted block
+that stood 1.4 to 2.1 bp short of LaTeX's now overshoots it by 3.9 to
+4.6 bp. Plain beamer's title → body went from 5.42 bp short to 6.61 past,
+outside both bands before and after.
 
 `\documentclass{article}` keeps the engine's 6 bp peer gap while `report`,
 `book` and the KOMA classes are rewritten to LaTeX's zero
@@ -19478,22 +19504,32 @@ rules inside `:where()`, specificity (0,0,0), and the base sheet's own
 Chromium 151.0.7922.34 each computes `margin-top: 0px`. A paragraph after a
 paragraph stands one line away (2.00 quanta against the PDF's 3.00), and an
 unnumbered display, a `p.display`, loses its skip (1.65 against 4.00); the
-numbered equation, a `div`, keeps it. `HtmlDoc.backend_gaps_agree` holds the
-emitted numbers and `HtmlDoc.single_owner_gap_exact` the one-emitter
-premise; neither sees the cascade. In quanta the deck's HTML matches its
-PDF (both zero parskip).
+numbered equation, a `div`, keeps it — measured before the picture-rhythm
+landing and again on it (`rhythm --html`, the same Chromium).
+`HtmlDoc.backend_gaps_agree` holds the emitted numbers and
+`HtmlDoc.single_owner_gap_exact` the one-emitter premise; neither sees the
+cascade. In quanta the deck's HTML paragraphs match its PDF (both zero
+parskip). On the landing the HTML did not move where the PDF did. Its new
+trivlist rules, `:where(* + blockquote)` and `:where(blockquote + *)` with
+the role's pair, are outranked the same way, by `blockquote { margin: 0 }`
+and `p { margin: 0 }`: a quote renders no gap, 2.00 quanta against the
+PDF's 4.00, where they differed by 1.01 before. The frame title → body
+stays 1.96 quanta (plain beamer) and 2.17 (moloch), while the PDF moved to
+3.98 and 4.96.
 
-**Markdown** has nothing to measure on main: `leantex build x.md` exits 3.
-The CommonMark branch owns the surface; the tier catches its move once
-`rhythm.lean` reads it (routed below).
+**Markdown** was not measurable at this entry's first base (`leantex build
+x.md` exited 3). The CommonMark reader has landed since, and a synthetic
+probe builds (exit 0); the tier still reads `.tex` fixtures only, so
+markdown twins are routed below.
 
 **The private reference corpus**, as a report only (`rhythm --private`,
 `--probe`, which refuse any output directory inside the working tree and
-write no text of the document): the deck ships 35 pages against 35 and the
-paper 8 against 8. The largest totals: the deck's frame title → body, 27
-boundaries, Σ|Δ| ≈ 310 bp; the paper's list items, 28, median −2.08 bp; its
-paragraph → heading, 8, median −6.66 bp; the deck's picture → paragraph, 6,
-median −11.34 bp.
+write no text of the document), measured on the builds before the
+picture-rhythm landing and not re-measured here: the deck ships 35 pages
+against 35 and the paper 8 against 8. The largest totals: the deck's frame
+title → body, 27 boundaries, Σ|Δ| ≈ 310 bp; the paper's list items, 28,
+median −2.08 bp; its paragraph → heading, 8, median −6.66 bp; the deck's
+picture → paragraph, 6, median −11.34 bp.
 
 **The contract, as targets rather than debt.** Three statements over the
 engine's own functions, written here for the branches that prove them
@@ -19574,9 +19610,12 @@ below parses the emitted sheet; rhythm-html's brief asks for the rule list
 from the one emitter instead, and the statement's shape stands either way.
 The reader sees specificity, not order: a `:where(p)` reset stated *after*
 the gap rules passes it and still wins the cascade, so the order half is a
-second clause or the rendered check's. After the fix the proof is `decide`
-for a fixed configuration; the general statement needs `baseCss`'s element
-rules factored out of its dependence on `cfg` and `doc`.
+second clause or the rendered check's. It quantifies over `blockGapKinds`,
+which the trivlist rules are not in, though the same resets outrank them;
+a rule list derived from the emitter covers every rule that sets a gap.
+After the fix the proof is `decide` for a fixed configuration; the general
+statement needs `baseCss`'s element rules factored out of its dependence on
+`cfg` and `doc`.
 
 ```lean
 def cssRules (css : String) : List (List String × String) :=
@@ -19598,19 +19637,28 @@ The branch's history holds the round in which the three were staged, with
 three `# lowered:` requests the writer spent; the commit that unstages them
 restores both files to main's, so the landing moves no owed record.
 
-**Routed.** To `agent/rhythm-pic`'s files (HtmlDoc): give the element rules'
-zero margins `:where()` too and state them before `blockGapCss`, so the gap
-rules win by order; `blockGap_owner_contract` is then `decide`. To Compat's
-owner: decide whether `article` joins `articleClasses`. To the commonmark
-branch, at landing: `rhythm.lean`'s engine build reads `.tex` only; markdown
-twins of the tex fixtures, and the call into the markdown front end, land
-with that surface.
-Whoever lands second of this branch and rhythm-pic regenerates the `rhythm`
-tier: every rise that branch earns is `stale` here until recorded.
+**Routed.**
+- To rhythm-html (HtmlDoc's gap CSS): state the element rules' zero margins
+  inside `:where()` and ahead of `blockGapCss`, so the gap rules win by
+  order at equal specificity; `blockGap_owner_contract` is then `decide`.
+  The same fix owes the trivlist role's and `blockquote`'s boundaries,
+  which render no gap in Chromium, and the deck's frame title → body.
+- To rhythm-pdf2 (Layout, Ir, Compat's class records): `peer_gap_exact` and
+  `display_skips_between`. Also the decision whether `article` joins
+  `articleClasses`, which now also decides the 3.9 to 4.6 bp overshoot at
+  every centred or quoted block in article, and plain beamer's title →
+  body, now 6.61 bp past lualatex's.
+- To this tier's next branch, now that the CommonMark reader has landed:
+  markdown twins of the tex fixtures, and the call into the markdown front
+  end.
+
+The tier is regenerated on the picture-rhythm landing here; whichever
+rhythm branch lands next regenerates it with the work that moves it.
 
 **For the human.** Four divergences from LaTeX that the tier now counts as
 outside and that are design, not defects, until decided: the article peer
-gap (6 bp against LaTeX's zero and an indent), the quantized heading skips,
-the display skip's unit and poster value, and the page model's text block
-(the first baseline stands 52.1 bp above article.cls's). Each is a new
-deliberate divergence or its removal — a human gate.
+gap (6 bp against LaTeX's zero and an indent, which now also sets every
+centred and quoted block about 4 bp past LaTeX's), the quantized heading
+skips, the display skip's unit and poster value, and the page model's text
+block (the first baseline stands 52.1 bp above article.cls's). Each is a
+new deliberate divergence or its removal — a human gate.
