@@ -5877,6 +5877,29 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- The words a redefined environment's begin body sets ahead of the body —
+the heading a venue writes (`\centerline{\large\bf Summary}`) — with the
+body's own container left out: the begin body's last environment, which
+the definer's split idiom leaves open for the body. A word that reads as a
+length is a skip's argument (`\vskip 2ex`), and one inside `[…]` an
+option's (`\vspace` arrives as `\block[before = …]`), never heading text. -/
+private def envHeadWords (acc : Array String) (opt : Bool) : List Raw → Array String
+  | [] => acc
+  | [.env _ _ _] => acc
+  | .sym '[' _ :: rest => envHeadWords acc true rest
+  | .sym ']' _ :: rest => envHeadWords acc false rest
+  | .word w _ :: rest =>
+    envHeadWords (if opt || (Decl.parseLength w).isSome then acc else acc.push w) opt rest
+  | .group body _ :: rest => envHeadWords (envHeadWords acc opt body.toList) opt rest
+  | .env _ body _ :: rest => envHeadWords (envHeadWords acc opt body.toList) opt rest
+  | _ :: rest => envHeadWords acc opt rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
 /-- The size × bold font fragment `envStyleInterpret` and `barInterpret`
 both spell: the inline tree the closed style vocabulary can honour. -/
 private def fontFragment (size : Option String) (bold : Bool) :
@@ -11015,17 +11038,32 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
         -- the W0303 gains W0361's clause naming what survived. The body's
         -- size is always declared: a begin body that switches none leaves
         -- the body at the size in force, never at the built-in's `\small`.
+        -- The refusal names what the built-in keeps: its heading text
+        -- where the definition writes another, and its heading and margins
+        -- where nothing of the definition's heading was read.
+        let heading := if envName == "abstract" then
+            beginB.bind fun b => envStyleInterpret (envStyleScanList {} b.toList)
+          else none
         let est := if envName == "abstract" then
             beginB.map fun b =>
               let body := { ({} : Ir.ElementStyle) with
                 bodySize := some ((envBodySizeList none b.toList).getD "normalsize") }
-              Theme.styleMerge body ((envStyleInterpret (envStyleScanList {} b.toList)).getD {})
+              Theme.styleMerge body (heading.getD {})
           else none
+        let word := s.info.locale.abstract
+        let written := String.intercalate " "
+          ((beginB.map fun b => envHeadWords #[] false b.toList).getD #[]).toList
+        let replaced := if written.isEmpty || written == word then ""
+          else s!"; its heading reads '{word}', not '{written}'"
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
-          (if est.isSome then
-            s!"'\{{envName}}' is built in; this definition's heading and body size are \
-declarations styling the built-in, its vertical skips the engine's own"
-          else
+          (match est, heading with
+           | some _, some _ =>
+             s!"'\{{envName}}' is built in; this definition's heading and body size style it, \
+its vertical skips the engine's own{replaced}"
+           | some _, none =>
+             s!"'\{{envName}}' is built in; of this definition only its body size is read, \
+the built-in's heading and margins stand{replaced}"
+           | none, _ =>
             s!"'\{{envName}}' is built in; this definition is ignored")
           (some ⟨s.ctx.file, npos⟩)
           (help := "the built-in already does this; \\define it under another name")) }

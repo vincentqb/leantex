@@ -66,6 +66,35 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let (bad, badDs) := elabStr ("\\documentclass{article}\\style{abstract}{ body-size = big }" ++ body)
   t "an unknown body size is named and leaves the built-in's"
     (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0323"))
+  -- The refusal tells the truth about what it read (review SP-2): a
+  -- definition whose heading no reading carries — a run-in heading, none
+  -- at all — has only its body size read, and the built-in's heading
+  -- word, standing in place of a written one, is named with it.
+  let refusal (begin : String) : Option String × Option Ir.ElementStyle :=
+    let (d, ds) := elabStr (venue begin)
+    ((ds.find? (·.code == "W0303")).map (·.message), d.styles.find? "abstract")
+  let (runin, runinStyle) := refusal "\\noindent\\textbf{Summary.}\\ "
+  t "a run-in heading is not read as the built-in's, and the refusal says only its size is"
+    (match runin, runinStyle with
+     | some m, some st =>
+       hasStr m "only its body size is read" && !hasStr m "style it" &&
+         hasStr m "'Abstract', not 'Summary.'" && st.font.isNone && st.align.isNone
+     | _, _ => false)
+  let (empty, _) := refusal ""
+  t "an empty definition's refusal names no heading it does not write"
+    (match empty with
+     | some m => hasStr m "only its body size is read" && !hasStr m "not '"
+     | none => false)
+  let (renamed, _) := refusal "\\small\\begin{center}\\textbf{Overview}\\end{center}\\begin{quote}"
+  t "a centred heading of another word styles the built-in, and the word it replaces is named"
+    (match renamed with
+     | some m => hasStr m "style it" && hasStr m "'Abstract', not 'Overview'"
+     | none => false)
+  let (same, _) := refusal (heading ++ "\\begin{quote}")
+  t "a heading writing the built-in's own word names no replacement"
+    (match same with
+     | some m => hasStr m "style it" && !hasStr m "not '"
+     | none => false)
 
 
 /-- The baseline distance on page 0 from the first line holding `a` to the
@@ -144,10 +173,12 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
         "tablebelowcaptionskip = 8pt }\n") belowBody))
   t "the caption package's default position faces the object with the skip above the caption"
     (shippedLines fonts (dvDoc ("\\usepackage{caption}\n" ++ venue) body) ==
-      shippedLines fonts (dvDoc packaged body))
+      shippedLines fonts (dvDoc packaged body) &&
+     shippedLines fonts (dvDoc packaged body) != shippedLines fonts (dvDoc venue body))
   t "a declared bottom position places a caption above as the kernel does"
     (shippedLines fonts (dvDoc ("\\usepackage{caption}\\captionsetup[table]{position=bottom}\n" ++
-        venue) body) == shippedLines fonts (dvDoc venue body))
+        venue) body) == shippedLines fonts (dvDoc venue body) &&
+     shippedLines fonts (dvDoc venue body) != shippedLines fonts (dvDoc packaged body))
   t "a table redefined around the kernel's float core is no refusal"
     (!((dvE (dvDoc venue body)).any (·.code == "W0303")))
   let html (pre : String) : String := (HtmlDoc.emit {} (elabStr (dvDoc pre body)).1).1

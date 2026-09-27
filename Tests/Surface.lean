@@ -325,12 +325,12 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- style, in W0361's voice; \begin{quote} is the built-in's own shape
   -- and the \vskips the engine's rhythm, both stay refused.
   let (vDoc, vDs) := elabStr ("\\documentclass{article}" ++
-    "\\renewenvironment{abstract}{\\vskip 0.075in\\centerline{\\large\\bf Abstract}" ++
-    "\\vspace{0.5ex}\\begin{quote}}{\\par\\end{quote}\\vskip 1ex}" ++
+    "\\renewenvironment{abstract}{\\vskip 0.1in\\centerline{\\large\\bf Abstract}" ++
+    "\\vspace{1ex}\\begin{quote}}{\\par\\end{quote}\\vskip 1ex}" ++
     "\\begin{document}\\begin{abstract}Words.\\end{abstract}\\end{document}")
   t "a refused abstract redefinition says the built-in stands styled"
     (vDs.any fun d => d.code == "W0303" &&
-      (d.message.splitOn "styling the built-in").length > 1)
+      (d.message.splitOn "heading and body size style it").length > 1)
   t "the refused redefinition's large bold centreline lands on the heading"
     ((Ir.abstractHeadingStyle vDoc.styles).font ==
       some #[.styled (.size "large") #[.styled .bold #[]]] &&
