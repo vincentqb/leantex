@@ -20891,3 +20891,13 @@ topsep-to-leading ratio of the PDF, and the theorem states that ratio in
 place of a quantum multiple. That HTML region is site-fix's this round
 (F6 rewrites the same two rules), so the whole move is routed there as
 one unit, with TeX's `\parskip` for the role as well.
+
+
+**The band mutant's lift is read off the layout (review F8).** The
+`Tests/Artifact` mutant that lifts the chrome fixture's body line into the
+title band used a fitted 110 pt. The picture-rhythm landing had already
+re-fitted it once, from 100, when the body moved down. The lift is now the
+line's own baseline less half the band's depth, read from `Layout.Out`, so
+the line lands in the middle of the band whatever the geometry, and a guard
+fails if the page stops having a band or a body line. Halving the lift
+makes the mutant pass the judge, which fails the suite.
