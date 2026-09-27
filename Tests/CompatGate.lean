@@ -301,7 +301,7 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- Counted, not repeated: two sites are one visible line reading two.
     let (_, twice) := elabStr (dvDoc "" (usage ++ "\n\n" ++ usage))
     t s!"fragment arm, {what} (fails on base): two sites are one named loss, counted twice"
-      ((own twice key).size == 2 && (own twice key).all (·.sites == 2) &&
+      ((own twice key).size == 2 && ((own twice key).map (·.sites)).toList == [2, 0] &&
         ((own twice key).filter (·.severity == .warning)).size == 1)
   -- A one-column realignment moves nothing: the row keeps its grid.
   let (oneDoc, _) := elabStr (dvDoc "" "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")

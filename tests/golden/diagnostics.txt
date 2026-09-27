@@ -260,7 +260,7 @@ warning[W0301]: unknown command '\mystery'; its [...] options were dropped and i
   help: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
 warning[W0301]: unknown command '\mystery'; any [...] options were dropped and its {...} arguments were kept as text (2 sites)
   help: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
-note[W0301]: unknown command '\mystery'; its {...} arguments were kept as text (2 sites)
+note[W0301]: unknown command '\mystery'; its {...} arguments were kept as text
 ── W0302 (degraded) unknown environment; body kept
 warning[W0302]: unknown environment '{banner}'; its body is kept
   help: \defineenv{name}(...) {begin} {end} declares one

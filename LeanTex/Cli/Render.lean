@@ -76,7 +76,10 @@ private def obj (fields : List (String × String)) : String :=
 /-- One diagnostic as a JSON line. `loss` is the declared class, so a reader
 bands without a table and without trusting `severity`, which demotion
 rewrites; `subject` is the structured key a census groups by, so no
-consumer has to group by message text. -/
+consumer has to group by message text. `sites` is how many of the run's
+sites the line accounts for, absent when it is 1: the first line of a loss
+carries them all and each later one 0, so the lines' counts add up to the
+run's sites (`Diag.tallySites_sum_exact`). -/
 def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
@@ -90,7 +93,7 @@ def porcelainDiag (d : Diag) : String :=
   let all := match d.subject with
     | some s => all ++ [("subject", jstr s)]
     | none => all
-  let all := if d.sites ≤ 1 then all else all ++ [("sites", toString d.sites)]
+  let all := if d.sites == 1 then all else all ++ [("sites", toString d.sites)]
   obj all
 
 def porcelainPhase (name detail : String) (ms : Nat) : String :=

@@ -675,7 +675,28 @@ code and the same structured subject. The code alone would merge two
 unrelated constructs refused for the same reason; the subject alone would
 merge two codes that happen to name one key. -/
 def Diag.sameLoss (a b : Diag) : Bool :=
-  a.kind == b.kind && a.subject == b.subject && a.subject.isSome
+  decide (a.kind = b.kind) && decide (a.subject = b.subject) && a.subject.isSome
+
+private theorem Diag.sameLoss_iff (a b : Diag) :
+    Diag.sameLoss a b = true ↔
+      a.kind = b.kind ∧ a.subject = b.subject ∧ a.subject.isSome = true := by
+  simp [Diag.sameLoss, and_assoc]
+
+private theorem Diag.sameLoss_symm {a b : Diag} (h : Diag.sameLoss a b = true) :
+    Diag.sameLoss b a = true := by
+  obtain ⟨hk, hs, hi⟩ := (Diag.sameLoss_iff a b).mp h
+  exact (Diag.sameLoss_iff b a).mpr ⟨hk.symm, hs.symm, hs ▸ hi⟩
+
+private theorem Diag.sameLoss_trans {a b c : Diag} (h₁ : Diag.sameLoss a b = true)
+    (h₂ : Diag.sameLoss b c = true) : Diag.sameLoss a c = true := by
+  obtain ⟨hk, hs, hi⟩ := (Diag.sameLoss_iff a b).mp h₁
+  obtain ⟨hk', hs', _⟩ := (Diag.sameLoss_iff b c).mp h₂
+  exact (Diag.sameLoss_iff a c).mpr ⟨hk.trans hk', hs.trans hs', hi⟩
+
+/-- The index whose line carries a diagnostic's count: the first diagnostic
+of its loss, or its own index when it names no subject. -/
+private def Diag.carrier (ds : List Diag) (i : Nat) (d : Diag) : Nat :=
+  if d.subject.isSome then ds.findIdx (Diag.sameLoss d) else i
 
 /-- **The losses add up.** A once-per-document diagnostic names its
 construct at the first site and delivers every later site as a note, so
@@ -684,21 +705,161 @@ therefore has to carry the total, or a reader sizing the damage from it
 undercounts — ten lines standing for fifty losses is how a document full of
 silent drops reads as nearly clean.
 
-This is the one writer of `sites`: each diagnostic is told how many
-diagnostics in the same run share its code and subject, which is exactly
-the number of sites the run reports. Nothing else moves — no diagnostic is
-added, removed, reordered, demoted or reworded — so counting cannot change
-what was lost, only what the reader is told about it. A diagnostic with no
-subject is not part of any census and keeps the default 1. -/
+This is the one writer of `sites`: the first diagnostic of each loss carries
+the number of diagnostics sharing its code and subject, every later one
+carries 0, and a diagnostic with no subject is its own one site — so the
+counts on a log add up to its length (`tallySites_sum_exact`). Stamping the
+total on every site squared it for any reader who summed them. Nothing else
+moves — no diagnostic is added, removed, reordered, demoted or reworded — so
+counting cannot change what was lost, only what the reader is told about it. -/
 def Diag.tallySites (ds : Array Diag) : Array Diag :=
-  ds.map fun d =>
-    if d.subject.isNone then d
-    else { d with sites := (ds.filter (Diag.sameLoss d ·)).size }
+  let carriers := ds.toList.mapIdx (Diag.carrier ds.toList)
+  ds.mapIdx fun i d => { d with sites := carriers.count i }
+
+private theorem Diag.findIdx_le_of_true {p : α → Bool} {xs : List α} {i : Nat}
+    (h : i < xs.length) (hp : p xs[i] = true) : xs.findIdx p ≤ i :=
+  Nat.le_of_not_lt fun hlt => by simp [List.not_of_lt_findIdx hlt] at hp
+
+private theorem Diag.carrier_lt (ds : List Diag) (i : Nat) (h : i < ds.length) :
+    Diag.carrier ds i ds[i] < ds.length := by
+  unfold Diag.carrier
+  split
+  · rename_i hs
+    have := Diag.findIdx_le_of_true h ((Diag.sameLoss_iff _ _).mpr ⟨rfl, rfl, hs⟩)
+    omega
+  · exact h
+
+/-- Counting a list of indices over the first `n` counts the entries below
+`n`: the fibres of a map into `[0, n)` partition its domain. -/
+private theorem Diag.sum_count_range (os : List Nat) (n : Nat) :
+    ((List.range n).map (os.count ·)).sum = (os.filter (· < n)).length := by
+  induction n with
+  | zero => rw [List.filter_eq_nil_iff.mpr (by simp)]; simp
+  | succ n ih =>
+    rw [List.range_succ, List.map_append, List.sum_append_nat, ih]
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, Nat.add_zero]
+    clear ih
+    induction os with
+    | nil => simp
+    | cons o os ih =>
+      simp only [List.filter_cons, List.count_cons]
+      by_cases h1 : o < n
+      · have h2 : o < n + 1 := by omega
+        have h3 : (o == n) = false := by simp; omega
+        simp [h1, h2, h3]; omega
+      · by_cases h4 : o = n
+        · subst h4; simp; omega
+        · have h2 : ¬ o < n + 1 := by omega
+          have h3 : (o == n) = false := by simp; omega
+          simp [h1, h2, h3]; omega
+
+private theorem Diag.count_mapIdx_eq_countP {l : List α} (f : Nat → α → Nat) (p : α → Bool)
+    (v : Nat) (h : ∀ j (hj : j < l.length), f j l[j] = v ↔ p l[j] = true) :
+    (l.mapIdx f).count v = l.countP p := by
+  induction l generalizing f with
+  | nil => simp
+  | cons a l ih =>
+    rw [List.mapIdx_cons, List.count_cons, List.countP_cons]
+    have h0 : f 0 a = v ↔ p a = true := by
+      have := h 0 (by simp); rwa [List.getElem_cons_zero] at this
+    rw [ih (fun i => f (i + 1)) fun j hj => by
+      have := h (j + 1) (by simp; omega); rwa [List.getElem_cons_succ] at this]
+    by_cases hp : p a
+    · simp [hp, h0.mpr hp]
+    · have : f 0 a ≠ v := fun e => hp (h0.mp e)
+      simp [hp, this]
+
+private theorem Diag.count_mapIdx_eq_one {l : List α} (f : Nat → α → Nat) (v i : Nat)
+    (hi : i < l.length) (h : ∀ j (hj : j < l.length), f j l[j] = v ↔ j = i) :
+    (l.mapIdx f).count v = 1 := by
+  induction l generalizing f i with
+  | nil => simp at hi
+  | cons a l ih =>
+    rw [List.mapIdx_cons, List.count_cons]
+    cases i with
+    | zero =>
+      have h0 : f 0 a = v := by
+        have := (h 0 (by simp)).mpr rfl; rwa [List.getElem_cons_zero] at this
+      have hz : (l.mapIdx fun i => f (i + 1)).count v = 0 := by
+        have := Diag.count_mapIdx_eq_countP (l := l) (fun i => f (i + 1)) (fun _ => false) v
+          fun j hj => by
+            have := h (j + 1) (by simp; omega); rw [List.getElem_cons_succ] at this
+            simpa using this
+        simpa using this
+      simp [h0, hz]
+    | succ k =>
+      have h0 : f 0 a ≠ v := fun e => by
+        have := h 0 (by simp); rw [List.getElem_cons_zero] at this; simpa using this.mp e
+      rw [ih (fun i => f (i + 1)) k (by simpa using hi)
+        fun j hj => by
+          have := h (j + 1) (by simp; omega); rw [List.getElem_cons_succ] at this
+          simpa using this]
+      simp [h0]
+
+private theorem Diag.carrier_eq_iff_head (l : List Diag) (i j : Nat) (hi : i < l.length)
+    (hj : j < l.length) (hs : l[i].subject.isSome = true)
+    (hfirst : ∀ k (hk : k < i), Diag.sameLoss l[i] l[k] = false) :
+    Diag.carrier l j l[j] = i ↔ Diag.sameLoss l[i] l[j] = true := by
+  unfold Diag.carrier
+  constructor
+  · intro h
+    split at h
+    · exact Diag.sameLoss_symm ((List.findIdx_eq hi).mp h).1
+    · rename_i hsj
+      subst h
+      exact absurd hs hsj
+  · intro h
+    have hsj : l[j].subject.isSome = true := by
+      obtain ⟨_, hsub, hsome⟩ := (Diag.sameLoss_iff _ _).mp h
+      rw [← hsub]; exact hsome
+    simp only [hsj, ite_true]
+    rw [List.findIdx_eq hi]
+    refine ⟨Diag.sameLoss_symm h, fun k hk => ?_⟩
+    cases hc : Diag.sameLoss l[j] l[k]
+    · rfl
+    · have := Diag.sameLoss_trans h hc
+      rw [hfirst k hk] at this
+      exact absurd this (by simp)
+
+private theorem Diag.carrier_ne_later (l : List Diag) (i k j : Nat) (hi : i < l.length)
+    (hki : k < i) (hj : j < l.length) (hsame : Diag.sameLoss l[i] l[k] = true) :
+    Diag.carrier l j l[j] ≠ i := by
+  unfold Diag.carrier
+  intro h
+  split at h
+  · have hx := (List.findIdx_eq hi).mp h
+    have hjk := Diag.sameLoss_trans hx.1 hsame
+    rw [hx.2 k hki] at hjk
+    exact absurd hjk (by simp)
+  · rename_i hsj
+    subst h
+    exact hsj ((Diag.sameLoss_iff _ _).mp hsame).2.2
+
+private theorem Diag.carrier_eq_iff_self (l : List Diag) (i j : Nat) (hi : i < l.length)
+    (hj : j < l.length) (hn : l[i].subject.isSome = false) :
+    Diag.carrier l j l[j] = i ↔ j = i := by
+  unfold Diag.carrier
+  constructor
+  · intro h
+    split at h
+    · have hx := ((List.findIdx_eq hi).mp h).1
+      have := ((Diag.sameLoss_iff _ _).mp hx).2
+      rw [← this.1] at hn
+      simp [this.2] at hn
+    · exact h
+  · intro h
+    subst h
+    simp [hn]
+
+private theorem Diag.tallySites_getElem? (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+    (Diag.tallySites ds)[i]? =
+      some { ds[i] with sites := (ds.toList.mapIdx (Diag.carrier ds.toList)).count i } := by
+  simp [Diag.tallySites, h]
 
 /-- Counting is not filtering: the tally holds every diagnostic it was
 given, in order. -/
 theorem Diag.tallySites_length (ds : Array Diag) :
-    (Diag.tallySites ds).size = ds.size := Array.size_map
+    (Diag.tallySites ds).size = ds.size := Array.size_mapIdx
 
 /-- Counting changes only the count: each diagnostic keeps its code,
 message, span, help, demotion and subject, so no loss is created,
@@ -707,38 +868,78 @@ theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ∃ d, (Diag.tallySites ds)[i]? = some d ∧ d.kind = (ds[i]).kind ∧
       d.message = (ds[i]).message ∧ d.span = (ds[i]).span ∧
       d.help = (ds[i]).help ∧ d.demoted = (ds[i]).demoted ∧
-      d.subject = (ds[i]).subject := by
-  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
-  simp only [Option.map_some]
-  exact ⟨_, rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl,
-    by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
+      d.subject = (ds[i]).subject :=
+  ⟨_, Diag.tallySites_getElem? ds i h, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- **The number on the line is the number of sites in the log.** Every
-tallied diagnostic's `sites` is the count of diagnostics sharing its loss,
-so a reader who trusts the default line's total and a reader who counts the
-`-v` sites by hand reach the same number. -/
+/-- **The counts on a log add up to its length.** Summing `sites` over every
+record of a run gives the number of records, whatever the run — the claim a
+reader sizing the damage makes when they add the numbers up. Each record
+counts once, on its carrier's line. -/
+theorem Diag.tallySites_sum_exact (ds : Array Diag) :
+    ((Diag.tallySites ds).toList.map (·.sites)).sum = ds.size := by
+  have hmap : (Diag.tallySites ds).toList.map (·.sites) =
+      (List.range ds.size).map ((ds.toList.mapIdx (Diag.carrier ds.toList)).count ·) := by
+    apply List.ext_getElem
+    · simp [Diag.tallySites]
+    · intro n _ _
+      simp [Diag.tallySites]
+  rw [hmap, Diag.sum_count_range]
+  have hall : ∀ o ∈ ds.toList.mapIdx (Diag.carrier ds.toList), o < ds.size := by
+    intro o ho
+    obtain ⟨j, hj, rfl⟩ := List.mem_mapIdx.mp ho
+    have := Diag.carrier_lt ds.toList j hj
+    rwa [Array.length_toList] at this
+  rw [List.filter_eq_self.mpr (by simpa using hall)]
+  simp
+
+/-- **The number on the line is the number of sites in the log.** The first
+diagnostic of a loss — the line the default log shows — carries the count
+of diagnostics sharing that loss, so a reader who trusts the default line's
+total and a reader who counts the `-v` sites by hand reach the same number. -/
 theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
-    (hs : (ds[i]).subject.isSome) :
+    (hs : (ds[i]).subject.isSome)
+    (hfirst : ∀ k (hk : k < i), Diag.sameLoss ds[i] ds[k] = false) :
     ((Diag.tallySites ds)[i]?).map (·.sites) =
       some (ds.filter (Diag.sameLoss ds[i] ·)).size := by
-  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
-  simp only [Option.map_some]
-  split
-  · simp_all
-  · rfl
+  rw [Diag.tallySites_getElem? ds i h]
+  simp only [Option.map_some, Option.some.injEq]
+  have hl : i < ds.toList.length := by simpa using h
+  rw [Diag.count_mapIdx_eq_countP (Diag.carrier ds.toList) (Diag.sameLoss ds[i]) i
+    fun j hj => by
+      have := Diag.carrier_eq_iff_head ds.toList i j hl hj (by simpa using hs)
+        fun k hk => by simpa using hfirst k hk
+      simpa using this]
+  rw [List.countP_eq_length_filter, ← Array.length_toList, Array.toList_filter]
 
-/-- **A diagnostic with no subject is not counted.** `tallySites` returns it
-exactly as given, so its `sites` stays whatever it was — the default 1. This
-is the mechanism behind the census gate in Tests.lean: a `censused` code
-emitted without a subject is invisible to the count, and the reader sees one
-line per site instead of one line carrying the total. Nothing here fixes
-that; it says precisely what is lost, so the gate over `DiagCode.all` has a
-statement to rest on rather than a comment. -/
+/-- **A later site rides on the first.** Every diagnostic after the first of
+its loss carries 0, so its note adds nothing to a sum the first line already
+holds. -/
+theorem Diag.tallySites_later_exact (ds : Array Diag) (i k : Nat) (h : i < ds.size)
+    (hk : k < i) (hsame : Diag.sameLoss ds[i] ds[k] = true) :
+    ((Diag.tallySites ds)[i]?).map (·.sites) = some 0 := by
+  rw [Diag.tallySites_getElem? ds i h]
+  simp only [Option.map_some, Option.some.injEq]
+  have hl : i < ds.toList.length := by simpa using h
+  rw [Diag.count_mapIdx_eq_countP (Diag.carrier ds.toList) (fun _ => false) i
+    fun j hj => by
+      have := Diag.carrier_ne_later ds.toList i k j hl hk hj (by simpa using hsame)
+      simpa using this]
+  simp
+
+/-- **A diagnostic with no subject is its own one site.** `tallySites`
+returns it with the count 1 and nothing else changed, whatever it carried.
+This is the mechanism behind the census gate in Tests.lean: a `censused`
+code emitted without a subject is invisible to the grouping, and the reader
+sees one line per site instead of one line carrying the total. Nothing here
+fixes that; it says precisely what is lost, so the gate over `DiagCode.all`
+has a statement to rest on rather than a comment. -/
 theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hn : (ds[i]).subject.isNone) :
-    (Diag.tallySites ds)[i]? = some ds[i] := by
-  rw [Diag.tallySites, Array.getElem?_map, Array.getElem?_eq_getElem h]
-  simp only [Option.map_some, hn, ite_true]
+    (Diag.tallySites ds)[i]? = some { ds[i] with sites := 1 } := by
+  rw [Diag.tallySites_getElem? ds i h]
+  have hl : i < ds.toList.length := by simpa using h
+  rw [Diag.count_mapIdx_eq_one (Diag.carrier ds.toList) i i hl
+    fun j hj => Diag.carrier_eq_iff_self ds.toList i j hl hj (by simpa using hn)]
 
 /-- One phase's diagnostics resolved against the document's acceptance,
 with the counts the driver's exit contract reads: errors and warnings are

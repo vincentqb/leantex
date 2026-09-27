@@ -1046,7 +1046,7 @@ def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- One undefined value at two sites is still one refusal, counted twice.
   let same := w104 "\\usepackage{url}\n\\urlstyle{zzfoo}\n\\urlstyle{zzfoo}\n" "x"
   t "urlstyle: one undefined value at two sites is one refusal counted at both"
-    (same.size == 2 && same.all (·.sites == 2) &&
+    (same.size == 2 && (same.map (·.sites)).toList == [2, 0] &&
       (same.filter (·.severity == .warning)).size == 1)
   -- The preamble selector is whole-document. A `\url` inside `\author` or a
   -- running head elaborates where it is declared, while LaTeX typesets it at
@@ -1635,10 +1635,18 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr rendered "(3 sites)")
   t "a single site renders no total"
     (!hasStr (((of "W0104" once)[0]?.map (Render.human false)).getD "") "sites)")
-  -- The machine-readable channel carries it too, so a consumer reading one
-  -- record knows the loss's multiplicity without scanning for the first.
-  t "porcelain carries the site count on every site"
-    ((of "W0104" ds).all fun d => hasStr (Render.porcelainDiag d) "\"sites\":3")
+  -- The machine-readable channel carries it too: the first line holds the
+  -- loss's sites and each later line 0, so a consumer adding the lines'
+  -- counts (an absent count is 1) gets the sites and never their square.
+  let porcelainSites (d : Diag) : Nat :=
+    match (Render.porcelainDiag d).splitOn "\"sites\":" with
+    | [_, rest] => (String.ofList (rest.toList.takeWhile Char.isDigit)).toNat!
+    | _ => 1
+  t "porcelain: the first line carries the site count, the later ones none"
+    (((of "W0104" ds).map porcelainSites).toList == [3, 0, 0])
+  t "porcelain: the lines' counts add up to the run's diagnostics"
+    ((ds.map porcelainSites).toList.sum == ds.size &&
+      (ds.map (·.sites)).toList.sum == ds.size)
   -- The exit contract does not move: the further sites are notes, so a
   -- construct at three sites is still one warning under --werror.
   t "the further sites are not warnings"
