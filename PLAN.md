@@ -21828,3 +21828,118 @@ would improve — a decision for the native definer's semantics. A
 `\newenvironment` in the body is E0312. The title-block redefinition stays
 refused (W0361); its W0357 is a nested definition's `##1`, which the
 engine's definitions cannot express either.
+
+
+
+### 2026-09-27 — a caption's skips follow its side and its declared position; a refusal names what it read; environ's discarded body
+
+Three review findings against the entry above (review-d SP-1 to SP-3),
+each a correction of it.
+
+**SP-1: which caption skip faces the object.** The entry above said a
+table redefined around the kernel's float core makes its `\abovecaptionskip`
+"the table's own gap". That holds only under the caption package's
+`tableposition=top`. The kernel's `\@makecaption` (article.cls, 480–489)
+sets `\abovecaptionskip` above a caption and `\belowcaptionskip` below it,
+whichever side the caption stands on, so a caption above its table sits on
+`\belowcaptionskip`; caption.sty v3.6o's `\caption@makecaption` sets the
+pair the other way round for a caption placed as a top one, and caption3.sty
+v2.4d defaults to `position=auto`, which reads a caption with nothing before
+it in its float as a top one (`\caption@autoposition`). One rule covers all
+three, `Ir.captionSides`: the object faces `\abovecaptionskip` exactly when
+the caption stands on the side it is placed for, and the caption's other
+skip stands on its text side, inside the float, beside the float
+separation (`Layout.floatPlan`, `floatPlan_gaps_exact`). `\captionsetup`
+records `position`, `tableposition` and `figureposition`
+(`Doc.captionPos`, `captionPosOf`), and reads `aboveskip` and `belowskip`.
+The float-core redefinition declares its kind's two skips
+(`tablecaptionsep`, `tablebelowcaptionskip`), and also the kernel's order
+(`position=bottom`) when the preamble's loads have no caption or subcaption
+package. Undeclared, the placement is `auto`, the engine's binding of a
+caption to its object, and the page does not change
+(`captionSides_auto_exact`). A declared position reads the two skips
+crosswise for a caption on the other side (`captionSides_declared_exact`).
+In HTML each kind gets one custom property per side, and the text-side
+skip is padding, since a margin would collapse into the figure's. The
+object after a caption above also loses its own peer margin: the
+paragraph gap a booktabs table takes had collapsed with the skip and
+floored it at 0.725rem.
+
+Measured on synthetic probes with a 9pt swap. Caption line top to first
+row line top, from `pdftotext -bbox-layout`, in bp, the same face in both
+engines: plain kernel, lualatex 20.50, before 12.00, now 21.00;
+`caption[tableposition=top]`, 11.96, 12.00 and 12.00, with the text above
+the caption 31.46, 24.00 and 33.00. In Chromium, caption box to table box
+in CSS px: 12.00 for the first; 0.00 for the second, where it was 11.59,
+with 12px of padding above the caption; 4.00 for a table-scoped 3pt skip,
+where it was 11.59. `captionScopeChecks` makes both builds, and each is
+held to the page of the native spelling of what LaTeX places; its old
+assertion was the regression.
+
+**Owed, parked both ways: `globalCaptionSkipsOwed`.** A preamble
+`\setlength` of either skip, with no caption package loaded, is still read
+through the object binding: the `\setlength` arms map `\abovecaptionskip`
+to `captionsep`, and they drop `\belowcaptionskip` with a note. On the
+probe, caption top to first row: lualatex 11.53, the engine 21.00. The
+row is owed by the length arms' owner.
+
+**For the user.** An undeclared top caption in a document without the
+caption package sits flush on its table in LaTeX: `\belowcaptionskip` is
+0pt, with `\abovecaptionskip` above the caption. The engine keeps the
+caption package's placement instead, 6pt between the caption and the
+table and nothing above. That departure is not barely different. The
+switch is one default, `captionPosOf`'s `auto`, and it belongs with the
+open question of the caption gap's own default (6pt against LaTeX's 10pt).
+
+**SP-2: a refusal says what it read.** Every `\renewenvironment{abstract}`
+with a begin body builds a style, because its body size is always read. So
+W0303 claimed that the heading styled the built-in, even when no reading
+had carried the heading at all: a run-in heading, or no heading. Now, when
+the heading's font or alignment is read, the message says it styles the
+built-in. When nothing of the heading is read, it says that only the body
+size is, and that the built-in's heading and margins stand. In both cases
+it names the heading text that the built-in's word replaces, read off the
+begin body ahead of the body's container; skip lengths and `[…]` options
+are left out. The message does not say "ignored": the body size is read,
+and it is right on every probe.
+
+**SP-3: environ's discarded body, and the spaces facing a body.** A
+`\NewEnviron` code that never places `\BODY` sets its own words and none
+of the body. The entry above refused that spelling with a message about a
+`\BODY` placed in a group, which the code does not contain, and it shipped
+the words that LaTeX hides. It is now the kernel's definer, with an empty
+begin code and the code as the end code. Each use keeps the arguments its
+signature reads and drops the body. A later definition that places
+`\BODY` places the body again. A final code beside such a code is refused,
+and the refusal names the final code.
+
+A defined environment's halves also lost the spaces at the edges facing
+the body. The entry above left this for a decision; rule 2 settles it.
+The halves now lose only their outer edges, as TeX reads them, and a seam
+where both sides bring a space sets one space where TeX sets two
+(`mergeText`). That is the declared departure: at most one space's width,
+and never a doubled gap. `environChecks` compares the words with their
+spaces against the line lualatex sets for the same source. That includes
+`\BODY Tail`, where TeX ends the control word at the space, so lualatex
+sets "wordsTail".
+
+**Guards.** Each fails on the engine before its unit; the new tests were
+run over the older engine in a scratch clone:
+- SP-1: 10 failures at `287aef16`;
+- SP-2 and SP-3: 11 at `f5267fc5`.
+
+Each was also broken once through the path that ships:
+- `captionSides` mutated to ignore the position: the build fails at
+  `captionSides_declared_exact`;
+- the float arm reading `auto`: 3 failures;
+- the discard arm disabled: 3;
+- the halves trimmed again: 2;
+- the seam collapse removed: 3, including the furniture golden and the
+  census's word-gap fact.
+
+**The private reference corpus**, main against this branch:
+- paper: warnings and errors 15 → 11 (W0103, W0301, W0303 and W0354 one
+  each). Its two tables' caption-to-header distance is 25.66/26.25 →
+  18.66/19.26 bp, against lualatex's 14.62.
+- deck, card, résumé and site: PDFs byte-identical; their HTML differs
+  only in the caption stylesheet.

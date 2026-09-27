@@ -140,8 +140,9 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   -- 8pt stands between a caption above and its table; the caption
   -- package's `tableposition=top` sets `\abovecaptionskip` there instead
   -- and puts the 8pt above the caption. Two builds, each against the
-  -- native spelling of what LaTeX places (lualatex, caption top to first
-  -- row: 20.50bp and 11.96bp).
+  -- native spelling of what LaTeX places; measured on the same shape with
+  -- 9pt (caption top to first row, bp): lualatex 20.50 and 11.96, the
+  -- engine 21.00 and 12.00.
   let swap := "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{0pt}" ++
     "\\setlength{\\belowcaptionskip}{8pt}\\@float{table}}{\\end@float}\n"
   let venue := "\\setlength{\\abovecaptionskip}{8pt}\\setlength{\\belowcaptionskip}{0pt}\n" ++ swap
