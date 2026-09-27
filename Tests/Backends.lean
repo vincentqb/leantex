@@ -2440,7 +2440,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         - spans.foldl (fun m s => m + (s.n - 1)) 0
     | _ => n) (fun n _ => n) 0 fixture.body
   t "tables fixture: every declared cell ships once"
-    (cells.size == declared && declared == 18)
+    (cells.size == declared && declared == 20)
   t "tables fixture: three th, all under thead with scope=col"
     ((cells.filter (·.tag == "th")).size == 3 &&
       (cells.filter (·.tag == "th")).all (fun c => c.group == "thead" && c.scope == "col") &&

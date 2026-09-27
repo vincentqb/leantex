@@ -2,8 +2,9 @@
 % document. Exercises the booktabs default: three rule weights with their
 % declared padding, p-column widths as fractions of the measure, `@{}`
 % killing the outer pads, a caption below (figure convention) and above
-% (table convention), `\cmidrule` with trimming, `\addlinespace`, and a
-% figure float whose caption binds to its body.
+% (table convention), `\cmidrule` with trimming, `\addlinespace`, a
+% `\multicolumn` head spanning two columns, and a figure float whose
+% caption binds to its body.
 \documentclass{article}
 \fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
 
@@ -35,6 +36,7 @@ never a vertical line.
 \centering
 \begin{tabular}{lcr}
   \toprule
+  & \multicolumn{2}{c}{a spanned head} \\
   left & centre & right \\
   \cmidrule(lr){1-2}
   a & b & c \\

@@ -49,9 +49,15 @@ float table 2 caption-above
     text "The caption above: the table convention."
   table l,c,r
     rule 0 top
-    rule 1 cmid 1-2(lr)
-    rule 2 gap 500/1000em
-    rule 3 bottom
+    rule 2 cmid 1-2(lr)
+    rule 3 gap 500/1000em
+    rule 4 bottom
+    span 0:1 x2 c
+    row
+      cell
+      cell
+        text "a spanned head"
+      cell
     row
       cell
         text "left"

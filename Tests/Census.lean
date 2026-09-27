@@ -792,7 +792,13 @@ def censusTable :
       ((lineXOf c 0 "Construct").bind fun a =>
         (lineXOf c 0 "Meaning").map fun b => decide (a < b)).getD false),
     ("the floated table centres: its first cell sits past the margin",
-      (lineXOf c 0 "invented row").any fun x => decide (x > geom.hmargin))]),
+      (lineXOf c 0 "invented row").any fun x => decide (x > geom.hmargin)),
+    -- a `\multicolumn` head: one line, standing over the columns it covers,
+    -- right of the first column's cell
+    ("the spanned head ships once, right of the first column",
+      pageOccurs c 0 "a spanned head" == 1 &&
+      ((lineXOf c 0 "a spanned head").bind fun h =>
+        (lineXOf c 0 "left").map fun l => decide (h > l)).getD false)]),
   ("tables-ragged", fun _ c => [
     ("one page", c.size == 1),
     ("every declared cell ships, the ragged row's included",
