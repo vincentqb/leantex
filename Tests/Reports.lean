@@ -81,7 +81,7 @@ def reports : List Report := [
   { id := "R01", date := "2026-09-16"
     what := "two section headings vanished in one PDF viewer and showed in two others: a text-positioning adjustment past sixteen bits"
     pins := [check% pdfStreamChecks]
-    state := .unwitnessed },
+    state := .guarded "ae063c0b" .revert .audit },
   { id := "R02", date := "2026-09-16"
     what := "a résumé did not build as written, set the gap under its large name line far too wide, ran onto a second page, and let a built-in shadow the document's own macro"
     pins := [check% spacingChecks, check% compatChecks]
@@ -129,7 +129,7 @@ def reports : List Report := [
     what := "a site port rendered a declared 32 px gap as 52 px: two rules owned one boundary"
     pins := [check% htmlRhythmChecks]
     accept := ["the site port's build and its structural comparison"]
-    state := .unwitnessed },
+    state := .guarded "ae063c0b" .revert .audit },
   { id := "R13", date := "2026-09-18"
     what := "a declared scroll reveal did not play in a browser's release version; decided since: the reveal is declarative where supported, and elsewhere the content stands visible with no script"
     pins := [check% pinChecks]
@@ -137,7 +137,7 @@ def reports : List Report := [
   { id := "R14", date := "2026-09-18"
     what := "a site port's alternate markdown link named a file other than the one served, and a face installed on the host displaced the face the document ships"
     pins := [check% mdNameChecks, check% fallbackChecks]
-    state := .unwitnessed },
+    state := .guarded "ae063c0b" .revert .audit },
   { id := "R15", date := "2026-09-20"
     what := "a picture on a slide shipped far too small, and an image sized against the text height emitted nothing in HTML"
     pins := [thm% HtmlDoc.image_share_agrees, check% deckImageChecks]
@@ -146,7 +146,7 @@ def reports : List Report := [
     what := "the HTML deck advanced on the wrong axis, took several key presses per frame, showed partial slides between frames and drew step-counter chrome"
     pins := [thm% HtmlDoc.deck_script_constant, thm% HtmlDoc.snap_pages_partition_frames,
       check% deckCssChecks]
-    state := .unwitnessed },
+    state := .guarded "ae063c0b" .revert .audit },
   { id := "R17", date := "2026-09-21"
     what := "a construct the engine misunderstands reached a backend with no warning naming it"
     pins := [thm% pending_named, check% pendingChecks]
@@ -245,7 +245,7 @@ def reports : List Report := [
 
 /-- The reports guarded but never seen failing: a count that may fall and
 never rise, and falls only when this line does. -/
-def unwitnessedBaseline : Nat := 14
+def unwitnessedBaseline : Nat := 10
 
 /-- The reports not closed, the same way. -/
 def owedBaseline : Nat := 4
