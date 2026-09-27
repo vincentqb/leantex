@@ -48,3 +48,39 @@ def splitPairingOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{probewrap}Wrapped words.\\end{probewrap}"
     t s!"parked: a split '\{{n}}' in an accepted definition still raises E0201"
       ((dvE src).any (·.code == "E0201"))
+
+
+mutual
+
+/-- The text of every `<strong>` element of an emitted tree. -/
+def strongTextsOne (acc : Array String) : Html.Node → Array String
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let acc := if t == "strong" then acc.push (nodeTextOne "" (.elem t attrs kids)) else acc
+    strongTextsList acc kids.toList
+
+def strongTextsList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => strongTextsList (strongTextsOne acc k) rest
+
+end
+
+/-- **A group primitive scopes what a brace pair scopes.** A weight change
+between `\begingroup` and `\endgroup` (or `\bgroup` and `\egroup`) reaches
+the words inside and stops at the closer, read off the typed HTML tree.
+The defect: both words were unknown commands, dropped as text, so the
+change leaked to the paragraph's end and a reader saw words bold that
+LaTeX sets upright. Quantified over `Compat.groupPrimitives`. -/
+def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (o, c) in Compat.groupPrimitives do
+    let (doc, ds) := elabStr
+      (dvDoc "" s!"Before words. \\{o}\\bfseries Inside words.\\{c} After words.")
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let strong := strongTextsList #[] body.toList
+    t s!"'\\{o}' scopes a weight change over its own words"
+      (strong.any (hasStr · "Inside words."))
+    t s!"and the change stops at '\\{c}'" (strong.all fun s => !hasStr s "After words.")
+    t s!"a matched '\\{o}' is no unknown command" (ds.all (·.code != "W0301"))

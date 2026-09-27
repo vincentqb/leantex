@@ -5133,6 +5133,79 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
+/-- The group primitives, opener to closer: `\begingroup … \endgroup`
+scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
+and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
+def groupPrimitives : List (String × String) :=
+  [("begingroup", "endgroup"), ("bgroup", "egroup")]
+
+/-- One level's group primitives paired into the brace group each pair is:
+an opener collects what follows it until the closer of its own kind, and an
+opener or closer with no partner at this level stands as written, for the
+elaborator to name. -/
+private def pairGroupLevel (xs : Array Raw) : Array Raw := Id.run do
+  let mut frames : Array (String × Pos × Array Raw) := #[]
+  let mut out : Array Raw := #[]
+  for r in xs do
+    let closer := match r, frames.back? with
+      | .ctrl n _, some (c, _, _) => n == c
+      | _, _ => false
+    let opener := match r with
+      | .ctrl n p => (groupPrimitives.lookup n).map (·, p)
+      | _ => none
+    let (frames', emit) : Array (String × Pos × Array Raw) × Option Raw :=
+      if closer then
+        match frames.back? with
+        | some (_, p, items) => (frames.pop, some (.group items p))
+        | none => (frames, some r)
+      else match opener with
+        | some (c, p) => (frames.push (c, p, #[]), none)
+        | none => (frames, some r)
+    frames := frames'
+    if let some x := emit then
+      match frames.back? with
+      | some (c, p, items) => frames := frames.pop.push (c, p, items.push x)
+      | none => out := out.push x
+  -- An opener left unclosed at the level's end stands as written.
+  for _ in [0:frames.size] do
+    match frames.back? with
+    | some (c, p, items) =>
+      frames := frames.pop
+      let opener := ((groupPrimitives.find? (·.2 == c)).map (·.1)).getD c
+      let flat := #[Raw.ctrl opener p] ++ items
+      match frames.back? with
+      | some (c', p', items') => frames := frames.pop.push (c', p', items' ++ flat)
+      | none => out := out ++ flat
+    | none => break
+  return out
+
+mutual
+
+/-- The pass that makes every matched group primitive the brace group it
+is, whole tree, before the rewrite walk: the walk reads a group where a
+document spelled braces, so a declaration inside the pair stays inside it.
+The preamble's own top level (`top`: the tree's, and a spliced file's at
+that level) keeps its pairs as written: the preamble is a flat list of
+declarations, where a group would be content. -/
+-- conserves: none — a pair's two words become the group they delimit.
+private def pairGroupsRaw (top : Bool) : Raw → Raw
+  | .group body p => .group (pairGroupsList false #[] body.toList) p
+  | .env n body p =>
+    .env n (pairGroupsList (top && (Parse.inputEnvFile? n).isSome) #[] body.toList) p
+  | .math d body p => .math d (pairGroupsList false #[] body.toList) p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+private def pairGroupsList (top : Bool) (acc : Array Raw) : List Raw → Array Raw
+  | [] => if top then acc else pairGroupLevel acc
+  | r :: rest => pairGroupsList top (acc.push (pairGroupsRaw top r)) rest
+
+end
+
 /-- Glue a row of boxes can hold between two boxes: a space, or the fill
 that takes what the boxes leave of the measure (`\hfill`, `\hfil`). A
 paragraph break is not among them — it ends the line the boxes stand on. -/
@@ -5736,6 +5809,8 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
     let raws ← condDocument raws
+    -- After the conditionals: only a live pair is a group.
+    let raws := pairGroupsList true #[] raws.toList
     let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList

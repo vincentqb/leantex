@@ -15,4 +15,4 @@ para
 -- diagnostics
 note[N0100] 8:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
 note[N0100] 9:1 '\renewcommand{\titlepage}' → \define \titlepage() {...}
-warning[W0361] 8:1 the redefinition of '\maketitle' uses '\begingroup' (redefine.tex:8), which the engine cannot run; the built-in stands
+warning[W0361] 8:1 the redefinition of '\maketitle' uses '\venuetitlebox' (redefine.tex:8), which the engine cannot run; the built-in stands

@@ -26,4 +26,4 @@ note[N0100] 16:1 '\newcommand{\@toptitlebar}' → \define \@toptitlebar() {...}
 note[N0100] 17:1 '\newcommand{\@bottomtitlebar}' → \define \@bottomtitlebar() {...}
 note[N0100] 18:1 '\providecommand{\@maketitle}' → \define \@maketitle() {...}
 note[N0100] 19:1 '\renewcommand{\@maketitle}' → \define \@maketitle() {...}
-warning[W0361] 15:1 the redefinition of '\maketitle' uses '\begingroup' (titlebars.tex:15), which the engine cannot run; the built-in stands, styled by the redefinition's rules and spacing
+warning[W0361] 15:1 the redefinition of '\maketitle' uses '\@maketitle' (titlebars.tex:15), which the engine cannot run; the built-in stands, styled by the redefinition's rules and spacing
