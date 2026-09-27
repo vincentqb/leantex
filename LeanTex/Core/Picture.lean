@@ -2521,6 +2521,25 @@ private def readDim (toks : List Tok) : Except String Sp :=
     | u => .error s!"the unit '{u}' is outside the rendered picture subset"
   | _ => .error "a length like '8mm' is needed"
 
+/-- pgf's named line widths, as tikz.code.tex defines them (lines
+1575–1581): each is the style `line width=<w>`, so a name and the key it
+abbreviates stroke one width. `thin` and `thick` are the IR's own two
+widths, read rather than restated. -/
+def lineWidthStyles : List (String × Sp) :=
+  [("ultra thin", Dim.pt 1 / 10), ("very thin", Dim.pt 1 / 5),
+   ("thin", Ir.Pic.thinWidth), ("semithick", Dim.pt 3 / 5),
+   ("thick", Ir.Pic.thickWidth), ("very thick", Dim.pt 6 / 5),
+   ("ultra thick", Dim.pt 8 / 5)]
+
+/-- A width entry: a named width or `line width=<length>`, read; `none`
+where the entry sets no width. The one reader every stroke site and every
+vocabulary check reads, so a width a path strokes and a width a picture's
+bracket carries down are the same keys. -/
+def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
+  match opt with
+  | .ident "line" :: .ident "width" :: .sym '=' :: rest => some (readDim rest)
+  | ts => ((keyName ts).bind fun n => lineWidthStyles.lookup n).map .ok
+
 /-- A relative placement's direction: the `positioning` keys this subset
 reads — the four sides and the four corners. Public because the placement
 facts range over it: a statement needs a name to talk about. -/
@@ -2690,8 +2709,9 @@ def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool 
       match tipName rest with
       | some tip => drawsAsArrow styles tip
       | none => false
-    | ts => ["thick", "draw", "dashed", "dotted", "densely dotted",
-        "auto", "swap", "'"].contains (keyPath ts) || toKeyNames.contains (keyPath ts)
+    | ts => ["draw", "dashed", "dotted", "densely dotted",
+        "auto", "swap", "'"].contains (keyPath ts) || toKeyNames.contains (keyPath ts) ||
+        (readLineWidth ts).isSome
 
 /-- The keys a node statement's option loop reads. A placement and a size
 switch are read through the same functions the loop reads them with, so the
@@ -2701,8 +2721,9 @@ def readsNodeOpt (opt : Array Tok) : Bool :=
   else match opt.toList with
   | [.ident "font", .sym '=', .ctrl size] => (Ir.sizeScale.lookup size).isSome
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
-      "thick", "text", "fill", "minimum size", "minimum width", "minimum height",
-      "inner sep", "inner xsep", "inner ysep", "node contents"].contains (keyPath ts)
+      "text", "fill", "minimum size", "minimum width", "minimum height",
+      "inner sep", "inner xsep", "inner ysep", "node contents"].contains (keyPath ts) ||
+      (readLineWidth ts).isSome
 
 /-- An entry some statement of this subset reads: what a declaration made
 once for the document, or once for the picture, carries into the brackets
@@ -2884,7 +2905,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut draw : Option (Option Ir.Color) := none
   let mut fillCol : Option Ir.Color := none
   let mut dash : Ir.Pic.Dash := .solid
-  let mut thick := false
+  let mut width : Sp := Ir.Pic.thinWidth
   let mut minW : Sp := 0
   let mut minH : Sp := 0
   -- `inner sep` as the document set it, per axis; `none` is pgf's default,
@@ -2943,6 +2964,11 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     match readPlace dsc opt.toList with
     | some p => place := some p
     | none =>
+    match readLineWidth opt.toList with
+    | some (.ok w) => width := w
+    | some (.error e) =>
+      ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+    | none =>
     match opt.toList with
     | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
       match Ir.sizeScale.lookup size with
@@ -2967,7 +2993,6 @@ rendered picture subset; the option is dropped")
       | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
     | [.ident "dashed"] => dash := .dashed
     | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
-    | [.ident "thick"] => thick := true
     | .ident "minimum" :: .ident "size" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => minW := max minW d; minH := max minH d
@@ -3151,7 +3176,7 @@ this one against; the node is not drawn")
         if draw.isSome || fillCol.isSome then
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
             { color := c.getD Ir.Color.black
-              width := if thick then Ir.Pic.thickWidth else Ir.Pic.thinWidth
+              width := width
               dash := dash }
           if isCircle then
             let r := dimF (max minW minH) / 2
@@ -3424,7 +3449,7 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut ev := ev
   let mut color := Ir.Color.black
   let mut dash : Ir.Pic.Dash := .solid
-  let mut thick := false
+  let mut width : Sp := Ir.Pic.thinWidth
   let mut arrow := false
   -- `\path` paints nothing of itself; an `edge` operation or an explicit
   -- `draw` key is what makes it stroke (pgf's `every edge` carries `draw`).
@@ -3467,8 +3492,12 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
         ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
 picture subset; the edge is drawn without a head")
     | none =>
+    match readLineWidth opt.toList with
+    | some (.ok w) => width := w
+    | some (.error e) =>
+      ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+    | none =>
     match opt.toList with
-    | [.ident "thick"] => thick := true
     | [.ident "draw"] => strokes := true
     -- `auto` puts an in-path label beside the path instead of on it;
     -- `auto=left`/`auto=right` name the side and `auto=false` turns it off.
@@ -3614,6 +3643,16 @@ not drawn")
               return ev.diag (.E0333, s!"in '{keyPath opt.toList}=', {e}; the \
 edge is not drawn")
             | none =>
+            match readLineWidth opt.toList with
+            | some (.ok w) =>
+              if opStroke then ev := ev.diag (.W0334, "a chain whose \
+operations declare more than one stroke is outside the rendered picture \
+subset; the last one is drawn")
+              opStroke := true
+              width := w
+            | some (.error e) =>
+              ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+            | none =>
             match opt.toList with
             -- An operation's own bracket carries stroke keys too, and on
             -- `\path (a) edge [dashed] (b)` they are the whole point: the
@@ -3633,12 +3672,6 @@ operations declare more than one stroke is outside the rendered picture \
 subset; the last one is drawn")
               opStroke := true
               dash := .dotted
-            | [.ident "thick"] =>
-              if opStroke then ev := ev.diag (.W0334, "a chain whose \
-operations declare more than one stroke is outside the rendered picture \
-subset; the last one is drawn")
-              opStroke := true
-              thick := true
             | .ident "draw" :: .sym '=' :: rest =>
               match evalColor cx env rest.toArray with
               | .ok c =>
@@ -3739,7 +3772,7 @@ edge is not drawn")
     return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
   let stroke : Ir.Pic.Stroke :=
     { color := color
-      width := if thick then Ir.Pic.thickWidth else Ir.Pic.thinWidth
+      width := width
       dash := dash }
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option Ir.Pic.Tip := none

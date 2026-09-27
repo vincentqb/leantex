@@ -26,6 +26,7 @@ import Tests.Redefine
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
+import Tests.PictureKeys
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -141,6 +142,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureBendChecks ref oneFace
   pictureInlineChecks ref oneFace
   pictureKeyNameChecks ref
+  pictureWidthChecks ref oneFace
   trivlistChecks ref oneFace
   listRhythmChecks ref oneFace
   vspaceKeptChecks ref oneFace
