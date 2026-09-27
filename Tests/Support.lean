@@ -911,6 +911,11 @@ def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
   let (doc, _) := elabStr src
   censusOf (coveredColorsOf doc) (layoutOf fonts doc)
 
+/-- The laid-out lines of a source, baseline and text: what a claim that two
+spellings set one page reads. -/
+def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
+  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
+
 /-- Does a block of the document's title block satisfy `p`? The block may
 stand inside its alignment wrapper, so the probe looks one level into
 `.center`. -/
@@ -1029,9 +1034,3 @@ def artCssBlocks (css : String) : Array (String × String) := Id.run do
     else
       cur := cur.push c
   return out
-
-
-/-- The laid-out lines of a source, baseline and text: what a claim that two
-spellings set one page reads. -/
-def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
-  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
