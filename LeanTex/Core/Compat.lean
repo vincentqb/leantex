@@ -540,6 +540,15 @@ structure LoadSet where
   clsPassed : Array (String × Array String) := #[]
   deriving Repr, BEq, Inhabited
 
+/-- One TeX parameter assignment, as TeX scans it (TeXbook ch. 24:
+⟨variable⟩[=]⟨value⟩, and `\advance`⟨variable⟩[by]⟨value⟩): the parameter,
+whether the value adds to it, and the raws of the value. -/
+structure TexAssign where
+  name : String
+  add : Bool
+  value : Array Raw
+  deriving Repr
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -602,6 +611,18 @@ private structure St where
   /-- Counter commands the preamble's top level holds, in order, moved to
   where the body starts: what they set holds there (ltcounts.dtx). -/
   preCounters : Array Raw := #[]
+  /-- The list levels whose parameter macro (`\@listi` …) the preamble
+  redefined as parameter assignments, with where each was defined. -/
+  listDefs : Array (Nat × Pos × Array TexAssign) := #[]
+  /-- The document's `\normalsize` leaves `\@listi` as the preamble set it:
+  a class's own does `\let\@listi\@listI` (size10.clo), and
+  `\begin{document}` runs it, so a preamble `\@listi` stands only when a
+  redefined `\normalsize` omits that. -/
+  listiKept : Bool := false
+  /-- The preamble's assignments to a parameter a list level sets again
+  (`listReset`), with the spelling, file and site each was written at: what
+  they reach is known only at the preamble's end. -/
+  listResets : Array (String × String × String × Pos) := #[]
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -3011,6 +3032,14 @@ private def paramName (raws : Array Raw) : Option String :=
   | [.ctrl "skip" _, .ctrl n _] => some n
   | _ => none
 
+/-- A parameter no engine site reads, named where it is set, once per
+parameter: the one door for that loss, whatever spelling set it. -/
+private def nameParam (n why : String) (pos : Pos) : M Unit := do
+  sayOnce ("ctrl:setlength:" ++ n) .W0104 s!"'\\{n}' is not honoured: it {why}" pos
+    -- premise: paramDemoteChecks — a setting in a style file ships the page the
+    -- same setting ships from the document, and only its severity moves
+    (demote := packageFile (← get).file)
+
 /-- One length assignment, natively, at the site `paramSites` gives it: a
 page property, a token an engine site reads, a list level's indent, or —
 where LaTeX's own code sets the value again before anything reads it —
@@ -3031,10 +3060,7 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     discard what why s!"setlength:{n}" pos
     if tokens then synthAt own pos else pure #[]
   let named (why : String) : M (Array Raw) := do
-    sayOnce ("ctrl:setlength:" ++ n) .W0104 s!"'\\{n}' is not honoured: it {why}" pos
-      -- premise: paramDemoteChecks — a setting in a style file ships the page the
-      -- same setting ships from the document, and only its severity moves
-      (demote := packageFile st.file)
+    nameParam n why pos
     synthAt own pos
   let list (level : Nat) (kind : String) : String :=
     if level == 1 then kind else s!"{kind}{level}"
@@ -3061,7 +3087,8 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
       | _ => emit own
   | .listReset, false =>
     if preamble then
-      nothing s!"every list sets '\\{n}' again from its class's parameters, so no list reads it"
+      write fun st => { st with listResets := st.listResets.push (n, what, st.file, pos) }
+      synthAt own pos
     else named "spaces one list; a list here is spaced per level, in the preamble"
   | .unmodelled why, false =>
     if n == "parindent" && Decl.parseGlue src == some {} then
@@ -3077,14 +3104,6 @@ private def lenOperand (lens : Array (String × String)) : List Raw → Option S
   | [.sym '-' _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | _ => none
-/-- One TeX parameter assignment, as TeX scans it (TeXbook ch. 24:
-⟨variable⟩[=]⟨value⟩, and `\advance`⟨variable⟩[by]⟨value⟩): the parameter,
-whether the value adds to it, and the raws of the value. -/
-structure TexAssign where
-  name : String
-  add : Bool
-  value : Array Raw
-  deriving Repr
 
 /-- A unit or glue keyword inside a value (plain.tex's `\p@` and `\z@`,
 ltdefns.dtx's `\@plus` and `\@minus`), never a register. -/
@@ -3160,6 +3179,116 @@ private def readAssigns (raws : Array Raw) (i : Nat) : Array TexAssign × Nat :=
       j := skipSpaces raws e
     | _ => break
   return (out, j)
+
+/-- The list depth a class's parameter macro sets up: `\@listi` to
+`\@listvi` (size10.clo), the one `\list` calls for its depth (ltlists.dtx). -/
+def listLevelOf : String → Option Nat
+  | "@listi" => some 1
+  | "@listii" => some 2
+  | "@listiii" => some 3
+  | "@listiv" => some 4
+  | "@listv" => some 5
+  | "@listvi" => some 6
+  | _ => none
+
+/-- The list parameters a level's style carries: `\leftmargin` its indent,
+`\topsep` its opening space, `\itemsep` and `\parsep` its gap between items. -/
+private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "parsep"]
+
+/-- Does a body run `\let\@listi\@listI`, a class `\normalsize`'s reset of
+the outermost list level (size10.clo)? -/
+private def resetsListi (body : Array Raw) : Bool :=
+  let xs := body.toList.filter (!· matches .space)
+  (xs.zip xs.tail).any fun p => (p.1 matches .ctrl "let" _) && (p.2 matches .ctrl "@listi" _)
+
+/-- A redefined list-level macro whose body is parameter assignments only:
+recorded for the level, as `\list` runs it where a list of that depth opens,
+with each parameter no engine site reads named once. `false` for any other
+body, which the definer reads as it reads every definition. -/
+private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos : Pos) :
+    M Bool := do
+  let (assigns, stop) := readAssigns body 0
+  if stop < body.size || assigns.isEmpty then return false
+  write fun st => { st with
+    listDefs := (st.listDefs.filter (·.1 != level)).push (level, pos, assigns) }
+  for a in assigns do
+    if let some (.unmodelled why) := paramSites.lookup a.name then nameParam a.name why pos
+    else if a.add && listCarried.contains a.name then
+      sayOnce "ctrl:advance" .W0104
+        s!"TeX register arithmetic ('\\advance') is not supported; skipped" pos
+  became what s!"the level-{level} list parameters, set where a list that deep opens" pos
+  return true
+
+/-- A list-level value as one native operand: the running value of the
+parameter it copies, a length the document set (a token of its name), or a
+literal glue; `none` for anything else. -/
+private def listOperand (run : List (String × Option String)) (lens : Array (String × String))
+    (value : Array Raw) : Option String :=
+  match value.toList.filter (!· matches .space) with
+  | [.ctrl r _] =>
+    if valueCtrl r then some (lengthSrc value)
+    else match run.lookup r with
+      | some o => o
+      | none => if lens.any (·.1 == r) then some r else none
+  | vs =>
+    if vs.all (fun x => match x with | .ctrl c _ => valueCtrl c | _ => true)
+    then some (lengthSrc value) else none
+
+/-- Each list level a redefined macro sets, as LaTeX's `\list` computes it
+where a list of that depth opens (ltlists.dtx): the level's assignments over
+the values the enclosing level left — the preamble's, for the outermost. A
+level the class's own macro sets up leaves its values the class's, so what a
+deeper level inherits from it is not known here and not written; the
+outermost is the class's unless the document's `\normalsize` keeps the
+preamble's `\@listi` (`listiKept`). The known values become the level's
+style, for both list kinds, and each preamble assignment to a parameter a
+level sets again is said to reach the lists it reaches, or none. -/
+private def flushListLevels : M (Array Raw) := do
+  let st ← get
+  let defOf (level : Nat) : Option (Pos × Array TexAssign) :=
+    if level == 1 && !st.listiKept then none
+    else (st.listDefs.find? (·.1 == level)).map fun (_, p, a) => (p, a)
+  -- What the preamble set, where the outermost list opens, is the list's
+  -- only when its level macro is the document's and leaves the parameter be.
+  let outer := (defOf 1).map (·.2)
+  for (n, what, file, pos) in st.listResets do
+    write fun st => { st with file := file }
+    match outer with
+    | some assigns =>
+      if assigns.any (·.name == n) then
+        discard what s!"the outermost lists' parameters set '\\{n}' again" s!"setlength:{n}" pos
+      else became what s!"the outermost lists' '\\{n}', which their parameters leave be" pos
+    | none =>
+      discard what s!"every list sets '\\{n}' again from its class's parameters, so no list reads it"
+        s!"setlength:{n}" pos
+  write fun s => { s with file := st.file }
+  if st.listDefs.isEmpty then return #[]
+  let preamble (n : String) : Option String := if st.lens.any (·.1 == n) then some n else none
+  let mut run : List (String × Option String) := listCarried.map fun n => (n, preamble n)
+  let mut out : Array Raw := #[]
+  for level in [1:5] do
+    match defOf level with
+    | none => run := listCarried.map fun n => (n, none)
+    | some (pos, assigns) =>
+      for a in assigns do
+        if listCarried.contains a.name then
+          let v := if a.add then none else listOperand run st.lens a.value
+          run := run.map fun (n, o) => if n == a.name then (n, v) else (n, o)
+      let op (n : String) : Option String := (run.lookup n).bind id
+      let r := (["i", "ii", "iii", "iv"][level - 1]?).getD ""
+      let mut native := ""
+      let mut keys : Array String := #[]
+      if let some v := op "leftmargin" then keys := keys.push s!"indent = {v}"
+      if let some v := op "topsep" then keys := keys.push s!"before = {v}"
+      if let (some i, some p) := (op "itemsep", op "parsep") then
+        native := s!"\\tokens\{ itemsep{r} = {i}, parsep{r} = {p} }"
+        keys := keys.push s!"gap = itemsep{r} + parsep{r}"
+      unless keys.isEmpty do
+        for kind in ["itemize", "enumerate"] do
+          let el := if level == 1 then kind else s!"{kind}{level}"
+          native := native ++ s!"\\style\{{el}}\{ {String.intercalate ", " keys.toList} }"
+        out := out ++ (← synthAt native pos)
+  return out
 
 /-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
@@ -4372,6 +4501,11 @@ were dropped: {dropped}" pos
       return i2 == ps.size
     match cmd? with
     | some cmd =>
+      -- A class's list-level macro read as the parameters it assigns.
+      if found && !expanding && ps.isEmpty && (← docPreamble) then
+        if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
+          if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
+            return some (#[], k + 1)
       if found && !expanding && undelimited then
         let n := ps.size / 2
         let spec := String.ofList (List.replicate n 'm')
@@ -5563,6 +5697,11 @@ skipped, and the length keeps its value" pos
     if let some (.group sbody _) := raws[js]? then
       if let some out ← startSection? cmd sbody pos then
         return some (out, js + 1)
+      -- A class's list-level macro read as the parameters it assigns.
+      if let some level := listLevelOf cmd then
+        if !xparse && (← docPreamble) then
+          if ← listLevelDef level s!"\\{name}\{\\{cmd}}" sbody pos then
+            return some (#[], js + 1)
     -- The size idiom: a venue class's `\renewcommand\normalsize` whose
     -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
     -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
@@ -5590,6 +5729,7 @@ skipped, and the length keeps its value" pos
                 let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
 leading = {milliStr factor} }" ++
                   (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
+                write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}" native pos
                 return some (← synthAt native pos, js + 1)
     if name == "providecommand" && (← get).bound.contains cmd then
@@ -6773,6 +6913,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let out ← boxRowList #[] out.toList
     let out ← boxRowEmit out
     let running ← flushRunning
+    let running := running ++ (← flushListLevels)
     let running ← rewriteList false running #[] running.toList 0 0
     -- Replay. Each body is rewritten as the preamble material it was
     -- declared as (`inDoc` restored to false for the pass), then routed

@@ -230,3 +230,52 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a preamble counter the engine does not keep is named as it is in the body"
     ((dvE (doc "\\setcounter{tocdepth}{2}" heads)).any fun d =>
       d.code == "W0104" && d.subject == some "ctrl:setcounter:tocdepth")
+
+
+/-- **A list level's parameters are its class macro's, run where a list of
+that depth opens.** `\list` calls `\@listi` … `\@listvi` for its depth
+(ltlists.dtx), so a redefinition assigning `\leftmargin`, `\topsep`,
+`\itemsep` and `\parsep` sets that level's indent, opening space and gap
+between items, over the values the enclosing level left. The outermost is
+the one trap, measured under lualatex: a class's `\normalsize` does
+`\let\@listi\@listI` and `\begin{document}` runs it, so a preamble
+`\@listi` stands only under a redefined `\normalsize` that omits the reset
+— as a venue style's does — and otherwise sets exactly the page the
+document sets without it. Asserted on the shipped page against the native
+styles spelled with the values. -/
+def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}\n\\makeatletter\n" ++ pre ++
+      "\n\\makeatother\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let body := "Alpha words.\n\n\\begin{itemize}\n\\item One.\n\\item Two.\n" ++
+    "\\begin{itemize}\n\\item Three.\n\\item Four.\n\\end{itemize}\n\\item Five.\n" ++
+    "\\end{itemize}\n\nBravo words."
+  let keep := "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xiipt}\n"
+  let params := "\\setlength{\\topsep}{9pt plus 1pt minus 2pt}\n" ++
+    "\\setlength{\\itemsep}{3pt plus 1pt}\n\\setlength{\\parsep}{2pt plus 1pt}\n" ++
+    "\\setlength{\\leftmargin}{40pt}\n\\setlength{\\leftmargini}{\\leftmargin}\n"
+  let listi := "\\def\\@listi{\\leftmargin\\leftmargini}\n"
+  let outer := "\\style{itemize}{ indent = 40pt, before = 9pt plus 1pt minus 2pt, " ++
+    "gap = 5pt plus 2pt }\\style{enumerate}{ indent = 40pt, before = 9pt plus 1pt minus 2pt, " ++
+    "gap = 5pt plus 2pt }"
+  let kept := pagesOf oneFace (doc (keep ++ params ++ listi) body)
+  t "a kept \\@listi sets the outermost lists the page their native styles set"
+    (kept == pagesOf oneFace (doc ("\\page{ fontsize = 10pt, leading = 1 }" ++ outer) body))
+  t "a kept \\@listi moves the page" (kept != pagesOf oneFace (doc (keep ++ params) body))
+  t "a class's \\normalsize resets \\@listi: the redefinition sets nothing"
+    (pagesOf oneFace (doc (params ++ listi) body) == pagesOf oneFace (doc params body))
+  let listii := "\\setlength{\\leftmarginii}{30pt}\n\\def\\@listii{\\leftmargin\\leftmarginii\n" ++
+    "\\labelwidth\\leftmarginii \\advance\\labelwidth-\\labelsep\n" ++
+    "\\topsep 4\\p@ \\@plus 1\\p@ \\parsep 1.5\\p@ \\itemsep \\parsep}\n"
+  let inner := "\\style{itemize2}{ indent = 30pt, before = 4pt plus 1pt, gap = 3pt }" ++
+    "\\style{enumerate2}{ indent = 30pt, before = 4pt plus 1pt, gap = 3pt }"
+  let second := pagesOf oneFace (doc listii body)
+  t "a redefined \\@listii sets the second level the page its native style sets"
+    (second == pagesOf oneFace (doc inner body))
+  t "a redefined \\@listii moves the page"
+    (second != pagesOf oneFace (doc "\\setlength{\\leftmarginii}{30pt}" body))
+  let ds := dvE (doc listii body)
+  t "a list level's arithmetic is read with it, never refused as arithmetic"
+    (!ds.any (·.subject == some "ctrl:advance") &&
+      (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 2)
