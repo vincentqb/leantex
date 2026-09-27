@@ -2257,6 +2257,7 @@ structure CellFact where
   scope : String
   cls : String
   text : String
+  colspan : String
   deriving BEq, Repr
 
 mutual
@@ -2275,7 +2276,8 @@ def cellFactsOne (group : String) (acc : Array CellFact) : Html.Node → Array C
         tag := tag
         scope := attr "scope"
         cls := attr "class"
-        text := nodeTextOne "" (.elem tag attrs kids) }
+        text := nodeTextOne "" (.elem tag attrs kids)
+        colspan := attr "colspan" }
     else
       let group := if tag == "thead" || tag == "tbody" then tag else group
       cellFactsList group acc kids.toList
@@ -2403,6 +2405,25 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a midrule after the last row heads every row: thead and no tbody"
     (tableGroupsOne #[] allHead == #[#["colgroup", "thead"]] &&
       (cellFactsOne "" #[] allHead).all (·.tag == "th"))
+  -- A `\multicolumn` head ships once, with `colspan`, its own alignment,
+  -- and no element for the cell it covers; the body rows are untouched.
+  let spanned := tree ("\\begin{tabular}{lrr}\\toprule & \\multicolumn{2}{c}{Head} \\\\ " ++
+    "\\midrule a & 1 & 2 \\\\ \\bottomrule\\end{tabular}")
+  let spannedCells := cellFactsOne "" #[] spanned
+  t "a spanning head is one th with colspan, its covered cell ships no element (fails on base)"
+    (spannedCells.map (fun c => (c.group, c.tag, c.text, c.colspan)) ==
+      #[("thead", "th", "", ""), ("thead", "th", "Head", "2"),
+        ("tbody", "td", "a", ""), ("tbody", "td", "1", ""), ("tbody", "td", "2", "")])
+  t "a spanning head takes its own alignment, not its column's (fails on base)"
+    (match spanned with
+     | .elem _ _ kids => (kids.toList.findSome? fun k => match k with
+         | .elem "thead" _ rs => rs.toList.findSome? fun r => match r with
+             | .elem "tr" _ cs => cs[1]?.bind fun c => match c with
+                 | .elem _ attrs _ => attrs.find? (·.1 == "style")
+                 | _ => none
+             | _ => none
+         | _ => none) == some ("style", "text-align: center")
+     | _ => false)
   -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
   t "an empty table ships its colgroup and no row group"
@@ -2413,8 +2434,10 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fixture, _) ← elabFixture "tables" src
   let (_, body, _) := HtmlDoc.emitTree {} fixture
   let cells := cellFactsList "" #[] body.toList
+  -- a span-covered cell has no element of its own: the head's colspan is it
   let declared := Ir.foldBlocks (fun n b => match b with
-    | .table _ _ _ rows _ _ => n + rows.foldl (fun m r => m + r.size) 0
+    | .table _ _ _ rows _ spans => n + rows.foldl (fun m r => m + r.size) 0
+        - spans.foldl (fun m s => m + (s.n - 1)) 0
     | _ => n) (fun n _ => n) 0 fixture.body
   t "tables fixture: every declared cell ships once"
     (cells.size == declared && declared == 18)

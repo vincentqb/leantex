@@ -638,6 +638,11 @@ private structure St where
   (`listReset`), with the spelling, file and site each was written at: what
   they reach is known only at the preamble's end. -/
   listResets : Array (String × String × String × Pos) := #[]
+  /-- At the top level of a `tabular` body, where the elaborator's tabular
+  arm reads every element itself: a `\multicolumn` there is its to set as a
+  span, so the walk keeps the construct whole. A group or another
+  environment inside the body hides it again. -/
+  tableTop : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -889,6 +894,16 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     -- does not re-name per repeat what once-per-construct says once.
     write id
   say code msg pos (if first then help else none) (demote || !first) (subject := some key)
+
+/-- The one line a `\multicolumn` that does not open a tabular cell prints,
+from either door that meets one (this walk, the tabular arm): every shape
+loses the same thing. -/
+def multicolumnMisplaced : String :=
+  "'\\multicolumn' opens no tabular cell here: its text stays in place, without its \
+span or alignment"
+
+def multicolumnMisplacedHelp : String :=
+  "write \\multicolumn first in a tabular cell"
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
@@ -5231,33 +5246,27 @@ its value is skipped" pos
         (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
     return some (#[], k)
   | "multicolumn" =>
-    -- `\multicolumn{n}{align}{text}`: spans are not modelled, so the text
-    -- fills one cell and cell alignment is its column's. Only the count and
-    -- the alignment are consumed: `text` stays where it stands, so the walk
-    -- rewrites it like any group — a `#1` inside a definition body is the
-    -- definition's parameter, which a kept-but-unwalked group lost. What is
-    -- dropped is named under the construct's own key, one per shape of
-    -- loss, so a counted line is true of every site it counts: a count of 1
-    -- loses only the alignment; a wider one loses the alignment too, and
-    -- any cells after it in the row move left (none at a row's end, LaTeX's
-    -- commonest span, where the table then pads the short row); a count
-    -- that is not a numeral says no more than the one cell.
+    -- `\multicolumn{n}{spec}{text}`. Where the tabular arm reads it — the
+    -- top level of a tabular body — or where the use site decides — the
+    -- head of a definition body, which a use at a cell's head expands —
+    -- the construct stays whole, for the elaborator to set as a span; the
+    -- groups after it are walked like any, so a `#1` in the text is the
+    -- definition's parameter.
+    -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps,
+    -- at a cell's head or by name where it does not open one
+    if (← get).tableTop || ((← get).inDef && skipSpaces raws 0 + 1 == start) then
+      return none
+    -- Anywhere else — mid-cell, inside a group, outside a tabular body —
+    -- no span is set (LaTeX refuses the first two, "Misplaced \omit"). The
+    -- count and the spec are consumed and named, one line for every shape
+    -- since every shape loses the same: its text stays where it stands,
+    -- walked like any group, without a span or an alignment.
     let (gs, k) := takeGroups raws start 2
     let j := skipSpaces raws k
     match gs, raws[j]? with
-    | #[n, _], some (.group _ _) =>
-      match (rawSrc n).trimAscii.toString.toNat? with
-      | some 1 =>
-        sayOnce "ctrl:multicolumn:1" .W0337
-          "'\\multicolumn{1}' alignment is not set: the cell takes its column's alignment" pos
-      | some (_ + 2) =>
-        sayOnce "ctrl:multicolumn" .W0337
-          "'\\multicolumn' spans are not set: its text fills one cell in its column's \
-alignment, and any later cells move left" pos
-      | _ =>
-        sayOnce "ctrl:multicolumn:unread" .W0337
-          "'\\multicolumn' span is not a numeral the engine reads: its text fills one cell \
-in its column's alignment" pos
+    | #[_, _], some (.group _ _) =>
+      sayOnce "ctrl:multicolumn:misplaced" .W0337 multicolumnMisplaced pos
+        (help := multicolumnMisplacedHelp)
       return some (#[], j)
     | _, _ => return none
   | "usefonttheme" =>
@@ -7137,12 +7146,14 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
     let savedLens := (← get).lens
-    write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true }
+    let savedTop := (← get).tableTop
+    write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
+                              tableTop := false }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
     -- A group's assignments end with it (TeXbook ch. 24: an assignment is
     -- local to the group it stands in).
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
-                              lens := savedLens }
+                              lens := savedLens, tableTop := savedTop }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
@@ -7158,7 +7169,10 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
         -- The environment form of the switch: the body takes the language
         -- attribute; the starred form differs only in date handling the
         -- engine does not model. The first group is the language.
+        let savedTop := (← get).tableTop
+        write fun st => { st with tableTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
+        write fun st => { st with tableTop := savedTop }
         let (langArg, j) := takeGroups body' 0 1
         let lname := rawSrc (langArg.getD 0 #[])
         let tag := Locale.babelTagOf lname
@@ -7216,9 +7230,11 @@ steps come from its body" p
         -- a length set inside it ends with it; inside a list, a list
         -- parameter set there is that list's own.
         let st0 ← get
-        write fun st => { st with inList := st.inList || listEnvs.contains n }
+        write fun st => { st with inList := st.inList || listEnvs.contains n,
+                                  tableTop := n == "tabular" || n == "tabular*" }
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        write fun st => { st with lens := st0.lens, inList := st0.inList }
+        write fun st => { st with lens := st0.lens, inList := st0.inList,
+                                  tableTop := st0.tableTop }
         return .env n body' p
   | r => pure r
 

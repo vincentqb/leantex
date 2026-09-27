@@ -1328,8 +1328,8 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        rows.map (·.map Ir.plainText) == #[#["a", "b"], #["c", "d"]]
      | _ => false)
   -- The classic rules, not just booktabs: \hline is a light rule, \cline a
-  -- full-width subrule, and \multicolumn keeps its cell text without the
-  -- span count or alignment spec leaking in beside it.
+  -- full-width subrule, and \multicolumn keeps its cell text, its span
+  -- count and alignment spec a span record rather than text beside it.
   let classicTab := "\\begin{tabular}{ll}\\hline\n" ++
     "\\multicolumn{2}{X}{Head} \\\\ \\cline{1-2}\na & b \\\\ \\hline\\end{tabular}"
   let (ctDoc, ctDs) := elabStr classicTab
@@ -1339,15 +1339,19 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | #[.table _ _ _ _ rules _] =>
        rules == #[(0, .mid), (1, .cmid 1 2 false false), (2, .mid)]
      | _ => false)
-  t "multicolumn keeps only its cell text"
+  t "multicolumn keeps its cell text and records its span"
     (match ctDoc.body with
-     | #[.table cols _ _ rows _ _] =>
+     | #[.table cols _ _ rows _ spans] =>
        let s := String.join (rows.toList.map fun r =>
          String.join (r.toList.map Ir.plainText))
-       -- the span is lost, the short row padded to the grid, and W0337 says so
+       -- the count and spec are the span record, never text; the covered
+       -- cell is empty and the grid rectangular, so no row is ragged; the
+       -- unknown column type is named by the spec reader, and set as `l`
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' &&
          !s.toList.contains 'X' &&
-         rows.all (·.size == cols.size) && ctDs.any (·.code == "W0337")
+         rows.all (·.size == cols.size) && !ctDs.any (·.code == "W0337") &&
+         ctDs.any (·.subject == some "tabular:colspec") &&
+         spans == #[{ row := 0, col := 0, n := 2, spec := { width := .natural, align := .left } }]
      | _ => false)
   -- [standout]: the one frame option that says what the frame IS. It
   -- inverts, centres, and sets Large bold in both backends; the other

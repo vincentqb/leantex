@@ -6114,6 +6114,82 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
       (Ir.titleSize r.geom.fontSize r.slides)
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
 
+/-- Is cell `(i, j)` inside a `\multicolumn`, its head or a cell it covers?
+Such a cell enters no single column's maximum: what it needs is judged
+against every column it spans (`widenAt`). -/
+def inSpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
+  spans.any fun s => s.row == i && s.col ≤ j && j < s.col + s.n
+
+/-- A column's width before spans: an `l`/`c`/`r` column's widest cell
+outside every span, a `p{f\linewidth}` its fraction of the measure, a
+`p{len}` its length. -/
+def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
+    (j : Nat) (spec : Ir.ColSpec) : Sp :=
+  match spec.width with
+  | .natural => nats.zipIdx.foldl (init := 0) fun m (r, i) =>
+      if inSpan spans i j then m else max m ((r[j]?).getD 0)
+  | .frac f => total * f / 1000
+  | .abs w => w
+
+/-- What a span needs across the columns it covers: its text's natural
+width, or the width its own `p{…}` spec declares. -/
+def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
+  match s.spec.width with
+  | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
+  | .frac f => total * f / 1000
+  | .abs w => w
+
+/-- The box a span sets in: the columns it covers and the `2·colsep` gaps
+between them. -/
+def spanBox (colsep : Sp) (widths : Array Sp) (s : Ir.ColSpan) : Sp :=
+  let last := min (s.col + s.n) widths.size
+  (widths.extract s.col last).foldl (· + ·) 0 + 2 * colsep * ((last : Int) - (s.col : Int) - 1)
+
+/-- Column `j` widened by every span that ends at it: TeX's rule for a
+spanned entry (tex.web §801), the span's need less the columns before `j`
+it covers and all its gaps, whenever that exceeds the width `j` has. -/
+def widenAt (colsep total : Sp) (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
+    (widths : Array Sp) (j : Nat) : Array Sp :=
+  spans.foldl (init := widths) fun ws s =>
+    if 0 < s.n && s.col + s.n == j + 1 && j < ws.size then
+      let before := (ws.extract s.col j).foldl (· + ·) 0 + 2 * colsep * ((s.n : Int) - 1)
+      ws.set! j (max ws[j]! (spanNeed total nats s - before))
+    else ws
+
+/-- A table's column widths: each column's base (`colBase`), then column by
+column, in order, the spans that end there (`widenAt`) — so a span reads the
+final widths of the columns before its last, as TeX's formula
+$w_j=\max_{i≤j}(w_{ij}-\sum_{i≤k<j}(t_k+w_k))$ does. -/
+def tableColWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) : Array Sp :=
+  (List.range cols.size).foldl (widenAt colsep total nats spans)
+    (cols.mapIdx fun j spec => colBase total spans nats j spec)
+
+theorem widenAt_nil (colsep total : Sp) (nats : Array (Array Sp)) (ws : Array Sp)
+    (j : Nat) : widenAt colsep total nats #[] ws j = ws := by
+  simp [widenAt]
+
+/-- Outside every span when there is none: with no `\multicolumn`, a
+natural column's base (`colBase`) is its widest cell over every row. -/
+theorem inSpan_nil (i j : Nat) : inSpan #[] i j = false := by
+  simp [inSpan]
+
+/-- A table with no span is exactly its column bases: every `l`/`c`/`r`
+column is its widest cell (`inSpan_nil`), every `p` column its declared
+width, and nothing reads the rest of the measure — `collectTable`'s centring
+moves the box and never widens it. -/
+theorem table_natural_width_exact (colsep total : Sp) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Sp)) :
+    tableColWidths colsep total cols nats #[] =
+      cols.mapIdx (fun j spec => colBase total #[] nats j spec) := by
+  have hfold : ∀ (l : List Nat) (ws : Array Sp),
+      l.foldl (widenAt colsep total nats #[]) ws = ws := by
+    intro l
+    induction l with
+    | nil => intro ws; rfl
+    | cons j rest ih => intro ws; simp only [List.foldl, widenAt_nil, ih]
+  rw [tableColWidths, hfold]
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -6125,7 +6201,7 @@ the measure (a table under `\centering` or inside a float). -/
 private def collectTable (r : Rd) (a0 : Acc)
     (cols : Array Ir.ColSpec) (padL padR : Bool)
     (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
-    (indent : Sp) (center : Bool) : Acc := Id.run do
+    (spans : Array Ir.ColSpan) (indent : Sp) (center : Bool) : Acc := Id.run do
   if cols.isEmpty then
     return a0
   let mut a := a0.flushGap r
@@ -6153,14 +6229,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
   a := { a with hyphCache := cache }
-  let mut widths : Array Sp := #[]
-  for j in [0:cols.size] do
-    let spec := cols[j]!
-    let w : Sp := match spec.width with
-      | .natural => nats.foldl (fun m r => max m ((r[j]?).getD 0)) 0
-      | .frac f => total * f / 1000
-      | .abs w => w
-    widths := widths.push w
+  let widths := tableColWidths colsep total cols nats spans
   let lead : Sp := if padL then colsep else 0
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
@@ -6281,13 +6350,23 @@ private def collectTable (r : Rd) (a0 : Acc)
       let row := rows[i]
       a := { a with ops := a.ops.push (.colOpen #[]) }
       for j in [0:row.size] do
-        let spec := cols[j]?.getD { width := .natural, align := .left }
-        let wj := widths[j]?.getD 0
+        -- a `\multicolumn` head sets across the columns it covers, gaps
+        -- included, by its own spec: a `p{…}` one wraps at its own width
+        let sp := spans.find? fun s => s.row == i && s.col == j
+        let spec := match sp with
+          | some s => s.spec
+          | none => cols[j]?.getD { width := .natural, align := .left }
+        let wj := match sp with
+          | some s => spanBox colsep widths s
+          | none => widths[j]?.getD 0
+        let measureW := match sp, spec.width with
+          | some s, .frac _ | some s, .abs _ => spanNeed total nats s
+          | _, _ => wj
         let x := colX j
         let cell := row[j]!
         unless cell.isEmpty do
           let sub := { a with
-            measure := some (x + wj)
+            measure := some (x + measureW)
             ops := #[]
             wantDefault := false
             owed := #[] }
@@ -7401,8 +7480,8 @@ private def collectCentered (r : Rd) (a : Acc)
       | .picture pic => collectPicture r a pic indent true
       -- A table under \centering (or in a float's centred body) centres
       -- as one box in the measure; its cells keep their own alignment.
-      | .table cols pl pr rows rules _ =>
-        collectTable r a cols pl pr rows rules indent true
+      | .table cols pl pr rows rules spans =>
+        collectTable r a cols pl pr rows rules spans indent true
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
@@ -7677,8 +7756,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.
     collectPicture r a pic indent false
-  | .table cols padL padR rows rules _ =>
-    collectTable r a cols padL padR rows rules indent false
+  | .table cols padL padR rows rules spans =>
+    collectTable r a cols padL padR rows rules spans indent false
   | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound
     -- to the content by the skip `Ir.captionSides` puts on its object side

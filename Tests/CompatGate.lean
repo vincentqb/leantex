@@ -277,16 +277,20 @@ the span and the alignment, and no code named the construct — the one
 diagnostic was the table's padded-row warning, keyed to the table, and a
 one-column realignment drew nothing at all. The kept group was also never
 walked, so a definition's `#1` inside it shipped as a reserved-character
-error and a stray digit. These rows are the census the guard cannot take. -/
+error and a stray digit. These rows are the census the guard cannot take.
+A span that opens a tabular cell is set now (`Ir.ColSpan`); what stays a
+fragment is a `\multicolumn` that opens no cell, reached through either
+door (the tabular arm mid-cell, the rewrite inside a group), and a count
+the engine cannot read. -/
 
 /-- The fragment-keeping arms, one row per shape of loss: what the row
 exercises, the key the loss owes (`ctrl:<key>`), and a usage. A new
 fragment-keeping arm, or a new shape of an old one, enters here. -/
 def fragmentArms : List (String × String × String) :=
-  [("a span", "multicolumn",
-      "\\begin{tabular}{lll}\n\\multicolumn{2}{c}{Spanning} & d \\\\\na & b & c \\\\\n\\end{tabular}"),
-   ("one column", "multicolumn:1",
-      "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}"),
+  [("a span that does not open its cell", "multicolumn:misplaced",
+      "\\begin{tabular}{lll}\na \\multicolumn{2}{c}{Mid} & d & e \\\\\n\\end{tabular}"),
+   ("a span in a group", "multicolumn:misplaced",
+      "\\begin{tabular}{lll}\n{\\multicolumn{2}{c}{Grp}} & d & e \\\\\n\\end{tabular}"),
    ("a count that is not a numeral", "multicolumn:unread",
       "\\begin{tabular}{lll}\n\\multicolumn{\\relax}{c}{Wide} & b & c \\\\\n\\end{tabular}")]
 
@@ -318,28 +322,29 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
       match defDoc.body with
       | #[.table _ _ _ rows _ _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
       | _ => false)
-  -- What the span line says, held at each shape of span: its text fills
-  -- one cell, and any cell written after it moves left by the columns it
-  -- spanned beyond the first — none at a row's end, where nothing moves.
+  -- A span at each shape: its text fills its head cell, and the cells it
+  -- covers stay, empty, in place, so a cell written after it keeps its
+  -- column (the leading shape moved `d` left before spans were set).
   for (what, row, want) in [
-      ("a leading span", "\\multicolumn{2}{c}{Span} & d", #["Span", "d", ""]),
+      ("a leading span", "\\multicolumn{2}{c}{Span} & d", #["Span", "", "d"]),
       ("a trailing span", "a & \\multicolumn{2}{c}{Span}", #["a", "Span", ""]),
       ("a full-row span", "\\multicolumn{3}{c}{Span}", #["Span", "", ""])] do
     let (spanDoc, _) := elabStr (dvDoc "" s!"\\begin\{tabular}\{lll}\n{row} \\\\\n\\end\{tabular}")
-    t s!"fragment arm, {what}: the text fills one cell, and only a later cell moves"
+    t s!"a {what}: the text fills its head cell, and a later cell keeps its column"
       (match spanDoc.body with
        | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.plainText) == #[want]
        | _ => false)
 
 /-! # One span, one visible line
 
-A span of n leaves its row n−1 cells short, because the IR has no cell
-span, so one `\multicolumn` prints two W0337 lines: its own, at the
+A span of n once left its row n−1 cells short, because the IR had no cell
+span, so one `\multicolumn` printed two W0337 lines: its own, at the
 command, and the table's padded-row line, at the table — two spans, which
 `siteCollisions` cannot pair, and two warnings under `--werror` for one
-construct. The rows below are the shapes that do so today, each with the
-change that owes the merge, read in both directions: a row whose probe
-prints one line is stale, and a probe printing two with no row fails. -/
+construct. The IR carries the span now (`Ir.ColSpan`), and a set span
+prints no W0337 at all. The registry below names any shape that still
+prints two, read in both directions: a row whose probe prints one line is
+stale, and a probe printing two with no row fails. -/
 
 /-- Span probes, as (what, preamble, body). -/
 def spanAccountingProbes : List (String × String × String) :=
@@ -355,20 +360,19 @@ def spanAccountingProbes : List (String × String × String) :=
       "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")]
 
 /-- The probes that print two lines for one span today, with what owes the
-merge. -/
-def spanAccounting : List (String × String) :=
-  let owner := "LeanTex/Core/Ir.lean and Elab's tabularArm: a cell that spans its \
-columns leaves no short row, so the padded-row line has nothing left to name"
-  [("a leading span", owner), ("a trailing span", owner), ("a full-row span", owner),
-   ("a span through a definition", owner)]
+merge: none, since the IR carries the span. -/
+def spanAccounting : List (String × String) := []
 
 def spanAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let visible (ds : Array Diag) (key : String) : Bool :=
-    ds.any fun d => d.code == "W0337" && d.severity == .warning && d.subject == some key
+  let visible (ds : Array Diag) (p : String → Bool) : Bool :=
+    ds.any fun d => d.code == "W0337" && d.severity == .warning && (d.subject.map p).getD false
   for (what, pre, body) in spanAccountingProbes do
     let (_, ds) := elabStr (dvDoc pre body)
-    let doubled := visible ds "ctrl:multicolumn" && visible ds "tabular:ragged"
+    let doubled := visible ds (·.startsWith "ctrl:multicolumn") &&
+      visible ds (· == "tabular:ragged")
+    t s!"span accounting {what} (fails on base): a set span prints no W0337"
+      (!visible ds fun _ => true)
     if spanAccounting.any (·.1 == what) then
       t s!"span accounting {what} (fails on base): the row still describes two lines for one span"
         doubled

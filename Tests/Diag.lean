@@ -392,8 +392,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "\\node (a) {A Wide Enough Label};\n" ++
       "\\node (b) [right =of a] {Another Wide Label};\n\\end{tikzpicture}"))
   | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}") ++
-      dvE (dvDoc "" ("\\begin{tabular}{lll}\n\\multicolumn{2}{c}{x} & y \\\\\n" ++
-        "\\multicolumn{1}{r}{z} & a & b \\\\\n\\multicolumn{\\relax}{c}{w} & c & d \\\\\n\\end{tabular}"))
+      dvE (dvDoc "" ("\\begin{tabular}{lll}\n\\multicolumn{\\relax}{c}{w} & c & d \\\\\n" ++
+        "a \\multicolumn{2}{c}{x} & y & z \\\\\n\\end{tabular}"))
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
   -- A frame taller than its page with no [allowframebreaks]: the layout

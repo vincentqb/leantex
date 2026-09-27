@@ -3086,6 +3086,72 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | some (fx, fw), some (cx, cw) => decide (fx < cx && cx + cw < fx + fw)
      | _, _ => false)
 
+/-- `\multicolumn` on the shipped page, TeX's rule for a spanned entry
+(tex.web §801): a span enters no single column's maximum; one wider than
+the columns it covers widens the last of them by exactly its excess; its
+text sets across those columns by its own spec. Judged on `Layout.Out`:
+the table box is the first rule's width, a cell's extent its line's ink.
+Invented content. -/
+def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let out (tab : String) : Layout.Out :=
+    layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++ tab ++
+      "\n\\end{document}")).1
+  let topRule (o : Layout.Out) : Dim.Sp := Id.run do
+    for p in o.pages do
+      for l in p.lines do
+        if l.size == 0 then
+          for sg in l.segs do
+            if let .rule w _ _ _ := sg then
+              return w
+    return 0
+  -- (measure edge, right ink edge) of the first line of page 0 whose text
+  -- holds `needle`: a protruded first glyph hangs left of the measure
+  let extent (o : Layout.Out) (needle : String) : Option (Dim.Sp × Dim.Sp) := Id.run do
+    for p in o.pages.extract 0 1 do
+      for l in p.lines do
+        if hasStr (lineText l) needle then
+          let w := l.segs.foldl (fun a s => match s with
+            | .run _ _ _ w .. => a + w
+            | .gap w _ => a + w
+            | .rule w .. => a + w
+            | .image _ w _ => a + w) (0 : Dim.Sp)
+          return some (l.x + l.hang, l.x + w)
+    return none
+  let tab (spec body : String) : String :=
+    s!"\\begin\{tabular}\{{spec}}\\toprule {body} \\\\\\bottomrule\\end\{tabular}"
+  let plain := topRule (out (tab "lrr" "alpha & 12345 & 67890"))
+  t "a spanning head that fits its columns leaves the table at its column maxima (fails on base)"
+    (topRule (out (tab "lrr" "& \\multicolumn{2}{c}{1234567890} \\\\ alpha & 12345 & 67890")) ==
+      plain && plain > 0)
+  -- the excess goes to the last covered column: the box is the two-column
+  -- table whose second cell is that head
+  let wide := "12345678901234567890123456789012345"
+  let twoCol := topRule (out (tab "lr" s!"alpha & {wide}"))
+  t "a spanning head wider than its columns widens the table by exactly its excess (fails on base)"
+    (topRule (out (tab "lrr" s!"& \\multicolumn\{2}\{c}\{{wide}} \\\\ alpha & 12345 & 67890")) ==
+      twoCol && twoCol > plain)
+  -- centred over its columns: from the second column's left edge (its
+  -- widest `r` cell's x) to the third's right edge (its widest cell's end)
+  let co := out (tab "lrr" "& \\multicolumn{2}{c}{ZZZ} \\\\ alpha & 12345 & 67890")
+  t "a spanned head is centred over the columns it covers (fails on base)"
+    (match extent co "ZZZ", extent co "12345", extent co "67890" with
+     | some (hx, hr), some (ax, _), some (_, br) => ((hx + hr) - (ax + br)).natAbs ≤ 2
+     | _, _, _ => false)
+  let ro := out (tab "ll" "\\multicolumn{1}{r}{QQ} & b \\\\ widewidewide & b")
+  t "a one-column multicolumn sets its own alignment (fails on base)"
+    (match extent ro "QQ", extent ro "widewidewide" with
+     | some (_, qr), some (_, wr) => (qr - wr).natAbs ≤ 2
+     | _, _ => false)
+  -- a declared width: a `p{…}` span wraps at its own width, left, however
+  -- wide the columns it covers
+  let po := out (tab "ll" ("\\multicolumn{2}{p{2cm}}{word word word word word word} \\\\ " ++
+    "widewidewidewide & widewidewidewide"))
+  t "a p-column span wraps at its declared width"
+    (match extent po "word", extent po "widewidewidewide" with
+     | some (px, pr), some (wx, _) => px == wx && pr - px ≤ Dim.pt 57
+     | _, _ => false)
+
 def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- knuth–plass: DP result equals brute-force minimum over all break sequences

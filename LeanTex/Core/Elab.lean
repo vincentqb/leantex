@@ -6890,6 +6890,70 @@ private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
   ∧ visParsGo c.user c.limit = visParsGo ctx.user ctx.limit
   ∧ visWeightGo c.user c.limit = visWeightGo ctx.user ctx.limit }
 
+/-- `\multicolumn{n}{spec}{text}` read from `raws`, whose element `j` is the
+command: the count when it is a numeral; the one column its spec declares,
+read by the table's own spec reader so `p{…}` keeps its width, with what
+that reader names — a `|`, an unknown column type — and an `@{}`, whose pad
+a span does not model; the text group; and the index after it. `none` when
+the three groups are not there. -/
+private def readMulticolumn (raws : Array Raw) (j : Nat) :
+    Option (Option Nat × Ir.ColSpec × Array (String × String × String) × Array Raw × Nat) :=
+  let j0 := skipSpaces raws (j + 1)
+  let j1 := skipSpaces raws (j0 + 1)
+  let j2 := skipSpaces raws (j1 + 1)
+  match raws[j0]?, raws[j1]?, raws[j2]? with
+  | some (.group count _), some (.group spec _), some (.group text _) =>
+    let (cols, padL, padR, warns) := parseColSpec spec
+    let warns := if padL && padR then warns else warns.push ("multicolumn-pad",
+      "'@{}' in a '\\multicolumn' spec is not modelled: the span keeps its column pads", "")
+    some ((Parse.rawSrc count).trimAscii.toString.toNat?,
+      cols[0]?.getD { width := .natural, align := .left }, warns, text, j2 + 1)
+  | _, _, _ => none
+
+/-- The span a `\multicolumn` at a cell's head declares, when its count is
+a numeral, with every loss its spec and count carry named where it stands:
+what the spec reader named, and a count the engine cannot read, whose text
+then fills one cell. -/
+private def spanOf (ctx : Ctx) (count : Option Nat) (spec : Ir.ColSpec)
+    (warns : Array (String × String × String)) (pos : Pos) :
+    EM (Option (Nat × Ir.ColSpec)) := do
+  for (key, msg, help) in warns do
+    warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
+      (help := if help.isEmpty then none else some help)
+  match count with
+  | some c => return some (max c 1, spec)
+  | none =>
+    warnOnce ctx "ctrl:multicolumn:unread" .W0337
+      "'\\multicolumn' span is not a numeral the engine reads: its text fills one \
+cell in its column's alignment" pos
+    return none
+
+/-- A user command at a cell's head whose definition opens with
+`\multicolumn`: the invocation's expansion, and how many elements of `raws`
+it took (the command, at `j`, and its arguments). TeX expands a cell's
+first tokens looking for the `\omit` a `\multicolumn` begins with; the
+expansion is the math path's raw-level one, terminating by definition
+order (`expandMathList`). -/
+private def expandSpanHead (ctx : Ctx) (raws : Array Raw) (j : Nat) (name : String) :
+    Option (Array Raw × Nat) :=
+  (lookupUser ctx name).bind fun (k, cmd) =>
+    if (trimRaws cmd.body)[0]? matches some (Raw.ctrl "multicolumn" _) then
+      let rest := raws.extract (j + 1) raws.size
+      let (bindings, rest') := bindMathArgs cmd.params rest
+      some (trimRaws (expandMathList ctx.user k bindings cmd.body.toList),
+        1 + (rest.size - rest'.size))
+    else none
+
+/-- Close a cell that a `\multicolumn` opened: record its span at the cell
+just pushed, and push the `n − 1` cells it covers, empty, so the grid stays
+rectangular. -/
+private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
+    (row : Nat) : Option (Nat × Ir.ColSpec) → Array Ir.ColSpan × Array (Array Inline)
+  | none => (spans, cells)
+  | some (n, spec) =>
+    (spans.push { row := row, col := cells.size - 1, n := n, spec := spec },
+      cells ++ Array.replicate (n - 1) #[])
+
 /-- The `{tabular}` arm, whole: no recursion into the block walk, so it
 lives outside the knot to keep the pack small. -/
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
@@ -6929,8 +6993,12 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
   let mut rows : Array (Array (Array Inline)) := #[]
   let mut rules : Array (Nat × Ir.TableRule) := #[]
+  let mut spans : Array Ir.ColSpan := #[]
   let mut cells : Array (Array Inline) := #[]
   let mut cellRaws : Array Raw := #[]
+  -- the span a `\multicolumn` at the head of the cell being collected
+  -- declares, recorded when the cell closes
+  let mut spanHere : Option (Nat × Ir.ColSpec) := none
   let mut j := k
   let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
     "cmidrule", "cline", "addlinespace"]
@@ -6939,6 +7007,8 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       match body[j] with
       | .ctrl "\\" bpos =>
         cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        (spans, cells) := closeSpan spans cells rows.size spanHere
+        spanHere := none
         cellRaws := #[]
         rows := rows.push cells
         cells := #[]
@@ -6959,8 +7029,25 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         | _ => pure ()
       | .sym '&' _ =>
         cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        (spans, cells) := closeSpan spans cells rows.size spanHere
+        spanHere := none
         cellRaws := #[]
         j := j + 1
+      | .ctrl "multicolumn" rpos =>
+        -- At a cell's head the text is the cell and the count and spec its
+        -- span; anywhere else LaTeX refuses it, and the text stays in place.
+        match readMulticolumn body j with
+        | some (count, spec, warns, text, next) =>
+          if cellRaws.all isSpaceOrPar && spanHere.isNone then
+            spanHere ← spanOf ctx count spec warns rpos
+          else
+            warnOnce ctx "ctrl:multicolumn:misplaced" .W0337 Compat.multicolumnMisplaced rpos
+              (help := Compat.multicolumnMisplacedHelp)
+          cellRaws := cellRaws.push (.group text rpos)
+          j := next
+        | none =>
+          cellRaws := cellRaws.push body[j]
+          j := j + 1
       | .ctrl name rpos =>
         if ruleNames.contains name &&
             cellRaws.all isSpaceOrPar && cells.isEmpty then
@@ -7003,14 +7090,31 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
               diag ctx .E0304
                 s!"'\\{name}' needs a \{from-to} column range" (some rpos)
         else
-          cellRaws := cellRaws.push body[j]
-          j := j + 1
+          -- A command whose definition opens with `\multicolumn`, at a
+          -- cell's head, is read as the `\multicolumn` it expands to; its
+          -- expansion must stay inside the cell.
+          let head := if cellRaws.all isSpaceOrPar && spanHere.isNone then
+              (expandSpanHead ctx body j name).bind fun (exp, took) =>
+                (readMulticolumn exp 0).bind fun (count, spec, warns, text, next) =>
+                  let tail := exp.extract next exp.size
+                  if tail.any (fun r => r matches .sym '&' _ | .ctrl "\\" _) then none
+                  else some (count, spec, warns, text, tail, took)
+            else none
+          match head with
+          | some (count, spec, warns, text, tail, took) =>
+            spanHere ← spanOf ctx count spec warns rpos
+            cellRaws := (cellRaws.push (.group text rpos)) ++ tail
+            j := j + took
+          | none =>
+            cellRaws := cellRaws.push body[j]
+            j := j + 1
       | r' =>
         cellRaws := cellRaws.push r'
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
     cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+    (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Rectangularity: every walk below trusts `cols.size`.
   let widest := rows.foldl (fun m r => max m r.size) cols.size
@@ -7026,7 +7130,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       "a row carries fewer cells than the column spec; it is \
   padded with empty cells" pos
   rows := Ir.padTableRows rows cols.size
-  blocks := blocks.push (.table cols padL padR rows rules #[])
+  blocks := blocks.push (.table cols padL padR rows rules spans)
   return blocks
 
 /-- One listing block from a lexically blind capture. `{verbatim}` is the

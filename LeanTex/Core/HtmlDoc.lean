@@ -4354,35 +4354,58 @@ theorem tableCellTag_th_iff (headerRows i : Nat) :
 reads the same `ColSpec.align`), the `bt-cmid` class when a `\cmidrule`
 spans its column, and — for a header cell — `scope=col`, the one scope a
 booktabs head declares (HTML §4.9.10: a `th` heading the cells below it).
-The cell's children are the same `inlines` a `td` carried. -/
+A `\multicolumn` head takes its own spec's alignment and `colspan` for the
+columns it covers (HTML §4.9.11), the layout's `spanBox`. The cell's
+children are the same `inlines` a `td` carried. -/
 def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
-    (headerRows i j : Nat) (cell : Array Inline) : Node :=
-  let al := match (cols[j]?.map (·.align)).getD .left with
+    (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
+  let sp := spans.find? fun s => s.row == i && s.col == j
+  let align : Ir.HAlign := match sp with
+    | some s => s.spec.align
+    | none => (cols[j]?.map (·.align)).getD .left
+  let al := match align with
     | .center => #[("style", "text-align: center")]
     | .right => #[("style", "text-align: right")]
     | .left => #[]
+  let al := match sp with
+    | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
+    | none => al
   let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
     then al.push ("class", "bt-cmid") else al
   let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
   Html.elem (tableCellTag headerRows i) (inlines cfg cell) attrs
 
-/-- The cells of row `i`, in column order. -/
+/-- Is cell `(i, j)` covered by a `\multicolumn` head to its left? Such a
+cell has no element of its own: the head's `colspan` is its place. -/
+def coveredBySpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
+  spans.any fun s => s.row == i && s.col < j && j < s.col + s.n
+
+/-- The cells of row `i`, in column order, the span-covered ones left out. -/
 def tableRowCells (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
-    (headerRows i : Nat) (row : Array (Array Inline)) : Array Node :=
-  row.mapIdx fun j cell => tableCellNode cfg cols cmids headerRows i j cell
+    (spans : Array Ir.ColSpan) (headerRows i : Nat) (row : Array (Array Inline)) :
+    Array Node :=
+  (Array.range row.size).filterMap fun j =>
+    if coveredBySpan spans i j then none
+    else some (tableCellNode cfg cols cmids spans headerRows i j (row[j]?.getD #[]))
 
 /-- A cell is a `th` exactly when its row lies in the header prefix — the
 HTML projection of `Ir.tableHeaderRows`, stated over the typed tree the
-table arm builds: the tag at every cell position of row `i` is `th` iff
-`i < headerRows`, whatever the column, the alignment, or the cmid spans. -/
+table arm builds: every cell element of row `i` is `th` iff
+`i < headerRows`, whatever the column, the alignment, the cmid rules, or
+the spans. -/
 theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
-    (cmids : Array (Nat × Nat)) (headerRows i : Nat) (row : Array (Array Inline))
-    (j : Nat) (hj : j < row.size) :
-    ((tableRowCells cfg cols cmids headerRows i row)[j]'(by
-        simp [tableRowCells, hj])).tag? = some "th" ↔ i < headerRows := by
-  simp only [tableRowCells, Array.getElem_mapIdx, tableCellNode, Html.elem, Html.Node.tag?,
-    Option.some.injEq]
-  exact tableCellTag_th_iff headerRows i
+    (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i : Nat)
+    (row : Array (Array Inline)) (nd : Node)
+    (h : nd ∈ tableRowCells cfg cols cmids spans headerRows i row) :
+    nd.tag? = some "th" ↔ i < headerRows := by
+  simp only [tableRowCells, Array.mem_filterMap] at h
+  obtain ⟨j, _, hj⟩ := h
+  split at hj
+  · exact absurd hj (by simp)
+  · simp only [Option.some.injEq] at hj
+    subst hj
+    simp only [tableCellNode, Html.elem, Html.Node.tag?, Option.some.injEq]
+    exact tableCellTag_th_iff headerRows i
 
 /-- booktabs' formal table. Rules land as border classes on the row they
 precede (`-below` on the last row for a rule written after it), and the
@@ -4396,7 +4419,8 @@ neutralises the UA's bold, centred `th` so the raster is the `td` one. A
 `gap` rule and `\cmidrule` end-trimming have no HTML spelling yet; the
 PDF path carries both. -/
 def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
-    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule)) : Node :=
+    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
+    (spans : Array Ir.ColSpan) : Node :=
   let headerRows := Ir.tableHeaderRows rows rules
   let ruleAt (i : Nat) : Array Ir.TableRule :=
     rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
@@ -4428,7 +4452,7 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     let cmids := (ruleAt i).foldl (fun out r => match r with
       | .cmid a b _ _ => out.push (a, b)
       | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
-    Html.elem "tr" (tableRowCells cfg cols cmids headerRows i row)
+    Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row)
       (if cls.isEmpty then #[] else #[("class", cls)])
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
     ++ (if padR then "" else " nopadr")
@@ -5572,7 +5596,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   | .picture pic => pictureSvg cfg pic
   -- booktabs' formal table: `tableNode` above, where the header projection
   -- theorem (`th_iff_header_row`) can read the row builder.
-  | .table cols padL padR rows rules _ => tableNode cfg cols padL padR rows rules
+  | .table cols padL padR rows rules spans => tableNode cfg cols padL padR rows rules spans
   -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
   -- object; the caption keeps its source-order side. The gaps are the
   -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with
