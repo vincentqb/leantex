@@ -17,14 +17,45 @@ namespace LeanTex.Core.Bib
 
 open LeanTex.Core
 
-/-- How a citation renders inline (natbib manual §2.3): numeric prints
-`[3]` for `\citep` and `Author et al. [3]` for `\citet`; author-year
-prints `(Author et al., 2024)` and `Author et al. (2024)`. Closed: a new
-citation style is one arm in `renderCite`, not a rewrite. -/
-inductive CiteStyle where
-  | numeric
-  | authorYear
+/-- natbib's citation punctuation: the seven values `\bibpunct` sets
+(natbib.sty `\NAT@open`, `\NAT@close`, `\NAT@sep`, the mode letter,
+`\NAT@aysep`, `\NAT@yrsep`, `\NAT@cmt`), each at natbib's own load
+value. -/
+structure CitePunct where
+  numbers : Bool := false
+  «open» : String := "("
+  close : String := ")"
+  sep : String := ";"
+  aysep : String := ","
+  yysep : String := ","
+  notesep : String := ", "
   deriving Repr, BEq, Inhabited
+
+/-- `\setcitestyle`'s keywords (natbib.sty `\setcitestyle`, the package
+options by the same names): each a row, read in the order written. -/
+def citeKeywords : List (String × (CitePunct → CitePunct)) :=
+  [("round", fun p => { p with «open» := "(", close := ")" }),
+   ("square", fun p => { p with «open» := "[", close := "]" }),
+   ("angle", fun p => { p with «open» := "<", close := ">" }),
+   ("curly", fun p => { p with «open» := "{", close := "}" }),
+   ("semicolon", fun p => { p with sep := ";" }),
+   ("colon", fun p => { p with sep := ";" }),
+   ("comma", fun p => { p with sep := "," }),
+   ("authoryear", fun p => { p with numbers := false }),
+   ("numbers", fun p => { p with numbers := true })]
+
+/-- One declaration over the punctuation and natbib's `\bibstyle` door, the
+door a bibliography style's own punctuation comes through at
+`\begin{document}`: `nobibstyle` closes it and `bibstyle` reopens it
+(natbib's option names), a keyword updates the punctuation, and anything
+else leaves both as they were — natbib reads an unknown keyword as
+nothing. -/
+def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
+  if d == "nobibstyle" then (st.1, false)
+  else if d == "bibstyle" then (st.1, true)
+  else match citeKeywords.lookup d with
+    | some f => (f st.1, st.2)
+    | none => st
 
 /-- How the reference list is ordered: `citation` keeps first-citation
 order (the "unsrt" in `unsrtnat`); `authorYear` sorts by the label names,
@@ -98,7 +129,10 @@ structure NameFormat where
 `plainnat` are records of this type; so is the fallback an unknown
 `\bibliographystyle` gets (W0353) — a record, not a code path. -/
 structure Style where
-  cite : CiteStyle
+  /-- The punctuation natbib's `\bibstyle@<name>` row gives the style
+  (natbib.sty): a `\bibpunct` that sets every value, so an open door
+  replaces whatever was declared before it. -/
+  punct : CitePunct
   sort : SortOrder
   /-- Sentences of fields per entry kind: fields inside a sentence join
   with `, `, sentences close with `.` — the shared punctuation model every
@@ -171,27 +205,6 @@ def citeFullAuthors (e : Entry) : String :=
   match e.field? "author" with
   | some a => fullNames a
   | none => e.key
-
-/-- natbib's citation punctuation: the seven values `\bibpunct` sets
-(natbib.sty `\NAT@open`, `\NAT@close`, `\NAT@sep`, the mode letter,
-`\NAT@aysep`, `\NAT@yrsep`, `\NAT@cmt`), each at natbib's own load
-value. -/
-structure CitePunct where
-  numbers : Bool := false
-  «open» : String := "("
-  close : String := ")"
-  sep : String := ";"
-  aysep : String := ","
-  yysep : String := ","
-  notesep : String := ", "
-  deriving Repr, BEq, Inhabited
-
-/-- The punctuation a citation style draws with: numeric is LaTeX's own
-`\cite` (latex.ltx `\@cite`: `[1, 2]`), author-year natbib's load
-values. -/
-def CiteStyle.punct : CiteStyle → CitePunct
-  | .numeric => { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
-  | .authorYear => {}
 
 /-- What one key prints: its names and year, its names alone, or its year
 alone — natbib.sty's `\NAT@ctype` 0, 1 and 2. -/
@@ -453,32 +466,47 @@ def renderEntry (nf : NameFormat) (order : Array (Array Field)) (e : Entry) :
       out := (out ++ sent).push (.text ".")
   return out
 
-/-- `unsrtnat`: numeric citations, the reference list in first-citation
-order (the "unsrt"), the standard field orders, full names — what
+/-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
+share (natbib.sty: `\bibpunct{[}{]}{,}{a}{,}{,}`): author-year, square
+brackets, a comma between citations. -/
+def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
+
+/-- natbib's `\bibstyle@plain` row, which `abbrv` and `unsrt` share
+(`\bibpunct{[}{]}{,}{n}{}{,}`): numbers in square brackets, LaTeX's own
+`\cite` too (latex.ltx `\@cite`, `[1, 2]`). These styles write no
+author-year label into a `\bibitem`, so natbib reads them in numbers mode
+whatever was declared. -/
+def latexPunct : CitePunct :=
+  { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
+
+/-- `unsrtnat`: the reference list in first-citation order (the "unsrt"),
+the standard field orders, full names, natbib's author-year row — what
 `unsrtnat.bst` is, as one record. -/
 def Style.unsrtnat : Style where
-  cite := .numeric
+  punct := natPunct
   sort := .citation
   order := standardOrder
   names := {}
 
-/-- `plainnat`: author-year citations over the same field orders and
-names, the list sorted by author then year (natbib manual §4: plainnat is
-the author-year companion of plain). -/
+/-- `plainnat`: the same fields and names, the list sorted by author then
+year (natbib manual §4: plainnat is the author-year companion of plain). -/
 def Style.plainnat : Style where
-  cite := .authorYear
+  punct := natPunct
   sort := .authorYear
   order := standardOrder
   names := {}
 
-/-- `plain`: what the record model buys — plain.bst is numeric citations
-over an author-sorted list, a third style that is zero new code, only a
-third pairing of the same two axes. -/
+/-- `plain`: what the record model buys — plain.bst is numbers over an
+author-sorted list, zero new code, only another pairing of the axes. -/
 def Style.plain : Style where
-  cite := .numeric
+  punct := latexPunct
   sort := .authorYear
   order := standardOrder
   names := {}
+
+/-- `unsrt`: `plain` in first-citation order, as unsrt.bst is. -/
+def Style.unsrt : Style :=
+  { Style.plain with sort := .citation }
 
 /-- The name format the abbrv-shaped styles share: first names abbreviate
 to initials, first-first order — `{f.~}{vv~}{ll}{, jj}` in both abbrv.bst
@@ -498,12 +526,32 @@ abbrv.bst has to plain.bst. -/
 def Style.abbrv : Style :=
   { Style.plain with names := abbrvNames }
 
+/-- The punctuation a document's citations draw with — natbib's rule. No
+natbib is LaTeX's own `\cite` (`latexPunct`). With natbib, its
+declarations replay over its load values (`CitePunct.step`); then, while
+natbib's `\bibstyle` door stays open, the declared style's row replaces
+them all at `\begin{document}`, and a style that writes no author-year
+labels puts natbib in numbers mode whatever was declared (natbib.sty
+reading a `\bibitem` without one). A document that declares no style has
+no row to apply. -/
+def CitePunct.ofDoc (natbib : Option (Array String)) (style : Option Style) : CitePunct :=
+  match natbib with
+  | none => latexPunct
+  | some decls =>
+    let (p, door) := decls.foldl CitePunct.step ({}, true)
+    match style with
+    | none => p
+    | some s =>
+      let p := if door then s.punct else p
+      if s.punct.numbers then { p with numbers := true } else p
+
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
 the caller falls back to `unsrtnat` — a record, so the fallback loses the
 name, never the machinery. -/
 def Style.named (name : String) : Option Style :=
   match name with
-  | "unsrtnat" | "unsrt" => some .unsrtnat
+  | "unsrtnat" => some .unsrtnat
+  | "unsrt" => some .unsrt
   | "plainnat" => some .plainnat
   | "plain" => some .plain
   | "abbrvnat" => some .abbrvnat
@@ -575,14 +623,14 @@ def resolveEntries (style : Style) (cited : Array String)
   (sorted.toArray.mapIdx fun i r => { r with position := i + 1 })
 
 /-- The items a `\bibliography` block ships: each resolved entry formatted
-per the style, its marker the style's own (the position for numeric,
-nothing for author-year — those lists mark no entries). -/
-def bibItems (style : Style) (resolved : Array Resolved) : Array Ir.BibItem :=
+per the style, marked by its position in numbers mode and by nothing in
+author-year mode — natbib's `\@biblabel` is the number there and an
+empty hanging label here. -/
+def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
+    Array Ir.BibItem :=
   resolved.map fun r =>
     { key := r.key
-      marker := match style.cite with
-        | .numeric => some (toString r.position)
-        | .authorYear => none
+      marker := if p.numbers then some (toString r.position) else none
       content := renderEntry style.names (style.order r.entry.kind) r.entry }
 
 /-! ### The theorems the four-axis shape earns
@@ -590,7 +638,7 @@ def bibItems (style : Style) (resolved : Array Resolved) : Array Ir.BibItem :=
 Each axis being a pure function is what makes these statable; a
 transcribed `.bst` has none of them. -/
 
-/-- Numbering is the sort position: in a numeric style, the marker of the
+/-- Numbering is the sort position: in numbers mode, the marker of the
 reference list's `i`-th entry is its 1-based index in the sorted list —
 the fact every `\cite` mark rests on, `positions_exact` below being the
 half that says the positions the marks look up are those same indices.
@@ -600,9 +648,9 @@ but over a different data shape (a counter threaded through a tree walk,
 not a `mapIdx` over a sorted list). Deliberately not unified: a shared
 "consecutive assignment" lemma would leave each proof's hard part — here a
 one-line `simp`, there the tree induction — untouched. -/
-theorem bibItems_marker_exact (style : Style) (resolved : Array Resolved)
-    (h : style.cite = .numeric) (i : Nat) (hi : i < resolved.size) :
-    (bibItems style resolved)[i]?.bind (·.marker) =
+theorem bibItems_marker_exact (p : CitePunct) (style : Style) (resolved : Array Resolved)
+    (h : p.numbers = true) (i : Nat) (hi : i < resolved.size) :
+    (bibItems p style resolved)[i]?.bind (·.marker) =
       some (toString (resolved[i].position)) := by
   simp [bibItems, Array.getElem?_map, Array.getElem?_eq_getElem hi, h]
 
@@ -993,17 +1041,19 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
       for e in parsed.entries do
         unless entries.any (·.key == e.key) do
           entries := entries.push e
-  let style ← do
+  let declared ← do
     match Ir.bibStyleName doc with
-    | none => pure Style.unsrtnat
+    | none => pure none
     | some name =>
       match Style.named name with
-      | some s => pure s
+      | some s => pure (some s)
       | none =>
         diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
           one the engine knows; the reference list is set as 'unsrtnat'"
           (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv"))
-        pure Style.unsrtnat
+        pure (some Style.unsrtnat)
+  let style := declared.getD Style.unsrtnat
+  let p := CitePunct.ofDoc doc.natbib declared
   let cited := citedKeys doc
   let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id
   unless requested.isEmpty do
@@ -1016,7 +1066,7 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
           (subject := some k))
   let resolved := resolveEntries style cited findEntry
   let find : Resolver := fun k => resolved.find? (·.key == k)
-  return (style.cite.punct, find, bibItems style resolved, diags)
+  return (p, find, bibItems p style resolved, diags)
 
 def apply (sources : Array (String × String)) (doc : Ir.Doc) : Ir.Doc × Array Diag :=
   match analyse sources doc with

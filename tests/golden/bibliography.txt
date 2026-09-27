@@ -141,7 +141,7 @@ bibliography "refs" style "unsrtnat"
     text "2017"
     text "."
 -- diagnostics
-note[N0100] 4:1 '\usepackage{natbib}' → nothing: the engine does this itself
-warning[W0340] 14:1 '\allow' is a declaration; in the body it is ignored | help: declare it in the preamble, before '\begin{document}'
+note[N0100] 5:1 '\usepackage[numbers]{natbib}' → natbib's citation punctuation, read at \begin{document}
+warning[W0340] 15:1 '\allow' is a declaration; in the body it is ignored | help: declare it in the preamble, before '\begin{document}'
 warning[W0352] 3:1 malformed .bib entry: '@string' opens with no '{' or '('; the entry is skipped and the rest of 'refs' is kept
 warning[W0351] - citation 'ghost' has no entry in the bibliography; it shows as '?' | help: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite

@@ -1373,6 +1373,46 @@ engine does not have; continuous numbers in the left margin stand" pos
     "usepackage:lineno" pos
   return out
 
+/-- natbib's package options in its own declaration order (natbib.sty's
+`\DeclareOption`s — `\ProcessOptions` runs them in this order, whatever
+order a load lists them in), each as the declarations it executes in
+`\setcitestyle`'s vocabulary: `numbers` is `numbers` with `square`, `comma`
+and `nobibstyle` there. `nobibstyle`/`bibstyle` are natbib's own names for
+closing and reopening the door a bibliography style's punctuation comes
+through (`Bib.CitePunct.step` reads them). -/
+def natbibOptions : List (String × List String) :=
+  [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
+   ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
+   ("round", ["round", "nobibstyle"]), ("square", ["square", "nobibstyle"]),
+   ("angle", ["angle", "nobibstyle"]), ("curly", ["curly", "nobibstyle"]),
+   ("comma", ["comma", "nobibstyle"]), ("semicolon", ["semicolon", "nobibstyle"]),
+   ("colon", ["semicolon", "nobibstyle"]),
+   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"])]
+
+/-- Carry natbib declarations to the document: the `@natbib` marker, one
+word per declaration, replayed at `\begin{document}` — where natbib reads
+the bibliography style back from the `.aux` — for the body elaborator to
+collect (`Ir.Doc.natbib`). -/
+private def natbibDefer (decls : Array String) (pos : Pos) : M Unit :=
+  write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
+    #[.ctrl "@natbib" pos, .group (decls.map (.word · pos)) pos]) }
+
+/-- `\usepackage[...]{natbib}`: the load, its options as declarations in
+natbib's order. An option outside the punctuation vocabulary (`sort`,
+`compress`, `super`, `longnamesfirst`, …) is named and dropped. -/
+private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
+  let given := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let decls := natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
+    if given.contains o then acc.appendList ds else acc
+  let dropped := given.filter fun o => !natbibOptions.any (·.1 == o)
+  unless dropped.isEmpty do
+    say .W0101 s!"'natbib' options without a native equivalent were dropped: \
+{String.intercalate ", " dropped}" pos
+  became (if given.isEmpty then s!"\\{name}\{natbib}" else s!"\\{name}[{opt}]\{natbib}")
+    "natbib's citation punctuation, read at \\begin{document}" pos
+  natbibDefer decls pos
+  return #[]
+
 /-- lineno's switch and modulo commands (lineno.sty, the user-commands
 section), natively the declared page keys. `\linenumbers` and
 `\runninglinenumbers` turn running numbers on — the one mode shipped —
@@ -4329,6 +4369,20 @@ engine reads one .bib per document, so it is skipped" pos
           (help := "merge the entries into the first .bib file")
       return some (#[], k)
     else return none
+  | "bibliographystyle" =>
+    -- LaTeX reads the style anywhere before the `.aux` is written, and
+    -- natbib reads it back at `\begin{document}`. The preamble elaborator
+    -- does not take it, so a preamble declaration replays there, where the
+    -- body arm carries it to the `\bibliography` marker.
+    if (← get).inDoc || (← get).seam then return none
+    let (args, k) := takeGroups raws start 1
+    match args[0]? with
+    | some g =>
+      became "\\bibliographystyle" "read at \\begin{document}, as natbib reads the .aux" pos
+      write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
+        #[.ctrl "bibliographystyle" pos, .group g pos]) }
+      return some (#[], k)
+    | none => return none
   | "printbibliography" =>
     -- The list prints here (biblatex manual §3.7.2), from the resources
     -- declared above; its options (heading=, title=) restyle a heading
@@ -5406,6 +5460,8 @@ captions and patterns stand in" pos
               (help := "the engine ships locale records for: en, fr, de")
         | none =>
           discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+      else if p == "natbib" then
+        out := out ++ (← natbibLoad name (opt.getD "") pos)
       else if p == "biblatex" then
         -- biblatex's style options (biblatex manual §3.1.1: style defaults
         -- to numeric, sorting to nty — name-title-year) select onto the
@@ -5431,6 +5487,9 @@ captions and patterns stand in" pos
           became s!"\\usepackage[style={style}]\{biblatex}"
             s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
           write fun st => { st with bibStyle := some s }
+          -- authoryear's round brackets and semicolons are natbib's own load
+          -- values; the style's square-bracket row stays out.
+          if s == "plainnat" then natbibDefer #["nobibstyle"] pos
         | none =>
           say .W0353 s!"bibliography style '{style}' is not one the engine \
 knows; the reference list is set as 'unsrtnat'" pos

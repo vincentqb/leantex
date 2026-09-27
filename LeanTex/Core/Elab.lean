@@ -413,6 +413,10 @@ structure ESt where
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
   bibStyle : Option String := none
+  /-- natbib's declarations, as `Doc.natbib` carries them: `none` until the
+  load's marker (`@natbib`, which the compatibility pass replays at
+  `\begin{document}`) says natbib is there. -/
+  natbib : Option (Array String) := none
   /-- The family a `\url`/`\nolinkurl` sets in, from url.sty's `\urlstyle`:
   `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
   running face, which is `none` — no family style at all, not a fourth
@@ -4857,7 +4861,7 @@ one-line entry) produces one, so it is a block too. -/
 def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
-      || n == "bibliography" || n == "bibliographystyle"
+      || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
       -- A definition or a counter command makes the body
       -- declaration-shaped: it must expand through the block walk,
       -- where the define door and the counter arm stand.
@@ -9574,7 +9578,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         n == "par" || n == "block" || n == "centering" || n == "pause"
           || (Ir.raggedSideOf? n).isSome
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
-          || n == "bibliography" || n == "bibliographystyle"
+          || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
           || (n == "note" && cur.isEmpty)
           -- A declaration met between blocks scopes the rest of the group,
           -- as `\centering` does (the arm below); mid-paragraph it keeps
@@ -9889,16 +9893,21 @@ a side channel, never slide content" cpos
         have ht2 : slicePars raws j2 ≤ slicePars raws i :=
           slicePars_le raws (by omega)
         elabBlocksGo ctx' raws j2 blocks #[] gen'
-      else if n == "bibliographystyle" then
+      else if n == "bibliographystyle" || n == "@natbib" then
         -- The declared style rides the state to the `\bibliography`
         -- marker; resolution reads it from the block (W0353 there names
-        -- an unknown one).
+        -- an unknown one). natbib's marker carries its declarations, one
+        -- word each (`Compat.natbibLoad`), to the document.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
           pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
         match raws[j]? with
         | some (.group body _) =>
-          modify fun st => { st with
-            bibStyle := some (rawSrc body).trimAscii.toString }
+          modify fun st => if n == "@natbib" then
+              { st with natbib := some ((st.natbib.getD #[]) ++ body.filterMap fun r =>
+                  match r with
+                  | .word w _ => some w
+                  | _ => none) }
+            else { st with bibStyle := some (rawSrc body).trimAscii.toString }
           have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
@@ -12960,6 +12969,7 @@ declare \\assert\{ pages <= N } to take control" }
     output := output
     asserts := asserts
     allow := allow
+    natbib := (← get).natbib
     pictureTool := ctx.picTool
     pictureSrcs := (← get).pictures
     picturePreamble := ctx.picPreamble

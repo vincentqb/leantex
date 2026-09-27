@@ -13,10 +13,12 @@
 # A style option and \addbibresource are bindings read at the
 # \printbibliography site (inert:binds): they move no ink where they stand,
 # and \printbibliography with no file declared draws nothing and says so.
+# authoryear also declares its punctuation document-wide — natbib's round
+# brackets and semicolons, not plainnat's square row — so its load is impl.
 # The drawn evidence is the citation rows below.
 pre inert:binds \usepackage[style=numeric]{biblatex}
 pre inert:binds \usepackage[style=numeric,sorting=none]{biblatex}
-pre inert:binds \usepackage[style=authoryear]{biblatex}
+pre impl \usepackage[style=authoryear]{biblatex}
 pre refuse:W0353 \usepackage[style=alphabetic]{biblatex}
 pre inert:binds \addbibresource{refs.bib}
 body inert:no-bib-file \printbibliography

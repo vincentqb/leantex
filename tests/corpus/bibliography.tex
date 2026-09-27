@@ -1,7 +1,8 @@
 % Citations and the bibliography: natbib's citation forms over a .bib file
-% beside the document, unsrtnat's numeric first-citation-order rendering.
+% beside the document, numbers in unsrtnat's first-citation order — natbib's
+% numbers option; its bare load sets unsrtnat author-year.
 \documentclass{article}
-\usepackage{natbib}
+\usepackage[numbers]{natbib}
 \begin{document}
 
 A first claim \citep{roe2020}, and one by name: \citet{doe2024} showed it

@@ -1,10 +1,14 @@
 # source: natbib manual §2.3 (basic citation commands), §2.4 (starred and
 # capitalized variants, \citetext/\citenum), §2.5 (aliases and style:
-# \defcitealias, \setcitestyle, \bibpunct), and natbib.sty's own command
-# table and header. The citation commands are one table
-# (Ir.natbibCites) read by one arm, and one renderer (Bib.renderCite)
-# draws every form under the document's punctuation; the lines lualatex
-# sets for each row are natbibChecks' expectations.
+# \defcitealias, \setcitestyle, \bibpunct), §2.9 (package options), and
+# natbib.sty's own command table, option list and header. The citation
+# commands are one table (Ir.natbibCites) read by one arm, and one
+# renderer (Bib.renderCite) draws every form under the document's
+# punctuation: the load's options and the preamble's declarations
+# replayed over natbib's load values, then the bibliography style's own
+# row while natbib's \bibstyle door stays open (Bib.CitePunct.ofDoc).
+# The options outside the punctuation vocabulary are named and dropped.
+# The lines lualatex sets for each row are natbibChecks' expectations.
 body impl \citep{k}
 body impl \citet{k}
 body impl \cite{k}
@@ -32,7 +36,31 @@ body refuse:W0301 \citetalias{k}
 body refuse:W0301 \citepalias{k}
 pre refuse:W0301 \setcitestyle{square}
 pre refuse:W0301 \bibpunct{(}{)}{;}{a}{,}{,}
+pre impl \usepackage[numbers]{natbib}
+pre impl \usepackage[authoryear]{natbib}
+pre impl \usepackage[round]{natbib}
+pre impl \usepackage[square]{natbib}
+pre impl \usepackage[angle]{natbib}
+pre impl \usepackage[curly]{natbib}
+pre impl \usepackage[comma]{natbib}
+pre impl \usepackage[semicolon]{natbib}
+pre impl \usepackage[colon]{natbib}
+pre impl \usepackage[nobibstyle]{natbib}
+pre impl \usepackage[bibstyle]{natbib}
+pre refuse:W0101 \usepackage[super]{natbib}
+pre refuse:W0101 \usepackage[sort]{natbib}
+pre refuse:W0101 \usepackage[compress]{natbib}
+pre refuse:W0101 \usepackage[sort&compress]{natbib}
+pre refuse:W0101 \usepackage[longnamesfirst]{natbib}
+pre refuse:W0101 \usepackage[sectionbib]{natbib}
+pre refuse:W0101 \usepackage[nonamebreak]{natbib}
+pre refuse:W0101 \usepackage[openbib]{natbib}
+pre refuse:W0101 \usepackage[mcite]{natbib}
+pre refuse:W0101 \usepackage[merge]{natbib}
+pre refuse:W0101 \usepackage[elide]{natbib}
+pre inert:binds \bibliographystyle{plainnat}
 body impl \bibliographystyle{plainnat}
+body impl \bibliographystyle{unsrtnat}
 body impl \bibliographystyle{abbrvnat}
 body impl \bibliographystyle{abbrv}
 body impl \bibliography{refs}

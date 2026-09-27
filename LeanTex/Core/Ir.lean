@@ -6158,6 +6158,14 @@ structure Doc where
   accepts. The driver downgrades those errors to warnings and always prints
   the acceptance, so it is declared and visible, never ambient. -/
   allow : Array String := #[]
+  /-- natbib as the document declared it: `none` when natbib is not loaded —
+  LaTeX's own `\cite` then, numbers in square brackets — and otherwise its
+  punctuation declarations in the order natbib applies them, in its own
+  `\setcitestyle` vocabulary: a load's options expanded in natbib's
+  declaration order, then each preamble `\setcitestyle`. Resolution replays
+  them against the bibliography style (`Bib.CitePunct.ofDoc`), because the
+  style may be declared after every citation. -/
+  natbib : Option (Array String) := none
   /-- The boundary tool in force: the external TeX the driver runs for
   pictures outside the rendered subset — the document's pin
   (`\pictures{ tool = lualatex }`, or the `\tikzexternalize` spelling) or
