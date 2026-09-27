@@ -20657,3 +20657,120 @@ sectioning, a `* + section` rule whose value follows the heading row).
 mode. The alternative is a derived dark palette — each declared colour
 realized against the dark ground, the way the title page's roles already
 are — which is a design choice, not a repair.
+
+
+### 2026-09-27 — a LaTeX-spelled card ships as its author drew it: the fill kept, the marks drawn, the trim named, the version written
+
+The user reported the business card messed up, and that the engine showed no
+taste in what to reproduce and what to adjust. The card is a private
+document, a LaTeX article whose geometry makes the paper the trim plus its
+bleed, centres two short lines between two `\vspace*{\fill}`, draws its own
+printer's marks from a `shipout/background` picture, declares its page boxes
+through `\pdfvariable pageattr` in a `shipout/before` hook, and declares its
+PDF version for its print shop. Built at `da9b049d` and rasterized at
+300 dpi against lualatex, both faces were set top-flush, no mark shipped, the
+file said trim equals medium, and the header said 2.0. The card's own print
+checks (its build's `check` recipe: boxes, marks sampled at 600 dpi, fonts,
+strings) failed three of fourteen on the engine's PDF and none on
+lualatex's. A correction to the brief: the `card.pdf` beside the card's
+source was the engine's own output (its Producer says so), not a lualatex
+build, so the reference was rebuilt with lualatex from a scratch copy.
+
+What to reproduce was never in question: every one of these is a decision
+the author wrote down. Four units, each with its guard failing on the
+broken code.
+
+**A fill before an element's space survives it.** ltspace.dtx's `\addvspace`
+tests `\ifdim\lastskip=\z@` first and adds when the last skip has zero
+natural width; `Acc.addvspace` compared widths only, so a `center`'s
+`\topsep` replaced the `\vspace*{\fill}` before it and the sandwich lost its
+upper fil. The rule is now LaTeX's (`addvspace_zero_adds_exact`), and
+`filChecks` holds the artifact: a trivlist between two fills stands where
+its two spaces written as plain skips stand. On the card both faces are
+centred again, within 1.3 bp and 0.5 bp of lualatex's baselines; the rest is
+the leading below and the closing `\topsep` the page close does not yet
+count as content, which is rhythm-fix's F4 (`B.contentEnd`).
+
+**A driver option asks for nothing shown.** geometry's and crop's driver
+names (`dvips=false`, `pdftex`, `driver=...`) and geometry's `verbose` say
+how a DVI or PDF backend is handed the paper and the marks; this engine is
+its own writer. `Compat.driverOptions` is the one list both readers consult,
+each gate pinned to `driverOptionChecks`: with and without the options the
+PDF bytes agree, and no loss is named. An option with meaning (`showframe`)
+is still named.
+
+**A shipout picture's rules are drawn, and cut marks name the trim.** Compat
+reads a `shipout/background` or `shipout/foreground` hook as the rules it
+draws: `\put` moves the reference point for its group, `\color` inks the rest
+of it, `\rule` stands on the point, a `picture` environment opens a group,
+and a parameterless drawing macro is read one level deep, where shipout
+expands it. The reading is one pass over the hook flattened to TeX's own
+shape, a token stream with explicit brackets (`picFlatList`, structural), so
+macro expansion needs no fuel: a spliced body is flattened by the
+non-splicing instance of the same walk. Coordinates become native
+expressions over the lengths the document declared, and the rules reach
+`Ir.PageSpec.drawn` through `\page{ rule = ... }`; every page ships them as
+drawn, in the ink named. Anything else in the hook — text, another command,
+an offset reference point, a length never declared — reads nothing, and the
+hook stays skipped by name. Eight rules that are exactly `cutMarks` of one
+trim, compared as sets, declare that trim (`Layout.drawnTrim`): the thickness
+is read off the leftmost top mark's width, the inset off its centre line,
+the gap off its length, all inside the geometry `cutmarks_in_bleed_covers`
+assumes, so the drawn set is one the mark theorems hold of. The medium stays
+the page — the page ground still covers it, as `\pagecolor` does — and the
+PDF names the trim through the same `pageBoxes` arithmetic a declared bleed
+uses (`Geom.trimInset`). `drawnMarkChecks` holds a synthetic card with
+invented lengths; five of its checks fail with the hook reader switched off,
+and the same source through the shipped CLI, base against head against
+lualatex, draws the marks within 0.001 bp of lualatex's strokes.
+
+**The PDF version is the document's.** `pdfversion=1.7` lands on
+`\pdfmeta{ version }`. A 1.7 file keeps its structure tree, in 1.7's one
+standard namespace: no namespace objects, and the 2.0-only types role-mapped
+onto 1.7's (`Pdf.pdf17Role`). So the engine writes the version lualatex
+writes and stays tagged where lualatex's file is not. `pdfVersionChecks`
+holds it; any other version stays named.
+
+**Measured.** The card's print checks now pass fourteen of fourteen on the
+engine's PDF. Base against head over the other private documents: the
+paper, the deck, the résumé and the site ship identical rasters at 72 dpi,
+the same page counts, and no new diagnostic; the paper and the card each
+lose their driver-key W0101. The card's remaining warnings are `\edef` (the
+`pageattr` values are computed by expansion) with the `shipout/before` hook
+it feeds, and the contrast of its accent on white. The boxes that hook
+declares are the boxes the engine now writes, but from the marks: the hook's
+own values stay unread until `\edef` has an evaluator, so its warning
+stands, truthfully.
+
+**Measured and routed, each to its site.** Kerning: pair adjustments never
+reach any PDF — `setLine` drops the per-glyph advance (Layout, the
+`glyphs.map` in `setLine`), `Seg.run` has no field for it, and
+`PdfContent.stepRun` paints nominal widths, so a kerned run is measured
+narrower than it is painted (12 bp over a 20-glyph centred line in the test
+serif); separately `Font.parseKernSubs` rejects extension lookups (type 9),
+which is how many fonts carry their pairs, the corpus sans among them.
+Protrusion: `doProt := protrude && justify && !m.fil` in `setLine` gives no
+ragged line and no last line any, where microtype protrudes both. Leading:
+one ratio (`Ir.leadingMilli`) for every size, where size10.clo sets
+`\LARGE` at 17.28/22 and `\large` at 12/14, and `lineExtent` receives a size
+but not the step it came from — the rhythm owner's factorization. The first
+baseline: the engine sets it one metric ascent below the body top
+(`first_baseline_declared`), where TeX uses `\topskip` floored by the first
+box's height; measured 0.5 to 0.7 bp high on body text and 5.6 bp low under
+display type, silently, in four documents. `\flushbottom` is still skipped
+(W0104), which the paper's reference shows in force. xcolor's `cmyk` option
+does not convert the page ground, which paints in RGB white. A page ground
+with a declared native bleed covers only the trim, not the strip the bleed
+exists for.
+
+**Decisions that are the user's.** The engine reads `pt` as `bp`
+(`Decl.unitScaleBase`), so every length written in points is 0.375% larger
+than LaTeX's; it is a long-standing divergence, measurable on every page,
+and whether it stays is a human gate. LaTeX's size ladder is not monotone in
+its leading ratio (`\large` looser than the body, `\Large` and `\LARGE`
+tighter), so reproducing it exactly and smoothing it barely differ and both
+are defensible — a document that picks a size command picks its leading
+with it, which argues for exact. And whether `\edef` gets a total evaluator — the
+arithmetic fragment `\the`, `\strip@pt`, `\dimexpr`, definition-ordered
+macros — is the termination design's boundary, so it is a design discussion
+before it is code.
