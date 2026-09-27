@@ -1,0 +1,23 @@
+\section{Method}\label{sec:method}
+
+\subsection{Block cache}
+Each paragraph is hashed together with the font state at its first
+character. A cache hit returns the shaped glyph runs and the chosen line
+breaks; a miss reshapes and re-breaks only that paragraph. The cost of a
+miss is therefore bounded by the longest paragraph, not by the document.
+
+\subsection{Page builder}
+Blocks are contributed to the current page in order. With the natural
+height $h_i$ and following penalty $p_i$ of block $i$, the badness of
+breaking after block $n$ on a page of goal height $G$ is
+\begin{equation}
+  b_n = \min\!\left( 10000,\ 100 \left( \frac{G - \sum_{i=1}^{n} h_i}{s} \right)^{3} \right),
+\end{equation}
+where $s$ is the available stretch. The break with the least total cost
+$b_n + p_n$ is taken, exactly as in the batch compiler, so a cached block
+lands on the same page it would have in a fresh run.
+
+\subsection{What is not cached}
+Floats, footnotes and anything that changes a counter are recomputed on
+every keystroke. This is deliberate: their placement depends on the pages
+around them, and a stale placement is worse than a slow one.

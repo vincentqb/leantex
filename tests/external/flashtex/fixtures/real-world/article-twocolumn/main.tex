@@ -1,0 +1,124 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.75in,columnsep=0.25in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[demo]{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+
+\title{Adaptive Line Breaking for Incremental Document Preview}
+\author{A.~Author \and B.~Coauthor\\
+  Department of Typesetting, Example University\\
+  \texttt{\{a.author,b.coauthor\}@example.edu}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe an incremental typesetting pipeline that retypesets only the
+paragraph touched by a keystroke while keeping page breaks stable. On a
+corpus of homework, lecture notes and short articles the median
+keystroke-to-paint latency is below one frame. We report the measured
+distribution, the failure modes, and an honest inventory of the constructs
+the pipeline does not yet support.
+\end{abstract}
+
+\section{Introduction}
+Live preview of \LaTeX{} documents is usually approximated by re-running a
+batch compiler on every save. This paper takes the opposite position: the
+document is a sequence of blocks, and a keystroke invalidates exactly one
+block~\cite{knuth84,plass81}. The remaining blocks keep their shaped
+glyph runs and their line breaks.
+
+The contribution is threefold. First, a block cache keyed by the source
+bytes of each paragraph (Section~\ref{sec:cache}). Second, a page builder
+that replays TeX's penalty and glue model so that the cached blocks fall on
+the same pages the batch compiler would choose (Section~\ref{sec:pages}).
+Third, a measurement harness that compares every page against pdfLaTeX at
+144~dpi (Section~\ref{sec:eval}).
+
+\section{Block cache}\label{sec:cache}
+A paragraph is identified by the SHA-256 of its source bytes together with
+the font selection in force at its first character. Two paragraphs with
+identical bytes but different fonts must not share a cache entry; the
+initial version of the cache made exactly this mistake, and a bold heading
+was painted in the body font for one frame.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{block-cache}
+  \caption{Cache hit rate against edit position. Edits inside display math
+  invalidate the surrounding paragraph as well.}
+  \label{fig:cache}
+\end{figure}
+
+Figure~\ref{fig:cache} shows the hit rate across an editing session. The
+cost of a miss is dominated by shaping; the Knuth--Plass pass itself is
+linear in the number of candidate breakpoints for the \emph{total-fit}
+variant used here.
+
+\section{Page builder}\label{sec:pages}
+The page builder implements the contribution list of \emph{The
+\TeX book}, Chapter~15. For each block we record its natural height $h$,
+depth $d$ and the penalty $p$ following it. A page break at a block with
+badness $b$ has cost
+\begin{equation}
+  c = \begin{cases}
+    b + p + q & \text{if } b < \infty \text{ and } p \le -10000,\\
+    \infty & \text{otherwise},
+  \end{cases}
+  \label{eq:cost}
+\end{equation}
+where $q$ is the insertion penalty. Equation~\eqref{eq:cost} is evaluated
+once per contributed block, which is sufficient because the page goal is
+fixed for a given class and geometry.
+
+\subsection{Stability under edits}
+Table~\ref{tab:stability} lists how often a single keystroke moved a page
+break in the three corpora. Page breaks moved only when the edited
+paragraph crossed a page boundary or when a float was displaced.
+
+\begin{table}[t]
+  \centering
+  \caption{Page-break stability per keystroke.}
+  \label{tab:stability}
+  \begin{tabular}{lrrr}
+    \toprule
+    Corpus & Keystrokes & Moved & Rate \\
+    \midrule
+    Homework      & 12\,480 & 41  & 0.33\% \\
+    Lecture notes & 30\,112 & 208 & 0.69\% \\
+    Articles      & 8\,930  & 97  & 1.09\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Evaluation}\label{sec:eval}
+Each document in the corpus has a reference PDF produced by pdfLaTeX with
+\texttt{SOURCE\_DATE\_EPOCH=0}. Both PDFs are rasterised at 144~dpi and
+compared pixel by pixel. We deliberately report raw differing-pixel counts
+rather than a similarity score: a score hides whether a difference is a
+missing glyph or a one-pixel shift of an entire column.
+
+\subsection{Threats to validity}
+The corpus is small and written by the authors. Two-column documents
+exercise \texttt{\textbackslash columnwidth} and float placement in ways a
+single-column homework does not, and we make no claim about documents that
+use \texttt{multicol}, \texttt{longtable} or TikZ.
+
+\section{Conclusion}
+Incremental typesetting is practical when the cache key includes the font
+state and the page builder replays TeX's cost model exactly. The remaining
+gap is not latency but coverage, and the coverage inventory is published
+with every run.
+
+\begin{thebibliography}{9}
+\bibitem{knuth84} D.~E. Knuth, \emph{The \TeX book}. Addison-Wesley, 1984.
+\bibitem{plass81} D.~E. Knuth and M.~F. Plass, ``Breaking paragraphs into
+  lines,'' \emph{Software: Practice and Experience}, vol.~11, no.~11,
+  pp.~1119--1184, 1981.
+\end{thebibliography}
+
+\end{document}

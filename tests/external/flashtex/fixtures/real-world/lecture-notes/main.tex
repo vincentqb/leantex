@@ -1,0 +1,139 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{enumerate}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\R}{\mathbb{R}}
+\DeclareMathOperator{\lcm}{lcm}
+
+\title{Lecture 4: Divisibility and the Euclidean Algorithm}
+\author{Course 21-127 --- Concepts of Mathematics}
+\date{Week 2}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Divisibility}
+
+\begin{definition}[Divides]
+Let $a, b \in \Z$. We say that $a$ \emph{divides} $b$, written $a \mid b$,
+if there exists $k \in \Z$ such that $b = ka$. If no such $k$ exists we
+write $a \nmid b$.
+\end{definition}
+
+\begin{example}
+$3 \mid 12$ since $12 = 4 \cdot 3$, but $5 \nmid 12$. Every integer divides
+$0$, and $1$ divides every integer.
+\end{example}
+
+\begin{lemma}\label{lem:transitive}
+If $a \mid b$ and $b \mid c$ then $a \mid c$.
+\end{lemma}
+
+\begin{proof}
+Write $b = ka$ and $c = \ell b$ for some $k, \ell \in \Z$. Then
+$c = \ell b = \ell(ka) = (\ell k) a$, and $\ell k \in \Z$, so $a \mid c$.
+\end{proof}
+
+\begin{lemma}\label{lem:linear}
+If $a \mid b$ and $a \mid c$ then $a \mid (mb + nc)$ for all $m, n \in \Z$.
+\end{lemma}
+
+\begin{proof}
+Write $b = ka$ and $c = \ell a$. Then $mb + nc = mka + n\ell a = (mk + n\ell)a$.
+\end{proof}
+
+\begin{remark}
+Lemma~\ref{lem:linear} is the fact that makes the Euclidean algorithm
+work: the set of common divisors of $a$ and $b$ is unchanged when $b$ is
+replaced by $b - qa$.
+\end{remark}
+
+\section{The division theorem}
+
+\begin{theorem}[Division with remainder]\label{thm:division}
+Let $a \in \Z$ and $b \in \Z_{>0}$. There exist unique $q, r \in \Z$ with
+\[
+  a = qb + r \quad\text{and}\quad 0 \le r < b.
+\]
+\end{theorem}
+
+\begin{proof}
+\emph{Existence.} Consider the set
+$S = \{\, a - kb : k \in \Z,\ a - kb \ge 0 \,\}$. The set is non-empty
+(take $k = -|a|$), so by well-ordering it has a least element $r = a - qb$.
+If $r \ge b$ then $r - b = a - (q+1)b \in S$ is smaller than $r$, a
+contradiction. Hence $0 \le r < b$.
+
+\emph{Uniqueness.} Suppose $a = qb + r = q'b + r'$ with $0 \le r, r' < b$.
+Then $(q - q')b = r' - r$ and $|r' - r| < b$, so $b \mid (r' - r)$ forces
+$r' - r = 0$, and therefore $q = q'$.
+\end{proof}
+
+\begin{corollary}
+Every integer is either even or odd, and not both.
+\end{corollary}
+
+\section{Greatest common divisors}
+
+\begin{definition}
+For $a, b \in \Z$ not both zero, $\gcd(a, b)$ is the largest $d \in \Z_{>0}$
+with $d \mid a$ and $d \mid b$. We also write $\lcm(a,b)$ for the least
+positive common multiple.
+\end{definition}
+
+\begin{theorem}[Euclidean algorithm]
+Let $a \ge b > 0$ and write $a = qb + r$ as in Theorem~\ref{thm:division}.
+Then $\gcd(a, b) = \gcd(b, r)$.
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:linear}, every common divisor of $a$ and $b$ divides
+$r = a - qb$, and every common divisor of $b$ and $r$ divides $a = qb + r$.
+The two pairs therefore have the same common divisors, hence the same
+greatest one.
+\end{proof}
+
+\begin{example}
+To compute $\gcd(252, 198)$:
+\begin{align*}
+  252 &= 1 \cdot 198 + 54, \\
+  198 &= 3 \cdot 54 + 36, \\
+   54 &= 1 \cdot 36 + 18, \\
+   36 &= 2 \cdot 18 + 0.
+\end{align*}
+The last non-zero remainder is $18$, so $\gcd(252, 198) = 18$.
+\end{example}
+
+\begin{theorem}[B\'ezout]
+For $a, b \in \Z$ not both zero there exist $m, n \in \Z$ with
+$ma + nb = \gcd(a, b)$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Run the Euclidean algorithm and substitute backwards; each remainder is an
+integer combination of the previous two, hence of $a$ and $b$.
+\end{proof}
+
+\subsection*{Exercises}
+\begin{enumerate}[(i)]
+  \item Prove that $\gcd(n, n+1) = 1$ for every $n \in \N$.
+  \item Find $m, n \in \Z$ with $252m + 198n = 18$.
+  \item Show that $\gcd(a,b) \cdot \lcm(a,b) = ab$ for $a, b \in \Z_{>0}$.
+\end{enumerate}
+
+\end{document}

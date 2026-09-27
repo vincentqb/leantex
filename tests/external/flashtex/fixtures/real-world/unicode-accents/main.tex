@@ -1,0 +1,49 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{CJKutf8}
+
+\title{Accents, Ligatures and Non-Latin Text}
+\author{Zoë Brontë, José Núñez, and Søren Kierkegård}
+\date{12 septembre 2026}
+
+\begin{document}
+\maketitle
+
+\section{Accented Latin text (UTF-8 source)}
+Café, naïve, résumé, façade, crème brûlée, jalapeño, piñata, señor,
+Ångström, smörgåsbord, Ærø, Œuvre, Straße, Zürich, Košice, Łódź,
+Gdańsk, Ørsted, Þórshöfn, Ísafjörður.
+
+The same words through \LaTeX{} accent commands:
+Caf\'e, na\"\i ve, r\'esum\'e, fa\c{c}ade, cr\`eme br\^ul\'ee, jalape\~no,
+\AA ngstr\"om, sm\"org\aa sbord, \AE r\o, \OE uvre, Stra\ss e, Z\"urich,
+Ko\v{s}ice, \L\'od\'z, Gda\'nsk, \O rsted, \TH \'orsh\"ofn.
+
+\section{Ligatures, dashes and quotes}
+Five fluffy waffles offer efficient office affluence --- ff, fi, fl, ffi, ffl.
+En dash: pages 12--15; em dash --- like this; ``double quotes'' and `single
+quotes'; ellipsis\dots; 25\,\% and \S\,4; \copyright~2026; \pounds 75.
+
+\section{Greek and Cyrillic words in text}
+The Greek word for typesetting is stoicheiothesía, and the Cyrillic spelling
+of Moscow is Moskva. Their native forms need a font with those scripts and
+are therefore given only in transliteration in this T1-encoded document.
+
+\section{CJK via inputenc utf8}
+\begin{CJK}{UTF8}{min}
+東京は日本の首都です。
+\end{CJK}
+(``Tokyo is the capital of Japan.'')
+
+\begin{CJK}{UTF8}{gbsn}
+排版是一门艺术。
+\end{CJK}
+(``Typesetting is an art.'')
+
+\section{Mixed script paragraph}
+The r\'esum\'e of Søren --- filed under ``K'' --- lists Zürich, Łódź and
+\begin{CJK}{UTF8}{min}東京\end{CJK} as places of residence, 2019--2026.
+
+\end{document}

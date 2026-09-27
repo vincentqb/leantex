@@ -1,0 +1,11 @@
+\section{Introduction}\label{sec:intro}
+A live preview must answer a keystroke faster than the reader can notice.
+The usual approach --- recompile the whole document on every change --- is
+correct but slow, and it also loses the reader's place on the page. These
+notes describe the two mechanisms that avoid both problems: a block cache
+keyed by source bytes, and a page builder that replays TeX's cost model.
+
+We assume familiarity with the standard \LaTeX{} document model: a preamble,
+a sequence of sectioning commands, paragraphs, display material and floats.
+Nothing here depends on a particular class; the examples use
+\texttt{article} because it is the class of most of the corpus.

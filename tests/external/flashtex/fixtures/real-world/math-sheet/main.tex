@@ -1,0 +1,100 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\dd}{\,\mathrm{d}}
+\DeclareMathOperator{\tr}{tr}
+
+\title{Formula Sheet: Calculus and Linear Algebra}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\section*{Series and sums}
+\begin{align}
+  \sum_{k=0}^{n} k &= \frac{n(n+1)}{2}, &
+  \sum_{k=0}^{n} k^2 &= \frac{n(n+1)(2n+1)}{6}, \\
+  \sum_{k=0}^{\infty} x^k &= \frac{1}{1-x} \quad (|x|<1), &
+  e^x &= \sum_{n=0}^{\infty} \frac{x^n}{n!}.
+\end{align}
+The binomial theorem: $(a+b)^n = \sum_{k=0}^{n} \binom{n}{k} a^{k} b^{n-k}$.
+
+\section*{Integrals}
+\begin{align*}
+  \int_a^b x^n \dd x &= \left[ \frac{x^{n+1}}{n+1} \right]_a^b, \qquad n \ne -1, \\
+  \int \frac{\dd x}{x} &= \ln|x| + C, \\
+  \int_{-\infty}^{\infty} e^{-x^2} \dd x &= \sqrt{\pi}, \\
+  \int_0^{2\pi} \!\! \int_0^{R} r \dd r \dd\theta &= \pi R^2 .
+\end{align*}
+Integration by parts: $\displaystyle \int u \dd v = uv - \int v \dd u$.
+
+\section*{Piecewise definitions}
+\[
+  |x| = \begin{cases}
+    x  & \text{if } x \ge 0, \\
+    -x & \text{if } x < 0,
+  \end{cases}
+  \qquad
+  \operatorname{sgn}(x) = \begin{cases}
+    1 & x > 0, \\
+    0 & x = 0, \\
+    -1 & x < 0.
+  \end{cases}
+\]
+
+\section*{Limits and derivatives}
+\[
+  f'(x) = \lim_{h \to 0} \frac{f(x+h) - f(x)}{h}, \qquad
+  \frac{\dd}{\dd x}\bigl( f(x) g(x) \bigr) = f'(x) g(x) + f(x) g'(x).
+\]
+Chain rule: $\dfrac{\dd}{\dd x} f(g(x)) = f'(g(x))\, g'(x)$.
+Taylor's theorem with remainder:
+\begin{equation}
+  f(x) = \sum_{k=0}^{n} \frac{f^{(k)}(a)}{k!}(x-a)^k + \frac{f^{(n+1)}(\xi)}{(n+1)!}(x-a)^{n+1}
+  \quad \text{for some } \xi \text{ between } a \text{ and } x.
+\end{equation}
+
+\section*{Matrices}
+For $A = \begin{pmatrix} a & b \\ c & d \end{pmatrix}$,
+\[
+  \det A = ad - bc, \qquad
+  A^{-1} = \frac{1}{ad - bc} \begin{pmatrix} d & -b \\ -c & a \end{pmatrix}, \qquad
+  \tr A = a + d .
+\]
+The $3\times3$ identity and a general matrix:
+\[
+  I_3 = \begin{bmatrix} 1 & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 1 \end{bmatrix}, \qquad
+  M = \begin{bmatrix}
+    m_{11} & m_{12} & \cdots & m_{1n} \\
+    m_{21} & m_{22} & \cdots & m_{2n} \\
+    \vdots & \vdots & \ddots & \vdots \\
+    m_{m1} & m_{m2} & \cdots & m_{mn}
+  \end{bmatrix}.
+\]
+Eigenvalues satisfy $\det(A - \lambda I) = 0$; for symmetric $A \in \R^{n\times n}$
+all $\lambda_i \in \R$ and $A = Q \Lambda Q^{\mathsf{T}}$ with $Q$ orthogonal.
+
+\section*{Inequalities}
+\begin{gather}
+  \left| \sum_{i=1}^{n} a_i b_i \right| \le \left( \sum_{i=1}^{n} a_i^2 \right)^{1/2}
+  \left( \sum_{i=1}^{n} b_i^2 \right)^{1/2} \\
+  \frac{a+b}{2} \ge \sqrt{ab} \ge \frac{2ab}{a+b} \qquad (a, b > 0)
+\end{gather}
+Triangle inequality: $\|x + y\| \le \|x\| + \|y\|$ for all $x, y \in \R^n$.
+
+\section*{Greek letters and operators}
+$\alpha, \beta, \gamma, \delta, \epsilon, \varepsilon, \theta, \lambda, \mu,
+\pi, \sigma, \phi, \varphi, \omega$; \quad
+$\Gamma, \Delta, \Theta, \Lambda, \Pi, \Sigma, \Phi, \Omega$.
+
+Operators and relations:
+$\partial, \nabla, \infty, \pm, \times, \circ, \cdot, \le, \ge, \ne, \approx, \equiv,
+\subseteq, \cup, \cap, \emptyset, \to, \mapsto, \Leftrightarrow$.
+
+\end{document}

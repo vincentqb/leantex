@@ -1,0 +1,70 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+
+\newcommand{\cvsection}[1]{\vspace{6pt}{\large\bfseries #1}\\[-6pt]\rule{\textwidth}{0.6pt}\vspace{2pt}}
+\newcommand{\entry}[4]{\textbf{#1} \hfill #2\\ \textit{#3} \hfill #4}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Jordan Example}\\[4pt]
+  123 Example Street, Pittsburgh, PA 15213 \quad $\cdot$ \quad
+  \href{mailto:jordan@example.edu}{jordan@example.edu} \quad $\cdot$ \quad
+  (412) 555-0100
+\end{center}
+
+\cvsection{Education}
+
+\entry{Example University}{Pittsburgh, PA}{B.S. in Computer Science, minor in Mathematics}{Expected May 2028}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item GPA 3.9/4.0; Dean's List every semester.
+  \item Coursework: Algorithms, Compilers, Operating Systems, Real Analysis, Type Theory.
+\end{itemize}
+
+\cvsection{Experience}
+
+\entry{Software Engineering Intern}{Summer 2027}{Typesetting Tools Inc., remote}{May--Aug 2027}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Built an incremental paragraph cache that cut preview latency from 180\,ms to 9\,ms at p50.
+  \item Wrote a pixel-diff harness comparing 2\,300 pages against pdfLaTeX; found and fixed 14 spacing bugs.
+  \item Mentored two new interns on the review process.
+\end{itemize}
+
+\entry{Teaching Assistant, 15-122 Principles of Imperative Computation}{Fall 2026 -- Spring 2027}{Example University}{}
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Led weekly recitations for 40 students; wrote 6 practice exams and their solutions.
+  \item Held office hours and graded proofs of contract correctness.
+\end{itemize}
+
+\cvsection{Projects}
+
+\textbf{FlashPreview} --- live \LaTeX{} preview in Rust and Swift\hfill 2027\\
+Original pipeline: parser, Knuth--Plass line breaking, TeX page builder, exact PDF export. No TeX engine at run time.
+
+\textbf{Sudoku SAT solver} --- CDCL with clause learning\hfill 2026\\
+Solves every puzzle in a 50\,000-puzzle set in under 3\,ms on average.
+
+\cvsection{Skills}
+
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}ll}
+  Languages & Rust, Swift, Python, C, Standard ML \\
+  Tools     & Git, Cargo, Xcode, LLVM, \LaTeX \\
+  Spoken    & English (native), Spanish (conversational) \\
+\end{tabular*}
+
+\cvsection{Awards}
+
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Putnam Competition, top 500 (2026).
+  \item Undergraduate Research Award, Department of Computer Science (2027).
+\end{itemize}
+
+\end{document}

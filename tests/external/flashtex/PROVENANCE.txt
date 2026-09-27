@@ -1,0 +1,43 @@
+# flashtex's tests and examples, vendored as an external corpus.
+#
+# source:   https://github.com/flash-tex/flashtex
+# commit:   bb853342f0fa3ef0f9a23bca9de5d0777747bb92, committed 2026-09-25T16:41:15-04:00
+# fetched:  2026-09-27, `git clone --depth 1`, read-only, its remote removed at once
+# license:  MIT, Copyright (c) 2026 flash-tex; LICENSE beside this file is the
+#           upstream file verbatim, which the licence asks every copy to carry
+# checked:  every file taken is listed in SHA256SUMS with the sha256 of its upstream
+#           bytes; `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken, at their upstream paths below this directory: the document sources of six
+# of flashtex's test sets, each with the inputs its directory holds (two sections
+# directories and one image), and the READMEs of the three fixture sets, which say
+# what each document exercises.
+#
+#   set                 upstream directory                                documents
+#   real-world          fixtures/real-world                               26
+#   divergence-probes   fixtures/divergence-probes                        52
+#   proof-corpus        fixtures/proof-corpus                             10
+#   amsmath-corpus      crates/compiler/tests/amsmath_corpus/fixtures     59
+#   amssymb-corpus      crates/compiler/tests/amssymb_corpus/fixtures     39
+#   tikz                crates/render-pipeline/fixtures/tikz              30
+#
+# flashtex's own expectations for these sets, which are not taken: the first three
+# are its parity "fixtures" tier, each document held at a level L0-L4 against a
+# committed pdfLaTeX reference.pdf (tools/parity, baseline-fixtures.json); the
+# amsmath and amssymb corpora pin pdfLaTeX word positions to 0.5 bp (oracle.py);
+# the TikZ probes are read by a cargo test against pdfLaTeX-derived positions.
+#
+# Selected: the entry documents of those sets that lualatex (LuaHBTeX 1.24.0,
+# TeX Live 2026) builds under -halt-on-error, twice, in a copy of the document's
+# own directory, so every document here is inside the denominator. 216 of 220.
+# Left out:
+#   fixtures/divergence-probes/min6-dimens-primitives   lualatex exits 1
+#   fixtures/real-world/hw1, hw2, inline-math           a user's own document, by
+#                                                       flashtex's README; this tree's
+#                                                       fixtures are invented
+# Not taken: flashtex's pdfLaTeX reference PDFs and their JSON sidecars (another
+# engine's output; this corpus's reference is lualatex, rebuilt by the report), the
+# fonts flashtex bundles (GUST Font License), and every other test set — among them
+# the tabular corpus, the render-pipeline oracle suites (footnotes, floats, toc,
+# siunitx, multicol, ...) and the unicode-tex fixtures, which name host fonts.
+# scripts/external.lean --report <work> <list> builds any of them from a clone.

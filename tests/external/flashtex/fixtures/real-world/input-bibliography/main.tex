@@ -1,0 +1,46 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+
+\title{Notes on Incremental Typesetting}
+\author{Jordan Example}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\input{sections/intro}
+\input{sections/method}
+
+\section{Related work}
+The line-breaking algorithm follows Knuth and Plass~\cite{plass81}; the
+page builder follows the description in \emph{The \TeX book}~\cite{knuth84}.
+Incremental recomputation over a block cache is standard in build systems
+and editors~\cite{adapton}; what differs here is that the cost model being
+replayed is TeX's own.
+
+\section{Conclusion}
+The two mechanisms introduced in Sections~\ref{sec:intro} and
+\ref{sec:method} are independent: the cache can be disabled without changing
+output, and the page builder can be driven by a batch compiler. That
+separation is what makes the pixel comparison in the appendix meaningful.
+
+\appendix
+\section{Measurement protocol}\label{app:protocol}
+Every document is compiled twice by pdfLaTeX with a fixed
+\texttt{SOURCE\_DATE\_EPOCH}, then rasterised at 144 dpi. The producer's
+PDF is rasterised the same way and differing pixels are counted per page.
+Page counts are compared first; a page-count mismatch is reported as such
+and no pixel count is claimed for the missing pages.
+
+\begin{thebibliography}{9}
+\bibitem{knuth84} Donald E. Knuth. \emph{The \TeX book}. Addison-Wesley, 1984.
+\bibitem{plass81} Donald E. Knuth and Michael F. Plass. Breaking paragraphs
+  into lines. \emph{Software: Practice and Experience}, 11(11):1119--1184, 1981.
+\bibitem{adapton} Matthew A. Hammer et al. Adapton: composable,
+  demand-driven incremental computation. In \emph{PLDI}, 2014.
+\end{thebibliography}
+
+\end{document}
