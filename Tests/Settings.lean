@@ -276,6 +276,6 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a redefined \\@listii moves the page"
     (second != pagesOf oneFace (doc "\\setlength{\\leftmarginii}{30pt}" body))
   let ds := dvE (doc listii body)
-  t "a list level's arithmetic is read with it, never refused as arithmetic"
+  t "a list level's arithmetic is read with it, and what it sets unread is named once"
     (!ds.any (·.subject == some "ctrl:advance") &&
-      (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 2)
+      (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 1)

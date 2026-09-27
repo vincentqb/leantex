@@ -3211,9 +3211,9 @@ private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos :
   if stop < body.size || assigns.isEmpty then return false
   write fun st => { st with
     listDefs := (st.listDefs.filter (·.1 != level)).push (level, pos, assigns) }
-  for a in assigns do
-    if let some (.unmodelled why) := paramSites.lookup a.name then nameParam a.name why pos
-    else if a.add && listCarried.contains a.name then
+  for n in (assigns.map (·.name)).toList.eraseDups do
+    if let some (.unmodelled why) := paramSites.lookup n then nameParam n why pos
+    else if assigns.any (fun a => a.add && a.name == n) && listCarried.contains n then
       sayOnce "ctrl:advance" .W0104
         s!"TeX register arithmetic ('\\advance') is not supported; skipped" pos
   became what s!"the level-{level} list parameters, set where a list that deep opens" pos
