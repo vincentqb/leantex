@@ -3719,7 +3719,7 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- a class on the environment's own element, never an element of its
   -- own: the environment and its declaration ship one element tree, so a
   -- consumer stylesheet's child combinators (`main > .centered`) meet the
-  -- tree they were written against. A wrapper once took a site's hero
+  -- tree they were written against. A wrapper once took a site port's
   -- layout with it.
   let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
   let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
