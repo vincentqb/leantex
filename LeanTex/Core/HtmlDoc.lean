@@ -1074,8 +1074,10 @@ def themeCss (doc : Doc) : String :=
     -- (`scroll(root x)`, Scroll-driven Animations 1: the axis is the
     -- deck's own), the same tokens as the section-page bar, and the same
     -- floor as `revealCss`: without the feature the rules never apply and
-    -- the deck is fully navigable without its bar. Screen only: a printed
-    -- handout has no scroll to report.
+    -- the deck is fully navigable without its bar. Screen only: paper has
+    -- no scroll to report, and the hairline does not print — unstyled it
+    -- is an empty box after the last stage's forced break, for which
+    -- Chromium opens a blank sheet.
     (if doc.docClass == .slides then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
@@ -1085,7 +1087,8 @@ def themeCss (doc : Doc) : String :=
       "  animation-timeline: scroll(root x); }\n" ++
       "@keyframes ltx-deck-progress { from { transform: scaleX(0) } \
 to { transform: scaleX(1) } }\n" ++
-      "} }\n"
+      "} }\n" ++
+      "@media print { .deck-progress { display: none; } }\n"
      else "") else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
   -- scale (`size-small` on the element), positions fixed by the declared
@@ -2427,20 +2430,17 @@ def deckPageSize (page : PageSpec) : String :=
   s!"{page.width.toPtString}pt {page.height.toPtString}pt"
 
 /-- The print partition: the screen deck's stages, paged — the stage
-partition carries their box, type and furniture onto paper. Every
-top-level page of the deck (a frame, a stepped frame's track, a section
-page) starts a sheet of its own, the first excepted, so no blank sheet
-leads or trails; a stage never splits; and it keeps its declared ground
-(`print-color-adjust: exact`, CSS Color Adjustment 1 §3.1: the ground is
-the author's, not decoration a reader's toner setting may drop). For a
-stepped deck the snap spacers hide and every step prints at full colour:
-paper has no steps to reveal (the user's own rule, beside the
-unconditional covered floor it was written against). -/
+partition carries their box, type and furniture onto paper. Every stage
+(a frame, a section page) ends its sheet and never splits, and keeps its
+declared ground (`print-color-adjust: exact`, CSS Color Adjustment 1
+§3.1: the ground is the author's, not decoration a reader's toner setting
+may drop). For a stepped deck the snap spacers hide and every step prints
+at full colour: paper has no steps to reveal (the user's own rule, beside
+the unconditional covered floor it was written against). -/
 def deckPrint (maxSteps : Nat) : List DeckRule :=
-  [ { selector := [.lit "main > * + *"], decls := [("break-before", "page")]
-      part := .print },
-    { selector := [.lit "section.slide, section.section-page"]
-      decls := [("break-inside", "avoid"), ("print-color-adjust", "exact")]
+  [ { selector := [.lit "section.slide, section.section-page"]
+      decls := [("break-after", "page"), ("break-inside", "avoid"),
+        ("print-color-adjust", "exact")]
       part := .print } ] ++
     (if 2 ≤ maxSteps then
       [ { selector := [.lit ".snap"], decls := [("display", "none")]
@@ -2663,7 +2663,7 @@ def baselineProps : List String :=
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
-   "break-before", "size", "print-color-adjust",
+   "size", "print-color-adjust",
    "bottom", "left", "right"]
 
 /-- Is the rule part of the floor — the CSS every engine applies? The
@@ -2698,7 +2698,7 @@ def targetsContent (r : DeckRule) : Bool :=
 
 /-- The floor is visible by theorem, not by review: no deck rule — in
 *any* partition — sets `display: none` or `visibility: hidden` on
-content (`contentFrags`). What the guards and the print handout hide is
+content (`contentFrags`). What the guards and the printed deck hide is
 only the spacers. `floor_opacity_mem` and `floor_covered_script_gated`
 are the dimming half.
 
@@ -2764,8 +2764,7 @@ theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl) | h2
-    · exact fun o ho => nomatch ho
+    rcases hr2 with rfl | h2
     · exact fun o ho => nomatch ho
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
@@ -2879,8 +2878,7 @@ theorem guards_by_construction (v pg : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl) | h2
-    · rfl
+    rcases hr2 with rfl | h2
     · rfl
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2

@@ -1018,16 +1018,16 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
       "display: flex; flex-direction: column;"))
   -- Print pages the stages: the stage, its type and its furniture hold on
   -- both media (the `@media screen, print` block), the sheet is the PDF's
-  -- page (160 × 90 mm, the MediaBox's own points), each top-level page of
-  -- the deck opens a sheet, and the card the handout drew is gone.
+  -- page (160 × 90 mm, the MediaBox's own points), every stage ends its
+  -- sheet, and the card the handout drew is gone.
   let printOf (page : String) : String :=
     (((page.splitOn "@media print {").getD 1 "").splitOn "\n}\n").headD ""
   let stageOf (page : String) : String :=
     (((page.splitOn "@media screen, print {").getD 1 "").splitOn "@media screen {").headD ""
   t "the deck prints its stages, one per sheet, on the PDF's page"
     (has (printOf deckPage) "@page { size: 453.543pt 255.118pt; margin: 0; }" &&
-     has (printOf deckPage) "main > * + * { break-before: page; }" &&
-     has (printOf deckPage) "print-color-adjust: exact" &&
+     has (printOf deckPage) ("section.slide, section.section-page { break-after: page; " ++
+       "break-inside: avoid; print-color-adjust: exact; }") &&
      has (stageOf deckPage) "section.slide, section.section-page { width: 100vw;" &&
      has (stageOf deckPage) "main { max-width: none; margin: 0; font-size: " &&
      !has (stageOf deckPage) "scroll-snap" &&
@@ -1261,6 +1261,8 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the hairline reads the tokens the PDF's bar reads"
     (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);"))
+  t "the hairline does not print: paper has no scroll, and no blank last sheet"
+    (has html "@media print { .deck-progress { display: none; } }")
   let (bareDoc, _) := elabStr (deck169 "\\theme{default}"
     "\\begin{frame}{T}\nx\n\\end{frame}")
   t "a deck that draws no progress ships no hairline"

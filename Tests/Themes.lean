@@ -2560,7 +2560,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
   t "print shows every step uncovered on its stage's own sheet, spacers hidden"
     (count ".snap { display: none; }" == 3 &&
-     count "main > * + * { break-before: page; }" == 1 &&
+     count "section.slide, section.section-page { break-after: page;" == 1 &&
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
       (s.splitOn "ltx-uncover").length == 1))
