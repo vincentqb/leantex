@@ -71,3 +71,106 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
      | _, _ => false)
   t "the frame of two side-by-side panels is one page, with no spill named"
     (fout.pages.size == 1 && (fds ++ fout.diags).all (·.code != "W0384"))
+
+
+mutual
+
+/-- Every `style` of an element with the given tag, read off the typed tree. -/
+def tagStylesOne (tag : String) (acc : Array String) : Html.Node → Array String
+  | .elem t attrs kids =>
+    let acc := if t == tag then
+      match attrs.find? (·.1 == "style") with
+      | some (_, s) => acc.push s
+      | none => acc
+      else acc
+    tagStylesList tag acc kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+def tagStylesList (tag : String) (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => tagStylesList tag (tagStylesOne tag acc k) rest
+
+end
+
+/-- **A row stands its boxes on one baseline** (TeXbook ch. 12; latex.ltx
+`\@iiiparbox`: `[t]` puts a box's first baseline on the line, `[b]` its
+last, `[c]` its middle; `Ir.BoxPos`, `Layout.B.alignRow`). The defect set
+every row top-aligned and noted the option as machinery nothing modelled
+(N0102), so a `[b]` pair stood a full line away from where LaTeX puts it. A
+picture's `baseline` is the height it stands on the line by
+(`Ir.Pic.Picture.rise`): a paragraph of a positioned box and a picture is
+one line, the label beside the graph. Read off `Layout.Out` and the typed
+HTML tree. Invented content. -/
+def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let two (pos a b : String) : String :=
+    dvDoc "" ("\\noindent\n\\parbox" ++ pos ++ "{3cm}{" ++ a ++ "}\\hfill\n\\parbox" ++ pos ++
+      "{3cm}{" ++ b ++ "}")
+  let tall := "Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo."
+  let linesOf (src : String) : Array Layout.LineOut :=
+    (allLines (layoutOf oneFace (elabStr src).1 geom)).filter
+      fun l => !l.furniture && !l.segs.isEmpty
+  let ys (src : String) (needle : String) : List Dim.Sp :=
+    ((linesOf src).filter fun l => hasStr (lineText l) needle).toList.map (·.y)
+  let tallYs (src : String) : List Dim.Sp :=
+    ((linesOf src).filter fun l => !hasStr (lineText l) "Short").toList.map (·.y)
+  -- `[b]`: the one-line box stands on the tall box's last line.
+  let bRow := two "[b]" "Short." tall
+  t "a [b] row stands each box on its last baseline"
+    (match ys bRow "Short", (tallYs bRow).reverse with
+     | [s], last :: _ :: _ => s == last
+     | _, _ => false)
+  -- `[t]` against a first line set larger: top edges would differ from
+  -- first baselines, so this is the case the top-aligned row got wrong.
+  let tRow := two "[t]" "Short." ("{\\Large Big} " ++ tall)
+  t "a [t] row stands each box on its first baseline"
+    (match ys tRow "Short", ys tRow "Big" with
+     | [s], [b] => s == b
+     | _, _ => false)
+  -- `[c]`: a one-line box stands halfway down the tall one.
+  let cRow := two "[c]" "Short." tall
+  t "a [c] row stands each box on its middle"
+    (match ys cRow "Short", tallYs cRow with
+     | [s], y1 :: rest@(_ :: _) =>
+       let yn := rest.getLast?.getD y1
+       decide (s - (y1 + yn) / 2 ≤ 1 ∧ (y1 + yn) / 2 - s ≤ 1)
+     | _, _ => false)
+  t "an honoured box position names nothing"
+    (!((elabStr bRow).2.any (·.code == "N0102")) && !((elabStr tRow).2.any (·.code == "N0102")))
+  -- beamer's row-wide `[b]` reaches the columns that declare none.
+  let cols := dvDeck "" ("\\begin{frame}{Cols}\n\\begin{columns}[b]\n" ++
+    "\\begin{column}{.4\\textwidth}Short.\\end{column}\n" ++
+    "\\begin{column}{.4\\textwidth}" ++ tall ++ "\\end{column}\n\\end{columns}\n\\end{frame}")
+  t "a columns [b] row stands each column on its last baseline"
+    (match ys cols "Short", (tallYs cols).reverse with
+     | [s], last :: _ :: _ => s == last
+     | _, _ => false)
+  -- A positioned box, then a picture, one paragraph: one line. Elaborated
+  -- as the driver elaborates, with the measurement layout sets labels by,
+  -- so the node's `base` is where its label's baseline ships.
+  let picLine := dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
+    "\\begin{tikzpicture}[baseline={(c.base)}]\n\\node (x) {Nodea};\n" ++
+    "\\node (c) [right =of x] {Nodeb};\n\\path (c) edge (x);\n\\end{tikzpicture}\n")
+  let elabM (s : String) : Ir.Doc × Array Diag :=
+    let (toks, lds) := Lex.lex "t" s
+    let (raws, pds) := Parse.parse "t" toks
+    Elab.runRaws "t" raws (lds ++ pds)
+      (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) oneFace)
+  let (pd, _) := elabM picLine
+  let pls := (allLines (layoutOf oneFace pd)).filter fun l => !l.furniture && !l.segs.isEmpty
+  t "a box and a picture on one line: the label stands beside the graph, on its node's baseline"
+    (match pls.find? (fun l => hasStr (lineText l) "Lab"), pls.find? (fun l => hasStr (lineText l) "Nodeb") with
+     | some lab, some node => lab.y == node.y && decide (lab.x < node.x)
+     | _, _ => false)
+  -- The HTML projections: the grid's own baseline alignment, and the
+  -- declared baseline as the SVG's lift off the line.
+  let (bDoc, _) := elabStr bRow
+  let bStyles := bDoc.body.foldl (fun acc b => tagStylesOne "div" acc (HtmlDoc.blockNode {} b)) #[]
+  t "the HTML row stands [b] boxes on their last baselines"
+    ((bStyles.filter (hasStr · "align-self: last baseline")).size == 2)
+  let svgStyles := pd.body.foldl (fun acc b => tagStylesOne "svg" acc (HtmlDoc.blockNode {} b)) #[]
+  let pStyles := pd.body.foldl (fun acc b => tagStylesOne "div" acc (HtmlDoc.blockNode {} b)) #[]
+  t "the HTML picture stands on its declared baseline, beside its box"
+    (svgStyles.any (hasStr · "vertical-align: -") &&
+      (pStyles.filter (hasStr · "align-self: baseline")).size == 2)

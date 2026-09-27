@@ -8,7 +8,7 @@ float figure 1
   caption
     text "Two invented panels side by side."
   columns
-    column 480/1000
+    column 480/1000 [t]
       float sub 1
         caption
           text "The first invented panel."
@@ -17,7 +17,7 @@ float figure 1
           rect 0 0 56.693 28.346 #CCCCCC
           label 28.346 14.173 #000000 1000
             text "left box"
-    column 480/1000
+    column 480/1000 [t]
       float sub 2
         caption
           text "The second invented panel."
@@ -35,5 +35,3 @@ para
   text "A closing paragraph after both figures."
 -- diagnostics
 note[N0100] 7:1 '\usepackage{subcaption}' → nothing: the engine does this itself
-note[N0102] 18:1 '{subfigure}' [pos] options are ignored: the box stands top-aligned in its row
-note[N0102] 27:1 '{subfigure}' [pos] options are ignored: the box stands top-aligned in its row

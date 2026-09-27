@@ -4458,6 +4458,39 @@ def macroTable (names : Array (String × String)) (ts : Array Tok) :
       if let some m := readMacro line then out := (n, m) :: out
   return out
 
+/-- `baseline=` (pgf manual §12.2.1) as a height in picture coordinates:
+the bare key is 0pt, a length is itself, and a coordinate is its y —
+`(x,y)` through the picture's scale, or a node's anchor such as `(n.base)`,
+where the picture's own reading put it. Braces around the value are TeX's
+grouping. -/
+private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
+    Except String Sp :=
+  let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
+  match toks with
+  | [] => .ok 0
+  | .sym '(' :: rest =>
+    match rest.reverse with
+    | .sym ')' :: inner =>
+      let inner := inner.reverse.toArray
+      match (splitTop inner ',').toList with
+      | [_, ys] => (evalNum [] ys).map cx.toSp
+      | _ =>
+        let nm := String.join (inner.toList.map fun (t : Tok) => match t with
+          | .ident s => s
+          | .num m => milliString m
+          | .sym c => String.singleton c
+          | _ => "")
+        match nodes.lookup nm, splitAnchor nm with
+        | some g, _ => .ok g.y
+        | none, some (base, an) =>
+          match nodes.lookup base, nodeAnchorOf an with
+          | some g, some a => .ok (g.anchorPoint a).2
+          | none, _ => .error s!"no node is named '{base}'"
+          | some _, none => .error s!"node anchor '{an}' is outside the rendered picture subset"
+        | none, none => .error s!"no node is named '{nm}'"
+    | _ => .error "the coordinate misses its ')'"
+  | ts => readDim ts
+
 /-- Elaborate one `tikzpicture` body: the leading `[scale=...]` option
 block, the statements, then the unrolled evaluation. Everything the
 subset cannot render is a named diagnostic beside the shapes that did.
@@ -4500,6 +4533,8 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let mut transformShape := false
   let mut inherited : Array (Array Tok) := #[]
   let mut diags : Array PDiag := #[]
+  -- `baseline=`'s value, read once the nodes it may name are placed.
+  let mut baselineSpec : Option (List Tok) := none
   let mut i := 0
   for _ in [0:toks.size] do
     if toks[i]? == some .space then i := i + 1 else break
@@ -4535,6 +4570,8 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         -- `transform shape`: nodes take the picture's scale (pgf manual
         -- §25.4, "transformations do not apply to nodes" without it).
         | [.ident "transform", .ident "shape"] => transformShape := true
+        | [.ident "baseline"] => baselineSpec := some []
+        | .ident "baseline" :: .sym '=' :: rest => baselineSpec := some rest
         | .ident "node" :: .ident "distance" :: rest =>
           match readNodeDistance (.ident "node" :: .ident "distance" :: rest) with
           | some d => dist := d
@@ -4589,6 +4626,13 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   -- Either way the standing rule holds: a key the subset does not use is
   -- never silently dropped.
   let mut unread : Array PDiag := #[]
+  let mut baseline : Option Sp := none
+  if let some spec := baselineSpec then
+    match readBaseline cx ev.nodes spec with
+    | .ok y => baseline := some y
+    | .error e =>
+      unread := unread.push (.E0333, s!"in 'baseline=', {e}; the picture's bottom \
+edge stands on the line")
   for opt in inherited do
     match opt.toList with
     | [] => pure ()
@@ -4606,7 +4650,8 @@ or node; the option is dropped")
     unless seen.contains d.2 do
       seen := seen.push d.2
       out := out.push d
-  return ({ shapes := ev.shapes, declared := ev.declared, borders := ev.borders }, out)
+  return ({ shapes := ev.shapes, declared := ev.declared, borders := ev.borders
+            baseline := baseline }, out)
 
 /-- The stand-in for a picture whose every construct was refused: one
 outlined box carrying the diagnostic code, following the image precedent

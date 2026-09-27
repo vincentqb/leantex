@@ -1522,6 +1522,22 @@ private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
       next => simp at h
   next => simp at h
 
+/-- The source between the brackets `scanBracketArg` took from `i` to `k`. -/
+private def bracketSrc (raws : Array Raw) (i k : Nat) : String :=
+  rawSrc (raws.extract (skipSpaces raws i + 1) (k - 1))
+
+/-- The point a box's `[pos]` stands it on its row's baseline by (latex.ltx
+`\@iiiparbox`: `t` builds a `\vtop`, `b` a `\vbox`, `c` a `\vcenter`;
+beamer's `column` and `columns` add `T`, the top edge). `none` for a
+spelling no box reads. -/
+private def boxPosOf (src : String) : Option Ir.BoxPos :=
+  match src.trimAscii.toString with
+  | "t" => some .first
+  | "c" => some .center
+  | "b" => some .last
+  | "T" => some .top
+  | _ => none
+
 /-- An unclosed `[` stays as content; this says why it was not an argument. -/
 private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
   diag ctx .W0310 s!"'[' after {after} never closes; it is not an argument" (some bpos)
@@ -8340,6 +8356,60 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
     | .content => break
   return o
 
+/-- A box's optional arguments from the start of `body`: `[pos]`
+(`boxPosOf`), then `[height]` and `[inner-pos]`, which size and fill a box
+the engine sets at its content's height, named once per box kind. The
+position and the index past the brackets. Outside the knot, as `tikzArm`
+is, so the environment arms stay inside the elaboration budget. -/
+private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String) :
+    EM (Ir.BoxPos × Nat) := do
+  let mut k := 0
+  let mut boxPos : Ir.BoxPos := .top
+  for arg in [0:3] do
+    match scanBracketArg body k pos with
+    | .took k' =>
+      match (if arg == 0 then boxPosOf (bracketSrc body k k') else none) with
+      | some p => boxPos := p
+      | none =>
+        warnOnce ctx ("box:" ++ what ++ ":options") .N0102
+          s!"'\{{what}}' [height] and [inner-pos] options are ignored: the box is as tall as its content" pos
+      k := k'
+    | .unclosed bpos =>
+      warnUnclosed ctx s!"'\\begin\{{what}}'" bpos
+      break
+    | .content => break
+  return (boxPos, k)
+
+/-- beamer's `\begin{columns}[...]`: `t`/`c`/`b`/`T` is the point each column
+stands on the row's baseline by unless a `{column}` declares its own
+(`Ir.BoxPos`, carried to the columns by `Compat.columnsRowPos`); any other
+option is named. The index past the brackets. Outside the knot. -/
+private def columnsOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Nat := do
+  let mut k := 0
+  for _ in [0:body.size] do
+    match scanBracketArg body k pos with
+    | .took k' =>
+      for o in (bracketSrc body k k').splitOn "," do
+        let o := o.trimAscii.toString
+        if (boxPosOf o).isNone && !o.isEmpty then
+            warnOnce ctx ("columns:option:" ++ o) .N0102
+              s!"'columns' option '{o}' is not modelled; ignored" pos
+      k := k'
+    | .unclosed bpos =>
+      warnUnclosed ctx "'\\begin{columns}'" bpos
+      break
+    | .content => break
+  return k
+
+/-- beamer's `\begin{column}[pos]{width}`: the point it stands on the row's
+baseline by, and where its width group may stand. A row's own `[pos]`
+reaches a column that declares none through the raws
+(`Compat.columnsRowPos`), so this reads the column alone. -/
+private def columnPosOf (cbody : Array Raw) (cpos : Pos) : Ir.BoxPos × Nat :=
+  match scanBracketArg cbody 0 cpos with
+  | .took k' => ((boxPosOf (bracketSrc cbody 0 k')).getD .top, skipSpaces cbody k')
+  | _ => (.top, skipSpaces cbody 0)
+
 mutual
 
 /-- Rule (b), judged once at the definition — the gate both registration
@@ -8540,21 +8610,12 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
             let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
             pure (innerBlocks ++ rb, (#[] : Array (BoxWidth × Array Block)))
           else pure (innerBlocks, cols)
-        -- The minipage shape: `[pos]` baseline options are noted and
-        -- ignored (the box stands top-aligned in its row), the `{width}`
+        -- The minipage shape: `[pos]` is the point the box stands on its
+        -- row's baseline by (`Ir.BoxPos`); `[height]` and `[inner-pos]` are
+        -- noted, since the box takes its content's height. The `{width}`
         -- group is a fraction of the measure, exactly as a column's.
-        let mut m := 0
-        for _ in [0:3] do
-          match scanBracketArg sbody m spos with
-          | .took m' =>
-            warnOnce ctx ("subfigure:options:" ++ sn) .N0102
-              s!"'\{{sn}}' [pos] options are ignored: the box \
-stands top-aligned in its row" spos
-            m := m'
-          | .unclosed bpos =>
-            warnUnclosed ctx s!"'\\begin\{{sn}}'" bpos
-            break
-          | .content => break
+        let (subPos, m0) ← boxOptsArm ctx sbody spos sn
+        let mut m := m0
         m := skipSpaces sbody m
         let mut width : Ir.BoxWidth := .share
         if let some (.group wRaws _) := sbody[m]? then
@@ -8589,7 +8650,7 @@ text width; the box shares the leftover" spos
         unless sCaption.isEmpty do
           sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
         figureGo ctx n kind body pos (j + 1) innerBlocks
-          (cols.push (width, #[.float .sub none sCapAbove sInner sCaption]))
+          (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks
           (by
             have := sliceWeight_le body (show j ≤ j + 1 by omega)
@@ -8668,7 +8729,9 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
           let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
           pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
         else pure (cols, blocks)
-      let m := skipSpaces cbody 0
+      -- beamer's `\begin{column}[pos]{width}`: its own point on the row's
+      -- baseline, else the row's.
+      let (colPos, m) := columnPosOf cbody cpos
       let mut width : Ir.BoxWidth := .share
       let mut m2 := m
       if let some (.group wRaws _) := cbody[m]? then
@@ -8694,7 +8757,8 @@ the column shares the leftover" cpos
         slicePars_zero _
       let cinner ← elabBlocksGo ctx (cbody.extract m2 cbody.size) 0 #[] #[]
         (← get).flowGen
-      columnsGo ctx body (j + 1) (cols.push (width, cinner)) #[] blocks
+      columnsGo ctx body (j + 1) (cols.push ({ width with pos := colPos }, cinner)) #[]
+        blocks
         (by
           have := sliceWeight_le body (show j ≤ j + 1 by omega)
           simp [rawWeightList]; omega)
@@ -8859,23 +8923,12 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
   else if n == "minipage" then
     -- A minipage is one column of declared width: the column model
     -- reused whole, never a parallel box model. LaTeX's signature
-    -- is [pos][height][inner-pos]{width} (classes.dtx §minipage);
-    -- the optionals position the box against a text baseline, and
-    -- at block level there is no baseline, so they are noted and
-    -- ignored exactly as the columns options are. An absolute
-    -- width is the same loss a column has (W0314).
-    let mut k := 0
-    for _ in [0:3] do
-      match scanBracketArg body k pos with
-      | .took k' =>
-        warnOnce ctx "minipage:options" .N0102
-          "'minipage' [pos] options are ignored: the box stands as a block, top-aligned"
-          pos
-        k := k'
-      | .unclosed bpos =>
-        warnUnclosed ctx "'\\begin{minipage}'" bpos
-        break
-      | .content => break
+    -- is [pos][height][inner-pos]{width} (classes.dtx §minipage):
+    -- `[pos]` is the point the box stands on its row's baseline by
+    -- (`Ir.BoxPos`), carried; `[height]` and `[inner-pos]` size and fill
+    -- a box the engine sets at its content's height, so they are noted.
+    -- An absolute width is the same loss a column has (W0314).
+    let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
     let m := skipSpaces body k
     let mut width : Ir.BoxWidth := .share
     let mut m2 := m
@@ -8900,7 +8953,7 @@ the text width; the box takes the whole measure" pos
     have hx1 : slicePars (body.extract m2 body.size) 0
         = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
     blocks := blocks.push
-      (.columns #[(width, ← elabBlocksGo ctx (body.extract m2 body.size) 0
+      (.columns #[({ width with pos := boxPos }, ← elabBlocksGo ctx (body.extract m2 body.size) 0
         #[] #[] (← get).flowGen)])
   else if n == "block" || n == "alertblock" || n == "exampleblock" then
     -- beamer's titled blocks (user guide §12.3): the {title} group on
@@ -9007,22 +9060,13 @@ has nowhere for a float to float" pos
   else if n == "algorithmic" then
     blocks ← algorithmicArm ctx body pos blocks
   else if n == "columns" then
-    -- `[T]`-and-friends alignment options are ignored with a note:
-    -- columns are top-aligned (PLAN, M5). A column's width is its
-    -- first group, a fraction of the text width; content standing
-    -- outside any column keeps its place as ordinary blocks — never
-    -- dropped.
-    let mut k := 0
-    for _ in [0:body.size] do
-      match scanBracketArg body k pos with
-      | .took k' =>
-        warnOnce ctx "columns:options" .N0102
-          "'columns' alignment options are ignored: columns are top-aligned" pos
-        k := k'
-      | .unclosed bpos =>
-        warnUnclosed ctx "'\\begin{columns}'" bpos
-        break
-      | .content => break
+    -- beamer's `[t]`/`[c]`/`[b]`/`[T]` is the point each column stands on
+    -- the row's baseline by, unless a `{column}` declares its own
+    -- (`Ir.BoxPos`); an undeclared row stands its columns top-aligned
+    -- where beamer centres them. A column's width is its first group, a
+    -- fraction of the text width; content standing outside any column
+    -- keeps its place as ordinary blocks — never dropped.
+    let k ← columnsOptsArm ctx body pos
     have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
       have := sliceWeight_le body (Nat.zero_le k); omega
     have hkp : slicePars body k ≤ nestedParsList body.toList := by

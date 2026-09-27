@@ -5146,22 +5146,17 @@ its value is skipped" pos
     -- both through `\@iiiparbox`, and the manual's own difference is what a
     -- body may contain, not what the box measures. So the width is honoured
     -- rather than dropped — the environment carries it to `Ir.BoxWidth`
-    -- through the one width reader — and `[pos]` options are noted where the
-    -- environment notes its own (N0102), since a block-level box has no text
-    -- baseline to sit against.
-    let (declared, j) := takeOpts raws start 3
+    -- through the one width reader — and the `[pos][height][inner-pos]`
+    -- options travel with it, read where the environment reads its own.
+    let (_, j) := takeOpts raws start 3
     let (args, k) := takeGroups raws j 2
-    if declared then
-      sayOnce "ctrl:parbox:pos" .N0102
-        "'\\parbox' [pos] options are ignored: the box stands as a block, top-aligned"
-        pos
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
     -- The environment node directly, not synthesised source: the width group
     -- and the body are already parsed raws, and a `\begin` spelled as text
     -- would have to be re-parsed against its own `\end` to become an
     -- environment at all.
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
-    return some (#[.env "minipage" (widthGroup ++ (args[1]?.getD #[])) pos], k)
+    return some (#[.env "minipage" (raws.extract start j ++ widthGroup ++ (args[1]?.getD #[])) pos], k)
   | "footercontent" =>
     -- The gemini poster lineage's footer declaration
     -- (beamerthemegemini.sty, footline template: one centred line of the
@@ -6583,28 +6578,56 @@ private def rowGlue : Raw → Bool
   | .ctrl "hfil" _ => true
   | _ => false
 
-/-- A minipage's width group and its content past it, and whether a
-`[pos]`-family option stood before the width (classes.dtx §minipage:
-`[pos][height][inner-pos]{width}`). `none` without a width group. -/
-private def boxParts (body : Array Raw) : Option (Raw × Array Raw × Bool) :=
-  let (opts, k) := takeOpts body 0 3
+/-- A minipage's width group and its content past it, its `[pos]` bracket as
+written (classes.dtx §minipage: `[pos][height][inner-pos]{width}`), and
+whether a `[height]` or `[inner-pos]` stood after it. `none` without a width
+group. -/
+private def boxParts (body : Array Raw) : Option (Raw × Array Raw × Array Raw × Bool) :=
+  let (_, k1) := takeOpts body 0 1
+  let (more, k) := takeOpts body k1 2
   let k := skipSpaces body k
   match body[k]? with
-  | some (.group g gp) => some (.group g gp, body.extract (k + 1) body.size, opts)
+  | some (.group g gp) => some (.group g gp, body.extract (k + 1) body.size, body.extract 0 k1, more)
   | _ => none
+
+/-- Does a paragraph end at `i` — a break, or the end of the level — once
+the spaces before it are passed? -/
+private def endsPara (rs : Array Raw) (i : Nat) : Bool :=
+  match rs[skipSpaces rs i]? with
+  | none | some (.par _) => true
+  | _ => false
+
+/-- Does a paragraph open at `i`: the level's start, or a break before it
+with only spaces between? -/
+private def opensPara (rs : Array Raw) (i : Nat) : Bool := Id.run do
+  let mut k := i
+  for _ in [0:i] do
+    match k with
+    | 0 => return true
+    | k' + 1 =>
+      match rs[k']? with
+      | some .space => k := k'
+      | some (.par _) => return true
+      | _ => return false
+  return k == 0
 
 /-- Each run of minipages at one level whose separators are row glue holding
 a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
 declare: LaTeX sets such boxes on one line with the fill between them
 (`\hfill` is `\hskip 0pt plus 1fill`, TeXbook chapter 12), which is the
 columns model's own leftover rule — the measure the declared widths leave
-goes into equal gutters between the boxes. A box standing alone, a pair a
-paragraph break or other content separates, and a pair only a space
+goes into equal gutters between the boxes. A paragraph that is one box with
+a declared `[pos]` and then a picture is that line too: LaTeX sets the two
+side by side, each on the baseline by its own point, and as a row the
+picture's column takes what the box leaves, so it starts where the box
+ends. Each box keeps its `[pos]`. A box standing alone, a pair a paragraph
+break or other content separates, and a pair of boxes only a space
 separates are left as they stand. Returns the level and, for each row,
-where it opened and whether a box carried `[pos]` options. -/
-private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool) := Id.run do
+where it opened, whether a box carried `[height]`/`[inner-pos]`, and
+whether it is the box-and-picture line. -/
+private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) := Id.run do
   let mut out : Array Raw := #[]
-  let mut rows : Array (Pos × Bool) := #[]
+  let mut rows : Array (Pos × Bool × Bool) := #[]
   let mut i := 0
   for _ in [0:rs.size + 1] do
     match (rs[i]? : Option Raw) with
@@ -6614,57 +6637,95 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool) := Id.ru
       | none =>
         out := out.push (.env "minipage" b p)
         i := i + 1
-      | some (w0, c0, o0) =>
-        let mut cols : Array (Raw × Array Raw × Pos) := #[(w0, c0, p)]
-        let mut opts := o0
-        let mut j := i + 1
-        for _ in [i + 1:rs.size + 1] do
-          let mut k := j
-          let mut fill := false
-          for _ in [j:rs.size + 1] do
-            match rs[k]? with
-            | some r =>
-              if rowGlue r then
-                if !(r matches .space) then fill := true
-                k := k + 1
-              else break
-            | none => break
-          match rs[k]? with
-          | some (.env "minipage" b2 p2) =>
-            match boxParts b2 with
-            | some (w, c, o) =>
-              if fill then
-                cols := cols.push (w, c, p2)
-                opts := opts || o
-                j := k + 1
-              else break
-            | none => break
-          | _ => break
-        if cols.size ≥ 2 then
+      | some (w0, c0, pos0, o0) =>
+        let pk := skipSpaces rs (i + 1)
+        let picLine := match rs[pk]? with
+          | some (.env "tikzpicture" _ _) =>
+            opensPara rs i && endsPara rs (pk + 1) && pos0.any (· matches .sym '[' _)
+          | _ => false
+        if picLine then
+          let pic := rs[pk]!
+          let pp := match pic with
+            | .env _ _ q => q
+            | _ => p
+          let picPos : Array Raw := #[.sym '[' pp, .word "t" pp, .sym ']' pp]
           out := out.push (.env "columns"
-            (cols.map fun (w, c, cp) => Raw.env "column" (#[w] ++ c) cp) p)
-          rows := rows.push (p, opts)
-          i := j
+            #[Raw.env "column" (pos0 ++ #[w0] ++ c0) p, Raw.env "column" (picPos ++ #[pic]) pp] p)
+          rows := rows.push (p, o0, true)
+          i := pk + 1
         else
-          out := out.push (.env "minipage" b p)
-          i := i + 1
+          let mut cols : Array (Raw × Array Raw × Array Raw × Pos) := #[(w0, c0, pos0, p)]
+          let mut opts := o0
+          let mut j := i + 1
+          for _ in [i + 1:rs.size + 1] do
+            let mut k := j
+            let mut fill := false
+            for _ in [j:rs.size + 1] do
+              match rs[k]? with
+              | some r =>
+                if rowGlue r then
+                  if !(r matches .space) then fill := true
+                  k := k + 1
+                else break
+              | none => break
+            match rs[k]? with
+            | some (.env "minipage" b2 p2) =>
+              match boxParts b2 with
+              | some (w, c, ps, o) =>
+                if fill then
+                  cols := cols.push (w, c, ps, p2)
+                  opts := opts || o
+                  j := k + 1
+                else break
+              | none => break
+            | _ => break
+          if cols.size ≥ 2 then
+            out := out.push (.env "columns"
+              (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) p)
+            rows := rows.push (p, opts, false)
+            i := j
+          else
+            out := out.push (.env "minipage" b p)
+            i := i + 1
     | some r =>
       out := out.push r
       i := i + 1
   return (out, rows)
 
 /-- One level of rows, formed and named: each row is a translation onto the
-columns model (N0100), and a `[pos]` option inside one is noted where the
-row opens, since a row's boxes stand top-aligned. -/
+columns model (N0100), and a `[height]` or `[inner-pos]` option inside one
+is noted where the row opens, since a box takes its content's height. -/
 private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
   let (out, rows) := boxRows rs
-  for (p, opts) in rows do
-    became "\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…"
-      "one row of boxes, the fill between them" p (subject := some "env:minipage-row")
+  for (p, opts, withPic) in rows do
+    if withPic then
+      became "\\parbox[pos]{w}{…} \\begin{tikzpicture}…"
+        "one row: the box, then the picture where it ends, each on the baseline by its own point"
+        p (subject := some "env:box-picture-row")
+    else
+      became "\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…"
+        "one row of boxes, the fill between them" p (subject := some "env:minipage-row")
     if opts then
       sayOnce "env:minipage-row-options" .N0102
-        "'minipage' [pos] options are ignored in a row of boxes: the boxes stand top-aligned" p
+        "'minipage' [height] and [inner-pos] options are ignored in a row of boxes: each \
+box is as tall as its content" p
   return out
+
+/-- beamer's `\begin{columns}[t]` (and `c`, `b`, `T`) is the point each
+column stands on the row's baseline by, unless a `{column}` declares its
+own: carried onto every column that declares none, so the column's reader
+is the one reader of a position. -/
+private def columnsRowPos (body : Array Raw) : Array Raw := Id.run do
+  let (o, _) := takeOpt body 0
+  let some opts := o | return body
+  let some letter := ((opts.splitOn ",").map (·.trimAscii.toString)).find?
+    (["t", "c", "b", "T"].contains ·) | return body
+  let withPos (r : Raw) : Raw :=
+    if let .env "column" cb cp := r then
+      if cb[skipSpaces cb 0]? matches some (.sym '[' _) then r
+      else .env "column" (#[.sym '[' cp, .word letter cp, .sym ']' cp] ++ cb) cp
+    else r
+  return body.map withPos
 
 mutual
 
@@ -6683,7 +6744,7 @@ private def boxRowRaw : Raw → M Raw
     return .group (← boxRowEmit kids) p
   | .env n body p => do
     let kids ← boxRowList #[] body.toList
-    return .env n (← boxRowEmit kids) p
+    return .env n (← boxRowEmit (if n == "columns" then columnsRowPos kids else kids)) p
   | .math d body p => pure (.math d body p)
   | .word s p => pure (.word s p)
   | .space => pure .space

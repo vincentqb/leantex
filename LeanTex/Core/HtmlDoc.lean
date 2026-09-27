@@ -5119,13 +5119,16 @@ pt box against CSS's 96 dpi ruler was the same "very small picture" defect.
 Both shares are stated and the viewBox's own ratio letterboxes inside them
 (SVG 2 §8.7, `meet`), so a viewport of another ratio never distorts the
 ink. -/
-def pictureBox (cfg : Config) (w h : Dim.Sp) : Array (String × String) :=
+def pictureBox (cfg : Config) (w h : Dim.Sp) (rise : Dim.Sp := 0) : Array (String × String) :=
   #[("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
     (if cfg.deck then
       #[("style", s!"width: {decMilli (deckStageMilli w cfg.page.width)}vw; \
-height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
+height: {decMilli (deckStageMilli h cfg.page.height)}dvh" ++
+        (if rise == 0 then "" else
+          s!"; vertical-align: -{decMilli (deckStageMilli rise cfg.page.height)}dvh"))]
      else
-      #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")])
+      #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
+        (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
 
 /-- The words a picture's labels set, as the SVG sets them (`labelPiece`),
 in shape order, joined. -/
@@ -5231,9 +5234,11 @@ paints it, whatever stylesheet mode the page ships under — an inline
 SVG's user-agent default is `overflow: hidden`. -/
 def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
+  -- The declared baseline is where the line stands (`Ir.Pic.Picture.rise`),
+  -- the value the PDF sets the picture's depth by.
   Html.elem "svg" (pictureKids pic px0 py1)
-    (pictureBox cfg (px1 - px0) (py1 - py0) ++ pictureRole cfg.locale pic ++
-      #[("overflow", "visible")])
+    (pictureBox cfg (px1 - px0) (py1 - py0) (pic.rise cfg.labelMetric) ++
+      pictureRole cfg.locale pic ++ #[("overflow", "visible")])
 
 /-- **A picture's SVG never clips its ink** (`_contract`): every picture
 ships `overflow="visible"`, the HTML half of the IR's "ink may stand
@@ -5619,10 +5624,18 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
   | [] => acc
-  | (_, body) :: rest =>
+  | (w, body) :: rest =>
+    -- The point the box stands on the row's baseline by (`Ir.BoxPos`), as
+    -- the grid's own baseline alignment says it; a top box keeps the
+    -- grid's default.
+    let pos : Array (String × String) := match w.pos with
+      | .top => #[]
+      | .first => #[("style", "align-self: baseline")]
+      | .center => #[("style", "align-self: center")]
+      | .last => #[("style", "align-self: last baseline")]
     columnNodesInto cfg
       (acc.push (Html.elem "div" (blockNodesInto cfg #[] body.toList)
-        #[("class", "column")])) rest
+        (#[("class", "column")] ++ pos))) rest
 
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc

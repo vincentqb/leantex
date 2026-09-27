@@ -22366,3 +22366,68 @@ changed (the frames that draw the two full graphs), each now bent as the
 reference is. Every other page is pixel-identical to the base at 110 dpi.
 The deck ships 35 pages, and its W0334 lines fall 13 → 8. The paper's
 census and its 8 pages are identical.
+
+
+**A row stands its boxes on one baseline** (second unit). The audit found a
+box's `[pos]` option moving ink by a full line against lualatex while it
+shipped as an `.info` note (N0102, "ignored: the box stands top-aligned").
+It also found, on the deck's frame of three labelled graphs, each label
+standing above its graph. That frame's construct is a positioned box
+followed by a picture declaring `baseline`, in one paragraph.
+- *Source.* latex.ltx `\@iiiparbox` builds `[t]` as a `\vtop`, whose
+  reference point is the first line's baseline; `[b]` as a `\vbox`, the last
+  line's; `[c]` as a `\vcenter`. TeX sets a line of boxes on one baseline
+  (TeXbook ch. 12). pgf's `baseline` (manual §12.2.1) is the height a
+  picture stands on the line by: a length, a coordinate, or a node anchor.
+- *The row value.* `Ir.BoxWidth` is now what a box in a row declares: its
+  width (`BoxSize`) and its `BoxPos` (`top`, `first`, `center`, `last`). The
+  constructors became `@[match_pattern]` definitions, so no walk over
+  `.columns` changed. `Ir.Pic.Picture` gains `baseline`, and
+  `Picture.rise` is the one value both backends set a picture by: the
+  baseline's height above the box's bottom edge. `rise_between` says it lies
+  inside the box. Broken once (the clamp removed) and the build failed.
+- *Readers.* `minipage`, `\parbox` (its options now travel into the box it
+  becomes), `subfigure`, beamer's `column`, and `columns` (whose
+  row-wide option `Compat.columnsRowPos` carries to every column that
+  declares none) read `[pos]`. `[height]` and `[inner-pos]` stay a
+  note. The row builder (`Compat.boxRows`) sets a paragraph that is one
+  positioned box and then a picture as one row: the picture's column
+  takes what the box leaves, so it starts where the box ends.
+- *Placement.* `Layout.B.alignRow` runs at a row's close. Every column was
+  set from the row's start; each moves down by what its point stands above
+  the lowest point, with its lines, fills and paths. A column that a picture
+  opens takes the picture's baseline as its first baseline, and a picture's
+  baseline sets the line's depth (`placePicture`). A row of undeclared boxes
+  moves nothing. `alignRow_keeps` carries the page-step facts. The HTML
+  grid says the same with `align-self: baseline`, `last baseline` or
+  `center`, and the SVG with `vertical-align`.
+- *Cost.* One extra parameter on `Elab.columnsGo` pushed the elaboration knot
+  past the compiler's heartbeat budget, so the row-wide option travels in
+  the raws instead, and the option readers live outside the knot
+  (`boxOptsArm`, `columnsOptsArm`, `columnPosOf`). That is a factorization
+  finding about the knot. The knot is now at its budget.
+- *Tests.* `boxPosRowChecks` (Tests/BoxRow.lean), over `Layout.Out` and the
+  typed HTML tree, checks eight facts. `[b]`, `[t]` (against a larger first
+  line) and `[c]` rows each stand on their point. An honoured position names
+  nothing. A `columns[b]` row reaches its columns. A box and a picture on one
+  line put the label beside the graph, on its node's baseline. Two facts are
+  HTML. All eight fail on `3d2307ca`, and so do the two Surface tests that
+  asserted the old notes, rewritten to the invariant.
+- *Measured.* On synthetic probes against lualatex (`pdftotext -bbox`), each
+  of `[b]`, `[t]` and `[c]` stands where lualatex puts it, and in Chromium
+  (Playwright 1.62) each row's lines share their tops. A box and a picture
+  on one line share their baselines on the page, 65.7 bp apart against
+  75.4 bp. The engine's text width is narrower, and it drops the interword
+  space before the picture (3.3 bp): the columns model has no gutter a space
+  can say. On the private deck only the three-graph frame changed, now
+  labels beside graphs as the reference has them; W0334 8 → 5, N0102 5 → 2.
+  The deck ships 35 pages. The paper is pixel-identical, and its N0102 falls
+  4 → 2 (the subfigures' `[t]`).
+- *Open.* An undeclared box stands top-aligned where LaTeX centres a
+  minipage and beamer its columns. Making `[c]` the default would move
+  every such row in every deck; that choice belongs to the user. `[c]`
+  centres on the box's middle, not TeX's math axis. In HTML a node label is
+  centred on its node (`dominant-baseline: central`) where the PDF sets it
+  on the IR's baseline, so the label and its neighbour differ by about
+  3 CSS px on the deck frame. The fix is the SVG label emission's, in
+  HtmlDoc.

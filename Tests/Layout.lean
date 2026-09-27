@@ -2837,9 +2837,10 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | #[.float .figure (some 1) false inner cap] =>
        Ir.plainText cap == "The parent" &&
        (match inner with
-        | #[.columns #[(.frac w1, #[.float .sub (some 1) false _ c1]),
-                       (.frac w2, #[.float .sub (some 2) false _ c2])]] =>
-          w1 == 400 && w2 == 400 &&
+        | #[.columns #[(w1, #[.float .sub (some 1) false _ c1]),
+                       (w2, #[.float .sub (some 2) false _ c2])]] =>
+          -- `[t]` is the point each box stands on the row's baseline by.
+          w1 == { size := .frac 400, pos := .first } && w2 == { size := .frac 400, pos := .first } &&
           Ir.plainText c1 == "First sub" && Ir.plainText c2 == "Second sub"
         | _ => false)
      | _ => false)

@@ -6790,18 +6790,18 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (_, ds7) := elabStr ("\\pictures{ tool = none }" ++ pic "\\draw (0,0);\n")
   t "a path with one endpoint is still named, not silently dropped"
     (ds7.any fun d => d.code == "E0333")
-  -- The other half of the same rule, for a construct that stays refused:
-  -- `baseline` aligns a picture's baseline with a node's, which needs an
-  -- inline picture the engine does not have, so it is named and dropped —
-  -- and the drop must cost *only* that alignment. Stated as an equality
-  -- between the shipped pages of the same picture with and without the
-  -- option, since only the page can say the drop moved nothing.
+  -- The other half of the same rule: `baseline` names the height the line
+  -- stands on (`Ir.Pic.Picture.baseline`), read where a row sets the
+  -- picture beside a box, so it is no loss — and on the picture itself it
+  -- moves no ink. Stated as an equality between the shipped pages of the
+  -- same picture with and without the option, since only the page can say
+  -- the reading moved nothing of the picture.
   let bl := "\\node (c) {P};\\node (d) [right =of c] {Q};\\path (c) edge (d);\n"
   let (withOpt, dsb) := run ("[baseline={(c.base)}]\n" ++ bl)
   let (without, _) := run bl
-  t "the dropped baseline option is named at the picture"
-    (dsb.any fun d => d.code == "W0334" && hasStr d.message "baseline")
-  t "dropping the baseline option moves nothing on the page"
+  t "a picture's baseline option is read, not named as a loss"
+    (!(dsb.any fun d => d.code == "W0334"))
+  t "reading the baseline option moves none of the picture's own ink"
     (withOpt.size == without.size &&
       (match withOpt[0]?, without[0]? with
        | some a, some b =>
@@ -8326,12 +8326,11 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     (has (pageText pb) "Label one")
   t "and parbox is not an unknown command"
     (!(warnCodes pb).contains "W0301")
-  -- The option run is beamer's `[t]` baseline choice: a parameter the box
-  -- model has nowhere to put, noted where the environment notes its own. The
-  -- geometry itself is no longer a loss — `\parbox{w}{t}` and `{minipage}{w}`
-  -- are the same box (latex.ltx, `\@iiiparbox`), so the width is carried.
-  t "the box it declares is honoured, its baseline option noted"
-    (!(warnCodes pb).contains "W0104" && (elabStr pb).2.any (·.code == "N0102"))
+  -- The option run is the box's `[t]`: the point it stands on its row's
+  -- baseline by (`Ir.BoxPos`), carried with the width — `\parbox{w}{t}` and
+  -- `{minipage}{w}` are the same box (latex.ltx, `\@iiiparbox`).
+  t "the box it declares is honoured, and its position with it"
+    (!(warnCodes pb).contains "W0104" && !(elabStr pb).2.any (·.code == "N0102"))
   -- The full kernel signature: [pos][height][inner-pos]{width}{text}.
   let pb3 := deck169Frame "\\parbox[t][2cm][c]{.25\\textwidth}{Label two}"
   t "a parbox's three option runs all go with it"

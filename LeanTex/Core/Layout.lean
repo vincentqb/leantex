@@ -5175,8 +5175,9 @@ private inductive Op where
   | brk
   /-- Column markers, kept flat so staging stays a map: `colOpen` saves the
   vertical position, `colNext` rewinds to it for the next column, `colClose`
-  resumes below the tallest column. Nesting works through a stack. -/
-  | colOpen
+  resumes below the tallest column. Nesting works through a stack. `pos` is
+  each column's declared position (`Ir.BoxPos`); a table row carries none. -/
+  | colOpen (pos : Array Ir.BoxPos)
   | colNext
   | colClose
   /-- Style for the page being opened: a background fill, and how its
@@ -6101,7 +6102,7 @@ private def collectTable (r : Rd) (a0 : Acc)
         pendBelow := none
       prev := 0
       let row := rows[i]
-      a := { a with ops := a.ops.push .colOpen }
+      a := { a with ops := a.ops.push (.colOpen #[]) }
       for j in [0:row.size] do
         let spec := cols[j]?.getD { width := .natural, align := .left }
         let wj := widths[j]?.getD 0
@@ -7407,7 +7408,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let rem := max 0 (total - declared)
     let shareW := if unspecified > 0 then rem / unspecified else 0
     let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
-    let a := { a with ops := a.ops.push .colOpen }
+    let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
     let a := collectColumns r a cols.toList indent shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
@@ -8159,7 +8160,7 @@ private inductive StagedOp where
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
   | para (j : ParaJob) (t : Task (Array Nat))
-  | colOpen
+  | colOpen (pos : Array Ir.BoxPos)
   | colNext
   | colClose
   | setLogo (content : Array Ir.Inline)
@@ -8170,8 +8171,24 @@ private inductive StagedOp where
   | slotOpen
   | slotClose (spec : SlotSpec)
 
+/-- One column of a row as placed: where its ink starts in the page's
+arrays, its first baseline when a picture opened it (a label line is no
+baseline of the column's), and where the builder stood when it ended —
+the column's last baseline, a picture's own included. -/
+private structure ColMark where
+  lines : Nat
+  fills : Nat
+  paths : Nat
+  first : Option Sp := none
+  y : Sp := 0
+  depth : Sp := 0
+  below : Sp := 0
+  rule : Bool := false
+
 /-- Placement state saved at a `colOpen`, restored per column: where the
-columns start, and the lowest bottom any column reached so far. -/
+columns start, and the lowest bottom any column reached so far. `pos`,
+`page` and `marks` are the row's alignment (`B.alignRow`): the declared
+positions, the page it opened on, and each column as placed. -/
 private structure ColSave where
   y : Sp
   prevDepth : Sp
@@ -8183,6 +8200,9 @@ private structure ColSave where
   bottomDepth : Sp
   bottomBelow : Sp
   bottomRule : Bool
+  pos : Array Ir.BoxPos := #[]
+  page : Nat := 0
+  marks : Array ColMark := #[]
 
 /-- The placement walk's whole state: the page builder, the column-save
 stack, the logo spans keyed to page indexes, and the running prose-line
@@ -8344,12 +8364,15 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         lines := lines.push { x := x, y := top + ink.height,
                               size := size, segs := segs, setWidth := ink.w, leaf := leaf }
   b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
+  -- A declared baseline (`Ir.Pic.Picture.rise`) is where the line stands:
+  -- the part of the picture below it is the line's depth, as a box's is.
+  let rise := pic.rise (picMetric fs imgs b.geom b.xHeight)
   b := { b with
     pageShrink := above
     needed := max b.needed overflow
-    y := yTop + h
-    prevDepth := 0
-    prevBelow := strut
+    y := yTop + h - rise
+    prevDepth := rise
+    prevBelow := max strut rise
     prevRuleOnly := false
     skip := {}
     freshStart := false }
@@ -8395,6 +8418,71 @@ private theorem placeSlot_keeps (b : B) (save : ColSave × Nat × Nat) (spec : S
   obtain ⟨col, l0, f0⟩ := save
   simp only [B.placeSlot]
   split <;> exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Where the next column's ink starts: the page's arrays as they stand. -/
+private def B.colMark (b : B) : ColMark :=
+  { lines := b.cur.lines.size, fills := b.cur.fills.size, paths := b.cur.paths.size }
+
+/-- A column ends where the builder stands: its last baseline and depth. -/
+private def ColMark.finish (m : ColMark) (b : B) : ColMark :=
+  { m with y := b.y, depth := b.prevDepth, below := b.prevBelow, rule := b.prevRuleOnly }
+
+/-- A placed path moved down the page by `d`. -/
+private def PagePath.shiftY (d : Sp) : PagePath → PagePath
+  | .circle cx cy r => .circle cx (cy + d) r
+  | .rect x y w h => .rect x (y + d) w h
+  | .segs ss => .segs (ss.map fun s => match s with
+    | .line x1 y1 x2 y2 => .line x1 (y1 + d) x2 (y2 + d)
+    | .cubic x1 y1 a1 b1 a2 b2 x2 y2 => .cubic x1 (y1 + d) a1 (b1 + d) a2 (b2 + d) x2 (y2 + d))
+  | .tri x1 y1 x2 y2 x3 y3 => .tri x1 (y1 + d) x2 (y2 + d) x3 (y3 + d)
+
+/-- **A row stands its boxes on one baseline** — TeX's line of boxes
+(TeXbook ch. 12), each box's reference point the one its `[pos]` names
+(latex.ltx `\@iiiparbox`: `t` its first baseline, `b` its last, `c` its
+middle; `Ir.BoxPos`). Every column was set from the row's start; the one
+whose point stands lowest stays, and each other moves down by the
+difference, its lines, fills and paths together. A `top` box's point is the
+row's start, so a row of undeclared boxes moves nothing. The row then ends
+where the column that ends lowest ends. -/
+private def B.alignRow (b : B) (save : ColSave) : B :=
+  let refOf (k : Nat) (m : ColMark) : Sp :=
+    let lineEnd := (save.marks[k + 1]?.map (·.lines)).getD b.cur.lines.size
+    let firstLine := if m.lines < lineEnd then (b.cur.lines[m.lines]?.map (·.y)).getD m.y
+      else m.y
+    match save.pos[k]?.getD .top with
+    | .top => save.y
+    | .first => m.first.getD firstLine
+    | .last => m.y
+    | .center => (save.y + m.y + m.depth) / 2
+  let refs := save.marks.mapIdx refOf
+  let target := refs.foldl max save.y
+  -- The column an index of one of the page's arrays belongs to, and its shift;
+  -- ink placed before the row stays.
+  let dyAt (start : ColMark → Nat) (i : Nat) : Sp := Id.run do
+    let mut d : Sp := 0
+    for k in [0:save.marks.size] do
+      if let some m := save.marks[k]? then
+        if start m ≤ i then d := target - refs[k]!
+    return d
+  let lines := b.cur.lines.mapIdx fun i l => { l with y := l.y + dyAt (·.lines) i }
+  let fills := b.cur.fills.mapIdx fun i f => { f with y := f.y + dyAt (·.fills) i }
+  let paths := b.cur.paths.mapIdx fun i p => { p with path := p.path.shiftY (dyAt (·.paths) i) }
+  let (ey, ed, eb, er) := (save.marks.zip refs).foldl (fun (acc : Sp × Sp × Sp × Bool) (m, r) =>
+    let y := m.y + (target - r)
+    if y > acc.1 then (y, m.depth, m.below, m.rule) else acc)
+    (save.y, save.prevDepth, save.prevBelow, save.prevRule)
+  { b with cur := { b.cur with lines := lines, fills := fills, paths := paths }
+           y := ey, prevDepth := ed, prevBelow := eb, prevRuleOnly := er
+           skip := {}, freshStart := false
+           needed := max b.needed (ey + ed - b.geom.bodyBottom) }
+
+/-- An aligned row moves ink inside the page being built and nothing else:
+the shipped pages, the geometry, the document's ground and the break flag
+stand — what the page-step facts read, as `placeSlot_keeps` says of a slot. -/
+private theorem alignRow_keeps (b : B) (save : ColSave) :
+    (b.alignRow save).pages = b.pages ∧ (b.alignRow save).geom = b.geom ∧
+    (b.alignRow save).docBg = b.docBg ∧ (b.alignRow save).noBreak = b.noBreak := by
+  simp [B.alignRow]
 
 /-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
 driver loop consumes the outermost pair (`runFloat`), and an inner pair —
@@ -8449,7 +8537,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                   chrome := some (b.cur.lines, b.cur.fills, b.y,
                     max b.prevDepth (barBottom - b.y),
                     max b.prevBelow (barBottom - b.y)) }
-  | .colOpen =>
+  | .colOpen pos =>
     -- On a fresh page nothing stands above the columns: their bottom starts
     -- at the body top, never at the last page's last line, which
     -- `B.contentEnd` would otherwise read as this page's content end.
@@ -8460,14 +8548,16 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       fresh := fresh
       bottomY := if fresh then b.geom.bodyTop else b.y
       bottomDepth := if fresh then 0 else b.prevDepth, bottomBelow := b.prevBelow
-      bottomRule := b.prevRuleOnly }
+      bottomRule := b.prevRuleOnly
+      pos := pos, page := b.pages.size, marks := #[b.colMark] }
   | .colNext =>
     if let some save := colSaves.back? then
       let save := if b.y > save.bottomY
         then { save with bottomY := b.y, bottomDepth := b.prevDepth
                          bottomBelow := b.prevBelow, bottomRule := b.prevRuleOnly }
         else save
-      colSaves := colSaves.pop.push save
+      colSaves := colSaves.pop.push { save with
+        marks := (save.marks.modify (save.marks.size - 1) (·.finish b)).push b.colMark }
       b := { b with y := save.y, prevDepth := save.prevDepth
                     prevBelow := save.prevBelow, prevRuleOnly := save.prevRule
                     skip := save.skip
@@ -8475,13 +8565,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
-      let (bottomY, bottomDepth, bottomBelow, bottomRule) := if b.y > save.bottomY
-        then (b.y, b.prevDepth, b.prevBelow, b.prevRuleOnly)
-        else (save.bottomY, save.bottomDepth, save.bottomBelow, save.bottomRule)
-      b := { b with y := bottomY, prevDepth := bottomDepth
-                    prevBelow := bottomBelow, prevRuleOnly := bottomRule
-                    skip := {}
-                    freshStart := false }
+      let save := { save with marks := save.marks.modify (save.marks.size - 1) (·.finish b) }
+      if save.pos.any (· != .top) && save.marks.size == save.pos.size &&
+          b.pages.size == save.page then
+        b := b.alignRow save
+      else
+        let (bottomY, bottomDepth, bottomBelow, bottomRule) := if b.y > save.bottomY
+          then (b.y, b.prevDepth, b.prevBelow, b.prevRuleOnly)
+          else (save.bottomY, save.bottomDepth, save.bottomBelow, save.bottomRule)
+        b := { b with y := bottomY, prevDepth := bottomDepth
+                      prevBelow := bottomBelow, prevRuleOnly := bottomRule
+                      skip := {}
+                      freshStart := false }
   | .titleBar color pad strut =>
     -- The bar sits behind the line just placed: full page width, page
     -- top to `pad` below the line's depth. Its bottom edge rides onto
@@ -8561,7 +8656,15 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       prose := max prose breaks.size
     b := placePara fs (b.keepHeading j breaks.size) j breaks
   | .picture x pic leaf =>
+    let before := b.cur.lines.size
     b := placePicture fs imgs b x pic leaf
+    -- A picture that opens a column is the column's first baseline; its
+    -- label lines are not.
+    if let some save := colSaves.back? then
+      if let some m := save.marks.back? then
+        if m.first.isNone && m.lines == before then
+          colSaves := colSaves.pop.push
+            { save with marks := save.marks.pop.push { m with first := some b.y } }
   | .slotOpen =>
     slotSaves := slotSaves.push ({
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
@@ -8932,6 +9035,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placePara_extends ..
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
+    | exact pagesExtend_of_eq (alignRow_keeps ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.skip.width)); simp; done)
     | (refine pagesExtend_congr ?_
         (pagesExtend_trans (finishPage_extends _ (o := st.b.skip.width)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
@@ -8955,6 +9059,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | exact placePara_noBreak _ _ _ _ h
     | exact placePicture_noBreak _ _ _ _ _ _ h
     | exact ⟨(placeSlot_keeps ..).1, (placeSlot_keeps ..).2.2.2.trans h⟩
+    | exact ⟨(alignRow_keeps ..).1, (alignRow_keeps ..).2.2.2.trans h⟩
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
@@ -9138,6 +9243,8 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     | exact bgStep_placePicture ..
     | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1
         (placeSlot_keeps ..).1
+    | exact BgStep.of_eq (alignRow_keeps ..).2.1 (alignRow_keeps ..).2.2.1
+        (alignRow_keeps ..).1
     | (refine (bgStep_finishPage _ (o := st.b.skip.width)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
@@ -9889,7 +9996,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
-    | .colOpen => .colOpen
+    | .colOpen p => .colOpen p
     | .colNext => .colNext
     | .colClose => .colClose
     | .setLogo c => .setLogo c

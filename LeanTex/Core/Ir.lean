@@ -2963,6 +2963,11 @@ structure Picture where
   the path paints it (§17.2.2), so a diagram of undrawn nodes is one inner
   sep larger on every side than its letters. -/
   borders : Array Box := #[]
+  /-- The height the surrounding line's baseline passes through, in picture
+  coordinates, when the picture declares one (`baseline=`, pgf manual
+  §12.2.1: a length, a coordinate or a node anchor; the bare key is 0pt).
+  Otherwise the box's bottom edge stands on the baseline. -/
+  baseline : Option Sp := none
   deriving Repr, BEq, Inhabited
 
 def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
@@ -3297,6 +3302,31 @@ theorem Picture.box_declared_exact (p : Picture) (m : LabelMetric) (b : Box)
     (h : p.declared = some b) : p.box m = b := by
   simp [Picture.box, h]
 
+/-- **Where a picture stands on its line**: how far above its box's bottom
+edge the declared baseline runs (pgf manual §12.2.1), held inside the box;
+with nothing declared, the bottom edge is on the line. The one value both
+backends set a picture on its baseline by — the PDF's depth below the line
+(`Layout.placePicture`), the SVG's `vertical-align` (`HtmlDoc.pictureSvg`). -/
+def Picture.rise (p : Picture) (m : LabelMetric) : Sp :=
+  (p.baseline.map fun yb =>
+    max 0 (min ((p.box m).2.2 - (p.box m).1.2) (yb - (p.box m).1.2))).getD 0
+
+/-- The clamp `rise` applies, over bare `Int` so `omega` reads it. -/
+private theorem clampRise_between (lo hi yb : Int) (h : lo ≤ hi) :
+    0 ≤ max 0 (min (hi - lo) (yb - lo)) ∧ max 0 (min (hi - lo) (yb - lo)) ≤ hi - lo := by
+  omega
+
+/-- **The baseline runs through the box**: a picture's rise lies between its
+box's bottom edge and its top, whatever it declared — a baseline declared
+above the picture is its top edge on the line, one below it its bottom. -/
+theorem Picture.rise_between (p : Picture) (m : LabelMetric)
+    (h : (p.box m).1.2 ≤ (p.box m).2.2) :
+    0 ≤ p.rise m ∧ p.rise m ≤ (p.box m).2.2 - (p.box m).1.2 := by
+  unfold Picture.rise
+  cases p.baseline with
+  | some yb => exact clampRise_between _ _ _ h
+  | none => exact ⟨Int.le_refl 0, Int.sub_nonneg.mpr h⟩
+
 /-- **Otherwise its box covers every mark**: with nothing declared, every
 shape's ink and every node's border lies inside the box, whatever face
 resolves. `inkBbox_covers` is the ink half of the old box; the borders are
@@ -3472,11 +3502,38 @@ reference a width is relative to is known at placement and nowhere earlier —
 the `Sourced` entry's finding (PLAN 2026-09-24) one layer over, where
 resolving in the wrong layer forced an operator to invent an answer it could
 not have. -/
-inductive BoxWidth where
+inductive BoxSize where
   | share
   | frac (permille : Nat)
   | abs (w : Sp)
   deriving Repr, BEq, Inhabited
+
+/-- Which point of a box stands on the baseline of the row it is set in —
+the `[pos]` a box declares (latex.ltx `\@iiiparbox`: `t` builds a `\vtop`,
+whose reference point is its first line's baseline; `b` a `\vbox`, its last
+line's; `c` a `\vcenter`, its middle; beamer's `column` adds `T`, the top
+edge). A picture's baseline is its bottom edge unless it declares one
+(`Pic.Picture.baseline`). `top` is also what a box that declares nothing
+gets: the engine's row sets undeclared boxes top-aligned, where LaTeX
+centres a minipage and beamer its columns — a standing divergence. -/
+inductive BoxPos where
+  | top
+  | first
+  | center
+  | last
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What a box in a row declares: its width and the point it stands on the
+row's baseline by. The type kept the width's name so the row's walks stay
+untouched; `share`, `frac` and `abs` build an undeclared-position box. -/
+structure BoxWidth where
+  size : BoxSize
+  pos : BoxPos := .top
+  deriving Repr, BEq, Inhabited
+
+@[match_pattern] def BoxWidth.share : BoxWidth := ⟨.share, .top⟩
+@[match_pattern] def BoxWidth.frac (permille : Nat) : BoxWidth := ⟨.frac permille, .top⟩
+@[match_pattern] def BoxWidth.abs (w : Sp) : BoxWidth := ⟨.abs w, .top⟩
 
 /-- The declared width against a known measure: the width the box is set at.
 One resolving site, read by the page's column arithmetic, so a box's measure
@@ -3487,7 +3544,7 @@ by the measure rather than by ink off the page. `share` resolves to nothing
 here — the leftover is not a function of one column — and the caller divides
 it (`Layout`'s `shareW`). -/
 def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
-  match w with
+  match w.size with
   | .share => none
   | .frac p => some (min measure (measure * p / 1000))
   | .abs l => some (min measure (max 0 l))
@@ -3507,7 +3564,8 @@ inductive Track where
 grid's own width, which is the enclosing measure; an absolute length is that
 length; a shared column takes a free fraction of the leftover, which is what
 `1fr` means. -/
-def BoxWidth.trackOf : BoxWidth → Track
+def BoxWidth.trackOf (w : BoxWidth) : Track :=
+  match w.size with
   | .share => .free
   | .frac p => .percent p
   | .abs l => .length l
@@ -3522,7 +3580,8 @@ def Track.css : Track → String
 /-- Does this declaration name a width at all? The question the census and
 the diagnostics ask, so `share` is named once rather than tested as a
 constructor at each site. -/
-def BoxWidth.declared : BoxWidth → Bool
+def BoxWidth.declared (w : BoxWidth) : Bool :=
+  match w.size with
   | .share => false
   | .frac _ | .abs _ => true
 
@@ -3542,7 +3601,8 @@ two projections. -/
 theorem boxWidth_tracks_agree (w : BoxWidth) (measure : Sp) :
     (w.resolve measure).isSome = w.declared ∧
       w.trackOf.isFree = !w.declared := by
-  cases w <;> exact ⟨rfl, rfl⟩
+  rcases w with ⟨s, _⟩
+  cases s <;> exact ⟨rfl, rfl⟩
 
 /-- One column of a table, from the `tabular` column spec. A `p` column
 wraps its cells at the declared width; `l`/`c`/`r` set each cell as one
@@ -7851,10 +7911,15 @@ def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String 
   match cols with
   | [] => ""
   | (w, body) :: rest =>
-    let self := (match w with
-      | .frac f => s!"{ind}column {f}/1000\n"
-      | .abs l => s!"{ind}column {l.toPtString}pt\n"
-      | .share => s!"{ind}column\n") ++ dumpBlocks (ind ++ "  ") body
+    let pos := match w.pos with
+      | .top => ""
+      | .first => " [t]"
+      | .center => " [c]"
+      | .last => " [b]"
+    let self := (match w.size with
+      | .frac f => s!"{ind}column {f}/1000{pos}\n"
+      | .abs l => s!"{ind}column {l.toPtString}pt{pos}\n"
+      | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
     self ++ tail
 
@@ -7974,6 +8039,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}picture {pic.shapes.size} shapes\n" ++
     (match pic.declared with
       | some b => s!"{ind}  declared {boxS b}\n"
+      | none => "") ++
+    (match pic.baseline with
+      | some y => s!"{ind}  baseline {y.toPtString}\n"
       | none => "") ++
     String.join (pic.borders.toList.map fun b => s!"{ind}  border {boxS b}\n") ++
     String.join (pic.shapes.toList.map fun s =>
