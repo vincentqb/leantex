@@ -99,12 +99,14 @@ def greekSpellings : List (Char × String) :=
    ('Ξ', "Xi"), ('Π', "Pi"), ('Σ', "Sigma"), ('Υ', "Upsilon"),
    ('Φ', "Phi"), ('Ψ', "Psi"), ('Ω', "Omega")]
 
-/-- Control words that are one symbol atom: `(class, scalar)`. Greek
+/-- Control words that are one symbol atom: `(class, scalar)`. The rows
+here are the engine's own decisions; every other symbol is a row of
+`MathSymData.rows`, generated from the file that declares it (the kernel's
+fontmath.ltx, amsfonts, amssymb) and unicode-math's table, and appended
+below, so a row here is the one `lookup` finds for its name. Greek
 lowercase is italic (the Mathematical Italic block, with TeX's `\epsilon` ↦
 lunate and `\phi` ↦ straight forms); Greek capitals upright, TeX's
-convention. After these rows come the symbols amsfonts and amssymb declare
-(`MathSymData.rows`, generated from the packages and unicode-math's table);
-where a name is in both, the row here is the one `lookup` finds. -/
+convention — kept whole here because `greek_literal_agree` reads it. -/
 def ctrlAtom : List (String × MathClass × Char) :=
   [-- Greek, lowercase italic
    ("alpha", .ord, '𝛼'), ("beta", .ord, '𝛽'),
@@ -127,65 +129,13 @@ def ctrlAtom : List (String × MathClass × Char) :=
    ("Lambda", .ord, 'Λ'), ("Xi", .ord, 'Ξ'), ("Pi", .ord, 'Π'),
    ("Sigma", .ord, 'Σ'), ("Upsilon", .ord, 'Υ'), ("Phi", .ord, 'Φ'),
    ("Psi", .ord, 'Ψ'), ("Omega", .ord, 'Ω'),
-   -- binary operations
-   ("times", .bin, '×'), ("cdot", .bin, '\u22C5'), ("pm", .bin, '±'),
-   ("mp", .bin, '\u2213'), ("div", .bin, '÷'), ("ast", .bin, '\u2217'),
-   ("star", .bin, '\u22C6'), ("circ", .bin, '\u2218'),
-   ("bullet", .bin, '\u2219'), ("cup", .bin, '\u222A'),
-   ("cap", .bin, '\u2229'), ("setminus", .bin, '\u2216'),
-   ("wedge", .bin, '\u2227'), ("land", .bin, '\u2227'),
-   ("vee", .bin, '\u2228'), ("lor", .bin, '\u2228'),
-   ("oplus", .bin, '\u2295'), ("ominus", .bin, '\u2296'),
-   ("otimes", .bin, '\u2297'), ("odot", .bin, '\u2299'),
-   -- relations
-   ("le", .rel, '≤'), ("leq", .rel, '≤'), ("ge", .rel, '≥'),
-   ("geq", .rel, '≥'), ("ne", .rel, '≠'), ("neq", .rel, '≠'),
-   ("equiv", .rel, '\u2261'), ("sim", .rel, '\u223C'),
-   ("simeq", .rel, '\u2243'), ("approx", .rel, '\u2248'),
-   ("cong", .rel, '\u2245'), ("propto", .rel, '\u221D'),
-   ("subset", .rel, '\u2282'), ("supset", .rel, '\u2283'),
-   ("subseteq", .rel, '\u2286'), ("supseteq", .rel, '\u2287'),
-   ("in", .rel, '\u2208'), ("notin", .rel, '\u2209'), ("ni", .rel, '\u220B'),
-   ("ll", .rel, '\u226A'), ("gg", .rel, '\u226B'),
-   ("prec", .rel, '\u227A'), ("succ", .rel, '\u227B'),
-   ("mid", .rel, '\u2223'), ("parallel", .rel, '\u2225'),
-   ("perp", .rel, '\u27C2'),
-   ("to", .rel, '→'), ("rightarrow", .rel, '→'),
-   ("leftarrow", .rel, '←'), ("gets", .rel, '←'),
-   ("mapsto", .rel, '\u21A6'), ("leftrightarrow", .rel, '\u2194'),
-   ("Rightarrow", .rel, '\u21D2'), ("Leftarrow", .rel, '\u21D0'),
-   ("Leftrightarrow", .rel, '\u21D4'), ("iff", .rel, '\u27FA'),
-   -- ordinary symbols
-   ("infty", .ord, '∞'), ("partial", .ord, '𝜕'),
-   ("nabla", .ord, '\u2207'), ("forall", .ord, '\u2200'),
-   ("exists", .ord, '\u2203'), ("nexists", .ord, '\u2204'),
-   ("neg", .ord, '¬'), ("lnot", .ord, '¬'),
-   ("emptyset", .ord, '\u2205'), ("varnothing", .ord, '\u2205'),
-   ("hbar", .ord, '\u210F'), ("ell", .ord, '\u2113'),
-   ("Re", .ord, '\u211C'), ("Im", .ord, '\u2111'),
-   ("aleph", .ord, '\u2135'), ("wp", .ord, '\u2118'),
-   ("angle", .ord, '\u2220'), ("top", .ord, '\u22A4'),
-   ("bot", .ord, '\u22A5'), ("prime", .ord, '\u2032'),
-   ("backslash", .ord, '\\'),
-   -- inner: the dotses, TeX's \mathinner forms; `\vdots` is a `\vbox`
-   -- (fontmath.ltx), which TeX sets as an ordinary atom
-   ("ldots", .inner, '…'), ("dots", .inner, '…'),
-   ("cdots", .inner, '\u22EF'), ("vdots", .ord, '\u22EE'),
-   ("ddots", .inner, '\u22F1'),
-   -- big operators: Op atoms; display-size variants and above/below limits
-   -- are the layout's, per atom `limits` (see `limitOps`)
-   ("sum", .op, '\u2211'), ("prod", .op, '\u220F'),
-   ("coprod", .op, '\u2210'), ("int", .op, '\u222B'),
-   ("oint", .op, '\u222E'), ("iint", .op, '\u222C'),
-   ("bigcup", .op, '\u22C3'), ("bigcap", .op, '\u22C2'),
-   ("bigvee", .op, '\u22C1'), ("bigwedge", .op, '\u22C0'),
-   ("bigoplus", .op, '\u2A01'), ("bigotimes", .op, '\u2A02'),
-   -- delimiters as ordinary (non-growing) atoms; `\left` grows them
-   ("langle", .opening, '\u27E8'), ("rangle", .closing, '\u27E9'),
-   ("lfloor", .opening, '\u230A'), ("rfloor", .closing, '\u230B'),
-   ("lceil", .opening, '\u2308'), ("rceil", .closing, '\u2309'),
-   ("vert", .ord, '|'), ("Vert", .ord, '\u2016'), ("|", .ord, '\u2016'),
-   ("colon", .punct, ':'),
+   -- the operator scalar, where unicode-math sets U+2022
+   ("bullet", .bin, '\u2219'),
+   ("iff", .rel, '\u27FA'),
+   -- inner: the dotses, TeX's \mathinner forms
+   ("ldots", .inner, '…'), ("dots", .inner, '…'), ("cdots", .inner, '\u22EF'),
+   ("iint", .op, '\u222C'),
+   ("|", .ord, '\u2016'), ("colon", .punct, ':'),
    -- escapes: the reserved characters as content
    ("{", .opening, '{'), ("}", .closing, '}'), ("$", .ord, '$'),
    ("%", .ord, '%'), ("&", .ord, '&'), ("#", .ord, '#'), ("_", .ord, '_')]
