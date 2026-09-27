@@ -20358,3 +20358,97 @@ N0020 `honoured:` count still reads the N0100 notes (the splice record
 carries no count; a per-file tally from `say` is the shape, owed by the
 change that stops emitting those notes), and a refused macro's use still
 reads "unknown command".
+
+
+### 2026-09-27 — one realized ink per role and ground, in both artifacts
+
+The warnings audit of the private reference corpus found three colour
+defects that share one shape: an artifact deciding an ink the IR had
+already decided. This entry records the fix and what stays open.
+
+**N0022: the HTML realized a second time.** The stylesheet ran the
+solver over the frame-title bar's and the standout frame's role tokens
+itself, on a palette entry the realization pass had already rewritten
+for the page. A role that failed on the page and on a local ground
+shipped three inks: the note's and the PDF's, and a third in the HTML.
+On a synthetic deck (declared accent `#D8691F`, failing on every
+ground), the bar shipped `#DC6D24` in the PDF and `#DC6D2C` in the
+HTML, and the standout `#EE7C38` and `#ED7D3E`.
+
+The class is closed rather than the site. A role's ink on every ground
+that is not its page is now one IR value: `Palette.inks`, read through
+`Design.inks`, is written by `Contrast.realizeDoc` on the palette it was
+judged under. The run rewrite and the record read one lookup
+(`Judged.inkOf`). The HTML declares the recorded inks per painted ground
+(`HtmlDoc.inkScopes`: the frame-title bar, the standout inversion, the
+title page, each titled bar) and calls no solver; `titlePageRealized` is
+deleted. The statements:
+- `Contrast.realized_projects`: every recorded ink is the ink the run
+  rewrite gives a run of that role, colour and ground;
+- `HtmlDoc.inkDecls_projects`: every scope painting that ground
+  declares it;
+- `HtmlDoc.realized_agree`: the two projections of one IR value, for
+  every document and colour-site lookup.
+
+Each breaks the build when its backend is given a second solver pass.
+N0022 carries its key (`Ir.inkKey`: role, declared colour, ground) as
+its subject. `realizedAgreeChecks` asserts the census in both
+directions over `Layout.Out`, the typed HTML tree and the notes; it
+fails at `b312cf2b` on the three local grounds.
+
+The ground was the second half. The paged deck's stage painted the
+engine's surface token whatever the document declared, while the PDF
+paints the declared page and the judge realizes against it. On the
+private deck, which declares a white page, the page's realized accent
+read 4.52:1 in the PDF and 4.33:1 in Chromium. The stage now paints
+`var(--bg, var(--surface))`: opaque on every path, as the user asked,
+and on the declared page where there is one.
+
+**W0315: a derived colour was frozen.** The pairing warning had no
+subject, span or count, and an anonymous colour's help invented a role
+name. Each W0315 now carries its pairing key as its subject. It warns at
+the first coloured run with that run's span; the elaboration records each
+colour expression's first span and value in `SpanRecords.colors`. Every
+later run is a note under the same subject, so the tally counts runs.
+W0315 has left `subjectDebt`.
+
+A failing mix of two named colours is re-weighted (`Contrast.remix`):
+the weight nearest the declared one whose mix passes. The author's two
+colours are kept, the result is reported as N0022 in the author's
+spelling, and both artifacts ship the one rewritten run colour. The
+statements:
+- `remix_mem`: the result is a mix of the declared operands, at a
+  weight in 0..100, and it passes;
+- `Palette.mixParts_exact`: the parts reader is held to
+  `Palette.resolve`'s grammar.
+
+Two kinds of mix keep W0315: a mix no weight can carry, and a mix in
+the print model, which `realize` already refuses.
+
+**Measured on the private reference documents** (PDF content streams;
+Chromium 151, rendered computed colour against the effective
+background):
+- deck HTML: 29 of 605 text elements below their AA threshold at
+  `b312cf2b`, 0 at this branch;
+- the bar's accent: one ink, where the HTML had shipped two;
+- deck PDF text shows below 4.5:1: 78 before, 53 after. Of the 53, 42
+  are one pale ink on two consecutive pages of one frame. That ink is
+  unchanged from the base, and no code in this branch writes it; it was
+  not traced further. The other 11 are picture labels.
+- page counts 35 and 8, unchanged; the census differs only in the one
+  W0315, which becomes N0022.
+
+**Open, and why.**
+- *Picture labels are judged by nothing.* On the private deck a label in
+  the accent role ships its declared value at 3.86:1, and a mixed label
+  at 3.29:1, in both artifacts alike. `Contrast.usesBlock` and the
+  recolour walk both leave `.picture` whole. The label-on-fill contract
+  is still owed.
+- *A mid-document palette's local-ground inks* reach the PDF's runs,
+  but the HTML's scoped rules are the document palette's only.
+- *W0385 (colour inside math)* is not carried in this branch. The plan
+  is in the report (`MNucleus.inked`, a resolver argument to
+  `MathParse`, the dim and recolour walks over math).
+- *How far a re-weighting may move* is the human's decision. The palette
+  golden's `warn!40` becomes `warn!97`; a cap would keep more of the
+  intent and warn more often.

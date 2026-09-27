@@ -60,7 +60,7 @@ frame
           styled bold
             text "An overridden accent"
         text " and "
-        color #8F999B
+        color #687578
           text "a mixed colour"
         text "."
 frame
@@ -144,4 +144,4 @@ note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{sli
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
 note[N0100] 36:11 '\alert' → \textcolor{alert}{\textbf ...}
 note[N0100] 43:6 '\alert' → \textcolor{alert}{\textbf ...}
-warning[W0315] - text coloured #8F999B reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #8F999B }
+note[N0022] - 'fg!50!bg' is realized as 'fg!68!bg' (#687578) on the page (#FAFAFA) to meet 4.50:1

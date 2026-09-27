@@ -951,6 +951,34 @@ def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
      ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
 }
 
+mutual
+
+/-- The stylesheet text the typed tree ships, in tree order. -/
+def treeCssList (acc : String) : List Html.Node → String
+  | [] => acc
+  | n :: rest => treeCssList (treeCssOne acc n) rest
+
+def treeCssOne (acc : String) : Html.Node → String
+  | .style css => acc.append css
+  | .elem _ _ kids => treeCssList acc kids.toList
+  | .text _ => acc
+  | .script _ _ => acc
+
+end
+
+/-- The declarations of every stylesheet rule whose selector is `sel`
+exactly, in order: the texts between their braces. -/
+def cssRulesOf (css sel : String) : List String :=
+  (css.splitOn "}").filterMap fun chunk =>
+    match chunk.splitOn "{" with
+    | [s, decls] =>
+      if (s.splitOn "\n").getLast!.trimAscii.toString == sel then some decls else none
+    | _ => none
+
+/-- The declarations of the first stylesheet rule whose selector is `sel`
+exactly: the text between its braces. -/
+def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+
 /-- The read-side census of produced PDF bytes, for a claim about what a
 file carries (fonts embedded, filters, page count) — `PdfCensus.census`
 with its refusal surfaced as the test's own failure text. -/

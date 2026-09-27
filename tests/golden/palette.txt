@@ -44,8 +44,8 @@ list unordered
       color soft #D8C4FA
         text "soft"
       text ", and an inline pale one that earns the pairing warning: "
-      color #E1BA9D
+      color #B65810
         text "a tint"
       text "."
 -- diagnostics
-warning[W0315] - text coloured #E1BA9D reads at 1.71:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #E1BA9D }
+note[N0022] - 'warn!40' is realized as 'warn!97' (#B65810) on the page (#FAFAF9) to meet 4.50:1

@@ -4594,30 +4594,6 @@ def titleSlideStylesOne (inSlide : Bool) (acc : Array String) : Html.Node → Ar
 
 end
 
-mutual
-
-/-- The stylesheet text the typed tree ships, in tree order. -/
-def treeCssList (acc : String) : List Html.Node → String
-  | [] => acc
-  | n :: rest => treeCssList (treeCssOne acc n) rest
-
-def treeCssOne (acc : String) : Html.Node → String
-  | .style css => acc.append css
-  | .elem _ _ kids => treeCssList acc kids.toList
-  | .text _ => acc
-  | .script _ _ => acc
-
-end
-
-/-- The declarations of the first stylesheet rule whose selector is `sel`
-exactly: the text between its braces. -/
-def cssRuleOf (css sel : String) : Option String :=
-  (css.splitOn "}").findSome? fun chunk =>
-    match chunk.splitOn "{" with
-    | [s, decls] =>
-      if (s.splitOn "\n").getLast!.trimAscii.toString == sel then some decls else none
-    | _ => none
-
 /-- **No datum a template node inserts is dropped.** A node the reader
 cannot pin, or cannot wholly read, still ships what it sets: pinned where
 its pin reads, in the title page's flow where it does not, and the loss is
@@ -4742,9 +4718,10 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let cssR := treeCssList (treeCssList "" headR.toList) bodyR.toList
   t "the HTML title slide resolves the author's token to the ink the PDF ships"
     ((titleSlideStylesList false #[] bodyR.toList).any (hasStr · "var(--probeRust") &&
-     (match authorInk, cssRuleOf cssR "section.slide.title-page" with
-      | some c, some decls => hasStr decls s!"--probeRust: {HtmlDoc.cssColor c};"
-      | _, _ => false))
+     (match authorInk with
+      | some c => (cssRulesOf cssR "section.slide.title-page").any
+          (hasStr · s!"--probeRust: {HtmlDoc.cssColor c};")
+      | none => false))
   -- **Each slot's stylesheet rule pins it where TikZ does**, read off the
   -- stylesheet the typed tree ships for the five-slot fixture. Known
   -- answers spelled from its declarations: `at` names the page point (a

@@ -967,6 +967,23 @@ theorem rhythm_table_exact (size : Sp) :
       headingBeforeDefault, displaySkipDefault, trivlistSkipDefault, Dim.Length.ofSp,
       List.lookup] <;> omega
 
+/-- A role realized on a ground other than its palette's page: the role, the
+colour it was declared as there, the ground, and the ink the contrast
+contract chose (`Contrast.realizeDoc`). -/
+structure GroundInk where
+  role : String
+  declared : Color
+  ground : Color
+  ink : Color
+  deriving Repr, BEq, Inhabited
+
+/-- The key a role's realization on one ground is named by — the role, the
+colour it was declared as, the ground — as the `subject` of its N0022 note,
+so "every realization is reported" is a lookup. -/
+def inkKey (role : String) (declared ground : Color) : String :=
+  let hex (c : Color) := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+  s!"{role}:{hex declared}@{hex ground}"
+
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]
@@ -979,6 +996,10 @@ structure Palette where
   low-contrast — a watermark, a dimmed aside — and exempt from the pairing
   diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
   decorative : Array String := #[]
+  /-- The realized inks of the roles used under this palette on grounds
+  that are not its page, written by the realization pass and read by
+  both backends through `Design.inks`. Empty until realization. -/
+  inks : Array GroundInk := #[]
   deriving Repr, BEq, Inhabited
 
 def Palette.find? (p : Palette) (name : String) : Option Color :=
@@ -1239,6 +1260,68 @@ theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : Color)
     · rename_i a ha
       exact ⟨first, rest, a, hparts, ha, Palette.resolve_go_model_exact p rest a c h⟩
     · exact absurd h (by simp)
+
+/-- A two-colour mix as its parts: `a!P!b`, or `a!P` over white — the one
+step of xcolor's grammar whose weight a contrast repair can move without
+touching the colours the author named. `none` for a bare name, a longer
+chain, or a malformed expression. -/
+def Palette.mixParts (p : Palette) (expr : String) : Option (Color × Nat × Color) :=
+  match bangParts [] expr.toList with
+  | [first, pctS] => (p.atom first).bind fun a => pctS.toNat?.bind fun pct =>
+      if pct > 100 then none else some (a, pct, Color.white)
+  | [first, pctS, second] => (p.atom first).bind fun a => pctS.toNat?.bind fun pct =>
+      if pct > 100 then none else (p.atom second).map fun b => (a, pct, b)
+  | _ => none
+
+/-- The mix expression with its weight replaced and its colours as written:
+the spelling a re-weighted mix is reported in. -/
+def mixReweighed (expr : String) (pct : Nat) : String :=
+  match bangParts [] expr.toList with
+  | first :: _ :: rest => String.intercalate "!" (first :: toString pct :: rest)
+  | parts => String.intercalate "!" parts
+
+/-- **A mix's parts are the mix `resolve` computes.** The parts reader is a
+second reading of the grammar `Palette.resolve` owns, so it is held to it:
+whatever parts it returns mix to exactly the colour the expression
+resolves to, and a re-weighting of those parts is a re-weighting of the
+author's own mix, not of a colour the reader invented. -/
+theorem Palette.mixParts_exact {p : Palette} {e : String} {a b : Color} {pct : Nat}
+    (h : p.mixParts e = some (a, pct, b)) : p.resolve e = some (a.mix pct b) := by
+  unfold Palette.mixParts at h
+  unfold Palette.resolve
+  split at h
+  · rename_i first pctS hparts
+    rw [hparts]
+    cases ha : p.atom first with
+    | none => simp [ha] at h
+    | some a0 =>
+      cases hp : pctS.toNat? with
+      | none => simp [ha, hp] at h
+      | some q =>
+        by_cases hq : q > 100
+        · simp [ha, hp, hq] at h
+        · simp only [ha, hp, hq, Option.bind_some, ite_false, Option.some.injEq,
+            Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl, rfl⟩ := h
+          simp [Palette.resolve.go, hp, hq, ha]
+  · rename_i first pctS second hparts
+    rw [hparts]
+    cases ha : p.atom first with
+    | none => simp [ha] at h
+    | some a0 =>
+      cases hp : pctS.toNat? with
+      | none => simp [ha, hp] at h
+      | some q =>
+        by_cases hq : q > 100
+        · simp [ha, hp, hq] at h
+        · cases hb : p.atom second with
+          | none => simp [ha, hp, hb] at h
+          | some b0 =>
+            simp only [ha, hp, hq, hb, Option.bind_some, ite_false, Option.map_some,
+              Option.some.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl, rfl⟩ := h
+            simp [Palette.resolve.go, hp, hq, hb, ha]
+  · exact absurd h (by simp)
 
 /-- Font families a document asks for, as declared by `\fonts`. `dirs` are
 directories of font files the document ships, relative to the document, so a
@@ -7469,6 +7552,11 @@ structure Design where
   both shipped bundles and consumed by no backend yet — the role check in
   `Tests.lean` names it until the title-page rule lands. -/
   separator : Color
+  /-- Every role's realized ink on a ground that is not the page (the
+  frame-title bar, a titled bar, the standout inversion, the title page):
+  one value per role, declaration and ground, which the PDF's runs ship and
+  the HTML's scoped tokens declare (`HtmlDoc.realized_agree`). -/
+  inks : Array GroundInk
   /-- Thickness of the progress bar, resolved at layout like any token. -/
   progressheight : SymGlue
   styles : Styles
@@ -7513,6 +7601,7 @@ def Design.ofPalette (pal : Palette) : Design :=
       { fg := (pal.find? "titlepagefg").getD bg
         bg := ground }
     separator := (pal.find? "separator").getD fg
+    inks := pal.inks
     progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := {} }
 

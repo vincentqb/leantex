@@ -1580,21 +1580,32 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
   -- An anonymous use (a mixed colour) has no name, so the decorative
-  -- escape matches it by value — the help's own printed line must be the
-  -- line that silences the warning it rides on.
-  let anon := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-    "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}"
+  -- escape matches it by value — and the help names no key the author did
+  -- not write: it states the two steps, with the name left to the author.
+  -- Yellow over white is a mix no weight can carry, so it keeps its warning.
+  let anon := "\\documentclass{article}\\begin{document}\\textcolor{yellow!50}{quiet}" ++
+    "\\end{document}"
   let anonDiag := ((elabStr anon).2.filter (·.code == "W0315"))[0]?
-  t "an anonymous mixed colour warns" anonDiag.isSome
-  t "the help's own line silences the anonymous pairing"
-    (match anonDiag.bind (·.help) with
-     | some h =>
-       let decl := ((h.splitOn ": ")[1]?).getD ""
-       decl.startsWith "\\palette[decorative]" &&
-         !(warnCodes ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-           decl ++
-           "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}")).contains "W0315"
-     | none => false)
+  t "an unreachable mix warns, naming the expression the author wrote"
+    (anonDiag.any fun d => d.subject.any (·.startsWith "yellow!50:"))
+  t "the anonymous help invents no role name"
+    (anonDiag.any fun d => d.help.any fun h => hasStr h "<name>" && !hasStr h "quiet")
+  -- A mix of two named colours that fails its ground is re-weighted: the
+  -- note is the mix's own, under the author's expression.
+  let reMix := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+    "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}")
+  t "a failing mix of two named colours is re-weighted, not warned"
+    (reMix.2.all (·.code != "W0315") &&
+      reMix.2.any fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!50!bg:"))
+  let mixed := ((({ entries := #[("fg", { r := 0x23, g := 0x37, b := 0x3B }),
+      ("bg", { r := 0xFA, g := 0xFA, b := 0xFA })] } : Ir.Palette).resolve "fg!50!bg").getD
+    Ir.Color.black)
+  t "a decorative entry at the mix's value keeps it low: no re-weighting, no warning"
+    (let src := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+      "\\palette[decorative]{ dim = #" ++ Ir.Color.hexByte mixed.r ++
+      Ir.Color.hexByte mixed.g ++ Ir.Color.hexByte mixed.b ++ " }" ++
+      "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}"
+     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
   t "covered is exempt by role"
     (!(warnCodes ("\\documentclass{article}\\palette{ covered = #DDDDDD }" ++
       "\\begin{document}\\textcolor{covered}{later}\\end{document}")).contains "W0315")
@@ -1700,7 +1711,8 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\documentclass{article}\\palette{ alpha = #C4C4C4 }\\begin{document}" ++
       spec ++ "\\end{document}"
   let pairing (spec : String) : Array String :=
-    ((elabStr (paleUse spec)).2.filter (·.code == "W0315")).map (·.message)
+    ((elabStr (paleUse spec)).2.filter fun d =>
+      d.code == "W0315" && d.severity == .warning).map (·.message)
   let heldAt (spec needle : String) : Bool :=
     let ms := pairing spec
     ms.size == 1 && ((((ms[0]?).getD "").splitOn needle).length == 2)
@@ -1721,6 +1733,21 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a repeated pairing is reported once"
     ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!60}{b} " ++
       "\\textcolor{alpha!60}{c} \\textcolor{alpha!60}{d}")).size == 1)
+  -- The one line carries the count: each later coloured run of the pairing
+  -- is a note under the same subject, and the tally puts the total on every
+  -- one of them. A run whose words split into several leaves is one site.
+  let fourRuns := ((elabStr (paleUse ("\\textcolor{alpha!60}{a} " ++
+      "\\textcolor{alpha!60}{b \\textbf{bb} b} \\textcolor{alpha!60}{c} " ++
+      "\\textcolor{alpha!60}{d}"))).2.filter (·.code == "W0315"))
+  t "a repeated pairing's line counts its four coloured runs"
+    (fourRuns.size == 4 && fourRuns.all (·.sites == 4) &&
+      (fourRuns.filter (·.severity == .warning)).size == 1 &&
+      (match fourRuns[0]? with
+       | some d => d.subject.isSome && fourRuns.all (·.subject == d.subject)
+       | none => false))
+  t "the pairing warning points at its first run's source"
+    ((dvE (dvDoc "\\palette{ alpha = #C4C4C4 }\n" "\\textcolor{alpha!60}{a}")).any fun d =>
+      d.code == "W0315" && d.severity == .warning && d.span == some ⟨"t", ⟨4, 1⟩⟩)
   t "distinct pairings are reported separately"
     ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!50}{b} " ++
       "\\textcolor{alpha!40}{c} \\textcolor{alpha!60}{d}")).size == 3)
@@ -1877,11 +1904,13 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette mix entry value" (pDoc.palette.find? "dim" == some { r := 0x80, g := 0x80, b := 0x80 })
   t "palette black!2 entry" (pDoc.palette.find? "faint" == some { r := 250, g := 250, b := 250 })
   -- Use site: \textcolor takes a mix, `fg`/`bg` naming the current semantic
-  -- foreground and background. A computed colour carries no var name.
-  let (uDoc, uDs) := doc "\\textcolor{fg!50!bg}{x}"
+  -- foreground and background. A computed colour carries no var name. The
+  -- mix is one that meets the page, so what is read is the resolution and
+  -- not a contrast repair of it.
+  let (uDoc, uDs) := doc "\\textcolor{fg!70!bg}{x}"
   t "textcolor mix resolves without W0304" (!uDs.any (·.code == "W0304"))
   t "textcolor mix colours the content" (uDoc.body == #[.para #[
-    .colored { r := 0x80, g := 0x80, b := 0x80 } none #[.text "x"]]])
+    .colored { r := 0x4D, g := 0x4D, b := 0x4D } none #[.text "x"]]])
   t "textcolor mix with unknown base still warns"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\textcolor{quiet!50}{x}\\end{document}") == ["W0304"])
@@ -2154,6 +2183,100 @@ def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- every pairing warning either realized away or never fired.
   t "the realized deck ships no failing role pair"
     (ds.all fun d => d.code != "W0315" && d.code != "W0345")
+
+/-- **One realized ink per role and ground, in both artifacts** — N0022's
+claim, read off each artifact for a role declared so it fails on the page
+and on three local grounds (the frame-title bar, a block-title bar, the
+standout inversion): the PDF run's ink and the ground under it off
+`Layout.Out`, the HTML token each scope re-points off the stylesheet the
+typed tree ships, the note off its structured subject. A failing page pair
+rewrites the palette entry, which is what hid the second solver pass the
+HTML once ran over it on the bar: this fixture is the one the pair needs
+to come apart, where a passing page pair makes the two passes coincide. -/
+def realizedAgreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let src := "\\documentclass{slides}\\theme{moloch}" ++
+    "\\palette{ alert = #D8691F, frametitlebg = #202633, frametitlefg = #FFFFFF, " ++
+    "blocktitlebg = #2B2F36, blocktitlefg = #FFFFFF }\\begin{document}" ++
+    "\\begin{frame}{\\textcolor{alert}{Barred Heading}}\\textcolor{alert}{Paged words.}" ++
+    "\\begin{block}{\\textcolor{alert}{Block Heading}}Plain body.\\end{block}\\end{frame}" ++
+    "\\begin{frame}[standout]\\textcolor{alert}{Inverted words.}\\end{frame}\\end{document}"
+  let (doc, ds) := elabStr src
+  let out := layoutOf oneFace doc
+  let runOf (needle : String) : Option (Ir.Color × Option Ir.Color) :=
+    out.pages.findSome? fun p => (p.lines.find? fun l => hasStr (lineText l) needle).bind fun l =>
+      l.segs.findSome? fun s => match s with
+        | .run _ c _ _ _ _ _ _ g _ => some (c, g)
+        | _ => none
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let css := treeCssList (treeCssList "" head.toList) body.toList
+  let declared : Ir.Color := { r := 0xD8, g := 0x69, b := 0x1F }
+  let hexOf (c : Ir.Color) : String :=
+    s!"#{Ir.Color.hexByte c.r}{Ir.Color.hexByte c.g}{Ir.Color.hexByte c.b}"
+  let design := Ir.Design.ofDoc doc
+  let noted (key : String) (ink : Ir.Color) : Bool :=
+    ds.any fun d => d.code == "N0022" && d.subject == some key && hasStr d.message (hexOf ink)
+  for (needle, sel) in [("Barred", "section.slide > header"),
+      ("Block Heading", "section.block-block > header"),
+      ("Inverted", "section.slide.standout")] do
+    match runOf needle with
+    | some (ink, some ground) =>
+      t s!"the PDF ships a legible realized alert on {sel}'s ground"
+        (ink != declared && Contrast.aaText ≤ Contrast.contrastMilli ink ground)
+      t s!"the HTML scope {sel} declares the ink the PDF paints"
+        ((cssRulesOf css sel).any (hasStr · s!"--alert: {HtmlDoc.cssColor ink};"))
+      t s!"the design records the ink the PDF paints on {sel}'s ground"
+        (design.inks.any fun e => e.role == "alert" && e.declared == declared &&
+          e.ground == ground && e.ink == ink)
+      t s!"the N0022 note for {sel}'s ground names the ink both artifacts ship"
+        (noted (Ir.inkKey "alert" declared ground) ink)
+    | _ => failures ref s!"no alert run on a painted ground under {sel} in the PDF"
+  let page := (doc.palette.find? "bg").getD Ir.Color.white
+  -- The ground itself is one value: the paged stage paints the declared
+  -- page the PDF paints and the judge reads, not the engine's own surface.
+  t "the paged stage paints the declared page the realization was judged on"
+    ((cssRulesOf css "section.slide, section.section-page").any
+        (hasStr · "background: var(--bg, var(--surface))") &&
+      (cssRulesOf css ":root").any (hasStr · s!"--bg: {HtmlDoc.cssColor page};"))
+  match runOf "Paged" with
+  | some (ink, _) =>
+    t "the page's realized alert is the palette entry the HTML root declares"
+      (ink != declared && doc.palette.find? "alert" == some ink &&
+        (cssRulesOf css ":root").any (hasStr · s!"--alert: {HtmlDoc.cssColor ink};"))
+    t "the N0022 note for the page names the ink both artifacts ship"
+      (noted (Ir.inkKey "alert" declared page) ink)
+  | none => failures ref "no alert run on the page in the PDF"
+  -- Both directions of the census: every recorded ink is named by a note,
+  -- and every note names a realization some artifact ships.
+  let shipped := design.inks.map (fun e => Ir.inkKey e.role e.declared e.ground)
+    |>.push (Ir.inkKey "alert" declared page)
+  t "every realization the design records is named by an N0022 note"
+    (shipped.all fun k => ds.any fun d => d.code == "N0022" && d.subject == some k)
+  t "every N0022 note names a realization the artifacts ship"
+    (ds.all fun d => d.code != "N0022" || d.subject.any shipped.contains)
+  -- A mix of two named colours re-weighted on its page: the PDF's run and
+  -- the HTML's inline colour are one value, a mix of the author's two
+  -- colours at a heavier weight, legible on the page it ships on.
+  let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
+  let bg : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xFA }
+  let (mDoc, _) := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+    "\\begin{document}\\textcolor{fg!50!bg}{Mixed words here.}\\end{document}")
+  let mInk := (layoutOf oneFace mDoc).pages.findSome? fun p =>
+    (p.lines.find? fun l => hasStr (lineText l) "Mixed").bind fun l =>
+      l.segs.findSome? fun s => match s with
+        | .run _ c .. => some c
+        | _ => none
+  let (_, mBody, _) := HtmlDoc.emitTree {} mDoc
+  match mInk with
+  | some ink =>
+    t "the PDF ships the mix re-weighted toward its ink, legible on its page"
+      (Contrast.aaText ≤ Contrast.contrastMilli ink bg &&
+        ((List.range 101).any fun q => 50 < q && fg.mix q bg == ink))
+    t "the HTML run carries the ink the PDF paints"
+      ((elemStylesList #[] mBody.toList).any fun (txt, st) =>
+        hasStr txt "Mixed" && st == s!"color: {HtmlDoc.cssColor ink}")
+  | none => failures ref "no mixed run in the PDF"
 
 /-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
 order lives in `elabInlines`, whose sanctioned recursion no theorem can

@@ -333,9 +333,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0312 => dvE "\\title[never closes\n\\begin{document}\nx\n\\end{document}"
   | .W0314 => dvE (dvDeck "" ("\\begin{frame}{T}\\begin{columns}\n" ++
       "\\begin{column}{banana}\nx\n\\end{column}\n\\end{columns}\\end{frame}"))
-  -- An anonymous mix is not a role, so it never realizes: the pairing
-  -- warning is its own (a role-named failing pair realizes and is N0022).
-  | .W0315 => dvE (dvDoc "" "\\textcolor{black!20}{faint}")
+  -- An anonymous colour is not a role, so it never realizes: the pairing
+  -- warning is its own, in the author's spelling (a role-named failing pair
+  -- realizes and is N0022). Yellow over white meets no ratio at any mix.
+  | .W0315 => dvE (dvDoc "" "\\textcolor{yellow!50}{faint}")
   | .W0316 => dvE (dvDoc "\\palette[dark]{ a = #101010 }\n" "x")
   | .W0317 => dvE ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
@@ -562,13 +563,14 @@ def dvHasAction (s : String) : Bool :=
 
 /-- Message and help bounds, in characters, taken from the two longest
 texts that read well rather than from a round number: the message bound is
-W0315's fired message (121 characters, one clause with the ratio, the
-threshold, and the source), the help bound E0322's list of every advertised
+W0315's fired message (124 characters, one clause with the colour in the
+author's own spelling, the ratio, the threshold, and the source), the help
+bound E0322's list of every advertised
 page key (187 characters, generated from `pageKeys`, decided again when the
 cut-mark and line-number keys joined it; E0328's styleable-element list
 stands at 181 beneath it; growing either list means deciding this bound
 again). -/
-def dvMsgMax : Nat := 121
+def dvMsgMax : Nat := 124
 def dvHelpMax : Nat := 187
 
 /-- Sentence case: a message opens lowercase (or with a quoted construct)
@@ -1133,7 +1135,7 @@ put this list on both gates is retired: its loss is a clause of `W0301`'s own
 message now, so it no longer owes a row here. -/
 def subjectDebt : List String :=
   ["W0003", "W0005", "W0006", "W0007", "W0009", "W0010", "W0011", "W0102",
-   "W0310", "W0311", "W0312", "W0315", "W0319", "W0320",
+   "W0310", "W0311", "W0312", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
    "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
    "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",

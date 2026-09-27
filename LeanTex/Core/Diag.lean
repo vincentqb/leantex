@@ -397,7 +397,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
   | .W0376 => ("0376", .standard, "an image ships no text alternative (WCAG 2.2)")
-  | .N0022 => ("0022", .info, "a palette role is realized at a new lightness on one ground to meet its contrast requirement (WCAG 2.2)")
+  | .N0022 => ("0022", .info, "a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
   | .W0378 => ("0378", .degraded, "the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives")

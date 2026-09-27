@@ -842,22 +842,65 @@ table. -/
 private def stepFactor (name : String) : String :=
   milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
 
-/-- **The title page's realized role values**, read off the IR: a role-named
-run inside a title frame whose colour is not its role's palette value is a
-run `Contrast.realizeDoc` rewrote on the title page's ground (the pair's
-realization, `Ir.titleGroundOf`). The page ships that colour; the
-stylesheet re-scopes the role's token on the title slide to it, so the
-run's `var(--role)` resolves to the same value rather than the page's. -/
-def titlePageRealized (doc : Doc) : Array (String × Ir.Color) :=
-  let run (acc : Array (String × Ir.Color)) (x : Inline) : Array (String × Ir.Color) :=
-    match x with
-    | .colored c (some n) _ =>
-      if doc.palette.find? n == some c || acc.any (·.1 == n) then acc else acc.push (n, c)
-    | _ => acc
-  Ir.foldBlocks (fun acc b => match b with
-      | .frame _ false .golden _ body => Ir.foldBlocks (fun a _ => a) run acc body
-      | _ => acc)
-    (fun acc _ => acc) #[] doc.body
+/-- The grounds the stylesheet paints under content, each with the selector
+of the element it paints: the frame-title bar, the standout inversion, the
+title page, and each titled kind's bar — the grounds the realization walk
+judges a run on (`Ir.recolorRolesBlock`), read off the one resolved
+`Design`. -/
+def inkScopes (d : Design) : List (String × Ir.Color) :=
+  (d.frametitle.map fun p => ("section.slide > header", p.bg)).toList ++
+    [("section.slide.standout", d.standout.bg)] ++
+    (d.titlepage.map fun p => ("section.slide.title-page", p.bg)).toList ++
+    ([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
+        (.example, d.exampleTitle)] : List (Ir.TitledKind × Ir.TitledLook)).filterMap
+      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)
+
+/-- One recorded ink as the scoped custom property that re-points its role's
+token on its ground: a run's `var(--role)` there resolves to the ink the PDF
+paints the same run in. -/
+def inkDecl (e : Ir.GroundInk) : String := s!"--{e.role}: {cssColor e.ink};"
+
+/-- The declarations one ground's scope carries: every ink the design
+records on that ground. -/
+def inkDecls (d : Design) (g : Ir.Color) : List String :=
+  (d.inks.toList.filter (·.ground == g)).map inkDecl
+
+/-- **The HTML declares every recorded ink on the ground it was realized
+for.** For every scope the stylesheet paints on an ink's ground, the
+scope's declarations carry that ink — the HTML half of
+`realized_agree`. -/
+theorem inkDecls_projects (d : Design) (e : Ir.GroundInk) (he : e ∈ d.inks)
+    (g : Ir.Color) (hg : (e.ground == g) = true) :
+    s!"--{e.role}: {cssColor e.ink};" ∈ inkDecls d g := by
+  simp only [inkDecls, List.mem_map, List.mem_filter, Array.mem_toList_iff]
+  exact ⟨e, ⟨he, hg⟩, rfl⟩
+
+/-- The scoped token rules: per ground the stylesheet paints, the inks
+recorded there. A design whose pairs all pass records none and emits
+nothing. -/
+def inkScopeCss (d : Design) : String :=
+  String.join ((inkScopes d).filterMap fun (sel, g) =>
+    let decls := inkDecls d g
+    if decls.isEmpty then none
+    else some (sel ++ " {\n" ++ String.join (decls.map fun x => s!"  {x}\n") ++ "}\n"))
+
+/-- **One realized ink per role and ground, in both artifacts.** Every ink
+the realized document's design records — a role, the colour it was
+declared as, the ground it realized on — is the ink the PDF's run rewrite
+gives a run of that role and colour on that ground, and the ink every
+scope the stylesheet paints on that ground declares: two projections of
+one IR value (`Ir.Design.inks`), in the shape of `backend_gaps_agree`.
+The HTML used to realize the bar and standout tokens a second time, over a
+palette entry already realized for the page, and shipped a third value
+neither the PDF nor the N0022 note named. -/
+theorem realized_agree (doc : Doc) (site : Contrast.ColorSite) (h0 : doc.palette.inks = #[])
+    (e : Ir.GroundInk) (he : e ∈ (Design.ofDoc (Contrast.realizeDoc doc site).1).inks)
+    (g : Ir.Color) (hg : (e.ground == g) = true) :
+    Contrast.realizeRecolor doc site doc.palette (some e.ground) (some e.role) e.declared =
+        e.ink ∧
+      s!"--{e.role}: {cssColor e.ink};" ∈
+        inkDecls (Design.ofDoc (Contrast.realizeDoc doc site).1) g :=
+  ⟨Contrast.realized_projects doc site h0 e he, inkDecls_projects _ e he g hg⟩
 
 /-- **The title page's slots, pinned**: the stylesheet projection of the IR
 value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
@@ -1002,31 +1045,16 @@ def themeCss (doc : Doc) : String :=
   (match d.titlepage with
    | some _ =>
      "section.slide.title-page { background: var(--titlepagebg);\n" ++
-     "  color: var(--titlepagefg, var(--bg, #fafaf9));" ++
-     String.join ((titlePageRealized doc).toList.map fun (n, c) =>
-       s!"\n  --{n}: {cssColor c};") ++ " }\n" ++
+     "  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n" ++
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
   -- A role names a hue; the contract chooses its lightness on each ground
-  -- (`Contrast.realize`, the same solver `Contrast.realizeDoc` ships the
-  -- PDF's runs through): on the frame-title bar and the standout
-  -- inversion a content colour that fails re-realizes, and the scope
-  -- carries its own value of the token, so a run's var(--alert) resolves
-  -- to the bar's realization rather than the page's. Emitted only where
-  -- the realized value differs — a bundle whose pairs pass emits nothing
-  -- (realizedChecks in Tests.lean pins the backend agreement).
-  (String.join ((
-    [("section.slide > header", d.frametitle.map (·.bg)),
-     ("section.slide.standout", some d.standout.bg)] :
-      List (String × Option Ir.Color)).filterMap
-    fun (sel, groundOf) => groundOf.bind fun ground =>
-      let vars := String.join ((["alert", "example"] : List String).filterMap fun role =>
-        (doc.palette.find? role).bind fun c =>
-          if doc.palette.decorative.contains role then none
-          else (Contrast.realize Contrast.aaText ground c).bind fun c' =>
-            if c' == c then none else some s!"  --{role}: {cssColor c'};\n")
-      if vars.isEmpty then none else some (sel ++ " {\n" ++ vars ++ "}\n"))) ++
+  -- (`Contrast.realizeDoc`, the one solver site): where a run realized on
+  -- a ground the stylesheet paints, the scope carries the ink the palette
+  -- records there, so a run's var(--role) resolves to the value the PDF
+  -- paints it in rather than the page's.
+  inkScopeCss d ++
   (if d.progress.isSome then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
@@ -1847,9 +1875,11 @@ def deckLogoRule : DeckRule :=
 
 /-- Every frame fills the viewport as one opaque column of the row:
 `100vw` wide (exactly the scrollport — the root clips y, so no scrollbar
-narrows the viewport under it), one stage tall, `background:
-var(--surface)` unconditionally — opaque on every path, the user's own
-rule — and content that spills the stage stays reachable through the
+narrows the viewport under it), one stage tall, `background: var(--bg,
+var(--surface))` — opaque on every path, the user's own rule, and the
+document's declared page where it declares one, the ground the PDF paints
+and the contrast judge reads — and content that spills the stage stays
+reachable through the
 frame's own scroll (`overflow-y: auto`; the scrollbar is the visible
 control, the honest floor). `position: relative` anchors the stage's own
 furniture (`deckLogoRule`); in a stepped track the sticky override
@@ -1858,7 +1888,7 @@ def deckStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw"),
       ("height", "100dvh"), ("overflow-y", "auto"),
-      ("background", "var(--surface)"), ("display", "flex"),
+      ("background", "var(--bg, var(--surface))"), ("display", "flex"),
       ("flex-direction", "column"), ("padding", safeareaVar),
       ("position", "relative")] }
 
@@ -5957,11 +5987,11 @@ as the cascade resolves them. A palette entry named after a token (`ink`,
 specificity (`tokenVars`), so it holds in both schemes; an undeclared
 token keeps the scheme's own. The text is the design's declared ink when it
 declares one (`themeCss`: `body { color: var(--fg) }`), and the ground
-under it is the declared page (`body { background: var(--bg) }`), both read
-off `Design.ofDoc`, their one resolving site — except
-on the paged deck, whose stage paints `var(--surface)` whatever the body
-carries (`deckStageRule`). Under `bulma` or `none` the engine ships no
-colour of its own and claims nothing; `schemeFailures` counts none. -/
+under it is the declared page (`body { background: var(--bg) }`, and on the
+paged deck the stage's `var(--bg, var(--surface))`, `deckStageRule`), both
+read off `Design.ofDoc`, their one resolving site. Under `bulma` or `none`
+the engine ships no colour of its own and claims nothing; `schemeFailures`
+counts none. -/
 def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColors :=
   let tok (n : String) (d : Ir.Color) : Ir.Color := (doc.palette.find? n).getD d
   let d := Design.ofDoc doc
@@ -5969,7 +5999,7 @@ def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColor
   let text := if d.fgDeclared then d.fg else tok "ink" base.ink
   let page := if d.bgDeclared then d.bg else surface
   { ink := text
-    surface := if doc.docClass.record.model == .frame then surface else page
+    surface := page
     muted := tok "muted" base.muted
     accent := tok "accent" base.accent
     tint := tok "tint" base.tint

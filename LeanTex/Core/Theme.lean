@@ -758,8 +758,8 @@ private theorem tokens_ext {a b : Tokens} (h : a.entries = b.entries) : a = b :=
   simpa using h
 
 private theorem palette_ext {a b : Palette} (he : a.entries = b.entries)
-    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative) :
-    a = b := by
+    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative)
+    (hi : a.inks = b.inks) : a = b := by
   cases a
   cases b
   simp_all
@@ -805,6 +805,11 @@ private theorem paletteApply_decorative (bp : Palette) : ∀ q : Palette,
   show (installPalette q bp.entries.toList).decorative = _
   exact installPalette_decorative ..
 
+private theorem installPalette_inks : ∀ (p : Palette) (es : List (String × Color)),
+    (installPalette p es).inks = p.inks
+  | _, [] => rfl
+  | p, (k, c) :: es => installPalette_inks (p.declare k c) es
+
 private theorem paletteApply_idem (bp p : Palette) :
     paletteApply bp (paletteApply bp p) = paletteApply bp p := by
   apply palette_ext
@@ -817,6 +822,7 @@ private theorem paletteApply_idem (bp p : Palette) :
     congr 1
     funext x
     exact Bool.and_self _
+  · simp only [paletteApply, installPalette_inks]
 
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by

@@ -159,7 +159,7 @@ note[N0019]: content addressed per backend encodes a per-medium decision by hand
 note[N0020]: 'venueguide.sty' beside the document is read into the preamble — honoured: 2, named: 1, TeX internals refused: 1
 ── N0021 (info) header and footer gaps differ as declared; equal gaps are the default
 note[N0021]: header and footer gaps differ by 10pt as declared; equal gaps are the default
-── N0022 (info) a palette role is realized at a new lightness on one ground to meet its contrast requirement (WCAG 2.2)
+── N0022 (info) a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)
 note[N0022]: 'alert' is realized lighter (#D8894A) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
 note[N0023]: this picture is drawn by lualatex at the boundary; its text is not in the document's census
@@ -288,8 +288,8 @@ warning[W0312]: no {...} group after '\title'; it is skipped
 warning[W0314]: column width 'banana' is not a fraction of the text width; the column shares the leftover
   help: write a factor like {0.5\textwidth}
 ── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
-warning[W0315]: text coloured #CCCCCC reads at 1.53:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
-  help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #CCCCCC }
+warning[W0315]: text coloured 'yellow!50' (#FFFF80) reads at 1.01:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  help: no weight of this mix meets its ground: name it in \palette{ <name> = #FFFF80 } to have it met on its ground, or declare that entry under \palette[decorative] to keep it low
 ── W0316 (config) unknown option in \palette; block skipped
 warning[W0316]: unknown option in '\palette': "dark"; block skipped
   help: options: decorative

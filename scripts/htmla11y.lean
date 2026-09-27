@@ -135,9 +135,13 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
   no "contrast: a stylesheet the engine does not own claims nothing"
     (HtmlDoc.schemeFailures false inked).isEmpty
   let deck := (elabStr (dvDeck "" "\\begin{frame}{T}\nx\n\\end{frame}")).1
-  no s!"contrast: the default deck bundle's ink fails on the dark stage: \
-{HtmlDoc.schemeFailures true deck}"
-    ((HtmlDoc.schemeFailures true deck).contains ("dark", "text"))
+  -- The deck's stage paints the bundle's declared page in both schemes, as
+  -- the PDF does, so its declared ink reads on it; what the dark scheme
+  -- still fails there is its own chrome token.
+  no s!"contrast: the default deck bundle's page stands in dark mode, under the \
+scheme's own accent: {HtmlDoc.schemeFailures true deck}"
+    ((HtmlDoc.schemeFailures true deck).contains ("dark", "accent") &&
+     !(HtmlDoc.schemeFailures true deck).contains ("dark", "text"))
   -- The rows: one per check per page, sorted, headroom.
   let rows := a11yRows "p" [("contrast", 2), ("h1", 1), ("img", 0)]
   no "rows: headroom is the cap less the count"

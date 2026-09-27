@@ -211,6 +211,10 @@ structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
   cites : Array (String × Span) := #[]
+  /-- Each colour expression's first span, the value it resolved to, and
+  whether it named a role: the contrast judge's `-->`, and the expression
+  it names for a colour that carries no role. -/
+  colors : Array (String × Color × Bool × Span) := #[]
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -610,6 +614,23 @@ private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
     if st.spans.images.any (·.1 == src) then st
     else { st with spans :=
       { st.spans with images := st.spans.images.push (src, ⟨ctx.file, pos⟩) } }
+
+/-- Record a colour expression's span and value, first occurrence per
+expression: the contrast judge's `-->` and the name it reports. -/
+private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
+    (pos : Pos) : EM Unit :=
+  modify fun st =>
+    if st.spans.colors.any (·.1 == expr) then st
+    else { st with spans :=
+      { st.spans with colors := st.spans.colors.push (expr, c, role, ⟨ctx.file, pos⟩) } }
+
+/-- Where a coloured use came from, for the contrast judge: a role's first
+use, or the first expression that resolved to an anonymous colour. -/
+def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
+    Option String → Color → Option (String × Span)
+  | some r, _ => (colors.find? (·.1 == r)).map fun (e, _, _, sp) => (e, sp)
+  | none, c => (colors.find? fun (_, v, role, _) => !role && v == c).map
+      fun (e, _, _, sp) => (e, sp)
 
 /-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
@@ -3940,6 +3961,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A mix expression is a computed value, not a token: only a
         -- plain palette name rides along for the HTML var(--name).
         let cssName := if (ctx.palette.find? key).isSome then some key else none
+        recordColorSpan ctx key c cssName.isSome pos
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
         elabInlinesFrom ctx raws (j2 + 1) (acc.push (.colored c cssName inner)) ""
@@ -3984,6 +4006,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     -- token: only a declared entry rides as the HTML var(--name), the
     -- same rule `\textcolor` holds.
     let cssName := if (ctx.palette.find? name).isSome then some name else none
+    recordColorSpan ctx name c cssName.isSome pos
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match hj : raws[j]? with
@@ -12452,7 +12475,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry
   -- N0022 where a pair realized, the pairing warnings where none could.
-  let (doc, contrast) := Contrast.realizeDoc doc
+  let (doc, contrast) := Contrast.realizeDoc doc (colorSiteOf st.spans.colors)
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
   -- after fulfilment (`Ir.picAltDiags`), where E0382's outcome is known.
