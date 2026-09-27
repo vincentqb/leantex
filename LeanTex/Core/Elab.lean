@@ -1167,6 +1167,17 @@ padding inside them is not content. -/
 private def trimRaws (raws : Array Raw) : Array Raw :=
   trimBy raws isSpaceOrPar
 
+/-- An environment's halves lose only their outer edges — the begin code's
+lead and the end code's tail. The edges facing the body are content, as TeX
+reads them: `{Lead words }` ends in a space before the body, so the body's
+first word is set apart from the code's last; a body bringing its own space
+there sets one, not two (`mergeText`). -/
+private def trimLead (raws : Array Raw) : Array Raw :=
+  raws.extract (spanRaws raws 0 isSpaceOrPar) raws.size
+
+private def trimTail (raws : Array Raw) : Array Raw :=
+  raws.extract 0 (spanRawsEnd raws isSpaceOrPar)
+
 /-- `lookupUser` over an explicit table and prefix bound, for the math
 expansion below, which threads its own decreasing `limit`. -/
 private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
@@ -1407,11 +1418,16 @@ where
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
 
+/-- Adjacent text runs join into one. Where both bring a space to the seam —
+an environment half's edge meeting its body's (`trimLead`), a macro body's
+tail meeting the text after it — the seam sets one space, where TeX sets
+two interword glues: at most one space's width, never a doubled gap. -/
 private def mergeText (xs : Array Inline) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for x in xs do
     match x, out.back? with
     | .text s, some (.text t) =>
+      let s := if t.endsWith " " && s.startsWith " " then (s.drop 1).toString else s
       out := out.pop.push (.text (t ++ s))
     | _, _ => out := out.push x
   return out
@@ -11078,7 +11094,7 @@ the built-in's heading and margins stand{replaced}"
           let params ← parseSig s.ctx sig pos
           return { s with ctx := { s.ctx with
             userEnvs := s.ctx.userEnvs.push
-              ⟨envName, params, trimRaws b, trimRaws e, s.ctx.limit⟩
+              ⟨envName, params, trimLead b, trimTail e, s.ctx.limit⟩
             envLimit := s.ctx.userEnvs.size + 1 } }
         | _, _ =>
           diag s.ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos

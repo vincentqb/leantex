@@ -491,6 +491,10 @@ private structure St where
   and end halves. Scoped: descending into a group consumes one and shields
   the count from the group's own definitions. -/
   bodyNext : Nat := 0
+  /-- environ's environments whose code never places `\BODY`, with the
+  signature letters their arguments read: each use keeps its arguments
+  and drops the body, which environ collects and discards. -/
+  discardEnvs : Array (String × String) := #[]
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
@@ -4202,6 +4206,7 @@ the definition is skipped" pos
     let native := s!"\\defineenv\{{envName}}({signature spec})"
     became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
     write fun st => { st with bodyNext := 2 }
+    write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
     return some (← synthAt native pos, j)
   | "NewEnviron" | "RenewEnviron" =>
     -- environ.sty's definer (`\env@new`): the begin code collects the
@@ -4218,22 +4223,35 @@ the definition is skipped" pos
     let (count, j) := takeOpt raws j
     let (dflt, j) := takeOpt raws j
     let b := skipSpaces raws j
+    let n := (count.bind String.toNat?).getD 0
+    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
+      else String.ofList (List.replicate n 'm')
+    let native := s!"\\defineenv\{{envName}}({signature spec})"
     match raws[b]? with
     | some (.group code _) =>
+      let final := raws[skipSpaces raws (b + 1)]? matches some (.sym '[' _)
       if (bodySlot? code).isSome then
-        let n := (count.bind String.toNat?).getD 0
-        let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
-          else String.ofList (List.replicate n 'm')
-        let native := s!"\\defineenv\{{envName}}({signature spec})"
         became s!"\\{name}\{{envName}}" (native ++ " {code before \\BODY} {code after it}") pos
         write fun st => { st with bodyNext := 1 }
+        write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
         return some (← synthAt native pos, j)
+      else if !mentionsBody code.toList && !final then
+        -- A code that never places `\BODY` runs where the environment
+        -- stands and the collected body goes nowhere, as environ.sty
+        -- leaves it: the kernel's definer with an empty begin code and the
+        -- code as the end code, the body discarded at each use (the
+        -- `.env` arm of `rewriteRaw`, which keeps only the arguments).
+        became s!"\\{name}\{{envName}}" (native ++ " {} {code}, its body discarded") pos
+        write fun st => { st with bodyNext := 1 }
+        write fun st => { st with discardEnvs := st.discardEnvs.push (envName.trimAscii.toString, spec) }
+        return some ((← synthAt native pos).push (.group #[] pos), j)
       else
         let (_, k) := takeOpt raws (b + 1)
+        let why := if mentionsBody code.toList then "places \\BODY inside a group or more than once"
+          else "gives a final code to a body its code never places"
         sayOnce ("ctrl:" ++ name) .W0104
-          s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
-environment's body stands between its begin and its end code here, so the definition is \
-skipped" pos
+          s!"'\\{name}\{{envName}}' {why}; an environment's body stands between its begin \
+and its end code here, so the definition is skipped" pos
           (help := "write the code around \\BODY at the definition's top level")
         return some (#[], k)
     | _ => return none
@@ -6409,6 +6427,13 @@ steps come from its body" p
             | some _ => return .env n (body'.extract (i + 1) body'.size) p
             | none => return .env n body' p
         | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+      else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
+        -- environ's discarding environment: only the arguments its
+        -- signature reads reach the definition, as written; the body is
+        -- dropped unread, so nothing of it is judged or ships.
+        let k := spec.foldl (fun k c =>
+          if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
+        return .env n (body.extract 0 k) p
       else
         return .env n (← rewriteList inBody body #[] body.toList 0 0) p
   | r => pure r

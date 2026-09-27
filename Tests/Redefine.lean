@@ -242,18 +242,14 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let t := check ref
   let use := "\\begin{placeholder}Middle words\\end{placeholder}"
   let doc (pre body : String) : String := dvDoc ("\\usepackage{environ}\n" ++ pre) body
-  -- The parts in reading order, whatever the space between them (that is
-  -- the kernel spelling's own business, which the pairs below hold equal).
-  let inOrder (s : String) (parts : List String) : Bool :=
-    (parts.foldl (fun (acc : Option String) p => acc.bind fun rest =>
-      match rest.splitOn p with
-      | _ :: after :: more => some (String.intercalate p (after :: more))
-      | _ => none) (some s)).isSome
+  -- The words as the page sets them, spaces included: each line below is
+  -- lualatex's own for its source, so a glued seam cannot pass.
+  let sets (src line : String) : Bool := hasStr (pageTextOf fonts src) line
   let defined := doc "\\NewEnviron{placeholder}{Lead words \\BODY}[ Tail words]\n" use
   let kernel := doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" use
   t "a NewEnviron environment ships what its kernel spelling ships"
     (shippedLines fonts defined == shippedLines fonts kernel &&
-      inOrder (pageTextOf fonts defined) ["Lead words", "Middle words", "Tail words"])
+      sets defined "Lead words Middle words Tail words")
   t "the package, the definer and the use raise nothing unknown"
     (!((dvE defined).any fun d => ["W0103", "W0301", "W0302"].contains d.code))
   let arg := doc "\\NewEnviron{placeholder}[1]{#1: \\BODY}\n"
@@ -261,16 +257,44 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let argKernel := doc "\\newenvironment{placeholder}[1]{#1: }{}\n"
     "\\begin{placeholder}{Name}Middle words\\end{placeholder}"
   t "a NewEnviron argument reaches its code as the kernel spelling's does"
-    (shippedLines fonts arg == shippedLines fonts argKernel)
+    (shippedLines fonts arg == shippedLines fonts argKernel && sets arg "Name: Middle words")
+  -- TeX ends a control word at the space after it, so `\BODY Tail` puts
+  -- no space before the tail, where `{ Tail words}` does.
   let renew := doc "\\RenewEnviron{placeholder}{\\BODY Tail words}\n" use
   t "RenewEnviron is the same definer"
     (shippedLines fonts renew ==
-      shippedLines fonts (doc "\\renewenvironment{placeholder}{}{ Tail words}\n" use) &&
-     inOrder (pageTextOf fonts renew) ["Middle words", "Tail words"])
+      shippedLines fonts (doc "\\renewenvironment{placeholder}{}{Tail words}\n" use) &&
+     sets renew "Middle wordsTail words")
+  let spaced := "\\begin{placeholder} Middle words \\end{placeholder}\n\n" ++
+    "Inline \\begin{placeholder} Middle words \\end{placeholder} after."
+  t "a body bringing its own spaces to the halves' spaced edges sets one space at each seam"
+    (sets (doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" spaced)
+        "Lead words Middle words Tail words" &&
+     sets (doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" spaced)
+        "Inline Lead words Middle words Tail words after.")
   let boxed := doc "\\NewEnviron{placeholder}{\\fbox{\\BODY}}\n" use
   t "a body placed inside a group is refused where it stands, and nothing of it leaks"
-    ((dvE boxed).any (·.code == "W0104") &&
+    ((dvE boxed).any (fun d => d.code == "W0104" && hasStr d.message "inside a group") &&
       !hasStr (pageTextOf fonts boxed) "BODY" && hasStr (pageTextOf fonts boxed) "Middle words")
+  -- environ collects the body into `\BODY` and runs the code; a code that
+  -- never places it sets its own words and nothing of the body (review SP-3).
+  let hidden := doc "\\NewEnviron{placeholder}{}\n" use
+  t "a code with no BODY discards the body, and says nothing of it"
+    (!hasStr (pageTextOf fonts hidden) "Middle words" &&
+      !((dvE hidden).any fun d => ["W0104", "W0301", "W0302"].contains d.code))
+  t "a code with no BODY still sets its own words"
+    (sets (doc "\\NewEnviron{placeholder}{Lead words}\n" use) "Lead words" &&
+      !hasStr (pageTextOf fonts (doc "\\NewEnviron{placeholder}{Lead words}\n" use)) "Middle")
+  let hiddenArg := doc "\\NewEnviron{placeholder}[1]{#1}\n"
+    "\\begin{placeholder}{Name}Middle words\\end{placeholder}"
+  t "a discarding environment's arguments still reach its code"
+    (sets hiddenArg "Name" && !hasStr (pageTextOf fonts hiddenArg) "Middle words")
+  t "a redefinition placing BODY places the body again"
+    (sets (doc "\\NewEnviron{placeholder}{}\n\\RenewEnviron{placeholder}{\\BODY}\n" use)
+      "Middle words")
+  t "a final code beside a code with no BODY is refused, and the refusal says so"
+    ((dvE (doc "\\NewEnviron{placeholder}{}[Tail words]\n" use)).any fun d =>
+      d.code == "W0104" && hasStr d.message "final code")
 
 
 /-- **Owed: a redefined abstract's vertical skips.** A venue's
