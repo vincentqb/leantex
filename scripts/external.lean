@@ -721,10 +721,7 @@ of {(ms.filter (·.ll == 0)).size} documents the reference builds"
 
 -- ## Selftest
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef (#[] : Array String)
-  let expect (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (·.push why)
+def selftest : IO UInt32 := tierSelftest "external" fun expect => do
   -- Lists.
   expect "a list line is a set and a path" (parseList "# c\na\tb/c.tex\n" matches .ok #[_])
   expect "a line with no set is a fault" (parseList "b/c.tex\n" matches .error _)
@@ -863,12 +860,6 @@ Mono\" }\nx")
     expect "a pin leaving the directory is a fault" ((← sumFaults root).size == 1)
     put "SHA256SUMS" (sums ++ "a.tex\n")
     expect "a line that is no pin is a fault" ((← sumFaults root).size == 1)
-  let bad ← fails.get
-  if bad.isEmpty then
-    IO.println "external: selftest ok"
-    return 0
-  for b in bad do IO.eprintln s!"external: selftest failed: {b}"
-  return 1
 
 end External
 

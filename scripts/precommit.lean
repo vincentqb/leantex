@@ -1201,18 +1201,22 @@ def obRecordFaults (lines : Array String) : Array (Nat × String × Nat) := Id.r
       if n != 1 then out := out.push (from_ + 1, k, n)
   return out
 
-/-- The failure list a hand-written selftest frame opens, and an import of the
-scoreboard format module. Both spelled by concatenation, so this file's own
-gate does not read its own pattern as a site. -/
-def failureList : String := "IO.mkRef ([]" ++ " : List String)"
-
+/-- An import of the scoreboard format module, spelled by concatenation so
+this file's own gate does not read it as a site. -/
 def boardImport : String := "import scripts" ++ ".Board"
 
-/-- The one script that opens its own failure list. `scripts/scoreboard.lean`
+/-- The one script that frames its own selftest. `scripts/scoreboard.lean`
 is the aggregate, and its success line counts the cases its own body binds —
 the malformations, the well-formed states, the base and CLI cases — so no
 caller outside it can supply that line. -/
 def selftestFrameAllow : List String := ["scripts/scoreboard.lean"]
+
+/-- Tier producers whose selftest still frames itself, each with what its
+migration owes. Read in both directions: a row whose file no longer frames
+itself fails, so a migrated file drops its row in the same commit. -/
+def selftestFrameDebt : List (String × String) :=
+  [("scripts/commonmark.lean", "its assertions push to a local array; each becomes a `no` call"),
+   ("scripts/parity.lean", "its assertions push to a local array; each becomes a `no` call")]
 
 /-- The top-level `def` name a line binds, dots included, for the three
 gates that need to know which definition a line stands inside: only
@@ -1227,6 +1231,39 @@ def topLevelDefName (l : String) : Option String :=
     let n := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
     if n.isEmpty then none else some n
   else none
+
+/-- The selftests a tier producer frames by hand: the top-level definitions
+returning `IO UInt32` that its `--selftest` reaches — named on a line that
+calls `tierMain` or dispatches `"--selftest"`, or named `…selftest` — whose
+body is not a `tierSelftest` application. A file that calls no `tierMain`
+is no producer. The rule reads which definition is the selftest and how it
+is built, never how a failure list is spelled: matching one spelling, the
+`List` ref, passed an `Array` ref, a mutable array and every frame under
+another name. -/
+def selfFramed (lines : Array String) : Array String := Id.run do
+  let code := lines.map fun l => stripLineComment (stripStrings l)
+  unless code.any (containsSub · "tierMain") do return #[]
+  let mut reached : Array String := #[]
+  for (l, c) in lines.zip code do
+    let args := " ".intercalate ((c.splitOn "tierMain").drop 1)
+    let target := " ".intercalate (((l.splitOn "\"--selftest\"").drop 1).map
+      (stripLineComment ∘ stripStrings))
+    for w in (args ++ " " ++ target).split (fun ch => !(isWordChar ch || ch == '.')) do
+      reached := reached.push ((w.toString.splitOn ".").getLastD "")
+  let mut out : Array String := #[]
+  for i in [0:code.size] do
+    let c := code[i]?.getD ""
+    let some full := topLevelDefName (lines[i]?.getD "") | continue
+    let n := (full.splitOn ".").getLastD full
+    let parts := c.splitOn ":="
+    unless containsSub (parts.headD "") ": IO UInt32" do continue
+    unless n.endsWith "selftest" || n.endsWith "Selftest" || reached.contains n do continue
+    let rest := (":=".intercalate (parts.drop 1)).trimAscii.toString
+    let body := if !rest.isEmpty then rest else
+      (((code.extract (i + 1) code.size).find? (!·.trimAscii.isEmpty)).getD "").trimAscii.toString
+    unless body.startsWith "tierSelftest " || body.startsWith "Scoreboard.tierSelftest " do
+      out := out.push n
+  return out
 
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
@@ -1872,6 +1909,45 @@ def selftest : IO UInt32 := do
   if (Source.tree).diffSel != none then
     fails.modify ("Source.tree.diffSel" :: ·)
 
+  -- The frame rule reads which definition `--selftest` reaches and how it is
+  -- built. The first five shapes frame themselves, one construct each: the
+  -- rule's first spelling, and the four the spelling rule passed; the rest
+  -- are legal, the second one a frame split across two lines.
+  let hand (fl : String) : List String :=
+    ["def selftest : IO UInt32 := do", fl, "  return 0"]
+  let producer := "def main (args : List String) : IO UInt32 := tierMain \"t\" .raw m selftest args"
+  let frameCases : List (String × List String × List String) := [
+    ("a List failure list", hand "  let fails ← IO.mkRef ([] : List String)" ++ [producer],
+      ["selftest"]),
+    ("an Array failure list", hand "  let fails ← IO.mkRef (#[] : Array String)" ++ [producer],
+      ["selftest"]),
+    ("a mutable array", hand "  let mut bad : Array String := #[]" ++ [producer], ["selftest"]),
+    ("a frame under another name, handed to tierMain",
+      ["def checkAll : IO UInt32 := do", "  return 1",
+       "def main (args : List String) : IO UInt32 := tierMain \"t\" .raw m checkAll args"],
+      ["checkAll"]),
+    ("a frame under another name, dispatched by --selftest",
+      ["def checkAll : IO UInt32 := do", "  return 1",
+       "def main (args : List String) : IO UInt32 := do",
+       "  if args.contains \"--selftest\" then return ← checkAll",
+       "  tierMain \"t\" .raw m (pure 1) args"], ["checkAll"]),
+    ("the shared frame, a cache inside it",
+      ["def selftest : IO UInt32 := tierSelftest \"t\" fun no => do",
+       "  let cache ← IO.mkRef #[]", producer], []),
+    ("the shared frame on the next line",
+      ["def selftest : IO UInt32 :=", "", "  Scoreboard.tierSelftest \"t\" fun no => do",
+       producer], []),
+    ("a report that exits on its own findings",
+      ["def table : IO UInt32 := do", "  return 1",
+       "def main (args : List String) : IO UInt32 := do",
+       "  if args.contains \"--table\" then return ← table", "  tierMain \"t\" .raw m selftest args",
+       "def selftest : IO UInt32 := tierSelftest \"t\" fun no => do"], []),
+    ("a script that measures no tier", hand "  let mut bad : Array String := #[]", [])]
+  for (what, file, want) in frameCases do
+    let got := selfFramed file.toArray
+    if got.toList != want then
+      fails.modify (s!"selfFramed, {what}: got {got}, want {want}" :: ·)
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -2323,21 +2399,29 @@ def main (args : List String) : IO UInt32 := do
   -- the print-and-exit tail — is `Scoreboard.tierSelftest`. Six producers
   -- wrote those nine lines out by hand before it existed, which is what let
   -- them differ: a producer that recorded a failure and still exited 0 read
-  -- exactly like the others. The failure list is the frame's tell.
+  -- exactly like the others. `selfFramed` finds a frame by what it is.
   for f in (← System.FilePath.readDir "scripts") do
     let p := ("scripts/" ++ f.fileName)
     unless !p.endsWith ".lean" || selftestFrameAllow.contains p do
-      let lines := (← IO.FS.readFile p).splitOn "\n"
-      unless !lines.any (fun l => (l.trimAscii.toString).startsWith boardImport) do
-        for l in lines do
-          if containsSub (stripLineComment l) failureList then
-            say s!"pre-commit: {p} opens its own failure list:
-  {l.trimAscii}
+      let lines := ((← IO.FS.readFile p).splitOn "\n").toArray
+      let framed := if lines.any (fun l => (l.trimAscii.toString).startsWith boardImport)
+        then selfFramed lines else #[]
+      if selftestFrameDebt.any (·.1 == p) then
+        if framed.isEmpty then
+          say s!"pre-commit: {p} no longer frames its own selftest.
+  Fix: delete its row in selftestFrameDebt (scripts/precommit.lean) in this commit."
+      else
+        for n in framed do
+          say s!"pre-commit: {p}: `{n}` is the tier's selftest, and frames itself.
   A tier producer's selftest is `tierSelftest \"<tier>\" fun no => do` and its
   assertions; the frame around them lives in scripts/Board.lean, so every
   producer reports and exits the same way.
-  Fix: call `tierSelftest`, or allowlist this file in selftestFrameAllow
+  Fix: build `{n}` with `tierSelftest`, or allowlist this file in selftestFrameAllow
   (scripts/precommit.lean) with the reason it cannot."
+  for (p, _) in selftestFrameDebt do
+    unless ← System.FilePath.pathExists p do
+      say s!"pre-commit: selftestFrameDebt names {p}, which is gone.
+  Fix: delete its row (scripts/precommit.lean)."
 
   -- The owed record's shape, whole tree and ahead of the ratchet: a record
   -- carries exactly one of each field. owed.lean reads five consecutive

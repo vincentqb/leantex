@@ -1204,10 +1204,7 @@ of {cands.size} indexed"
 
 -- ## Selftest
 
-def selftest : IO UInt32 := do
-  let ref ← IO.mkRef (#[] : Array String)
-  let expect (name : String) (ok : Bool) : IO Unit := do
-    unless ok do ref.modify (·.push name)
+def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   -- The rung rule, on diagnostics the engine really produces.
   let measured := measurePlaces places
   let pr := probeIn measured
@@ -1375,38 +1372,31 @@ def selftest : IO UInt32 := do
       let hits ← corpusContradictions places d.rows
       for c in hits do
         if (explained c.name).isNone then
-          ref.modify (·.push s!"the corpus uses \\{c.name} in {c.file} and the probe reads \
-{c.rung.word}")
+          expect s!"the corpus uses \\{c.name} in {c.file} and the probe reads \
+{c.rung.word}" false
       -- Every explanation still explains something, and says true of its side.
       for e in witnessExplained do
         match hits.find? (·.name == e.name) with
-        | none => ref.modify (·.push s!"the explanation for \\{e.name} is stale — drop it")
+        | none => expect s!"the explanation for \\{e.name} is stale — drop it" false
         | some c =>
           let answered := answeredIn e.name c.rung e.usage
           if e.side == .probe && !answered then
-            ref.modify (·.push s!"\\{e.name} is filed as the probe's miss, and its natural \
-usage is not answered either")
+            expect s!"\\{e.name} is filed as the probe's miss, and its natural \
+usage is not answered either" false
           if e.side == .corpus && answered then
-            ref.modify (·.push s!"\\{e.name} is filed as a real gap, and its natural usage \
-is answered")
+            expect s!"\\{e.name} is filed as a real gap, and its natural usage \
+is answered" false
       for e in falseQueue do
         let rung := pr e.name
         if rung.counted then
-          ref.modify (·.push s!"\\{e.name} is answered by the probe now — drop its row")
+          expect s!"\\{e.name} is answered by the probe now — drop its row" false
         else if !answeredIn e.name rung e.usage then
-          ref.modify (·.push s!"\\{e.name}'s natural usage is not answered — it is a real \
-gap, not the probe's miss")
+          expect s!"\\{e.name}'s natural usage is not answered — it is a real \
+gap, not the probe's miss" false
       let blind ← corpusContradictions contextBlindPlaces d.rows
       let blindUnexplained := blind.filter fun c => (explained c.name).isNone
       expect "the corpus control fails on context-blind places"
         (!blindUnexplained.isEmpty)
-  let bad ← ref.get
-  if bad.isEmpty then
-    IO.println "coverage: selftest ok"
-    return 0
-  else
-    for b in bad do IO.eprintln ("coverage: selftest failed: " ++ b)
-    return 1
 
 def main (args : List String) : IO UInt32 := do
   match args with
