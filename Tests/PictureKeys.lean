@@ -242,3 +242,54 @@ def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((match lines edge with
       | some (a, b) => near a.x b.x
       | none => false) && !picLoss edge)
+
+
+/-- Consecutive segments meet end to start, and the last ends where the first
+began: a closed chain. -/
+def closedChain (ss : Array Ir.Pic.PathSeg) : Bool :=
+  let ends : Ir.Pic.PathSeg → (Dim.Sp × Dim.Sp) × (Dim.Sp × Dim.Sp)
+    | .line x1 y1 x2 y2 => ((x1, y1), (x2, y2))
+    | .cubic x1 y1 _ _ _ _ x2 y2 => ((x1, y1), (x2, y2))
+  let es := ss.map ends
+  !es.isEmpty && (List.range es.size).all fun k =>
+    match es[k]?, es[(k + 1) % es.size]? with
+    | some a, some b => a.2 == b.1
+    | _, _ => false
+
+/-- **A drawn rectangle and a closed path are drawn** (pgf manual §14.4, the
+rectangle operation; §14.2, `cycle`, which closes the path back to its
+subpath's start). `\draw (a) rectangle (b)` strokes the box its corners span
+as one closed outline; `-- cycle` draws the side back to the start, and the
+PDF strokes the polygon as one subpath, so no corner is two caps. The defect
+refused both: the rectangle named its statement outside the subset and
+dropped it, and `cycle` failed as an unreadable endpoint (E0333), so a closed
+shape shipped nothing. Asserted over the shipped page, the PDF's path
+operators and the SVG. Invented content. -/
+def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let pageOf (src : String) : Option Layout.PageOut := (layoutOf oneFace (elabStr src).1).pages[0]?
+  let paths (src : String) : Array Layout.PathOut := ((pageOf src).map (·.paths)).getD #[]
+  let rect := picDoc "" "" "\\draw[thick] (0,0) rectangle (2,1);"
+  t "a drawn rectangle strokes the box its corners span, and names nothing"
+    ((match (paths rect).toList with
+      | [q] => match q.path, q.stroke with
+        | .rect _ _ w h, some st => w == Dim.mm 20 && h == Dim.mm 10 && st.width == Dim.pt 4 / 5
+        | _, _ => false
+      | _ => false) && !picLoss rect)
+  let (rd, _) := elabStr rect
+  t "the SVG strokes the rectangle as one closed outline"
+    ((bodyAttrValues rd "stroke-width").size == 1 &&
+      (rd.body.foldl (fun acc b => acc ++ attrValuesOne "height" #[] (HtmlDoc.blockNode {} b)) #[]).contains
+        (Dim.mm 10).toPtString)
+  let tri := picDoc "" "" "\\draw (0,0) -- (2,0) -- (1,1) -- cycle;"
+  let triSegs : Array Ir.Pic.PathSeg := (paths tri).foldl (fun acc q => match q.path with
+    | .segs ss => acc ++ ss
+    | _ => acc) #[]
+  t "-- cycle closes the path back to its start, and names nothing"
+    (closedChain triSegs && !picLoss tri)
+  let geom := Layout.Geom.ofPage (elabStr tri).1.page
+  let moves := (paths tri).foldl (fun n q =>
+    n + ((Pdf.pathSegs geom q.path).filter fun op => op matches .moveTo ..).size) 0
+  t "the PDF strokes the closed polygon as one subpath"
+    (moves == 1)

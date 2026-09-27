@@ -3581,10 +3581,17 @@ To-Path library's own factor), absolute or against the chord. -/
 private inductive DrawOp where
   | straight
   | curve (spec : ToSpec)
+  /-- `rectangle`: the box the current point and the next corner span, a
+  closed subpath of its own (pgf manual §14.4). -/
+  | rect
+  /-- `-- cycle`: the side back to the current subpath's start, closing it
+  (pgf manual §14.2). -/
+  | cycle
 
 /-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
 chain between named nodes and coordinates, border-anchored at named
-endpoints (along the declared tangent for a curve). Options: `thick`,
+endpoints (along the declared tangent for a curve), with `rectangle`
+outlines and `-- cycle` closing a subpath. Options: `thick`,
 `dashed`/`dotted` (and the densely form), an arrow spec (`->`/`-latex`,
 both the triangle tip), a colour, and declared style bundles; an in-path
 `node[...] {...}` is an edge label at the segment's midpoint. Anything
@@ -3757,10 +3764,17 @@ picture subset; the edge is not drawn")
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
   for _ in [0:ts.size + 1] do
     if h : i < ts.size then
-      -- the path operation: `--`, or `to` with its optional tangents
+      -- the path operation: `--` (closing with `cycle`), `rectangle`, or
+      -- `to` with its optional tangents
       let mut op := DrawOp.straight
       if ts[i]? == some (.sym '-') && ts[i+1]? == some (.sym '-') then
         i := i + 2
+        if ts[i]? == some (.ident "cycle") then
+          op := .cycle
+          i := i + 1
+      else if ts[i]? == some (.ident "rectangle") then
+        op := .rect
+        i := i + 1
       else if ts[i]? == some (.ident "to") || ts[i]? == some (.ident "edge") then
         -- `edge` is `to` with `every edge`'s `draw` in force: the same
         -- operation, and the reason a `\path` of edges paints.
@@ -3923,12 +3937,19 @@ the rendered picture subset; the option is dropped")
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
 edge is not drawn")
-      match readAnchor i with
-      | .error d => return ev.diag d
-      | .ok (a, i2) =>
-        pts := pts.push a
+      -- `cycle` names no endpoint: its segment ends where the subpath began,
+      -- which the segment walk below knows; the chain's first point stands
+      -- in its slot.
+      if op matches .cycle then
+        pts := pts.push (pts[0]?.getD (.point 0 0))
         ops := ops.push (op, mid)
-        i := i2
+      else
+        match readAnchor i with
+        | .error d => return ev.diag d
+        | .ok (a, i2) =>
+          pts := pts.push a
+          ops := ops.push (op, mid)
+          i := i2
     else break
   unless pts.size ≥ 2 do
     return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
@@ -3939,11 +3960,50 @@ edge is not drawn")
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option Ir.Pic.Tip := none
   let mut labels : Array Ir.Pic.Shape := #[]
+  -- A rectangle's outline: a closed frame, which both backends stroke as
+  -- one path with every corner joined.
+  let mut frames : Array Ir.Pic.Shape := #[]
+  -- Where the current subpath began (its index in `segs` and its first
+  -- point) and where it stands now: what `cycle` closes back to.
+  let mut subStart : Option (Nat × Sp × Sp) := none
+  let mut cur : Option (Sp × Sp) := none
   for k in [0:ops.size] do
     match pts[k]?, pts[k+1]?, ops[k]? with
     | some a, some c, some (op, mid) =>
       let last := k + 1 == ops.size
       match op with
+      | .rect =>
+        let (x1, y1) := a.center
+        let (x2, y2) := c.center
+        if strokes then
+          frames := frames.push (.frame (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
+            (max y1 y2 - min y1 y2) (some stroke) none)
+        -- A node on a rectangle stands on its diagonal, as on a straight side.
+        if let some (lines, mc, msc, mal, _, mta) := mid then
+          labels := labels ++ alignLabels cx.metric mta
+            (stackLabels ((x1 + x2) / 2) ((y1 + y2) / 2) cx.bodySize msc mc (mal.getD .center)
+              lines #[])
+        subStart := none
+        cur := some (x2, y2)
+      | .cycle =>
+        match subStart, cur with
+        | some (f, sx, sy), some (ex, ey) =>
+          -- The closing side, then the first side split at its midpoint when
+          -- it is straight, so the subpath runs from that midpoint round to
+          -- it: every corner is interior and the PDF joins it, where a path
+          -- that ended on its first corner would cap it twice.
+          segs := segs.push (.line ex ey sx sy)
+          if let some (.line _ _ x2 y2) := segs[f]? then
+            let mx := (sx + x2) / 2
+            let my := (sy + y2) / 2
+            segs := (segs.set! f (.line mx my x2 y2)).push (.line sx sy mx my)
+          if let some (lines, mc, msc, mal, mlf, mta) := mid then
+            let al := mal.getD (if autoOn then autoAlign mlf (sx - ex) (sy - ey) else .center)
+            labels := labels ++ alignLabels cx.metric mta
+              (stackLabels ((ex + sx) / 2) ((ey + sy) / 2) cx.bodySize msc mc al lines #[])
+          subStart := none
+          cur := some (sx, sy)
+        | _, _ => pure ()
       | .straight =>
         let p1 := a.toward c.center
         let p2 := c.toward a.center
@@ -3955,6 +4015,10 @@ edge is not drawn")
           | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         else
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+        -- A side that does not start where the last ended opens a subpath,
+        -- as pgf moves to a node's border toward the next point.
+        if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
+        cur := some p2
         if let some (lines, mc, msc, mal, mlf, mta) := mid then
           -- A label that declared no placement of its own takes the side
           -- `auto` computes from this segment's direction, and the segment's
@@ -3986,6 +4050,8 @@ edge is not drawn")
             (curveControl p1.1 p1.2 (len * 3915 * spec.outL / 10000000) spec.outA,
              curveControl p2.1 p2.2 (len * 3915 * spec.inL / 10000000) spec.inA)
         segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
+        if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
+        cur := some p2
         if last && arrow then
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
@@ -4002,8 +4068,10 @@ edge is not drawn")
             ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc al lines #[])
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
-  -- own; its in-path labels still stand, as pgf sets them.
-  let withEdge := if strokes then ev.shapes.push (.edge segs stroke tip) else ev.shapes
+  -- own; its in-path labels still stand, as pgf sets them. A chain of
+  -- nothing but rectangles strokes no edge of its own.
+  let withEdge := if strokes && !segs.isEmpty then (ev.shapes ++ frames).push (.edge segs stroke tip)
+    else ev.shapes ++ frames
   return { ev with shapes := withEdge ++ labels }
 
 /-- One `\foreach` list item: values (`1`, `2/3`, a word), or the `...`
