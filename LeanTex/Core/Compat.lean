@@ -572,6 +572,10 @@ private structure St where
   /-- The conditional pass reads a spliced file's own top level, the list
   where a live `\endinput` ends the file. -/
   fileTop : Bool := false
+  /-- The value source each length holds as the rewrite last set it
+  (`\newlength`, `\setlength`, register arithmetic): what an `\advance` of
+  it is evaluated from. -/
+  lens : Array (String × String) := #[]
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand`'s keep-existing policy reads. Separate from
   `binds`, which the conditional pass fills for the whole document
@@ -2908,6 +2912,31 @@ private def lengthSrc (raws : Array Raw) : String := Id.run do
     | other => s := s ++ rawSrcOne other
   return s.trimAscii.toString
 
+/-- One length assignment, natively: TeX's paragraph glue is a page
+property here, not a token; the object-side caption gap (classes.dtx
+`\@makecaption`: `\abovecaptionskip` stands between the object and its
+caption) is exactly the engine's `captionsep` token; every other length is
+a token of its own name. The value is recorded, so register arithmetic on
+the length reads it. -/
+private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
+  let native := match n with
+    | "parskip" => s!"\\page\{ parskip = {src} }"
+    | "abovecaptionskip" => s!"\\tokens\{ captionsep = {src} }"
+    | _ => s!"\\tokens\{ {n} = {src} }"
+  became what native pos
+  write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
+  synthAt native pos
+
+/-- A length operand the rewrite evaluates: a literal (`2pt`, `-2pt`), or a
+length whose value it set, negated or not. -/
+private def lenOperand (lens : Array (String × String)) : List Raw → Option String
+  | [.word w _] => (Decl.parseLength w).map fun _ => w
+  | [.sym '-' _, .word w _] => (Decl.parseLength ("-" ++ w)).map fun _ => "-" ++ w
+  | [.ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"({v})"
+  | [.sym '-' _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
+  | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
+  | _ => none
+
 /-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
@@ -4766,9 +4795,7 @@ face serves every language, so the binding is dropped" pos
     -- `\setlength{\x}` and references to `\x` in other lengths resolve.
     let (args, k) := takeGroups raws start 1
     let some n := ctrlName (args.getD 0 #[]) | return none
-    let native := s!"\\tokens\{ {n} = 0pt }"
-    became s!"\\newlength\{\\{n}}" native pos
-    return some (← synthAt native pos, k)
+    return some (← setLength n "0pt" s!"\\newlength\{\\{n}}" pos, k)
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
@@ -4783,13 +4810,6 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
           (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
         return some (#[], k)
       match ctrlName args[0] with
-      | some "abovecaptionskip" =>
-        -- The object-side caption gap (classes.dtx `\@makecaption`:
-        -- `\abovecaptionskip` stands between the object and its caption):
-        -- exactly the engine's `captionsep` token.
-        let native := s!"\\tokens\{ captionsep = {lengthSrc args[1]} }"
-        became "\\setlength{\\abovecaptionskip}" native pos
-        return some (← synthAt native pos, k)
       | some "belowcaptionskip" =>
         -- The caption's text side: in this engine that is the float
         -- separation (`floatsep`), not a caption property; the LaTeX
@@ -4797,16 +4817,25 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
         say .N0102 "'\\belowcaptionskip' is not a knob here: the caption's \
 text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         return some (#[], k)
-      | some "parskip" =>
-        -- TeX's own paragraph glue is a page property here, not a token.
-        let native := s!"\\page\{ parskip = {lengthSrc args[1]} }"
-        became "\\setlength{\\parskip}" native pos
-        return some (← synthAt native pos, k)
       | some n =>
-        let native := s!"\\tokens\{ {n} = {lengthSrc args[1]} }"
-        became s!"\\setlength\{\\{n}}" native pos
-        return some (← synthAt native pos, k)
+        return some (← setLength n (lengthSrc args[1]) s!"\\setlength\{\\{n}}" pos, k)
       | none => return none
+    else return none
+  | "addtolength" =>
+    -- LaTeX's spelling of `\advance` (usrguide, "Changing lengths"): the
+    -- sum of the value the length holds and the operand, where both are
+    -- known; otherwise the command stands, named by the elaborator.
+    let (args, k) := takeGroups raws start 2
+    if h : args.size = 2 then
+      let some n := ctrlName args[0] | return none
+      let st ← get
+      -- premise: registerArithChecks — a length this rewrite set holds the
+      -- value it recorded
+      match (st.lens.find? (·.1 == n)).map (·.2),
+          lenOperand st.lens (args[1].toList.filter (!· matches .space)) with
+      | some p, some v =>
+        return some (← setLength n s!"({p}) + {v}" s!"\\addtolength\{\\{n}}" pos, k)
+      | _, _ => return none
     else return none
   | "advance" | "multiply" | "divide" =>
     -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
@@ -4824,16 +4853,43 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
       -- The value: one word (`2pt`), or a register chain of one or two
       -- control words (`\ht\strutbox`).
       let k := match raws[j2]? with
+        | some (.word "-" _) =>
+          match raws[j2 + 1]? with
+          | some (.ctrl _ _) => j2 + 2
+          | _ => j2 + 1
         | some (.word _ _) => j2 + 1
         | some (.ctrl _ _) =>
           match raws[j2 + 1]? with
           | some (.ctrl _ _) => j2 + 2
           | _ => j2 + 1
+        | some (.sym '-' _) =>
+          match raws[j2 + 1]? with
+          | some (.ctrl _ _) | some (.word _ _) => j2 + 2
+          | _ => j2 + 1
         | _ => j2
-      sayOnce ("ctrl:" ++ name) .W0104
-        s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
-        (demote := styInternal (← get).file name)
-      return some (#[], k)
+      -- A length this rewrite set is evaluated from the value it holds,
+      -- as TeX evaluates the register; anything else is named and skipped.
+      let tgt := match raws[j0]? with
+        | some (.ctrl t _) => t
+        | _ => ""
+      let st ← get
+      let opnd := (raws.extract j2 k).toList.filter (!· matches .space)
+      let value := if name == "advance" then lenOperand st.lens opnd
+        else match opnd with
+          | [.word w _] => w.toNat?.map toString
+          | _ => none
+      -- premise: registerArithChecks — a length this rewrite set holds the
+      -- value it recorded
+      match (st.lens.find? (·.1 == tgt)).map (·.2), value with
+      | some p, some v =>
+        let expr := if name == "advance" then s!"({p}) + {v}"
+          else if name == "multiply" then s!"{v} * ({p})" else s!"({p}) / {v}"
+        return some (← setLength tgt expr s!"\\{name}\\{tgt}" pos, k)
+      | _, _ =>
+        sayOnce ("ctrl:" ++ name) .W0104
+          s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
+          (demote := styInternal (← get).file name)
+        return some (#[], k)
     | _ => return none
   | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>

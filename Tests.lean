@@ -206,6 +206,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   splitPairingOwedChecks ref
   groupPrimitiveChecks ref
   delimitedUseChecks ref oneFace
+  registerArithChecks ref oneFace
   endInputChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,

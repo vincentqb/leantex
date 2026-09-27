@@ -110,3 +110,41 @@ def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (page == pageTextOf fonts (dvDoc pre braced))
   t "the definitions stay refused by name"
     ((dvE (dvDoc pre "Body.")).any (·.code == "W0357"))
+
+
+/-- The laid-out lines of a source, baseline and text: what a claim that two
+spellings set one page reads. -/
+def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
+  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
+
+/-- **Register arithmetic on a length the document set is evaluated, not
+skipped.** TeX's `\advance`, `\multiply`, `\divide` and LaTeX's
+`\addtolength` change the value a later layout reads; skipping them left
+the earlier value standing, silently, and a paragraph skip advanced by 20pt
+set 19.9 bp short per paragraph. Each row pairs the arithmetic with the
+literal value it computes, and the pages must agree; a length the rewrite
+never set is still named and skipped (W0104). -/
+def registerArithChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let paras := "First words.\n\nSecond words.\n\nThird words."
+  let gap := "First words.\n\n\\vspace{\\probegap}\nSecond words."
+  let tok := "\\newlength{\\probegap}\n\\newlength{\\probeb}\n\\setlength{\\probeb}{4pt}\n" ++
+    "\\setlength{\\probegap}{6pt}\n"
+  let rows := [
+    (dvDoc "\\setlength{\\parskip}{2pt}\n\\advance\\parskip by 20pt\n" paras,
+     dvDoc "\\setlength{\\parskip}{22pt}\n" paras),
+    (dvDoc "\\setlength{\\parskip}{2pt}\n\\addtolength{\\parskip}{20pt}\n" paras,
+     dvDoc "\\setlength{\\parskip}{22pt}\n" paras),
+    (dvDoc (tok ++ "\\advance\\probegap by 6pt\n") gap,
+     dvDoc (tok ++ "\\setlength{\\probegap}{12pt}\n") gap),
+    (dvDoc (tok ++ "\\multiply\\probegap by 3\n") gap,
+     dvDoc (tok ++ "\\setlength{\\probegap}{18pt}\n") gap),
+    (dvDoc (tok ++ "\\advance\\probegap by -\\probeb\n") gap,
+     dvDoc (tok ++ "\\setlength{\\probegap}{2pt}\n") gap)]
+  for (arith, literal) in rows do
+    let line := ((arith.splitOn "\n").filter fun l =>
+      hasStr l "advance" || hasStr l "multiply" || hasStr l "addtolength").headD ""
+    t s!"register arithmetic sets the page its value sets: {line}"
+      (pageLines fonts arith == pageLines fonts literal)
+  t "a length the rewrite never set is still named and skipped"
+    ((dvE (dvDoc "\\advance\\probeunset by 2pt\n" "Body.")).any (·.code == "W0104"))
