@@ -910,6 +910,15 @@ structure Cx where
   in a paragraph — the picture walk owns no font-axis table, and a second
   one here would drift from the first. -/
   argStyles : List (String × Ir.Style) := []
+  /-- The size ladder in force for the document (`Ir.PageSpec.scale`): what
+  a size switch in a node's `font=` or at a label line's start means, per
+  mille of the body — the same step the document's paragraphs set it at,
+  including a venue's read-out redefinition. -/
+  ladder : List (String × Nat) := Ir.sizeScale
+  /-- The font declarations and the style each names (`\bfseries` bold,
+  `\itshape` italic, …): the elaborator's own table, as `argStyles` is, so
+  a `font=` switch means what the same declaration does in a paragraph. -/
+  declStyles : List (String × Ir.Style) := []
   /-- The body size a node label's lines are spaced against
   (`nodeLineLead`). The nominal until the elaborator passes the document's
   own: the picture walk has no face and no page spec, which is the same
@@ -2319,8 +2328,9 @@ page as ink — and keeps what its content groups say.
 `Ir.floorNamedArgs` is the math floor's own table, read here rather than
 restated: which arguments of a command are names is one fact about LaTeX,
 and a second list would drift from the first. The text commands are the
-elaborator's own table for the same reason (`Cx.argStyles`). -/
-private def salCtrl (styles : List (String × Ir.Style)) (env : List (String × Val))
+elaborator's own table for the same reason (`Cx.argStyles`), and a size
+switch is a step of the document's own ladder (`Cx.ladder`). -/
+private def salCtrl (cx : Cx) (env : List (String × Val))
     (n : String) (s : Sal) : Sal :=
   match env.lookup n with
   | some v => s.str v.text
@@ -2328,10 +2338,10 @@ private def salCtrl (styles : List (String × Ir.Style)) (env : List (String × 
     if n == "\\" then { s.newline with mode := .optMaybe 0 }
     else if phantomCtrl.contains n then { s with mode := .optMaybe 1 }
     else if n == "textcolor" then { s with mode := .colorRole }
-    else match styles.lookup n with
+    else match cx.argStyles.lookup n with
     | some st => { s with mode := .styleBody st }
     | none =>
-    match Ir.sizeScale.lookup n with
+    match cx.ladder.lookup n with
       | some k =>
         if s.fresh && s.depth == 0 then { s with scale := k }
         else
@@ -2410,7 +2420,7 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
       let (inl, ds) := cx.math d body.toArray
       (s.inline inl).addDiags ds
     | .other what => s.refuse what
-    | .ctrl n => salCtrl cx.argStyles env n s
+    | .ctrl n => salCtrl cx env n s
 
 end
 
@@ -2539,6 +2549,39 @@ def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
   match opt with
   | .ident "line" :: .ident "width" :: .sym '=' :: rest => some (readDim rest)
   | ts => ((keyName ts).bind fun n => lineWidthStyles.lookup n).map .ok
+
+/-- A `font=` value as TikZ runs it before a node's text: switches, each a
+size step of the document's ladder (`Cx.ladder`) or a declaration of the
+elaborator's table (`Cx.declStyles`), braces being grouping. The last size
+written wins, as in TeX; the declarations apply in order; `\selectfont`
+selects what they already chose. A switch outside both tables is returned
+by name, so the loss names what it could not set and the rest still
+applies. -/
+def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style × Array String :=
+  Id.run do
+  let flat := toks.flatMap fun t => match t with
+    | .group g => g
+    | t => [t]
+  let mut size : Option Nat := none
+  let mut sts : Array Ir.Style := #[]
+  let mut unread : Array String := #[]
+  for t in flat do
+    match t with
+    | .space | .ctrl "selectfont" => pure ()
+    | .ctrl n =>
+      match cx.ladder.lookup n, cx.declStyles.lookup n with
+      | some k, _ => size := some k
+      | none, some st => sts := sts.push st
+      | none, none => unread := unread.push s!"\\{n}"
+    | t => unread := unread.push (tokText t)
+  return (size, sts, unread)
+
+/-- A label's lines set in the declarations a `font=` named, the first
+written outermost; an empty line stays empty, so no empty wrapper ships. -/
+def fontLines (sts : Array Ir.Style) (lines : Array LabelLine) : Array LabelLine :=
+  if sts.isEmpty then lines
+  else lines.map fun (xs, rel) =>
+    (if xs.isEmpty then xs else sts.foldr (fun st inner => #[.styled st inner]) xs, rel)
 
 /-- A relative placement's direction: the `positioning` keys this subset
 reads — the four sides and the four corners. Public because the placement
@@ -2713,16 +2756,16 @@ def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool 
         "auto", "swap", "'"].contains (keyPath ts) || toKeyNames.contains (keyPath ts) ||
         (readLineWidth ts).isSome
 
-/-- The keys a node statement's option loop reads. A placement and a size
-switch are read through the same functions the loop reads them with, so the
-vocabulary cannot drift from the loop that consumes it. -/
+/-- The keys a node statement's option loop reads. A placement and a width
+are read through the functions the loop reads them with, so the vocabulary
+cannot drift from the loop that consumes it; a `font=` is read whole, and
+the loop names any switch in it that it cannot set (`readFont`). -/
 def readsNodeOpt (opt : Array Tok) : Bool :=
   if (readPlace (0, 0) opt.toList).isSome then true
   else match opt.toList with
-  | [.ident "font", .sym '=', .ctrl size] => (Ir.sizeScale.lookup size).isSome
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
-      "inner sep", "inner xsep", "inner ysep", "node contents"].contains (keyPath ts) ||
+      "inner sep", "inner xsep", "inner ysep", "node contents", "font"].contains (keyPath ts) ||
       (readLineWidth ts).isSome
 
 /-- An entry some statement of this subset reads: what a declaration made
@@ -2906,6 +2949,8 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut fillCol : Option Ir.Color := none
   let mut dash : Ir.Pic.Dash := .solid
   let mut width : Sp := Ir.Pic.thinWidth
+  -- The declarations a `font=` named, wrapping every label line.
+  let mut fontStyles : Array Ir.Style := #[]
   let mut minW : Sp := 0
   let mut minH : Sp := 0
   -- `inner sep` as the document set it, per axis; `none` is pgf's default,
@@ -2970,12 +3015,14 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
     | none =>
     match opt.toList with
-    | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
-      match Ir.sizeScale.lookup size with
-      | some k => scale := k * factor / 1000
-      | none =>
-        ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside the \
-rendered picture subset; the option is dropped")
+    | .ident "font" :: .sym '=' :: rest =>
+      -- The key replaces what an earlier `font=` set, as TikZ's does.
+      let (sz, sts, unread) := readFont cx rest
+      scale := (sz.map fun k => k * factor / 1000).getD factor
+      fontStyles := sts
+      for w in unread do
+        ev := ev.diag (.W0334, s!"node option 'font={w}' is outside the rendered \
+picture subset; the switch is dropped")
     | .ident "text" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
@@ -3069,6 +3116,7 @@ outside the rendered picture subset; the label is not drawn")
       | some c => .ok (c, #[])
       | none =>
         .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
+  let bodyOf := bodyOf.map fun (ls, ds) => (fontLines fontStyles ls, ds)
   -- The extent the label's own ink asks for, measured through the face the
   -- driver resolved (`Cx.metric`): the shapes this node's body would emit,
   -- hulled at the origin, which is the same measurement the picture's box
@@ -3707,6 +3755,7 @@ outside the rendered picture subset; the edge is not drawn")
 the rendered picture subset; the keys are dropped")
         let mut mcolor := Ir.Color.black
         let mut mscale : Nat := factor
+        let mut mstyles : Array Ir.Style := #[]
         -- `none` is "this label declared no placement": it then takes the
         -- side `auto` computes from the path's direction, or the path's
         -- midpoint where no `auto` is in force.
@@ -3727,12 +3776,13 @@ edge is not drawn")
           i := j + 1
           for opt in splitTop inner ',' do
             match opt.toList with
-            | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
-              match Ir.sizeScale.lookup size with
-              | some k => mscale := k * factor / 1000
-              | none =>
-                ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside \
-the rendered picture subset; the option is dropped")
+            | .ident "font" :: .sym '=' :: rest =>
+              let (sz, sts, unread) := readFont cx rest
+              mscale := (sz.map fun k => k * factor / 1000).getD factor
+              mstyles := sts
+              for w in unread do
+                ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
+the rendered picture subset; the switch is dropped")
             | .ident "text" :: .sym '=' :: rest =>
               match evalColor cx env rest.toArray with
               | .ok c => mcolor := c
@@ -3756,7 +3806,7 @@ the rendered picture subset; the option is dropped")
         | some (.group body) =>
           let (lines, mdiags) := nodeLabel cx env body
           ev := mdiags.foldl Ev.diag ev
-          mid := some (lines, mcolor, mscale, malign, mLeft)
+          mid := some (fontLines mstyles lines, mcolor, mscale, malign, mLeft)
           i := i + 1
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
@@ -4484,13 +4534,21 @@ def readMacro (line : String) : Option Macro := Id.run do
 every name the walk owns and every name the picture binds for itself, and
 less any whose definition this reader cannot read. `names` is the document's
 reachable set as the elaborator collected it (`Elab.Ctx.picMacros`), one
-entry per name, in document order. -/
-def macroTable (names : Array (String × String)) (ts : Array Tok) :
+entry per name, in document order.
+
+A font switch is the font reader's (`readFont`), as it is the elaborator's:
+a size name means its step of the document's ladder, which is where the
+elaborator reads a venue's `\@setfontsize` redefinition out, so expanding
+the redefinition here would set a picture's `font=\small` by a body the
+paragraphs never run. -/
+def macroTable (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
+    (names : Array (String × String)) (ts : Array Tok) :
     List (String × Macro) := Id.run do
   let bound := boundNames ts
   let mut out : List (String × Macro) := []
   for (n, line) in names do
-    unless walkOwns n || bound.contains n do
+    unless walkOwns n || bound.contains n || (ladder.lookup n).isSome ||
+        (declStyles.lookup n).isSome do
       if let some m := readMacro line then out := (n, m) :: out
   return out
 
@@ -4545,17 +4603,22 @@ An `every X` this subset has no loop for stays unread and is named at the
 line that declared it. `argStyles` is the elaborator's text-command table
 (`Cx.argStyles`), and it has no default on purpose: a caller that forgot
 it would set every styled node label in the regular face, the defect the
-parameter exists to close. -/
+parameter exists to close. `ladder` and `declStyles` are the document's
+size ladder and the elaborator's declaration table, without defaults for
+the same reason: a forgotten ladder sets a venue's `\small` at the engine's
+step. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
     (sets : Array (Array Parse.Raw) := #[])
     (metric : Ir.Pic.LabelMetric := fun _ _ => {})
     (macros : Array (String × String) := #[])
-    (argStyles : List (String × Ir.Style)) :
+    (argStyles : List (String × Ir.Style))
+    (ladder : List (String × Nat))
+    (declStyles : List (String × Ir.Style)) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRaws raws
-  let toks := expandMacros (macroTable macros raw) raw
+  let toks := expandMacros (macroTable ladder declStyles macros raw) raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map fun keys => ofRaws keys)
   -- `node distance` is a key, not a definition: the document's `\tikzset`
@@ -4648,6 +4711,8 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    dist := dist
                    math := math
                    argStyles := argStyles
+                   ladder := ladder
+                   declStyles := declStyles
                    metric := metric
                    -- A declaration the parse skipped is gone before
                    -- evaluation begins, so a name that then resolves to

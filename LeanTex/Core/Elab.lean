@@ -7209,7 +7209,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
 formula {floorWording (Parse.rawSrc raws)}")])
   let (pic, pdiags) :=
     Picture.elabPicture ctx.palette body mathOf ctx.picSets ctx.picMetric
-      ctx.picMacros argStyles
+      ctx.picMacros argStyles ctx.page.scale declStyles
   -- **Native first; the boundary is the fallback.** What the engine's own
   -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
   -- the constructs it refused are named beside the shapes that landed

@@ -19,20 +19,25 @@ def picLoss (src : String) : Bool :=
 
 mutual
 
-/-- Every `stroke-width` an emitted element declares, in tree order. -/
-def strokeWidthsOne (acc : Array String) : Html.Node → Array String
+/-- Every value an emitted element declares for attribute `key`, in tree
+order. -/
+def attrValuesOne (key : String) (acc : Array String) : Html.Node → Array String
   | .elem _ attrs kids =>
-    let acc := match attrs.find? (·.1 == "stroke-width") with
+    let acc := match attrs.find? (·.1 == key) with
       | some (_, w) => acc.push w
       | none => acc
-    strokeWidthsList acc kids.toList
+    attrValuesList key acc kids.toList
   | .text _ | .style _ | .script _ _ => acc
 
-def strokeWidthsList (acc : Array String) : List Html.Node → Array String
+def attrValuesList (key : String) (acc : Array String) : List Html.Node → Array String
   | [] => acc
-  | k :: rest => strokeWidthsList (strokeWidthsOne acc k) rest
+  | k :: rest => attrValuesList key (attrValuesOne key acc k) rest
 
 end
+
+/-- Every value the HTML of a document's body declares for `key`. -/
+def bodyAttrValues (doc : Ir.Doc) (key : String) : Array String :=
+  doc.body.foldl (fun acc b => attrValuesOne key acc (HtmlDoc.blockNode {} b)) #[]
 
 /-- **A declared line width is the width pgf strokes.** tikz.code.tex
 (lines 1575–1581) defines the seven named widths as `line width=<w>`
@@ -72,5 +77,47 @@ def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (shippedWidths oneFace edge == #[Dim.pt 1 / 5] && !picLoss edge)
   let (doc, _) := elabStr (path "semithick")
   t "the SVG strokes the declared width"
-    ((doc.body.foldl (fun acc b => strokeWidthsOne acc (HtmlDoc.blockNode {} b)) #[]).contains
-      (Dim.pt 3 / 5).toPtString)
+    ((bodyAttrValues doc "stroke-width").contains (Dim.pt 3 / 5).toPtString)
+
+/-- **A node's `font=` sets its label in the fonts it names, at the size the
+document's own ladder gives each size switch.** TikZ runs the key's value
+before the node's text (tikz.code.tex, the `font` option), so a size switch
+means what it means in the document's paragraphs — the step a venue's
+redefinition read out, where it did — and a series or shape switch is that
+face. The defect expanded a redefined `\small` through the picture's macro
+table, named the key as dropped and set the label at the body size; a run of
+two switches was dropped whole. Asserted over the shipped page and the SVG.
+Invented content. -/
+def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let venue := "\\makeatletter\\renewcommand{\\small}{\\@setfontsize\\small{8.5}{10}}\\makeatother"
+  let doc (pre body : String) : String :=
+    picDoc pre "" body |>.replace "\\begin{document}\n"
+      "\\begin{document}\n{\\small Smallword}\n\n"
+  let sizes (src : String) (words : List String) : List (Option Dim.Sp) :=
+    let c := censusOfSrc oneFace src
+    words.map (lineSizeOf c 0)
+  let node := doc venue "\\node[font=\\small] at (0,0) {Nodeword};"
+  t "font=\\small sets a node at the size the document's \\small sets, and names nothing"
+    ((match sizes node ["Smallword", "Nodeword"] with
+      | [some a, some b] => a == b && a == Dim.pt 17 / 2
+      | _ => false) && !picLoss node)
+  let run := doc venue "\\node[font=\\bfseries\\small] at (0,0) {Boldword};"
+  let (rd, _) := elabStr run
+  t "a run of switches sets both: the size on the page, the weight in the SVG"
+    ((match sizes run ["Smallword", "Boldword"] with
+      | [some a, some b] => a == b
+      | _ => false) && (bodyAttrValues rd "font-weight").contains "bolder" && !picLoss run)
+  let edge := doc venue "\\draw (0,0) -- node[font=\\small] {Edgeword} (3,0);"
+  t "an edge label's font= reads the same ladder"
+    ((match sizes edge ["Smallword", "Edgeword"] with
+      | [some a, some b] => a == b
+      | _ => false) && !picLoss edge)
+  let pic := picDoc venue "[font=\\small]" "\\node at (0,0) {Nodeword};"
+  t "a picture's font= reaches its nodes"
+    ((match sizes pic ["Nodeword"] with
+      | [some a] => a == Dim.pt 17 / 2
+      | _ => false) && !picLoss pic)
+  t "a switch the engine cannot read is still named"
+    (picLoss (doc "" "\\node[font=\\undefinedswitch] at (0,0) {Nodeword};") &&
+      !picLoss (doc "" "\\node[font=\\itshape] at (0,0) {Nodeword};"))
