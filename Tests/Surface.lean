@@ -298,7 +298,7 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   let page := (HtmlDoc.emit {} doc).1
   t "HTML sets the abstract as a classed section with a centred heading"
-    ((page.splitOn "class=\"abstract\"").length == 2 &&
+    ((page.splitOn "class=\"abstract size-small\"").length == 2 &&
      (page.splitOn "<h2 style=\"text-align: center\">").length == 2 &&
      (page.splitOn "Abstract").length == 2)
   let md := MarkdownDoc.emit doc

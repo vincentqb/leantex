@@ -321,6 +321,7 @@ def styleMerge (top base : ElementStyle) : ElementStyle :=
     ruleBelowSkip := top.ruleBelowSkip <|> base.ruleBelowSkip
     authorFont := top.authorFont <|> base.authorFont
     authorStrut := top.authorStrut <|> base.authorStrut
+    bodySize := top.bodySize <|> base.bodySize
     hover := top.hover <|> base.hover
     focus := top.focus <|> base.focus
     motion := top.motion <|> base.motion

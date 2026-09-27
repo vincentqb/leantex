@@ -5857,6 +5857,26 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- The size the environment's *body* sets at, read off a refused
+redefinition's begin body with TeX's scoping: a size switch standing at the
+begin body's top level holds to the environment's end, one inside a group
+(the heading's `\centerline{\large ...}`) only to its brace. The begin
+body's last item, when it is an environment, is the one the definer's split
+idiom leaves open for the body (`\begin{quote}` in the begin body,
+`\end{quote}` in the end body), so its own top level counts too. -/
+private def envBodySizeList (acc : Option String) : List Raw → Option String
+  | [] => acc
+  | [.env _ body _] => envBodySizeList acc body.toList
+  | .ctrl n _ :: rest =>
+    envBodySizeList (if sizeCtrlNames.contains n then some n else acc) rest
+  | _ :: rest => envBodySizeList acc rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
 /-- The size × bold font fragment `envStyleInterpret` and `barInterpret`
 both spell: the inline tree the closed style vocabulary can honour. -/
 private def fontFragment (size : Option String) (bold : Bool) :
@@ -9932,7 +9952,7 @@ def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "hover", "focus", "motion", "slot"]
+   "author-strut", "body-size", "hover", "focus", "motion", "slot"]
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`: what it
 sets, in which font, aligned how, how wide, and where it is pinned. -/
@@ -10034,6 +10054,13 @@ list levels: itemize2..4, enumerate2..4")
       | "rule-below-skip" => st := { st with ruleBelowSkip := ← asLength }
       | "author-font" => st := { st with authorFont := ← asInline }
       | "author-strut" => st := { st with authorStrut := ← asLength }
+      | "body-size" =>
+        let v := valueSrc.trimAscii.toString
+        let v := if v.startsWith "\\" then (v.drop 1).toString else v
+        if sizeCtrlNames.contains v then st := { st with bodySize := some v }
+        else
+          diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
+            (help := "sizes: tiny, scriptsize, footnotesize, small, normalsize, large, Large")
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
       | "rule-thickness" => st := { st with ruleThickness := ← asLength }
@@ -10962,9 +10989,14 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
         -- redefinition may still declare the built-in's appearance —
         -- `\large\bf` and `\centerline` are read as `\style{abstract}`
         -- keys, merged under anything the document declared itself, and
-        -- the W0303 gains W0361's clause naming what survived.
+        -- the W0303 gains W0361's clause naming what survived. The body's
+        -- size is always declared: a begin body that switches none leaves
+        -- the body at the size in force, never at the built-in's `\small`.
         let est := if envName == "abstract" then
-            beginB.bind fun b => envStyleInterpret (envStyleScanList {} b.toList)
+            beginB.map fun b =>
+              let body := { ({} : Ir.ElementStyle) with
+                bodySize := some ((envBodySizeList none b.toList).getD "normalsize") }
+              Theme.styleMerge body ((envStyleInterpret (envStyleScanList {} b.toList)).getD {})
           else none
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
           (if est.isSome then

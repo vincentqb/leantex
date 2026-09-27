@@ -7328,10 +7328,11 @@ private def collectBlock (r : Rd) (a : Acc)
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading (`collectAbstractHead`), then the body on quotation margins.
-    -- The body takes the scale's own \small, the quotation margins are the
-    -- quote arm's, and the outer state is restored the way a quote restores
-    -- its measure.
-    let small := Ir.scaleStep r.geom.fontSize "small"
+    -- The body takes the document's own step of the declared size
+    -- (`Ir.abstractBodySize`, `\small` undeclared), the quotation margins
+    -- are the quote arm's, and the outer state is restored the way a quote
+    -- restores its measure.
+    let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
     let saved := a.measure
     let sub := { a with

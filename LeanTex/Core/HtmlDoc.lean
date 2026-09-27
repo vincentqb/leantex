@@ -5193,6 +5193,13 @@ theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
 
+/-- The abstract region's classes: the engine's own hook, and the size
+step its body sets at, read from the one resolving site the PDF's body
+reads (`Ir.abstractBodySize`, `Layout`'s `.abstract` arm). -/
+def abstractClass (styles : Ir.Styles) : String :=
+  let step := Ir.abstractBodySize styles
+  "abstract size-" ++ step
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -5303,11 +5310,13 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- The heading is an <h2>, so a declared `\style{section}` reaches it
     -- through the h2 selector — the abstract follows the section heading
     -- by construction (`Ir.abstract_heading_follows_section`); centred, as
-    -- the class centres it (article.cls §abstract).
+    -- the class centres it (article.cls §abstract). The body's size is the
+    -- one the PDF sets (`Ir.abstractBodySize`), on the region, where the
+    -- rem-sized heading does not inherit it.
     Html.elem "section"
       (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
         blockNodesInto cfg.into #[] body.toList)
-      #[("class", "abstract")]
+      #[("class", abstractClass cfg.styles)]
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.

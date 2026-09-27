@@ -5258,6 +5258,11 @@ structure ElementStyle where
   `\rule{\z@}{24\p@}` strut, giving the name room instead of its bare cap
   height. The engine's value is `titleAuthorStrut`, a rhythm multiple. -/
   authorStrut : Option SymGlue := none
+  /-- The size step the element's body sets at, read by the abstract only
+  (`abstractBodySize`): article.cls declares `\small` over the whole
+  environment, and a redefinition that declares none leaves its body at
+  the size in force, `\normalsize`. -/
+  bodySize : Option String := none
   /-- Interaction states, read by the HTML backend only — a printed page
   has no hover or focus, so the PDF path ignores all three keys (said once
   here, not per consumer). `hover` and `focus` colour the element's links
@@ -5329,6 +5334,12 @@ theorem abstract_heading_follows_section (styles : Styles)
       ((styles.find? "section").getD {}).font ∧
     (abstractHeadingStyle styles).align = some "center" := by
   simp [abstractHeadingStyle, h]
+
+/-- The abstract body's size step: the one resolving site both backends
+read. Undeclared, article.cls §abstract's `\small`, which it declares over
+the whole environment before the heading. -/
+def abstractBodySize (styles : Styles) : String :=
+  ((styles.find? "abstract").bind (·.bodySize)).getD "small"
 
 /-- What a chrome footer slot shows, resolved per page by the backends: the
 title of the current top-level section, or the index of the page's own frame
