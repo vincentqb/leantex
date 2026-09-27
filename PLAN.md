@@ -21565,3 +21565,74 @@ list inside a paragraph.
 **The user's.** None of these fixes departs from LaTeX. The two open
 decisions stand as the card entry left them: whether the size ladder's
 leading is reproduced exactly, and the `pt`-as-`bp` reading.
+
+
+### 2026-09-27 — the evaluation holds itself honest: a pin is about its code, the vendored bytes are upstream's, and a hand-framed selftest is found by what it is
+
+Review r7-a found two instruments that counted what they could not see
+(DI-1, FX-2), and the lander routed a third (the frame rule). Each now
+fails through the path that ships, on the case that passed before.
+
+**A pin is about its code (DI-1).** The diagaudit tier counted a code as
+decided whenever its row's pin resolved, so `W0301` pinned to
+`Nat.add_comm` and `W0302` to `measureChecks` built, passed `lake test`,
+and raised the tier 836 → 838, which regeneration recorded. The heading
+of the diagnostics-ledger entry above promised a gate *behind* each
+decision; it held only that a gate exists. Now `pin_faults%`, in
+`scripts/diagaudit.lean`, reads each row off the elaborated registry and
+faults it unless the pin holds the code as a value: a theorem's
+statement, or a check's block or a table of the suite's the block reads
+(a `Tests` definition that takes no argument, which is how
+`siteAccountingChecks` holds its two codes), holds the code's
+constructor or its name spelled whole; a compat item's index file
+refuses with it. A message that mentions a code holds it only inside a
+longer string, which does not count. The tier also checks that it read
+every registry row, so a row cannot slip past the reader. With the
+reviewer's mutant, main writes 838 and this tree exits 1 under `--check`
+and regeneration, naming both rows and writing nothing; `lake test`
+still passes it, and says so: its check is that each pin resolves.
+
+Why the tier and not the suite: reading a declaration needs Lean's
+elaborator, and importing it into `Tests/DiagAudit.lean` links it into
+the `Tests` binary (`cites`, which imports it, is 118 MB against the
+suite's 26 MB). The tier script runs interpreted, so it links nothing.
+The codes are spelled by constructor name, the premise `diagChecks`
+already holds and the tier's selftest states. Blind spots, stated: a
+block that names its code only in a `match` pattern is not seen (the
+pattern lives in an auxiliary matcher), and a block that names the code
+in an assertion about something else counts. Declined, with the price:
+the reviewer's stronger form, a witness document per row whose census
+the suite asserts, would copy what each pinned block already does — it
+builds its witness and asserts the code's census inside.
+
+**The vendored bytes are upstream's (FX-2).** `SHA256SUMS` was read by
+nothing, so a changed byte passed `external --check` whenever the
+document's standing held. `sumFaults` reads the pin list in both
+directions before the tier measures: a file whose bytes are not its
+pin's, a pinned file gone, a pin leaving the directory, a file no pin
+names. There is one SHA-256 in the tree: it and the `sha256sum`-format
+reader moved from `scripts/blockers.lean` to `scripts/Board.lean`, and
+blockers dropped its copy of Gate's `containsSub`. One byte changed
+("Some" to "Sime", standing held): main exits 0, this tree exits 1 naming
+the file. The check costs 1.7 s of `external --check` (5.2 → 6.9 s).
+
+**A hand-framed selftest is found by what it is.** The hook matched one
+spelling of a failure list, `IO.mkRef ([] : List String)`. Four tier
+producers framed their own selftest and it saw none: external's and
+coverage's `Array` refs, commonmark's and parity's mutable arrays (the
+routed item named one). `selfFramed` reads which definition
+`--selftest` reaches — a top-level `IO UInt32` definition named on a line
+that calls `tierMain` or dispatches "--selftest", or named `…selftest` —
+and faults it unless its body is a `tierSelftest` application. external
+and coverage now run through the shared frame with their assertions
+unchanged; commonmark and parity, whose assertions push to a local
+array, are `selftestFrameDebt` rows read in both directions. Blind spot:
+a signature split across lines is not read.
+
+**Compound.** Each rule is a gate with its break in a selftest: four pins
+about something other than their code and the three ways a pin holds it
+(`diagaudit --selftest`), the five faults of the pin list through a real
+directory (`external --selftest`), five framed shapes and four legal
+ones (`precommit --selftest`). A rule that decides by reading
+declarations lives where declarations are readable, and says in the
+suite what the suite checks.
