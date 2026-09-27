@@ -3588,6 +3588,32 @@ private def docHasListing (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
+/-- Whether the document carries a reference list: the gate on its rules,
+so a document without one ships exactly the stylesheet it shipped before. -/
+private def docHasBibliography (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || bl matches .bibliography ..) (fun b _ => b) false doc.body
+
+/-- The reference list as the page sets it (`Layout.collectBibliography`),
+from the same resolving sites: author-year entries hang their continuation
+lines `\bibhang` in; numbered entries hang their labels right-aligned in a
+column as wide as the widest label — a grid whose rows share its columns
+(`subgrid`), since only the browser can measure a label — `\labelsep`
+(.5em, article.cls:338) before the text; `\bibsep` between entries, its
+default the page's value over the page's size, in `em` so it follows the
+reader's type. A declared token reaches both as its custom property. -/
+private def bibCss (doc : Doc) : String :=
+  let hang := s!"var(--{Ir.bibHangName}, {cssLength (Ir.bibHang {}).width})"
+  let size := doc.page.fontSize
+  let sepMilli := (Ir.bibSepDefault size).width.sp * 1000 / (max size 1)
+  let sep := s!"var(--{Ir.bibSepName}, {decMilli sepMilli}em)"
+  s!"ul.bibliography \{ display: grid; row-gap: {sep}; padding: 0; list-style: none; }\n" ++
+  s!"ul.bibliography.unmarked > li \{ padding-left: {hang}; text-indent: calc(-1 * {hang}); }\n" ++
+  "ul.bibliography:not(.unmarked) { grid-template-columns: max-content minmax(0, 1fr);\n" ++
+  "  column-gap: 0.5em; }\n" ++
+  "ul.bibliography:not(.unmarked) > li { display: grid; grid-column: 1 / -1;\n" ++
+  "  grid-template-columns: subgrid; }\n" ++
+  ".bib-marker { text-align: right; }\n"
+
 /-- The kerning request, HTML projection of `Ir.features`: the one place
 this stylesheet asks a browser to kern, present exactly when the record
 the PDF path reads asks for it (`Pdf.features_agree` states the pair). -/
@@ -3838,6 +3864,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
     "  padding-right: 1em; text-align: right; color: var(--muted);\n" ++
     "  user-select: none; }\n"
    else "") ++
+  (if docHasBibliography doc then bibCss doc else "") ++
   ".centered { text-align: center; }\n" ++
   raggedRule .left ++ raggedRule .right ++
   ".fill { flex: 1 1 auto; }\n" ++
@@ -4563,14 +4590,15 @@ def withClass (c : String) : Node → Node
   | .script attrs code => .script attrs code
 
 /-- One reference-list entry: the style's marker, the formatted content,
-and the anchor its citations link to. -/
+and the anchor its citations link to. A numbered entry's content is one
+element beside its label, so the list's grid can hang the labels in one
+column (`bibCss`); an author-year entry is its content alone. -/
 private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
-  let markerNode : Array Node := match item.marker with
-    | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
-        #[("class", "bib-marker")], Html.text " "]
-    | none => #[]
-  Html.elem "li" (markerNode ++ inlines cfg item.content)
-    #[("id", Ir.bibAnchor item.key)]
+  let kids : Array Node := match item.marker with
+    | some m => #[Html.elem "span" #[Html.text s!"[{m}]"] #[("class", "bib-marker")],
+        Html.text " ", Html.elem "span" (inlines cfg item.content) #[("class", "bib-entry")]]
+    | none => inlines cfg item.content
+  Html.elem "li" kids #[("id", Ir.bibAnchor item.key)]
 
 /-- An entry's key enters the artifact only as the `id` attribute of the
 typed tree — the anchor `Bib.anchorOf` links to — so it passes
@@ -5564,8 +5592,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- marks nothing and the class carries that.
   | .bibliography _ _ items =>
     let marked := items.any (·.marker.isSome)
+    -- `role="list"`: the list's markers are drawn by its own grid, and a
+    -- list styled without them loses its list semantics in WebKit.
     Html.elem "ul" (items.map (bibItemNode cfg))
-      #[("class", if marked then "bibliography" else "bibliography unmarked")]
+      #[("class", if marked then "bibliography" else "bibliography unmarked"),
+        ("role", "list")]
 
 /-- The accumulator threads through the sibling walk, as in
 `inlineNodesInto` — and so does the epoch: a `.setPalette`/`.setTokens`

@@ -6654,18 +6654,34 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   if r.slides then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
-  -- The reference list: each resolved entry is one paragraph led by its
-  -- style's marker, separated by the paragraph gap — thebibliography's
-  -- hanging label set flat. An unfilled marker ships nothing; the
-  -- diagnostic that left it empty already said why.
-  items.foldl (init := a) fun a item =>
-    let content := match item.marker with
-      | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
-      | none => item.content
-    -- one leaf per entry, its whole text (`Struct.bibRaw`), the marker generated
+  -- The reference list is natbib's `thebibliography` list (`\NAT@bibsetnum`,
+  -- `\NAT@bibsetup`, natbib.sty:627–644). Numbered entries set their `[n]`
+  -- right-aligned in a column as wide as the widest label — `[N]` for N
+  -- entries, the argument the style writes into `\begin{thebibliography}` —
+  -- `\labelsep` before the text; author-year entries hang their continuation
+  -- lines `\bibhang` in; `\bibsep` stands between entries, `\parsep` being
+  -- zero. An unfilled marker ships nothing; the diagnostic that left it
+  -- empty already said why.
+  let size := r.geom.fontSize
+  let numbered := items.any (·.marker.isSome)
+  let (labelW, a) : Sp × Acc := if !numbered then (0, a) else
+    -- measured only (how wide is the widest label?), never shipped
+    let (li, _, cache, _, _) :=
+      itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground }
+        #[.text s!"[{items.size}]"] a.hyphCache (.fixed .unattributed) r.imgs
+        r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
+    (itemsNaturalWidth li, { a with hyphCache := cache })
+  let hang := if numbered then 0 else (r.resolve (Ir.bibHang a.tokens)).width
+  let textIndent := if numbered then indent + labelW + size / 2 else indent
+  let sep := r.resolve (Ir.bibSep a.tokens size)
+  items.zipIdx.foldl (init := a) fun a (item, i) =>
+    let marker := item.marker.map fun m => #[Ir.Inline.text s!"[{m}]"]
+    -- one leaf per entry, its whole text (`Struct.bibRaw`); the label is
+    -- generated marker ink
     let (a, leaf) := a.leafRange 1
-    let a := collectPara r a content indent false r.geom.fontSize (leaf := leaf) (span := 1)
-    a.wantGap
+    let a := collectPara r a item.content textIndent false size (marker := marker)
+      (leaf := leaf) (span := 1) (hangIndent := hang)
+    if i + 1 == items.size then a.wantGap else a.addvspace sep
 
 private def collectNav (a : Acc) (spec : Ir.NavSpec) (body : Array Block) : Acc :=
   -- A nav is furniture, and each medium has its own answer. The paged

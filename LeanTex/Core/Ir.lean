@@ -779,6 +779,51 @@ backends read it — the PDF walk around a trivlist, the HTML base sheet's
 def trivlistSkip (tokens : Tokens) (size : Sp) : SymGlue :=
   (tokens.find? trivlistSkipName).getD (trivlistSkipDefault size)
 
+/-- natbib's hanging indent for an author-year reference list, `\bibhang`
+(natbib.sty:637–638, `\setlength{\bibhang}{1em}`): the list's
+`\leftmargin`, with `\itemindent` its negative (`\NAT@bibsetup`,
+natbib.sty:642–644), so an entry's first line stands at the margin and
+its continuation lines one hang in. A numbered list hangs its labels
+instead (`\NAT@bibsetnum`, natbib.sty:627). The document's token where
+declared — `\setlength{\bibhang}` spells it — else natbib's value; both
+backends read it. -/
+def bibHangName : String := "bibhang"
+
+def bibHang (tokens : Tokens) : SymGlue :=
+  (tokens.find? bibHangName).getD { width := { em := 1000 } }
+
+/-- natbib's gap between reference-list entries, `\bibsep`: the list's
+`\itemsep`, its `\parsep` zero (`\NAT@bibsetup`). natbib reads the default
+from the class's first-level list when it loads (natbib.sty:639–640,
+`\itemsep` plus `\parsep` of `\@listi`): size10.clo:216–219 sets each to
+`4pt plus 2pt minus 1pt`, size11.clo `4.5pt plus 2pt minus 1pt`,
+size12.clo `5pt plus 2.5pt minus 1pt`. Another base keeps size10's
+proportions of its own size. -/
+def bibSepName : String := "bibsep"
+
+def bibSepDefault (size : Sp) : SymGlue :=
+  let g (w s h : Sp) : SymGlue :=
+    { width := { sp := w }, stretch := { sp := s }, shrink := { sp := h } }
+  if size == Dim.pt 10 then g (Dim.pt 8) (Dim.pt 4) (Dim.pt 2)
+  else if size == Dim.pt 11 then g (Dim.pt 9) (Dim.pt 4) (Dim.pt 2)
+  else if size == Dim.pt 12 then g (Dim.pt 10) (Dim.pt 5) (Dim.pt 2)
+  else g (size * 4 / 5) (size * 2 / 5) (size / 5)
+
+/-- The one resolving site for the gap between reference-list entries: the
+document's token where declared (`\setlength{\bibsep}`), else natbib's
+default at the governing size. -/
+def bibSep (tokens : Tokens) (size : Sp) : SymGlue :=
+  (tokens.find? bibSepName).getD (bibSepDefault size)
+
+/-- **An undeclared reference list reads natbib's own values** at the three
+standard bases — the sourced rows above, exactly, and a one-em hang. -/
+theorem bibList_default_exact :
+    bibHang {} = { width := { em := 1000 } } ∧
+    (bibSep {} (Dim.pt 10)).width.sp = Dim.pt 8 ∧
+    (bibSep {} (Dim.pt 11)).width.sp = Dim.pt 9 ∧
+    (bibSep {} (Dim.pt 12)).width.sp = Dim.pt 10 :=
+  ⟨rfl, by decide, by decide, by decide⟩
+
 /-- The role a trivlist environment's body rides in: the environment
 opens space (`\topsep` above and below), the `\centering` and `\raggedright`
 declarations open none, and both elaborate to the same `.center` or

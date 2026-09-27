@@ -4226,6 +4226,139 @@ def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "natbib: an unresolved key prints [?], the separators a resolved one has"
     (miss.contains "L1 [?] end.")
 
+/-- The entries natbib's list checks set: invented people and titles, ten
+so a numbered list carries labels of two widths (`[9]`, `[10]`), and the
+tenth long enough to wrap, so an entry has continuation lines. -/
+def natbibListBib : String := Id.run do
+  let mut out := ""
+  for k in [1:11] do
+    let words := String.intercalate " "
+      ((List.range (if k == 10 then 30 else 2)).map fun i => s!"widget{i}")
+    out := out ++ s!"@misc\{e{k}, author = \{Ann Author}, title = \{Survey of {words}},\n\
+      howpublished = \{Example Press}, year = \{{2000 + k}}}\n"
+  return out
+
+/-- A shipped line's segments with the x each starts at, from the line's own
+origin. -/
+def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
+  let mut x := l.x
+  let mut out := #[]
+  for s in l.segs do
+    out := out.push (x, s)
+    x := x + match s with
+      | .run _ _ _ w _ _ _ _ _ _ => w
+      | .gap w _ => w
+      | .rule w _ _ _ => w
+      | .image _ w _ => w
+  return out
+
+/-- The reference list's shipped lines, one array per entry: the lines after
+the References heading, split where the leaf changes. -/
+def bibEntryLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) := Id.run do
+  let start := ((lines.findIdx? (lineText · == "References")).map (· + 1)).getD lines.size
+  let mut out : Array (Array Layout.LineOut) := #[]
+  let mut cur : Array Layout.LineOut := #[]
+  for l in lines.extract start lines.size do
+    if !cur.isEmpty && cur.back?.map (·.leaf) != some l.leaf then
+      out := out.push cur
+      cur := #[]
+    cur := cur.push l
+  return if cur.isEmpty then out else out.push cur
+
+/-- **The reference list is natbib's list**, on the shipped page and in the
+HTML (`\NAT@bibsetup`, `\NAT@bibsetnum`, natbib.sty:627–644): an
+author-year entry's first line stands at the margin and its continuation
+lines one `\bibhang` in; a numbered entry's label stands right-aligned in a
+column as wide as the widest label, `\labelsep` before a text column every
+line of the entry shares; `\bibsep` stands between entries, so the baseline
+step between two entries is the step inside one plus the gap. A declared
+`\setlength{\bibhang}` or `\setlength{\bibsep}` moves exactly that, and
+the HTML reads the same values through the same token names. Positions are
+read at the measure edge (`x + hang`): character protrusion moves a first
+line with its label, as it moves a list item with its bullet. Measured
+under lualatex over the same shapes in TeX Gyre Termes at 10 pt: a hang of
+9.96 pt, a `[3]` label column of 16.60 pt, entry steps of 19.93 pt against
+11.96 pt inside an entry (`pdftotext -bbox`, ink edges). -/
+def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let build (pre : String) (keys : String) : Ir.Doc × Layout.Out × String :=
+    let (doc, _) := elabStr s!"\\documentclass\{article}\n{pre}\n\
+      \\bibliographystyle\{unsrtnat}\n\\begin\{document}\nL1 \\citep\{{keys}} end.\n\n\
+      \\bibliography\{refs}\n\\end\{document}\n"
+    let (doc, _) := Bib.apply #[("refs", natbibListBib)] doc
+    (doc, layoutOf oneFace doc, (HtmlDoc.emit {} doc).1)
+  let edge (l : Layout.LineOut) : Dim.Sp := l.x + l.hang
+  let step (a b : Layout.LineOut) : Dim.Sp := b.y - a.y
+  -- author-year: the long entry first, so one entry's own step is read
+  let ay (pre : String) := build ("\\usepackage{natbib}" ++ pre) "e10,e1,e2"
+  let (doc, out, html) := ay ""
+  let geom := Layout.Geom.ofPage doc.page
+  let em := geom.fontSize
+  let es := bibEntryLines (bodyLines out)
+  let rest (e : Array Layout.LineOut) := e.extract 1 e.size
+  t s!"natbib list: three author-year entries ship, the first wrapping ({es.map (·.size)})"
+    (es.size == 3 && decide ((es[0]?.map (·.size)).getD 0 ≥ 2))
+  t "natbib list: an author-year entry's first line stands at the margin"
+    (es.all fun e => e[0]?.map edge == some geom.hmargin)
+  t "natbib list: its continuation lines hang one em in (\\bibhang)"
+    (es.all fun e => (rest e).all fun l => edge l == geom.hmargin + em)
+  let within := match es[0]? with
+    | some e => if h : 1 < e.size then step e[0] e[1] else 0
+    | none => 0
+  let between := match es[0]?, es[1]? with
+    | some a, some b => match a.back?, b[0]? with
+      | some x, some y => step x y
+      | _, _ => 0
+    | _, _ => 0
+  t s!"natbib list: \\bibsep (8pt at 10pt) stands between entries ({between - within})"
+    (decide (within > 0) && between - within == Dim.pt 8)
+  let (_, out2, html2) := ay "\\setlength{\\bibhang}{2em}\\setlength{\\bibsep}{0pt}"
+  let es2 := bibEntryLines (bodyLines out2)
+  t "natbib list: a declared \\bibhang moves the continuation lines to it"
+    ((es2[0]?.map fun e => (rest e).all fun l => edge l == geom.hmargin + 2 * em).getD false)
+  let between2 := match es2[0]?, es2[1]? with
+    | some a, some b => match a.back?, b[0]? with
+      | some x, some y => step x y
+      | _, _ => 0
+    | _, _ => 0
+  t "natbib list: a declared \\bibsep of zero leaves the entries one line apart"
+    (between2 == within)
+  t "natbib list html: the author-year entries hang and part by the same token names"
+    (hasStr html "<ul class=\"bibliography unmarked\" role=\"list\">" &&
+     hasStr html "padding-left: var(--bibhang, 1em); text-indent: calc(-1 * var(--bibhang, 1em))" &&
+     hasStr html "row-gap: var(--bibsep, 0.8em)")
+  t "natbib list html: a declared \\bibhang and \\bibsep reach the page's custom properties"
+    (hasStr html2 "--bibhang: 2em;" && hasStr html2 "--bibsep: 0;")
+  -- numbered: ten labels, `[1]` narrower than `[10]`
+  let (ndoc, nout, nhtml) :=
+    build "\\usepackage[numbers]{natbib}" "e1,e2,e3,e4,e5,e6,e7,e8,e9,e10"
+  let ngeom := Layout.Geom.ofPage ndoc.page
+  let ns := bibEntryLines (bodyLines nout)
+  let label (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) :=
+    (segStarts l).findSome? fun (x, s) => match s with
+      | .run _ _ _ w _ _ _ _ _ .label => some (x, x + w)
+      | _ => none
+  let labels := ns.filterMap fun e => e[0]?.bind fun l => (label l).map fun (a, b) =>
+    (a + l.hang, b + l.hang)
+  let widest := labels.foldl (fun m (a, b) => max m (b - a)) 0
+  let column := ngeom.hmargin + widest + ngeom.fontSize / 2
+  let textStart (l : Layout.LineOut) : Option Dim.Sp :=
+    (segStarts l).findSome? fun (x, s) => match s with
+      | .run _ _ _ _ glyphs _ _ _ _ a =>
+        if glyphs.isEmpty || a == .label then none else some x
+      | _ => none
+  t s!"natbib list: ten numbered entries ship, each with its label ({labels.size})"
+    (ns.size == 10 && labels.size == 10)
+  t "natbib list: the labels stand right-aligned in a column the widest label fills"
+    (labels.all (·.2 == ngeom.hmargin + widest) &&
+     decide ((labels[0]?.map fun (a, b) => b - a).getD widest < widest))
+  t "natbib list: every line of a numbered entry starts at one text column, \\labelsep past it"
+    (ns.all fun e => e.zipIdx.all fun (l, i) =>
+      if i == 0 then (textStart l).map (· + l.hang) == some column else edge l == column)
+  t "natbib list html: a numbered entry's label and text are the list grid's two columns"
+    (hasStr nhtml "<li id=\"ref-e1\"><span class=\"bib-marker\">[1]</span> <span class=\"bib-entry\">" &&
+     hasStr nhtml "grid-template-columns: subgrid;")
+
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a
 `\usepackage` inside an `\input`'ed preamble file, a `\RequirePackage`

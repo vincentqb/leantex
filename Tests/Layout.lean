@@ -5381,6 +5381,8 @@ got {(String.ofList actual.toList).quote}"
           | some (.para _) => true
           | _ => false).size
       | .algorithm numbered _ ls => if numbered then acc + ls.size else acc
+      -- a numbered reference list labels each entry
+      | .bibliography _ _ items => acc + (items.filter (·.marker.isSome)).size
       | _ => acc) (fun acc _ => acc) 0 doc.body
     -- a stepped frame repeats its lines per page, and a declared marker may
     -- be an image (no run): the count is compared only where every page is
