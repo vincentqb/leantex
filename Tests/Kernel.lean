@@ -66,8 +66,10 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "plain: the note is upright and medium" (face "Named" == some 0)
   t "definition: the body is upright" (face "Elm" == some 0 && face "Definition" == some 1)
   t "remark: the head is italic and unnumbered" (face "Remark" == some 2 && opensWith ls "Remark.")
-  t "remark: the body is upright" (face "Fir" == some 0)
-  t "theorem: the text after it is upright again" (face "Hazel" == some 0)
+  t "remark: the body under its head is upright"
+    (opensWith ls "Remark." && face "Fir" == some 0)
+  t "theorem: the italic stops at its end: the text after it is upright again"
+    (face "Dogwood" == some 2 && face "Hazel" == some 0)
   -- The kernel's own theorem, no amsthm: bold head without the period,
   -- italic body (latex.ltx `\@begintheorem`).
   let kls := linesOf (dvDoc "\\newtheorem{thm}{Theorem}\n" "\\begin{thm}[Aside]\nJuniper.\n\\end{thm}")
@@ -100,8 +102,10 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
         decide (((r.2.2.1 + r.2.2.2) - (geom.hmargin + geom.textWidth)).natAbs ≤ (Dim.pt 1).natAbs))
   let noQed := linesOf (dvDoc "\\usepackage{amsthm}\n"
     "\\begin{proof}\n\\renewcommand{\\qedsymbol}{}Maple ends bare.\n\\end{proof}")
-  t "proof: an emptied \\qedsymbol omits the mark"
-    ((lineWith noQed "Maple").any fun l => !(lineRuns l).any (hasStr ·.2.1 "□"))
+  t "proof: an emptied \\qedsymbol omits the mark, the head stays"
+    ((lineWith noQed "Maple").any fun l =>
+      (lineText l).startsWith "Proof." && !(lineRuns l).any (hasStr ·.2.1 "□"))
+  -- Kept behaviour, not a repair: passes on the merge base too.
   t "proof: without amsthm the environment is unknown, as LaTeX has it"
     ((warnCodes (dvDoc "" "\\begin{proof}\nx\n\\end{proof}")).contains "W0302")
   t "theoremstyle: a style the engine has not is named"
@@ -136,12 +140,14 @@ def kernelVerseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (["Birch", "Cedar"].all fun w => (lineWith w).any fun l =>
       l.x == geom.hmargin + geom.listIndent &&
         decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
-  t "verse: each \\\\ opens the next line one leading below"
+  t "verse: each \\\\ opens the next indented line one leading below"
     (match lineWith "Birch", lineWith "Cedar" with
-     | some a, some b => b.y - a.y == Ir.leadingFor geom.fontSize geom.leading
+     | some a, some b => a.x == geom.hmargin + geom.listIndent &&
+         b.y - a.y == Ir.leadingFor geom.fontSize geom.leading
      | _, _ => false)
-  t "verse: the text after it keeps the full measure"
-    ((lineWith "Dogwood").any fun l => l.x == geom.hmargin)
+  t "verse: the text after it keeps the full measure, the verse does not"
+    ((lineWith "Dogwood").any fun l => l.x == geom.hmargin &&
+      (lineWith "Cedar").any fun c => c.x == geom.hmargin + geom.listIndent)
   t "html: verse is a blockquote"
     (hasStr (HtmlDoc.emit {} doc).1 "<blockquote>")
 
