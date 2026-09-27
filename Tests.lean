@@ -24,6 +24,7 @@ import Tests.Refusal
 import Tests.EndInput
 import Tests.Redefine
 import Tests.Settings
+import Tests.Kernel
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -177,6 +178,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   picSiteChecks ref oneFace
   settleChecks ref
   quoteChecks ref oneFace
+  kernelThmChecks ref
   refChecks ref oneFace
   titleChecks ref
   outlineChecks ref

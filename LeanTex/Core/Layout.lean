@@ -1785,6 +1785,7 @@ def fixedSpace (c : Char) : Option (Nat × Nat) :=
   else if c == '\u2005' then some (1, 4)   -- four-per-em, \:
   else if c == '\u2004' then some (1, 3)   -- three-per-em, \;
   else if c == '\u2007' then some (1, 2)   -- figure space
+  else if c == '\u2002' then some (1, 2)   -- en space: \enspace, \labelsep's .5em
   else if c == '\u2003' then some (1, 1)   -- em quad: \paragraph's run-in gap
   else none
 

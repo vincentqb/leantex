@@ -43,7 +43,7 @@ def nativePackages : List String :=
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
-   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ"]
+   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -5367,6 +5367,13 @@ where
         -- indent; the half line is what changes the page.
         let native := "\\page{ parskip = 0.6em plus 2pt }"
         became "\\usepackage{parskip}" native pos
+        out := out ++ (← synthAt native pos)
+      else if p == "amsthm" then
+        -- amsthm's documented default style is plain (amsthm manual §4:
+        -- `plain` is in force until a `\theoremstyle`), which is also what
+        -- tells the elaborator amsthm's heads and its `proof` are in force.
+        let native := "\\theoremstyle{plain}"
+        became "\\usepackage{amsthm}" native pos
         out := out ++ (← synthAt native pos)
       else if (p == "caption" || p == "subcaption") && opt.isSome then
         -- The package options are `\captionsetup` keys (caption manual

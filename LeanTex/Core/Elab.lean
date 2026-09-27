@@ -51,6 +51,48 @@ structure UserEnv where
   cmdLimit : Nat
   deriving Repr, BEq
 
+/-- A theorem-like environment's style: the kernel's (latex.ltx
+`\@begintheorem`: the head bold, the body `\itshape`) where amsthm is not
+loaded, else amsthm's three (amsthm.sty `\th@plain`, `\th@definition`,
+`\th@remark`: a bold head over an italic or upright body, and an italic
+head over an upright one). -/
+inductive ThmStyle where
+  | kernel
+  | plain
+  | definition
+  | remark
+  deriving Repr, BEq, Inhabited
+
+/-- One `\newtheorem`: the environment, its heading, the counter it steps
+(`none` is amsthm's unnumbered `\newtheorem*`) and the style in force where
+it was declared (amsthm.sty: `\newtheorem` captures `\thm@style`). -/
+structure ThmDef where
+  env : String
+  heading : Array Inline
+  counter : Option String
+  style : ThmStyle
+  deriving Repr, BEq
+
+/-- The theorem declarations the preamble made and the counters the body
+steps: the environments, each counter with the heading level that resets it
+(`[section]`), the `\theoremstyle` in force — `.kernel` until amsthm is
+loaded, whose default is `plain` (Compat spells the load that way), so
+whether amsthm's heads and its `proof` exist is read off the style — and,
+in flow order, each counter with the heading number it last stepped under
+(the `[within]` levels, spelled) and its value: a counter that finds its
+heading moved restarts at 1, `\@addtoreset`'s effect read where the number
+is used. One field on `ESt`, the `AlgSt` shape: the knots' state stays
+narrow. -/
+structure ThmDecls where
+  defs : Array ThmDef := #[]
+  counters : Array (String × Option Nat) := #[]
+  style : ThmStyle := .kernel
+  nums : Array (String × String × Nat) := #[]
+  deriving Repr, BEq
+
+/-- amsthm is loaded: some `\theoremstyle` has been declared. -/
+def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
+
 /-- A user command sees only commands defined before it: `limit` bounds the
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
@@ -309,6 +351,9 @@ structure Counters where
   Per-chapter numbering waits for a real report class (a `ClassRecord`
   field then). -/
   fnNum : Nat := 0
+  /-- The theorem-like environments (`\newtheorem`, `\theoremstyle`) and
+  their counters in flow order. -/
+  thm : ThmDecls := {}
 
 structure ESt where
   diags : Array Diag := #[]
@@ -7357,6 +7402,184 @@ theorem wrapScopedEnv_text (n : String) :
     · simp
     · rfl
 
+/-- The theorem-like environment `n` names, when a `\newtheorem` declared it. -/
+private def thmOf? (thm : ThmDecls) (n : String) : Option ThmDef :=
+  thm.defs.find? (·.env == n)
+
+/-- `n` opens a theorem-like scope: an environment a `\newtheorem` declared,
+or amsthm's `proof` once amsthm is loaded (amsthm.sty defines it; the kernel
+does not, so without amsthm it stays unknown, as LaTeX has it). -/
+def thmEnv (thm : ThmDecls) (n : String) : Bool :=
+  (thmOf? thm n).isSome || (n == "proof" && thm.ams)
+
+/-- What separates a theorem-like head from its body: `\labelsep`, .5 em
+(article.cls, `\setlength\labelsep{.5em}`), with which the kernel's head
+(latex.ltx `\@begintheorem`, `\item[\hskip\labelsep …]`) and amsthm's proof
+head (`\item[\hskip\labelsep\itshape …]`) both close. amsthm's theorem head
+closes with `\thm@headsep`, `5pt plus 1pt minus 1pt` (amsthm.sty `\@thm`):
+the same length at a 10 pt body, 0.5 pt over at 11 pt and 1 pt at 12 pt,
+its ±1 pt rubber not carried — the IR has no fixed-length inline glue, and
+the en space (U+2002, `\enspace`) stands for both. -/
+def thmHeadSep : String := "\u2002"
+
+/-- `\@addpunct{.}` (amsthm.sty): a period after a head, unless the head
+already ends in one of the punctuation marks it tests for. -/
+private def addPunct (head : Array Inline) : Array Inline :=
+  let t := (Ir.plainText head).trimAscii.toString
+  if [".", "?", "!", ":", ";", ","].any (t.endsWith ·) then #[] else #[.text "."]
+
+/-- The head a theorem-like environment opens with, the separator
+included. The kernel's (latex.ltx `\@begintheorem`, `\@opargbegintheorem`):
+name, number and `(note)`, bold. amsthm's (amsthm.sty `\thmhead@plain`,
+`\@begintheorem`): name and number in the style's head font — bold, italic
+under `remark` — the number `\@upn` upright, the note parenthesised in the
+note font (`\fontseries\mddefault\upshape`), then the head punctuation `.`
+in the head font. -/
+def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
+    (note : Option (Array Inline)) : Array Inline :=
+  match style with
+  | .kernel =>
+    let numRun : Array Inline := match num with
+      | some n => #[.text (" " ++ n)]
+      | none => #[]
+    let noted : Array Inline := match note with
+      | some nt => #[.text " ("] ++ nt ++ #[.text ")"]
+      | none => #[]
+    #[.styled .bold (name ++ numRun ++ noted), .text thmHeadSep]
+  | _ =>
+    let font : Style := if style == .remark then .italic else .bold
+    let numRun : Array Inline := match num with
+      | some n => #[.text " ", .styled .upright #[.text n]]
+      | none => #[]
+    let noteRun : Array Inline := match note with
+      | some nt => #[.text " ", .styled .medium #[.styled .upright
+          (#[.text "("] ++ nt ++ #[.text ")"])]]
+      | none => #[]
+    #[.styled font (name ++ numRun)] ++ noteRun ++
+      #[.styled font #[.text "."], .text thmHeadSep]
+
+/-- A theorem-like scope's state at its `\begin`: the head its first
+paragraph opens with, whether a QED closes it (amsthm's `proof`) and the
+`\qedsymbol` its own body redefines, and the label target and block
+declarations to restore at its `\end` — `\refstepcounter` and the body font
+are local to the environment's group. -/
+structure ThmOpen where
+  head : Array Inline
+  qed : Bool
+  qedDef : Option (Array Raw)
+  target : Option Ir.RefBinding
+  decls : List Ir.Decl
+
+/-- The `\qedsymbol` a proof's own body redefines — the manual's way to
+change or omit one proof's mark (amsthdoc §5: "just before
+`\end{proof}`") — read off the body's top level, where Compat spells the
+redefinition `\define \qedsymbol() {…}`: the body of the last one. -/
+private def bodyQedDef? (body : Array Raw) : Option (Array Raw) := Id.run do
+  let mut found : Option (Array Raw) := none
+  for i in [0:body.size] do
+    if body[i]? matches some (.ctrl "define" _) then
+      let j := skipSpaces body (i + 1)
+      if body[j]? matches some (.ctrl "qedsymbol" _) then
+        match (body.extract (j + 1) body.size).find? (· matches .group _ _) with
+        | some (.group g _) => found := some g
+        | _ => pure ()
+  return found
+
+/-- Step a theorem counter and render its number (ltthm.dtx `\newtheorem`:
+`\the<counter>` is `\arabic`, after `\the<within>.` for a `[within]`
+counter, which restarts whenever that heading counter moves — read here as
+the heading numbers it last stepped under, the appendix mark included). -/
+private def stepThmCounter (c : String) : EM String := do
+  let st ← get
+  let within := (st.ctr.thm.counters.find? (·.1 == c)).bind (·.2)
+  let (s1, s2, s3) := st.ctr.secNums
+  let mark := if st.ctr.inAppendix then "A" else ""
+  let levels := match within with
+    | some 1 => s!"{s1}"
+    | some 2 => s!"{s1}.{s2}"
+    | some _ => s!"{s1}.{s2}.{s3}"
+    | none => ""
+  let snap := mark ++ levels
+  let v := match st.ctr.thm.nums.find? (·.1 == c) with
+    | some (_, s, v) => if s == snap then v + 1 else 1
+    | none => 1
+  modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with
+    nums := (st.ctr.thm.nums.filter (·.1 != c)).push (c, snap, v) } } }
+  return match within with
+    | some lvl => s!"{renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel lvl}.{v}"
+    | none => toString v
+
+/-- A caption word the document may redefine (`\proofname`, `\qedsymbol`):
+its definition where one stands, else `dflt`. -/
+private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array Inline)) :
+    EM (Array Inline) := do
+  if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
+
+/-- Open a theorem-like scope: read the optional `[note]`, step the counter
+and make its number the label target, push the style's body font
+(`\itshape` for the kernel's and `plain`), and build the head. Returns the
+index past the note, where the body starts. -/
+private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
+    EM (ThmOpen × Nat) := do
+  let (note, k) ← match scanBracketArg body 0 pos with
+    | .took k =>
+      let j := skipSpaces body 0
+      pure (some (← elabInlines ctx (body.extract (j + 1) (k - 1))), k)
+    | .unclosed bpos =>
+      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+      pure (none, 0)
+    | .content => pure (none, 0)
+  let st ← get
+  let (head, italic, qed) ← match thmOf? st.ctr.thm n with
+    | some d =>
+      let num ← match d.counter with
+        | some c => pure (some (← stepThmCounter c))
+        | none => pure none
+      if let some nm := num then
+        modify fun st => { st with refTarget := some { kind := none, num := nm } }
+      pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false)
+    | none =>
+      -- amsthm's proof: `\itshape #1\@addpunct{.}` over `\proofname`,
+      -- `\labelsep`, the body `\normalfont` and a QED at its end.
+      let name ← match note with
+        | some nt => pure nt
+        | none => definedOr ctx "proofname" pos (pure #[.text ctx.locale.proof])
+      pure (#[.styled .italic (name ++ addPunct name), .text thmHeadSep], false, true)
+  if italic then
+    modify fun s => { s with blockDecls := st.blockDecls ++ [.style .italic] }
+  return ({ head := Ir.wrapDecls st.blockDecls head, qed,
+            qedDef := if qed then bodyQedDef? body else none, target := st.refTarget,
+            decls := st.blockDecls }, k)
+
+/-- Close a theorem-like scope: restore what `thmOpen` changed, open the
+first paragraph with the head — or stand it alone when the body opens with
+anything else — end a proof with its QED (amsthm.sty `\qed`:
+`\hfill\quad\hbox{\qedsymbol}` on the last line, a line of its own after a
+display or list), and set the whole as the trivlist it is (ltthm.dtx and
+amsthm.sty both open `\trivlist`) under the environment's name. -/
+private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
+    (pos : Pos) : EM (Array Block) := do
+  modify fun st => { st with refTarget := o.target, blockDecls := o.decls }
+  let inner : Array Block := match inner[0]? with
+    | some (Block.para c) => inner.modify 0 fun _ => .para (o.head ++ c)
+    | _ => #[Block.para o.head] ++ inner
+  let inner ← if o.qed then do
+      let square : EM (Array Inline) := do
+        return #[← elabMathInline ctx false #[.ctrl "square" pos] pos]
+      let mark ← match o.qedDef with
+        | some b => elabInlines ctx b
+        | none => definedOr ctx "qedsymbol" pos square
+      -- `\renewcommand{\qedsymbol}{}` is the manual's way to omit it.
+      if mark.isEmpty then pure inner else
+      let shown := Ir.wrapDecls o.decls mark
+      let q : Array Inline := #[.fill, .text "\u2003"] ++ shown
+      pure (match inner.back? with
+        | some (.para c) => inner.pop.push (.para (c ++ q))
+        | _ => inner.push (.para q))
+    else pure inner
+  return #[.role Ir.trivlistRole #[.role n inner]]
+
+seal thmOf? thmEnv thmOpen thmClose
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
@@ -8622,6 +8845,21 @@ the text width; the box takes the whole measure" pos
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
     blocks := blocks.push (.titled kind title
       (← elabBlocksGo ctx (body.extract m body.size) 0 #[] #[] (← get).flowGen))
+  else if thmEnv (← get).ctr.thm n then
+    -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
+    -- counter, the label target and the body font are the scope's own,
+    -- opened and closed outside the knot; the body recurses here.
+    let (o, k) ← thmOpen ctx n body pos
+    have hxw : rawWeightList (body.extract k body.size).toList
+        ≤ rawWeightList body.toList := extract_weight_le ..
+    have hxp : nestedParsList (body.extract k body.size).toList
+        ≤ nestedParsList body.toList := extract_nested_le ..
+    have hx0 : sliceWeight (body.extract k body.size) 0
+        = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
+    have hx1 : slicePars (body.extract k body.size) 0
+        = nestedParsList (body.extract k body.size).toList := slicePars_zero _
+    let inner ← elabBlocksGo ctx (body.extract k body.size) 0 #[] #[] (← get).flowGen
+    blocks := blocks ++ (← thmClose ctx n o inner pos)
   else if n == "quote" || n == "quotation" || n == "abstract" || n == "appendices" then
     -- Three same-shaped block-sequence wrappers, one branch and one
     -- recursion site (the knot compiles as one LCNF unit; a branch per
@@ -9198,6 +9436,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hep : rawParsList body.toList ≤ slicePars raws i := by
         have := elem_pars_le hre (Nat.le_refl i)
         simp only [nestedPars] at this; omega
+      let thmS := (← get).ctr.thm
       let isB : Bool :=
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
@@ -9206,6 +9445,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n
+            || thmEnv thmS n
             || (match lookupUserEnv ctx' n with
                 | some (_, env) =>
                   bodyIsBlock env.beginBody || bodyIsBlock env.endBody
@@ -9725,6 +9965,7 @@ unseal isColumnStray
 unseal Ir.markInParagraph Ir.flushedText
 unseal scanBracketArg Parse.inputEnvFile?
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
+unseal thmOf? thmEnv thmOpen thmClose
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
@@ -10627,6 +10868,14 @@ inductive PDecl where
   /-- An algorithm2e display setting outside the model, met in the
   preamble: named and ignored, its groups consumed with it. -/
   | algSetting (name : String) (pos : Pos)
+  /-- `\newtheorem{env}[shared]{heading}[within]` (latex.ltx, ltthm.dtx),
+  amsthm's starred form unnumbered: the environment, the counter it
+  shares, its heading, and the heading counter that resets its own. -/
+  | newtheorem (star : Bool) (env : String) (shared : Option String)
+      (heading : Option (Array Raw)) (within : Option String) (pos : Pos)
+  /-- amsthm's `\theoremstyle{s}`: the style the `\newtheorem`s after it
+  take. -/
+  | theoremstyle (name : Option String) (pos : Pos)
   | stray
 
 /-- The preamble fold's threaded state: exactly the loop-local values the
@@ -10928,6 +11177,38 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.titleDecl name unclosed recovered none pos)
             if recovered then
               i := j
+        else if name == "newtheorem" then
+          -- \newtheorem{env}[shared]{heading}[within]; amsthm's `*` form.
+          let j0 := skipSpaces preamble i
+          let (star, j0) := match preamble[j0]? with
+            | some (.word "*" _) => (true, skipSpaces preamble (j0 + 1))
+            | _ => (false, j0)
+          match preamble[j0]? with
+          | some (.group envRaws _) =>
+            let env := (rawSrc envRaws).trimAscii.toString
+            let (shared, j1) := takeOptRun preamble (skipSpaces preamble (j0 + 1))
+            let j2 := skipSpaces preamble j1
+            match preamble[j2]? with
+            | some (.group hRaws _) =>
+              let (within, j3) := takeOptRun preamble (skipSpaces preamble (j2 + 1))
+              i := j3
+              out := out.push (.newtheorem star env
+                (shared.map fun r => (rawSrc r).trimAscii.toString) (some hRaws)
+                (within.map fun r => (rawSrc r).trimAscii.toString) pos)
+            | _ =>
+              i := j2
+              out := out.push (.newtheorem star env none none none pos)
+          | _ =>
+            i := j0
+            out := out.push (.newtheorem star "" none none none pos)
+        else if name == "theoremstyle" then
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group g _) =>
+            i := j + 1
+            out := out.push (.theoremstyle (some (rawSrc g).trimAscii.toString) pos)
+          | _ =>
+            out := out.push (.theoremstyle none pos)
         else if let some code := reservedCtrl.lookup name then
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
@@ -11584,6 +11865,61 @@ its declared layout" pos
     warnOnce s.ctx ("alg:set:" ++ name) .N0102
       s!"'\\{name}' is not modelled; the algorithm keeps the engine's own display" pos
     return s
+  | .newtheorem star env shared heading within pos =>
+    match heading with
+    | some h =>
+      if env.isEmpty then
+        warnOnce s.ctx "newtheorem:" .E0304 "'\\newtheorem' needs {name}{heading}" pos
+        return s
+      let thms := (← get).ctr.thm
+      let name ← elabInlines s.ctx h
+      -- A shared counter must exist (ltthm.dtx: "No counter defined" is an
+      -- error there); unknown, the environment numbers on its own.
+      let sharedOk := shared.any fun c => thms.counters.any (·.1 == c)
+      if let some c := shared then
+        unless sharedOk do
+          warnOnce s.ctx ("newtheorem:" ++ env) .W0110
+            s!"'\\newtheorem\{{env}}' shares counter '{c}', which no \\newtheorem \
+declared; '{env}' numbers on its own" pos
+            (help := "declare the environment that owns the counter first")
+      let withinLvl ← match within, sharedOk with
+        | some w, false =>
+          match sectionLevel w with
+          | some l => pure (some l)
+          | none =>
+            warnOnce s.ctx ("newtheorem:" ++ env ++ ":within") .W0110
+              s!"'\\newtheorem\{{env}}' numbers within '{w}', a counter the engine \
+does not keep; the number stands alone" pos
+            pure none
+        | _, _ => pure none
+      let counter := if star then none else if sharedOk then shared else some env
+      let counters := if !star && !sharedOk then thms.counters.push (env, withinLvl)
+        else thms.counters
+      let thms := { thms with
+        defs := thms.defs.push ⟨env, name, counter, thms.style⟩, counters }
+      modify fun st => { st with ctr := { st.ctr with thm := thms } }
+      return s
+    | none =>
+      warnOnce s.ctx ("newtheorem:" ++ env) .E0304
+        "'\\newtheorem' needs {name}{heading}" pos
+      return s
+  | .theoremstyle name pos =>
+    let style := match name with
+      | some "plain" => some ThmStyle.plain
+      | some "definition" => some .definition
+      | some "remark" => some .remark
+      | _ => none
+    match style with
+    | some st =>
+      modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := st } } }
+      return s
+    | none =>
+      warnOnce s.ctx ("theoremstyle:" ++ name.getD "") .W0110
+        s!"'\\theoremstyle' names '{name.getD ""}', not one of plain, definition, \
+remark; the style in force stands" pos
+      modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with
+        style := if e.ctr.thm.ams then e.ctr.thm.style else .plain } } }
+      return s
   | .unknownCmd name unclosed pos =>
     -- A tikz-family set line is not unknown: the engine reads `\tikzset`
     -- itself (`Compat.nativeSetCtrls`), and while the boundary is open the

@@ -1,0 +1,25 @@
+# source: amsthm manual (amsthdoc.tex, "Using the amsthm package", for
+# amsthm.sty 2020/05/29 v2.20.6): §2 setup and input of theorem elements
+# (\newtheorem, \newtheorem*), §3 theorem numbering (the [within] and
+# [shared] arguments), §4 theorem styles (\theoremstyle's plain,
+# definition and remark; \swapnumbers; \newtheoremstyle), §5 proofs (proof
+# and its optional name, \proofname, \qedsymbol, \qed, \qedhere). A
+# declaration binds the environment a later \begin uses and moves no ink
+# where it stands (inert:binds); what a declared environment sets is
+# witnessed on the page by the theorem checks, the proof rows below by
+# this index.
+pre inert:binds \newtheorem{thm}{Theorem}
+pre inert:binds \newtheorem{thm}{Theorem}[section]
+pre inert:binds \newtheorem{thm}{Theorem}\newtheorem{lem}[thm]{Lemma}
+pre inert:binds \newtheorem*{thm}{Theorem}
+pre inert:binds \theoremstyle{plain}
+pre inert:binds \theoremstyle{definition}
+pre inert:binds \theoremstyle{remark}
+pre refuse:W0301 \swapnumbers
+pre refuse:W0301 \newtheoremstyle{note}{3pt}{3pt}{}{}{\itshape}{:}{.5em}{}
+body impl \begin{proof}x\end{proof}
+body impl \begin{proof}[Sketch]x\end{proof}
+body impl \renewcommand{\proofname}{Argument}\begin{proof}x\end{proof}
+body impl \renewcommand{\qedsymbol}{QED}\begin{proof}x\end{proof}
+body refuse:W0301 \begin{proof}x\qedhere\end{proof}
+body refuse:W0301 x\qed
