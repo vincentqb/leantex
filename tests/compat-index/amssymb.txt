@@ -1,24 +1,244 @@
-# source: amsfonts/amssymb documentation (amsfndoc §7 symbol tables) — one row
-# per symbol class, not per glyph; \mathbb/\mathfrak render via the alphabet
-# remap, the symbol names degrade W0012.
-body impl $\leq$
-body impl $\mathbb{R}$
-body impl $\mathfrak{g}$
-body refuse:W0012 $\square \blacksquare \lozenge$
-body refuse:W0012 $\varnothing \nexists \complement$
-body refuse:W0012 $\therefore \because$
-body refuse:W0012 $\lesssim \gtrsim$
-body refuse:W0012 $\subsetneq \supsetneq$
-body refuse:W0012 $\nmid \nparallel$
-body refuse:W0012 $\vDash \Vdash$
-body refuse:W0012 $\twoheadrightarrow \rightsquigarrow$
-body refuse:W0012 $\boxplus \boxtimes$
-body refuse:W0012 $\ltimes \rtimes$
-body refuse:W0012 $\smallsetminus \pitchfork$
-body refuse:W0012 $\circlearrowright \curvearrowleft$
-body refuse:W0012 $\upharpoonright \between$
-body refuse:W0012 $\hslash \backprime$
-body refuse:W0012 $\checkmark \maltese$
-body refuse:W0012 $\yen \circledR$
-body refuse:W0012 $\digamma \varkappa$
-body refuse:W0012 $\beth \gimel \daleth$
+# source: amssymb.sty v3.01 (2013/01/14): every symbol command the file
+# declares (\DeclareMathSymbol, and the aliases it makes with \global\let),
+# one row each, in file order — the commands amsfndoc's symbol tables
+# document. An impl row sets the scalar unicode-math's table gives the
+# command (LeanTex/Core/MathSymData.lean, generated from the two files by
+# scripts/gen-mathsym-data.lean). The glyph is the math face's: a scalar the
+# face lacks is named on the page (W0009 when a fallback face sets it, E0405
+# when none can). A refused row has no scalar of its own in unicode-math;
+# the line above it names the glyph that is missing.
+body impl $\boxdot$
+body impl $\boxplus$
+body impl $\boxtimes$
+body impl $\square$
+body impl $\blacksquare$
+body impl $\centerdot$
+body impl $\lozenge$
+body impl $\blacklozenge$
+body impl $\circlearrowright$
+body impl $\circlearrowleft$
+body impl $\leftrightharpoons$
+body impl $\boxminus$
+body impl $\Vdash$
+body impl $\Vvdash$
+body impl $\vDash$
+body impl $\twoheadrightarrow$
+body impl $\twoheadleftarrow$
+body impl $\leftleftarrows$
+body impl $\rightrightarrows$
+body impl $\upuparrows$
+body impl $\downdownarrows$
+body impl $\upharpoonright$
+body impl $\restriction$
+body impl $\downharpoonright$
+body impl $\upharpoonleft$
+body impl $\downharpoonleft$
+body impl $\rightarrowtail$
+body impl $\leftarrowtail$
+body impl $\leftrightarrows$
+body impl $\rightleftarrows$
+body impl $\Lsh$
+body impl $\Rsh$
+body impl $\rightsquigarrow$
+body impl $\leftrightsquigarrow$
+body impl $\looparrowleft$
+body impl $\looparrowright$
+body impl $\circeq$
+body impl $\succsim$
+body impl $\gtrsim$
+body impl $\gtrapprox$
+body impl $\multimap$
+body impl $\therefore$
+body impl $\because$
+body impl $\doteqdot$
+body impl $\Doteq$
+body impl $\triangleq$
+body impl $\precsim$
+body impl $\lesssim$
+body impl $\lessapprox$
+body impl $\eqslantless$
+body impl $\eqslantgtr$
+body impl $\curlyeqprec$
+body impl $\curlyeqsucc$
+body impl $\preccurlyeq$
+body impl $\leqq$
+body impl $\leqslant$
+body impl $\lessgtr$
+body impl $\backprime$
+body impl $\risingdotseq$
+body impl $\fallingdotseq$
+body impl $\succcurlyeq$
+body impl $\geqq$
+body impl $\geqslant$
+body impl $\gtrless$
+body impl $\vartriangleright$
+body impl $\vartriangleleft$
+body impl $\trianglerighteq$
+body impl $\trianglelefteq$
+body impl $\bigstar$
+body impl $\between$
+body impl $\blacktriangledown$
+body impl $\blacktriangleright$
+body impl $\blacktriangleleft$
+body impl $\vartriangle$
+body impl $\blacktriangle$
+body impl $\triangledown$
+body impl $\eqcirc$
+body impl $\lesseqgtr$
+body impl $\gtreqless$
+body impl $\lesseqqgtr$
+body impl $\gtreqqless$
+body impl $\Rrightarrow$
+body impl $\Lleftarrow$
+body impl $\veebar$
+body impl $\barwedge$
+body impl $\doublebarwedge$
+body impl $\measuredangle$
+body impl $\sphericalangle$
+# \varpropto: a variant form of U+221D, which \propto already sets
+body refuse:W0012 $\varpropto$
+# \smallsmile: a small form of U+2323, which \smile sets
+body refuse:W0012 $\smallsmile$
+# \smallfrown: a small form of U+2322, which \frown sets
+body refuse:W0012 $\smallfrown$
+body impl $\Subset$
+body impl $\Supset$
+body impl $\Cup$
+body impl $\doublecup$
+body impl $\Cap$
+body impl $\doublecap$
+body impl $\curlywedge$
+body impl $\curlyvee$
+body impl $\leftthreetimes$
+body impl $\rightthreetimes$
+body impl $\subseteqq$
+body impl $\supseteqq$
+body impl $\bumpeq$
+body impl $\Bumpeq$
+body impl $\lll$
+body impl $\llless$
+body impl $\ggg$
+body impl $\gggtr$
+# \circledS: U+24C8, outside unicode-math's table
+body refuse:W0012 $\circledS$
+body impl $\pitchfork$
+body impl $\dotplus$
+body impl $\backsim$
+body impl $\backsimeq$
+body impl $\complement$
+body impl $\intercal$
+body impl $\circledcirc$
+body impl $\circledast$
+body impl $\circleddash$
+# \lvertneqq: U+2268 U+FE00, a standardized variation sequence (with vertical stroke)
+body refuse:W0012 $\lvertneqq$
+# \gvertneqq: U+2269 U+FE00, a standardized variation sequence (with vertical stroke)
+body refuse:W0012 $\gvertneqq$
+body impl $\nleq$
+body impl $\ngeq$
+body impl $\nless$
+body impl $\ngtr$
+body impl $\nprec$
+body impl $\nsucc$
+body impl $\lneqq$
+body impl $\gneqq$
+# \nleqslant: U+2A7D U+0338, a negation by combining overlay
+body refuse:W0012 $\nleqslant$
+# \ngeqslant: U+2A7E U+0338, a negation by combining overlay
+body refuse:W0012 $\ngeqslant$
+body impl $\lneq$
+body impl $\gneq$
+# \npreceq: U+2AAF U+0338, a negation by combining overlay
+body refuse:W0012 $\npreceq$
+# \nsucceq: U+2AB0 U+0338, a negation by combining overlay
+body refuse:W0012 $\nsucceq$
+body impl $\precnsim$
+body impl $\succnsim$
+body impl $\lnsim$
+body impl $\gnsim$
+# \nleqq: U+2266 U+0338, a negation by combining overlay
+body refuse:W0012 $\nleqq$
+# \ngeqq: U+2267 U+0338, a negation by combining overlay
+body refuse:W0012 $\ngeqq$
+body impl $\precneqq$
+body impl $\succneqq$
+body impl $\precnapprox$
+body impl $\succnapprox$
+body impl $\lnapprox$
+body impl $\gnapprox$
+body impl $\nsim$
+body impl $\ncong$
+body impl $\diagup$
+body impl $\diagdown$
+# \varsubsetneq: U+228A U+FE00, a standardized variation sequence (stroke through bottom members)
+body refuse:W0012 $\varsubsetneq$
+# \varsupsetneq: U+228B U+FE00, a standardized variation sequence (stroke through bottom members)
+body refuse:W0012 $\varsupsetneq$
+# \nsubseteqq: U+2AC5 U+0338, a negation by combining overlay
+body refuse:W0012 $\nsubseteqq$
+# \nsupseteqq: U+2AC6 U+0338, a negation by combining overlay
+body refuse:W0012 $\nsupseteqq$
+body impl $\subsetneqq$
+body impl $\supsetneqq$
+# \varsubsetneqq: U+2ACB U+FE00, a standardized variation sequence (stroke through bottom members)
+body refuse:W0012 $\varsubsetneqq$
+# \varsupsetneqq: U+2ACC U+FE00, a standardized variation sequence (stroke through bottom members)
+body refuse:W0012 $\varsupsetneqq$
+body impl $\subsetneq$
+body impl $\supsetneq$
+body impl $\nsubseteq$
+body impl $\nsupseteq$
+body impl $\nparallel$
+body impl $\nmid$
+# \nshortmid: a short form of U+2224, which \nmid sets
+body refuse:W0012 $\nshortmid$
+# \nshortparallel: a short form of U+2226, which \nparallel sets
+body refuse:W0012 $\nshortparallel$
+body impl $\nvdash$
+body impl $\nVdash$
+body impl $\nvDash$
+body impl $\nVDash$
+body impl $\ntrianglerighteq$
+body impl $\ntrianglelefteq$
+body impl $\ntriangleleft$
+body impl $\ntriangleright$
+body impl $\nleftarrow$
+body impl $\nrightarrow$
+body impl $\nLeftarrow$
+body impl $\nRightarrow$
+body impl $\nLeftrightarrow$
+body impl $\nleftrightarrow$
+body impl $\divideontimes$
+body impl $\varnothing$
+body impl $\nexists$
+body impl $\Finv$
+body impl $\Game$
+body impl $\eth$
+body impl $\eqsim$
+body impl $\beth$
+body impl $\gimel$
+body impl $\daleth$
+body impl $\lessdot$
+body impl $\gtrdot$
+body impl $\ltimes$
+body impl $\rtimes$
+# \shortmid: a short form of U+2223, which \mid sets
+body refuse:W0012 $\shortmid$
+# \shortparallel: a short form of U+2225, which \parallel sets
+body refuse:W0012 $\shortparallel$
+# \smallsetminus: a small form of U+2216, which unicode-math draws as a rotated minus
+body refuse:W0012 $\smallsetminus$
+# \thicksim: a heavy form of U+223C, which \sim sets
+body refuse:W0012 $\thicksim$
+# \thickapprox: a heavy form of U+2248, which \approx sets
+body refuse:W0012 $\thickapprox$
+body impl $\approxeq$
+body impl $\succapprox$
+body impl $\precapprox$
+body impl $\curvearrowleft$
+body impl $\curvearrowright$
+body impl $\digamma$
+body impl $\varkappa$
+body impl $\Bbbk$
+body impl $\hslash$
+body impl $\backepsilon$

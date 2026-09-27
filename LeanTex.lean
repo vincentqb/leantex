@@ -13,6 +13,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.MdParse
 import LeanTex.Core.MdDesugar
 import LeanTex.Core.Math
+import LeanTex.Core.MathSymData
 import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
 import LeanTex.Core.ColorContract

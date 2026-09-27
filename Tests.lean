@@ -18,6 +18,7 @@ import Tests.Conditionals
 import Tests.BoxRow
 import Tests.PackageCode
 import Tests.DiagAudit
+import Tests.MathSym
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -215,6 +216,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linenoChecks ref
   footnoteChecks ref
   mathChecks ref
+  mathSymChecks ref
   bibChecks ref
   bibStyleChecks ref
   bibIrChecks ref

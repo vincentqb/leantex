@@ -1,5 +1,6 @@
 import LeanTex.Core.Parse
 import LeanTex.Core.Math
+import LeanTex.Core.MathSymData
 import LeanTex.Core.Ir
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated
@@ -101,7 +102,9 @@ def greekSpellings : List (Char × String) :=
 /-- Control words that are one symbol atom: `(class, scalar)`. Greek
 lowercase is italic (the Mathematical Italic block, with TeX's `\epsilon` ↦
 lunate and `\phi` ↦ straight forms); Greek capitals upright, TeX's
-convention. -/
+convention. After these rows come the symbols amsfonts and amssymb declare
+(`MathSymData.rows`, generated from the packages and unicode-math's table);
+where a name is in both, the row here is the one `lookup` finds. -/
 def ctrlAtom : List (String × MathClass × Char) :=
   [-- Greek, lowercase italic
    ("alpha", .ord, '𝛼'), ("beta", .ord, '𝛽'),
@@ -185,6 +188,7 @@ def ctrlAtom : List (String × MathClass × Char) :=
    -- escapes: the reserved characters as content
    ("{", .opening, '{'), ("}", .closing, '}'), ("$", .ord, '$'),
    ("%", .ord, '%'), ("&", .ord, '&'), ("#", .ord, '#'), ("_", .ord, '_')]
+    ++ MathSymData.rows
 
 /-- Two spellings, one atom: every literal Greek letter classifies to exactly
 the atom its control word does. The invariant whose absence let `$λ$`
@@ -239,6 +243,8 @@ dominant use `{\cal L}` reads here as `\cal` taking the single letter. -/
 def alphaCtrl : List (String × Math.MathAlphabet) :=
   [("mathbb", .bb), ("mathcal", .cal), ("cal", .cal),
    ("mathfrak", .frak), ("frak", .frak),
+   -- amsfonts.sty's obsolete spellings of `\mathbb` and `\mathbf`
+   ("Bbb", .bb), ("bold", .bf),
    ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
    ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm),
    -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
@@ -289,7 +295,8 @@ stretches to the base's width through the face's horizontal variants.
 overbar constants (TeXbook Appendix G rule 9), so its stretch is exact. -/
 def accentCtrl : List (String × Char × Bool) :=
   [("hat", '\u0302', false), ("widehat", '\u0302', true),
-   ("tilde", '\u0303', false), ("bar", '\u0304', false),
+   ("tilde", '\u0303', false), ("widetilde", '\u0303', true),
+   ("bar", '\u0304', false),
    ("dot", '\u0307', false), ("ddot", '\u0308', false),
    ("vec", '\u20D7', false), ("overline", '\u0305', true)]
 

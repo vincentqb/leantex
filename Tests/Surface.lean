@@ -2012,8 +2012,10 @@ reviewable data — one line per command, `<place> <annotation> <call>`,
 place `pre` | `body` | `frame` (a `beamer` frame body, for the class's own
 surface — a class loads by `\documentclass`, never `\usepackage`),
 annotation `impl` | `inert:<why>` | `refuse:<code>`. An `impl` call
-elaborates without W0301/W0302 *and* changes the document by being
-recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
+elaborates without W0301/W0302 — nor W0012, the math parser's answer to a
+name it does not know, under which a formula is its own source text and so
+differs from the renamed call by its spelling alone — *and* changes the
+document by being recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
 code, so a refusal that silently stops warning fails too. Adding a package
 to the list without its index file fails: the claim and its evidence
 arrive together. Every file in the directory is probed, not only the
@@ -2050,7 +2052,7 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
         failures ref s!"compat index {pkg}: unreadable place in: {line}"
       else if ann == "impl" then
         check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
-          (!codes.contains "W0301" && !codes.contains "W0302")
+          (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
         check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
 is the same one the engine elaborates when it knows none of these commands — \
 say why with inert:<why>, or probe the command where its effect lands"
@@ -2060,7 +2062,7 @@ say why with inert:<why>, or probe the command where its effect lands"
         check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
           (!why.isEmpty)
         check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
-          (!codes.contains "W0301" && !codes.contains "W0302")
+          (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
         check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
 changes the document — promote it to impl"
           (!compatRowEffect pkg place call)

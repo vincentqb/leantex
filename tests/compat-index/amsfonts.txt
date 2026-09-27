@@ -1,7 +1,46 @@
-# source: amsfndoc — a subset of amssymb's tables; the alphabet commands
-# render natively.
+# source: amsfonts.sty v3.01 (2013/01/14): every command the file defines
+# for a document, one row each, in file order — its symbols (read from
+# LeanTex/Core/MathSymData.lean, as amssymb.txt's are), then its alphabets,
+# accents and definer. \frak, \Bbb and \bold are the file's obsolete
+# spellings of \mathfrak, \mathbb and \mathbf, and set as those do.
+body impl $\yen$
+body impl $\checkmark$
+# \circledR: U+00AE, outside unicode-math's table
+body refuse:W0012 $\circledR$
+body impl $\maltese$
+body impl $\ulcorner$
+body impl $\urcorner$
+body impl $\llcorner$
+body impl $\lrcorner$
+body impl $\dashrightarrow$
+body impl $\dashleftarrow$
+body impl $\dasharrow$
+body impl $\rightleftharpoons$
+body impl $\angle$
+body impl $\hbar$
+body impl $\sqsubset$
+body impl $\sqsupset$
+body impl $\mho$
+body impl $\square$
+body impl $\lozenge$
+body impl $\vartriangleright$
+body impl $\vartriangleleft$
+body impl $\trianglerighteq$
+body impl $\trianglelefteq$
+body impl $\rightsquigarrow$
+body impl $\Box$
+body impl $\Diamond$
+body impl $\leadsto$
+body impl $\lhd$
+body impl $\unlhd$
+body impl $\rhd$
+body impl $\unrhd$
+body impl $\Join$
 body impl $\mathbb{R}$
 body impl $\mathfrak{g}$
-body impl $\hbar$
-body refuse:W0012 $\checkmark$
-body refuse:W0012 $\yen$
+body impl $\frak{g}$
+body impl $\Bbb{R}$
+body impl $\bold{x}$
+body impl $\widehat{x}$
+body impl $\widetilde{x}$
+body refuse:W0301 \newsymbol
