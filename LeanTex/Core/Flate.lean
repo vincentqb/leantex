@@ -441,6 +441,18 @@ and `dist-1` packed beside it. -/
 private def matchToken (len dist : Nat) : UInt32 :=
   (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
 
+/-- A match token read back: its length, its distance, and the distance
+code that distance selects — the inverse of `matchToken`'s packing, spelled
+once for the two loops that read every token (frequencies, then bits). The
+bit work stays in `UInt32`: a `Nat` shift is an out-of-line bignum call
+with no scalar fast path, which is `Bw`'s own lesson one loop out. -/
+private def matchOf (t : UInt32) : Nat × Nat × Nat :=
+  let distBits := t &&& 32767
+  let dist := distBits.toNat + 1
+  ((((t >>> 15) &&& 255).toNat + 3, dist,
+    if dist ≤ 256 then distSymTab1[dist]?.getD 0
+    else distSymTab2[(distBits >>> 7).toNat]?.getD 0))
+
 /-- The three-byte rolling hash: Knuth's multiplicative constant over the
 window the next match must open with. `UInt64` arithmetic — the product
 stays under 2⁵⁶ — for the same reason as `Bw`; one bounds check covers
@@ -592,16 +604,13 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   let mut litFreq : Array Nat := Array.replicate 286 0
   let mut distFreq : Array Nat := Array.replicate 30 0
   for t in tokens do
-    let t := t.toNat
     if t < 256 then
-      litFreq := litFreq.set! t (litFreq[t]?.getD 0 + 1)
+      let lit := t.toNat
+      litFreq := litFreq.set! lit (litFreq[lit]?.getD 0 + 1)
     else
-      let len := ((t >>> 15) &&& 255) + 3
-      let dist := (t &&& 32767) + 1
+      let (len, _, ds) := matchOf t
       let ls := 257 + (lenSymTab[len]?.getD 0)
       litFreq := litFreq.set! ls (litFreq[ls]?.getD 0 + 1)
-      let ds := if dist ≤ 256 then distSymTab1[dist]?.getD 0
-        else distSymTab2[(dist - 1) >>> 7]?.getD 0
       distFreq := distFreq.set! ds (distFreq[ds]?.getD 0 + 1)
   litFreq := litFreq.set! 256 1
   let litLens := pmLengths litFreq 15
@@ -638,19 +647,16 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
     if eb > 0 then
       w := w.push ev eb
   for t in tokens do
-    let t := t.toNat
     if t < 256 then
-      w := w.push (litCodes[t]?.getD 0) (litLens[t]?.getD 0)
+      let lit := t.toNat
+      w := w.push (litCodes[lit]?.getD 0) (litLens[lit]?.getD 0)
     else
-      let len := ((t >>> 15) &&& 255) + 3
-      let dist := (t &&& 32767) + 1
+      let (len, dist, di) := matchOf t
       let li := lenSymTab[len]?.getD 0
       w := w.push (litCodes[257 + li]?.getD 0) (litLens[257 + li]?.getD 0)
       let leb := lenExtra[li]?.getD 0
       if leb > 0 then
         w := w.push (len - (lenBase[li]?.getD 0)) leb
-      let di := if dist ≤ 256 then distSymTab1[dist]?.getD 0
-        else distSymTab2[(dist - 1) >>> 7]?.getD 0
       w := w.push (distCodes[di]?.getD 0) (distLens[di]?.getD 0)
       let deb := distExtra[di]?.getD 0
       if deb > 0 then
