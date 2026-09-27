@@ -124,7 +124,8 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[a11yEl "pre", stage #[]] (own := false)).scrolls == 0)
   -- contrast: the engine's own tokens pass both schemes; a declared ink
   -- keeps its value in dark mode and fails there; a themed deck's declared
-  -- ink sits on the scheme's stage.
+  -- ink stands on its declared ground, which the stage paints in both
+  -- schemes (`HtmlDoc.stageGround`).
   let plain := (elabStr (dvDoc "" "x")).1
   no s!"contrast: an undeclared page passes both schemes: {HtmlDoc.schemeFailures true plain}"
     (HtmlDoc.schemeFailures true plain).isEmpty
@@ -142,6 +143,10 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
 scheme's own accent: {HtmlDoc.schemeFailures true deck}"
     ((HtmlDoc.schemeFailures true deck).contains ("dark", "accent") &&
      !(HtmlDoc.schemeFailures true deck).contains ("dark", "text"))
+  no s!"contrast: the default deck bundle's ink stands on its declared ground in both \
+schemes: {HtmlDoc.schemeFailures true deck}"
+    (!(HtmlDoc.schemeFailures true deck).contains ("dark", "text") &&
+     !(HtmlDoc.schemeFailures true deck).contains ("light", "text"))
   -- The rows: one per check per page, sorted, headroom.
   let rows := a11yRows "p" [("contrast", 2), ("h1", 1), ("img", 0)]
   no "rows: headroom is the cap less the count"
