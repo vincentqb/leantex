@@ -911,9 +911,9 @@ theorem ctrl_groups_never_ink :
 /-- A formula the page cannot set inks something whenever its source carried
 content: the paid-for clause of `Ir.FloorHonest` at the translated salvage,
 the side `floorInk_accounts` holds unconditionally at the filtered one. -/
-theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships)
+theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (display : Bool)
     (raws : Array Parse.Raw) (body : Math.MList) (notes : Array MathParse.Note)
-    (hp : MathParse.parseMath raws = .ok (body, notes)) :
+    (hp : MathParse.parseMath display raws = .ok (body, notes)) :
     Ir.FloorHonest c.floor .translated
       (Ir.floorChars (Parse.rawSrc raws)) (Ir.formulaFloor body).toList := by
   sorry
@@ -943,9 +943,9 @@ note naming a reduced construct names a control word this slice does not
 model and whose operands `Ir.floorNamedArgs` declares — so the reduction
 applies a decision already made rather than inventing one, and a construct
 the table says nothing about degrades its formula whole instead. -/
-theorem mathContain_accounts (raws : Array Parse.Raw) (l : Math.MList)
+theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw) (l : Math.MList)
     (notes : Array MathParse.Note)
-    (h : MathParse.parseMath raws = .ok (l, notes)) :
+    (h : MathParse.parseMath display raws = .ok (l, notes)) :
     ∀ w, MathParse.Note.constructFloored w ∈ notes →
       ∃ n, w = "\\" ++ n ∧ MathParse.knownCtrl n = false ∧
         (Ir.floorNamedArgs.lookup n).isSome := by

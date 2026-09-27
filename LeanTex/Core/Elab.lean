@@ -1282,7 +1282,7 @@ content kept. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
-  match MathParse.parseMath expanded with
+  match MathParse.parseMath display expanded with
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note "" pos
@@ -6909,7 +6909,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   let mathOf (d : Bool) (raws : Array Parse.Raw) :
       Ir.Inline × Array Picture.PDiag :=
     let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
-    match MathParse.parseMath expanded with
+    match MathParse.parseMath d expanded with
     | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \

@@ -134,6 +134,10 @@ def ctrlAtom : List (String × MathClass × Char) :=
    ("iff", .rel, '\u27FA'),
    -- inner: the dotses, TeX's \mathinner forms
    ("ldots", .inner, '…'), ("dots", .inner, '…'), ("cdots", .inner, '\u22EF'),
+   -- amsmath's semantic dots are these two (amsmath.sty: `\let\dotsb\cdots`,
+   -- `\let\dotsm\cdots`; `\dotsc` and `\dotso` set `\@ldots`)
+   ("dotsc", .inner, '…'), ("dotso", .inner, '…'),
+   ("dotsb", .inner, '\u22EF'), ("dotsm", .inner, '\u22EF'),
    ("iint", .op, '\u222C'),
    ("|", .ord, '\u2016'), ("colon", .punct, ':'),
    -- escapes: the reserved characters as content
@@ -276,7 +280,8 @@ not a table; `containKnownChecks` probes each name here through
 than quietly starting to be contained. -/
 def structuralCtrl : List String :=
   ["over", "frac", "dfrac", "tfrac", "sqrt", "ensuremath", "left", "right",
-   "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor"]
+   "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor",
+   "bmod", "mod", "pod", "pmod", "dotsi"]
 
 /-- amsmath's environments that build a grid inside a formula, each as the
 grid it expands to and the delimiters `\left`/`\right` grow around it
@@ -644,6 +649,9 @@ private inductive Dest where
   /-- A math accent's base: the mark sets over it when it closes. -/
   | accentBody (mark : Char) (stretch : Bool)
   | leftRight (l : Option Char)
+  /-- amsmath's `\pod`/`\pmod` argument: it closes into `(…)`, after the
+  word "mod" and a 6 mu kern when `withMod` (`\pmod` is `\pod{mod\mkern6mu #1}`). -/
+  | pod (withMod : Bool)
   /-- A grid awaiting its rows. `wrap` is `none` for the formula's own
   alignment (`top`), which only the end of the formula closes; a nested
   grid carries the delimiters it closes between, `(none, none)` for an
@@ -669,6 +677,10 @@ private def closeLevel (overNum : Option (Array MItem)) (acc : Array MItem) : ML
     .cons (.atom .inner (.frac (MList.ofList num.toList) (MList.ofList acc.toList))
       .nil .nil false) .nil
   | none => MList.ofList acc.toList
+
+/-- The upright word amsmath's modulo commands set (`{\operator@font mod}`),
+an Ord: `\bmod`'s Bin spacing is realized by its own kerns (below). -/
+private def modWord : MItem := .atom .ord (.word "mod") .nil .nil false
 
 /-- The one place every parsed argument lands: an argument answers the
 innermost awaiting destination, whose result may in turn answer the next —
@@ -707,6 +719,13 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
       rest := more
     | .accentBody mark stretch :: more =>
       arg := .cons (.atom .ord (.accent mark stretch arg) .nil .nil false) .nil
+      rest := more
+    | .pod withMod :: more =>
+      let inner : List MItem :=
+        [.atom .opening (.sym '(') .nil .nil false] ++
+        (if withMod then [modWord, .space 6] else []) ++
+        [.atom .ord (.list arg) .nil .nil false, .atom .closing (.sym ')') .nil .nil false]
+      arg := .cons (.atom .ord (.list (MList.ofList inner)) .nil .nil false) .nil
       rest := more
     | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
     | .grid _ _ _ _ :: _ => throw "an unbalanced group"
@@ -789,8 +808,9 @@ bound is never the reason it stops. `top` opens an alignment grid at the
 bottom of the stack (`align`/`gather` bodies); notes name ragged rows.
 `pending` is the chain of constructions awaiting their next argument,
 innermost first — `x^\frac{a}{b}` stacks the fraction's request on the
-script's — and `resolveChain` is where every argument lands. -/
-private def parseToks (toks : Array MTok) (top : Option GridKind) :
+script's — and `resolveChain` is where every argument lands. `display` is
+amsmath's `\if@display`, which picks the modulo commands' leading kerns. -/
+private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Bool) :
     Except String (MList × Array Note) := do
   let mut stack : Array PFrame := #[]
   let mut acc : Array MItem := #[]
@@ -959,6 +979,30 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       -- Transparent inside math (amsldoc: `\ensuremath`'s argument sets in
       -- math mode, which this already is): the group after it is an
       -- ordinary braced group.
+      i := i + 1
+    -- amsmath's modulo commands (amsmath.sty). `\bmod` is a Bin "mod" whose
+    -- medium spaces are cancelled and replaced by 5 mu a side in every
+    -- style; `\mod` kerns 18 mu in a display, else 12, then sets "mod" and
+    -- `\,\,` before its argument; `\pod` kerns 18 mu, else 8, and
+    -- parenthesises its argument; `\pmod` is `\pod{mod\mkern6mu #1}`.
+    | .ctrl "bmod" =>
+      unless pending.isEmpty do throw (tokName tok)
+      acc := acc ++ #[.space 5, modWord, .space 5]
+      i := i + 1
+    | .ctrl "mod" =>
+      unless pending.isEmpty do throw (tokName tok)
+      acc := acc ++ #[.space (if display then 18 else 12), modWord, .space 3, .space 3]
+      i := i + 1
+    | .ctrl "pod" | .ctrl "pmod" =>
+      unless pending.isEmpty do throw (tokName tok)
+      acc := acc.push (.space (if display then 18 else 8))
+      pending := [.pod (tok == .ctrl "pmod")]
+      i := i + 1
+    | .ctrl "dotsi" =>
+      -- amsmath.sty: `\newcommand{\dotsi}{\!\@cdots}`, the dots between
+      -- integrals pulled a thin space back.
+      unless pending.isEmpty do throw (tokName tok)
+      acc := acc ++ #[.space (-3), .atom .inner (.sym '\u22EF') .nil .nil false]
       i := i + 1
     | .ctrl "left" =>
       unless pending.isEmpty do throw (tokName tok)
@@ -1132,9 +1176,10 @@ stays, and the formula parses. Where containment leaves the formula inking
 nothing at all the whole-formula floor is the better recovery — it has a
 declared placeholder (`Ir.floorInk_accounts`) where this path would ship a
 blank — so the construct is named through the same channel it always was. -/
-def parseMath (raws : Array Parse.Raw) : Except String (MList × Array Note) := do
+def parseMath (display : Bool) (raws : Array Parse.Raw) :
+    Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
-  let (l, notes) ← parseToks toks none
+  let (l, notes) ← parseToks toks none display
   if let some n := names[0]? then
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
@@ -1145,7 +1190,7 @@ formula (`parseMath`): one unmodelled addend of one row costs that addend. -/
 def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
-  let (l, notes) ← parseToks toks (some kind)
+  let (l, notes) ← parseToks toks (some kind) true
   if let some n := names[0]? then
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)

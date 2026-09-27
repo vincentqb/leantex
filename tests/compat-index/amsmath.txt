@@ -52,12 +52,15 @@ body refuse:W0012 $\overset{a}{b}$
 body refuse:W0012 $\underset{a}{b}$
 body refuse:W0012 $\sideset{_a}{^b}\prod$
 body impl $\sum_{\substack{i\\ j}}$
-body refuse:W0012 $a, \dotsc, b$
-body refuse:W0012 $a \dotsb b$
-body refuse:W0012 $a \bmod b$
-body refuse:W0012 $a \pmod{b}$
-body refuse:W0012 $a \mod b$
-body refuse:W0012 $a \pod{b}$
+body impl $a, \dotsc, b$
+body impl $a \dotsb b$
+body impl $a \dotsm b$
+body impl $a \dotsi b$
+body impl $a \dotso b$
+body impl $a \bmod b$
+body impl $a \pmod{b}$
+body impl $a \mod b$
+body impl $a \pod{b}$
 body refuse:W0012 $\genfrac{(}{)}{0pt}{}{a}{b}$
 body refuse:W0012 $\xleftarrow{f} \xrightarrow{g}$
 pre refuse:W0301 \allowdisplaybreaks

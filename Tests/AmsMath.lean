@@ -160,6 +160,42 @@ def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
   t "amsmath tag: an alignment's tag is named, never set inside the formula"
     ((warnCodes aligned).contains "W0015" && !(pageTextOf fs aligned).contains '3')
 
+/-- amsmath's modulo commands are their definitions (amsmath.sty), measured
+on the laid line: each formula is as wide as the definition spelled with
+the engine's own kerns (`\;` 5 mu, `\:` 4, `\,` 3, `\quad` 18) and an
+upright `\text{mod}` — `\bmod` 5 mu a side; `\mod` 12 mu inline, then
+`\,\,`; `\pod` 8 mu inline and 18 in a display, then its parenthesised
+argument; `\pmod` a `\pod` of "mod" 6 mu before the argument. The semantic
+dots set the glyphs amsmath `\let`s them to. -/
+def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let widthOf (body : String) : Dim.Sp :=
+    (((bodyLines (layoutOf fs (elabStr (dvDoc "" body)).1))[0]?).map (·.setWidth)).getD 0
+  let pairs : List (String × String) := [
+    ("$a \\bmod b$", "$a \\;\\text{mod}\\; b$"),
+    ("$a \\mod b$", "$a \\:\\:\\:\\text{mod}\\,\\, b$"),
+    ("$a \\pod{b}$", "$a \\:\\:(b)$"),
+    ("$a \\pmod{b}$", "$a \\:\\:(\\text{mod}\\,\\,b)$"),
+    ("\\[ a \\pmod{b} \\]", "\\[ a \\quad(\\text{mod}\\,\\,b) \\]"),
+    ("$a \\dotsi b$", "$a \\!\\cdots b$")]
+  for (cmd, defn) in pairs do
+    t s!"amsmath mod: {cmd} sets no diagnostic" (dvE (dvDoc "" cmd)).isEmpty
+    -- One kern spelled as several rounds once per kern: 12 mu as `\:\:\:`
+    -- may differ from one 12 mu kern by the 2 sp its two extra roundings owe.
+    let (w, d) := (widthOf cmd, widthOf defn)
+    t s!"amsmath mod: {cmd} is as wide as its definition ({w} vs {d})"
+      (w > 0 && w - d ≤ 2 && d - w ≤ 2)
+  t "amsmath mod: the HTML sets the upright word and fixed parentheses"
+    (let h := (HtmlDoc.emit {} (elabStr (dvDoc "" "$a \\pmod{b}$")).1).1
+     hasStr h "<mi>mod</mi>" && hasStr h "<mo stretchy=\"false\">(</mo>")
+  let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
+  for (cmd, glyph) in [("dotsc", '…'), ("dotso", '…'), ("dotsb", '\u22EF'),
+      ("dotsm", '\u22EF')] do
+    let src := dvDoc "" s!"$a \\{cmd} b$"
+    t s!"amsmath dots: \\{cmd} sets {glyph}"
+      ((dvE src).isEmpty && squash (pageTextOf fs src) ==
+        String.ofList [MathParse.italicVar 'a', glyph, MathParse.italicVar 'b'])
+
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
     | .ok f => pure f
@@ -167,3 +203,4 @@ def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathSetOf (oneFaceOf serif)
   amsGridChecks ref fs
   amsTagChecks ref fs
+  amsModChecks ref fs
