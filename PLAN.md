@@ -21736,3 +21736,95 @@ lose what runs past the sheet. A page with a transparent image now has
 no dark mode, as a page with a picture has none; the alternatives are a
 light backing behind such an image in dark mode, or the derived dark
 palette site-fix named.
+
+
+### 2026-09-27 — a redefinition takes effect: an abstract's body size, a table's caption skips, environ's body slot
+
+The user's rule this round: a declared setting is implemented, not reported
+as ignored, and the default is LaTeX's behaviour. The package and
+redefinition warnings in the private reference corpus were, per site: the
+paper's venue style redefines the abstract and the table float (W0303 ×2),
+scopes a caption skip to tables through a register (W0354 ×2), loads
+environ for one `\NewEnviron` (W0103 + W0301), and redefines the title
+block (W0361, with a W0357 note inside it). The deck's only one is a
+strike package, a decided divergence with its own index. The card's three
+W0357 build page-box strings, which belong to the page model. The résumé's
+W0303 redefines a name the native underline already implements. The site
+has none.
+
+**A redefined built-in environment is read as declarations over the
+built-in.** The structure stays the engine's — the abstract's region with
+its heading, a float's number — and what the redefinition declares takes
+effect where LaTeX puts it. The abstract's body sets at the size its begin
+body leaves in force, read with TeX's scoping (`envBodySizeList`): a switch
+at the begin body's top level, or at the top level of the environment its
+split idiom leaves open, holds over the body; one inside a group (the
+heading's `\centerline{\large ...}`) does not. A redefinition declaring no
+size leaves the body at `\normalsize`, where the engine had kept article's
+`\small` for every redefinition. The value is a style key, `body-size`, with
+one resolving site both backends read (`Ir.abstractBodySize`): the page's
+`.abstract` arm through the document's own size ladder, and the HTML region
+as a size class. That also closed a backend disagreement the reading found:
+HTML had set the built-in abstract's body at the normal size while the page
+set it small. Measured on the paper's first page (engine against a fresh
+lualatex build, same face): the abstract's body pitch 9.9 → 11.0 bp, the
+reference's 10.9. Its width stays 367 bp against 324: that is the list
+indent, 1.5 em here against the venue's declared one (routed below).
+
+**A caption setting reaches the float type it names, and no other.**
+`\captionsetup[table]{skip=...}` read its scope and dropped it, so a
+table-only gap moved every figure's caption. A kind now reads its own caption
+tokens before the document's (`Ir.captionTokenOf`: `tablecaptionsep`, then
+`captionsep`; the same for the margin), the one resolving site the float arm
+and the HTML caption rule share. A venue that swaps the two caption skips for
+tables writes `\renewenvironment{table}` around the kernel's own float core
+(`\@float{table}` … `\end@float`, as latex.ltx defines it); that is a scoped
+declaration, not a new environment, so it becomes the table's own gap
+instead of W0303. `skip=\abovecaptionskip` is the gap set to itself — the
+package applies an option where the caption is set — so it is honoured and
+moves nothing; a skip reads as the document's other lengths do, a declared
+length included. Measured on synthetic probes, caption to first row in bp:
+the swap idiom 19.00 → 12.00 (lualatex 11.96); a table-scoped 3 pt skip
+left the figure's gap at 15 (the leak) and now at its own 18. The same in
+Chromium: the swap's table gap 9.33 → 0 px, the leak's figure gap 4 → 11.6
+px. On the paper the table redefinition and both W0354 are gone, and its
+second table's caption-to-header distance falls 26.25 → 19.25 bp (lualatex
+14.62; the rest is the booktabs rule spacing).
+
+**environ's body slot.** `\NewEnviron{name}[n][default]{code}[final]`
+collects the body into `\BODY`; with `\BODY` once at the code's top level
+that is the kernel's `\newenvironment` with the body standing there, so it
+takes the native definer's head, its code walked as a macro body, and the
+preamble scan splits it at `\BODY` (`Compat.bodySlot?`), the final code
+joining the end. A `\BODY` inside a group or placed twice has no begin and
+end to split into and is W0104 where it stands. environ is native with its
+index (`tests/compat-index/environ.txt`).
+
+**Guards**, each failing on the engine before its unit (tests run over the
+older engine in a scratch clone): `abstractRedefChecks` (6 of the unit's
+checks failed there), `captionScopeChecks` (11, with the two Surface checks
+that had asserted the leak and the refusal turned), `environChecks` (8 of 8).
+Each compares the LaTeX spelling with its native one over the shipped page.
+
+**Parked, read both ways.** `abstractSkipsOwed`: a redefined abstract's
+`\vskip`s and its `\vspace` before the quote are placed by the engine's own
+rhythm (Layout's `.abstract` arm, the vertical placement rhythm-fix owns),
+so two redefinitions differing in one declared skip ship one page. W0303 now
+says exactly that and nothing more. Baselines on the probe, lualatex against
+the engine: heading to body 24.16 / 18.40 bp, body to the next paragraph
+26.40 / 18.00.
+
+**Routed.** The list indent that sets the quote, quotation and abstract
+margins (`Geom.listIndent`, 1.5 em) is not what a declared `\leftmargini`
+reaches, and LaTeX's default is 2.5 em (settings-lengths, the class record).
+`\belowcaptionskip` has no slot: a caption's text side is the float
+separation, where LaTeX adds it inside the float (the float plan; rhythm).
+The engine's default caption gap is half a rhythm unit, 6 pt against
+LaTeX's 10 pt (18 against 22 bp on the probe). A user environment's begin
+and end code are edge-trimmed at `defineEnv`, so `{Lead words }{ Tail
+words}` ships "Lead wordsMiddle" where lualatex sets "Lead words Middle";
+LaTeX would double the space when the source adds one, which a collapse
+would improve — a decision for the native definer's semantics. A
+`\newenvironment` in the body is E0312. The title-block redefinition stays
+refused (W0361); its W0357 is a nested definition's `##1`, which the
+engine's definitions cannot express either.
