@@ -370,6 +370,10 @@ structure ArtRun where
   reach the glyph. Defaulted, because every claim that reads whole runs
   predates it. -/
   glyphs : Array (Dim.Sp × String) := #[]
+  /-- The font resource the run's `Tf` named — which face the run is in, as
+  the file says it, so a claim can find where one face gives way to the
+  next. Defaulted like `glyphs`. -/
+  face : String := ""
   deriving Repr, Inhabited
 
 /-- One non-text mark the file paints, as its bounding box in PDF user
@@ -431,6 +435,7 @@ private structure ArtSt where
   size : Dim.Sp := 0
   th : Int := 1000
   font : Option ArtFont := none
+  face : String := ""
   path : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
   cm : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
 
@@ -482,8 +487,8 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
       else if o == "Td" then
         if 2 ≤ ns.size then s := { s with x := s.x + ns[0]!, y := s.y + ns[1]! }
       else if o == "Tf" then
-        let f := (s.stack.findSome? ctName?).bind fun nm => fonts[nm]?
-        s := { s with font := f, size := (ns[0]?).getD s.size }
+        let nm := (s.stack.findSome? ctName?).getD ""
+        s := { s with font := fonts[nm]?, face := nm, size := (ns[0]?).getD s.size }
       else if o == "Tz" then
         -- The operand is a percentage; the scale is kept in per mille.
         s := { s with th := (((ns[0]?).getD (Dim.pt 100)) * 10) / Dim.spPerPt }
@@ -510,7 +515,7 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
                   ascent := f.ascent * s.size / (1000 * Dim.spPerPt),
                   inkAscent := f.capHeight * s.size / (1000 * Dim.spPerPt),
                   descent := f.descent * s.size / (1000 * Dim.spPerPt)
-                  widest := widest, text := txt, glyphs := gs }
+                  widest := widest, text := txt, glyphs := gs, face := s.face }
               x := s.x + adv }
           | .num _ raw =>
             let d := raw.toInt?.getD 0
@@ -970,6 +975,7 @@ layout produced and this identifier is not among them. -/
 def artRegidTextOp (gid : Nat) : Pdf.TextOp → Pdf.TextOp
   | .show items => .show (items.map fun it => match it with
       | .glyphs gs => .glyphs (if gs.isEmpty then gs else gs.set! 0 gid)
+      | .kerned gs => .kerned (if gs.isEmpty then gs else gs.set! 0 (gid, gs[0]!.2))
       | a@(.adjust _) => a)
   | .marked t body => .marked t (artRegidTextList gid #[] body.toList)
   | o@(.scale _) => o
@@ -2040,3 +2046,126 @@ def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"artifact pitch: {name}.html closes the body stack with {want}: {got}"
       (got == some want)
   IO.FS.removeDirAll dir
+
+
+/-! ## Kerns reach the page
+
+The layout folds each GPOS pair kern into the advance of the glyph before
+it, and the writer places every glyph by that advance
+(`Pdf.place_between`). Three claims, read from the written bytes by the
+evaluator's pen — never the layout's record of where it meant to paint:
+every glyph starts where the layout put it; a run after a font change
+starts at or after the rendered end of the run before it; a centred line
+is centred as painted. The defect they pin: kerns never reached the file
+(the writer painted nominal widths and believed its pen was where the
+layout was), so the drift since the last `Tm` was absorbed at the next
+absolute one — an italic word stood 8.46 pt inside the upright word
+before it, and a centred line of kerned pairs painted 8.6 pt wider than it
+measured, 4.3 pt off its axis. -/
+
+/-- A kerning face and its italic in every slot: Source Serif Pro, whose
+"Ta" pair is −41/1000 em (hb-shape's number, pinned in `FontMath`). -/
+def artKernSet : IO Font.FontSet := do
+  let load (f : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ f)) with
+    | .ok font => pure font
+    | .error e => throw (IO.userError s!"{f}: {e}")
+  let reg ← load "SourceSerifPro-Regular.otf"
+  let ital ← load "SourceSerifPro-RegularIt.otf"
+  return { fonts := #[reg, ital]
+           index := ((List.range 3).flatMap fun slot =>
+             [((slot, 400, false), 0), ((slot, 700, false), 0),
+              ((slot, 400, true), 1), ((slot, 700, true), 1)]).toArray }
+
+/-- Pairs the face kerns hard, an italic word right after them, a second
+justified line with another, and a centred line of kerned pairs. -/
+def artKernSrc : String :=
+  "\\documentclass{article}\n\\begin{document}\n" ++
+  "Ta Ta Ta To To Te Te Ya Ya AV AV AV Wa Wa \\emph{Tote} end. " ++
+  "Yo Yo Tw Tw Ty Vo Vo Wo Wo LT LT Ly Ly To Te Ta and \\emph{Wave} Ta To, Ty Tw Yo.\n" ++
+  "\\begin{center}\nTaTaTaTaTaTaTaTaTaTa\n\\end{center}\n\\end{document}\n"
+
+/-- Where the layout put each glyph of a page, in PDF user space and in
+stream order: the line's x, the segments before it, and the glyph's laid
+advance from its run's start under the line's expansion, by the rule
+`Layout.setLine` scales a run by (`w + w·f/1000`). -/
+def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id.run do
+  let mut out : Array Dim.Sp := #[]
+  for l in p.lines do
+    let mut x := geom.bleed + l.x
+    for s in l.segs do
+      match s with
+      | .run _ _ _ w glyphs _ _ _ _ _ =>
+        let mut adv : Dim.Sp := 0
+        for (_, _, a) in glyphs do
+          out := out.push (x + adv + adv * l.expand / 1000)
+          adv := adv + a
+        x := x + w
+      | .gap w _ => x := x + w
+      | .rule w _ _ _ => x := x + w
+      | .image _ w _ => x := x + w
+  return out
+
+/-- Glyphs whose painted start misses the layout's: the file's pen, glyph
+by glyph, against `artLaidGlyphs`, beyond the precision a coordinate is
+spelled at (`artSpellSlack`). A count that differs is an offence of its
+own. -/
+def artGlyphPlacementOffences (laid painted : Array Dim.Sp) : Array String := Id.run do
+  if laid.size != painted.size then
+    return #[s!"{painted.size} glyphs painted where the layout placed {laid.size}"]
+  let mut out : Array String := #[]
+  for h : k in [0:laid.size] do
+    let d := painted[k]! - laid[k]
+    if d.natAbs > artSpellSlack.natAbs then
+      out := out.push s!"glyph {k}: painted {(d : Dim.Sp).toPtString}pt from its layout x"
+  return out
+
+/-- Runs that start inside the rendered extent of the run before them on
+the same baseline in another face: where a font change once absorbed the
+kerns dropped before it. Within one face a positive `TJ` number is a kern
+and may pull a string back over the last one's advance box; across a
+face change nothing may. -/
+def artFaceChangeOffences (pages : Array ArtPage) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for h : i in [0:pages.size] do
+    let rs := pages[i].runs
+    for k in [1:rs.size] do
+      let a := rs[k - 1]!
+      let b := rs[k]!
+      if a.y == b.y && a.face != b.face && b.x < a.x1 - artSpellSlack then
+        out := out.push
+          s!"page {i + 1}: '{b.text}' starts {(a.x1 - b.x).toPtString}pt inside '{a.text}'"
+  return out
+
+def kernPlacementChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let fs ← artKernSet
+  let (doc, _) := elabStr artKernSrc
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf fs doc geom
+  match readArtifact (driverPdf fs geom doc out) with
+  | .error e => t s!"kerns: the kerned page reads back: {e}" false
+  | .ok pages =>
+    t "kerns: the fixture ships one page" (pages.size == 1 && out.pages.size == 1)
+    let painted := pages.flatMap (·.runs.flatMap (·.glyphs.map (·.1)))
+    let laid := out.pages.flatMap (artLaidGlyphs geom)
+    let offs := artGlyphPlacementOffences laid painted
+    t s!"kerns: every glyph starts where the layout put it: {offs.toList.take 5}"
+      (!laid.isEmpty && offs.isEmpty)
+    let faceOffs := artFaceChangeOffences pages
+    t s!"kerns: a run after a font change starts at or after the run before it: {faceOffs.toList}"
+      faceOffs.isEmpty
+    t "kerns: the fixture changes face on a baseline (the claim is not vacuous)"
+      (pages.any fun p => (List.range (p.runs.size - 1)).any fun k =>
+        p.runs[k]!.y == p.runs[k + 1]!.y && p.runs[k]!.face != p.runs[k + 1]!.face)
+    -- The centred line: the page's lowest body baseline, its painted extent
+    -- centred on the measure.
+    let body := pages[0]!.runs.filter (!·.isArtifact)
+    let lowest := body.foldl (fun m r => min m r.y) (body[0]?.map (·.y) |>.getD 0)
+    let line := body.filter (·.y == lowest)
+    let x0 := line.foldl (fun m r => min m r.x) (line[0]?.map (·.x) |>.getD 0)
+    let x1 := line.foldl (fun m r => max m r.x1) 0
+    let area := artBodyArea geom
+    let off := (x0 + x1) - (area.x0 + area.x1)
+    t s!"kerns: the centred line is centred as painted ({(off / 2).toPtString}pt off its axis)"
+      (!line.isEmpty && off.natAbs ≤ 2 * artSpellSlack.natAbs)

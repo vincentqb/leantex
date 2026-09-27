@@ -1881,7 +1881,7 @@ def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
   let shippedText (src : String) : String :=
     let out := layoutOf fs (elabStr src).1
     ((allLines out).flatMap (·.segs)).foldl (init := "") fun s seg => match seg with
-      | .run _ _ _ _ gs _ _ _ _ _ => s ++ String.ofList (gs.map (·.2)).toList
+      | .run _ _ _ _ gs _ _ _ _ _ => s ++ String.ofList (gs.map (·.2.1)).toList
       | _ => s
   let hook (pre body : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
@@ -1974,19 +1974,19 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The projection the two commands must agree on: face, metrics, glyphs,
   -- size. The link is the one difference, and the underline is the link's
   -- own affordance (`linkSignalChecks`), so both stay out of the projection.
-  let runsOf (call : String) : Array ((Nat × Int × Array (Nat × Char) × Int) × Bool × Bool) :=
+  let runsOf (call : String) : Array ((Nat × Int × Array (Nat × Char × Int) × Int) × Bool × Bool) :=
     let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\nsee " ++
       call ++ " here\n\\end{document}")).1
     let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
     segs.filterMap fun s => match s with
       | .run fi _ link w gs sz ul _ _ _ =>
-        if String.ofList (gs.map (·.2)).toList == url then
+        if String.ofList (gs.map (·.2.1)).toList == url then
           some ((fi, w, gs, sz), link.isSome, ul)
         else none
       | _ => none
   let linked := runsOf s!"\\url\{{url}}"
   let plain := runsOf s!"\\nolinkurl\{{url}}"
-  let monoIdx (rs : Array ((Nat × Int × Array (Nat × Char) × Int) × Bool × Bool)) : Bool :=
+  let monoIdx (rs : Array ((Nat × Int × Array (Nat × Char × Int) × Int) × Bool × Bool)) : Bool :=
     !rs.isEmpty && rs.all fun r => r.1.1 == 1
   t "url ships the URL in the mono face" (monoIdx linked)
   -- The gap: \nolinkurl shipped the body face, the same ink an unknown
@@ -6661,13 +6661,13 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `none` where an interword space stands — a space is a gap, not a run,
   -- and a row that read only runs would pass a label that lost one.
   let runsOf (l : Layout.LineOut) :
-      Array (Option (Nat × Array (Nat × Char) × Ir.Color)) :=
+      Array (Option (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color)) :=
     l.segs.filterMap fun seg => match seg with
       | .run idx color _ _ glyphs _ _ _ _ _ => some (some (idx, glyphs, color))
       | .gap _ true => some none
       | _ => none
   let shipped (src : String) :
-      Array (Array (Option (Nat × Array (Nat × Char) × Ir.Color))) :=
+      Array (Array (Option (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color))) :=
     let (d, _) := elabStr src
     ((bodyLines (layoutOf fs d)).filter fun l => (runsOf l).any (·.isSome)).map runsOf
   let diagsOf (src : String) : Array Diag := (elabStr src).2
@@ -6678,7 +6678,7 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The faces a source's glyphs ship in, one per non-space glyph.
   let facesOf (src : String) : Array Nat :=
     (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
-      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun _ => i
+      | some (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun _ => i
       | none => #[]
   t "a plain node's runs are the paragraph's (control)" (agrees "Middle")
   t "a bold node's runs are the paragraph's" (agrees "\\textbf{Middle}")
@@ -6775,7 +6775,7 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- face; the SVG's is what CSS computes for the run (`svgFace`).
   let pdfFaces (src : String) : Array (Char × Nat × Bool × Bool) :=
     (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
-      | some (i, gs, _) => (gs.filter (·.2 != ' ')).map fun (_, c) =>
+      | some (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun (_, c, _) =>
         (c, (fs.get i).weight, (fs.get i).isItalic, fs.math == some i)
       | none => #[]
   let svgFaces (src : String) : Array (Char × Nat × Bool) :=
@@ -7693,7 +7693,7 @@ def pictureMacroReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       p.lines.flatMap fun l => l.segs.filterMap fun s =>
         match s with
         | .run _ col _ _ glyphs _ _ _ _ _ =>
-          if glyphs.any (·.2 == 'B') then some col else none
+          if glyphs.any (·.2.1 == 'B') then some col else none
         | _ => none).getD #[]
   t "a macro-supplied '\\textcolor' paints the run it wraps"
     (runColors.any (· == { r := 0x11, g := 0x88, b := 0xCC }))

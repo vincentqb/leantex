@@ -50,9 +50,13 @@ inductive PathOp where
   deriving Repr, BEq, Inhabited
 
 /-- One element of a `TJ` array (§9.4.3): a glyph string, or a horizontal
-adjustment in thousandths of the text space unit. -/
+adjustment in thousandths of the text space unit. `kerned` is a glyph
+string whose glyphs each carry the number set before them (0: none) —
+one run's string with its pair kerns, spelled `<…>n<…>` as lualatex
+spells it, and one run for the glyph census all the same. -/
 inductive TextItem where
   | glyphs (gids : Array Nat)
+  | kerned (gs : Array (Nat × Int))
   | adjust (d : Int)
   deriving Repr, BEq, Inhabited
 
@@ -164,6 +168,9 @@ def PathOp.render : PathOp → String
 
 def TextItem.render : TextItem → String
   | .glyphs gids => (gids.foldl pushGid "<").push '>'
+  | .kerned gs =>
+    (gs.foldl (fun acc (g, n) =>
+      pushGid (if n == 0 then acc else ((acc.push '>') ++ toString n).push '<') g) "<").push '>'
   | .adjust d => toString d
 
 mutual
@@ -264,13 +271,38 @@ structure ImgOut where
   origin : Origin
   deriving Repr, BEq, Inhabited
 
+/-- A glyph's advance as the file states it: its `hmtx` width in
+millionths of the em, rounded to the nearest — what the `/W` array spells,
+to three decimals of a thousandth, and so the width a viewer's pen
+advances by (`TextSt.widths`). Exact in thousandths for a face on a
+1000-unit em; to 5·10⁻⁷ em otherwise, where whole thousandths would drift
+the pen up to one per glyph. -/
+def pdfWidthμ (font : Font.Font) (g : Nat) : Int :=
+  (((font.widths[g]?.getD 0) * 1000000 + font.unitsPerEm / 2) / font.unitsPerEm : Nat)
+
+/-- The viewer's pen inside the open `TJ` array, as the writer computes it
+from what it wrote (§9.4.4): `xm` the x the array's `Tm` spells, in
+thousandths of a point (`Sp.toPtMilli`, the value a reader parses back),
+`y` the baseline it spells, and `adv` the advance since then in millionths
+of the text size — each glyph adds its `/W` width in that unit, each `TJ`
+number `n` subtracts `1000 n`. The horizontal scale multiplies both terms
+alike, so it enters only where a layout length is converted
+(`penTarget`). -/
+structure Pen where
+  xm : Int
+  y : Sp
+  adv : Int
+  deriving Repr, BEq, Inhabited
+
 /-- The text object's walk state. `items` is the open `TJ` array — empty
 exactly when no array is open. `font` is the layout face index in force
 (`-1` before the first `Tf`), `size` and `color` likewise; `tz` the live
 expansion in per-mille delta from 100 %; `x` the layout position; `pen`
-where the PDF pen is, once a glyph run has set it. Rules and images
-gather here and paint after `ET`: path and `Do` operators may not appear
-inside a text object. -/
+where the viewer's pen is (`Pen`), once a `Tm` has set it; `widths` each
+face's `/W` widths in millionths of the em, by layout face index — what
+the file tells the viewer, and so what the pen advances by. Rules and
+images gather here and paint after `ET`: path and `Do` operators may not
+appear inside a text object. -/
 structure TextSt where
   ops : Array TextOp := #[]
   items : Array TextItem := #[]
@@ -279,7 +311,8 @@ structure TextSt where
   color : Ir.Color := Ir.Color.black
   tz : Int := 0
   x : Sp := 0
-  pen : Option (Sp × Sp) := none
+  pen : Option Pen := none
+  widths : Nat → Nat → Int := fun _ _ => 0
   rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
   images : Array ImgOut := #[]
 
@@ -288,29 +321,56 @@ def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st.ops.pus
 def TextSt.closeTJ (st : TextSt) : TextSt :=
   if st.items.isEmpty then st else { st with ops := st.ops.push (.show st.items), items := #[] }
 
-/-- Bring the pen to a run at `(st.x, runY)`. Inside an open array with
-the face unchanged, a small horizontal move is an adjustment in the live
-size — thousandths of the font size times the horizontal scale, so under
-expansion the number compensates by the inverse factor, and a viewer that
-keeps adjustments in sixteen bits (macOS Preview drops the whole array
-past ±32767) never sees one that large. Any other move is an absolute
-`Tm`, and closes the array. A fresh line has no pen until its first run
-sets one. -/
-def adjustFor (dx size tz : Int) : Int :=
-  let v0 := dx * 1000 / size
-  if tz == 0 then v0 else v0 * 1000 / (1000 + tz)
+/-- A layout x as the pen advance that reaches it, in the pen's unit:
+`(x − Tm) / (size · scale)` in millionths, with the `Tm` x and the size as
+the file spells them (`xm`, `sm`: thousandths of a point) and the scale
+`1000 + tz` per mille, rounded to the nearest millionth. 10⁹ / 65536 =
+1953125 / 128, so every term is an exact integer. -/
+def penTarget (sm tz xm : Int) (x : Sp) : Int :=
+  let den := 128 * sm * (1000 + tz)
+  if den ≤ 0 then 0 else
+    (2 * ((1000 * x - 65536 * xm) * 1953125) + den) / (2 * den)
 
+/-- The `TJ` number that brings a pen standing `d` millionths past its
+target (short of it when negative) to within half a thousandth: `d / 1000`
+rounded to the nearest integer, half up — zero exactly when the pen is
+already that close. -/
+def nudge (d : Int) : Int := (d + 500) / 1000
+
+/-- **A nudged pen stands within half a thousandth of the em of its
+target.** Whatever the distance `d`, the residue `d − 1000 · nudge d` lies
+in `[−500, 499]` millionths: the resolution of a `TJ` number, and nothing
+more. -/
+theorem nudge_between (d : Int) :
+    -500 ≤ d - 1000 * nudge d ∧ d - 1000 * nudge d ≤ 499 := by
+  unfold nudge
+  omega
+
+/-- An absolute move: the open array closed, `Tm` at the layout x and
+`runY`, and the pen restarted at the x the `Tm` spells. -/
+def TextSt.moveTo (st : TextSt) (runY : Sp) : TextSt :=
+  { st.closeTJ.op (.move st.x runY) with
+    pen := some { xm := st.x.toPtMilli, y := runY, adv := 0 } }
+
+/-- Bring the pen to a run at `(st.x, runY)`. Inside an open array with
+the face unchanged and the baseline the same, the move is the number that
+puts the viewer's pen within half a thousandth of the em of the layout's
+x (`nudge`, measured from where the file's own arithmetic left it), unless
+that number exceeds ±32000 — a viewer that keeps adjustments in sixteen
+bits (macOS Preview drops the whole array past ±32767) never sees one that
+large. Any other move is an absolute `Tm` (`moveTo`), which closes the
+array: a face or size change re-bases the pen, whose unit is the size. A
+fresh line has no pen until its first run sets one. -/
 def TextSt.toPen (st : TextSt) (changes : Bool) (runY : Sp) : TextSt :=
   match st.pen with
-  | some (hx, hy) =>
-    if hx != st.x || hy != runY then
-      let v := adjustFor (st.x - hx) st.size st.tz
-      if !st.items.isEmpty && !changes && hy == runY && v.natAbs ≤ 32000 then
-        { st with items := st.items.push (.adjust (-v)) }
-      else
-        st.closeTJ.op (.move st.x runY)
-    else st
-  | none => st.op (.move st.x runY)
+  | some p =>
+    let n := nudge (p.adv - penTarget st.size.toPtMilli st.tz p.xm st.x)
+    if !st.items.isEmpty && !changes && p.y == runY && n.natAbs ≤ 32000 then
+      if n == 0 then st
+      else { st with items := st.items.push (.adjust n),
+                     pen := some { p with adv := p.adv - 1000 * n } }
+    else st.moveTo runY
+  | none => st.moveTo runY
 
 def TextSt.setFont (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) : TextSt :=
   if st.font != (idx : Int) || st.size != size then
@@ -326,19 +386,133 @@ def TextSt.setFace (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
     (color : Ir.Color) : TextSt :=
   ((st.closeTJ).setFont remap idx size).setColor color
 
+/-- One glyph of a run onto its string: the number that brings the pen
+from where the previous glyph's `/W` width left it to `tgt P` — the
+glyph's layout position, `P` its laid-out advance from the run's start —
+then the glyph and its own width. The state is the string so far, the pen
+(`Pen.adv`'s unit) and `P`. -/
+def placeStep (wμ : Nat → Int) (tgt : Sp → Int) :
+    Array (Nat × Int) × Int × Sp → Nat × Char × Sp → Array (Nat × Int) × Int × Sp
+  | (acc, adv, P), (g, _, a) =>
+    let n := nudge (adv - tgt P)
+    (acc.push (g, n), adv - 1000 * n + wμ g, P + a)
+
+/-- `placeStep`'s string as a list: each glyph with the number set before
+it, from pen `adv` at laid-out advance `P`. -/
+def placeSpec (wμ : Nat → Int) (tgt : Sp → Int) :
+    Int → Sp → List (Nat × Char × Sp) → List (Nat × Int)
+  | _, _, [] => []
+  | adv, P, (g, _, a) :: rest =>
+    let n := nudge (adv - tgt P)
+    (g, n) :: placeSpec wμ tgt (adv - 1000 * n + wμ g) (P + a) rest
+
+/-- Where a viewer's pen stands as each glyph of a kerned string begins,
+from pen `p` — §9.4.4's arithmetic, the number first, then the glyph's
+width — whatever chose the numbers. -/
+def penStarts (wμ : Nat → Int) : Int → List (Nat × Int) → List Int
+  | _, [] => []
+  | p, (g, n) :: rest => (p - 1000 * n) :: penStarts wμ (p - 1000 * n + wμ g) rest
+
+/-- Each glyph's laid-out advance from the run's start. -/
+def glyphStarts : Sp → List (Nat × Char × Sp) → List Sp
+  | _, [] => []
+  | P, (_, _, a) :: rest => P :: glyphStarts (P + a) rest
+
+theorem placeStep_foldl (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+    (acc : Array (Nat × Int)) (adv : Int) (P : Sp) :
+    (gs.foldl (placeStep wμ tgt) (acc, adv, P)).1.toList = acc.toList ++ placeSpec wμ tgt adv P gs := by
+  induction gs generalizing acc adv P with
+  | nil => simp [placeSpec]
+  | cons x rest ih =>
+    obtain ⟨g, c, a⟩ := x
+    simp only [List.foldl_cons, placeStep, placeSpec]
+    rw [ih]
+    simp
+
+theorem placeSpec_ids (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+    (adv : Int) (P : Sp) : (placeSpec wμ tgt adv P gs).map (·.1) = gs.map (·.1) := by
+  induction gs generalizing adv P with
+  | nil => rfl
+  | cons x rest ih =>
+    obtain ⟨g, c, a⟩ := x
+    simp [placeSpec, ih]
+
+/-- Placing a run keeps its glyphs, in order: only numbers are added. -/
+theorem place_ids (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
+    (adv : Int) : (glyphs.foldl (placeStep wμ tgt) (#[], adv, 0)).1.map (·.1) = glyphs.map (·.1) := by
+  apply Array.toList_inj.mp
+  rw [Array.toList_map, Array.toList_map, ← Array.foldl_toList, placeStep_foldl]
+  simpa using placeSpec_ids wμ tgt glyphs.toList adv 0
+
+theorem placeSpec_length (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+    (adv : Int) (P : Sp) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
+  induction gs generalizing adv P with
+  | nil => rfl
+  | cons x rest ih =>
+    obtain ⟨g, c, a⟩ := x
+    simp [placeSpec, penStarts, ih]
+
+theorem glyphStarts_length (P : Sp) (gs : List (Nat × Char × Sp)) :
+    (glyphStarts P gs).length = gs.length := by
+  induction gs generalizing P with
+  | nil => rfl
+  | cons x rest ih =>
+    obtain ⟨g, c, a⟩ := x
+    simp [glyphStarts, ih]
+
+/-- **Every glyph a run paints starts where the layout put it**, to the
+resolution of the file: by the viewer's own arithmetic over the numbers
+`placeStep` writes and the widths the file declares (`penStarts`), each
+glyph's pen stands within `[−500, 499]` millionths of the em — under half
+a thousandth — of its target, the layout's position for it (both lists
+hold one entry per glyph: `placeSpec_length`, `glyphStarts_length`). The
+written advances are the laid-out advances, pair kerns included; and since
+each number is chosen from where the file's arithmetic actually left the
+pen, the residue never accumulates along a line. -/
+theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) (P : Sp)
+    (gs : List (Nat × Char × Sp)) :
+    ∀ d ∈ List.zipWith (· - ·) (penStarts wμ adv (placeSpec wμ tgt adv P gs))
+        ((glyphStarts P gs).map tgt), -500 ≤ d ∧ d ≤ 499 := by
+  induction gs generalizing adv P with
+  | nil => simp [placeSpec, penStarts]
+  | cons x rest ih =>
+    obtain ⟨g, c, a⟩ := x
+    simp only [placeSpec, penStarts, glyphStarts, List.map_cons, List.zipWith_cons_cons,
+      List.mem_cons]
+    rintro d (rfl | hd)
+    · have := nudge_between (adv - tgt P)
+      omega
+    · exact ih _ _ d hd
+
+/-- A run's string: plain when no glyph needed a number, kerned otherwise. -/
+def runItem (gs : Array (Nat × Int)) : TextItem :=
+  if gs.all (·.2 == 0) then .glyphs (gs.map (·.1)) else .kerned gs
+
+/-- A placed run onto the open array: its string, the layout x past its
+width, and the pen where the file's arithmetic left it. -/
+def TextSt.pushRun (st : TextSt) (item : TextItem) (w : Sp) (pen : Pen) : TextSt :=
+  { st with items := st.items.push item, x := st.x + w, pen := some pen }
+
 /-- One glyph run: the pen, then the face and colour when they change,
-then the glyphs. A kern (a run with no glyphs) only moves the layout
-position, like a gap. -/
+then the glyphs, each placed where the layout put it (`placeStep`): a
+glyph's layout position is the run's x plus its laid-out advance from the
+run's start — the pair kerns the layout applied included — under the
+line's expansion as the layout scaled the run (`w + w·f/1000`). The pen
+the file's arithmetic reaches is where every later move is measured from.
+A kern (a run with no glyphs) only moves the layout position, like a gap. -/
 def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
-    (color : Ir.Color) (w : Sp) (glyphs : Array (Nat × Char)) (segSize raise : Sp) : TextSt :=
+    (color : Ir.Color) (w : Sp) (glyphs : Array (Nat × Char × Sp)) (segSize raise : Sp) :
+    TextSt :=
   if glyphs.isEmpty then { st with x := st.x + w } else
   let runY := ypdf + raise
   let size := if segSize == 0 then lineSize else segSize
   let changes := st.font != (idx : Int) || st.size != size || st.color != color
   let st := st.toPen changes runY
   let st := if changes then st.setFace remap idx size color else st
-  { st with items := st.items.push (.glyphs (glyphs.map (·.1))), x := st.x + w,
-            pen := some (st.x + w, runY) }
+  let p := st.pen.getD { xm := st.x.toPtMilli, y := runY, adv := 0 }
+  let tgt := fun P : Sp => penTarget st.size.toPtMilli st.tz p.xm (st.x + P + P * st.tz / 1000)
+  let r := glyphs.foldl (placeStep (st.widths idx) tgt) (#[], p.adv, 0)
+  st.pushRun (runItem r.1) w { p with adv := r.2.1 }
 
 def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
     (og : Origin) (st : TextSt) : Seg → TextSt
@@ -576,12 +750,13 @@ over the middle — paths, text, images; the two artifact blocks hold fills
 only and carry none, and a rule-heavy page would pay their rebuild for
 nothing. Every painting operator sits under exactly one wrapper
 (`mcids_partition_covers`). -/
-def contentOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) : Array ContentOp :=
+def contentOps (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let paths := pathGroups geom tags page.paths
-  let st := page.lines.foldl (stepLine geom remap imgMap tags) {}
+  let st := page.lines.foldl (stepLine geom remap imgMap tags) { widths }
   let images := st.images.map imageOp
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
@@ -590,12 +765,13 @@ def contentOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
 /-- The specification twin of `contentOps`: the same operations with no
 marked content — the writer before this layer, kept so `mark_ink_exact`
 can name the stream it must reproduce. -/
-def contentOpsPlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) : Array ContentOp :=
+def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let paths := page.paths.map fun p => ContentOp.path p.fill p.stroke (pathSegs geom p.path)
-  let st := page.lines.foldl (stepLinePlain geom remap imgMap tags) {}
+  let st := page.lines.foldl (stepLinePlain geom remap imgMap tags) { widths }
   let images := st.images.map imageOpPlain
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let body := (fills ++ paths).push (.text st.ops)
@@ -607,6 +783,7 @@ def contentOpsPlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Na
 adjustment none. -/
 def TextItem.runs : TextItem → List (Array Nat)
   | .glyphs gids => [gids]
+  | .kerned gs => [gs.map (·.1)]
   | .adjust _ => []
 
 mutual
@@ -920,16 +1097,21 @@ theorem closeTJ_items (st : TextSt) : st.closeTJ.items = #[] := by
     exact Array.isEmpty_iff.mp h
   · rfl
 
+theorem moveTo_runs (st : TextSt) (y : Sp) : (st.moveTo y).runs = st.runs := by
+  have h := op_runs st.closeTJ (.move st.x y) rfl
+  rw [closeTJ_runs] at h
+  exact h
+
 theorem toPen_runs (st : TextSt) (c : Bool) (y : Sp) : (st.toPen c y).runs = st.runs := by
   unfold TextSt.toPen
   split
-  · split
-    · simp only []
-      split
+  · simp only []
+    split
+    · split
+      · rfl
       · simp [TextSt.runs, TextItem.runs]
-      · rw [op_runs _ _ rfl, closeTJ_runs]
-    · rfl
-  · rw [op_runs _ _ rfl]
+    · exact moveTo_runs st y
+  · exact moveTo_runs st y
 
 theorem setFont_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) :
     (st.setFont remap idx size).runs = st.runs := by
@@ -949,25 +1131,24 @@ theorem setFace_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) (
   unfold TextSt.setFace
   rw [setColor_runs, setFont_runs, closeTJ_runs]
 
+theorem runItem_runs (gs : Array (Nat × Int)) : (runItem gs).runs = [gs.map (·.1)] := by
+  unfold runItem
+  split <;> rfl
+
+theorem pushRun_runs (st : TextSt) (i : TextItem) (w : Sp) (p : Pen) :
+    (st.pushRun i w p).runs = st.runs ++ i.runs := by
+  simp [TextSt.pushRun, TextSt.runs]
+
 theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
-    (w : Sp) (glyphs : Array (Nat × Char)) (ss raise : Sp) :
+    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) :
     (stepRun remap ls y st idx c w glyphs ss raise).runs
       = st.runs ++ (if glyphs.isEmpty then [] else [glyphs.map (·.1)]) := by
   unfold stepRun
   split
   · simp [TextSt.runs]
-  · simp only []
-    generalize hc : (st.font != (idx : Int) || st.size != (if ss == 0 then ls else ss)
-      || st.color != c) = changes
-    have key : ∀ (s : TextSt) (i : TextItem) (x' : Sp) (p' : Option (Sp × Sp)),
-        TextSt.runs { s with items := s.items.push i, x := x', pen := p' } = s.runs ++ i.runs := by
-      intro s i x' p'
-      simp [TextSt.runs]
-    rw [key]
-    simp only [TextItem.runs]
-    split
-    · rw [setFace_runs, toPen_runs]
-    · rw [toPen_runs]
+  · simp only [pushRun_runs, runItem_runs, place_ids]
+    congr 1
+    simp only [apply_ite TextSt.runs, setFace_runs, toPen_runs, ite_self]
 
 theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp) (og : Origin)
     (st : TextSt) (seg : Seg) : (stepSeg remap imgMap ls y og st seg).runs = st.runs ++ segRuns seg := by
@@ -1213,9 +1394,9 @@ census of the typed content stream is the page's run census: no run
 dropped, none invented, none reordered — the `_text` fact for the
 PageOut → ContentOp projection (not a `Conserves` instance: the walk
 changes type, as `structTree_text` does). -/
-theorem contentOps_text (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) :
-    runsOf (contentOps geom remap imgMap tags page) = pageRuns page := by
+theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    runsOf (contentOps geom remap widths imgMap tags page) = pageRuns page := by
   unfold contentOps
   unfold runsOf pageRuns
   simp only [Array.toList_append, List.flatMap_append, artifactBlock_runs, numberMarks_runs_list]
@@ -1223,8 +1404,8 @@ theorem contentOps_text (geom : Geom) (remap : Array Nat) (imgMap : Array (Optio
     List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs,
     flatMap_nil_fun, pathGroups_runs]
   simp only [ContentOp.runs, flatMap_nil_fun, List.append_nil, List.nil_append]
-  have hr := foldl_lines_runs geom remap imgMap tags page.lines.toList {}
-  have hi := foldl_lines_items geom remap imgMap tags page.lines.toList {} rfl
+  have hr := foldl_lines_runs geom remap imgMap tags page.lines.toList { widths }
+  have hi := foldl_lines_items geom remap imgMap tags page.lines.toList { widths } rfl
   rw [Array.foldl_toList] at hr hi
   simp only [TextSt.runs, hi] at hr
   simpa using hr
@@ -1718,17 +1899,21 @@ theorem closeTJ_plainOps (st : TextSt) (h : inkText st.ops = st.ops) :
   · exact h
   · exact op_plainOps st _ h (by simp [TextOp.ink])
 
+theorem moveTo_plainOps (st : TextSt) (y : Sp) (h : inkText st.ops = st.ops) :
+    inkText (st.moveTo y).ops = (st.moveTo y).ops :=
+  op_plainOps _ _ (closeTJ_plainOps st h) (by simp [TextOp.ink])
+
 theorem toPen_plainOps (st : TextSt) (c : Bool) (y : Sp) (h : inkText st.ops = st.ops) :
     inkText (st.toPen c y).ops = (st.toPen c y).ops := by
   unfold TextSt.toPen
   split
-  · split
-    · simp only []
-      split
+  · simp only []
+    split
+    · split
       · exact h
-      · exact op_plainOps _ _ (closeTJ_plainOps st h) (by simp [TextOp.ink])
-    · exact h
-  · exact op_plainOps _ _ h (by simp [TextOp.ink])
+      · exact h
+    · exact moveTo_plainOps st y h
+  · exact moveTo_plainOps st y h
 
 theorem setFont_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
     (h : inkText st.ops = st.ops) :
@@ -1751,18 +1936,17 @@ theorem setFace_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : S
   setColor_plainOps _ _ (setFont_plainOps _ _ _ _ (closeTJ_plainOps _ h))
 
 theorem stepRun_plainOps (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
-    (w : Sp) (glyphs : Array (Nat × Char)) (ss raise : Sp) (h : inkText st.ops = st.ops) :
+    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) (h : inkText st.ops = st.ops) :
     inkText (stepRun remap ls y st idx c w glyphs ss raise).ops
       = (stepRun remap ls y st idx c w glyphs ss raise).ops := by
   unfold stepRun
   split
   · exact h
-  · simp only []
-    generalize (st.font != (idx : Int) || st.size != (if ss == 0 then ls else ss)
-      || st.color != c) = changes
-    split
-    · exact setFace_plainOps _ _ _ _ _ (toPen_plainOps _ _ _ h)
-    · exact toPen_plainOps _ _ _ h
+  · simp only [TextSt.pushRun]
+    split <;> split
+    all_goals first
+      | exact setFace_plainOps _ _ _ _ _ (toPen_plainOps _ _ _ h)
+      | exact toPen_plainOps _ _ _ h
 
 theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
     (og : Origin) (st : TextSt) (seg : Seg) (h : inkText st.ops = st.ops) :
@@ -1963,17 +2147,18 @@ acceptance runs is this equation on the file. Both wrapper kinds are
 covered: artifacts and structure content alike hide nothing, and the
 identifier numbering rewrites tags only. A fact of the content stream,
 not a projection of an IR statement: the IR never sees marked content. -/
-theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) :
-    inkOps (contentOps geom remap imgMap tags page) = contentOpsPlain geom remap imgMap tags page := by
+theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    inkOps (contentOps geom remap widths imgMap tags page)
+      = contentOpsPlain geom remap widths imgMap tags page := by
   unfold contentOps contentOpsPlain
   simp only [inkOps, Array.toList_append, ContentOp.inkList_append, numberMarks_ink_list]
-  have hp := foldl_stepLine_plain geom remap imgMap tags page.lines.toList {}
+  have hp := foldl_stepLine_plain geom remap imgMap tags page.lines.toList { widths }
   rw [Array.foldl_toList, Array.foldl_toList] at hp
-  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap tags page.lines.toList {} rfl
+  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap tags page.lines.toList { widths } rfl
   rw [Array.foldl_toList] at hpo
-  have hops : inkText (page.lines.foldl (stepLine geom remap imgMap tags) {}).ops
-      = (page.lines.foldl (stepLinePlain geom remap imgMap tags) {}).ops := by
+  have hops : inkText (page.lines.foldl (stepLine geom remap imgMap tags) { widths }).ops
+      = (page.lines.foldl (stepLinePlain geom remap imgMap tags) { widths }).ops := by
     rw [← hpo]; exact congrArg TextSt.ops hp
   have himg := congrArg TextSt.images hp
   have hrul := congrArg TextSt.rules hp
@@ -2122,9 +2307,9 @@ object, and every operator of the text object is a marked-content
 sequence: no fill, path, glyph run or image is bare — real content under
 its structure type, everything else an artifact. The identifier half of
 the statement is `numberMarks_mcids_exact`. -/
-theorem wrapped_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) :
-    ∀ o ∈ contentOps geom remap imgMap tags page, o.wrapped = true := by
+theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap widths imgMap tags page, o.wrapped = true := by
   unfold contentOps numberMarks
   intro o ho
   simp only [Array.mem_append] at ho
@@ -2136,7 +2321,7 @@ theorem wrapped_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option
     rcases ho with (hp | rfl) | ⟨i, _, rfl⟩
     · exact pathGroupsList_wrapped geom tags _ #[] none (by simp) o hp
     · simp only [ContentOp.wrapped, Array.all_eq_true_iff_forall_mem]
-      have := foldl_lines_marked geom remap imgMap tags page.lines.toList {} (by simp)
+      have := foldl_lines_marked geom remap imgMap tags page.lines.toList { widths } (by simp)
       rw [Array.foldl_toList] at this
       exact this
     · exact imageOp_wrapped i
@@ -2144,11 +2329,11 @@ theorem wrapped_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option
 
 /-- **No decoration is left bare** — the corollary `wrapped_covers`
 projects: every fill and every placeholder box sits under a wrapper. -/
-theorem artifacts_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) :
-    ∀ o ∈ contentOps geom remap imgMap tags page, o.decoration = false := by
+theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    ∀ o ∈ contentOps geom remap widths imgMap tags page, o.decoration = false := by
   intro o ho
-  have h := wrapped_covers geom remap imgMap tags page o ho
+  have h := wrapped_covers geom remap widths imgMap tags page o ho
   cases o <;> simp_all [ContentOp.wrapped, ContentOp.decoration]
 
 /-! ### Identifiers in stream order -/
@@ -2454,12 +2639,12 @@ theorem fillBlock_contentOpens (k : Option ArtifactKind) (fills : Array ContentO
 operator of a page is under exactly one wrapper (`wrapped_covers`), and the
 identifiers its content wrappers carry are `0 … n−1` in stream order —
 the two fill blocks around the numbered middle carry none. -/
-theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (tags : Array (Option String)) (page : PageOut) :
-    (∀ o ∈ contentOps geom remap imgMap tags page, o.wrapped = true)
-    ∧ (pageMarks (contentOps geom remap imgMap tags page)).toList.map Prod.fst
-        = List.range (pageMarks (contentOps geom remap imgMap tags page)).size := by
-  refine ⟨wrapped_covers geom remap imgMap tags page, ?_⟩
+theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    (∀ o ∈ contentOps geom remap widths imgMap tags page, o.wrapped = true)
+    ∧ (pageMarks (contentOps geom remap widths imgMap tags page)).toList.map Prod.fst
+        = List.range (pageMarks (contentOps geom remap widths imgMap tags page)).size := by
+  refine ⟨wrapped_covers geom remap widths imgMap tags page, ?_⟩
   unfold contentOps
   have hA := fillBlock_contentOpens none (page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h)
@@ -2468,7 +2653,7 @@ theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (imgMap : Array
       obtain ⟨f, _, rfl⟩ := ho
       exact ⟨_, _, _, _, _, rfl⟩)
   have hC := fillBlock_contentOpens (some .layout)
-    ((page.lines.foldl (stepLine geom remap imgMap tags) {}).rules.map
+    ((page.lines.foldl (stepLine geom remap imgMap tags) { widths }).rules.map
       fun (c, x, y, w, h) => ContentOp.fill c x y w h)
     (fun o ho => by
       simp only [Array.mem_map] at ho

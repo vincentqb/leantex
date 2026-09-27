@@ -662,12 +662,15 @@ def hyphenPenalty : Int := 50
 
 inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
-  computed without re-measuring against the font. `raise` lifts the run's
+  computed without re-measuring against the font. Each glyph carries its
+  laid-out advance — its width plus the pair kern applied after it, before
+  the line's expansion — which is where the next glyph starts, and what
+  the PDF writer places it by. `raise` lifts the run's
   baseline above the line's (negative sinks it): a superscript is a raised
   run at script size. `attr` names the structure leaf (or the generated
   kind) the ink stands for. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char)) (size : Sp) (underline : Bool) (raise : Sp)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool) (raise : Sp)
       (ground : Option Ir.Color) (attr : Attribution)
   /-- Horizontal space. `word` is true exactly for glue that came from
   `interword` — the space between two words of one leaf's text, what the
@@ -3833,8 +3836,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- under the same horizontal scale.
       let w := w + w * f / 1000
       segs := segs.push
-        (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline raise
-          ground attr)
+        (.run fontIdx color link w glyphs size underline raise ground attr)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
@@ -3878,8 +3880,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
         | .run _ _ _ _ _ sz ul _ gr _ => (if sz != 0 then sz else acc.1, ul, gr)
         | _ => acc) ((0 : Sp), false, (none : Option Ir.Color))
       segs := segs.push
-        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited inheritedUl 0
-          inheritedGr .hyphen)
+        (.run fontIdx color none w glyphs inherited inheritedUl 0 inheritedGr .hyphen)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -7878,11 +7879,11 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       let upem : Int := font.unitsPerEm
       let thick := (font.band).2 * sz / upem
       let mut gx : Sp := x
-      for (g, _) in glyphs do
+      for (g, _, adv) in glyphs do
         for (ilo, ihi) in font.inkAt g do
           obs := obs.push (gx + ilo * sz / upem - 2 * thick,
             gx + ihi * sz / upem + 2 * thick)
-        gx := gx + scaledAt sz font (font.widths[g]?.getD 0)
+        gx := gx + adv
       x := x + w
   -- Merge into the chained obstruction list the theorems consume.
   let merged := mergeIntervals obs

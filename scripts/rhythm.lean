@@ -356,7 +356,7 @@ def ofOut (out : Layout.Out) : Array MPage :=
         | .run _ _ _ w glyphs _ _ _ _ _ =>
           if glyphs.isEmpty then
             if w > 0 then text := text.push ' '
-          else for (_, c) in glyphs do text := text.push c
+          else for (_, c, _) in glyphs do text := text.push c
         | .gap _ _ => text := text.push ' '
         | .rule _ th raise _ => marks := marks.push (l.y - raise - th, l.y - raise)
         | .image _ _ h => marks := marks.push (l.y - h, l.y)

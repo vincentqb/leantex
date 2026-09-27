@@ -353,7 +353,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "the icon glyph ships from the covering face"
     (runs.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '\uF09B')
+      | .run 1 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '\uF09B')
       | _ => false)
   t "a deliberate icon face is not a substitution warning"
     (!out.diags.any (·.code == "W0009"))
@@ -433,13 +433,13 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let set (f : Font.Font) : Font.FontSet := {
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
-  let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char) × Dim.Sp) :=
+  let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp) :=
     (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
       (·.segs.filterMap fun s =>
         match s with
         | .run _ _ _ _ glyphs size _ _ _ _ => some (glyphs, size)
         | _ => none)
-  let ink (rs : Array (Array (Nat × Char) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
+  let ink (rs : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
     rs.flatMap fun (glyphs, size) => glyphs.map fun (g, _) => (g, size)
   let scSerif := drawn (set serif) "{\\scshape PhD}"
   t "gsub small caps draw the same ink for PhD, phd, and PHD"
@@ -448,8 +448,8 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
      ink scSerif != ink (drawn (set serif) "PhD"))
   t "gsub small caps set at full size with substituted glyphs, text as typed"
     (scSerif.all (·.2 == geom.fontSize) &&
-     (scSerif.flatMap (·.1.map (·.2))) == #['P', 'h', 'D'] &&
-     scSerif.all fun (glyphs, _) => glyphs.all fun (g, c) =>
+     (scSerif.flatMap (·.1.map (·.2.1))) == #['P', 'h', 'D'] &&
+     scSerif.all fun (glyphs, _) => glyphs.all fun (g, c, _) =>
        some g == (serif.gid c).map serif.smallCapGid)
   let scSans := drawn (set sans) "{\\scshape PhD}"
   t "synthesised small caps draw the same ink for PhD, phd, and PHD"
@@ -519,7 +519,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "fallback sets the glyph from the mapped face"
     (runs.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '∀')
+      | .run 1 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '∀')
       | _ => false)
   t "fallback reports once per family+glyph, naming both faces"
     ((out.diags.filter (·.code == "W0009")).map (·.message) ==
@@ -561,7 +561,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let accOut := layoutOf mapped accDoc geom
   let accGlyphs := ((accOut.pages.flatMap (·.lines)).flatMap (·.segs)).flatMap
     fun s => match s with
-      | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2)
+      | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2.1)
       | _ => #[]
   t "a combining sequence ships composed, no mark machinery"
     (accGlyphs.contains 'é' && !accGlyphs.contains '\u0301' &&
@@ -624,7 +624,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let taRun := ((taOut.pages.flatMap (·.lines)).flatMap (·.segs)).findSome?
     fun s => match s with
       | .run _ _ _ w glyphs _ _ _ _ _ =>
-        if (glyphs.map (·.2)) == #['T', 'a'] then some (w, glyphs) else none
+        if (glyphs.map (·.2.1)) == #['T', 'a'] then some (w, glyphs) else none
       | _ => none
   t "kern: the run width is the advances plus the pair value"
     (match taRun with
@@ -635,6 +635,17 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
            + (-41 : Int) * geom.fontSize / 1000)
            + (ssp.widths[sspA]! : Int) * geom.fontSize / 1000
        glyphs.size == 2 && w == want
+     | none => false)
+  -- The run carries each glyph's laid advance, the pair value in the
+  -- first: where the second glyph starts is the ink's to honour, not only
+  -- the measure's (`Seg.run`; the PDF writer places by it).
+  t "kern: the run carries T's advance with the pair value, a's without"
+    (match taRun with
+     | some (_, glyphs) =>
+       let geom : Layout.Geom := {}
+       glyphs.map (·.2.2) ==
+         #[(ssp.widths[sspT]! : Int) * geom.fontSize / 1000 + (-41 : Int) * geom.fontSize / 1000,
+           (ssp.widths[sspA]! : Int) * geom.fontSize / 1000]
      | none => false)
   t "no MATH face anywhere: the pick is none"
     ((← FontDb.pickMathFace
@@ -1060,7 +1071,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyOut := layoutOf oneFace hyDoc narrow (some pats)
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '-')
           | .gap _ _ | .rule .. | .image .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
@@ -1069,7 +1080,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphens (doc : Ir.Doc) : Bool :=
         (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
-            | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '-')
+            | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '-')
             | .gap _ _ | .rule .. | .image .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
@@ -1107,7 +1118,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         p.lines.any (·.size == Layout.sectionSize ({} : Layout.Geom) 1)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '•')
+          | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '•')
           | .gap _ _ | .rule .. | .image .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -1284,7 +1295,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- TeXbook ch. 18): x maps to U+1D465, sin and 2 stay ASCII.
   let glyphChars (src : String) : Array Char :=
     (lineOf src).segs.flatMap fun s => match s with
-      | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2)
+      | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2.1)
       | _ => #[]
   t "variables italic, functions and digits upright"
     (glyphChars "$\\sin 2x$" == #['s', 'i', 'n', '2', '𝑥'])
@@ -1311,7 +1322,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       (cOut.diags.filter (·.code == "W0009")).map (·.message) ==
         #["'Fira Math' has no glyph for '₿' (U+20BF); set from 'Source Serif Pro'"] &&
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '₿')
+        | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '₿')
         | _ => false))
   -- No math face: one W0003 for the document, formulas set as their floor —
   -- the glyph text the parse produced, never the source, so the missing
@@ -1323,7 +1334,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no math face sets the formula's glyph text, not its source"
     (let chars := (nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.flatMap fun s =>
        match s with
-       | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2)
+       | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2.1)
        | _ => #[]
      !chars.contains '^' && !chars.contains '\\' && chars.contains '2')
   -- Elaboration shapes: display math is its own centred block; \(..\) is
@@ -1436,7 +1447,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$λ θ φ$" == #['𝜆', '𝜃', '𝜑'])
   -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment,
   -- pinned in sp over Layout's own output.
-  let runXOf (src : String) (pick : Array (Nat × Char) → Bool) : Option Dim.Sp := Id.run do
+  let runXOf (src : String) (pick : Array (Nat × Char × Dim.Sp) → Bool) : Option Dim.Sp := Id.run do
     let l := lineOf src
     let mut x : Dim.Sp := 0
     for s in l.segs do
@@ -1452,7 +1463,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an accent adds no width: hat x advances as x alone"
     (warnCodes "$\\hat{x}$" == [] && widthOf "$\\hat{x}$" == adv mbase '𝑥')
   t "the mark's attachment point lands on the base's"
-    (runXOf "$\\hat{x}$" (fun gs => gs.any (·.2 == '\u0302')) ==
+    (runXOf "$\\hat{x}$" (fun gs => gs.any (·.2.1 == '\u0302')) ==
       some (konst mbase (fira.topAccentX ((fira.gid '𝑥').getD 0))
         - konst mbase (fira.markAttachX hatG)))
   t "a base at accentBaseHeight leaves the mark unlifted"
@@ -1556,7 +1567,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((bfOut.diags.filter (·.code == "N0018")).map (·.message) ==
       #["'Fira Math' has no bold 'A' (U+1D400); set bold from 'Source Serif Pro'"] &&
       ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == 'A')
+        | .run 0 _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
@@ -1586,7 +1597,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .image _ w _ => x := x + w
           | .run _ _ _ w glyphs sz _ raise _ _ =>
             let mut gx := x
-            for (g, c) in glyphs do
+            for (g, c, _) in glyphs do
               let a := (fira.widths[g]?.getD 0 : Int) * sz / upem
               out := out.push (c, g, gx, raise, a)
               gx := gx + a

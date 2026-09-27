@@ -451,11 +451,11 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
           runSize := max runSize size
           runFonts := runFonts.push idx
           if coveredColors.contains color then
-            for (_, c) in glyphs do
+            for (_, c, _) in glyphs do
               chars := chars.push c
               covered := covered.push c
           else
-            for (_, c) in glyphs do
+            for (_, c, _) in glyphs do
               chars := chars.push c
             covered := covered.push ' '
         | .gap _ _ =>
@@ -591,7 +591,7 @@ a gap as one space (`gapAsSpace := false` reads the bare glyphs — a page
 number's centring gaps are not its text). -/
 def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
   l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+    | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 

@@ -150,7 +150,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
       for s in l.segs do
         if let .run idx _ _ _ glyphs _ _ _ _ _ := s then
           if idx == fontIdx then
-            for (g, c) in glyphs do
+            for (g, c, _) in glyphs do
               if h : g < seen.size then
                 if seen[g].isNone then
                   seen := seen.set! g (some c)
@@ -325,11 +325,19 @@ end
 end"
   return s
 
-/-- The `/W` array: each used glyph's advance in thousandths of the em
-(§9.7.4.3), as a typed object — `Obj.render` decides its bytes. -/
+/-- A `/W` width in millionths of the em as the number the file spells:
+thousandths, with up to three decimals — an integer when it is one. -/
+def widthObj (μ : Int) : PdfRead.Obj :=
+  if μ % 1000 == 0 then .int (μ / 1000) else
+    let frs := toString (μ.natAbs % 1000)
+    let frs := (("".pushn '0' (3 - frs.length)) ++ frs).dropEndWhile (· == '0')
+    .real s!"{μ / 1000}.{frs}"
+
+/-- The `/W` array: each used glyph's advance (§9.7.4.3), `pdfWidthμ` as
+`widthObj` spells it — the width the pen model advances by — as a typed
+object; `Obj.render` decides its bytes. -/
 private def wArray (font : Font) (used : Array (Nat × Char)) : PdfRead.Obj :=
-  .arr (used.flatMap fun (g, _) =>
-    #[PdfRead.Obj.int g, .arr #[.int ((font.widths[g]?.getD 0) * 1000 / font.unitsPerEm)]])
+  .arr (used.flatMap fun (g, _) => #[PdfRead.Obj.int g, .arr #[widthObj (pdfWidthμ font g)]])
 
 /-- Escape a PDF literal string: balance-sensitive characters only. -/
 private def pdfString (s : String) : String := Id.run do
@@ -501,7 +509,7 @@ def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let remap := remapOf fs (keepFaces fs pages)
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
   let tags := tagsOf tree
-  pages.map (contentOps geom remap imgMap tags)
+  pages.map (contentOps geom remap (fun f g => pdfWidthμ (fs.get f) g) imgMap tags)
 
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
@@ -1093,7 +1101,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let tags := leafTags sk nLeaves
   -- The typed operators: the caller's when it built them (`pageOps`, the
   -- same walk — `streams` are their render), else built here.
-  let ops := if ops.size == np then ops else pages.map (contentOps geom remap imgMap tags)
+  let ops := if ops.size == np then ops
+    else pages.map (contentOps geom remap (fun f g => pdfWidthμ (fs.get f) g) imgMap tags)
   let marks := ops.map pageMarks
   let es := fill sk (leafPagesOf nLeaves marks)
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)

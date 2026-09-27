@@ -2820,7 +2820,20 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w glyphs.toArray size false raise none (.leaf 0)
+  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size false
+    raise none (.leaf 0)
+
+/-- The widths the synthetic pages' faces declare, in millionths of the
+em: each glyph's laid advance at its run's size, so the writer places
+every glyph where its run already put it and the only numbers in the
+stream are the gaps'. -/
+def contentOpsWidths (_ : Nat) (g : Nat) : Int :=
+  match g with
+  | 36 | 37 | 70000 | 4096 => 1250000
+  | 38 => 1666667
+  | 39 | 40 => 2222222
+  | 1 => 2500000
+  | _ => 833333
 
 /-- The leaf tags the synthetic pages are marked under: leaf 0 a paragraph,
 leaf 1 a heading, leaf 2 a leaf no element holds. -/
@@ -2875,13 +2888,19 @@ def contentOpsPathPage : Layout.PageOut := {
 
 /-- The streams the writer produced for these pages before the typed
 layer existed — captured from `Pdf.pageStreams`, and the spelling the
-typed operators must reproduce byte for byte. -/
+typed operators must reproduce byte for byte — with two numbers since
+placed by the viewer's arithmetic (`place_between`): a gap rounds to the
+nearest thousandth (5 pt at 12 pt is 416.7, so 417 where truncation said
+416), and is measured from where the file's own pen stands. The expanded
+line's `xy` declares 30 pt of unexpanded advances, which paint 30.6 pt
+under `Tz`; the old writer measured the gap from 30 pt and set `z` 0.58 pt
+past its layout x (−407), the number now brings it back (−359). -/
 def contentOpsTextExpected : String :=
   "q 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\n" ++
-  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
   "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
-  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-359<0001>] TJ\n" ++
   "100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n[<0033>] TJ\n" ++
   "1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
   "q 20 0 0 15 50 20 cm /Im1 Do Q\n" ++
@@ -2904,9 +2923,9 @@ bleed and nothing else changes. -/
 def contentOpsBleedExpected : String :=
   "q 0.941 0.941 0.941 rg 3 3 200 100 re f Q\n" ++
   "q 1 0 0 0 k 8 88 50 10 re f Q\n" ++
-  "BT\n1 0 0 1 13 83 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "BT\n1 0 0 1 13 83 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
   "1 0 0 1 68 86 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
-  "102.0 Tz\n1 0 0 1 13 63 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 13 63 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-359<0001>] TJ\n" ++
   "100.0 Tz\n1 0 0 1 15 43 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 525 43 Tm\n[<0033>] TJ\n" ++
   "1 0 0 1 535 40 Tm\n[<0034><0035>] TJ\n1 0 0 1 103 23 Tm\n[<0036>] TJ\nET\n" ++
   "q 20 0 0 15 53 23 cm /Im1 Do Q\n" ++
@@ -2936,11 +2955,11 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
   let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOpsPlain g remap imgMap tags p)
+    Pdf.render (Pdf.contentOpsPlain g remap contentOpsWidths imgMap tags p)
   let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    stripMarkLines (Pdf.render (Pdf.contentOps g remap imgMap tags p))
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap contentOpsWidths imgMap tags p))
   let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap imgMap tags p))
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap contentOpsWidths imgMap tags p))
   t "content ops: text, fills, images and rules render to the recorded stream"
     (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
@@ -2959,7 +2978,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
-    (Pdf.runsOf (Pdf.contentOps geom remap imgMap tags contentOpsTextPage)
+    (Pdf.runsOf (Pdf.contentOps geom remap contentOpsWidths imgMap tags contentOpsTextPage)
       == Pdf.pageRuns contentOpsTextPage)
   -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
@@ -2974,9 +2993,12 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let store : Image.Store := { entries := #[
     { src := "a.png", info := (Image.decode png).toOption }, { src := "b.png" }] }
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
-  t "content ops: pageStreams is the typed render, stripped to the recorded stream"
+  let typed (p : Layout.PageOut) : String :=
+    stripMarkLines (Pdf.render (Pdf.contentOps geom remap
+      (fun f g => Pdf.pdfWidthμ (twoFace.get f) g) imgMap (Pdf.tagsOf ⟨#[]⟩) p))
+  t "content ops: pageStreams is the typed render under the faces' own widths"
     (streams.map (stripMarkLines <| String.fromUTF8! ·)
-      == #[contentOpsTextExpected, contentOpsPathExpected])
+      == #[typed contentOpsTextPage, typed contentOpsPathPage])
 
 /-- The output contract: declared facts held against each artifact's
 realization record (one W0701 per unmet fact per artifact), the font
@@ -3299,10 +3321,10 @@ bare artifact, each placeholder under `/Layout`, the rules as one
 def artifactTextExpected : String :=
   "/Artifact BMC\nq 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\nEMC\n" ++
-  "BT\n/P << /MCID 0 >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "BT\n/P << /MCID 0 >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
   "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\nEMC\n" ++
   "/H2 << /MCID 1 >> BDC\n102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n" ++
-  "[<11701000>-407<0001>] TJ\nEMC\n" ++
+  "[<11701000>-359<0001>] TJ\nEMC\n" ++
   "/Artifact BMC\n100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n" ++
   "[<0033>] TJ\n1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\nEMC\n" ++
   "/Artifact BMC\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nEMC\nET\n" ++
@@ -3417,14 +3439,14 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
-  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap imgMap tags p
+  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap contentOpsWidths imgMap tags p
   t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; leaves under their types"
     (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
   t "artifacts: furniture lines are pagination groups inside the text object, a leafless line a bare one"
     (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
   t "artifacts: the furniture page strips to its plain twin"
     (stripMarkLines artifactFurnitureExpected
-      == Pdf.render (Pdf.contentOpsPlain geom remap imgMap tags artifactFurniturePage))
+      == Pdf.render (Pdf.contentOpsPlain geom remap contentOpsWidths imgMap tags artifactFurniturePage))
   t "artifacts: picture paths are grouped per picture under the holder's type"
     (Pdf.render (ops contentOpsPathPage) == artifactPathExpected)
   t "artifacts: the marks of the text page are its two leaves, numbered in stream order"

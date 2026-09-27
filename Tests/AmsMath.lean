@@ -113,8 +113,8 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     let raises := (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap
       fun s => match s with
         | .run _ _ _ _ glyphs _ _ raise _ _ =>
-          if glyphs.any (·.2 == MathParse.italicVar 'a') then some (0, raise)
-          else if glyphs.any (·.2 == MathParse.italicVar 'c') then some (1, raise)
+          if glyphs.any (·.2.1 == MathParse.italicVar 'a') then some (0, raise)
+          else if glyphs.any (·.2.1 == MathParse.italicVar 'c') then some (1, raise)
           else none
         | _ => none
     let ra ← raises.find? (·.1 == 0)

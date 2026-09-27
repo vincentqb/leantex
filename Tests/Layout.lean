@@ -96,7 +96,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (bodyLines out, out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _ _ _) => String.ofList (glyphs.toList.map (·.2))
+    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _ _ _) => String.ofList (glyphs.toList.map (·.2.1))
     | _ => ""
   -- The numbering functions and their decoders (`\labelenum*`, classes.dtx).
   t "enum labels match the class defaults"
@@ -291,7 +291,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
   let scRuns := (bodyLines scOut).flatMap (·.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs size _ _ _ _ => some (glyphs.map (·.2), size)
+    | .run _ _ _ _ glyphs size _ _ _ _ => some (glyphs.map (·.2.1), size)
     | _ => none)
   t "synthesised small caps carry no lowercase form"
     (!scRuns.isEmpty && scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
@@ -2775,7 +2775,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let pageTexts (out : Layout.Out) : Array String :=
     out.pages.map fun p => String.join (p.lines.toList.map fun l =>
       String.join (l.segs.toList.map fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
+        | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2.1))
         | _ => " "))
   let samePage (src : String) (marks : List String) : Bool :=
     let texts := pageTexts (layoutOut src)
@@ -3349,7 +3349,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc (pats := some pats)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '-')
+        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2.1 == '-')
         | .gap _ _ | .rule .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
@@ -3799,7 +3799,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       | [l] =>
         (match l.segs.toList with
          | [Layout.Seg.run _ _ _ _ glyphs _ _ _ _ _] =>
-           String.ofList (glyphs.toList.map (·.2)) == "7"
+           String.ofList (glyphs.toList.map (·.2.1)) == "7"
          | _ => false)
         && l.x + l.setWidth / 2 == geom.hmargin + Dim.pt 10
       | _ => false).getD false)
@@ -4643,7 +4643,7 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let (d, _) := elabStr src
     (layoutOf oneFace d geom).pages.flatMap fun p =>
       p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
-        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
         | .gap _ _ => s.push ' '
         | _ => s) "", l.y)
   let doc (pre body : String) : String :=
@@ -5013,7 +5013,7 @@ is compared by containment only). -/
 def attrLineText (l : Layout.LineOut) : String :=
   l.segs.foldl (fun s seg => match seg with
     | .run _ _ _ _ glyphs _ _ raise _ _ =>
-      if raise != 0 then s else glyphs.foldl (fun s (_, c) => s.push c) s
+      if raise != 0 then s else glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ => s.push ' '
     | _ => s) ""
 
@@ -5204,7 +5204,7 @@ def segAttr : Layout.Seg → Option Layout.Attribution
   | _ => none
 
 def segGlyphText : Layout.Seg → String
-  | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
+  | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2.1))
   | _ => ""
 
 def isGlyphRun : Layout.Seg → Bool
@@ -5511,7 +5511,7 @@ def declBlockChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let itemRuns := (bodyLines cout).flatMap (·.segs.filterMap fun s =>
     match s with
     | .run _ color _ _ glyphs _ _ _ _ _ =>
-      if glyphs.any (·.2 == 'o') then some color else none
+      if glyphs.any (·.2.1 == 'o') then some color else none
     | _ => none)
   t "decl between blocks: a bare palette name colours the list after it"
     (!itemRuns.isEmpty && itemRuns.all (· == accent))

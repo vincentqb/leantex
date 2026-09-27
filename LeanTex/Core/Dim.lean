@@ -43,15 +43,22 @@ theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
   simp only [mm100, mm, h, h2]
   exact Int.mul_ediv_mul_of_pos _ _ (by decide)
 
+/-- The value `toPtString` spells, in thousandths of a point: the exact sp
+value rounded to the nearest thousandth, half away from zero. What a
+reader of the spelling gets back — the PDF writer's pen model starts from
+it, so the pen it tracks is the one the file states. -/
+def Sp.toPtMilli (x : Sp) : Int :=
+  let milli : Int := ((x.natAbs * 1000 + 32768) / 65536 : Nat)
+  if x < 0 then -milli else milli
+
 /-- Render as decimal points with up to three fractional digits (exact sp
-value rounded to the nearest thousandth). -/
+value rounded to the nearest thousandth, `toPtMilli`). -/
 def Sp.toPtString (x : Sp) : String :=
-  let neg := x < 0
-  let n := x.natAbs
-  let milli := (n * 1000 + 32768) / 65536
+  let m := x.toPtMilli
+  let milli := m.natAbs
   let ip := milli / 1000
   let fr := milli % 1000
-  let sign := if neg && milli != 0 then "-" else ""
+  let sign := if m < 0 then "-" else ""
   if fr == 0 then
     s!"{sign}{ip}"
   else
