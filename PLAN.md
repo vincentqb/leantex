@@ -20076,3 +20076,108 @@ entry documents in 25 sets, 12 min 27 s at 48 in flight):
 - whether to import more sets. The tabular corpus (129 documents) and
   the render-pipeline oracle suites (464) build from the clone, with the
   same tool, today.
+
+
+### 2026-09-27 — a math symbol is a sourced row: amssymb, amsfonts and the kernel's symbols from one generated table, held to lualatex
+
+`tests/compat-index/amssymb.txt` stood for 216 commands with 21 rows
+("one row per symbol class"), 18 of them refusals, and the engine set 2
+of the names amssymb.sty declares (`\varnothing`, `\nexists`). It is now
+one row per command the package file declares, in file order — 210 rows —
+and `amsfonts.txt` is the same for its file, 40 rows. compat: amssymb
+3/21 → 185/210, amsfonts 3/5 → 38/40.
+
+**The rows are data.** `scripts/gen-mathsym-data.lean` reads each command's
+TeX class and font slot from `amsfonts.sty`, `amssymb.sty` (v3.01) and, for
+the kernel, `fontmath.ltx` over the names the manual's "Math formulas"
+chapter documents (`tests/coverage/latex2e-index.txt`), and the scalar from
+unicode-math's table (0.8r) — the one lualatex sets under OpenType math —
+and writes `LeanTex/Core/MathSymData.lean`, which `MathParse.ctrlAtom`
+appends after its hand rows: 375 rows. The hand rows shrink from 151 to
+55, the engine's own decisions: the Greek letters `greek_literal_agree`
+reads, `\bullet`, `\iff`, the inner dots, `\iint`, `\|`, `\colon` and the
+escapes; the other 96 set exactly what their generated rows set. A scalar
+comes from the normal-style
+alphabet (so ∂ sets italic, as `math-style=TeX` does), the table, a
+unicode-math alias, one of thirteen renames judged by unicode-math's own
+glyph description (`\square` is `\mdlgwhtsquare`), the package's own
+`\global\let`, or a sibling at the same font slot (`\lhd` is
+`\vartriangleleft` as a binary operator). Rerun on this host, the generator
+reproduces the committed file byte for byte. TeX's own `glyphtounicode.tex`,
+the other TeX-side table, agrees with unicode-math on 157 of the 227 AMS
+names and is wrong on several (`\lll` → U+226A, `\leftleftarrows` →
+U+21D4), which is why it is not a source.
+
+26 declared commands have no scalar of their own and stay refused rows
+(W0012), each index row naming the glyph it lacks: a standardized variation
+sequence (`\lvertneqq` is U+2268 U+FE00, per the UCD's
+StandardizedVariants.txt), a negation by combining overlay (`\nleqslant` is
+U+2A7D U+0338), a short, small or heavy form of a symbol already set
+(`\shortmid`, `\smallsetminus`, `\thicksim`), or a scalar outside
+unicode-math's table (`\circledS`, `\circledR`).
+
+**The probe that certified an impl row did not look at W0012.** The math
+parser answers a name it does not know with W0012, under which a formula is
+its own source text — and source text differs from the renamed call by its
+spelling alone, so `compatRowEffect` held for every unknown symbol. Measured
+through `lake test` with the base parser restored: under the old probe all
+215 unimplemented AMS rows passed; under the new one each fails. No row in
+any other index fired W0012. The AGENTS.md row now says so.
+
+**What holds the table.** `Tests/MathSym.lean`: every declared command has
+exactly one index row, `impl` exactly when the table sets it; a hand row
+that shadows a generated one says the same, or is a `handDivergences`
+entry; no symbol row is a name the parser reads structurally; a refused name
+is unknown to the parser. The shipped Fira Math lacks 125 of the table's
+atoms (`firaGaps`, both ways) — among them the hand-set `\bigcup`,
+`\bigcap`, `\setminus`, `\star`, `\top`, `\bot`, `\vdots`, `\ddots`, `\Re`
+and `\Im` — and a gap on the page is not inked and is named once (E0405).
+Against the reference engine, two parity fixtures set every covered symbol
+ten to a line, the reference spelling each as unicode-math does from the
+same face: `amssymb` (122 symbols) and `mathsym` (161) both hold at P4, the
+top; with the base parser `amssymb` falls to P2. The same sources in HTML
+set each symbol as the MathML leaf its class maps to, in order.
+
+**Kernel symbols.** 167 kernel rows join (`\hookrightarrow`,
+`\longrightarrow`, the arrows, `\lbrace`, `\models`, `\bowtie`, `\doteq`,
+`\sqcup`, `\dagger`, the suits, `\imath`); coverage kernel/Math formulas
+75 → 98, and the headline 40.4% → 50.1% (783/1564) with the package half's
+new rows. `\vdots` is a `\vbox` in `fontmath.ltx`, an ordinary atom, and its
+hand row said inner; `\bigodot`, `\bigsqcup`, `\biguplus` take display
+limits, TeX's `\mathop` default.
+
+Measured, nothing moved elsewhere: both private documents build
+byte-identical PDFs at base and head (8 and 35 pages), their HTML identical
+up to the output-named asset directory, their diagnostics unchanged;
+`bench.lean` and an interleaved 21-run A/B show no regression
+(`bench/paper.tex` 149/144 ms).
+
+**What compounds.** The next symbol package is one more file for the
+generator to read (latexsym, stmaryrd, mathabx), and its rows arrive with
+their index rows, their face coverage and a parity line owed by the
+AGENTS.md row this entry adds. The W0012 clause closes the probe hole for
+every package's math rows at once. `firaGaps` and `handDivergences` fail in
+both directions, so neither can drift from the face or the table.
+
+**Decisions that are the user's.**
+- `\bullet` sets U+2219 and `\colon` U+003A where lualatex under
+  unicode-math sets U+2022 and U+2236: keep, or follow the reference.
+- A refused symbol degrades its whole formula to source text. Setting its
+  base glyph and naming the lost variant (a new code) is a better floor;
+  so is reading cmap format 14 for the six variation sequences.
+- A package's symbols are known with or without `\usepackage{amssymb}`,
+  where LaTeX leaves them undefined.
+- The thirteen renames are judged per glyph; the generator carries each.
+
+**Routed.**
+- E0405 and W0009 carry no subject (`Layout.lean`, the dropped and substs
+  ledgers): a census of missing glyphs has to read message text.
+- A refused symbol's W0012 cannot name the missing glyph: its subject is
+  the parser's error string (`Elab.lean`, `"math:" ++ what`), so the reason
+  lives in the index row's comment.
+- Text-mode `\checkmark`, `\yen`, `\maltese` (amsfonts defines them for
+  both modes) are W0301 in text.
+- A text-style big operator is not centred on the axis (TeXbook
+  Appendix G, rule 13): lualatex moves Fira Math's ∑ 0.02 bp off its
+  line's baseline (pdftotext -bbox), which `mathsym` leaves out because the
+  order level groups a line by exact baseline.
