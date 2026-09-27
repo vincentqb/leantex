@@ -1549,6 +1549,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr inkCss "color-scheme: light;" && !hasStr inkCss "prefers-color-scheme: dark" &&
      (HtmlDoc.schemeFailures true (elabStr
        "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1).isEmpty)
+  -- A picture's marks paint the colour they declare (black, undeclared),
+  -- which the dark surface would swallow: its page keeps one scheme too.
+  let (picHead, _, _) := HtmlDoc.emitTree {} (elabStr
+    ("\\documentclass{article}\\pictures{ tool = none }\\begin{document}" ++
+     "\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture}\\end{document}")).1
+  let picCss := headCss picHead
+  t "a page with a picture ships one scheme"
+    (hasStr picCss "color-scheme: light;" && !hasStr picCss "prefers-color-scheme: dark")
   -- The layering order still holds where a page ships both schemes: a
   -- declared token stands after the dark variant, so no variant beats a
   -- higher layer (the layering audit's clobber 3).

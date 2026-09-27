@@ -3267,14 +3267,17 @@ def kernCss : String :=
 /-- Whether the page ships the dark colour scheme. Only the engine's own
 token set has a proven dark variant (`Contrast.dark_contract`). A colour
 the document chose — a palette entry, its own or a bundle's, an epoch's
-palette, a coloured run — was judged against the light ground
-(`Contrast`'s pairing judge), and the dark block would stand it on a
-ground no judge read it on: a declared ink equal to the light default read
-1.00:1 there. Such a page declares the one scheme its colours were judged
-in. The judge (`schemeFailures`) reads this same decision. -/
+palette, a coloured run, a rule or a picture, whose marks paint the colour
+they declare — was judged against the light ground (`Contrast`'s pairing
+judge), and the dark block would stand it on a ground no judge read it on:
+a declared ink equal to the light default read 1.00:1 there, and a
+picture's black ink about as much. Such a page declares the one scheme its
+colours were judged in. The judge (`schemeFailures`) reads this same
+decision. -/
 def dualScheme (doc : Doc) : Bool :=
   doc.palette.entries.isEmpty &&
-    !Ir.foldBlocks (fun a b => a || b matches .setPalette _)
+    !Ir.foldBlocks (fun a b => a || b matches .setPalette _ || b matches .picture _ ||
+        b matches .rule _ _ _)
       (fun a i => a || i matches .colored _ _ _) false doc.body
 
 /-- The base stylesheet. Small on purpose: a generated document should not
