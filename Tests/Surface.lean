@@ -3859,22 +3859,23 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       fields := #[("author", "Poe, Kim and others"), ("year", "2020")]
       pos := {} }
   let r2 : Bib.Resolved := { key := "k2", position := 1, entry := e2 }
-  let cite (s : Bib.CiteStyle) (tx : Bool) (ps : Array (Option Bib.Resolved)) :=
-    Ir.plainText (Bib.renderCite s tx ps)
+  let cite (s : Bib.CiteStyle) (cmd : Ir.CiteCmd) (ps : Array (Option Bib.Resolved)) :=
+    Ir.plainText (Bib.renderCite s.punct { cmd } ps)
   t "bibstyle: numeric citep brackets and joins"
-    (cite .numeric false #[some r1, some r2] == "[3, 1]")
+    (cite .numeric .paren #[some r1, some r2] == "[3, 1]")
   t "bibstyle: numeric citet names then bracket"
-    (cite .numeric true #[some r1] == "Doe and Roe [3]")
+    (cite .numeric .textual #[some r1] == "Doe and Roe [3]")
   t "bibstyle: author-year citep parenthesizes with semicolons"
-    (cite .authorYear false #[some r1, some r2] ==
+    (cite .authorYear .paren #[some r1, some r2] ==
       "(Doe and Roe, 2024; Poe et al., 2020)")
   t "bibstyle: author-year citet puts the year in parens"
-    (cite .authorYear true #[some r1, some r2] ==
+    (cite .authorYear .textual #[some r1, some r2] ==
       "Doe and Roe (2024); Poe et al. (2020)")
   t "bibstyle: an unresolved key prints ? in place"
-    (cite .numeric false #[some r1, none] == "[3, ?]")
+    (cite .numeric .paren #[some r1, none] == "[3, ?]")
   t "bibstyle: citation pieces link to the entry anchor"
-    ((Bib.renderCite .numeric false #[some r1]).any fun x => match x with
+    ((Bib.renderCite Bib.CiteStyle.numeric.punct { cmd := .paren } #[some r1]).any fun x =>
+      match x with
       | .link u _ => u == "#ref-k1"
       | _ => false)
   t "bibstyle: named styles pair the axes; unknown is none"
@@ -3911,7 +3912,7 @@ one unresolved-mark site, and the request value the driver fulfils. -/
 def bibIrChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "bib-ir: an unresolved citation is worth one mark per key"
-    (Ir.plainText #[.cite false #["a", "b"]] == "?, ?")
+    (Ir.plainText #[.cite { cmd := .paren } #["a", "b"]] == "?, ?")
   let item : Ir.BibItem :=
     { key := "k1"
       marker := some "1"
@@ -3936,8 +3937,8 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
     "@misc{c, author = {Poe, Kim}, title = {Third}, year = 2022}"
   let doc (style : Option String) : Ir.Doc :=
     { body := #[
-        .para #[.text "x ", .cite false #["b"], .text " y ", .cite true #["a"]],
-        .para #[.cite false #["c", "b"]],
+        .para #[.text "x ", .cite { cmd := .paren } #["b"], .text " y ", .cite { cmd := .textual } #["a"]],
+        .para #[.cite { cmd := .paren } #["c", "b"]],
         .bibliography "refs" style #[]] }
   let run (style : Option String) := Bib.apply #[("refs", bib)] (doc style)
   let (outU, dsU) := run (some "unsrtnat")
@@ -3981,12 +3982,12 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
           == some (Ir.plainText i.content))
   -- The three diagnostics, each with its contract.
   let (outG, dsG) := Bib.apply #[("refs", bib)]
-    { body := #[.para #[.cite false #["ghost", "a"]],
+    { body := #[.para #[.cite { cmd := .paren } #["ghost", "a"]],
         .bibliography "refs" none #[]] }
   t "apply: an unknown key warns W0351 and shows ? beside its neighbours"
     ((dsG.map (·.code)) == #["W0351"] && paraText outG 0 == "[?, 1]")
   let (outB, dsB) := Bib.apply #[("refs", "@misc{broken, year = ?}\n" ++ bib)]
-    { body := #[.para #[.cite false #["a"]], .bibliography "refs" none #[]] }
+    { body := #[.para #[.cite { cmd := .paren } #["a"]], .bibliography "refs" none #[]] }
   t "apply: a malformed entry warns W0352 at its .bib position, rest kept"
     (dsB.map (·.code) == #["W0352"] &&
       (dsB[0]?.bind (·.span)).map (·.file) == some "refs" &&
@@ -3997,9 +3998,113 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- No marker, no sources: the mark still resolves — to LaTeX's `[?]` — and
   -- no `.cite` node survives; the elaborator named the loss at the site
   -- (W0351, the no-bibliography cause), so `apply` says nothing here.
-  let (outN, dsN) := Bib.apply #[] { body := #[.para #[.cite false #["a"]]] }
+  let (outN, dsN) := Bib.apply #[] { body := #[.para #[.cite { cmd := .paren } #["a"]]] }
   t "apply: a document with no bibliography marker resolves every mark to [?], silently"
     (dsN == #[] && paraText outN 0 == "[?]" && (Ir.pendingNodes outN).isEmpty)
+
+/-- The synthetic bibliography natbib's rows cite: invented people and
+venues, one entry per name shape a citation prints differently — three
+authors (`et al.`, and all three starred), one, two, and a lowercase
+particle (`\Citet` capitalizes it). -/
+def natbibBib : String :=
+  "@article{alpha2019, author = {Ann Alpha and Bob Beta and Cy Gamma},\n\
+    title = {A study of invented widgets}, journal = {Journal of Examples},\n\
+    year = {2019}, volume = {3}, number = {2}, pages = {10--20}}\n\
+  @book{delta2021, author = {Dee Delta}, title = {Placeholder Methods},\n\
+    publisher = {Example Press}, year = {2021}}\n\
+  @inproceedings{eps2020, author = {Eve Epsilon and Finn Zeta},\n\
+    title = {On synthetic benchmarks},\n\
+    booktitle = {Proceedings of the Example Workshop}, year = {2020}, pages = {1--8}}\n\
+  @article{pome2018, author = {Quill de Pome}, title = {Lowercase particles},\n\
+    journal = {Example Letters}, year = {2018}}\n"
+
+/-- natbib's command table, one row per construct: the call, and the line
+lualatex set for it under `\usepackage[numbers]{natbib}` with
+`\bibliographystyle{unsrtnat}` — measured with natbib 8.31b and TeX Live
+2026 through `pdftotext`, every row a paragraph `Lnn <call> end.` of one
+document over `natbibBib`, so the numbers are first-citation positions in
+this order. -/
+def natbibRows : List (String × String) :=
+  [("\\citet{alpha2019}", "Alpha et al. [1]"),
+   ("\\citep{alpha2019}", "[1]"),
+   ("\\cite{alpha2019}", "[1]"),
+   ("\\citet*{alpha2019}", "Alpha, Beta, and Gamma [1]"),
+   ("\\citep*{alpha2019}", "[1]"),
+   ("\\citep[p.~5]{alpha2019}", "[1, p. 5]"),
+   ("\\citep[see][]{alpha2019}", "[see 1]"),
+   ("\\citep[see][p.~5]{alpha2019}", "[see 1, p. 5]"),
+   ("\\citet[p.~5]{alpha2019}", "Alpha et al. [1, p. 5]"),
+   ("\\citet[see][p.~5]{alpha2019}", "Alpha et al. [see 1, p. 5]"),
+   ("\\citep{alpha2019,delta2021}", "[1, 2]"),
+   ("\\citet{alpha2019,delta2021}", "Alpha et al. [1], Delta [2]"),
+   ("\\citealt{alpha2019}", "Alpha et al. 1"),
+   ("\\citealp{alpha2019}", "1"),
+   ("\\citealp[p.~5]{alpha2019}", "1, p. 5"),
+   ("\\citeauthor{alpha2019}", "Alpha et al."),
+   ("\\citeauthor*{alpha2019}", "Alpha, Beta, and Gamma"),
+   ("\\citeyear{alpha2019}", "2019"),
+   ("\\citeyearpar{alpha2019}", "[2019]"),
+   ("\\Citet{pome2018}", "de Pome [3]"),
+   ("\\Citep{pome2018}", "[3]"),
+   ("\\citetext{priv.\\ comm.}", "[priv. comm.]"),
+   ("\\citenum{alpha2019}", "1"),
+   ("\\citet{eps2020}", "Epsilon and Zeta [4]"),
+   ("\\citep{eps2020,pome2018}", "[4, 3]"),
+   ("\\cite[p.~5]{alpha2019}", "[1, p. 5]"),
+   ("\\citealt*{alpha2019}", "Alpha, Beta, and Gamma 1"),
+   ("\\citeauthor{eps2020}", "Epsilon and Zeta"),
+   ("\\Citeauthor{pome2018}", "de Pome")]
+
+/-- The rows as one document, each call in its own paragraph. -/
+def natbibSrc (pre : String) (rows : List (String × String)) : String := Id.run do
+  let mut body := ""
+  for (call, _) in rows, k in [1:rows.length + 1] do
+    body := body ++ s!"L{k} {call} end.\n\n"
+  return s!"\\documentclass\{article}\n{pre}\n\\bibliographystyle\{unsrtnat}\n\
+    \\begin\{document}\n{body}\\bibliography\{refs}\n\\end\{document}\n"
+
+/-- An HTML page's text as a reader gets it: tags dropped, the entities
+the escaper writes read back, a no-break space a space. -/
+def htmlVisibleText (page : String) : String := Id.run do
+  let mut out := ""
+  let mut inTag := false
+  for c in page.toList do
+    if c == '<' then inTag := true
+    else if c == '>' then inTag := false
+    else if !inTag then out := out.push c
+  return ((out.replace "&amp;" "&").replace "&nbsp;" " ").replace "\u00A0" " "
+
+/-- **natbib's commands set the lines lualatex sets**, on the shipped page
+and in the HTML: every row of `natbibRows` in one synthetic document,
+resolved against `natbibBib` and laid out, its line compared whole with
+the one lualatex set. An unresolved key is the one declared divergence:
+natbib's numbers mode prints `[? ]`, a space its source line leaves after
+the bold `?`, where the engine prints `[?]` with the separators a resolved
+key would have. -/
+def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := natbibSrc "\\usepackage[numbers]{natbib}" natbibRows
+  let (doc, _) := elabStr src
+  let (doc, bibDiags) := Bib.apply #[("refs", natbibBib)] doc
+  t "natbib: the rows resolve with no diagnostic" bibDiags.isEmpty
+  -- A tie ships as a glyphless box a space wide (Layout's no-break-space
+  -- arm), which `lineText` reads as nothing; the page shows a space.
+  let ink (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
+    | .run _ _ _ _ glyphs _ _ _ _ _ =>
+      if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c) => s.push c) s
+    | .gap _ _ => s.push ' '
+    | _ => s) ""
+  let lines := (bodyLines (layoutOf oneFace doc)).map ink
+  let html := htmlVisibleText (HtmlDoc.emit {} doc).1
+  for (call, want) in natbibRows, k in [1:natbibRows.length + 1] do
+    let line := s!"L{k} {want} end."
+    t s!"natbib page: {call} sets '{want}'" (lines.contains line)
+    t s!"natbib html: {call} reads '{want}'" (hasStr html line)
+  let (miss, _) := elabStr (natbibSrc "\\usepackage[numbers]{natbib}"
+    [("\\citep{missing2000}", "")])
+  let (miss, _) := Bib.apply #[("refs", natbibBib)] miss
+  t "natbib: an unresolved key prints [?], the separators a resolved one has"
+    ((bodyLines (layoutOf oneFace miss)).any fun l => lineText l == "L1 [?] end.")
 
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a

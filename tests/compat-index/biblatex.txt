@@ -5,8 +5,11 @@
 # (numeric→plain, numeric+sorting=none→unsrt, authoryear→plainnat;
 # alphabetic labels are outside the record set, W0353 with unsrtnat
 # standing in), \parencite/\autocite onto \citep, \textcite onto \citet,
-# the resource onto \bibliography at the \printbibliography site. The
-# rest of the citation family stays refused by name, as natbib's is.
+# the resource onto \bibliography at the \printbibliography site.
+# \citeauthor and \citeyear share natbib's names and land on its rows,
+# with natbib's name rule (et al. past two authors, where biblatex's
+# default maxcitenames prints up to three). The rest of the citation
+# family stays refused by name.
 # A style option and \addbibresource are bindings read at the
 # \printbibliography site (inert:binds): they move no ink where they stand,
 # and \printbibliography with no file declared draws nothing and says so.
@@ -23,7 +26,7 @@ body impl \textcite{k}
 body refuse:W0301 \Textcite{k}
 body refuse:W0301 \footcite{k}
 body refuse:W0301 \fullcite{k}
-body refuse:W0301 \citeauthor{k}
-body refuse:W0301 \citeyear{k}
+body impl \citeauthor{k}
+body impl \citeyear{k}
 body refuse:W0301 \nocite{k}
 body refuse:W0301 \citetitle{k}

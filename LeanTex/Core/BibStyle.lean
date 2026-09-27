@@ -165,63 +165,151 @@ structure Resolved where
   entry : Entry
   deriving Repr
 
-/-- The inline body of one resolved key under the style: numeric prints the
-position, author-year the names and year (natbib manual §2.3). Each piece
-links to the entry's item. `textual` is `\citet`'s form. -/
-def renderCiteOne (style : CiteStyle) (textual : Bool) (r : Resolved) :
+/-- The full author list natbib's starred forms print (`\citet*`), or the
+key when no author is there, as `citeAuthors` does. -/
+def citeFullAuthors (e : Entry) : String :=
+  match e.field? "author" with
+  | some a => fullNames a
+  | none => e.key
+
+/-- natbib's citation punctuation: the seven values `\bibpunct` sets
+(natbib.sty `\NAT@open`, `\NAT@close`, `\NAT@sep`, the mode letter,
+`\NAT@aysep`, `\NAT@yrsep`, `\NAT@cmt`), each at natbib's own load
+value. -/
+structure CitePunct where
+  numbers : Bool := false
+  «open» : String := "("
+  close : String := ")"
+  sep : String := ";"
+  aysep : String := ","
+  yysep : String := ","
+  notesep : String := ", "
+  deriving Repr, BEq, Inhabited
+
+/-- The punctuation a citation style draws with: numeric is LaTeX's own
+`\cite` (latex.ltx `\@cite`: `[1, 2]`), author-year natbib's load
+values. -/
+def CiteStyle.punct : CiteStyle → CitePunct
+  | .numeric => { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
+  | .authorYear => {}
+
+/-- What one key prints: its names and year, its names alone, or its year
+alone — natbib.sty's `\NAT@ctype` 0, 1 and 2. -/
+private inductive CitePart where
+  | both
+  | names
+  | year
+  deriving BEq
+
+/-- The loop's state between keys: the output so far, the separator the
+last key left for the next (natbib.sty `\@citea`), the last key's names —
+a key repeating them prints only its year — and whether the last key
+printed a year, which is what closes a textual citation's bracket. -/
+private structure CiteAcc where
+  out : Array Ir.Inline := #[]
+  citea : String := ""
+  last : Option String := none
+  dated : Bool := false
+
+private def emit (out : Array Ir.Inline) (s : String) : Array Ir.Inline :=
+  if s.isEmpty then out else out.push (.text s)
+
+private def emitLink (out : Array Ir.Inline) (anchor s : String) : Array Ir.Inline :=
+  out.push (.link anchor #[.text s])
+
+/-- The first letter capitalized — natbib's `\NAT@Up`, what `\Citet` does
+to a name that opens with a lowercase particle. -/
+private def upFirst (s : String) : String :=
+  match s.toList with
+  | c :: cs => String.ofList (c.toUpper :: cs)
+  | [] => s
+
+/-- What natbib's command table sets for a command: whether it counts in
+numbers (`\citenum` does in either mode), whether its brackets close the
+whole citation (`\NAT@swa`: `\citep`) rather than each year (`\citet`),
+which part of each key it prints (`\NAT@ctype`), and the brackets it draws
+(`\NAT@par`: none for the `alt`/`alp` forms). -/
+private structure Switches where
+  numeric : Bool
+  wrap : Bool
+  part : CitePart
+  op : String
+  cl : String
+
+private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
+  let brackets := match f.cmd with
+    | .textual | .paren | .auto | .yearPar | .text => true
+    | .alt | .alp | .author | .year | .num => false
+  { numeric := p.numbers || f.cmd == .num
+    wrap := match f.cmd with
+      | .paren | .alp | .yearPar | .num | .text => true
+      | .auto => p.numbers
+      | .textual | .alt | .author | .year => false
+    part := match f.cmd with
+      | .author => .names
+      | .year | .yearPar => .year
+      | .textual | .paren | .auto | .alt | .alp | .num | .text => .both
+    op := if brackets then p.open else ""
+    cl := if brackets then p.close else "" }
+
+/-- One key under natbib's loop (natbib.sty `\NAT@citex`, `\NAT@citexnum`
+in numbers mode): the separator the previous key left, this key's piece
+linked to its entry, and the separator it leaves. natbib capitalizes names
+only in author-year mode, and a key repeating the previous key's names
+prints only its year (`yysep`). An unresolvable key prints `?` in its
+place with the separators a resolved one would have. -/
+private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : CiteAcc) :
+    Option Resolved → CiteAcc
+  | none => { out := emit acc.out (acc.citea ++ "?"), citea := p.sep ++ " " }
+  | some r =>
+    let names := if f.full then citeFullAuthors r.entry else citeAuthors r.entry
+    let names := if f.up && !s.numeric then upFirst names else names
+    let year := citeYear r.entry
+    let mark := if s.numeric then toString r.position else year
+    let pre := if f.pre.isEmpty then "" else f.pre ++ " "
+    let same := acc.last == some names
+    -- (what precedes the linked piece, the piece, the separator left behind)
+    let t : String × String × String := match s.part with
+      | .names => (acc.citea, names, p.sep ++ " ")
+      | .year => (acc.citea, year, p.sep ++ " ")
+      | .both =>
+        if s.wrap then
+          if s.numeric then (acc.citea, mark, p.sep ++ " ")
+          else if same then (p.yysep ++ " ", year, p.sep ++ " ")
+          else (acc.citea, s!"{names}{p.aysep} {year}", p.sep ++ " ")
+        else
+          (if same then p.yysep ++ " " ++ (if s.numeric then pre else "")
+            else acc.citea ++ names ++ " " ++ s.op ++ pre, mark, s.cl ++ p.sep ++ " ")
+    { out := emitLink (emit acc.out t.1) (anchorOf r.key) t.2.1
+      citea := t.2.2
+      last := some names
+      dated := true }
+
+/-- The brackets around the loop's output: a wrapping form opens them with
+its pre-note and closes them after its post-note (`notesep`); a textual
+form has opened each year's bracket in the loop and closes the last,
+after the post-note, when that key printed a year. -/
+private def finish (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : CiteAcc) :
     Array Ir.Inline :=
-  let anchor := anchorOf r.key
-  match style, textual with
-  | .numeric, false => #[.link anchor #[.text (toString r.position)]]
-  | .numeric, true =>
-    #[.text (citeAuthors r.entry ++ " ["),
-      .link anchor #[.text (toString r.position)], .text "]"]
-  | .authorYear, false =>
-    #[.link anchor #[.text s!"{citeAuthors r.entry}, {citeYear r.entry}"]]
-  | .authorYear, true =>
-    #[.text (citeAuthors r.entry ++ " ("),
-      .link anchor #[.text (citeYear r.entry)], .text ")"]
+  let post := if f.post.isEmpty then "" else p.notesep ++ f.post
+  let (lead, trail) :=
+    if s.wrap then (s.op ++ (if f.pre.isEmpty then "" else f.pre ++ " "), post ++ s.cl)
+    else ("", (if s.numeric && s.part != .both then "" else post) ++
+      (if acc.dated then s.cl else ""))
+  emit (emit #[] lead ++ acc.out) trail
 
-/-- The rendered parts of a citation joined by `sep`: the first part follows
-the opener directly, each later one after a separator. -/
-private def joinCiteRest (sep : String) (out : Array Ir.Inline) :
-    List (Array Ir.Inline) → Array Ir.Inline
-  | [] => out
-  | p :: rest => joinCiteRest sep (out ++ #[.text sep] ++ p) rest
-
-private def joinCite (sep : String) (out : Array Ir.Inline) :
-    List (Array Ir.Inline) → Array Ir.Inline
-  | [] => out
-  | p :: rest => joinCiteRest sep (out ++ p) rest
-
-/-- One key's rendering under the style, or `?` for an unresolvable one —
-LaTeX's own spelling for an undefined citation; the caller says why with
-W0351. -/
-private def renderCitePart (style : CiteStyle) (textual : Bool) : Option Resolved → Array Ir.Inline
-  | some r => renderCiteOne style textual r
-  | none => #[.text "?"]
-
-/-- A whole citation under the style: numeric `\citep` wraps its keys in
-one bracket group `[1, 2]`; author-year `\citep` parenthesizes with `; `
-between entries; the textual forms join with `; ` and no wrapper (natbib
-manual §2.3: `\citet{jon90,jam91}` → `Jones et al. (1990); James et al.
-(1991)`). An unresolvable key prints `?` in place (`renderCitePart`). The
-output is text and links over text only — no `.cite`, no `.ref` — which
-is `renderCite_plain`, the leaf fact `apply_no_cite` rests on. -/
-def renderCite (style : CiteStyle) (textual : Bool)
-    (parts : Array (Option Resolved)) : Array Ir.Inline :=
-  let sep := match style, textual with
-    | .numeric, false => ", "
-    | _, _ => "; "
-  let opener : Array Ir.Inline := match style, textual with
-    | .numeric, false => #[.text "["]
-    | .authorYear, false => #[.text "("]
-    | _, _ => #[]
-  let closer : Array Ir.Inline := match style, textual with
-    | .numeric, false => #[.text "]"]
-    | .authorYear, false => #[.text ")"]
-    | _, _ => #[]
-  joinCite sep opener (parts.toList.map (renderCitePart style textual)) ++ closer
+/-- A whole citation under natbib's punctuation, per its command (natbib.sty's
+command table): `\citep` wraps its keys in the brackets with `sep` between
+them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
+(`Doe [2024]`), the `alt`/`alp` forms drop the brackets, `\citeauthor` and
+`\citeyear` print one part, `\citenum` the list position in either mode,
+and `\citetext` its note between the brackets. The output is text and
+links over text only — no `.cite`, no `.ref` — which is `renderCite_plain`,
+the leaf fact `apply_no_cite` rests on. -/
+def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
+    Array Ir.Inline :=
+  if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
+  else finish p f (switches p f) (parts.foldl (citeStep p f (switches p f)) {})
 
 /-- An en dash between page numbers: `45--67` and `45-67` both print
 `45–67`, the range dash `.bib` files spell both ways. `text` already
@@ -627,28 +715,28 @@ where
 
 mutual
 
-/-- The citation rewrite: every `.cite` node becomes the style's inlines
-(`renderCite`), everything else passes through with its body walked. The
-one edit is the citation; `resolveInline_id` below is the machine-checked
-form of that sentence. -/
+/-- The citation rewrite: every `.cite` node becomes its rendering under the
+document's punctuation (`renderCite`), everything else passes through with
+its body walked. The one edit is the citation; `resolveInline_id` below is
+the machine-checked form of that sentence. -/
 -- conserves: none — resolution rewrites citation marks into the style's
 -- rendering; `resolveInline_id` states the walk's identity off citations.
-private def resolveInline (style : CiteStyle) (find : Resolver)
+private def resolveInline (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) : Ir.Inline → Array Ir.Inline
-  | .cite textual keys =>
-    let rendered := renderCite style textual (keys.map find)
+  | .cite form keys =>
+    let rendered := renderCite p form (keys.map find)
     out ++ rendered
-  | .styled st body => out.push (.styled st (resolveInlines style find #[] body.toList))
-  | .colored c nm body => out.push (.colored c nm (resolveInlines style find #[] body.toList))
-  | .role nm body => out.push (.role nm (resolveInlines style find #[] body.toList))
-  | .link u body => out.push (.link u (resolveInlines style find #[] body.toList))
-  | .underline body => out.push (.underline (resolveInlines style find #[] body.toList))
-  | .step n last body => out.push (.step n last (resolveInlines style find #[] body.toList))
+  | .styled st body => out.push (.styled st (resolveInlines p find #[] body.toList))
+  | .colored c nm body => out.push (.colored c nm (resolveInlines p find #[] body.toList))
+  | .role nm body => out.push (.role nm (resolveInlines p find #[] body.toList))
+  | .link u body => out.push (.link u (resolveInlines p find #[] body.toList))
+  | .underline body => out.push (.underline (resolveInlines p find #[] body.toList))
+  | .step n last body => out.push (.step n last (resolveInlines p find #[] body.toList))
   | .alt n last active otherwise =>
-    out.push (.alt n last (resolveInlines style find #[] active.toList)
-      (resolveInlines style find #[] otherwise.toList))
+    out.push (.alt n last (resolveInlines p find #[] active.toList)
+      (resolveInlines p find #[] otherwise.toList))
   -- a citation inside a note resolves like any other
-  | .footnote n body => out.push (.footnote n (resolveInlines style find #[] body.toList))
+  | .footnote n body => out.push (.footnote n (resolveInlines p find #[] body.toList))
   | .text s => out.push (.text s)
   | .math d src => out.push (.math d src)
   | .formula d src body => out.push (.formula d src body)
@@ -662,16 +750,16 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .pageCount => out.push .pageCount
   | .linebreak e => out.push (.linebreak e)
 
-private def resolveInlines (style : CiteStyle) (find : Resolver)
+private def resolveInlines (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) : List Ir.Inline → Array Ir.Inline
   | [] => out
-  | x :: rest => resolveInlines style find (resolveInline style find out x) rest
+  | x :: rest => resolveInlines p find (resolveInline p find out x) rest
 
 end
 
-private def resolveArr (style : CiteStyle) (find : Resolver)
+private def resolveArr (p : CitePunct) (find : Resolver)
     (xs : Array Ir.Inline) : Array Ir.Inline :=
-  resolveInlines style find #[] xs.toList
+  resolveInlines p find #[] xs.toList
 
 mutual
 
@@ -697,20 +785,20 @@ def citeFreeList : List Ir.Inline → Bool
 
 end
 
-private theorem resolveInlines_acc (style : CiteStyle) (find : Resolver)
+private theorem resolveInlines_acc (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) (xs : List Ir.Inline) :
-    resolveInlines style find out xs = out ++ resolveInlines style find #[] xs := by
+    resolveInlines p find out xs = out ++ resolveInlines p find #[] xs := by
   induction xs generalizing out with
   | nil => simp [resolveInlines]
   | cons x rest ih =>
-    rw [resolveInlines, resolveInlines, ih (resolveInline style find out x),
-      ih (resolveInline style find #[] x), resolveInline_acc, ← Array.append_assoc]
+    rw [resolveInlines, resolveInlines, ih (resolveInline p find out x),
+      ih (resolveInline p find #[] x), resolveInline_acc, ← Array.append_assoc]
 where
-  resolveInline_acc (style : CiteStyle) (find : Resolver)
+  resolveInline_acc (p : CitePunct) (find : Resolver)
       (out : Array Ir.Inline) (x : Ir.Inline) :
-      resolveInline style find out x = out ++ resolveInline style find #[] x := by
+      resolveInline p find out x = out ++ resolveInline p find #[] x := by
     match x with
-    | .cite t keys => simp [resolveInline]
+    | .cite _ _ => simp [resolveInline]
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
     | .underline body | .step _ _ body | .footnote _ body => simp [resolveInline]
     | .alt _ _ _ _ => simp [resolveInline]
@@ -726,49 +814,49 @@ content carrying no citation — whatever the style and whatever the
 bibliography, only citations and the reference list change. The
 citation-side analogue of `artifact_flag_free`: two styles can differ
 only where a `.cite` stood or a `\bibliography` marker fills. -/
-theorem resolveInline_id (style : CiteStyle) (find : Resolver)
+theorem resolveInline_id (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) (x : Ir.Inline) (h : citeFreeOne x = true) :
-    resolveInline style find out x = out.push x := by
+    resolveInline p find out x = out.push x := by
   match x with
   | .styled st body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .colored c nm body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .role nm body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .link u body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .underline body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .step n last body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .alt n last active otherwise =>
     rw [citeFreeOne, Bool.and_eq_true] at h
-    rw [resolveInline, resolveInlines_id style find active.toList h.1,
-      resolveInlines_id style find otherwise.toList h.2]
+    rw [resolveInline, resolveInlines_id p find active.toList h.1,
+      resolveInlines_id p find otherwise.toList h.2]
   | .footnote n body =>
     rw [citeFreeOne] at h
-    rw [resolveInline, resolveInlines_id style find body.toList h]
+    rw [resolveInline, resolveInlines_id p find body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
     rw [resolveInline]
 
-theorem resolveInlines_id (style : CiteStyle) (find : Resolver)
+theorem resolveInlines_id (p : CitePunct) (find : Resolver)
     (xs : List Ir.Inline) (h : citeFreeList xs = true) :
-    resolveInlines style find #[] xs = xs.toArray := by
+    resolveInlines p find #[] xs = xs.toArray := by
   match xs with
   | [] => rw [resolveInlines]
   | x :: rest =>
     rw [citeFreeList, Bool.and_eq_true] at h
-    rw [resolveInlines, resolveInline_id style find #[] x h.1,
-      resolveInlines_acc, resolveInlines_id style find rest h.2]
+    rw [resolveInlines, resolveInline_id p find #[] x h.1,
+      resolveInlines_acc, resolveInlines_id p find rest h.2]
     simp
 
 end
@@ -780,51 +868,51 @@ content stands, and each `\bibliography` marker takes the items the style
 built. -/
 -- conserves: none — resolution rewrites citation marks and fills the
 -- reference list; `resolveInline_id` carries the off-citation identity.
-private def resolveBlock (style : Style) (find : Resolver)
+private def resolveBlock (p : CitePunct) (find : Resolver)
     (items : Array Ir.BibItem) (out : Array Ir.Block) (b : Ir.Block) :
     Array Ir.Block :=
   match b with
   | .bibliography src declared _ => out.push (.bibliography src declared items)
-  | .para content => out.push (.para (resolveArr style.cite find content))
+  | .para content => out.push (.para (resolveArr p find content))
   | .equation n content =>
-    out.push (.equation (resolveArr style.cite find n) (resolveArr style.cite find content))
-  | .section l st num title => out.push (.section l st num (resolveArr style.cite find title))
-  | .abstract body => out.push (.abstract (resolveBlocks style find items #[] body.toList))
-  | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
-  | .center body => out.push (.center (resolveBlocks style find items #[] body.toList))
-  | .ragged s body => out.push (.ragged s (resolveBlocks style find items #[] body.toList))
-  | .quote body => out.push (.quote (resolveBlocks style find items #[] body.toList))
+    out.push (.equation (resolveArr p find n) (resolveArr p find content))
+  | .section l st num title => out.push (.section l st num (resolveArr p find title))
+  | .abstract body => out.push (.abstract (resolveBlocks p find items #[] body.toList))
+  | .list ordered its => out.push (.list ordered (resolveItems p find items #[] its.toList))
+  | .center body => out.push (.center (resolveBlocks p find items #[] body.toList))
+  | .ragged s body => out.push (.ragged s (resolveBlocks p find items #[] body.toList))
+  | .quote body => out.push (.quote (resolveBlocks p find items #[] body.toList))
   | .titled kind title body =>
-    out.push (.titled kind (resolveArr style.cite find title)
-      (resolveBlocks style find items #[] body.toList))
-  | .role nm body => out.push (.role nm (resolveBlocks style find items #[] body.toList))
-  | .spaced g body => out.push (.spaced g (resolveBlocks style find items #[] body.toList))
-  | .columns cols => out.push (.columns (resolveCols style find items #[] cols.toList))
+    out.push (.titled kind (resolveArr p find title)
+      (resolveBlocks p find items #[] body.toList))
+  | .role nm body => out.push (.role nm (resolveBlocks p find items #[] body.toList))
+  | .spaced g body => out.push (.spaced g (resolveBlocks p find items #[] body.toList))
+  | .columns cols => out.push (.columns (resolveCols p find items #[] cols.toList))
   | .step n last body =>
-    out.push (.step n last (resolveBlocks style find items #[] body.toList))
+    out.push (.step n last (resolveBlocks p find items #[] body.toList))
   | .alt n last active otherwise =>
-    out.push (.alt n last (resolveBlocks style find items #[] active.toList)
-      (resolveBlocks style find items #[] otherwise.toList))
-  | .only t body => out.push (.only t (resolveBlocks style find items #[] body.toList))
-  | .nav spec body => out.push (.nav spec (resolveBlocks style find items #[] body.toList))
-  | .note body => out.push (.note (resolveBlocks style find items #[] body.toList))
+    out.push (.alt n last (resolveBlocks p find items #[] active.toList)
+      (resolveBlocks p find items #[] otherwise.toList))
+  | .only t body => out.push (.only t (resolveBlocks p find items #[] body.toList))
+  | .nav spec body => out.push (.nav spec (resolveBlocks p find items #[] body.toList))
+  | .note body => out.push (.note (resolveBlocks p find items #[] body.toList))
   | .frame title standout va br body =>
-    out.push (.frame (resolveArr style.cite find title) standout va br
-      (resolveBlocks style find items #[] body.toList))
-  | .framefoot content => out.push (.framefoot (resolveArr style.cite find content))
+    out.push (.frame (resolveArr p find title) standout va br
+      (resolveBlocks p find items #[] body.toList))
+  | .framefoot content => out.push (.framefoot (resolveArr p find content))
   | .float k n ca body caption =>
-    out.push (.float k n ca (resolveBlocks style find items #[] body.toList)
-      (resolveArr style.cite find caption))
+    out.push (.float k n ca (resolveBlocks p find items #[] body.toList)
+      (resolveArr p find caption))
   | .table cols pl pr rows rules =>
     out.push (.table cols pl pr
-      (rows.map fun row => row.map (resolveArr style.cite find)) rules)
+      (rows.map fun row => row.map (resolveArr p find)) rules)
   -- A citation resolves inside a line and its comment, as in a cell.
   | .algorithm n sm lines =>
     out.push (.algorithm n sm (lines.map fun l =>
       { l with
-        content := resolveArr style.cite find l.content
-        comment := l.comment.map (resolveArr style.cite find) }))
-  | .logo content => out.push (.logo (resolveArr style.cite find content))
+        content := resolveArr p find l.content
+        comment := l.comment.map (resolveArr p find) }))
+  | .logo content => out.push (.logo (resolveArr p find content))
   | .verbatim c s sp => out.push (.verbatim c s sp)
   | .setPalette p => out.push (.setPalette p)
   | .setTokens tk => out.push (.setTokens tk)
@@ -833,33 +921,33 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .picture pic => out.push (.picture pic)
 termination_by structural b
 
-private def resolveBlocks (style : Style) (find : Resolver)
+private def resolveBlocks (p : CitePunct) (find : Resolver)
     (items : Array Ir.BibItem) (out : Array Ir.Block) (bs : List Ir.Block) :
     Array Ir.Block :=
   match bs with
   | [] => out
-  | b :: rest => resolveBlocks style find items (resolveBlock style find items out b) rest
+  | b :: rest => resolveBlocks p find items (resolveBlock p find items out b) rest
 termination_by structural bs
 
-private def resolveItems (style : Style) (find : Resolver)
+private def resolveItems (p : CitePunct) (find : Resolver)
     (items : Array Ir.BibItem) (out : Array (Array Ir.Block))
     (its : List (Array Ir.Block)) : Array (Array Ir.Block) :=
   match its with
   | [] => out
   | item :: rest =>
-    resolveItems style find items
-      (out.push (resolveBlocks style find items #[] item.toList)) rest
+    resolveItems p find items
+      (out.push (resolveBlocks p find items #[] item.toList)) rest
 termination_by structural its
 
-private def resolveCols (style : Style) (find : Resolver)
+private def resolveCols (p : CitePunct) (find : Resolver)
     (items : Array Ir.BibItem) (out : Array (Ir.BoxWidth × Array Ir.Block))
     (cs : List (Ir.BoxWidth × Array Ir.Block)) :
     Array (Ir.BoxWidth × Array Ir.Block) :=
   match cs with
   | [] => out
   | (w, body) :: rest =>
-    resolveCols style find items
-      (out.push (w, resolveBlocks style find items #[] body.toList)) rest
+    resolveCols p find items
+      (out.push (w, resolveBlocks p find items #[] body.toList)) rest
 termination_by structural cs
 
 end
@@ -868,10 +956,10 @@ end
 `resolveBlocks`, every furniture region through `resolveArr` — `Ir.mapDoc`
 hands both the regions the pending census (`Ir.foldDoc`) reads, so a
 `\cite` in a running head resolves as one in the body does. -/
-def resolveDoc (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) : Ir.Doc :=
-  Ir.mapDoc (resolveArr style.cite find)
-    (fun bs => resolveBlocks style find items #[] bs.toList) doc
+  Ir.mapDoc (resolveArr p find)
+    (fun bs => resolveBlocks p find items #[] bs.toList) doc
 
 /-- Resolve the document's citations and reference lists against its
 `.bib` sources — the pure half of the `\bibliography` effect. `sources`
@@ -889,7 +977,7 @@ is what lets the backends' `.cite` arms be dead code. `analyse` is the
 reading half — sources, style, the resolver and the reference list, with
 the diagnostics — and `apply` is that half followed by the one rewrite. -/
 def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
-    Style × Resolver × Array Ir.BibItem × Array Diag := Id.run do
+    CitePunct × Resolver × Array Ir.BibItem × Array Diag := Id.run do
   let requested := Ir.bibRefs doc
   let mut diags : Array Diag := #[]
   let mut entries : Array Entry := #[]
@@ -928,11 +1016,11 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
           (subject := some k))
   let resolved := resolveEntries style cited findEntry
   let find : Resolver := fun k => resolved.find? (·.key == k)
-  return (style, find, bibItems style resolved, diags)
+  return (style.cite.punct, find, bibItems style resolved, diags)
 
 def apply (sources : Array (String × String)) (doc : Ir.Doc) : Ir.Doc × Array Diag :=
   match analyse sources doc with
-  | (style, find, items, diags) => (resolveDoc style find items doc, diags)
+  | (p, find, items, diags) => (resolveDoc p find items doc, diags)
 
 /-! ## Resolution leaves no citation
 
@@ -985,63 +1073,47 @@ private theorem foldInlineList_plain (acc : Array Ir.Unresolved) :
     rw [Ir.foldInlineList, foldInline_plain acc x (h x (List.mem_cons_self ..))]
     exact ih acc fun y hy => h y (List.mem_cons_of_mem _ hy)
 
-private theorem renderCiteOne_plain (style : CiteStyle) (textual : Bool) (r : Resolved) :
-    (renderCiteOne style textual r).all plainCite = true := by
-  unfold renderCiteOne
-  split <;> simp [plainCite]
+private theorem emit_plain (out : Array Ir.Inline) (s : String)
+    (h : out.all plainCite = true) : (emit out s).all plainCite = true := by
+  unfold emit
+  split
+  · exact h
+  · rw [Array.all_push, h]; rfl
 
-private theorem renderCitePart_plain (style : CiteStyle) (textual : Bool)
-    (p : Option Resolved) : (renderCitePart style textual p).all plainCite = true := by
-  cases p with
-  | some r => exact renderCiteOne_plain style textual r
-  | none => simp [renderCitePart, plainCite]
+private theorem emitLink_plain (out : Array Ir.Inline) (anchor s : String)
+    (h : out.all plainCite = true) : (emitLink out anchor s).all plainCite = true := by
+  rw [emitLink, Array.all_push, h]; simp [plainCite]
 
-private theorem joinCiteRest_plain (sep : String) :
-    ∀ (ps : List (Array Ir.Inline)) (out : Array Ir.Inline), out.all plainCite = true →
-      (∀ p ∈ ps, p.all plainCite = true) →
-      (joinCiteRest sep out ps).all plainCite = true := by
-  intro ps
-  induction ps with
-  | nil => intro out ho _; simpa [joinCiteRest] using ho
-  | cons p rest ih =>
-    intro out ho hp
-    rw [joinCiteRest]
-    apply ih
-    · simp [ho, hp p (List.mem_cons_self ..), plainCite]
-    · intro q hq; exact hp q (List.mem_cons_of_mem _ hq)
+private theorem citeStep_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
+    (acc : CiteAcc) (o : Option Resolved) (h : acc.out.all plainCite = true) :
+    (citeStep p f s acc o).out.all plainCite = true := by
+  cases o with
+  | none => exact emit_plain _ _ h
+  | some r => exact emitLink_plain _ _ _ (emit_plain _ _ h)
 
-private theorem joinCite_plain (sep : String) (ps : List (Array Ir.Inline))
-    (out : Array Ir.Inline) (ho : out.all plainCite = true)
-    (hp : ∀ p ∈ ps, p.all plainCite = true) :
-    (joinCite sep out ps).all plainCite = true := by
-  cases ps with
-  | nil => simpa [joinCite] using ho
-  | cons p rest =>
-    rw [joinCite]
-    apply joinCiteRest_plain
-    · simp [ho, hp p (List.mem_cons_self ..)]
-    · intro q hq; exact hp q (List.mem_cons_of_mem _ hq)
+private theorem finish_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
+    (acc : CiteAcc) (h : acc.out.all plainCite = true) :
+    (finish p f s acc).all plainCite = true := by
+  refine emit_plain _ _ ?_
+  rw [Array.all_append, emit_plain _ _ (by simp), h]; rfl
 
 /-- The renderer emits text and links over text only. -/
-theorem renderCite_plain (style : CiteStyle) (textual : Bool)
+theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) :
-    (renderCite style textual parts).all plainCite = true := by
+    (renderCite p f parts).all plainCite = true := by
   unfold renderCite
-  simp only [Array.all_append, Bool.and_eq_true]
-  refine ⟨joinCite_plain _ _ _ ?_ ?_, ?_⟩
-  · split <;> simp [plainCite]
-  · intro p hp
-    rw [List.mem_map] at hp
-    obtain ⟨o, _, rfl⟩ := hp
-    exact renderCitePart_plain style textual o
-  · split <;> simp [plainCite]
+  split
+  · exact emit_plain _ _ (by simp)
+  · refine finish_plain _ _ _ _ ?_
+    exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => a.out.all plainCite = true)
+      (by simp) (fun _ b hb => citeStep_plain p f _ b _ hb)
 
 /-- A rendered citation adds nothing to the pending census. -/
-private theorem renderCite_pending (style : CiteStyle) (textual : Bool)
+private theorem renderCite_pending (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) (acc : Array Ir.Unresolved) :
-    Ir.foldInlineList Ir.pendingStep acc (renderCite style textual parts).toList = acc :=
+    Ir.foldInlineList Ir.pendingStep acc (renderCite p f parts).toList = acc :=
   foldInlineList_plain acc _ fun x hx =>
-    Array.all_eq_true_iff_forall_mem.mp (renderCite_plain style textual parts) x
+    Array.all_eq_true_iff_forall_mem.mp (renderCite_plain p f parts) x
       (Array.mem_def.mpr hx)
 
 mutual
@@ -1049,9 +1121,9 @@ mutual
 /-- Resolution's census, inline face: whatever a rewritten node adds to the
 pending census is not a citation — the citation arm emits plain content
 (`renderCite_pending`), every other node keeps its own leaf. -/
-theorem resolveInline_pending (style : CiteStyle) (find : Resolver) (x : Ir.Inline) :
+theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) :
     ∀ (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInline style find #[] x).toList →
+      q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInline p find #[] x).toList →
       q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .role _ body | .link _ body
@@ -1060,16 +1132,16 @@ theorem resolveInline_pending (style : CiteStyle) (find : Resolver) (x : Ir.Inli
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
       Array.append_empty] at h
-    exact resolveInlines_pending style find body.toList acc q h
+    exact resolveInlines_pending p find body.toList acc q h
   | .alt _ _ active otherwise =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
       Array.append_empty] at h
-    rcases resolveInlines_pending style find otherwise.toList _ q h with h' | hc
-    · exact resolveInlines_pending style find active.toList acc q h'
+    rcases resolveInlines_pending p find otherwise.toList _ q h with h' | hc
+    · exact resolveInlines_pending p find active.toList acc q h'
     · exact .inr hc
-  | .cite textual keys =>
+  | .cite form keys =>
     intro acc q h
     simp only [resolveInline, Array.empty_append, renderCite_pending] at h
     exact .inl h
@@ -1094,24 +1166,24 @@ theorem resolveInline_pending (style : CiteStyle) (find : Resolver) (x : Ir.Inli
       Array.append_empty] at h
     exact .inl h
 
-theorem resolveInlines_pending (style : CiteStyle) (find : Resolver) (xs : List Ir.Inline) :
+theorem resolveInlines_pending (p : CitePunct) (find : Resolver) (xs : List Ir.Inline) :
     ∀ (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInlines style find #[] xs).toList →
+      q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInlines p find #[] xs).toList →
       q ∈ acc ∨ q.isCite = false := by
   match xs with
   | [] => intro acc q h; exact .inl h
   | x :: rest =>
     intro acc q h
     rw [resolveInlines, resolveInlines_acc, Array.toList_append, Ir.foldInlineList_append] at h
-    rcases resolveInlines_pending style find rest _ q h with h' | hc
-    · exact resolveInline_pending style find x acc q h'
+    rcases resolveInlines_pending p find rest _ q h with h' | hc
+    · exact resolveInline_pending p find x acc q h'
     · exact .inr hc
 
 end
 
-private theorem tableCells_pending (style : CiteStyle) (find : Resolver) :
+private theorem tableCells_pending (p : CitePunct) (find : Resolver) :
     ∀ (cells : List (Array Ir.Inline)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ Ir.foldTableCells Ir.pendingStep acc (cells.map (resolveArr style find)) →
+      q ∈ Ir.foldTableCells Ir.pendingStep acc (cells.map (resolveArr p find)) →
       q ∈ acc ∨ q.isCite = false := by
   intro cells
   induction cells with
@@ -1120,13 +1192,13 @@ private theorem tableCells_pending (style : CiteStyle) (find : Resolver) :
     intro acc q h
     rw [List.map_cons, Ir.foldTableCells] at h
     rcases ih _ q h with h' | hc
-    · exact resolveInlines_pending style find c.toList acc q h'
+    · exact resolveInlines_pending p find c.toList acc q h'
     · exact .inr hc
 
-private theorem tableRows_pending (style : CiteStyle) (find : Resolver) :
+private theorem tableRows_pending (p : CitePunct) (find : Resolver) :
     ∀ (rows : List (Array (Array Ir.Inline))) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldTableRows Ir.pendingStep acc
-        (rows.map fun row => row.map (resolveArr style find)) →
+        (rows.map fun row => row.map (resolveArr p find)) →
       q ∈ acc ∨ q.isCite = false := by
   intro rows
   induction rows with
@@ -1135,15 +1207,15 @@ private theorem tableRows_pending (style : CiteStyle) (find : Resolver) :
     intro acc q h
     rw [List.map_cons, Ir.foldTableRows, Array.toList_map] at h
     rcases ih _ q h with h' | hc
-    · exact tableCells_pending style find row.toList acc q h'
+    · exact tableCells_pending p find row.toList acc q h'
     · exact .inr hc
 
-private theorem algLines_pending (style : CiteStyle) (find : Resolver) :
+private theorem algLines_pending (p : CitePunct) (find : Resolver) :
     ∀ (lines : List Ir.AlgLine) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldAlgLines Ir.pendingStep acc (lines.map fun l =>
         { l with
-          content := resolveArr style find l.content
-          comment := l.comment.map (resolveArr style find) }) →
+          content := resolveArr p find l.content
+          comment := l.comment.map (resolveArr p find) }) →
       q ∈ acc ∨ q.isCite = false := by
   intro lines
   induction lines with
@@ -1155,11 +1227,11 @@ private theorem algLines_pending (style : CiteStyle) (find : Resolver) :
     · cases hc' : l.comment with
       | none =>
         simp only [hc', Option.map] at h'
-        exact resolveInlines_pending style find l.content.toList acc q h'
+        exact resolveInlines_pending p find l.content.toList acc q h'
       | some c =>
         simp only [hc', Option.map] at h'
-        rcases resolveInlines_pending style find c.toList _ q h' with h'' | hcc
-        · exact resolveInlines_pending style find l.content.toList acc q h''
+        rcases resolveInlines_pending p find c.toList _ q h' with h'' | hcc
+        · exact resolveInlines_pending p find l.content.toList acc q h''
         · exact .inr hcc
     · exact .inr hc
 
@@ -1168,125 +1240,125 @@ mutual
 /-- Resolution's census, block face, generalised over the output prefix:
 whatever the rewritten block adds to the census beyond what the prefix
 already contributed is not a citation. -/
-theorem resolveBlock_pending (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (b : Ir.Block) :
     ∀ (out : Array Ir.Block) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc
-        (resolveBlock style find items out b).toList →
+        (resolveBlock p find items out b).toList →
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match b with
   | .para content | .framefoot content | .logo content =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    exact resolveInlines_pending style.cite find content.toList _ q h
+    exact resolveInlines_pending p find content.toList _ q h
   | .equation n content =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    rcases resolveInlines_pending style.cite find n.toList _ q h with h' | hc
-    · exact resolveInlines_pending style.cite find content.toList _ q h'
+    rcases resolveInlines_pending p find n.toList _ q h with h' | hc
+    · exact resolveInlines_pending p find content.toList _ q h'
     · exact .inr hc
   | .section _ _ _ title =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    exact resolveInlines_pending style.cite find title.toList _ q h
+    exact resolveInlines_pending p find title.toList _ q h
   | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
   | .spaced _ body | .step _ _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    exact resolveBlocks_pending style find items body.toList #[] _ q h
+    exact resolveBlocks_pending p find items body.toList #[] _ q h
   | .alt _ _ active otherwise =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    rcases resolveBlocks_pending style find items otherwise.toList #[] _ q h with h' | hc
-    · exact resolveBlocks_pending style find items active.toList #[] _ q h'
+    rcases resolveBlocks_pending p find items otherwise.toList #[] _ q h with h' | hc
+    · exact resolveBlocks_pending p find items active.toList #[] _ q h'
     · exact .inr hc
   | .titled _ title body | .frame title _ _ _ body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    rcases resolveBlocks_pending style find items body.toList #[] _ q h with h' | hc
-    · exact resolveInlines_pending style.cite find title.toList _ q h'
+    rcases resolveBlocks_pending p find items body.toList #[] _ q h with h' | hc
+    · exact resolveInlines_pending p find title.toList _ q h'
     · exact .inr hc
   | .float _ _ _ body caption =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    rcases resolveBlocks_pending style find items body.toList #[] _ q h with h' | hc
-    · exact resolveInlines_pending style.cite find caption.toList _ q h'
+    rcases resolveBlocks_pending p find items body.toList #[] _ q h with h' | hc
+    · exact resolveInlines_pending p find caption.toList _ q h'
     · exact .inr hc
   | .list _ its =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    exact resolveItems_pending style find items its.toList #[] _ q h
+    exact resolveItems_pending p find items its.toList #[] _ q h
   | .columns cols =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
-    exact resolveCols_pending style find items cols.toList #[] _ q h
+    exact resolveCols_pending p find items cols.toList #[] _ q h
   | .table _ _ _ rows _ =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
-    exact tableRows_pending style.cite find rows.toList _ q h
+    exact tableRows_pending p find rows.toList _ q h
   | .algorithm _ _ lines =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
-    exact algLines_pending style.cite find lines.toList _ q h
+    exact algLines_pending p find lines.toList _ q h
   | .bibliography _ _ _ | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact .inl h
 
-theorem resolveBlocks_pending (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+theorem resolveBlocks_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (bs : List Ir.Block) :
     ∀ (out : Array Ir.Block) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc
-        (resolveBlocks style find items out bs).toList →
+        (resolveBlocks p find items out bs).toList →
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match bs with
   | [] => intro out acc q h; exact .inl h
   | b :: rest =>
     intro out acc q h
     rw [resolveBlocks] at h
-    rcases resolveBlocks_pending style find items rest _ acc q h with h' | hc
-    · exact resolveBlock_pending style find items b out acc q h'
+    rcases resolveBlocks_pending p find items rest _ acc q h with h' | hc
+    · exact resolveBlock_pending p find items b out acc q h'
     · exact .inr hc
 
-theorem resolveItems_pending (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+theorem resolveItems_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (its : List (Array Ir.Block)) :
     ∀ (out : Array (Array Ir.Block)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBlockItems (fun a _ => a) Ir.pendingStep acc
-        (resolveItems style find items out its).toList →
+        (resolveItems p find items out its).toList →
       q ∈ Ir.foldBlockItems (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match its with
   | [] => intro out acc q h; exact .inl h
   | item :: rest =>
     intro out acc q h
     rw [resolveItems] at h
-    rcases resolveItems_pending style find items rest _ acc q h with h' | hc
+    rcases resolveItems_pending p find items rest _ acc q h with h' | hc
     · simp only [Array.toList_push, Ir.foldBlockItems_append, Ir.foldBlockItems] at h'
-      exact resolveBlocks_pending style find items item.toList #[] _ q h'
+      exact resolveBlocks_pending p find items item.toList #[] _ q h'
     · exact .inr hc
 
-theorem resolveCols_pending (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+theorem resolveCols_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (cs : List (Ir.BoxWidth × Array Ir.Block)) :
     ∀ (out : Array (Ir.BoxWidth × Array Ir.Block)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBlockCols (fun a _ => a) Ir.pendingStep acc
-        (resolveCols style find items out cs).toList →
+        (resolveCols p find items out cs).toList →
       q ∈ Ir.foldBlockCols (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match cs with
   | [] => intro out acc q h; exact .inl h
   | (_, body) :: rest =>
     intro out acc q h
     rw [resolveCols] at h
-    rcases resolveCols_pending style find items rest _ acc q h with h' | hc
+    rcases resolveCols_pending p find items rest _ acc q h with h' | hc
     · simp only [Array.toList_push, Ir.foldBlockCols_append, Ir.foldBlockCols] at h'
-      exact resolveBlocks_pending style find items body.toList #[] _ q h'
+      exact resolveBlocks_pending p find items body.toList #[] _ q h'
     · exact .inr hc
 
 end
 
 /-- The furniture regions, each through `resolveArr`, folded in turn. -/
-private theorem regions_pending (style : CiteStyle) (find : Resolver) :
+private theorem regions_pending (p : CitePunct) (find : Resolver) :
     ∀ (rs : List (Array Ir.Inline)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ rs.foldl (fun acc r => Ir.foldInlines Ir.pendingStep acc (resolveArr style find r)) acc →
+      q ∈ rs.foldl (fun acc r => Ir.foldInlines Ir.pendingStep acc (resolveArr p find r)) acc →
       q ∈ acc ∨ q.isCite = false := by
   intro rs
   induction rs with
@@ -1295,24 +1367,24 @@ private theorem regions_pending (style : CiteStyle) (find : Resolver) :
     intro acc q h
     rw [List.foldl_cons] at h
     rcases ih _ q h with h' | hc
-    · exact resolveInlines_pending style find r.toList acc q h'
+    · exact resolveInlines_pending p find r.toList acc q h'
     · exact .inr hc
 
 /-- **Resolution leaves no citation**: the pending census of a resolved
 document names no `.cite`, in any region `foldDoc` reads. -/
-theorem resolveDoc_no_cite (style : Style) (find : Resolver) (items : Array Ir.BibItem)
+theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) :
-    ∀ u ∈ Ir.pendingNodes (resolveDoc style find items doc), u.isCite = false := by
+    ∀ u ∈ Ir.pendingNodes (resolveDoc p find items doc), u.isCite = false := by
   intro u hu
   unfold Ir.pendingNodes Ir.foldDoc at hu
   rw [resolveDoc, Ir.furnitureInlines_mapDoc, Array.foldl_map, ← Array.foldl_toList] at hu
-  have hbody : (Ir.mapDoc (resolveArr style.cite find)
-      (fun bs => resolveBlocks style find items #[] bs.toList) doc).body =
-        resolveBlocks style find items #[] doc.body.toList := rfl
+  have hbody : (Ir.mapDoc (resolveArr p find)
+      (fun bs => resolveBlocks p find items #[] bs.toList) doc).body =
+        resolveBlocks p find items #[] doc.body.toList := rfl
   rw [hbody] at hu
-  rcases regions_pending style.cite find _ _ u hu with h' | hc
+  rcases regions_pending p find _ _ u hu with h' | hc
   · unfold Ir.foldBlocks at h'
-    rcases resolveBlocks_pending style find items doc.body.toList #[] #[] u h' with h'' | hc
+    rcases resolveBlocks_pending p find items doc.body.toList #[] #[] u h' with h'' | hc
     · simp [Ir.foldBlockList] at h''
     · exact hc
   · exact hc
@@ -1326,9 +1398,9 @@ theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc) :
     ∀ u ∈ Ir.pendingNodes (apply sources doc).1, u.isCite = false := by
   intro u hu
   unfold apply at hu
-  rcases h : analyse sources doc with ⟨style, find, items, diags⟩
+  rcases h : analyse sources doc with ⟨p, find, items, diags⟩
   rw [h] at hu
-  exact resolveDoc_no_cite style find items doc u hu
+  exact resolveDoc_no_cite p find items doc u hu
 
 
 end LeanTex.Core.Bib

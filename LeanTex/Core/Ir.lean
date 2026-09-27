@@ -2279,6 +2279,62 @@ inductive RefForm where
   | name (cap : Bool)
   deriving Repr, BEq
 
+/-- The natbib command a citation was written with — natbib.sty's command
+table (`\DeclareRobustCommand\citet` and its siblings), each one setting
+which parts print and whether brackets wrap them: `\citet` (textual),
+`\citep` (parenthetical), `\cite` (`auto`: textual in author-year mode,
+parenthetical in numbers mode, natbib.sty `\NAT@cites`), `\citealt` and
+`\citealp` (the two without brackets), `\citeauthor`, `\citeyear`,
+`\citeyearpar`, `\citenum` (the list position alone), and `\citetext`
+(its note in the citation brackets, no key). Which punctuation draws them
+is the bibliography's to decide (`Bib.renderCite`). -/
+inductive CiteCmd where
+  | textual
+  | paren
+  | auto
+  | alt
+  | alp
+  | author
+  | year
+  | yearPar
+  | num
+  | text
+  deriving Repr, BEq, Inhabited
+
+/-- What a citation declares beside its keys: the command, the starred
+form's full author list (`\citet*`), the capitalized form (`\Citet`), and
+the optional notes — one `[...]` is the note after the citation, two are
+the notes before and after it (natbib.sty's header: `\citep[see][p.~5]`).
+A note is its elaborated text: natbib sets it as written, and nothing in a
+citation's rendering reads structure inside one. -/
+structure CiteForm where
+  cmd : CiteCmd
+  full : Bool := false
+  up : Bool := false
+  pre : String := ""
+  post : String := ""
+  deriving Repr, BEq, Inhabited
+
+/-- natbib's citation commands (natbib.sty's command table), each with the
+form it selects: `\citefullauthor` is `\citeauthor*` there, and the
+capitalized five are the only ones natbib defines. The one naming site —
+the elaborator reads a command through it and the dump spells a form back
+through it. -/
+def natbibCites : List (String × CiteForm) :=
+  [("citet", { cmd := .textual }), ("citep", { cmd := .paren }),
+   ("cite", { cmd := .auto }), ("citealt", { cmd := .alt }),
+   ("citealp", { cmd := .alp }), ("citeauthor", { cmd := .author }),
+   ("citefullauthor", { cmd := .author, full := true }),
+   ("citeyear", { cmd := .year }), ("citeyearpar", { cmd := .yearPar }),
+   ("citenum", { cmd := .num }), ("citetext", { cmd := .text }),
+   ("Citet", { cmd := .textual, up := true }), ("Citep", { cmd := .paren, up := true }),
+   ("Citealt", { cmd := .alt, up := true }), ("Citealp", { cmd := .alp, up := true }),
+   ("Citeauthor", { cmd := .author, up := true })]
+
+/-- The command a form spells back as. -/
+def CiteForm.command (f : CiteForm) : String :=
+  ((natbibCites.find? fun (_, g) => g.cmd == f.cmd && g.up == f.up).map (·.1)).getD "cite"
+
 /-- The weight a style selects, when it touches the axis: the one map
 `.bold`, `.medium`, `.series`, and `.normal`'s reset project through.
 Layout's `applyStyle` follows it exactly (`weight_agree` in Layout.lean),
@@ -2396,16 +2452,17 @@ inductive Inline where
   glyph from AT and carries the label as the accessible name; the
   markdown twin renders the label itself. -/
   | icon (scalar : Char) (label : String)
-  /-- A citation (`\cite`, natbib's `\citep`/`\citet`): the keys of one
-  citation group, as written. Elaboration emits it unresolved — the `.bib`
-  file is the driver's effect — and resolution (`Bib.apply`) *replaces* the
-  node with the bibliography style's own inlines: marks linked to their
-  entries, brackets or parentheses per the style, so no backend ever reads
-  a citation form. A node a backend still sees is one no bibliography
-  resolved; it renders `citeMark` per key, LaTeX's own spelling for an
-  undefined citation, and W0351 or the missing-file diagnostic has already
-  said why. `textual` marks `\citet`'s in-sentence form. -/
-  | cite (textual : Bool) (keys : Array String)
+  /-- A citation (`\cite`, natbib's `\citep`/`\citet` and their family): the
+  keys of one citation group, as written, and the form it was written in.
+  Elaboration emits it unresolved — the `.bib` file is the driver's effect —
+  and resolution (`Bib.apply`) *replaces* the node with the bibliography's
+  own inlines: marks linked to their entries, brackets and separators per
+  the document's natbib punctuation, so no backend ever reads a citation
+  form. A node a backend still sees is one no bibliography resolved; it
+  renders `citeMark` per key, LaTeX's own spelling for an undefined
+  citation, and W0351 or the missing-file diagnostic has already said
+  why. -/
+  | cite (form : CiteForm) (keys : Array String)
   /-- `\footnote{...}`: a note set at the foot of the page its mark lands
   on. `num` is the resolved mark number — elaboration assigns it in flow
   order through `footnoteMark` (`\footnote[n]` overrides without stepping
@@ -7631,9 +7688,10 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}image {src.quote}{parts}\n"
   | .icon c label =>
     s!"{ind}icon {(String.ofList [c]).quote} label {label.quote}\n"
-  | .cite textual keys =>
-    let form := if textual then "citet" else "cite"
-    s!"{ind}{form} {String.intercalate " " (keys.toList.map (·.quote))}\n"
+  | .cite form keys =>
+    let note (tag s : String) := if s.isEmpty then "" else s!" {tag} {s.quote}"
+    s!"{ind}cite {form.command}{if form.full then "*" else ""}{note "pre" form.pre}\
+{note "post" form.post} {String.intercalate " " (keys.toList.map (·.quote))}\n"
   | .footnote num body =>
     let tag := match num with
       | some n => s!" {n}"

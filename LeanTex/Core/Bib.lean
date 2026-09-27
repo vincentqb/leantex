@@ -660,4 +660,11 @@ def labelNames (v : String) : String :=
   | [a, b] => if b == "others" then s!"{short a} et al." else s!"{short a} and {short b}"
   | a :: _ => s!"{short a} et al."
 
+/-- The full author list natbib's starred forms print (plainnat.bst
+FUNCTION {format.full.names}, the long names each `\bibitem` carries):
+every last name, joined as `andJoin` joins a list. -/
+def fullNames (v : String) : String :=
+  andJoin ((splitNames v).toList.map fun s =>
+    if s == "others" then s else text (parseName s).short)
+
 end LeanTex.Core.Bib

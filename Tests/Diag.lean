@@ -37,7 +37,7 @@ coverage check holds each witness to actually firing its code. -/
 `Bib.apply` is pure, so the witness needs no driver. -/
 def dvBib (bib : String) (cite : String) (style : Option String) : Array Diag :=
   (Bib.apply #[("refs", bib)]
-    { body := #[.para #[.cite false #[cite]],
+    { body := #[.para #[.cite { cmd := .paren } #[cite]],
         .bibliography "refs" style #[]] }).2
 
 /-- Diagnostics of the data-expansion pass over a source: the pass runs
