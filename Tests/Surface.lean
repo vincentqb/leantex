@@ -4535,6 +4535,84 @@ def plainnatChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   for want in plainnatLines, got in shipped.toList do
     t s!"plainnat: the page sets '{want}' ({got})" (got == want)
 
+/-- Entries whose label names and year coincide, so plainnat.bst's
+`forward.pass`/`reverse.pass` give them letters, one more year by the same
+names, and one other author: invented people and titles. -/
+def natbibLabelBib : String :=
+  "@article{gam2019a, author = {Gil Gamma and Hal Eta}, title = {An early invented result},\n\
+    journal = {Journal of Examples}, year = {2019}}\n\
+  @article{gam2019b, author = {Gil Gamma and Hal Eta}, title = {A later invented result},\n\
+    journal = {Journal of Examples}, year = {2019}}\n\
+  @article{gam2020, author = {Gil Gamma and Hal Eta}, title = {A third invented result},\n\
+    journal = {Journal of Examples}, year = {2020}}\n\
+  @book{iota2018, author = {Ivy Iota}, title = {An Invented Book}, publisher = {Example Press},\n\
+    year = {2018}}\n"
+
+/-- The calls the letter rows set, one paragraph each (`natbibSrc`). -/
+def natbibLabelCalls : List String :=
+  ["\\citet{gam2019a}", "\\citet{gam2019b}", "\\citet{gam2019a,gam2019b}",
+   "\\citep{gam2019a,gam2019b}", "\\citep{gam2019a,gam2019b,gam2020}", "\\citeyear{gam2019b}",
+   "\\citeyearpar{gam2019a}", "\\citealp{gam2019a,gam2019b}", "\\citealt{gam2019a,gam2019b}",
+   "\\citep{iota2018}"]
+
+/-- The author-year lines lualatex set for `natbibLabelCalls` in square
+brackets, and the reference list's first three entries. -/
+def natbibLabelAy : List String × List String :=
+  (["Gamma and Eta [2019a]", "Gamma and Eta [2019b]", "Gamma and Eta [2019a,b]",
+    "[Gamma and Eta, 2019a,b]", "[Gamma and Eta, 2019a,b, 2020]", "2019b", "[2019a]",
+    "Gamma and Eta, 2019a,b", "Gamma and Eta 2019a,b", "[Iota, 2018]"],
+   ["Gil Gamma and Hal Eta. An early invented result. Journal of Examples, 2019a.",
+    "Gil Gamma and Hal Eta. A later invented result. Journal of Examples, 2019b.",
+    "Gil Gamma and Hal Eta. A third invented result. Journal of Examples, 2020."])
+
+/-- One configuration per row — the preamble, the style, the lines lualatex
+set for `natbibLabelCalls`, and the list's first three entries — measured
+with TeX Live 2026 (natbib 8.31b, bibtex 0.99e) through `pdftotext`. In
+numbers mode natbib defines `\natexlab` to print nothing, so the letters
+reach neither the citations nor the list. -/
+def natbibLabelModes : List (String × String × List String × List String) :=
+  let round (xs : List String) := xs.map fun s => (s.replace "[" "(").replace "]" ")"
+  [("\\usepackage{natbib}", "plainnat", natbibLabelAy.1, natbibLabelAy.2),
+   ("\\usepackage{natbib}", "unsrtnat", natbibLabelAy.1, natbibLabelAy.2),
+   ("\\usepackage{natbib}\\setcitestyle{authoryear,round}", "plainnat",
+    round natbibLabelAy.1, natbibLabelAy.2),
+   ("\\usepackage{natbib}\\bibpunct{(}{)}{;}{a}{,}{,}", "plainnat",
+    round natbibLabelAy.1, natbibLabelAy.2),
+   ("\\usepackage[numbers]{natbib}", "unsrtnat",
+    ["Gamma and Eta [1]", "Gamma and Eta [2]", "Gamma and Eta [1, 2]", "[1, 2]", "[1, 2, 3]",
+     "2019", "[2019]", "1, 2", "Gamma and Eta 1, 2", "[4]"],
+    ["[1] Gil Gamma and Hal Eta. An early invented result. Journal of Examples, 2019.",
+     "[2] Gil Gamma and Hal Eta. A later invented result. Journal of Examples, 2019.",
+     "[3] Gil Gamma and Hal Eta. A third invented result. Journal of Examples, 2020."])]
+
+/-- **Entries that share a label are told apart as plainnat.bst tells them**:
+two entries by the same label names in the same year take the letters
+plainnat's `forward.pass`/`reverse.pass` give them, in list order; the list
+prints each year with its letter (FUNCTION {format.date}), and a citation
+prints it too — `\citet{a,b}` sets `2019a,b`, as natbib's loop prints only
+the letter for a key whose names and year repeat the last key's. On the
+shipped page and in the HTML, in every mode natbib reads; in numbers mode
+the letters stay out. -/
+def natbibLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for (pre, style, calls, list) in natbibLabelModes do
+    let (doc, _) := elabStr (natbibSrc
+      (pre ++ "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}") style
+      natbibLabelCalls)
+    let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+    let lines := bodyLines (layoutOf oneFace doc)
+    let page := lines.map lineInk
+    let entries := (bibEntryLines lines).map fun e => String.intercalate " " (e.toList.map lineInk)
+    let html := htmlVisibleText (HtmlDoc.emit {} doc).1
+    t s!"natbib letters {pre} + {style}: every key resolves" ds.isEmpty
+    for want in calls, k in [1:calls.length + 1] do
+      let line := s!"L{k} {want} end."
+      t s!"natbib letters {pre} + {style}: page line {k} sets '{want}'" (page.contains line)
+      t s!"natbib letters {pre} + {style}: html line {k} reads '{want}'" (hasStr html line)
+    for want in list, k in [0:list.length] do
+      t s!"natbib letters {pre} + {style}: entry {k + 1} reads '{want}' ({entries[k]?.getD ""})"
+        (entries[k]? == some want && hasStr html want)
+
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a
 `\usepackage` inside an `\input`'ed preamble file, a `\RequirePackage`

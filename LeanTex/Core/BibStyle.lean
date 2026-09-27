@@ -282,11 +282,13 @@ def anchorOf (key : String) : String :=
   "#" ++ a
 
 /-- One resolved citation, ready to render: the entry with its 1-based
-position in the reference list. -/
+position in the reference list, and the letter that tells it from entries
+sharing its label (`extraLabels`), empty when its label is its own. -/
 structure Resolved where
   key : String
   position : Nat
   entry : Entry
+  extra : String := ""
   deriving Repr
 
 /-- The full author list natbib's starred forms print (`\citet*`), or the
@@ -305,13 +307,15 @@ private inductive CitePart where
   deriving BEq
 
 /-- The loop's state between keys: the output so far, the separator the
-last key left for the next (natbib.sty `\@citea`), the last key's names —
-a key repeating them prints only its year — and whether the last key
-printed a year, which is what closes a textual citation's bracket. -/
+last key left for the next (natbib.sty `\@citea`), the last key's names and
+bare year — a key repeating the names prints only its year, and one
+repeating both only its letter — and whether the last key printed a year,
+which is what closes a textual citation's bracket. -/
 private structure CiteAcc where
   out : Array Ir.Inline := #[]
   citea : String := ""
   last : Option String := none
+  lastYear : Option String := none
   dated : Bool := false
 
 private def emit (out : Array Ir.Inline) (s : String) : Array Ir.Inline :=
@@ -358,19 +362,24 @@ private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
 /-- One key under natbib's loop (natbib.sty `\NAT@citex`, `\NAT@citexnum`
 in numbers mode): the separator the previous key left, this key's piece
 linked to its entry, and the separator it leaves. natbib capitalizes names
-only in author-year mode, and a key repeating the previous key's names
-prints only its year (`yysep`). An unresolvable key prints `?` in its
-place with the separators a resolved one would have. -/
+only in author-year mode; a key repeating the previous key's names prints
+only its year after `yysep`, and one repeating the year too only its
+letter, with no space (`\NAT@exlab`: `2019a,b`). In numbers mode natbib
+defines `\natexlab` to print nothing, so no letter prints. An unresolvable
+key prints `?` in its place with the separators a resolved one would have. -/
 private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : CiteAcc) :
     Option Resolved → CiteAcc
   | none => { out := emit acc.out (acc.citea ++ "?"), citea := p.sep ++ " " }
   | some r =>
     let names := if f.full then citeFullAuthors r.entry else citeAuthors r.entry
     let names := if f.up && !s.numeric then upFirst names else names
-    let year := citeYear r.entry
+    let bare := citeYear r.entry
+    let letter := if p.numbers then "" else r.extra
+    let year := bare ++ letter
     let mark := if s.numeric then toString r.position else year
     let pre := if f.pre.isEmpty then "" else f.pre ++ " "
     let same := acc.last == some names
+    let sameYear := same && acc.lastYear == some bare && !letter.isEmpty
     -- (what precedes the linked piece, the piece, the separator left behind)
     let t : String × String × String := match s.part with
       | .names => (acc.citea, names, p.sep ++ " ")
@@ -378,14 +387,17 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : Cit
       | .both =>
         if s.wrap then
           if s.numeric then (acc.citea, mark, p.sep ++ " ")
+          else if sameYear then (p.yysep, letter, p.sep ++ " ")
           else if same then (p.yysep ++ " ", year, p.sep ++ " ")
           else (acc.citea, s!"{names}{p.aysep} {year}", p.sep ++ " ")
+        else if sameYear then (p.yysep, letter, s.cl ++ p.sep ++ " ")
         else
           (if same then p.yysep ++ " " ++ (if s.numeric then pre else "")
             else acc.citea ++ names ++ " " ++ s.op ++ pre, mark, s.cl ++ p.sep ++ " ")
     { out := emitLink (emit acc.out t.1) (anchorOf r.key) t.2.1
       citea := t.2.2
       last := some names
+      lastYear := some bare
       dated := true }
 
 /-- The brackets around the loop's output: a wrapping form opens them with
@@ -516,9 +528,11 @@ private def editorsText (nf : NameFormat) (ed : String) : String :=
 /-- One piece of one entry: THE piece renderer — every entry type renders
 through this one function, and what varies per type is only the steps that
 call it. `mid` is whether the piece continues a sentence, which the edition
-and the series number read, as plainnat's do. An absent field renders
-empty, and its step writes nothing. -/
-def renderField (nf : NameFormat) (e : Entry) (mid : Bool) : Field → Array Ir.Inline
+and the series number read, as plainnat's do; `extra` is the entry's letter,
+which the date carries. An absent field renders empty, and its step writes
+nothing. -/
+def renderField (nf : NameFormat) (e : Entry) (mid : Bool) (extra : String) :
+    Field → Array Ir.Inline
   | .authors =>
     match e.field? "author" with
     | some a => #[.text (Ir.smartPunct (nf.renderList a))]
@@ -589,9 +603,9 @@ def renderField (nf : NameFormat) (e : Entry) (mid : Bool) : Field → Array Ir.
     | none => #[.text (Ir.smartPunct words)]
   | .date =>
     match e.field? "year", e.field? "month" with
-    | some y, some m => #[.text (text m ++ " " ++ text y)]
-    | some y, none => #[.text (text y)]
-    | none, _ => #[]
+    | some y, some m => #[.text (text m ++ " " ++ text y ++ extra)]
+    | some y, none => #[.text (text y ++ extra)]
+    | none, _ => if extra.isEmpty then #[] else #[.text extra]
   | .doi =>
     match e.field? "doi" with
     | some d => #[.text "doi: ", .link ("https://doi.org/" ++ urlText d) #[.text (urlText d)]]
@@ -691,15 +705,16 @@ joins its sentence with `, `; after a block or sentence boundary the entry
 so far takes its period (`add.period$`) and the piece opens the next; the
 entry closes with its period (`fin.entry`). natbib's `\newblock` adds
 `\hskip .11em plus .33em minus .07em` at a block boundary, which no IR
-node spells: the boundary is one word space. -/
-def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) :
+node spells: the boundary is one word space. `extra` is the entry's letter
+among those sharing its label, which its date carries (`extraLabels`). -/
+def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : String := "") :
     Array Ir.Inline := Id.run do
   let mut out : Array Ir.Inline := #[]
   let mut st := OutState.beforeAll
   for step in steps do
     match step with
     | .out f =>
-      let r := renderField nf e (st == .mid) f
+      let r := renderField nf e (st == .mid) extra f
       unless r.isEmpty do
         out := match st with
           | .beforeAll => out
@@ -855,9 +870,30 @@ where
 1-based position in the reference list. -/
 def Resolver := String → Option Resolved
 
+/-- The label plainnat.bst's `calc.label` builds and its `forward.pass`
+compares between entries: the label names a citation prints and the
+year. -/
+def labelOf (e : Entry) : String :=
+  citeAuthors e ++ "(" ++ ((e.field? "year").map text).getD ""
+
+/-- The letter of the `i`-th entry among those sharing a label: `a`, `b`,
+… (`int.to.chr$` from `"a" chr.to.int$`). -/
+def extraLetter (i : Nat) : String := String.singleton (Char.ofNat ('a'.toNat + i))
+
+/-- The letters plainnat.bst's `forward.pass` and `reverse.pass` give a
+reference list, and unsrtnat.bst's the same: the entries sharing a label
+(`labelOf`) take `a`, `b`, … in list order, and an entry whose label is its
+own takes none. -/
+def extraLabels (rs : Array Resolved) : Array Resolved :=
+  rs.map fun r =>
+    let same := rs.filter fun s => labelOf s.entry == labelOf r.entry
+    { r with extra :=
+        if same.size < 2 then "" else extraLetter ((same.findIdx? (·.key == r.key)).getD 0) }
+
 /-- The reference list a style builds from the cited entries: sorted by
 the style's order, positions assigned by list index — so the numeric
-marker IS the sort position, the fact `\cite` marks rest on. -/
+marker IS the sort position, the fact `\cite` marks rest on — and each
+entry's letter among those sharing its label (`extraLabels`). -/
 def resolveEntries (style : Style) (cited : Array String)
     (find : String → Option Entry) : Array Resolved :=
   -- First-citation positions (1-based, in cited order) feed the sort;
@@ -867,18 +903,21 @@ def resolveEntries (style : Style) (cited : Array String)
     | some e => acc.push { key := k, position := acc.size + 1, entry := e }
     | none => acc) #[]
   let sorted := sortResolved style.sort hits.toList
-  (sorted.toArray.mapIdx fun i r => { r with position := i + 1 })
+  extraLabels (sorted.toArray.mapIdx fun i r => { r with position := i + 1 })
 
 /-- The items a `\bibliography` block ships: each resolved entry formatted
 per the style, marked by its position in numbers mode and by nothing in
 author-year mode — natbib's `\@biblabel` is the number there and an
-empty hanging label here. -/
+empty hanging label here. The date carries the entry's letter in
+author-year mode (FUNCTION {format.date}); numbers mode's `\natexlab`
+prints nothing. -/
 def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
     Array Ir.BibItem :=
   resolved.map fun r =>
     { key := r.key
       marker := if p.numbers then some (toString r.position) else none
-      content := renderEntry style.names (style.steps r.entry) r.entry }
+      content := renderEntry style.names (style.steps r.entry) r.entry
+        (if p.numbers then "" else r.extra) }
 
 /-! ### The theorems the four-axis shape earns
 
@@ -909,7 +948,7 @@ theorem positions_exact (style : Style) (cited : Array String)
     (find : String → Option Entry) (i : Nat)
     (hi : i < (resolveEntries style cited find).size) :
     (resolveEntries style cited find)[i].position = i + 1 := by
-  simp [resolveEntries] at hi ⊢
+  simp [resolveEntries, extraLabels] at hi ⊢
 
 /-- Insertion keeps every element: what goes in comes out, nothing else.
 The membership half of "the emitted list is a permutation of the cited
