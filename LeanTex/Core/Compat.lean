@@ -285,6 +285,10 @@ inductive ParamSite where
   | unmodelled (what : String)
   deriving Repr, BEq
 
+/-- The kernel's list environments, each a `\list` whose own settings
+follow its level's parameters (ltlists.dtx). -/
+def listEnvs : List String := ["itemize", "enumerate", "description"]
+
 /-- The kernel and booktabs length parameters, each with its site. A name
 not here is a length of the document's own: a token of its name. -/
 def paramSites : List (String × ParamSite) :=
@@ -328,6 +332,12 @@ def paramSites : List (String × ParamSite) :=
    ("fboxrule", .unmodelled "rules a framed box, which no site here reads"),
    ("arrayrulewidth", .unmodelled "sets a table rule's thickness, which no site here reads"),
    ("unitlength", .unmodelled "scales a picture environment, which no site here reads")]
+
+/-- Is `n` a parameter `\normalsize` sets again (`ParamSite.sizeReset`)? -/
+def sizeReset (n : String) : Bool :=
+  match paramSites.lookup n with
+  | some (.sizeReset _) => true
+  | _ => false
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -601,6 +611,10 @@ private structure St where
   wherever the group is set; only one outside every group stays in force
   until `\begin{document}`. -/
   inGroup : Bool := false
+  /-- The walk is inside a list environment's body, where a list parameter
+  assigned there spaces that one list (ltlists.dtx: `\list` runs the level's
+  parameters, then the environment's own settings). -/
+  inList : Bool := false
   /-- The rewrite is of a whole document — its stream holds the `document`
   environment — rather than of a value's text re-read on its own, whose top
   level is inline content (`preambleProper`). -/
@@ -2991,13 +3005,24 @@ private def collectDeferOne : Raw → M Raw
 end
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
-`\relax` vanishes. -/
-private def lengthSrc (raws : Array Raw) : String := Id.run do
+`\relax` vanishes. Each control word goes through `ref`, told whether an
+argument group follows it; `none` from `ref` makes the whole value
+unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
+private def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
+    Option String := Id.run do
   let mut s := ""
   let mut prevNumber := false
-  for r in raws do
-    match r with
-    | .ctrl "relax" _ => pure ()
+  let mut depth := 0
+  for h : k in [0:raws.size] do
+    match raws[k] with
+    | .ctrl "relax" _ =>
+      if depth > 0 then
+        s := s ++ ")"
+        depth := depth - 1
+    | .ctrl "dimexpr" _ =>
+      s := s ++ (if prevNumber then " * (" else "(")
+      depth := depth + 1
+      prevNumber := false
     | .ctrl "p@" _ =>
       -- TeX's \p@ is 1pt and \z@ 0pt (plain.tex); a `.sty` spells its
       -- lengths in them, and its rubber in \@plus/\@minus (ltdefns.dtx:
@@ -3014,14 +3039,27 @@ private def lengthSrc (raws : Array Raw) : String := Id.run do
       s := s ++ " minus "
       prevNumber := false
     | .ctrl n _ =>
-      s := s ++ (if prevNumber then " * " else "") ++ n
+      let some v := ref n (raws[skipSpaces raws (k + 1)]? matches some (.group _ _))
+        | return none
+      -- A factor against a name multiplies it; a sign before one negates
+      -- it, which the native reader spells as a factor too (`-1 * x`).
+      let t := s.trimAsciiEnd.toString
+      let pre := if prevNumber || t.back.isDigit || t.back == '.' then " * "
+        else if t == "-" || t.endsWith "(-" then "1 * " else ""
+      s := s ++ pre ++ v
       prevNumber := false
     | .word w _ =>
       s := s ++ w
       prevNumber := w.toList.all fun c => c.isDigit || c == '.'
     | .space => s := s ++ " "
     | other => s := s ++ rawSrcOne other
-  return s.trimAscii.toString
+  -- `\dimexpr` ends with its argument when no `\relax` closes it (e-TeX
+  -- manual §3.5: the expression stops at the first token it cannot read).
+  return some (s ++ String.ofList (List.replicate depth ')')).trimAscii.toString
+
+/-- A TeX length in the native spelling, every name standing as itself. -/
+private def lengthSrc (raws : Array Raw) : String :=
+  (lengthSrcBy (fun n _ => some n) raws).getD ""
 
 /-- The parameter a `\setlength` target names: a control word, or TeX's
 register reference `\skip\footins` (the skip an insertion holds, TeXbook
@@ -3040,17 +3078,73 @@ private def nameParam (n why : String) (pos : Pos) : M Unit := do
     -- same setting ships from the document, and only its severity moves
     (demote := packageFile (← get).file)
 
+/-- The kernel's three vertical skip amounts, the same in every class
+(ltspace.dtx, as plain.tex sets them). -/
+private def kernelSkip : String → Option String
+  | "smallskipamount" => some "3pt plus 1pt minus 1pt"
+  | "medskipamount" => some "6pt plus 2pt minus 2pt"
+  | "bigskipamount" => some "12pt plus 4pt minus 4pt"
+  | _ => none
+
+/-- A length value as the door reads it where it stands: a kernel parameter
+the document set is the value it holds (TeX copies a register's value; the
+parameter's own token may not exist, or carry an engine name), a kernel
+skip amount is its fixed value, and any other name is a token of the
+document's, read where the declaration reads it. `none` for what the door
+cannot evaluate: a kernel parameter whose value it was never told (the
+class sets it), a box's dimension, and a command that computes a length
+(`\stretch`, calc's `\widthof`). -/
+private def lenValue (lens : Array (String × String)) (raws : Array Raw) : Option String :=
+  let kernel (n : String) : Bool := (paramSites.lookup n).isSome
+  let held (n : String) : Option String :=
+    (if kernel n then (lens.find? (·.1 == n)).map (·.2) else none).orElse
+      fun _ => kernelSkip n
+  let unknown (n : String) : Bool := kernel n || n == "ht" || n == "wd" || n == "dp"
+  match raws.filter (!· matches .space) with
+  | #[.ctrl n _] =>
+    -- One name alone copies its value whole, glue included.
+    match held n with
+    | some v => some v
+    | none => if unknown n then none else some n
+  | _ => lengthSrcBy (fun n arg =>
+      if arg then none
+      else match held n with
+        | some v => some s!"({v})"
+        | none => if unknown n then none else some n) raws
+
+/-- The names a native length spells, in order: the word runs that start
+with a letter. Units stand against their digits (`2pt`), so none is one. -/
+private def lengthNames (s : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur := ""
+  for c in s.toList ++ [' '] do
+    if c.isAlphanum || c == '@' || c == '_' then cur := cur.push c
+    else
+      if !cur.isEmpty && cur.front.isAlpha then out := out.push cur
+      cur := ""
+  return out
+
+/-- Does the declaration reader take `s` as a length, each name in it taken
+as declared? Whether a name resolves stays the reader's, where it reads. -/
+private def readsAsLength (s : String) : Bool :=
+  match Decl.parseValue s ((lengthNames s).map fun n => (n, {})) with
+  | some (.glue _) | some (.dim _) => true
+  | _ => false
+
 /-- One length assignment, natively, at the site `paramSites` gives it: a
 page property, a token an engine site reads, a list level's indent, or —
 where LaTeX's own code sets the value again before anything reads it —
 nothing, said so. A parameter no engine site reads is named where it stands,
 and a length of the document's own is a token of its name. Inside a
-definition nothing is judged: the assignment runs where the command is used.
-The value is recorded either way, so register arithmetic on the length reads
-it. -/
+definition nothing is judged: the assignment runs where the command is used,
+so it is not the value later arithmetic reads either; everywhere else the
+value is recorded, for as long as its group lasts (`rewriteRaw`). -/
 private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
-  write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
   let st ← get
+  -- premise: registerScopeChecks — an assignment in a definition body or in a
+  -- group leaves the value arithmetic after it reads as it was
+  unless st.inDef do
+    write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
   let preamble ← docPreamble
   let own := s!"\\tokens\{ {n} = {src} }"
   let emit (native : String) : M (Array Raw) := do
@@ -3089,11 +3183,39 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     if preamble then
       write fun st => { st with listResets := st.listResets.push (n, what, st.file, pos) }
       synthAt own pos
-    else named "spaces one list; a list here is spaced per level, in the preamble"
+    else if st.inList then
+      -- premise: unreadableLengthChecks — the setting builds inside its list,
+      -- named once, and the list keeps its level's spacing
+      nameParam n "spaces this one list; a list here is spaced per level, in the preamble" pos
+      return #[]
+    else
+      nothing s!"the next list sets '\\{n}' again from its class's parameters, so no list reads it"
   | .unmodelled why, false =>
     if n == "parindent" && Decl.parseGlue src == some {} then
       nothing "paragraphs here are set flush, as declared"
     else named why
+
+/-- The one warning for a length assignment the door cannot read (`shown`,
+the value as written): named once per parameter, and skipped, the length
+keeping what it held, as though no assignment took place. -/
+private def unreadableLength (n shown : String) (pos : Pos) : M (Array Raw) := do
+  sayOnce ("ctrl:setlength:" ++ n ++ ":value") .W0104
+    s!"'\\{n}' is set to '{shown}', a value this engine cannot read: skipped, and \
+the length keeps its value" pos
+    -- premise: unreadableLengthChecks — each LaTeX-valid spelling the door
+    -- cannot read builds with this one warning, and ships the page it shipped
+    -- without the setting
+    (demote := packageFile (← get).file)
+  return #[]
+
+/-- A length assignment from its value's raws (`\setlength`, TeX's own
+`\parskip 6pt`): read at the door and landed by `setLength`, or named and
+skipped (`unreadableLength`). -/
+private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
+    M (Array Raw) := do
+  if let some src := lenValue (← get).lens value then
+    if readsAsLength src then return ← setLength n src what pos
+  unreadableLength n (rawSrc value).trimAscii.toString pos
 
 /-- A length operand the rewrite evaluates: a literal (`2pt`, `-2pt`), or a
 length whose value it set, negated or not. -/
@@ -3179,6 +3301,54 @@ private def readAssigns (raws : Array Raw) (i : Nat) : Array TexAssign × Nat :=
       j := skipSpaces raws e
     | _ => break
   return (out, j)
+
+/-- Past the spaces and the optional `=` before a TeX assignment's value. -/
+private def skipEq (raws : Array Raw) (i : Nat) : Nat :=
+  let j := skipSpaces raws i
+  match raws[j]? with
+  | some (.sym '=' _) | some (.word "=" _) => skipSpaces raws (j + 1)
+  | _ => j
+
+/-- The raw standing before index `i`, spaces skipped. -/
+private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
+  let mut k := i
+  for _ in [0:i] do
+    k := k - 1
+    match raws[k]? with
+    | some .space => pure ()
+    | r => return r
+  return none
+
+/-- TeX's own assignment to a kernel parameter, when the control word
+`name`, read up to `start`, opens one (TeXbook ch. 24:
+⟨variable⟩[=]⟨value⟩, as `\parskip 6pt plus 1pt`, `\parskip=0pt` and
+`\parindent\z@` spell it): the value's raws and where it ends. The value
+starts with `=`, a number or a register; a parameter read as an operand —
+after `\hskip`, or before words — opens none. -/
+private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
+    Option (Array Raw × Nat) :=
+  if (paramSites.lookup name).isNone then none
+  else if (match rawBefore raws (start - 1) with
+      | some (.ctrl c _) => ["hskip", "vskip", "kern", "the", "showthe", "advance",
+          "multiply", "divide"].contains c
+      | _ => false) then none
+  else
+    let j := skipSpaces raws start
+    -- The lexer keeps an `=` against the word it opens (`=6pt`).
+    let (eq, raws) := match raws[j]? with
+      | some (.sym '=' _) | some (.word "=" _) => (true, raws)
+      | some (.word w p) =>
+        if w.startsWith "=" && w.length > 1 then (true, raws.set! j (.word (w.drop 1).toString p))
+        else (false, raws)
+      | _ => (false, raws)
+    let v0 := skipEq raws start
+    let opens := eq || match raws[v0]? with
+      | some (.word w _) => w.front.isDigit || w.front == '.' || w.front == '-'
+      | some (.sym c _) => c == '-' || c == '+'
+      | some (.ctrl c _) => valueCtrl c || (paramSites.lookup c).isSome
+      | _ => false
+    let e := glueEnd raws v0
+    if opens && e > v0 then some (raws.extract v0 e, e) else none
 
 /-- The list depth a class's parameter macro sets up: `\@listi` to
 `\@listvi` (size10.clo), the one `\list` calls for its depth (ltlists.dtx). -/
@@ -5158,6 +5328,8 @@ where
       s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
       (help := "declare the hook before '\\begin{document}'")
     return some (#[], start)
+  if let some (value, e) := plainAssign? name raws start then
+    return some (← assignLength name value s!"\\{name}" pos, e)
   match name with
   | "usepackage" | "RequirePackage" =>
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
@@ -5568,7 +5740,7 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         return some (#[], k)
       | some n =>
         let target := (rawSrc args[0]).trimAscii.toString
-        return some (← setLength n (lengthSrc args[1]) s!"\\setlength\{{target}}" pos, k)
+        return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos, k)
       | none => return none
     else return none
   | "addtolength" =>
@@ -5594,7 +5766,11 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
 skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
         return some (#[], k)
-      | _, _ => return none
+      | _, _ =>
+        -- The value the length holds is its class's, or the addend is one
+        -- the door cannot read: the sum is unknown here.
+        return some (← unreadableLength n
+          s!"\\{n} + {(rawSrc args[1]).trimAscii.toString}" pos, k)
     else return none
   | "advance" | "multiply" | "divide" =>
     -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
@@ -6752,9 +6928,13 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let saved := (← get).bodyNext
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
+    let savedLens := (← get).lens
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup }
+    -- A group's assignments end with it (TeXbook ch. 24: an assignment is
+    -- local to the group it stands in).
+    write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
+                              lens := savedLens }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
@@ -6783,7 +6963,10 @@ and patterns stand in" p
       else if n == "document" then
         -- Inside the document environment a preamble declaration is a
         -- placement defect; the flag is what the `\usepackage` arm reads.
-        write fun st => { st with inDoc := true }
+        -- `\begin{document}` runs `\normalsize`, which sets the size's
+        -- lengths again (size10.clo), so the preamble's values of them end.
+        write fun st => { st with inDoc := true,
+                                  lens := st.lens.filter fun e => !sizeReset e.1 }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with inDoc := false }
         return .env n body' p
@@ -6821,7 +7004,14 @@ steps come from its body" p
           if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
         return .env n (body.extract 0 k) p
       else
-        return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+        -- An environment is a group (ltmiscen.dtx: `\begin` opens one), so
+        -- a length set inside it ends with it; inside a list, a list
+        -- parameter set there is that list's own.
+        let st0 ← get
+        write fun st => { st with inList := st.inList || listEnvs.contains n }
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        write fun st => { st with lens := st0.lens, inList := st0.inList }
+        return .env n body' p
   | r => pure r
 
 end

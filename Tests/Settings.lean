@@ -279,3 +279,121 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a list level's arithmetic is read with it, and what it sets unread is named once"
     (!ds.any (·.subject == some "ctrl:advance") &&
       (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 1)
+
+
+
+/-- **Every LaTeX-valid length setting builds: one the door reads is the
+value it holds, and one it cannot read is named once and changes nothing.**
+The door evaluates a value where it stands, as TeX copies a register's value
+(a kernel parameter the document set, `\medskipamount`, `-\x`,
+`\dimexpr … \relax`, TeX's own `\parskip 6pt`), and the page is the one the
+literal spelling sets. A value it cannot evaluate — a kernel parameter's
+class value, infinite glue, a command that measures text — is W0104 once,
+keyed on the parameter, and the page is the one the document ships without
+the setting: never an error, never stray text. The list idiom, a setting
+before a list's first `\item`, builds the same way. Asserted on the shipped
+page and the structured diagnostics. -/
+def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}\n\\usepackage{calc}\n" ++ pre ++ "\n\\begin{document}\n" ++
+      body ++ "\n\\end{document}"
+  let body := "Alpha words here.\n\nBravo words here.\n\\begin{itemize}\n" ++
+    "\\item Charlie item.\n\\item Delta item.\n\\end{itemize}\nEcho words.\n" ++
+    "\\begin{tabular}{ll}\nFoxtrot & Golf\n\\end{tabular}"
+  let bare := pagesOf oneFace (doc "" body)
+  let fine (ds : Array Diag) : Bool :=
+    !ds.any fun d => d.severity == .error || d.code == "W0104" || d.code == "W0301"
+  let read : List (String × String) :=
+    [("\\newlength{\\probegap}\\setlength{\\probegap}{7pt}\\setlength{\\parskip}{-\\probegap}",
+       "\\setlength{\\parskip}{-7pt}"),
+     ("\\setlength{\\parskip}{\\medskipamount}",
+       "\\setlength{\\parskip}{6pt plus 2pt minus 2pt}"),
+     ("\\setlength{\\leftmargini}{\\dimexpr 1em+2pt\\relax}",
+       "\\setlength{\\leftmargini}{1em + 2pt}"),
+     ("\\parskip 6pt plus 1pt", "\\setlength{\\parskip}{6pt plus 1pt}"),
+     ("\\parskip=5pt", "\\setlength{\\parskip}{5pt}"),
+     ("\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{\\parskip}",
+       "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}")]
+  for (spelled, literal) in read do
+    let src := doc spelled body
+    let set := pagesOf oneFace src
+    t s!"'{spelled}' sets the page '{literal}' sets"
+      (set == pagesOf oneFace (doc literal body))
+    t s!"'{spelled}' moves the page" (set != bare)
+    t s!"'{spelled}' builds, and names no loss" (fine (dvE src))
+  let unread : List (String × String) :=
+    [("parskip", "\\setlength{\\parskip}{0pt plus 1fil}"),
+     ("parskip", "\\setlength{\\parskip}{0.5\\baselineskip}"),
+     ("parskip", "\\setlength{\\parskip}{\\stretch{1}}"),
+     ("labelwidth", "\\setlength{\\labelwidth}{0.5\\leftmargini}"),
+     ("arraycolsep", "\\setlength{\\arraycolsep}{0.5\\tabcolsep}"),
+     ("probegap", "\\newlength{\\probegap}\\setlength{\\probegap}{\\widthof{Alpha}}"),
+     ("parskip", "\\addtolength{\\parskip}{2pt}"),
+     ("tabcolsep", "\\tabcolsep=\\baselineskip")]
+  for (n, pre) in unread do
+    let src := doc pre body
+    let ds := dvE src
+    t s!"'{pre}' builds" (!ds.any (·.severity == .error))
+    t s!"'{pre}' is named once, on its parameter"
+      ((ds.filter fun d => d.code == "W0104").map (·.subject) ==
+        #[some s!"ctrl:setlength:{n}:value"])
+    t s!"'{pre}' ships the page the document ships without it" (pagesOf oneFace src == bare)
+  let listBody (lead : String) : String :=
+    "Alpha words.\n\\begin{itemize}" ++ lead ++ "\\item One.\\item Two.\\end{itemize}\nBravo words."
+  let idiom := doc "" (listBody "\\setlength{\\itemsep}{0pt}")
+  let ids := dvE idiom
+  t "a length set before a list's first item builds" (!ids.any (·.severity == .error))
+  t "a length set before a list's first item is named once, as spacing only that list"
+    ((ids.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:itemsep"])
+  t "a length set before a list's first item keeps the list's level spacing"
+    (pagesOf oneFace idiom == pagesOf oneFace (doc "" (listBody "")))
+  let enumBody (lead : String) : String :=
+    "\\begin{enumerate}" ++ lead ++ "\\item Four.\\item Five.\\end{enumerate}"
+  let start := dvE (doc "" (enumBody "\\setcounter{enumi}{3}"))
+  t "a counter set before a list's first item builds, named once"
+    (!start.any (·.severity == .error) &&
+      (start.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setcounter:enumi"])
+  let heads (set : String) : String :=
+    "\\section{Alpha}\nOne.\n\\subsection{Bravo}\nTwo.\n\\subsection{Charlie}\nThree.\n" ++
+      set ++ "\n\\section{Delta}\nFour."
+  let valued := doc "" (heads "\\setcounter{section}{\\value{subsection}}")
+  t "a counter set to another's value reads it where it stands"
+    (pagesOf oneFace valued == pagesOf oneFace (doc "" (heads "\\setcounter{section}{2}")))
+  t "a counter set to another's value builds" (!(dvE valued).any (·.severity == .error))
+
+
+/-- **An assignment is the value later arithmetic reads only where TeX makes
+it: not in a definition's body, which runs where the command is used, and not
+past the group or environment it stands in** (TeXbook ch. 24: assignments
+are local to their group). Measured as the gap a `\vspace` of the length
+sets on the shipped page, against the document that sets the value LaTeX
+computes (lualatex: 11pt in every row). -/
+def registerScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let doc (pre set : String) : String :=
+    "\\documentclass{article}\n\\newlength{\\probegap}\\setlength{\\probegap}{10pt}\n" ++ pre ++
+      "\n\\begin{document}\n" ++ set ++ "\nAlpha words.\n\n\\vspace{\\probegap}\n\n" ++
+      "Bravo words.\n\\end{document}"
+  let eleven := pagesOf oneFace (doc "" "\\setlength{\\probegap}{11pt}")
+  let rows : List (String × String × String) :=
+    [("an unused definition's arithmetic",
+       "\\newcommand{\\probebump}{\\addtolength{\\probegap}{30pt}}",
+       "\\addtolength{\\probegap}{1pt}"),
+     ("an unused definition's assignment",
+       "\\newcommand{\\probeset}{\\setlength{\\probegap}{50pt}}",
+       "\\addtolength{\\probegap}{1pt}"),
+     ("a group's assignment", "",
+       "{\\setlength{\\probegap}{30pt}}\\addtolength{\\probegap}{1pt}"),
+     ("an environment's assignment", "",
+       "\\begin{minipage}{5cm}\\setlength{\\probegap}{30pt}\\end{minipage}" ++
+         "\\addtolength{\\probegap}{1pt}")]
+  for (what, pre, set) in rows do
+    t s!"{what} is not the value arithmetic after it reads"
+      (pagesOf oneFace (doc pre set) ==
+        pagesOf oneFace (doc pre ((set.splitOn "\\addtolength").headD "" ++
+          "\\setlength{\\probegap}{11pt}")))
+  t "the scope rows measure the value: 11pt is not the 10pt the document starts from"
+    (eleven != pagesOf oneFace (doc "" ""))

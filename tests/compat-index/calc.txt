@@ -3,4 +3,4 @@
 pre impl \setlength{\parskip}{2pt}
 pre impl \setlength{\parindent}{1em + 2pt}
 pre refuse:W0301 \settowidth{\parindent}{abc}
-pre refuse:E0321 \setlength{\parindent}{\widthof{abc}}
+pre refuse:W0104 \setlength{\parindent}{\widthof{abc}}

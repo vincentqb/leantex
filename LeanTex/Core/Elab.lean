@@ -2707,6 +2707,20 @@ private def applyFlowCounter (name : String)
       | "addtocounter" => rw.1 st.ctr + n
       | _ => rw.1 st.ctr + 1) }
 
+/-- A counter command's integer argument: a literal, or `\value{c}` — the
+counter's register (ltcounts.dtx) — read where it stands. `.error c` for
+the value of a counter `c` the flow does not keep; `none` for no integer. -/
+private def counterValue (st : ESt) (nRaw : Array Raw) : Option (Except String Int) :=
+  match nRaw.toList.filter (!· matches .space) with
+  | [.ctrl "value" _, .group c _] =>
+    let c := (rawSrc c).trimAscii.toString
+    some <| match sectionLevel c with
+      | some lvl => .ok (Int.ofNat (counterAt st.ctr.secNums lvl))
+      | none => match flowCounter? c with
+        | some rw => .ok (rw.1 st.ctr)
+        | none => .error c
+  | _ => (rawSrc nRaw).trimAscii.toString.toInt?.map .ok
+
 /-- One counter command with its arguments starting at `i` (just past
 the control word): scan, apply over the section counters, name any
 other counter (W0104) with its arguments consumed — configuration,
@@ -2720,27 +2734,31 @@ private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   match raws[j]? with
   | some (.group ctrRaw _) =>
     let ctr := (rawSrc ctrRaw).trimAscii.toString
-    let ⟨(amt, j2), hj2⟩ : { t : Option Int × Nat // j + 1 ≤ t.2 } ←
+    let st ← get
+    let ⟨(amt, j2), hj2⟩ : { t : Option (Except String Int) × Nat // j + 1 ≤ t.2 } ←
       if n == "addtocounter" || n == "setcounter" then
         let ja := skipSpaces raws (j + 1)
         have hja : j + 1 ≤ ja := skipSpaces_ge raws (j + 1)
         match raws[ja]? with
         | some (.group nRaw _) =>
-          pure ⟨((rawSrc nRaw).trimAscii.toString.toInt?, ja + 1), by omega⟩
+          pure ⟨(counterValue st nRaw, ja + 1), by omega⟩
         | _ => pure ⟨(none, j + 1), Nat.le_refl _⟩
       else
-        pure ⟨(some 1, j + 1), Nat.le_refl _⟩
+        pure ⟨(some (.ok 1), j + 1), Nat.le_refl _⟩
+    let unmodelled (c : String) : EM Unit :=
+      warnOnce ctx ("ctrl:" ++ n ++ ":" ++ c) .W0104
+        s!"counter '{c}' is not modelled; '\\{n}' changes nothing" pos
     match sectionLevel ctr, amt with
-    | some lvl, some v => applyCounter n lvl v
+    | some lvl, some (.ok v) => applyCounter n lvl v
+    | some _, some (.error c) => unmodelled c
     | some _, none =>
       diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
     | none, _ =>
       match flowCounter? ctr, amt with
-      | some rw, some v => applyFlowCounter n rw v
+      | some rw, some (.ok v) => applyFlowCounter n rw v
+      | some _, some (.error c) => unmodelled c
       | some _, none => diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
-      | none, _ =>
-        warnOnce ctx ("ctrl:" ++ n ++ ":" ++ ctr) .W0104
-          s!"counter '{ctr}' is not modelled; '\\{n}' changes nothing" pos
+      | none, _ => unmodelled ctr
     return ⟨j2, by omega⟩
   | _ =>
     diag ctx .E0304 s!"'\\{n}' needs a \{counter} group" pos
@@ -6687,6 +6705,23 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
             rw [nestedParsList_push]
             omega)
       else do
+        if let .ctrl c _ := item then
+          if counterCtrl c then
+            -- A counter command before the first `\item` sets its counter,
+            -- as LaTeX allows there (ltlists.dtx: the list's own settings
+            -- follow `\list`'s): a declaration, never content.
+            let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
+            return ← itemSplitGo ctx body pos k items steps itemPauses pauses curItem
+              curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+              (by
+                have hwj := sliceWeight_here body h
+                have hle := sliceWeight_le body hk
+                omega)
+              (by
+                have hpj := slicePars_here body h
+                have h2 := rawPars_split body[j]
+                have hle := slicePars_le body hk
+                omega)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
         itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
