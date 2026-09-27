@@ -293,3 +293,56 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     n + ((Pdf.pathSegs geom q.path).filter fun op => op matches .moveTo ..).size) 0
   t "the PDF strokes the closed polygon as one subpath"
     (moves == 1)
+
+
+/-- **A drawn node with no minimum ships the outline pgf draws: its text box
+plus two inner seps** (pgfmoduleshapes.code.tex: the `rectangle` shape's
+`\northeast`, the `circle` shape's `\radius`), per axis the declared minimum
+where that is larger, and an edge meets that outline. The defect shipped the
+text bare and named the outline as outside the subset. Asserted over the
+shipped paths' extents and boxes, against the same text with no inner sep, so
+the claim is about the rule and not about one face's metrics. Invented
+content. -/
+def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let paths (src : String) : Array (Dim.Sp × Dim.Sp) × Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    let (doc, _) := elabMeasured oneFace src
+    let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+    ((c[0]?.map (·.pathSpans)).getD #[], (c[0]?.map (·.pathBoxes)).getD #[])
+  let node (opts : String) : String := picDoc "" "" s!"\\node[draw{opts}] at (0,0) \{Pad};"
+  let bare := (paths (node ", inner sep=0pt")).1[0]?
+  let padded := (paths (node ", inner sep=6pt")).1[0]?
+  t "a drawn node's outline is its text plus an inner sep on every side"
+    (match bare, padded with
+     | some (w0, h0), some (w6, h6) =>
+       decide (0 < w0 ∧ 0 < h0) && w6 - w0 == 2 * Dim.pt 6 && h6 - h0 == 2 * Dim.pt 6
+     | _, _ => false)
+  t "the drawn outline names nothing" (!picLoss (node "") && !picLoss (node ", inner sep=6pt"))
+  -- One declared minimum governs its own axis; the text governs the other.
+  let wide := (paths (node ", inner sep=0pt, minimum width=40mm")).1[0]?
+  let tall := (paths (node ", inner sep=0pt, minimum height=20mm")).1[0]?
+  let near (p q : Int) : Bool := decide (p - q ≤ 1 ∧ q - p ≤ 1)
+  t "a declared minimum governs its axis and the text the other"
+    (match bare, wide, tall with
+     | some (w0, h0), some (ww, wh), some (tw, th) =>
+       near ww (Dim.mm 40) && wh == h0 && tw == w0 && near th (Dim.mm 20)
+     | _, _, _ => false)
+  -- pgf's circle: the text box's half-diagonal, one inner sep out each way.
+  let circ := (paths (picDoc "" "" "\\node[circle, draw, inner sep=0pt] at (0,0) {Pad};")).1[0]?
+  t "a drawn circle's radius reaches the text box's corners"
+    (match bare, circ with
+     | some (w0, h0), some (d, _) =>
+       let r := d / 2
+       decide (r * r ≤ (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) + 2 * r + 2 ∧
+         (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) ≤ (r + 1) * (r + 1) + 2 * r + 2)
+     | _, _ => false)
+  -- An edge between two drawn nodes starts and ends on their outlines.
+  let (_, boxes) := paths (picDoc "" ""
+    ("\\node[draw] (a) at (0,0) {Aa};\\node[draw] (b) at (3,0) {Bb};\n" ++
+     "\\draw (a) -- (b);"))
+  t "an edge meets the outlines it joins"
+    (match boxes[0]?, boxes[1]?, boxes[2]? with
+     | some (ax, _, aw, _), some (bx, _, _, _), some (ex, _, ew, _) =>
+       decide (ex - (ax + aw) ≤ 2 ∧ (ax + aw) - ex ≤ 2 ∧
+         (ex + ew) - bx ≤ 2 ∧ bx - (ex + ew) ≤ 2)
+     | _, _, _ => false)

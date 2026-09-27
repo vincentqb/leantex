@@ -3629,9 +3629,16 @@ minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
                   width := Ir.Pic.thickWidth, dash := .dashed })
           (some Ir.Color.white),
         .label cm cm #[.text "x"] Ir.Color.black 1000 .center]))
-  t "a drawn node without a minimum names the loss and keeps its label"
-    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334"] &&
-      (picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes.size) == some 1)
+  t "a drawn node without a minimum ships pgf's outline around its text"
+    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == [] &&
+      (match ((picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes)).getD #[] with
+       | s => s.size == 2 && (match s[0]? with
+         | some (Ir.Pic.Shape.circle _ _ r _ _) => decide (0 < r)
+         | _ => false)) &&
+      (match ((picOf (wrap "\\node[draw] at (0,0) {x};")).map (·.shapes)).getD #[] with
+       | s => s.size == 2 && (match s[0]? with
+         | some (Ir.Pic.Shape.frame _ _ w h _ _) => decide (0 < w ∧ 0 < h)
+         | _ => false)))
   t "a shape option without draw or fill draws nothing and warns nothing"
     ((elabStr (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).2.isEmpty &&
       (picOf (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).map

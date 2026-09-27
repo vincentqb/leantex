@@ -1732,6 +1732,42 @@ def innerSepDefault : Int := 3333
 /-- One inner sep at this em. -/
 def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
 
+/-- **A drawn node's outline is the shape pgf draws**, for a node that does
+not declare its whole extent (pgfmoduleshapes.code.tex, the `rectangle`
+shape's `\northeast` and the `circle` shape's `\radius`): centred on the
+text box, and per axis the text box plus two inner seps, or the declared
+minimum where that is larger — a circle's radius is the length of the
+vector from the text box's centre to its corner one inner sep out, or half
+the larger minimum. The glyph box `lo`–`hi` is relative to the node's
+centre `sy`. Returns the outline's centre height and its width and height
+(a circle's are both its diameter), so a governing minimum is met to the
+sp. -/
+def nodeOutline (circle : Bool) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
+    Sp × Sp × Sp :=
+  let mid := sy + (lo + hi) / 2
+  let tx := textHalfW + sepX
+  let ty := (hi - lo) / 2 + sepY
+  if circle then
+    let d := max (max minW minH) (2 * isqrt (tx * tx + ty * ty))
+    (mid, d, d)
+  else (mid, max minW (2 * tx), max minH (2 * ty))
+
+/-- **The outline covers the letters, one inner sep out** (`_covers`): the
+drawn rectangle is centred on the text box and at least the text box plus
+two inner seps on each axis — the room pgf gives a node's text, whatever
+minimum it declares — and a governing minimum is its size exactly. -/
+theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
+    (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
+      2 * (textHalfW + sepX) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
+      2 * ((hi - lo) / 2 + sepY) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.2 ∧
+      minW ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
+      minH ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.2 := by
+  simp only [nodeOutline, Bool.false_eq_true, ↓reduceIte, true_and]
+  have step : ∀ mW mH t u : Int, 2 * t ≤ max mW (2 * t) ∧ 2 * u ≤ max mH (2 * u) ∧
+      mW ≤ max mW (2 * t) ∧ mH ≤ max mH (2 * u) := by
+    intros; omega
+  exact step minW minH (textHalfW + sepX) ((hi - lo) / 2 + sepY)
+
 /-- **A node's border half-extent: its text, plus one inner sep, or the
 declared minimum where that is larger.** pgf manual §17.2.2 — a node's
 border is its text *plus* `inner sep`, and §17.5.2's anchors sit on the
@@ -3306,49 +3342,57 @@ this one against; the node is not drawn")
           ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
            (sx + ownA, sy + max (boxHi + sepY) declB))
         ev := { ev with borders := ev.borders.push border }
+        -- A drawn node that does not declare its whole extent is outlined as
+        -- pgf outlines it, around its measured text (`nodeOutline`), and its
+        -- anchors stand on that outline, where an edge meets what is drawn.
+        -- A node declaring both minimums (a circle, its size) keeps the
+        -- declared outline and the anchors it always had.
+        let declaredExtent : Bool := if isCircle then max minW minH > 0 else minW > 0 && minH > 0
+        let outline? : Option (Sp × Sp × Sp) :=
+          if (draw.isSome || fillCol.isSome) && !declaredExtent then
+            some (nodeOutline isCircle (dimF minW) (dimF minH) sy inkHalf.1 boxLo boxHi sepX sepY)
+          else none
         -- A named node registers its anchoring geometry whether or not
         -- its border draws: pgf anchors edges on the shape's border even
         -- when the path itself is never painted.
         if let some nm := nodeName then
           let geom : NodeGeom :=
-            if isCircle then
-              { x := sx, y := sy, a := ownA, b := ownB, circle := true
-                base := sy + base }
-            else
-              { x := sx, y := sy, a := ownA, b := ownB, base := sy + base }
+            match outline? with
+            | some (cy, w, h) =>
+              { x := sx, y := cy, a := w / 2, b := h / 2, circle := isCircle, base := sy + base }
+            | none =>
+              if isCircle then
+                { x := sx, y := sy, a := ownA, b := ownB, circle := true
+                  base := sy + base }
+              else
+                { x := sx, y := sy, a := ownA, b := ownB, base := sy + base }
           ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
-        -- the text. Extent is the declared minimum: pgf manual §"Shapes"
-        -- has extent = max(minimum, text extent + 2·inner sep) per axis,
-        -- and the minimum is the whole answer when it dominates the
-        -- body — the case this subset renders; a body wider than its
-        -- declared minimum stands proud of the border. pgf draws a
-        -- node's path only when `draw` or `fill` asks it to. Minimums
-        -- scale with the picture only under `transform shape` (§25.4);
-        -- the line width is graphic state and never scales.
+        -- the text. A declared extent is the declared minimum (pgf manual
+        -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
+        -- axis, and the minimum is the whole answer when it dominates the
+        -- body — a body wider than both declared minimums stands proud of
+        -- the border); an undeclared one is `nodeOutline`'s. pgf draws a
+        -- node's path only when `draw` or `fill` asks it to. Minimums scale
+        -- with the picture only under `transform shape` (§25.4); the line
+        -- width is graphic state and never scales.
         if draw.isSome || fillCol.isSome then
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
             { color := c.getD Ir.Color.black
               width := width
               dash := dash }
-          if isCircle then
-            let r := dimF (max minW minH) / 2
-            if r > 0 then
-              ev := { ev with shapes := ev.shapes.push (.circle sx sy r stroke fillCol) }
-            else
-              ev := ev.diag (.W0334, "a drawn 'circle' without a 'minimum size' \
-is outside the rendered picture subset (the body's own extent is not measured \
-here); its outline is not drawn")
-          else
-            let w := dimF minW
-            let h := dimF minH
-            if w > 0 && h > 0 then
-              let fr := Ir.Pic.Shape.frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
-              ev := { ev with shapes := ev.shapes.push fr }
-            else
-              ev := ev.diag (.W0334, "a drawn node without 'minimum width' and \
-'minimum height' (or 'minimum size') is outside the rendered picture subset \
-(the body's own extent is not measured here); its outline is not drawn")
+          match outline? with
+          | some (cy, w, h) =>
+            let shape : Ir.Pic.Shape :=
+              if isCircle then .circle sx cy (w / 2) stroke fillCol
+              else .frame (sx - w / 2) (cy - h / 2) w h stroke fillCol
+            ev := { ev with shapes := ev.shapes.push shape }
+          | none =>
+            let shape : Ir.Pic.Shape :=
+              if isCircle then .circle sx sy (dimF (max minW minH) / 2) stroke fillCol
+              else .frame (sx - dimF minW / 2) (sy - dimF minH / 2) (dimF minW) (dimF minH)
+                stroke fillCol
+            ev := { ev with shapes := ev.shapes.push shape }
         match bodyOf with
         | .error d => return ev.diag d
         | .ok (lines, mdiags) =>
