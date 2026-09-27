@@ -792,11 +792,14 @@ theorem trivlist_between :
   decide
 
 /-- Where a class's list spacing comes from: the size file of the standard
-classes for the body size, or beamer's own list family, which a deck and a
-poster inherit (beamerposter loads beamer). -/
+classes for the body size, beamer's own list family, which a deck and a
+poster inherit (beamerposter loads beamer), or the web's, where a list is a
+block like a paragraph and its items stand one leading apart — what the
+HTML base sheet sets, and what a webpage's print twin follows. -/
 inductive ListLineage where
   | sizeFile
   | beamer
+  | web
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- One list level's vertical parameters, LaTeX's `\@list⟨n⟩` (ltlists.dtx):
@@ -836,6 +839,8 @@ def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   -- beamerbaselocalstructure.sty:152-163
   | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}⟩
   | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0⟩
+  -- the web's: no list space of its own (`listSkips` answers `none`)
+  | .web, _, _ => ⟨{}, {}, {}⟩
 
 /-- The size file a body size reads: the standard classes' `10pt`, `11pt`
 and `12pt` options, and the nearest of them for any other size. -/
@@ -843,23 +848,25 @@ def sizeFileOf (size : Sp) : Nat :=
   if size < Dim.pt 21 / 2 then 10 else if size < Dim.pt 23 / 2 then 11 else 12
 
 /-- **The one resolving site for a list level's spacing**: the lineage's
-sourced values at the body size and nesting level. At 10, 11 and 12 pt
-they are the size file's own. A body size no size file sets scales its
-nearest file's values with the type; LaTeX has no value there, and the
+sourced values at the body size and nesting level, `none` for the web's,
+where a list opens only the peer gap a paragraph would. At 10, 11 and
+12 pt they are the size file's own. A body size no size file sets scales
+its nearest file's values with the type; LaTeX has no value there, and the
 engine's other defaults follow the type the same way. beamer's values do
 not depend on the size, as its `\@listi` does not. -/
-def listSkips (l : ListLineage) (size : Sp) (level : Nat) : ListSkips :=
+def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSkips :=
   let lv := min (max level 1) 3
   match l with
-  | .beamer => listSkipsTable .beamer 0 lv
+  | .web => none
+  | .beamer => some (listSkipsTable .beamer 0 lv)
   | .sizeFile =>
     let f := sizeFileOf size
     let s := listSkipsTable .sizeFile f lv
     let base := Dim.pt f
-    if size == base then s
-    else { topsep := s.topsep.scale size base.toNat
-           itemsep := s.itemsep.scale size base.toNat
-           parsep := s.parsep.scale size base.toNat }
+    if size == base then some s
+    else some { topsep := s.topsep.scale size base.toNat
+                itemsep := s.itemsep.scale size base.toNat
+                parsep := s.parsep.scale size base.toNat }
 
 /-- At the three standard body sizes a list's spacing is the size file's,
 exactly: `\topsep` 8, 9, 10 pt and `\itemsep + \parsep` 8, 9, 10 pt at the
@@ -867,18 +874,14 @@ top level (size10/11/12.clo:216-219), and beamer's `\topsep` and
 `\itemsep` are 3 pt with a zero `\parsep` (beamerbaselocalstructure
 .sty:152-155). -/
 theorem listSkips_exact :
-    (listSkips .sizeFile (Dim.pt 10) 1).topsep.width.sp = Dim.pt 8 ∧
-    (listSkips .sizeFile (Dim.pt 10) 1).itemsep.width.sp
-      + (listSkips .sizeFile (Dim.pt 10) 1).parsep.width.sp = Dim.pt 8 ∧
-    (listSkips .sizeFile (Dim.pt 11) 1).topsep.width.sp = Dim.pt 9 ∧
-    (listSkips .sizeFile (Dim.pt 11) 1).itemsep.width.sp
-      + (listSkips .sizeFile (Dim.pt 11) 1).parsep.width.sp = Dim.pt 9 ∧
-    (listSkips .sizeFile (Dim.pt 12) 1).topsep.width.sp = Dim.pt 10 ∧
-    (listSkips .sizeFile (Dim.pt 12) 1).itemsep.width.sp
-      + (listSkips .sizeFile (Dim.pt 12) 1).parsep.width.sp = Dim.pt 10 ∧
-    (listSkips .beamer (Dim.pt 11) 1).topsep.width.sp = Dim.pt 3 ∧
-    (listSkips .beamer (Dim.pt 11) 1).itemsep.width.sp = Dim.pt 3 ∧
-    (listSkips .beamer (Dim.pt 11) 1).parsep.width.sp = 0 := by
+    ((listSkips .sizeFile (Dim.pt 10) 1).map fun s =>
+      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 8, Dim.pt 8) ∧
+    ((listSkips .sizeFile (Dim.pt 11) 1).map fun s =>
+      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 9, Dim.pt 9) ∧
+    ((listSkips .sizeFile (Dim.pt 12) 1).map fun s =>
+      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 10, Dim.pt 10) ∧
+    ((listSkips .beamer (Dim.pt 11) 1).map fun s =>
+      (s.topsep.width.sp, s.itemsep.width.sp, s.parsep.width.sp)) = some (Dim.pt 3, Dim.pt 3, 0) := by
   decide
 
 /-- The heading's default spaces, their own tokens rather than the
@@ -5686,6 +5689,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
   | .webpage =>
     { model := .flow
       measureBand := true
+      lists := .web
       formats := #["html", "md"]
       mdName := some "llms.txt" }
   | .poster =>

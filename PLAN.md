@@ -20951,3 +20951,35 @@ build at this theorem.
   semantics, so it should feed `Ir.listSkips` as a per-level override. It
   should not feed `\style{itemize⟨n⟩}{ before, gap }`, whose declared
   values are whole gaps.
+
+
+**What the list spacing did to two private documents, and the two fixes.**
+The private website is `\documentclass{article}` with an HTML-first
+`\output`. Its print twin took the article lists' new spacing, and page 1
+then ended on a heading whose text stood on page 2. A second private
+document, the paper, already stranded a heading at the foot of its page 5
+on `da9b049d`, where the lualatex reference breaks above the heading.
+- *A heading never ends a page* (`B.keepHeading`, `ParaJob.keepNext`). TeX
+  finds no legal break between a heading and its text: `\@xsect` puts
+  `\nobreak` before the after-skip, and `\@afterheading` sets
+  `\clubpenalty` to 10000. So a heading whose own lines, after-skip and
+  two lines of text cannot stand on the page within its shrink opens the
+  next page. This applies in flow only, and outside a float's replay.
+  One departure is declared: after a one-line paragraph, TeX would accept
+  a single line under the heading. The paper's page 5 now ends where the
+  reference's does, on the same sentence, and the website's page 1 no
+  longer ends on its heading. `headingKeepChecks` slides a heading down
+  forty positions across a page boundary and fails wherever the heading
+  and its text part. The check fails on `da9b049d`.
+- *The web's list lineage* (`Ir.ListLineage.web`, the `webpage` class). A
+  webpage's print twin follows its HTML: a list is a block like a
+  paragraph, and its items stand one leading apart, as the base sheet sets
+  them. The website is an article, so it keeps LaTeX's lists. A guard in
+  `listRhythmChecks` holds a webpage's lists at the old spacing, and it
+  fails on `35ed7619`, the commit above that spent LaTeX's spacing
+  everywhere.
+
+After both fixes, the résumé and the business card still build byte-identical
+to `da9b049d`, the deck matches the list commit, and the website's HTML is
+unchanged. The paper's census drops one N0200, a page set short. The
+`rhythm` tier does not move.

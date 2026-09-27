@@ -4926,6 +4926,11 @@ private structure ParaJob where
   /-- The first `Struct` leaf of the block this paragraph sets — what every
   line placed from it names (`LineOut.leaf`). `none` for generated ink. -/
   leaf : Option Nat := none
+  /-- The space the text after this paragraph needs on its page: nonzero
+  for a heading, which TeX never lets end a page (`\@xsect` puts `\nobreak`
+  before the after-skip, and `\@afterheading` sets `\clubpenalty` to
+  10000, so the heading keeps the next paragraph's first two lines). -/
+  keepNext : Sp := 0
 
 /-- A title slot's placement resolved to the page: which point of its box
 (`anchor`) stands at which point of the page (`pagePoint`), the shifts in
@@ -5416,7 +5421,7 @@ private def collectPara (r : Rd) (a : Acc)
     (markerIndent : Option Sp := none)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
-    (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0) : Acc :=
   let a := a.flushGap r
   -- The measure the paragraph sets against — and what a fraction-of-
   -- `\textwidth` image size resolves against: inside a `column` the
@@ -5524,7 +5529,8 @@ private def collectPara (r : Rd) (a : Acc)
       markerSegs := markerSegs, markerIndent := markerIndent, rule := rule
       notes := noteBlocks
       inFloat := r.inFloat
-      leaf := leaf }) }
+      leaf := leaf
+      keepNext := keepNext }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -5622,10 +5628,10 @@ private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (rule : Option HeadingRule := none)
-    (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
-    (display := true) (leaf := leaf) (span := span)
+    (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
 cell takes when nothing bends. Penalties add nothing — a pen's width is
@@ -6364,17 +6370,21 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
         (headingRuleWeight r.geom.fontSize)
       position := st.rulePosition.getD .xHeight
       color := rc.1 }
+  let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
+  let after := (st.after.map r.resolve).getD
+    (if r.parskip.width > ha.width then r.parskip else ha)
+  -- The heading keeps its text (`ParaJob.keepNext`): the after-skip and
+  -- two lines of the body must fit below it, or it opens the next page.
+  let keep := after.width + 2 * Ir.leadingFor r.geom.fontSize r.geom.leading
   let a := match st.font with
     | some tpl =>
       collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
-        (rule := rule) (leaf := leaf) (span := span)
+        (rule := rule) (leaf := leaf) (span := span) (keepNext := keep)
     | none =>
       collectDisplay r a title indent false (sectionSize r.geom level)
         (baseStyle := { weight := .b }) (rule := rule)
-        (leaf := leaf) (span := span)
-  let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
-  let a := a.vskip ((st.after.map r.resolve).getD
-    (if r.parskip.width > ha.width then r.parskip else ha))
+        (leaf := leaf) (span := span) (keepNext := keep)
+  let a := a.vskip after
   if r.slides then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
@@ -6849,17 +6859,19 @@ private def collectItem (r : Rd) (a : Acc)
 
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
-    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Glue) : Acc :=
+    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
     -- Items are peers: LaTeX's `\@item` spends `\addvspace\itemsep`, and
     -- the item's paragraph its `\parskip`, which is `\parsep` inside the
-    -- list — the reader's peer gap here. A declared gap is the whole gap.
-    let a := match idx == 1, st.gap with
-      | true, _ => a
-      | false, some g => a.addvspace (r.resolve g)
-      | false, none => a.wantGap.listSpace itemsep
+    -- list — the reader's peer gap here. A declared gap is the whole gap;
+    -- the web's lineage (`none`) spaces items by their leading alone.
+    let a := match idx == 1, st.gap, itemsep with
+      | true, _, _ => a
+      | false, some g, _ => a.addvspace (r.resolve g)
+      | false, none, some i => a.wantGap.listSpace i
+      | false, none, none => a
     -- The item's marker: the declared style, or the class default for the
     -- level and, for enumerate, this item's number. The class glyph is
     -- checked against the loaded faces so it degrades to its stand-in
@@ -6967,22 +6979,28 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the
     -- nesting depth over both kinds, as `\@listdepth` counts it.
     let sk := Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1)
-    let top := r.resolve sk.topsep
-    -- The list's `\topsep` stands above it with the surrounding paragraph's
-    -- peer gap on top, paid before the reader switches to the list's own
-    -- `\parskip`; a declared `before` is the whole space, as it was.
-    let a := match st.before with
-      | some g => a.addvspace (r.resolve g)
-      | none => (a.listSpace top).flushGap r
+    let top := sk.map fun s => r.resolve s.topsep
+    -- The list's `\topsep` stands above it with TeX's `\parskip` on top,
+    -- paid before the reader switches to the list's own `\parskip`; a
+    -- declared `before` is the whole space, as it was, and the web's
+    -- lineage opens only the peer gap a paragraph would.
+    let a := match st.before, top with
+      | some g, _ => a.addvspace (r.resolve g)
+      | none, some t => (a.listSpace t).flushGap r
+      | none, none => a
     let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
-    let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-    let a := collectItems ri a items.toList indent st ordered level 1 (r.resolve sk.itemsep)
+    let ri := match sk with
+      | some s => { r with geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
+      | none => r
+    let a := collectItems ri a items.toList indent st ordered level 1
+      (sk.map fun s => r.resolve s.itemsep)
     let a := if ordered then { a with enumDepth := depth - 1 }
       else { a with itemDepth := depth - 1 }
-    match st.before with
-    | some g => a.addvspace (r.resolve g)
-    | none => a.listSpace top
+    match st.before, top with
+    | some g, _ => a.addvspace (r.resolve g)
+    | none, some t => a.listSpace t
+    | none, none => a
   | .center body =>
     -- A display formula's block reads through the shared shape
     -- (`Ir.displayContent?`) and opens the display skips; any other
@@ -7031,14 +7049,22 @@ private def collectBlock (r : Rd) (a : Acc)
     -- spends its level's `\topsep` (`Ir.listSkips`) above and below — so a
     -- declared `\topsep` does not reach it, as `\@listi` resets the length
     -- on entry — and sets its paragraphs `\parsep` apart.
-    let sk := Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1)
-    let g := r.resolve sk.topsep
     let saved := a.measure
-    let sub := { (a.listSpace g).flushGap r with
-      measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
-    let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-    let sub := collectBlocks ri sub body (indent + r.geom.listIndent)
-    { sub.listSpace g with measure := saved }
+    let narrow := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent)
+    match Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1) with
+    | some sk =>
+      let g := r.resolve sk.topsep
+      let sub := { (a.listSpace g).flushGap r with measure := narrow }
+      let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+      let sub := collectBlocks ri sub body (indent + r.geom.listIndent)
+      { sub.listSpace g with measure := saved }
+    | none =>
+      -- The web's lineage: the quote is the trivlist block the HTML sheet
+      -- sets, its `\topsep` over the peer gap.
+      let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+      let sub := collectBlocks r { a.trivSpace g with measure := narrow } body
+        (indent + r.geom.listIndent)
+      { sub.trivSpace g with measure := saved }
   | .titled kind title body =>
     collectBlocks r (collectTitledTitle r a kind title indent) body indent
   | .abstract body =>
@@ -7837,6 +7863,21 @@ private structure StepSt where
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
+/-- **A heading never ends a page** (`ParaJob.keepNext`): when a heading's
+own lines and the text it keeps cannot stand on the page within its shrink,
+the page closes before the heading, as TeX's page builder finds no legal
+break between a heading and the first lines of its text and breaks above
+it. Only in flow and outside a float replay: a frame or a float decides
+its own page. `n` is the heading's line count. -/
+private def B.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
+  if 0 < j.keepNext && b.frameBreak.isNone && !b.noBreak &&
+      !(b.cur.lines.isEmpty || b.freshStart) &&
+      noteFloor b.geom b.footins b.notesH + b.pageShrink + b.skip.shrink
+        < b.y + b.prevDepth + b.skip.width
+          + (n : Int) * Ir.leadingFor j.size b.geom.leading + j.keepNext then
+    b.spillPage
+  else b
+
 /-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
 the picture's height, then every shape through one affine transform —
 fills and paths as riders, label lines riding the picture's own shrink
@@ -8133,7 +8174,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     if j.target == b.geom.textWidth && !j.center && j.size == b.geom.fontSize &&
         j.markerSegs.isNone && j.rule.isNone then
       prose := max prose breaks.size
-    b := placePara fs b j breaks
+    b := placePara fs (b.keepHeading j breaks.size) j breaks
   | .picture x pic leaf =>
     b := placePicture fs imgs b x pic leaf
   | .slotOpen =>
@@ -8478,6 +8519,19 @@ private theorem placePara_noBreak (fs : FontSet) (b : B) (j : ParaJob)
       have step := placeParaLine_noBreak fs j acc _ hacc.2
       ⟨step.1.trans hacc.1, step.2⟩)
 
+private theorem keepHeading_extends (b : B) (j : ParaJob) (n : Nat) :
+    PagesExtend b (b.keepHeading j n) := by
+  unfold B.keepHeading
+  split
+  · obtain ⟨s, hs⟩ := finishPage_extends b (o := 0)
+    exact ⟨s, by rw [spillPage_pages]; exact hs⟩
+  · exact pagesExtend_refl b
+
+private theorem keepHeading_noBreak (b : B) (j : ParaJob) (n : Nat) (h : b.noBreak = true) :
+    b.keepHeading j n = b := by
+  unfold B.keepHeading
+  simp [h]
+
 /-- Every placement step extends the shipped pages: nothing pops,
 reorders, or rewrites a page that already shipped. With the size check
 in `runFloat`, this is what makes "no page was closed" mean "the shipped
@@ -8489,6 +8543,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_of_eq ?_; simp; done)
     | exact fitCommit_extends ..
     | exact placeLine_extends ..
+    | exact pagesExtend_trans (keepHeading_extends ..) (placePara_extends ..)
     | exact placePara_extends ..
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
@@ -8510,6 +8565,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
         fitCommit_keeps_noBreak (h := h) ..⟩
     | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ _ h,
         placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ _ h⟩
+    | (rw [keepHeading_noBreak _ _ _ h]; exact placePara_noBreak _ _ _ _ h)
     | exact placePara_noBreak _ _ _ _ h
     | exact placePicture_noBreak _ _ _ _ _ _ h
     | exact ⟨(placeSlot_keeps ..).1, (placeSlot_keeps ..).2.2.2.trans h⟩
@@ -8677,6 +8733,13 @@ private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
     (BgStep.of_eq (by simp) (by simp) (by simp))
     (fun _ acc hacc => hacc.trans (bgStep_placeParaLine ..))
 
+private theorem bgStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
+    BgStep b (b.keepHeading j n) := by
+  unfold B.keepHeading
+  split
+  · exact bgStep_spillPage b 0
+  · exact BgStep.refl b
+
 private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (op : StagedOp) : BgStep st.b (stepStaged fs imgs st op).b := by
   cases op <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
@@ -8685,6 +8748,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
        done)
     | exact bgStep_fitCommit ..
     | exact bgStep_placeLine ..
+    | exact (bgStep_keepHeading ..).trans (bgStep_placePara ..)
     | exact bgStep_placePara ..
     | exact bgStep_placePicture ..
     | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1

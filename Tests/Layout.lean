@@ -3940,6 +3940,16 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       "\\item Delta.\n\\end{itemize}\n\\end{itemize}")) ["Bravo.", "Charlie.", "Delta."]
       == [lead10 + Dim.pt 4 + Dim.pt 4, lead10 + Dim.pt 2 + Dim.pt 2])
   t "article list fixtures lay out their peer boundary" (peerOf "{article}" > 0)
+  -- The web's lineage: a webpage's print twin follows its HTML, where a
+  -- list is a block like a paragraph and its items stand a leading apart.
+  -- A guard for the site's print twin, which LaTeX's spacing once pushed a
+  -- heading to the foot of a page.
+  let web := doc "{webpage}" three
+  let wg := geomOf web
+  let wlead := Ir.leadingFor wg.fontSize wg.leading
+  let wpeer := peerOf "{webpage}"
+  t "a webpage's list opens the peer gap a paragraph would, and its items stand a leading apart"
+    (0 < wpeer && steps web words == [wpeer, wlead, wpeer])
   -- beamer's own family: 3 pt items and topsep, no parsep, in a frame.
   let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n" ++
     "\\begin{itemize}\n\\item Bravo.\n\\item Charlie.\n\\end{itemize}\nDelta.\n\\end{frame}\\end{document}"
@@ -3947,6 +3957,35 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let dlead := Ir.leadingFor dg.fontSize dg.leading
   t "a deck's items stand beamer's itemsep apart, its list beamer's topsep from the text"
     (steps deck words == [dlead + Dim.pt 3, dlead + Dim.pt 3, dlead + Dim.pt 3])
+
+/-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
+break between a heading and the first lines of its text (`\@xsect`'s
+`\nobreak`, `\@afterheading`'s `\clubpenalty`), so a heading that would be a
+page's last line opens the next page. Asserted over `Layout.Out`: as the
+filler above it grows, the heading slides down one page's worth of
+positions, and at every one it shares a page with its text. The paper in
+the private corpus stranded a heading at a page foot this way, where the
+lualatex reference breaks above it. Invented words. -/
+def headingKeepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (n : Nat) : String :=
+    "\\documentclass{article}\\begin{document}" ++
+    String.join ((List.range n).map fun i => s!"Filler line {i}.\n\n") ++
+    "\\section{Heading}\nBody text after the heading, long enough to run onto a second line " ++
+    "of the page so that the club rule has two lines to keep together.\n\\end{document}"
+  let pageOf (c : Array CensusPage) (needle : String) : Option Nat :=
+    (List.range c.size).find? fun i => (lineYOf c i needle).isSome
+  let placements := (List.range 40).map fun k =>
+    let c := censusOfSrc oneFace (src (20 + k))
+    (20 + k, pageOf c "Heading", pageOf c "Body text")
+  let strands := placements.filterMap fun (n, h, b) =>
+    match h, b with
+    | some h, some b => if h == b then none else some n
+    | _, _ => some n
+  t s!"a heading shares a page with its text wherever it falls (strands: {strands})"
+    strands.isEmpty
+  t "the heading fixtures reach a page boundary"
+    (placements.any fun (_, h, _) => h == some 1)
 
 /-- **A frame's content opens on a baseline below the title box, and a
 picture's bottom is a baseline** (`B.openBody`, `B.strutBelow`,
