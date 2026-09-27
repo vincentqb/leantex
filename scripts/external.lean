@@ -330,6 +330,8 @@ structure Measure where
   lmRmse : Array Nat := #[]
   census : Array (String × String) := #[]
   unknowns : Array String := #[]
+  /-- The tier's reading of the same document: elaboration alone. -/
+  alone : Int := 2
 deriving Inhabited
 
 def mean (xs : Array Nat) : Nat := if xs.isEmpty then 0 else xs.foldl (· + ·) 0 / xs.size
@@ -457,7 +459,7 @@ def measureOne (bin root work : String) (n : Nat) (d : Doc) : IO Measure := do
   let llPages ← if ll.exit == 0 then pagesOf llPdf else pure 0
   let ltPages ← if lt.exit == 0 then pagesOf s!"{dir}/lt.pdf" else pure 0
   let lmPages ← if lm.exit == 0 then pagesOf s!"{dir}/lm.pdf" else pure 0
-  let unknowns := unknownsIn (← elaborate (root ++ "/" ++ d.path))
+  let eds ← elaborate (root ++ "/" ++ d.path)
   return {
     doc := d, ll := ll.exit, lt := lt.exit, html := html.exit, ltlm := lm.exit
     llPages, ltPages, lmPages
@@ -465,7 +467,7 @@ def measureOne (bin root work : String) (n : Nat) (d : Doc) : IO Measure := do
     text := agreement llw ltw, lmText := agreement llw lmw
     rmse := rmses ltr llr, lmRmse := rmses lmr llr
     census := porcelainDiags lt.out
-    unknowns }
+    unknowns := unknownsIn eds, alone := standing eds }
 
 -- ## Where output may land
 
@@ -502,12 +504,12 @@ def pageList (xs : Array Nat) : String :=
   if xs.isEmpty then "-" else String.intercalate "," (xs.toList.map toString)
 
 def documentsTsv (ms : Array Measure) : String := Id.run do
-  let mut out := tsvLine ["set", "doc", "lualatex", "engine", "html", "engine+lm",
+  let mut out := tsvLine ["set", "doc", "lualatex", "engine", "html", "engine+lm", "alone",
     "pages ll/engine/lm", "letters ll/engine", "text ‰ engine/lm", "rmse ‰ engine",
     "rmse ‰ lm", "causes"]
   for m in ms do
     out := out ++ tsvLine [m.doc.set, m.doc.path, toString m.ll, toString m.lt,
-      toString m.html, toString m.ltlm, s!"{m.llPages}/{m.ltPages}/{m.lmPages}",
+      toString m.html, toString m.ltlm, toString m.alone, s!"{m.llPages}/{m.ltPages}/{m.lmPages}",
       s!"{m.llChars}/{m.ltChars}", s!"{m.text}/{m.lmText}", pageList m.rmse,
       pageList m.lmRmse, String.intercalate "; " ((causes m).toList.map Cause.render)]
   return out
@@ -624,6 +626,14 @@ def indexOwners : IO (Std.HashMap String String) := do
     if f.endsWith ".txt" then pkgs := pkgs.push ((f.dropEnd 4).toString, ← IO.FS.readFile (dir / f))
   return indexOwnersOf kernel pkgs
 
+/-- The tier's premise, checked where both readings exist: elaboration alone
+stands at 0 exactly when the shipped build refuses (exit 1). Documents the
+reference builds only; a disagreement means the tier's 0 is not the
+refusal the report measures, and the tier's docstring would be a claim. -/
+def premiseMisses (ms : Array Measure) : Array String :=
+  (ms.filter fun m => m.ll == 0 && (m.lt == 0 || m.lt == 1) && ((m.alone == 0) != (m.lt == 1))).map
+    (·.doc.path)
+
 def report (work : String) (listPath : Option String) : IO UInt32 := do
   let work ← match ← outsideCheckouts work with
     | .ok w => pure w
@@ -661,6 +671,10 @@ def report (work : String) (listPath : Option String) : IO UInt32 := do
   IO.print (summary ms)
   IO.println ""
   IO.print (worklistTsv (items.extract 0 40))
+  let misses := premiseMisses ms
+  IO.println s!"external: elaboration alone and the shipped build disagree on {misses.size} \
+of {(ms.filter (·.ll == 0)).size} documents the reference builds"
+  for p in misses do IO.println s!"external:   {p}"
   IO.println s!"external: wrote documents.tsv, census.tsv, worklist.tsv, summary.tsv in {work}"
   return (if ms.size == docs.size then 0 else 1)
 
@@ -741,6 +755,12 @@ Mono\" }\nx")
     (causes { clean with ltlm := 1, ltPages := 2 } == #[.pages 2 1])
   expect "a failed HTML build beside a PDF is its own cause"
     (causes { clean with html := 1 } == #[.html 1])
+  expect "the premise holds where elaboration and the build agree"
+    (premiseMisses #[clean, { clean with lt := 1, alone := 0 }] == #[])
+  expect "a refusal elaboration did not foresee is a miss, and so is the converse"
+    (premiseMisses #[{ clean with lt := 1 }, { clean with alone := 0 }] == #["p", "p"])
+  expect "a crash and a reference failure are outside the premise"
+    (premiseMisses #[{ clean with lt := 4, alone := 0 }, { clean with ll := 1, lt := 1 }] == #[])
   let ms : Array Measure := #[{ clean with unknowns := #["ctrl:a"] },
     { clean with unknowns := #["ctrl:a", "env:b"] }, clean]
   let w := worklist ms
