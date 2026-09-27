@@ -2374,6 +2374,26 @@ def inkBoundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "a mix past the bound warns under its key, naming the weight to write"
     (fDs.any fun d => d.code == "W0315" && d.subject.any (·.startsWith "fg!50!bg:") &&
       d.help.any (hasStr · "'fg!68!bg'"))
+  -- beamer's `transparent` covering is the key's default opaqueness, 15%,
+  -- set as xcolor's mixin of the ink over the page (beamerbaseoverlay.sty):
+  -- the covered run ships within the bound of that colour, where the
+  -- bundle's own 31% lay ΔEOK 0.114 from it.
+  let (covDoc, covDs) := elabStr ("\\documentclass{beamer}\n\\usetheme{moloch}\n" ++
+    "\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}\n" ++
+    "Shown \\uncover<2>{Pending}\n\\end{frame}\n\\end{document}")
+  let covInk := (layoutOf oneFace covDoc).pages[0]?.bind fun p =>
+    p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
+      | .run _ c _ _ glyphs .. =>
+        if hasStr (String.ofList (glyphs.toList.map (·.2))) "Pending" then some c else none
+      | _ => none
+  let covD := Ir.Design.ofDoc covDoc
+  t "a transparent covering is beamer's fifteen per cent, and nothing warns"
+    (covDoc.palette.coveredFraction == some 15 && covDs.all (·.severity == .note))
+  match covInk with
+  | some ink =>
+    t "the covered run ships within the ink bound of beamer's covered colour"
+      (Contrast.deltaEOkSq (covD.fg.mix 15 covD.bg) ink ≤ Contrast.inkBoundSq)
+  | none => failures ref "no covered run on the step's first page"
 
 /-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
 order lives in `elabInlines`, whose sanctioned recursion no theorem can

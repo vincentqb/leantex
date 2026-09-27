@@ -4498,23 +4498,21 @@ and \\tokens declare the design directly")
   | "setbeamercovered" =>
     -- beamer's default covering is invisible and `transparent` makes it
     -- show dimmed; this engine's covering is dim-not-hide always (PLAN
-    -- M5), so `transparent` asks for what already happens — agreement, not
-    -- missing configuration, and no warning. `transparent=<n>` shows
-    -- covered text at n% opaqueness (beamer manual, \setbeamercovered:
-    -- 0 transparent .. 100 opaque; 15 is the default): exactly the
-    -- engine's covered fraction, so the two spellings are one idea —
-    -- `\palette{ covered = n% }`, each covered colour kept at n% of
-    -- itself over the page. Everything else (invisible, dynamic,
-    -- still/again covered) asks for hiding or per-slide opacity the
-    -- engine deliberately does not do.
+    -- M5). `transparent=<n>` shows covered text at n% opaqueness (beamer
+    -- manual, \setbeamercovered: 0 transparent .. 100 opaque), and
+    -- `transparent` alone is n = 15, the key's default
+    -- (beamerbaseoverlay.sty: `\define@key{beamer@mixin}{transparent}[15]`):
+    -- exactly the engine's covered fraction, so the two spellings are one
+    -- idea — `\palette{ covered = n% }`, each covered colour kept at n% of
+    -- itself over the page, in Oklab, inside the ink bound of beamer's
+    -- sRGB mixin (`inkBoundChecks` holds a covered run to it). Everything
+    -- else (invisible, dynamic, still/again covered) asks for hiding or
+    -- per-slide opacity the engine deliberately does not do.
     let (args, k) := takeGroups raws start 1
     let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    if src == "transparent" then
-      became "\\setbeamercovered{transparent}"
-        "the engine's own covering (dim-not-hide)" pos
-      return some (#[], k)
     let pct? : Option Nat :=
-      if src.startsWith "transparent=" then
+      if src == "transparent" then some 15
+      else if src.startsWith "transparent=" then
         ((src.drop "transparent=".length).toString.trimAscii.toString).toNat?
       else none
     match pct? with

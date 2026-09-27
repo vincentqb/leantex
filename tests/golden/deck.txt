@@ -3,6 +3,7 @@ page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0
 font dir "fonts"
 font body "Open Sans"
 font mono "Source Code Pro"
+palette covered 15%
 meta title "A Certified Deck"
 meta author "Pat Placeholder"
 frame golden
@@ -82,7 +83,7 @@ frame standout
 -- diagnostics
 note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
 note[N0100] 9:1 '\usetheme' → \theme{example}
-note[N0100] 10:1 '\setbeamercovered{transparent}' → the engine's own covering (dim-not-hide)
+note[N0100] 10:1 '\setbeamercovered' → \palette{ covered = 15\% }
 note[N0100] 11:1 '\newcommand{\dim}' → \define \dim(a1: content) {...}
 note[N0100] 12:1 '\newenvironment{banner}' → \defineenv{banner}(a1: content) {begin} {end}
 note[N0100] 35:19 '\alert' → \textbf

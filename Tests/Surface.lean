@@ -949,15 +949,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
        "\\begin{document}\n\\appendix\nx\n\\end{document}") == [])
   t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
     some { r := 0x0F, g := 0x76, b := 0x6E })
-  -- \setbeamercovered{transparent} asks for what the engine always does
-  -- (dim-not-hide): agreement, not missing configuration — no warning.
-  -- A percentage declares the covered colour; anything else (invisible,
-  -- dynamic) keeps the warning naming the divergence.
+  -- \setbeamercovered{transparent} is beamer's fifteen per cent, the key's
+  -- default: it sets the covered fraction, as any percentage does, and
+  -- warns nothing (the artifact half is `inkBoundChecks`). Anything else
+  -- (invisible, dynamic) keeps the warning naming the divergence.
   let themedPre (decls : String) : String :=
     "\\documentclass{beamer}\n\\usetheme{moloch}\n" ++ decls ++
     "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
   t "compat setbeamercovered transparent agrees, warning nothing"
-    (warnCodes (themedPre "\\setbeamercovered{transparent}") == [])
+    (warnCodes (themedPre "\\setbeamercovered{transparent}") == [] &&
+     (elabStr (themedPre "\\setbeamercovered{transparent}")).1.palette.coveredFraction
+       == some 15)
   t "compat setbeamercovered transparent=n sets the covered fraction"
     ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.coveredFraction
       == some 25)
