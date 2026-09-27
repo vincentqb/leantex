@@ -89,3 +89,37 @@ def pictureBendChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "the SVG draws the bent edge as a cubic"
     ((doc.body.foldl (fun acc b => pathDsOne acc (HtmlDoc.blockNode {} b)) #[]).any
       fun d => hasStr d "C")
+
+
+/-- **A picture inside a paragraph is named where it stands.** LaTeX sets a
+`tikzpicture` as a box of its line; the engine sets it as a block, so a
+paragraph with text beside a picture breaks at it. The defect was silent:
+the page lost the sentence's continuity and no diagnostic said so. The
+divergence is a keyed `W0334` (`picture:inline`), asserted over the
+structured diagnostic, and the blocks the page ships are the ones it names.
+A picture standing alone, one under a declaration, and one beside a box on
+its own line (a row) name nothing. Invented content. -/
+def pictureInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let mark := "\\begin{tikzpicture}\\fill (0,0) rectangle (0.3,0.3);\\end{tikzpicture}"
+  let doc (body : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+  let named (body : String) : Bool :=
+    (elabStr (doc body)).2.any fun d => d.code == "W0334" && d.subject == some "picture:inline"
+  let mid := "Some running words " ++ mark ++ " and more running words."
+  t "a picture inside a paragraph names its block placement"
+    (named mid && named ("Words before it " ++ mark) && named (mark ++ " words after it."))
+  -- What the name says is what the page ships: the paragraph's text stands
+  -- on either side of the picture's fill, as two lines.
+  let c := censusOfSrc oneFace (doc mid)
+  t "the named placement is what ships: text above the picture, text below it"
+    (match lineYOf c 0 "Some running words", lineYOf c 0 "and more running words",
+        (c[0]?.bind (·.fillRects[0]?)) with
+     | some a, some b, some (_, fy, _, fh) => decide (a < fy ∧ fy + fh < b)
+     | _, _, _ => false)
+  t "a picture alone, or under a declaration, names nothing"
+    (!named mark && !named ("\\centering\n" ++ mark) && !named ("\\vspace{1em}\n" ++ mark) &&
+      !named ("Before.\n\n" ++ mark ++ "\n\nAfter."))
+  t "a box and a picture on their own line are a row, not a sentence"
+    (!named ("\\parbox[t]{3cm}{Lab}\n" ++ mark))

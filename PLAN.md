@@ -22431,3 +22431,23 @@ followed by a picture declaring `baseline`, in one paragraph.
   on the IR's baseline, so the label and its neighbour differ by about
   3 CSS px on the deck frame. The fix is the SVG label emission's, in
   HtmlDoc.
+
+
+**A picture inside a paragraph is named** (third unit). LaTeX sets a
+`tikzpicture` as a box of its line, so the sentence runs on beside it. The
+engine sets it as a block: the paragraph's text breaks at the picture, and
+nothing said so. The audit measured this on a synthetic mark in a sentence.
+A true inline picture is an `Ir.Inline` constructor. That owes an arm in
+about fifty walks across eight modules, several with proofs, plus a line
+box for the line breaker; it is the follow-up, not this unit. What this unit
+owes is the name. `Elab.pictureInSentence`, outside the knot, raises a keyed
+`W0334` (`picture:inline`, pending) where a picture stands with text in
+its paragraph: words, symbols or inline math, before it (the block walk's
+open paragraph) or after it (up to the next break or environment).
+Declarations and spacing commands do not count, and a positioned box then
+a picture on their own line is a row. `pictureInlineChecks` holds the
+note on three placements. It fails on `41a1b90e`. It also holds four
+placements that name nothing, and checks that the page ships the text
+above and below the picture's fill as the note says. The private
+documents carry no such picture once their box-and-picture lines are rows,
+so their census is unchanged.

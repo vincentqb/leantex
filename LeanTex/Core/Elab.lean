@@ -7169,6 +7169,26 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   let content := keys.map (Ir.Inline.label ·) |>.push inl
   return blocks.push (.center #[.para content])
 
+/-- **A picture inside a sentence is named where it stands.** LaTeX sets a
+`tikzpicture` as a box of its line, so the sentence runs on around it; the
+engine sets a picture as a block, which breaks the sentence into two
+paragraphs with the picture between. The sentence is the paragraph's text
+before the picture (`cur`, what the block walk holds) and after it, up to
+the next paragraph break or environment; a word, a symbol or inline math
+counts, a declaration or a spacing command does not. A box followed by a
+picture on its own line is a row (`Compat.boxRows`), and never reaches
+here. Outside the knot. -/
+private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
+    (pos : Pos) : EM Unit := do
+  if n != "tikzpicture" then return
+  let text (r : Raw) : Bool := r matches .word _ _ || r matches .sym _ _ || r matches .math false _ _
+  let after := (raws.extract (i + 1) raws.size).toList.takeWhile fun r =>
+    !(r matches .par _) && !(r matches .env _ _ _)
+  if cur.any text || after.any text then
+    warnOnce ctx "picture:inline" .W0334
+      "a picture inside a paragraph is set as its own block: the paragraph's text breaks \
+at it instead of running on beside it" pos
+
 /-- The `{tikzpicture}` arm, outside the knot: the rendered subset —
 shapes evaluate here, loops unrolled, expressions reduced, colours
 resolved against the palette — and everything the subset cannot render is
@@ -9584,6 +9604,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
                 | none => false)
             || bodyIsBlock body
       if isB then
+        pictureInSentence ctx' n cur raws i epos
         let k := blocks.size
         let flushed ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
