@@ -20572,6 +20572,14 @@ across the whole branch.
   contrast judge judges the epoch's ink against it, and HTML ignores an
   epoch's `fg` there (the inline `--fg` has no reader below `body`).
   Contrast and HtmlDoc's colour emission (warn-ink).
+- A declared light ground in dark mode keeps the scheme's own accent and
+  code tint, chosen for the dark surface: two dark-scheme failures per
+  deck stay in the `htmla11y` count, the colour-scheme class every class
+  that declares a ground already carries (the oracle's known
+  `color-scheme` cells). The scheme's tokens should follow the declared
+  ground they stand on; HtmlDoc's base sheet (rhythm-html, warn-ink). The
+  selftest that pinned the deck's old dark-text failure as expected now
+  asserts the declared pair passes both schemes.
 
 **The user's.** The print partition was the Tufte handout (one bordered
 card per frame); it is now the deck's own pages, which is what reveal.js
