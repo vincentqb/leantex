@@ -2470,24 +2470,27 @@ two numbers `Pdf.ptObj` writes the MediaBox with. -/
 def deckPageSize (page : PageSpec) : String :=
   s!"{page.width.toPtString}pt {page.height.toPtString}pt"
 
-/-- A stage on paper: it ends its sheet, and it grows with its content
-instead of clipping it — `height` and `overflow-y` lifted
+/-- A stage on paper: it opens and ends its sheet, and it grows with its
+content instead of clipping it — `height` and `overflow-y` lifted
 (`print_lifts_stage_bounds_covers`), one sheet tall at least
 (`min-height`), so a frame that fits still fills its sheet, its declared
-distribution and its furniture where the screen puts them. A frame that
-runs long breaks between its lines onto the next sheet, as the PDF's
-continuation pages do, and each continuation sheet keeps the stage's
-safe-area padding and ground (`box-decoration-break: clone`, CSS
-Fragmentation 3 §5.4). The ground is the author's, not decoration a
-reader's toner setting may drop (`print-color-adjust: exact`, CSS Color
-Adjustment 1 §3.1). What the PDF adds on a continuation page and a sheet
-cannot is the frame's title band: the HTML has no layout pass to know
-where a sheet breaks, so the title stands once, where the frame opens. -/
+distribution and its furniture where the screen puts them. The break
+before a stage keeps it off a sheet that content outside any stage
+opened (an unthemed deck's section heading stands on its own sheet, as
+it did while a stage could not split). A frame that runs long breaks
+between its lines onto the next sheet, as the PDF's continuation pages
+do, and each continuation opens below the stage's safe area on its own
+ground (`box-decoration-break: clone`, CSS Fragmentation 3 §5.4). The
+ground is the author's, not decoration a reader's toner setting may drop
+(`print-color-adjust: exact`, CSS Color Adjustment 1 §3.1). What the PDF
+adds on a continuation page and a sheet cannot is the frame's title band
+and footer: the HTML has no layout pass to know where a sheet breaks, so
+each stands once, where the frame opens and where it ends. -/
 def printStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
-    decls := [("break-after", "page"), ("height", "auto"), ("min-height", "100dvh"),
-      ("overflow-y", "visible"), ("box-decoration-break", "clone"),
-      ("print-color-adjust", "exact")]
+    decls := [("break-after", "page"), ("break-before", "page"), ("height", "auto"),
+      ("min-height", "100dvh"), ("overflow-y", "visible"),
+      ("box-decoration-break", "clone"), ("print-color-adjust", "exact")]
     part := .print }
 
 /-- The sheet's own ground: where a frame's last continuation leaves its
@@ -2499,15 +2502,54 @@ def printSheetGround : DeckRule :=
     decls := [("background", stageGround), ("print-color-adjust", "exact")]
     part := .print }
 
+/-- How far ahead of the declared vertical distribution a frame's end
+spacer claims the leftover (`printFrameEnd`): a hundredfold over the
+largest pair of fill shares any alignment declares
+(`printEndGrow_outranks_contract`), so the spacer takes its whole safe area
+before a fill grows, to within one part in a hundred of the leftover. -/
+def printEndGrow : Nat := 1000000
+
+/-- The end spacer outranks every declared distribution a hundredfold:
+the golden title page's 3618 + 2000 is the largest, and a new alignment
+with larger shares fails here instead of moving a printed frame's
+content. `_contract`'s grade: one bound, every alignment. -/
+theorem printEndGrow_outranks_contract :
+    ∀ v : Ir.VAlign, 100 * (v.shares.1 + v.shares.2) ≤ printEndGrow := by
+  intro v
+  cases v <;> decide
+
+/-- A frame's bottom safe area on paper is room its content may take
+before the frame continues, not a box that continues by itself. Padding
+would: a frame whose content fits its sheet but not its sheet less the
+safe area printed one blank sheet holding only its padding — three in a
+measured 31-frame deck, where the HTML's rhythm runs a few points taller
+than the PDF's. So on paper a frame keeps its safe area as a trailing
+spacer that takes its whole safe area from the leftover first
+(`printEndGrow`) and gives it back when the content needs the room: a
+frame with room to spare lays out exactly as its padding would, a frame
+that overruns by less than the safe area prints on one sheet with its
+last line that much nearer the edge, and only content longer than the
+sheet continues. A section page keeps its padding: it holds a title and
+a bar. -/
+def printFrameEnd : List DeckRule :=
+  [ { selector := [.lit "section.slide"], decls := [("padding-bottom", "0")]
+      part := .print },
+    { selector := [.lit "section.slide::after"]
+      decls := [("content", "\"\""), ("flex", s!"{printEndGrow} 0 0"),
+        ("max-height", safeareaVar)]
+      part := .print } ]
+
+/-- The print rules every deck carries, steps aside. -/
+def printPaged : List DeckRule := [printStageRule, printSheetGround] ++ printFrameEnd
+
 /-- The print partition: the screen deck's stages, paged — the stage
 partition carries their box, type and furniture onto paper, and the stage
-itself grows onto as many sheets as its content needs
-(`printStageRule`, `printSheetGround`). For a stepped deck the snap
-spacers hide and every step prints at full colour: paper has no steps to
-reveal (the user's own rule, beside the unconditional covered floor it
-was written against). -/
+itself grows onto as many sheets as its content needs (`printPaged`). For
+a stepped deck the snap spacers hide and every step prints at full
+colour: paper has no steps to reveal (the user's own rule, beside the
+unconditional covered floor it was written against). -/
 def deckPrint (maxSteps : Nat) : List DeckRule :=
-  [printStageRule, printSheetGround] ++
+  printPaged ++
     (if 2 ≤ maxSteps then
       [ { selector := [.lit ".snap"], decls := [("display", "none")]
           part := .print },
@@ -2723,18 +2765,19 @@ for `box-decoration-break` (CSS Fragmentation 3 §5.4), print-only here:
 Chromium 151 clones a continuing stage's padding onto each sheet
 (measured on a printed breaking frame); where unsupported it degrades to
 `slice`, and every line still reaches paper — a continuation sheet's text
-just starts at its edge. The selector
+just starts at its edge. `break-before` is `break-after`'s twin (CSS
+Fragmentation 3 §3.1) and `padding-bottom` is CSS 2's. The selector
 side of the floor is `deck_css_partition`; attribute selectors
 (`[data-snap]`, `[data-deck-script]`) are CSS 2. -/
 def baselineProps : List String :=
   ["scroll-snap-type", "scroll-snap-align", "scroll-snap-stop",
-   "scroll-behavior", "padding", "margin", "margin-top", "max-width",
+   "scroll-behavior", "padding", "padding-bottom", "margin", "margin-top", "max-width",
    "width", "flex", "background", "overflow-y",
    "min-height", "max-height", "height", "font-size", "color",
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
-   "size", "print-color-adjust", "box-decoration-break",
+   "break-before", "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right"]
 
 /-- Is the rule part of the floor — the CSS every engine applies? The
@@ -2833,13 +2876,12 @@ theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
   · exact fun _ o ho => nomatch ho
   · intro r hr
     have hr2 := deckPrint_subset r hr
-    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
-      or_false] at hr2
-    rcases hr2 with (rfl | rfl) | h2
-    · intro o ho
-      simp [opacityValues, printStageRule] at ho
-    · intro o ho
-      simp [opacityValues, printSheetGround] at ho
+    simp only [deckPrint, List.mem_append] at hr2
+    rcases hr2 with h1 | h2
+    · have hnone : ∀ q ∈ printPaged, opacityValues q = [] := by decide
+      intro o ho
+      rw [hnone r h1] at ho
+      exact nomatch ho
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
         rcases h2 with rfl | rfl
@@ -2950,11 +2992,11 @@ theorem guards_by_construction (v pg : String) (cp ms : Nat) :
     all_goals rfl
   · intro r hr
     have hr2 := deckPrint_subset r hr
-    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
-      or_false] at hr2
-    rcases hr2 with (rfl | rfl) | h2
-    · rfl
-    · rfl
+    simp only [deckPrint, List.mem_append] at hr2
+    rcases hr2 with h1 | h2
+    · simp only [printPaged, printFrameEnd, List.mem_append, List.mem_cons,
+        List.not_mem_nil, or_false] at h1
+      rcases h1 with (rfl | rfl) | (rfl | rfl) <;> rfl
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
         rcases h2 with rfl | rfl <;> rfl
@@ -3014,7 +3056,7 @@ theorem print_lifts_stage_bounds_covers (v pg : String) (cp ms : Nat) :
     (fun _ k => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) ?_
   · exact deckBase_cases rfl rfl rfl rfl rfl
       (printLifts_of_lift (g := printStageRule)
-        (mem_deckRules_print (List.mem_append_left _ (List.mem_cons_self ..))) (by decide))
+        (mem_deckRules_print (List.mem_append_left _ (by decide))) (by decide))
       rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
@@ -3027,11 +3069,11 @@ theorem print_lifts_stage_bounds_covers (v pg : String) (cp ms : Nat) :
       rfl | rfl | rfl <;> rfl
   · intro r hr
     have hr2 := deckPrint_subset r hr
-    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
-      or_false] at hr2
-    rcases hr2 with (rfl | rfl) | h2
-    · rfl
-    · rfl
+    simp only [deckPrint, List.mem_append] at hr2
+    rcases hr2 with h1 | h2
+    · simp only [printPaged, printFrameEnd, List.mem_append, List.mem_cons,
+        List.not_mem_nil, or_false] at h1
+      rcases h1 with (rfl | rfl) | (rfl | rfl) <;> rfl
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
         rcases h2 with rfl | rfl <;> rfl
