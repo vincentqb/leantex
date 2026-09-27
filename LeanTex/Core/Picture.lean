@@ -2662,6 +2662,12 @@ private def readNodeDistance (toks : List Tok) : Option (Sp × Sp) := do
     some (v, h)
   | _ => none
 
+/-- The To-Path keys a path statement reads (`ToSpec.read`), so a bundle or
+an outer bracket that sets one reaches every `to` below it. -/
+private def toKeyNames : List String :=
+  ["out", "in", "bend left", "bend right", "bend angle", "relative", "looseness",
+   "out looseness", "in looseness"]
+
 /-- The keys a path statement's option loop reads, so an entry declared for
 the whole document or for the picture can be carried into a path's bracket
 instead of dropped. A tip counts only where this subset can draw it
@@ -2677,7 +2683,7 @@ def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool 
       | some tip => drawsAsArrow styles tip
       | none => false
     | ts => ["thick", "draw", "dashed", "dotted", "densely dotted",
-        "auto", "swap", "'"].contains (keyPath ts)
+        "auto", "swap", "'"].contains (keyPath ts) || toKeyNames.contains (keyPath ts)
 
 /-- The keys a node statement's option loop reads. A placement and a size
 switch are read through the same functions the loop reads them with, so the
@@ -3295,13 +3301,105 @@ private theorem curveControl_tangent (px py dist deg : Int) :
   generalize dist * sinDeg deg = e
   omega
 
+/-- The To-Path library's settings for one `to` (pgf's
+tikzlibrarytopaths.code.tex, TeX Live 2026). Tangents are whole degrees;
+`rel` reads them against the chord (`relative`, which `bend left`/`bend
+right` turn on); `bend` is the angle the value-less bend keys read
+(`\def\tikz@to@bend{30}`, line 119); each end's looseness is in milli
+(`\def\tikz@to@out@looseness{1}`, line 124); `curved` is
+`\tikz@to@switch@on`, without which a `to` is the straight line. A curve
+switched on by one tangent keeps the library's other one
+(`\def\tikz@to@out{45}`, `\def\tikz@to@in{135}`, lines 121–122). -/
+private structure ToSpec where
+  outA : Int := 45
+  inA : Int := 135
+  rel : Bool := false
+  bend : Int := 30
+  outL : Int := 1000
+  inL : Int := 1000
+  curved : Bool := false
+
+/-- `bend left=α` and `bend right=α` (lines 30–53): the angle becomes the
+bend, `out` is it or its negation, `in` is 180 − `out`, and both read
+against the chord. -/
+private def ToSpec.bendTo (s : ToSpec) (left : Bool) (b : Int) : ToSpec :=
+  let o := if left then b else -b
+  { s with bend := b, outA := o, inA := 180 - o, rel := true, curved := true }
+
+/-- One option entry read as a To-Path key, in the order the library applies
+them. `none` when the entry is no To-Path key; the error is a value that
+does not evaluate. -/
+private def ToSpec.read (s : ToSpec) (env : List (String × Val)) (opt : Array Tok) :
+    Option (Except String ToSpec) :=
+  let num (rest : List Tok) (k : Int → ToSpec) : Option (Except String ToSpec) :=
+    some ((evalNum env rest.toArray).map k)
+  let deg (m : Int) : Int := (m + 500) / 1000
+  match opt.toList with
+  | .ident "out" :: .sym '=' :: rest => num rest fun m => { s with outA := deg m, curved := true }
+  | .ident "in" :: .sym '=' :: rest => num rest fun m => { s with inA := deg m, curved := true }
+  | [.ident "bend", .ident "left"] => some (.ok (s.bendTo true s.bend))
+  | [.ident "bend", .ident "right"] => some (.ok (s.bendTo false s.bend))
+  | .ident "bend" :: .ident "left" :: .sym '=' :: rest => num rest fun m => s.bendTo true (deg m)
+  | .ident "bend" :: .ident "right" :: .sym '=' :: rest => num rest fun m => s.bendTo false (deg m)
+  | .ident "bend" :: .ident "angle" :: .sym '=' :: rest => num rest fun m => { s with bend := deg m }
+  | [.ident "relative"] | [.ident "relative", .sym '=', .ident "true"] =>
+    some (.ok { s with rel := true })
+  | [.ident "relative", .sym '=', .ident "false"] => some (.ok { s with rel := false })
+  | .ident "looseness" :: .sym '=' :: rest =>
+    num rest fun m => { s with outL := m, inL := m, curved := true }
+  | .ident "out" :: .ident "looseness" :: .sym '=' :: rest =>
+    num rest fun m => { s with outL := m, curved := true }
+  | .ident "in" :: .ident "looseness" :: .sym '=' :: rest =>
+    num rest fun m => { s with inL := m, curved := true }
+  | _ => none
+
+/-- `p` turned about `c` by `deg`: where pgf's relative curve looks from a
+node's centre (lines 262–296 rotate the other endpoint about this one before
+asking the shape for its border). Milli trigonometry, one rounding per axis. -/
+private def turnAbout (c p : Sp × Sp) (deg : Int) : Sp × Sp :=
+  let dx := p.1 - c.1
+  let dy := p.2 - c.2
+  (c.1 + (dx * cosDeg deg - dy * sinDeg deg) / 1000,
+   c.2 + (dx * sinDeg deg + dy * cosDeg deg) / 1000)
+
+/-- A relative curve's control point (lines 318–352): in the frame whose
+x-axis runs along the chord `v` from the start's border to the target's,
+`dist` along the declared angle, where `dist` is 0.3915·‖v‖ scaled by the
+end's looseness — so the offset is the chord itself turned by the angle and
+scaled, which needs neither a square root nor an arctangent. -/
+private def turnedControl (px py vx vy deg loose : Int) : Int × Int :=
+  (px + (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose / 10000000000,
+   py + (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose / 10000000000)
+
+/-- **A bent edge leaves at its angle to its chord.** The control offset is
+the chord turned by the declared angle — `(vₓ cos α − v_y sin α, vₓ sin α +
+v_y cos α)` over the milli table — times the To-Path factor 0.3915 and the
+looseness, inside one rounding per axis. pgf builds the same point as
+`\pgfpointpolar{α}{dist}` under the transform `[n −n⊥]` of the unit chord
+`n`, and `dist·n` is `0.3915·looseness·v`. The same function builds both
+ends, the arrival one from the target with `in`, as the library does. -/
+private theorem turnedControl_between (px py vx vy deg loose : Int) :
+    10000000000 * ((turnedControl px py vx vy deg loose).1 - px) ≤
+      (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose ∧
+    (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose <
+      10000000000 * ((turnedControl px py vx vy deg loose).1 - px) + 10000000000 ∧
+    10000000000 * ((turnedControl px py vx vy deg loose).2 - py) ≤
+      (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose ∧
+    (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose <
+      10000000000 * ((turnedControl px py vx vy deg loose).2 - py) + 10000000000 := by
+  simp only [turnedControl]
+  generalize (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose = d
+  generalize (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose = e
+  omega
+
 /-- One path operation between two endpoints: pgf manual §14.13 (to
-paths) — `--` and a bare `to` are the straight line, `to[out=α, in=β]`
-the cubic whose control points sit 0.3915·‖d‖ along the departure and
-arrival tangents (the To-Path library's own factor, at looseness 1). -/
+paths) — `--` and a bare `to` are the straight line; a `to` whose keys
+switched the curve on is the cubic its `ToSpec` describes, the control
+points 0.3915·‖d‖·looseness along the departure and arrival tangents (the
+To-Path library's own factor), absolute or against the chord. -/
 private inductive DrawOp where
   | straight
-  | curve (outA inA : Int)
+  | curve (spec : ToSpec)
 
 /-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
 chain between named nodes and coordinates, border-anchored at named
@@ -3334,6 +3432,9 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- bracket still wins, as every inner setting does.
   let mut autoOn := false
   let mut autoLeft := true
+  -- The To-Path keys the statement sets: every `to` and `edge` of the chain
+  -- starts from them, and its own bracket refines them.
+  let mut toSpec : ToSpec := {}
   let mut own : Array (Array Tok) := #[]
   if ts[0]? == some (.sym '[') then
     let mut j := 1
@@ -3391,6 +3492,12 @@ picture subset; the option is dropped")
       strokes := true
     | [] => pure ()
     | o :: rest =>
+      match toSpec.read env opt with
+      | some (.ok s) => toSpec := s
+      | some (.error e) =>
+        return ev.diag (.E0333, s!"in '\\draw' option '{keyPath opt.toList}', {e}; \
+the edge is not drawn")
+      | none =>
       -- A remaining option is a colour spelling, or names itself.
       match evalColor cx env opt with
       | .ok c => color := c
@@ -3488,24 +3595,19 @@ picture subset; the edge is not drawn")
             return ev.diag (.E0333, "'to' options miss their ']'; the edge is \
 not drawn")
           i := j + 1
-          let mut outA : Option Int := none
-          let mut inA : Option Int := none
+          let mut spec := toSpec
           -- Through the same expansion a node's and a path's bracket goes
           -- through, so a bundle applied on an edge operation is the bundle
           -- it names. Reading this one bracket raw was the last place a
           -- declared name reached no reader (`styleName_agree`'s use side).
           for opt in expandOpts cx.styles inner do
+            match spec.read env opt with
+            | some (.ok s) => spec := s
+            | some (.error e) =>
+              return ev.diag (.E0333, s!"in '{keyPath opt.toList}=', {e}; the \
+edge is not drawn")
+            | none =>
             match opt.toList with
-            | .ident "out" :: .sym '=' :: rest =>
-              match evalNum env rest.toArray with
-              | .ok m => outA := some ((m + 500) / 1000)
-              | .error e =>
-                return ev.diag (.E0333, s!"in 'out=', {e}; the edge is not drawn")
-            | .ident "in" :: .sym '=' :: rest =>
-              match evalNum env rest.toArray with
-              | .ok m => inA := some ((m + 500) / 1000)
-              | .error e =>
-                return ev.diag (.E0333, s!"in 'in=', {e}; the edge is not drawn")
             -- An operation's own bracket carries stroke keys too, and on
             -- `\path (a) edge [dashed] (b)` they are the whole point: the
             -- dash is what the diagram means by that edge. The subset has
@@ -3544,14 +3646,14 @@ subset; the last one is drawn")
 colour is dropped")
             | [] => pure ()
             | o :: _ =>
-              ev := ev.diag (.W0334, s!"'to' option {tokText o} is outside the \
+              -- The whole key: its first word alone named `in` for
+              -- `in min distance`, a key the reader does honour.
+              let key := keyPath opt.toList
+              let named := if key.isEmpty then tokText o else s!"'{key}'"
+              ev := ev.diag (.W0334, s!"'to' option {named} is outside the \
 rendered picture subset; the option is dropped")
-          match outA, inA with
-          | some oA, some iA => op := .curve oA iA
-          | none, none => pure ()  -- pgf's default to path is the straight line
-          | _, _ =>
-            ev := ev.diag (.W0334, "a 'to' with only one of 'out='/'in=' is \
-outside the rendered picture subset; it is drawn as a straight line")
+          op := if spec.curved then .curve spec else .straight
+        else if toSpec.curved then op := .curve toSpec
       else
         return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
 outside the rendered picture subset; the edge is not drawn")
@@ -3663,15 +3765,28 @@ edge is not drawn")
             (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
           labels := stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
             cx.bodySize msc mc al lines labels
-      | .curve oA iA =>
-        let p1 := a.towardDir oA
-        let p2 := c.towardDir iA
+      | .curve spec =>
+        -- Absolute tangents anchor each end on its border along its own
+        -- angle and aim the controls along those angles. Relative ones
+        -- (lines 246–358) turn the other centre about this one to find
+        -- the border, then aim the controls in the frame of the chord
+        -- between the two borders.
+        let (p1, p2) :=
+          if spec.rel then
+            (a.toward (turnAbout a.center c.center spec.outA),
+             c.toward (turnAbout c.center a.center (180 + spec.inA)))
+          else (a.towardDir spec.outA, c.towardDir spec.inA)
         let ddx := p2.1 - p1.1
         let ddy := p2.2 - p1.2
-        -- control distance 0.3915·‖d‖: the To-Path library's factor
-        let dist := isqrt (ddx * ddx + ddy * ddy) * 3915 / 10000
-        let c1 := curveControl p1.1 p1.2 dist oA
-        let c2 := curveControl p2.1 p2.2 dist iA
+        let (c1, c2) :=
+          if spec.rel then
+            (turnedControl p1.1 p1.2 ddx ddy spec.outA spec.outL,
+             turnedControl p2.1 p2.2 ddx ddy spec.inA spec.inL)
+          else
+            -- control distance 0.3915·‖d‖·looseness: the To-Path library's factor
+            let len := isqrt (ddx * ddx + ddy * ddy)
+            (curveControl p1.1 p1.2 (len * 3915 * spec.outL / 10000000) spec.outA,
+             curveControl p2.1 p2.2 (len * 3915 * spec.inL / 10000000) spec.inA)
         segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
         if last && arrow then
           -- the tip rides the arrival tangent; the curve keeps its

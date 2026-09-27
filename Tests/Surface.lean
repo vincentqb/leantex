@@ -3695,9 +3695,10 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
         p.shapes.any fun s => match s with
           | .edge segs _ _ => segs == #[.line 0 0 cm cm]
           | _ => false) == some true)
-  t "a to with only one tangent names the loss and draws straight"
-    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334"] &&
-      (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes.size) == some 1)
+  t "a to with only one tangent keeps the library's default for the other"
+    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == [] &&
+      (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes) ==
+        (picOf (wrap "\\draw (0,0) to[out=90, in=135] (1,1);")).map (·.shapes))
   t "a mid-path node labels the segment at its midpoint"
     ((picOf (wrap "\\draw (0,0) -- node {mid} (2,0);")).map (fun p =>
       p.shapes.any fun s => match s with

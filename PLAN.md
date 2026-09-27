@@ -22305,3 +22305,64 @@ again, where natbib prints `?` and warns.
   fields; review-d's `bibconfine.py` (title 4-grams, surnames, keys)
   found this branch's fixture titles. Folding it into the scan the lander
   runs would catch the class on every landing (the coordinator's tool).
+
+
+### 2026-09-27 — pictures: a bent edge is drawn bent, and a to-path reads TikZ's own defaults
+
+The warnings audit of the private reference corpus found a `to`/`edge`
+option `bend left=α`/`bend right=α` dropped (W0334) on five sites of the
+deck's diagrams: every bend was drawn as its chord, so two one-way
+relations between a pair of nodes collapsed onto one overdrawn segment, and
+a long connector crossed an intermediate node's label.
+
+**The source.** pgf's To-Path library (tikzlibrarytopaths.code.tex, TeX
+Live 2026) defines the whole key family as settings of one curve:
+- `bend left=α` sets the bend to α, `out` to α and `in` to 180 − `out`;
+  `bend right=α` sets `out` to −α (lines 30–53). Both turn `relative` on.
+  A bend key without a value reads the bend angle, 30 by default
+  (`\def\tikz@to@bend{30}`, line 119; `bend angle`, line 28).
+- `out`, `in`, `looseness` and the bend keys switch the curve on
+  (`\tikz@to@switch@on`). A curve switched on by one tangent keeps the
+  library's other: `out` 45 and `in` 135 (lines 121–122).
+- A relative curve (lines 246–358) turns the other endpoint's centre about
+  a node's centre by the angle and asks the shape for its border there.
+  It then aims both controls in the frame whose x-axis is the chord
+  between the two borders, at 0.3915·‖chord‖·looseness.
+
+**What changed** (`Picture.evalDraw`; no new `Ir`, no backend change). The
+keys are read by one reader, `ToSpec.read`, at a `to`/`edge` bracket and at
+the statement's own options; the statement's settings seed every operation
+of its chain, and `readsPathOpt` carries them from the picture's and the
+document's brackets. The relative control point is the chord itself turned
+by the angle and scaled (`turnedControl`), which needs neither a square
+root nor an arctangent. A `to` with only one tangent was a named loss drawn
+straight; it now takes the library's default for the other. A dropped
+`to` key is named whole (`in min distance`, not `in`).
+
+**The theorem.** `turnedControl_between`: a bent edge leaves at its angle
+to its chord. The control offset is the chord turned by the declared angle
+over the milli sine table, times 0.3915 and the looseness, inside one
+rounding per axis. Broken once (a sign in the rotation) and the build
+failed at it (`break-u1.log` in the evidence directory). The box still
+covers the control points by `Picture.box_covers`, since a cubic's box
+joins its four points.
+
+**Tests over the artifact.** `pictureBendChecks` (Tests/PicturePaths.lean),
+over `Layout.Out`'s page paths and the SVG: a bent edge ships one cubic and
+no chord; a bend and its reverse bulge to opposite sides; `bend right` is
+`bend left` mirrored in the chord; the value-less form is 30°; a statement's
+keys reach its `to`; `looseness` scales the controls; a one-tangent `to`
+keeps the other; no bend key is named a loss; the SVG draws a `C`. All ten
+fail on `b312cf2b`, the Surface test that asserted the one-tangent loss
+included.
+
+**Measured against lualatex** (`pdftocairo -svg`, control offsets relative
+to each endpoint, bp): on drawn nodes at three heights, the four curves
+agree to 1.2%. The rest is TikZ's `outer sep`, half the line width, which
+the engine's node border does not add (0.2bp an end). On bare coordinates
+they agree to 0.3%: TikZ measures the chord by a fixed-point approximation,
+and the engine takes the exact length. On the private deck, five pages
+changed (the frames that draw the two full graphs), each now bent as the
+reference is. Every other page is pixel-identical to the base at 110 dpi.
+The deck ships 35 pages, and its W0334 lines fall 13 → 8. The paper's
+census and its 8 pages are identical.
