@@ -485,7 +485,7 @@ warning[W0381]: no unit symbol for '\banana'; set as its ASCII spelling
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
 warning[W0383]: '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
-warning[W0384]: frame 1 is 5.993pt taller than its page; it continues on the next page
+warning[W0384]: frame 1 is 3.437pt taller than its page; it continues on the next page
   help: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 warning[W0385]: the colour 'indigo' inside math sets in the surrounding style
@@ -497,7 +497,7 @@ warning[W0386]: a declared line break did not hold: 2 lines were declared, 4 shi
 warning[W0387]: '\thispagestyle' was read and had no effect
   help: \allow{W0387} accepts the skip
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
-warning[W0388]: the \framefoot note reaches 231.57 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
+warning[W0388]: the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
   help: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
 warning[W0389]: math with \cancelto is not rendered yet; its content operand sets in its place

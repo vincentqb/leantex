@@ -139,6 +139,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   headingKeepChecks ref oneFace
   frameBodyChecks ref oneFace
   frameContentEndChecks ref oneFace
+  footlineChecks ref
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace
   frameSpecChecks ref oneFace

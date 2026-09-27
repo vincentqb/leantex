@@ -1130,7 +1130,7 @@ to { transform: scaleX(1) } }\n" ++
       "@media print { .deck-progress { display: none; } }\n"
      else "") else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
-  -- scale (`size-small` on the element), positions fixed by the declared
+  -- scale (the footline step, `Ir.footline`), positions fixed by the declared
   -- side — each slot pinned to its edge, as `Layout.bandSlotX` pins the
   -- page's — so nothing a slot contains can move another. The band holds
   -- one line (`min-height: 1lh`, CSS Values 4 §6.1.3: the element's own
@@ -1145,7 +1145,14 @@ to { transform: scaleX(1) } }\n" ++
     "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
     "  white-space: nowrap; }\n" ++
     "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
-    "  white-space: nowrap; }\n" else "")
+    "  white-space: nowrap; }\n" ++
+    -- A named size inside a slot is the body's step, as TeX's size
+    -- commands are absolute and as the page sets it
+    -- (`Layout.setBandSlot`): the footer's own step is undone for it.
+    (let step := (Ir.scaleStepIn doc.page.scale 1000 Ir.footline.step).toNat
+     String.join (doc.page.scale.map fun (name, k) =>
+       s!"footer.slide-foot .size-{name} \{ font-size: \
+{milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
 
 /-- One palette entry as the CSS custom-property declaration `:root`
 carries: the definition site a role use's `var(--name, …)` reference
@@ -5942,7 +5949,7 @@ first; retitle one frame, or link to '#{id}'"))
                         | .left => "band-left"
                         | .right => "band-right"),
                       ("style", s!"z-index: {s.rank}")])
-                  #[("class", "slide-foot size-small")]))
+                  #[("class", "slide-foot size-" ++ Ir.footline.step)]))
               | _, other => other
             else node
           -- The frame's logo: the state in force at this position, from

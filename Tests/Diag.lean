@@ -370,7 +370,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
-      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 100 '0')}}\n" ++
+      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
        "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0334 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
@@ -432,7 +432,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- sets at its natural width and reaches past the page edge. W0333 names
   -- the collision with the folio; this names the ink no viewer can show.
   | .W0388 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
-      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 100 '0')}}\n" ++
+      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
        "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++

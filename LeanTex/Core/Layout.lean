@@ -294,24 +294,52 @@ theorem geometry_roundtrip (sep descent vmargin ink : Sp)
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
 
-/-- A band slot's horizontal position: the declared side and the geometry,
-plus the slot's own set width — no other slot is an argument, so nothing a
-slot contains can move another slot's box. The right slot's box ends at the
-right margin whatever it holds (`bandSlotX_right_pinned`): the folio has a
-fixed position, and an empty or overlong neighbour is not a case. -/
+/-- A band slot's horizontal position: the declared side and the paper's
+edge, inset as moloch's footline insets its slots (`Ir.footline`), plus the
+slot's own set width — no other slot is an argument, so nothing a slot
+contains can move another slot's box. The right slot's box ends its inset
+from the paper's right edge whatever it holds (`bandSlotX_right_pinned`):
+the folio has a fixed position, and an empty or overlong neighbour is not a
+case. -/
 def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Sp) : Sp :=
   match side with
-  | .left => g.hmargin
-  | .right => g.pageW - g.hmargin - w
+  | .left => Ir.footline.left
+  | .right => g.pageW - Ir.footline.right - w
 
 /-- The right slot's right edge is a constant of the geometry: `x + w` is
-the right margin for every width, so no content — its own included — moves
-the folio's anchor. -/
+the paper's right edge less the footline's inset for every width, so no
+content — its own included — moves the folio's anchor. -/
 theorem bandSlotX_right_pinned (g : Geom) (w : Sp) :
-    bandSlotX g .right w + w = g.pageW - g.hmargin := by
+    bandSlotX g .right w + w = g.pageW - Ir.footline.right := by
   have key : ∀ a b c : Int, a - b - c + c = a - b := by intro a b c; omega
   simp only [bandSlotX]
-  exact key g.pageW g.hmargin w
+  exact key g.pageW Ir.footline.right w
+
+/-- The footline band's baseline on a page `pageH` tall, for a band whose
+box hangs `d` below its baseline: the template's closing `\vskip4pt`
+stands between the box and the paper's bottom edge (`Ir.footline`). -/
+def footBaseline (pageH d : Sp) : Sp := pageH - Ir.footline.raise - d
+
+/-- The floor of a frame's text area above a footline band whose box stands
+`h` above and `d` below its baseline: `gap` above the band's top — beamer's
+`\footheight` is the box plus 4 pt (`Ir.footline.sep`), unless the document
+declared its own furniture gap. -/
+def footFloor (pageH gap h d : Sp) : Sp := footBaseline pageH d - h - gap
+
+/-- **A frame's text area and its footline tile the page** (`_exact`):
+the floor the body stands on, plus the footline's gap, box and closing
+skip, is the paper's height — beamer's `\textheight + \footheight =
+\paperheight` (beamerbaseframecomponents.sty:178-180), whatever the band
+holds. The floor and the number's baseline are one function of the band's
+box (`footFloor` is `footBaseline` less the box's height and the gap), so
+the two can only move together. -/
+theorem footFloor_exact (pageH gap h d : Sp) :
+    footFloor pageH gap h d + gap + h + d + Ir.footline.raise = pageH ∧
+      footBaseline pageH d - h - footFloor pageH gap h d = gap := by
+  have key : ∀ H g h d r : Int, H - r - d - h - g + g + h + d + r = H ∧
+      H - r - d - h - (H - r - d - h - g) = g := by intros; omega
+  exact key pageH gap h d Ir.footline.raise
+
 
 /-- Does a box of width `w` whose left edge stands at `x` lie on the medium
 the page declares? Layout space is the trim's, so the medium runs
@@ -946,6 +974,11 @@ structure PageOut where
   pass lays into the margin once the page count is known. `none` on section
   pages, standout frames, and every page of an unthemed document. -/
   foot : Option (Array Ir.BandSlot) := none
+  /-- The chrome footer's box on this page — its glyphs' height above and
+  depth below the baseline (`segsInk`) — measured where the page was built,
+  so the band's baseline (`footBaseline`) is set from the same value the
+  page's text-area floor was (`B.bottom`). `none` where `foot` is. -/
+  footBox : Option (Sp × Sp) := none
   /-- The countable frame this page belongs to — its `Ir.frameNumbers`
   number, written at `finishPage` from the same `.foot` op that carries
   the footer, so a stepped or spilling frame's pages all bear it. `none`
@@ -3852,8 +3885,8 @@ private structure NoteBlock where
 the note block and the `\skip\footins` gap above it come out of the text
 block's bottom; with no notes the floor is `bodyBottom` itself. Every
 placement fit test on a noted page reads the bottom from here. -/
-private def noteFloor (geom : Geom) (footins h : Sp) : Sp :=
-  if h == 0 then geom.bodyBottom else geom.bodyBottom - h - footins
+private def noteFloor (bottom footins h : Sp) : Sp :=
+  if h == 0 then bottom else bottom - h - footins
 
 
 /-- Page assembly state. A page is set the way a line is: its lines are
@@ -3930,6 +3963,19 @@ private structure B where
   `.foot` ops: written onto each closing page (`finishPage`), so the
   attribution and the footer can only move together. -/
   curFrame : Option Nat := none
+  /-- The footline band's box — its glyphs' height above and depth below
+  the baseline (`segsInk`) — for pages closed from here on, written with
+  `curFoot` from the same `.foot` op: the one value the page's text-area
+  floor (`B.bottom`) and the band's baseline (`footBaseline`) both read. -/
+  footBox : Option (Sp × Sp) := none
+  /-- The declared gap between the footline's ink and the text area:
+  the document's furniture gap, else beamer's 4 pt (`Ir.footline.sep`). -/
+  footGap : Sp := Ir.footline.sep
+  /-- A frame opened its body on this page (`openBody`): the next band is
+  spaced below `y` as below a box of depth zero even though no line
+  stands on the page yet — beamer's `\vbox{}` at the top of an untitled
+  frame. -/
+  opened : Bool := false
   /-- Inside a frame (`.frameOpen` to its `.brk`): whether the author
   declared `[allowframebreaks]`. `none` outside a frame — an article page
   close is flow, never a spill to report. -/
@@ -3970,6 +4016,22 @@ private structure B where
   notesH : Sp := 0
   diags : Array Diag := #[]
 
+/-- The floor of the text area on the page being built — what every fit
+test, the note block and the page close read: `Geom.bodyBottom`, except on
+a frame page that carries the footline, whose text area ends beamer's
+`\footheight` above the paper's bottom edge (`footFloor`, from the band's
+own box). -/
+private def B.bottom (b : B) : Sp :=
+  match b.footBox with
+  | some (h, d) => footFloor b.geom.pageH b.footGap h d
+  | none => b.geom.bodyBottom
+
+/-- Nothing stands on the page being built that the next band must be
+spaced below: no line and no opened frame body, or a column rewound to the
+page's start. -/
+private def B.fresh (b : B) : Bool :=
+  (b.cur.lines.isEmpty && !b.opened) || b.freshStart
+
 /-- Attach a committed line's notes to the open page: each note's lines
 join `pendingNotes` shifted below what already stands, whole — no branch
 anywhere splits a `NoteBlock`. Called only beside `B.commit`, so a note
@@ -3986,7 +4048,7 @@ private def B.attachNotes (b : B) (notes : Array NoteBlock) : B :=
 block's floor even on a fresh page — the note ships whole and the page is
 honestly overrun (the W0358 shape), never silently truncated or split. -/
 private def B.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
-  let over := y + inkBelow - noteFloor b.geom b.footins b.notesH
+  let over := y + inkBelow - noteFloor b.bottom b.footins b.notesH
   if b.notesH > 0 && over > 0 then
     { b with diags := b.diags.push (Diag.of .W0372
         (s!"a footnote is {over.toPtString}pt taller than the text block; " ++
@@ -4076,7 +4138,7 @@ pending, so an unnoted page ships exactly what it always shipped. One
 `++` per page close, bounded, never a walk's accumulator. -/
 private def B.noteLines (b : B) : Array LineOut :=
   if b.pendingNotes.isEmpty then #[] else
-    let top := b.geom.bodyBottom - b.notesH
+    let top := b.bottom - b.notesH
     let thick := b.geom.fontSize * 4 / 100
     let ruleW := b.geom.textWidth * 2 / 5
     let rule : LineOut := { x := b.geom.hmargin
@@ -4151,7 +4213,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
       -- after the shift, anchored at bodyBottom)
-      noteFloor b.geom b.footins b.notesH - b.contentEnd owed
+      noteFloor b.bottom b.footins b.notesH - b.contentEnd owed
     else 0
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
@@ -4188,12 +4250,13 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
   -- the distribution can never move a note.
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
                                    paths := paths, foot := b.curFoot,
+                                   footBox := b.footBox,
                                    frame := b.curFrame, band := b.curBand },
            cur := {}, curBand := none,
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0,
-           pendingNotes := #[], notesH := 0,
+           pendingNotes := #[], notesH := 0, opened := false,
            diags := diags }
 
 /-- A y-only rewrite keeps every line's segs: the projection both closing
@@ -4574,6 +4637,26 @@ theorem line_box_glyph_free (fs : FontSet)
   funext acc s
   cases s <;> rfl
 
+/-- The box TeX builds around a set line, read from the glyphs' own
+outlines: the tallest glyph above the baseline and the deepest below it,
+each run at its own size and raise; an image stands on the baseline, a
+rule spans its extent, and a glyph whose outline does not decode answers
+its face's metric ascent and descent. The line-box convention positions
+no line from ink (`line_box_glyph_free`); this is read only where the ink
+is what must be cleared — the footline band a frame's text area stops
+above, as beamer's `\footheight` is the band's `\ht` plus `\dp`. -/
+def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
+  segs.foldl (fun (acc : Sp × Sp) s => match s with
+    | .run idx _ _ _ glyphs sz _ raise _ _ =>
+      let font := fs.get idx
+      let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
+      glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
+        let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
+        (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
+    | .image _ _ h => (max acc.1 h, acc.2)
+    | .rule _ t r _ => (max acc.1 (r + t), max acc.2 (-r))
+    | _ => acc) (0, 0)
+
 /-- A line that is bare rule ink: at least one segment, every segment a
 rule. The interline convention measures to its edges (`interlineFor`),
 and the body strut never applies to it (`lineExtent`). -/
@@ -4675,14 +4758,19 @@ box's bottom and no `\parskip` is spent. The box's bottom is the bar's
 bottom edge (the last pinned fill, as the spill page's resume reads it) or
 the title's own depth, whichever is lower; `g` is the declared skip. Before,
 the first line was spaced off the title's baseline, so on a `[t]` frame its
-ascent reached into the bar. -/
+ascent reached into the bar. An untitled frame on a footline page opens the
+same way on an empty page, at the top of beamer's text area (moloch's
+headline is empty, so `\headheight` is zero): its `\vbox{}` is the paper's
+top edge, or the bottom of a band already painted there. -/
 private def B.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
-  { b with y := max (b.y + b.prevDepth) barBottom
+  { b with y := if b.cur.lines.isEmpty then barBottom
+                else max (b.y + b.prevDepth) barBottom
            prevDepth := 0
            prevBelow := b.strutBelow fs
            prevRuleOnly := false
-           skip := b.skip.add g }
+           skip := b.skip.add g
+           opened := true }
 
 /-- The pending skip a fresh page keeps. TeX discards glue at the top of a
 page up to its first box or rule, and `\vspace*`'s zero rule is one
@@ -4709,14 +4797,16 @@ checked one proved it fits. -/
 private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
     (notes : Array NoteBlock := #[]) : B :=
-  if b.cur.lines.isEmpty || b.freshStart then
+  if b.fresh then
     ((b.commit (mk (firstY b)) depth below rl false 0).attachNotes
       notes).warnNoteOverrun (firstY b) inkBelow
   else
     let y := stepY b
     let overflow := y + inkBelow - bottom
     let above := b.pageShrink + b.skip.shrink
-    if overflow ≤ above ∨ b.noBreak then
+    -- An opened page with no line on it yet commits: a break would ship an
+    -- empty frame page and gain the band nothing.
+    if overflow ≤ above ∨ b.noBreak ∨ b.cur.lines.isEmpty then
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
     else
       let b := b.spillPage (overflow - above)
@@ -4763,7 +4853,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   -- not fit spills WITH its notes and the reservation follows the mark.
   let need := if notes.isEmpty then 0
     else notes.foldl (fun s nb => s + nb.height) 0
-  let bottom := noteFloor b.geom b.footins (b.notesH + need)
+  let bottom := noteFloor b.bottom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand, counted := counted, leaf := leaf }
@@ -4805,7 +4895,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)
         + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-            b.geom.leading size segs).inkBelow - b.geom.bodyBottom
+            b.geom.leading size segs).inkBelow - b.bottom
         ≤ b.pageShrink + b.skip.shrink) :
     (b.placeLine fs x size segs w hang ex).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
@@ -4818,7 +4908,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp only [hcur, hfresh, hpr, hrl, interlineFor, hnn, noteFloor,
+  simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, interlineFor, hnn, noteFloor,
     Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
@@ -4833,7 +4923,7 @@ none unless a fil stands in it). Constant for a document unless a taller
 first line honestly needs more, or the page opens on a `\vspace*{\fill}`;
 what furniture symmetry measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (hcur : b.cur.lines.isEmpty = true) :
+    (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
       some (b.geom.bodyTop + max b.ascent
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
@@ -4843,7 +4933,7 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp [hcur, B.commit, B.attachNotes, Array.back?_push]
+  simp [hf, B.commit, B.attachNotes, Array.back?_push]
 
 /-- **The line names the leaf it was given** (`_exact`): the `LineOut`
 `placeLine` commits carries `leaf` unchanged — the `mk` closure copies it,
@@ -4851,14 +4941,14 @@ so a later edit cannot drop the attribution channel between the paragraph
 job and the page silently. Stated on the fresh-page branch, as
 `first_baseline_declared` is; every branch commits the same `mk`. -/
 private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (lf : Option Nat) (hcur : b.cur.lines.isEmpty = true) :
+    (segs : Array Seg) (w : Sp) (lf : Option Nat) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w (leaf := lf)).cur.lines.back?.map (·.leaf) = some lf := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp [hcur, B.commit, B.attachNotes, Array.back?_push]
+  simp [hf, B.commit, B.attachNotes, Array.back?_push]
 
 /-- The other half of the PDF realization: what page close does to the gaps
 placement realized — nothing, on a page that shipped without consuming
@@ -4885,7 +4975,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
-      noteFloor b.geom b.footins b.notesH - b.contentEnd owed
+      noteFloor b.bottom b.footins b.notesH - b.contentEnd owed
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
@@ -4905,17 +4995,17 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
-    (hl : 0 ≤ noteFloor b.geom b.footins b.notesH - b.contentEnd owed) :
+    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
-          VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed))) ∧
-    VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
-      ≤ (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
-        - VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed) ∧
-    (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
-        - VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
-      ≤ VDist.center.aboveShare (noteFloor b.geom b.footins b.notesH - b.contentEnd owed)
+          VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed))) ∧
+    VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+      ≤ (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) ∧
+    (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+      ≤ VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
         + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
@@ -7384,7 +7474,17 @@ private def collectBlock (r : Rd) (a : Acc)
     -- (beamerbaseframe.sty:126) and, on a `[t]` frame, the `.2cm` top skip
     -- (:263); a centred frame's top skip is a bare fil (moloch,
     -- beamerinnerthememoloch.sty:455), which the distribution spends.
-    let a := if title.isEmpty then a else
+    let a := if title.isEmpty then
+        -- An untitled frame whose page carries the footline opens the same
+        -- way, at the top of beamer's text area: its content's `\vbox{}`
+        -- stands at the paper's top edge (moloch's headline is empty), with
+        -- no title box and so no `\vskip0.25em` (`B.openBody`).
+        if a.footAllowed && a.frameNum.isSome && a.chromeFoot.isSome then
+          { a with ops := a.ops.push (.bodyOpen
+              { width := if valign matches .top then Dim.mm 2 else 0 }), -- [t]'s .2cm, beamerbaseframe.sty:263
+                   wantDefault := false }
+        else a
+      else
       let g : Glue := { width := r.geom.fontSize / 4 + -- \vskip0.25em, beamerbaseframe.sty:126
         (if valign matches .top then Dim.mm 2 else 0) } -- [t]'s .2cm, beamerbaseframe.sty:263
       { a with ops := (a.ops.push .pin).push (.bodyOpen g), wantDefault := false }
@@ -8001,6 +8101,43 @@ private structure StepSt where
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
+/-- A chrome band slot set as one line at its natural width, at the
+footline's step (`Ir.footline`): the one setting both the page's text-area
+floor (`bandBox`, where the page is built) and the furniture pass
+(`runPost`, where the slot ships) read, so the box the floor clears is the
+ink the pass paints. The band holds one line; the flag says the content
+wrapped, which the pass names (W0328). -/
+private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (imgs : Image.Store) (geom : Geom) (xHeight : Sp) (style : TextStyle)
+    (content : Array Inline) (cache : Std.HashMap String (Array Nat)) :
+    Option (Array Seg × Sp) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
+  -- The step is the band's own scale over the body size, so a named size
+  -- inside a slot (`\scriptsize` in a frame footer) is the body's step, as
+  -- TeX's size commands are absolute, never a step of the band's.
+  let (items, ds, cache, _) :=
+    itemsOfInlines pats geom.fontSize xHeight fs
+      { style with scale := (Ir.scaleStep 1000 Ir.footline.step).toNat }
+      content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
+      (ladder := geom.scale)
+  let breaks := kp items geom.textWidth
+  match breaks[0]? with
+  | none => (none, breaks.size > 1, ds, cache)
+  | some brk =>
+    let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+    (some (segs, w), breaks.size > 1, ds, cache)
+
+/-- The footline band's box on page `n`: the tallest and deepest ink of its
+slots (`segsInk`), each set as the furniture pass will set it — beamer's
+`\ht` and `\dp` of the footline, which its `\footheight` sums. -/
+private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+    (n : Nat) (band : Array Ir.BandSlot) : Sp × Sp :=
+  band.foldl (fun (acc : Sp × Sp) slot =>
+    match (setBandSlot none fs imgs geom xHeight {} (substPage n 0 slot.content) {}).1 with
+    | some (segs, _) =>
+      let (h, d) := segsInk fs segs
+      (max acc.1 h, max acc.2 d)
+    | none => acc) (0, 0)
+
 /-- **A heading never ends a page** (`ParaJob.keepNext`): when a heading's
 own lines and what it keeps — the next block's first box, as placement
 reads it (`keepExt`): two lines of text, a picture's whole box, a second
@@ -8011,8 +8148,8 @@ flow and outside a float replay: a frame or a float decides its own page.
 `n` is the heading's line count. -/
 private def B.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
   if 0 < j.keepNext && b.frameBreak.isNone && !b.noBreak &&
-      !(b.cur.lines.isEmpty || b.freshStart) &&
-      noteFloor b.geom b.footins b.notesH + b.pageShrink + b.skip.shrink
+      !b.fresh &&
+      noteFloor b.bottom b.footins b.notesH + b.pageShrink + b.skip.shrink
         < b.y + b.prevDepth + b.skip.width
           + (n : Int) * Ir.leadingFor j.size b.geom.leading + j.keepNext then
     b.spillPage
@@ -8037,11 +8174,11 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- cannot absorb the overflow.
   let ((px0, py0), (_px1, py1)) := pictureBox b.geom fs imgs b.xHeight pic
   let h := py1 - py0
-  let bottom := b.geom.bodyBottom
+  let bottom := b.bottom
   let mut yTop := b.geom.vmargin
   let mut above : Sp := 0
   let mut overflow : Sp := 0
-  if !(b.cur.lines.isEmpty || b.freshStart) then
+  if !b.fresh then
     let y := b.y + b.prevDepth + b.skip.width + inkClearance
     overflow := y + h - bottom
     above := b.pageShrink + b.skip.shrink
@@ -8184,7 +8321,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- Glue reaching a page that holds nothing yet is discarded, as TeX's
     -- page builder discards it, until a fil anchors what follows
     -- (`B.topKept`): only then does the page keep its pending skip.
-    unless (b.cur.lines.isEmpty || b.freshStart) && !(b.skip.fil || g.fil) do
+    unless b.fresh && !(b.skip.fil || g.fil) do
       b := { b with skip := b.skip.add g }
   | .bodyOpen g => b := b.openBody fs g
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
@@ -8199,10 +8336,12 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
-                    frameBreak := none, spillWarned := false }
+                    frameBreak := none, spillWarned := false, opened := false }
   | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
-  | .foot c fr => b := { b with curFoot := c, curFrame := fr }
+  | .foot c fr =>
+    b := { b with curFoot := c, curFrame := fr
+                  footBox := c.map (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
   | .pin =>
     -- The resume depth clears the chrome's ink: the title bar (the last
     -- pinned fill) reaches `pad` below the title's depth, and a spill
@@ -8218,7 +8357,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- On a fresh page nothing stands above the columns: their bottom starts
     -- at the body top, never at the last page's last line, which
     -- `B.contentEnd` would otherwise read as this page's content end.
-    let fresh := b.cur.lines.isEmpty || b.freshStart
+    let fresh := b.fresh
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       prevRule := b.prevRuleOnly, skip := b.skip
@@ -8303,7 +8442,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       (fun b => b.geom.vmargin + th)
       (fun b => b.y + b.prevDepth + b.skip.width + th)
       (fun b => b.y + b.prevDepth + th)
-      0 0 true 0 b.geom.bodyBottom
+      0 0 true 0 b.bottom
   | .progress num den fg bg thick x w =>
     -- Half a line under the last baseline: the track, then the elapsed
     -- share over it. The bar joins the page's depth so following content
@@ -8331,7 +8470,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     slotSaves := slotSaves.push ({
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       prevRule := b.prevRuleOnly, skip := b.skip
-      fresh := b.cur.lines.isEmpty || b.freshStart
+      fresh := b.fresh
       bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
       bottomRule := b.prevRuleOnly }, b.cur.lines.size, b.cur.fills.size)
   | .slotClose spec =>
@@ -8361,7 +8500,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
     let b2 := st2.b
-    let overrun := b2.y + b2.prevDepth - noteFloor b2.geom b2.footins b2.notesH
+    let overrun := b2.y + b2.prevDepth - noteFloor b2.bottom b2.footins b2.notesH
     let b2 := if overrun > b2.pageShrink then
         { b2 with diags := b2.diags.push (Diag.of .W0358
           (s!"a figure or table is {(overrun - b2.pageShrink).toPtString}pt taller " ++
@@ -8531,7 +8670,7 @@ private theorem fitCommit_pages_noBreak (b : B) (mk : Sp → LineOut)
   repeat' split
   all_goals first
     | (simp; done)
-    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
 
 private theorem fitCommit_keeps_noBreak (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -8542,7 +8681,7 @@ private theorem fitCommit_keeps_noBreak (b : B) (mk : Sp → LineOut)
   repeat' split
   all_goals first
     | (simp [h]; done)
-    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
 
 /-- Whatever branch `fitCommit` takes, every line of every note handed in
 stands in `pendingNotes` of the SAME builder that holds the committed
@@ -8710,6 +8849,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   cases s <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
   all_goals first
     | exact absurd rfl hs
+    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
     | exact ⟨fitCommit_pages_noBreak (h := h) ..,
         fitCommit_keeps_noBreak (h := h) ..⟩
@@ -9086,7 +9226,6 @@ private structure Shipped where
   footSize : Sp
   headY : Sp
   footY : Sp
-  chromeFootY : Sp
   muted : Ir.Color
 
 /-- The furniture pass's spine: page `i` gains the running lines its
@@ -9156,7 +9295,6 @@ private def runPost (sh : Shipped) : Out := Id.run do
   let logoSpans := sh.logoSpans
   let headY := sh.headY
   let footY := sh.footY
-  let chromeFootY := sh.chromeFootY
   let mutedC := sh.muted
   let b := sh.b
   let pages := b.pages
@@ -9213,27 +9351,24 @@ private def runPost (sh : Shipped) : Out := Id.run do
       (some { x := geom.hmargin, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
   -- A band slot is a line of its own at natural width, positioned by its
-  -- declared side and the geometry alone (`bandSlotX`): nothing another
-  -- slot contains enters its box.
+  -- declared side and the paper's edge alone (`bandSlotX`): nothing another
+  -- slot contains enters its box. It is set by `setBandSlot`, the setting
+  -- the page's floor measured.
   let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
-      (y size : Sp) (baseStyle : TextStyle) (cache : _) :
+      (y : Sp) (baseStyle : TextStyle) (cache : _) :
       Option LineOut × Array Diag × _ :=
-    let sub := substPage n total content
-    let (items, ds, cache, _) :=
-      itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
-    let breaks := kp items geom.textWidth
+    let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
+      { baseStyle with ground := furnGround } (substPage n total content) cache
     -- The band holds one line, as the running bands do: a slot that wraps
     -- loses every line but its first, named, never silent.
-    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
+    let ds := if wraps then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
         (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
       else ds
-    match breaks[0]? with
+    match set? with
     | none => (none, ds, cache)
-    | some brk =>
-      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-      (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
+    | some (segs, w) =>
+      (some { x := bandSlotX geom side w, y := y, size := footSize, segs := segs,
               setWidth := w }, ds, cache)
   -- The logo: the preamble `\logo` is the initial state, and a `\logo`
   -- block in the body changes it for the pages from that point on — an
@@ -9352,7 +9487,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
                                   size := geom.fontSize, segs := segs,
                                   setWidth := w, furniture := true }
     -- The chrome footer the page's frame gave it, slot by slot: the muted
-    -- key at the scale's small step, both from declarations. Positions are
+    -- key at the footline's step (`Ir.footline`). Positions are
     -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
     -- yields — painted first, so every higher slot paints over it — and the
     -- yield is reported by name (W0333). No box moves: yielding is by ink,
@@ -9366,10 +9501,14 @@ private def runPost (sh : Shipped) : Out := Id.run do
     -- loses it to every viewer's clip — so `onMedium` is checked here and
     -- the loss reported with the distance (W0388).
     if let some band := page.foot then
+      -- One baseline for the band, the box's depth plus the template's
+      -- closing skip above the paper's edge (`footBaseline`), from the box
+      -- the page's floor was set against.
+      let footY := footBaseline geom.pageH ((page.footBox.map (·.2)).getD 0)
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
-        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) chromeFootY
-          footSize { color := mutedC } cache
+        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) footY
+          { color := mutedC } cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then
@@ -9505,13 +9644,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- The chrome footer draws when the document (usually through its theme)
   -- declared one — `\chrome` slots or a `\framefoot` note — and no
   -- \runningfoot overrides it, and only on slides: chrome is deck
-  -- furniture. `\framefoot` wraps frames, so the scan is over top-level
-  -- blocks, where elaboration puts it.
+  -- furniture. The frames decide which pages carry it (`collectFrameOpen`).
   let footAllowed := doc.docClass.record.chrome && doc.foot.isNone
-  let hasFrameFoot := doc.body.any fun blk => match blk with
-    | .framefoot xs => !xs.isEmpty
-    | _ => false
-  let chromeActive := footAllowed && (doc.chrome.hasFooter || hasFrameFoot)
   -- The flow default article carries: plain's centred page number in the
   -- foot (`ClassRecord.pageNumbers`; article.cls initialises
   -- `\pagestyle{plain}`, classes.dtx), unless a `\runningfoot` already
@@ -9520,34 +9654,29 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- over `substPage` — so it is one more content in an existing path,
   -- never a second footer model.
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
-  -- The footer's size is a step of the scale and its colour a palette key,
-  -- never a literal: the theme declares both.
-  let footSize := Ir.scaleStep geom.fontSize "small"
+  -- The chrome footer's size is the footline's step (`Ir.footline`, the one
+  -- value both backends read) and its colour a palette key, never a literal.
+  let footSize := Ir.scaleStep geom.fontSize Ir.footline.step
   -- The running line's ink extents: the body face at the page size for a
-  -- declared head or foot and the plain number, the small step for chrome
-  -- slots. One `furnitureBand` per side from the same ink and gap is what
-  -- makes the two edges one number (`furniture_symmetric`); the declared
-  -- gap is read here — the native ink key directly, the LaTeX spellings
-  -- through the one baseline-to-ink correction (`furnGapOfSep`).
+  -- declared head or foot and the plain number. One `furnitureBand` per
+  -- side from the same ink and gap is what makes the two edges one number
+  -- (`furniture_symmetric`); the declared gap is read here — the native
+  -- ink key directly, the LaTeX spellings through the one baseline-to-ink
+  -- correction (`furnGapOfSep`). The chrome footer is moloch's footline
+  -- instead (`Ir.footline`): its box sets each page's floor where the page
+  -- is built (`B.bottom`), so it reserves no band here.
   let runInk := scale font.ascent + scale (-font.descent)
-  let chromeScale (u : Int) : Sp := u * footSize / (font.unitsPerEm : Int)
-  let chromeInk := chromeScale font.ascent + chromeScale (-font.descent)
   let corr := scale (-font.descent)
   let gapTop := doc.page.furnitureGap <|> doc.page.headsep.map (furnGapOfSep · corr)
   let gapBot := doc.page.furnitureGap <|> doc.page.footskip.map (furnGapOfSep · corr)
   let headFurn := furnitureBand geom.vmargin runInk gapTop
   let footFurn := furnitureBand geom.vmargin runInk gapBot
-  let chromeFurn := furnitureBand geom.vmargin chromeInk
-    (doc.page.furnitureGap <|>
-      doc.page.footskip.map (furnGapOfSep · (chromeScale (-font.descent))))
   -- A footer reserves its band before anything is placed, so no body line
   -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
   -- With the default margins the half margin holds the foot line whole and
   -- the band is zero: an undeclared page is unchanged.
   let geom := if doc.foot.isSome || plainFoot then
       { geom with footBand := footFurn.band }
-    else if chromeActive then
-      { geom with footBand := chromeFurn.band }
     else geom
   -- The running head reserves its band the same way, before anything is
   -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
@@ -9696,6 +9825,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     footins := ((doc.tokens.find? "footins").getD
       (Ir.footinsDefault geom.fontSize)).resolve geom.fontSize xHeight |>.width
     noteInk := design.fg
+    footGap := doc.page.furnitureGap.getD Ir.footline.sep
     diags := preDiags
   }
   -- Placement, one op at a time (`stepStaged`) — except a float's ops,
@@ -9755,8 +9885,6 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     footSize := footSize
     headY := furnHeadY headFurn (scale font.ascent)
     footY := furnFootY footFurn geom.pageH (scale (-font.descent))
-    chromeFootY := furnFootY chromeFurn geom.pageH
-      (chromeScale (-font.descent))
     muted := design.muted }
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by

@@ -878,14 +878,12 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "a stepped frame's pages share one footer"
     (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
   let font := oneFace.body
-  let footSize := geom0.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
-  let footAscent : Dim.Sp := font.ascent * footSize / (font.unitsPerEm : Int)
-  let footDescent : Dim.Sp := (-font.descent) * footSize / (font.unitsPerEm : Int)
+  let footSize := Ir.scaleStep geom0.fontSize Ir.footline.step
   let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
-  let footY := Layout.furnFootY
-    (Layout.furnitureBand geom0.vmargin (footAscent + footDescent) none)
-    geom0.pageH footDescent
-  t "the foot line lands in the margin at the small step, in muted"
+  -- A flat digit's band has no depth: its baseline stands exactly moloch's
+  -- closing `\vskip4pt` above the paper's bottom edge.
+  let footY := Layout.footBaseline geom0.pageH 0
+  t "the foot line stands 4 pt above the paper's edge at the footline's step, in muted"
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
@@ -900,9 +898,12 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let tallOut := layoutOf oneFace tallDoc geom0
   t "a tall frame spills and every spill page keeps its footer"
     (tallOut.pages.size > 1 && tallOut.pages.all (·.foot.isSome))
-  t "body ink never reaches the footer ink"
-    (tallOut.pages.all fun p => p.lines.all fun l =>
-      l.y == footY || l.y + descent ≤ footY - footAscent - Layout.inkClearance)
+  t "body ink stays beamer's 4 pt clear of the footer's ink"
+    (tallOut.pages.all fun p =>
+      match p.lines.find? fun l => l.furniture && l.y == footY with
+      | some f => p.lines.all fun l => l.furniture ||
+          l.y + descent + Ir.footline.sep ≤ f.y - (Layout.segsInk oneFace f.segs).1
+      | none => false)
   t "the tall frame demonstrably fills the body area"
     (tallOut.pages.any fun p => p.lines.any fun l =>
       l.y != footY && l.y + descent + Ir.leadingFor geom0.fontSize >
@@ -933,7 +934,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- One footer per frame section: the stepped frame is one section now,
   -- so its number appears once — the PDF's step pages still repeat it.
   t "html frames close with the footer, standout none"
-    ((html.splitOn "class=\"slide-foot size-small\"").length == 3)
+    ((html.splitOn ("class=\"slide-foot size-" ++ Ir.footline.step ++ "\"")).length == 3)
   t "html footer carries the stepped frame's one number"
     ((html.splitOn ">2</span>").length == 2)
   t "html footer styling comes from the tokens"
@@ -975,7 +976,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     -- Consecutive sections sharing one footer are one frame: the deck is
     -- one section per frame now, so this collapse is the PDF side's
     -- (steps, spills) mirrored — the frame-level sequence both agree on.
-    let raw := ((html.splitOn "class=\"slide-foot size-small\">").drop 1).map fun s =>
+    let raw := ((html.splitOn ("class=\"slide-foot size-" ++ Ir.footline.step ++ "\">")).drop 1).map fun s =>
       strip ((s.splitOn "</footer>")[0]?.getD "")
     (raw.foldl (fun (acc : List String) s =>
       if acc.head? == some s then acc else s :: acc) []).reverse
@@ -1011,7 +1012,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | none => false)
   let (html, _) := HtmlDoc.emit {} doc
   t "html gives the title and standout frames no footer"
-    ((html.splitOn "class=\"slide-foot size-small\"").length == 2)
+    ((html.splitOn ("class=\"slide-foot size-" ++ Ir.footline.step ++ "\"")).length == 2)
   t "html numbers the content frame 1"
     ((html.splitOn ">1</span>").length == 2)
   t "html progress is 0% before any content frame"
@@ -1097,12 +1098,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
-  let gFootSize := gGeom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
-  let gFootAscent : Dim.Sp := gFont.ascent * gFootSize / (gFont.unitsPerEm : Int)
-  let gFootDescent : Dim.Sp := (-gFont.descent) * gFootSize / (gFont.unitsPerEm : Int)
-  let footY := Layout.furnFootY
-    (Layout.furnitureBand gGeom.vmargin (gFootAscent + gFootDescent) none)
-    gGeom.pageH gFootDescent
+  let footY := Layout.footBaseline gGeom.pageH 0
   t "runningFrom keeps the head off page 1 and on page 2"
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[false, true])
   t "runningFrom does not gate the frame's chrome footer"

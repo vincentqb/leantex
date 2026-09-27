@@ -586,25 +586,26 @@ def censusTable :
       !pageHas c 0 "Footers" &&
         ((c[0]?.map fun p => p.lines.all (·.text != "1")).getD false)),
     ("numbering starts at the first countable frame",
-      pageHas c 2 "Footers" && lineRightOf c 2 "1" == some (geom.pageW - geom.hmargin)),
+      pageHas c 2 "Footers" && lineRightOf c 2 "1" == some (geom.pageW - Ir.footline.right)),
     ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
     ("the default footer returns when the wrapper ends",
-      pageHas c 4 "Footers" && lineRightOf c 4 "3" == some (geom.pageW - geom.hmargin))]),
+      pageHas c 4 "Footers" && lineRightOf c 4 "3" == some (geom.pageW - Ir.footline.right))]),
   -- The footline's slots have fixed positions (FINDINGS F5 correction): a
-  -- slot's box is a function of the declared layout and the geometry alone
-  -- (`Layout.bandSlotX`), so the number holds the right edge whatever the
-  -- left slot holds — an empty left slot is not a case.
+  -- slot's box is a function of the declared layout and the paper's edge
+  -- alone (`Layout.bandSlotX`, moloch's insets), so the number holds the
+  -- right edge whatever the left slot holds — an empty left slot is not a
+  -- case.
   ("footer-left", fun geom c => [
     ("pages", c.size == 4),
     ("the sectionless frame still numbers at the right edge",
-      lineRightOf c 1 "1" == some (geom.pageW - geom.hmargin)),
+      lineRightOf c 1 "1" == some (geom.pageW - Ir.footline.right)),
     ("the number is a line of its own, whole and unmoved",
       ((c[1]?.bind fun p => p.lines.find? fun l => hasStr l.text "1").map
         fun l => l.text == "1").getD false),
     ("the section title takes the left slot flush left",
-      lineXOf c 3 "Placement" == some geom.hmargin),
+      lineXOf c 3 "Placement" == some Ir.footline.left),
     ("the sectioned frame numbers at the same right edge",
-      lineRightOf c 3 "2" == some (geom.pageW - geom.hmargin))]),
+      lineRightOf c 3 "2" == some (geom.pageW - Ir.footline.right))]),
   -- FINDINGS F4: the two sequences share a band only by declaration. The
   -- stepped frame is where they visibly disagree: its pages advance the
   -- physical number and hold the frame number — one counter could never
@@ -618,16 +619,16 @@ def censusTable :
     ("the plain frame carries the next of both",
       pageHas c 4 "p. 5" && pageHas c 4 "2")]),
   -- The F5 correction's collision half: the boxes overlap and the number —
-  -- lower priority — yields IN PLACE: still at the right margin, painted
+  -- lower priority — yields IN PLACE: still at its right inset, painted
   -- first so the note paints over it. The yield's diagnostic (W0333) and
   -- the paint order are asserted in bandChecks; the census states the
   -- boxes.
   ("footer-collide", fun geom c => [
     ("pages", c.size == 2),
-    ("the number still ends at the right margin",
-      lineRightOf c 1 "1" == some (geom.pageW - geom.hmargin)),
+    ("the number still ends at its right inset",
+      lineRightOf c 1 "1" == some (geom.pageW - Ir.footline.right)),
     ("the overlong note still ships flush left",
-      lineXOf c 1 "0123456789" == some geom.hmargin)]),
+      lineXOf c 1 "0123456789" == some Ir.footline.left)]),
   ("lists", fun _ c => [
     ("one page", c.size == 1),
     ("four itemize levels ship their four marks",

@@ -234,8 +234,10 @@ right margins, which default to 1 cm"), and an 11 pt base — beamer's
 documented default font size, chosen so that "between 10 and 20 lines
 should fit on each slide" and it is "difficult to fit too much onto a
 slide" (beamer user guide §5.6.1, §18.2.1). The vertical margin is the
-engine's own — beamer spends that band on headline and footline templates
-the engine does not render — and, being the engine's own, it is derived,
+engine's own, for the pages that carry no footline — a section page, a
+standout, the title page, an unthemed deck; a page that carries moloch's
+footline takes beamer's own text area instead, the paper's top edge down to
+the footline (`Layout.footFloor`). Being the engine's own, it is derived,
 not chosen: two lines of the slides context's own rhythm (its earlier
 spelling, 9 mm, missed that by 0.888 pt — a free scalar for no reason).
 The lines-per-slide theorem in Layout is what holds these numbers
@@ -5515,6 +5517,31 @@ theorem Chrome.footSlots_left_ignores_right (c c' : Chrome)
     (h : c.footerLeft = c'.footerLeft) :
     (c.footSlots ff sec n total).1 = (c'.footSlots ff sec n total).1 := by
   simp [footSlots, h]
+
+/-- Where moloch's footline template stands on the page, and how much of
+the page it takes from the frame (beamerouterthememoloch.sty:113-125,
+`\defbeamertemplate{footline}{plain}`). beamer sets a footline as wide as
+the paper (beamerbaseframecomponents.sty:128, `\textwidth=\paperwidth`) in
+the `footline` font; the template's colour box insets its slots from the
+paper's side edges and closes with `\vskip4pt`, and the box stands on the
+paper's bottom edge — so the slots' baseline is the band's depth plus
+`raise` above that edge. beamer ends a frame's text area `sep` above the
+band's top (`\footheight` is the band's height and depth plus 4 pt). Both
+backends read `step`; the rest is the paged artifact's geometry. -/
+structure Footline where
+  step : String
+  left : Sp
+  right : Sp
+  raise : Sp
+  sep : Sp
+  deriving Repr
+
+def footline : Footline :=
+  { step := "tiny"      -- beamerfontthemedefault.sty:67 and :19, footline: parent={tiny structure}, size=\tiny
+    left := Dim.pt 4    -- beamerouterthememoloch.sty:115, leftskip=4pt
+    right := Dim.pt 5   -- beamerouterthememoloch.sty:116, rightskip=5pt
+    raise := Dim.pt 4   -- beamerouterthememoloch.sty:123, \vskip4pt
+    sep := Dim.pt 4 }   -- beamerbaseframecomponents.sty:167, \advance\footheight by 4pt
 
 mutual
 

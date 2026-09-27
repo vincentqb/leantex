@@ -2499,7 +2499,7 @@ the right margin, and W0333 names both the slot that yielded and the slot
 that displaced it. -/
 def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let longTok := String.ofList (List.replicate 10 "0123456789".toList).flatten
+  let longTok := String.ofList (List.replicate 20 "0123456789".toList).flatten
   let frame := "\\begin{frame}{F}\nx\n\\end{frame}"
   let run (left : String) : Layout.Out × Array CensusPage :=
     let (doc, _) := elabStr (deck169
@@ -4264,8 +4264,77 @@ def frameContentEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   let two := deck [pic "-2" "", pic "-2" "\\node at (1.5,-1.5) {November};\n"]
   match y two 0 "Kilo", y two 1 "Kilo" with
   | some k1, some k2 =>
-    t "two centred frames sharing one declared box keep their shared nodes still" (k1 == k2)
+    -- lualatex moves them 0.03 pt: the two frames' numbers, 1 and 2, are
+    -- glyphs of different heights, so their footlines — and the floors
+    -- beamer centres against — differ by that much (`footlineChecks`).
+    t "two centred frames sharing one declared box keep their shared nodes still"
+      (k1 - k2 ≤ Dim.pt 1 / 20 && k2 - k1 ≤ Dim.pt 1 / 20)
   | _, _ => t "shared-box frame fixtures lay out" false
+
+/-- **A frame's text area ends 4 pt above its footline, and the footline is
+moloch's** (`Layout.footFloor_exact`, `Ir.footline`). Asserted over
+`Layout.Out` on one synthetic moloch deck at beamer's 10 pt in the shipped
+Fira Sans, every value first measured under lualatex on the same source
+(TeX Live 2026; bp from the page top, a digit's baseline in bp above the
+paper's bottom edge): the frame number is `\tiny` (4.981), its baseline
+3.985 above the edge for a flat digit and 4.045 for the round-bottomed 3,
+its right edge 4.981 in from the paper's right edge; a titled `[c]` frame's
+line stands at 151.219, an untitled one's at 136.275, and a titled `[t]`
+frame's at 49.405 (a control: the floor does not reach it); a frame footer
+with descenders ("Kilo gauge") raises the band to 5.046 and the `[c]` line
+to 150.412. The engine reads pt as bp, 0.4% long, so the number's
+positions are held to 0.05 bp; a line may also miss by the frame title's
+size-ladder difference and its last line's depth, inside 1.5 bp. At
+`8d3df368` the number sat at the text block's edge in `\small`, 15.585 bp
+up, and the `[c]` line 7.311 bp high. Invented words. -/
+def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← (do
+      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
+      | .ok f => pure (some (oneFaceOf f))
+      | .error _ => pure none : IO (Option Font.FontSet))
+    | t "footline: the shipped Fira Sans parses" false
+  let tol : Dim.Sp := Dim.pt 3 / 2
+  let near (a b slack : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
+  let bp (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
+  let build (pre : String) (frames : String) : Layout.Geom × Layout.Out :=
+    let (doc, _) := elabStr ("\\documentclass[10pt]{beamer}\\usetheme{moloch}" ++ pre ++
+      "\\begin{document}" ++ frames ++ "\\end{document}")
+    let geom := Layout.Geom.ofPage doc.page
+    (geom, layoutOf fira doc geom)
+  let baseline (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Sp :=
+    (out.pages[page]?.bind fun p => p.lines.find? fun l =>
+      !l.furniture && hasStr (lineText l) word).map (·.y)
+  let number (out : Layout.Out) (page : Nat) : Option Layout.LineOut :=
+    out.pages[page]?.bind fun p => p.lines.find? fun l =>
+      l.furniture && lineText l == toString (page + 1)
+  let (geom, out) := build ""
+    ("\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
+     "\\begin{frame}[t]{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
+     "\\begin{frame}\nBravo words.\n\\end{frame}\n")
+  t "footline: the frame number is set at the tiny step, as moloch's footline font"
+    ([0, 1, 2].all fun i => ((number out i).map (·.size == Ir.scaleStep geom.fontSize "tiny")).getD false)
+  t "footline: the number's baseline stands where lualatex's does, a round digit's higher"
+    ([(0, 3985), (1, 3985), (2, 4045)].all fun (i, up) =>
+      ((number out i).map fun l => near (geom.pageH - l.y) (bp up) (Dim.pt 1 / 20)).getD false)
+  t "footline: the number's right edge is 5 pt in from the paper's, as moloch insets it"
+    ([0, 1, 2].all fun i =>
+      ((number out i).map fun l => near (geom.pageW - (l.x + l.setWidth)) (bp 4981)
+        (Dim.pt 1 / 20)).getD false)
+  t "footline: a titled centred frame centres above its footline, as lualatex does"
+    (((baseline out 0 "Alpha").map fun y => near y (bp 151219) tol).getD false)
+  t "footline: an untitled centred frame opens at the paper's top, as lualatex does"
+    (((baseline out 2 "Bravo").map fun y => near y (bp 136275) tol).getD false)
+  t "footline: a top-aligned frame is untouched by the floor (control)"
+    (((baseline out 1 "Alpha").map fun y => near y (bp 49405) tol).getD false)
+  let (_, noted) := build "" "\\framefoot{Kilo gauge}\n\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n"
+  let noteLine := noted.pages[0]?.bind fun p => p.lines.find? fun l =>
+    l.furniture && hasStr (lineText l) "Kilo"
+  t "footline: a footer's descender raises the band's one baseline, as in lualatex"
+    ((noteLine.map fun l => near (geom.pageH - l.y) (bp 5046) (Dim.pt 1 / 20) &&
+      ((number noted 0).map (·.y == l.y)).getD false).getD false)
+  t "footline: and the centred line rises with the floor, as in lualatex"
+    (((baseline noted 0 "Alpha").map fun y => near y (bp 150412) tol).getD false)
 
 /-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
 `Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over

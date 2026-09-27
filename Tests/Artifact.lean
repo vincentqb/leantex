@@ -681,12 +681,18 @@ def ArtPage.box (p : ArtPage) : ArtRect :=
 between the horizontal margins, and between `bodyTop` and `bodyBottom`
 (which is where the engine's own placement decisions read the page's
 vertical limits from). Derived from the document's declaration — an input
-to the build — never from what the layout recorded. -/
-def artBodyArea (geom : Layout.Geom) : ArtRect :=
+to the build — never from what the layout recorded. A deck whose chrome
+footer draws has beamer's frame instead (`footline`): its text area runs
+from the paper's top edge (moloch's headline is empty) to 4 pt above the
+footline's ink, which the template declares to stand at least its closing
+skip above the paper's edge — so the bound is `raise + sep`, the floor of a
+band holding no ink (`Layout.footFloor_exact`). -/
+def artBodyArea (geom : Layout.Geom) (footline : Bool := false) : ArtRect :=
   { x0 := geom.bleed + geom.hmargin
-    y0 := geom.bleed + geom.pageH - geom.bodyBottom
+    y0 := geom.bleed + (if footline then Ir.footline.raise + Ir.footline.sep
+      else geom.pageH - geom.bodyBottom)
     x1 := geom.bleed + geom.pageW - geom.hmargin
-    y1 := geom.bleed + geom.pageH - geom.bodyTop }
+    y1 := geom.bleed + geom.pageH - (if footline then 0 else geom.bodyTop) }
 
 /-- The least share of the page width a fill must span to read as a
 furniture band rather than as a rule, a marker or a node's ground. Nine
@@ -1022,10 +1028,11 @@ def artCopyPage (i j : Nat) (ops : Array (Array Pdf.ContentOp)) :
 
 /-- A file read as a reading, with the declared area and whether the build
 named a loss that accounts for ink outside it. -/
-def artReadingOf (geom : Layout.Geom) (accounted : Bool) (pdf : ByteArray) :
+def artReadingOf (geom : Layout.Geom) (accounted : Bool) (pdf : ByteArray)
+    (footline : Bool := false) :
     Except String ArtReading :=
   (readArtifact pdf).map fun pages =>
-    { pages := pages, area := artBodyArea geom, accounted := accounted }
+    { pages := pages, area := artBodyArea geom footline, accounted := accounted }
 
 /-- Did this build name a loss that accounts for ink outside the declared
 area? Read from the whole build's diagnostics — elaboration and layout
@@ -1058,7 +1065,11 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let store ← corpusStore doc
     let out := layoutOf fs doc geom (some pats) store
     let pdf := driverPdf fs geom doc out store
-    match artReadingOf geom (artAccounted (diags ++ out.diags)) pdf with
+    let footline := doc.docClass.record.chrome && doc.foot.isNone &&
+      (doc.chrome.hasFooter || doc.body.any fun b => match b with
+        | .framefoot xs => !xs.isEmpty
+        | _ => false)
+    match artReadingOf geom (artAccounted (diags ++ out.diags)) pdf footline with
     | .error e => t s!"artifact {n}: the file reads back: {e}" false
     | .ok rd =>
       t s!"artifact {n}: the file's page count is the layout's \
