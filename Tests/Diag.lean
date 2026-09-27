@@ -15,14 +15,9 @@ def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `spec` arm answering another arm's number would surface here).
   -- The compiler already holds the other direction: a code that is not
   -- a constructor cannot be emitted at all.
-  let mut files := (← System.FilePath.walkDir "LeanTex").filter
-    (·.toString.endsWith ".lean")
-  files := files.push "Main.lean"
   let mut emitted : List String := []
-  for f in files do
-    if f.toString == "LeanTex/Core/Diag.lean" then continue
-    let src ← IO.FS.readFile f
-    for c in appliedCodes (stripNonCode src) do
+  for (_, applied) in ← codeSources do
+    for c in applied do
       if !emitted.contains c then
         emitted := c :: emitted
   for c in emitted do

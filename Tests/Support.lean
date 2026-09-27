@@ -779,6 +779,20 @@ def appliedCodes (stripped : String) : List String := Id.run do
       out := tok :: out
   return out
 
+/-- The engine's sources as the emission scans read them: every `LeanTex/`
+module and the driver, path-sorted, with the codes each applies. The
+registry itself (`Diag.lean`) names every code and emits none, so it is
+left out. -/
+def codeSources : IO (Array (String × List String)) := do
+  let mut files := (← System.FilePath.walkDir "LeanTex").filter
+    (·.toString.endsWith ".lean")
+  files := files.push "Main.lean"
+  let mut out : Array (String × List String) := #[]
+  for f in files.qsort (·.toString < ·.toString) do
+    if f.toString == "LeanTex/Core/Diag.lean" then continue
+    out := out.push (f.toString, appliedCodes (stripNonCode (← IO.FS.readFile f)))
+  return out
+
 /-- The layout spelling nearly every test claim uses: geometry from the
 document's own page, no hyphenation, no images — each overridable where a
 claim needs a narrower measure, patterns, or a store. -/

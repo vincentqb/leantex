@@ -17,6 +17,7 @@ import Tests.HtmlA11y
 import Tests.Conditionals
 import Tests.BoxRow
 import Tests.PackageCode
+import Tests.DiagAudit
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -298,6 +299,7 @@ def main (args : List String) : IO UInt32 := do
   diagSiteCountChecks ref
   porcelainCensusChecks ref
   siteAccountingChecks ref
+  diagAuditChecks ref
   optionRunAccountingChecks ref
   visibleRunAccountingChecks ref
   monoSlotChecks ref
