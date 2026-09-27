@@ -1,0 +1,14 @@
+fixture: amssymb
+compiles: yes
+pdf-key: 44F6DB8A37E2D4FE19EE24A03E9DA6A4
+pdf-size: 12398
+src-key: FD18909375D817A98424E55943AD27DB
+src-body-key: 8A2BD3319C370DB9472BE92D3B9575D7
+ref-src-key: 6DFA58A7C28BABED211B328188CDF25B
+engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
+format: LaTeX2e <2025-11-01>
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=amssymb.ref \pdfvariable trailerid{[<6DFA58A7C28BABED211B328188CDF25B> <6DFA58A7C28BABED211B328188CDF25B>]}\input{amssymb.ref.tex}
+inputs: ./amssymb.ref.tex=6DFA58A7C28BABED211B328188CDF25B ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D ../corpus/fonts/FiraMath-Regular.otf=F3679A96A22E06D6F7FE6170BF36B968
+pages: 1
+overfull: 0
+provenance: every amssymb and amsfonts symbol the engine sets and the shipped math face draws, ten to a line; the reference sets each through unicode-math from the same face, so census and order hold exactly when the engine's table names the scalar lualatex sets

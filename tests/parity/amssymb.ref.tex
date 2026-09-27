@@ -1,0 +1,40 @@
+% The reference half of amssymb.tex: the same symbols, ten to a line,
+% each spelled as unicode-math spells it, set from the shipped Fira Math.
+% Geometry, body size and paragraph gap are declared as in prose.ref.tex.
+\documentclass{article}
+\usepackage[letterpaper,margin=72bp]{geometry}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/]
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6bp}
+\pagestyle{plain}
+\AtBeginDocument{\fontsize{10bp}{12bp}\selectfont}
+\begin{document}
+$\mathyen$ $\rightdasharrow$ $\leftdasharrow$ $\rightdasharrow$ $\rightleftharpoons$ $\angle$ $\hbar$ $\sqsubset$ $\sqsupset$ $\mho$
+
+$\mdlgwhtsquare$ $\mdlgwhtlozenge$ $\rightsquigarrow$ $\mdlgwhtsquare$ $\mdlgwhtlozenge$ $\rightsquigarrow$ $\mdlgblksquare$ $\cdotp$ $\cwopencirclearrow$ $\acwopencirclearrow$
+
+$\leftrightharpoons$ $\twoheadrightarrow$ $\twoheadleftarrow$ $\leftleftarrows$ $\rightrightarrows$ $\upuparrows$ $\downdownarrows$ $\upharpoonright$ $\upharpoonright$ $\downharpoonright$
+
+$\upharpoonleft$ $\downharpoonleft$ $\rightarrowtail$ $\leftarrowtail$ $\leftrightarrows$ $\rightleftarrows$ $\Lsh$ $\Rsh$ $\leftrightsquigarrow$ $\looparrowleft$
+
+$\looparrowright$ $\succsim$ $\gtrsim$ $\therefore$ $\because$ $\Doteq$ $\Doteq$ $\precsim$ $\lesssim$ $\curlyeqprec$
+
+$\curlyeqsucc$ $\preccurlyeq$ $\leqq$ $\leqslant$ $\lessgtr$ $\backprime$ $\risingdotseq$ $\fallingdotseq$ $\succcurlyeq$ $\geqq$
+
+$\geqslant$ $\gtrless$ $\blacktriangleright$ $\blacktriangleleft$ $\lesseqgtr$ $\gtreqless$ $\Rrightarrow$ $\Lleftarrow$ $\measuredangle$ $\sphericalangle$
+
+$\curlywedge$ $\curlyvee$ $\lll$ $\lll$ $\ggg$ $\ggg$ $\dotplus$ $\backsim$ $\backsimeq$ $\complement$
+
+$\nleq$ $\ngeq$ $\nless$ $\ngtr$ $\nprec$ $\nsucc$ $\lneqq$ $\gneqq$ $\precnsim$ $\succnsim$
+
+$\lnsim$ $\gnsim$ $\nsim$ $\ncong$ $\subsetneq$ $\supsetneq$ $\nsubseteq$ $\nsupseteq$ $\nparallel$ $\nmid$
+
+$\nleftarrow$ $\nrightarrow$ $\nLeftarrow$ $\nRightarrow$ $\nLeftrightarrow$ $\nleftrightarrow$ $\varnothing$ $\nexists$ $\eth$ $\eqsim$
+
+$\beth$ $\gimel$ $\daleth$ $\lessdot$ $\gtrdot$ $\approxeq$ $\curvearrowleft$ $\curvearrowright$ $\varkappa$ $\Bbbk$
+
+$\hslash$ $\backepsilon$
+\end{document}

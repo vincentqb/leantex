@@ -1,0 +1,36 @@
+% parity: every amssymb and amsfonts symbol the engine sets and the shipped math face draws, ten to a line; the reference sets each through unicode-math from the same face, so census and order hold exactly when the engine's table names the scalar lualatex sets
+% The engine half spells each command as the package does; the reference
+% spells it as unicode-math does, which is the same name except for the
+% package's own aliases and the thirteen renames the generator records.
+% A symbol the shipped face lacks is not here: lualatex inks nothing for it
+% and the engine names it lost, so it has no place on a page both draw.
+\documentclass{article}
+\page{ size = letter, margin = 1in, fontsize = 10pt, measure = free, protrusion = off, expansion = off }
+\fonts{ body = "Open Sans", math = "Fira Math" }
+\begin{document}
+$\yen$ $\dashrightarrow$ $\dashleftarrow$ $\dasharrow$ $\rightleftharpoons$ $\angle$ $\hbar$ $\sqsubset$ $\sqsupset$ $\mho$
+
+$\square$ $\lozenge$ $\rightsquigarrow$ $\Box$ $\Diamond$ $\leadsto$ $\blacksquare$ $\centerdot$ $\circlearrowright$ $\circlearrowleft$
+
+$\leftrightharpoons$ $\twoheadrightarrow$ $\twoheadleftarrow$ $\leftleftarrows$ $\rightrightarrows$ $\upuparrows$ $\downdownarrows$ $\upharpoonright$ $\restriction$ $\downharpoonright$
+
+$\upharpoonleft$ $\downharpoonleft$ $\rightarrowtail$ $\leftarrowtail$ $\leftrightarrows$ $\rightleftarrows$ $\Lsh$ $\Rsh$ $\leftrightsquigarrow$ $\looparrowleft$
+
+$\looparrowright$ $\succsim$ $\gtrsim$ $\therefore$ $\because$ $\doteqdot$ $\Doteq$ $\precsim$ $\lesssim$ $\curlyeqprec$
+
+$\curlyeqsucc$ $\preccurlyeq$ $\leqq$ $\leqslant$ $\lessgtr$ $\backprime$ $\risingdotseq$ $\fallingdotseq$ $\succcurlyeq$ $\geqq$
+
+$\geqslant$ $\gtrless$ $\blacktriangleright$ $\blacktriangleleft$ $\lesseqgtr$ $\gtreqless$ $\Rrightarrow$ $\Lleftarrow$ $\measuredangle$ $\sphericalangle$
+
+$\curlywedge$ $\curlyvee$ $\lll$ $\llless$ $\ggg$ $\gggtr$ $\dotplus$ $\backsim$ $\backsimeq$ $\complement$
+
+$\nleq$ $\ngeq$ $\nless$ $\ngtr$ $\nprec$ $\nsucc$ $\lneqq$ $\gneqq$ $\precnsim$ $\succnsim$
+
+$\lnsim$ $\gnsim$ $\nsim$ $\ncong$ $\subsetneq$ $\supsetneq$ $\nsubseteq$ $\nsupseteq$ $\nparallel$ $\nmid$
+
+$\nleftarrow$ $\nrightarrow$ $\nLeftarrow$ $\nRightarrow$ $\nLeftrightarrow$ $\nleftrightarrow$ $\varnothing$ $\nexists$ $\eth$ $\eqsim$
+
+$\beth$ $\gimel$ $\daleth$ $\lessdot$ $\gtrdot$ $\approxeq$ $\curvearrowleft$ $\curvearrowright$ $\varkappa$ $\Bbbk$
+
+$\hslash$ $\backepsilon$
+\end{document}

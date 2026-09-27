@@ -2,6 +2,7 @@
 # encoding: raw
 # the parity ladder against lualatex: one integer per fixture, the number of levels that hold, of 5
 # (P0 build, P1 pages, P2 census, P3 order, P4 lines); -1 means lualatex refuses the reference, which puts the fixture outside the denominator
+amssymb	5
 measure	2
 pagebreak	4
 prose	5

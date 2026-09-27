@@ -107,6 +107,12 @@ nothing is judged on its measurement alone.
   loads no microtype. Every level the ladder has holds here, line for line,
   and the fixture exists so that a change which breaks them has somewhere
   to fail.
+- `amssymb.tex` — the 122 amssymb and amsfonts symbols the shipped Fira Math
+  draws, ten to a line, each spelled as the package spells it; the reference
+  spells each as unicode-math does and sets it from the same face. Census
+  and order hold exactly when the engine's symbol table
+  (`LeanTex/Core/MathSymData.lean`) names the scalar lualatex sets, so this
+  is that table's check against the reference engine.
 
 ## The probe whose pairing is not yet declared alike
 

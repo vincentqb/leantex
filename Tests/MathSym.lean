@@ -46,6 +46,31 @@ def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :
     | _ => #[]
   (ink, out.diags)
 
+mutual
+
+/-- The MathML leaves of an emitted tree, in document order: each `mo`,
+`mi` or `mn` with the text it carries. -/
+def mathLeavesOne (acc : Array (String × String)) : Html.Node → Array (String × String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag _ kids =>
+    if tag == "mo" || tag == "mi" || tag == "mn" then acc.push (tag, nodeTextList "" kids.toList)
+    else mathLeavesList acc kids.toList
+
+def mathLeavesList (acc : Array (String × String)) : List Html.Node → Array (String × String)
+  | [] => acc
+  | k :: rest => mathLeavesList (mathLeavesOne acc k) rest
+
+end
+
+/-- The commands a source spells as one-symbol formulas, `$\name$`, in order. -/
+def symbolCalls (src : String) : Array String :=
+  ((src.splitOn "$\\").drop 1).toArray.filterMap fun piece =>
+    let name := String.ofList (piece.toList.takeWhile Char.isAlpha)
+    if !name.isEmpty && (piece.toList.drop name.length).head? == some '$' then some name
+    else none
+
 /-- The symbol table against its sources and the shipped math face.
 
 The index side: `tests/compat-index/<pkg>.txt` carries one row per symbol
@@ -111,3 +136,16 @@ and firaGaps does not say so" (firaGaps.contains n)
   t "a covered symbol inks its own scalar" (ink.contains '\u2A7D')
   t "a covered symbol raises no glyph loss"
     (!ds.any fun d => d.code == "E0405" || d.code == "W0009")
+  -- The parity fixture's engine half, in HTML: the MathML leaves are the
+  -- table's atoms in the source's order — each scalar, under the leaf its
+  -- class maps to. The parity tier holds the PDF of the same source to
+  -- lualatex's scalars, so the two artifacts agree through the one table.
+  let src ← IO.FS.readFile "tests/parity/amssymb.tex"
+  let calls := symbolCalls src
+  let want := calls.filterMap fun n => (MathParse.ctrlAtom.lookup n).map fun (cls, c) =>
+    (MathMl.leafTag cls c, String.ofList [c])
+  t "the parity fixture spells every symbol it sets through the table"
+    (!calls.isEmpty && want.size == calls.size)
+  let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
+  t "the fixture's HTML sets each symbol as the table's leaf, in order"
+    (mathLeavesList #[] body.toList == want)
