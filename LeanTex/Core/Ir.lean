@@ -1661,6 +1661,12 @@ structure Meta where
   PDF catalog `/Lang` — and every language-reading site (captions,
   hyphenation patterns, quotes) resolves through it. -/
   language : Option String := none
+  /-- The PDF version the document declares (`\DocumentMetadata{
+  pdfversion = 1.7 }`, natively `\pdfmeta{ version = "1.7" }`): `1.7`
+  writes a PDF 1.7 file — the header, and the structure tree in 1.7's one
+  standard namespace with the 2.0-only types role-mapped onto 1.7's
+  (`Pdf.pdf17Role`). Undeclared, or `2.0`, the file is PDF 2.0. -/
+  pdfVersion : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- The document's resolved main locale: the declared language when a

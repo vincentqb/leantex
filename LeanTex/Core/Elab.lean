@@ -688,7 +688,7 @@ def pageGeometryKeys : List String :=
 
 def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon",
-   "language"]
+   "language", "version"]
 
 def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
 
@@ -10343,6 +10343,11 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     | "url", .str s => m := { m with url := some s }
     | "image", .str s => m := { m with image := some s }
     | "favicon", .str s => m := { m with favicon := some s }
+    | "version", .str s =>
+      if s == "1.7" || s == "2.0" then m := { m with pdfVersion := some s }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'version' in '\\pdfmeta' expects \"1.7\" or \"2.0\", got '{s}'" (some pos) none))
     | key, v =>
       if metaKeys.contains key then
         evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key "a string" v pos))

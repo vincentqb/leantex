@@ -3222,16 +3222,20 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
 
 /-- `\DocumentMetadata{...}` (usrguide, "Document metadata"; ltdocinit):
 `lang` is the document's language and lands on the same `\pdfmeta{
-language }` door babel's main language uses. The writer keys
-(`pdfversion`, `pdfstandard`, `uncompress`, `testphase`, …) configure a
-PDF writer the engine is not — it writes PDF 2.0 — so each is dropped by
-name, never silently, and never as page content. -/
+language }` door babel's main language uses, and `pdfversion` on
+`\pdfmeta{ version }` when it names a version the writer writes (1.7 or
+2.0). The other writer keys (`pdfstandard`, `uncompress`, `testphase`, …)
+configure a PDF writer the engine is not, so each is dropped by name, never
+silently, and never as page content. -/
 private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut lang : Option String := none
+  let mut version : Option String := none
   let mut dropped : Array String := #[]
   for e in Decl.splitEntries opts do
     match Decl.splitEntry e with
     | some ("lang", v) => lang := some v
+    | some ("pdfversion", v) =>
+      if v == "1.7" || v == "2.0" then version := some v else dropped := dropped.push "pdfversion"
     | some (key, _) => if !key.isEmpty then dropped := dropped.push key
     | none =>
       let key := e.trimAscii.toString
@@ -3239,14 +3243,14 @@ private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
   unless dropped.isEmpty do
     say .W0101 s!"\\DocumentMetadata keys without a native equivalent were \
 dropped: {String.intercalate ", " dropped.toList}" pos
-      (help := "the engine always writes PDF 2.0; version, standard, and \
-compression keys have no effect here")
-  match lang with
-  | some tag =>
-    let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
-    became "\\DocumentMetadata" native pos
-    synthAt native pos
-  | none => return #[]
+      (help := "the engine writes PDF 2.0, or 1.7 when 'pdfversion=1.7' asks; \
+standard and compression keys have no effect here")
+  let keys := (lang.map fun tag => s!"language = \"{tag}\"").toArray ++
+    (version.map fun v => s!"version = \"{v}\"").toArray
+  if keys.isEmpty then return #[]
+  let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }"
+  became "\\DocumentMetadata" native pos
+  synthAt native pos
 
 /-- `\AddToHook{hook}[label]{code}` (usrguide, "Hooks"): code onto a kernel
 hook. The engine has no hook machinery — what a page shows is declared,

@@ -3582,6 +3582,38 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((layoutOf oneFace lone loneGeom).pages.all fun p => p.fills.any fun f =>
       f.x == bl && f.w == Dim.mm 1 && f.h == hair && f.y == lone.page.height - bl - hair)
 
+/-- A document declares its PDF version (`\DocumentMetadata{pdfversion =
+1.7}`): the file then is PDF 1.7 — its header, and a structure tree in
+1.7's one standard namespace, the 2.0-only types role-mapped onto 1.7's
+(`Pdf.pdf17Role`) — and the declaration names no loss. Undeclared, the
+file stays PDF 2.0 with its namespace. -/
+def pdfVersionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (keys : String) : String :=
+    s!"\\DocumentMetadata\{{keys}}\\documentclass\{article}\\begin\{document}" ++
+      "Placeholder text.\\footnote{A placeholder note.}\\end{document}"
+  let build (s : String) : ByteArray × Array Diag :=
+    let (doc, ds) := elabStr s
+    let geom := Layout.Geom.ofPage doc.page
+    let out := layoutOf oneFace doc geom
+    let tree := Struct.ofDoc (Layout.pdfView doc)
+    (Pdf.write geom oneFace out.pages doc.info (outline := out.outline) (tree := tree), ds)
+  let (p17, d17) := build (src "lang=en, pdfversion=1.7")
+  let (p20, _) := build (src "lang=en")
+  let head (p : ByteArray) : String := String.fromUTF8! (p.extract 0 8)
+  t "a declared pdfversion 1.7 writes a PDF 1.7 header"
+    (head p17 == "%PDF-1.7" && head p20 == "%PDF-2.0")
+  t "a declared pdfversion names no loss"
+    (!(d17.any fun d => d.code == DiagCode.W0101.code))
+  t "a 1.7 file carries no 2.0 namespace, and role-maps the 2.0 note type"
+    (let x := pdfText p17
+     !bytesContain x "/Namespace" && bytesContain x "/RoleMap" &&
+       bytesContain x "/FENote /Note")
+  t "an undeclared version keeps the 2.0 namespace"
+    (bytesContain (pdfText p20) "/Namespaces")
+  t "a version the writer does not write stays named"
+    ((warnCodes (src "pdfversion=1.4")).contains "W0101")
+
 /-- A driver option asks for nothing the page shows: geometry's and crop's
 driver names (`dvips=false`, `pdftex`, `driver=...`) and geometry's
 `verbose` pass with no loss named, because the build with them ships the

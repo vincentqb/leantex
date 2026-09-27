@@ -733,9 +733,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat DocumentMetadata: lang lands on pdfmeta, nothing leaks"
     (dmDoc.info.language == some "en" && onlyX dmDoc &&
       dmDs.all (·.severity != .error))
+  t "compat DocumentMetadata: a version the writer writes lands on pdfmeta"
+    (dmDoc.info.pdfVersion == some "1.7")
   t "compat DocumentMetadata names the writer keys it drops"
     (dmDs.any fun d => d.code == "W0101" &&
-      hasStr d.message "pdfversion" && hasStr d.message "uncompress")
+      !hasStr d.message "pdfversion" && hasStr d.message "uncompress")
   let (hookDoc, hookDs) := elabStr ("\\documentclass{article}\n" ++
     "\\AddToHook{shipout/background}[me]{\\put(0,0){leak}}\n" ++
     "\\begin{document}\nx\n\\end{document}")

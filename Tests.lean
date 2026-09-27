@@ -115,6 +115,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   cardChecks ref oneFace pats
   cutMarkChecks ref oneFace
   drawnMarkChecks ref oneFace
+  pdfVersionChecks ref oneFace
   driverOptionChecks ref oneFace
   posterChecks ref oneFace
   censusChecks ref oneFace pats

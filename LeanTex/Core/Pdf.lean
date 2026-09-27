@@ -73,6 +73,19 @@ theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
   dsimp only [pageBoxes, Rect.within]
   omega
 
+/-- The PDF 1.7 standard structure type a 2.0-only type is role-mapped
+onto, in a file declared PDF 1.7 (ISO 32000-1 §14.8.4 is 1.7's standard
+set; ISO 32000-2 §14.8.6 adds the others): a document title stands as a
+paragraph, a footnote as a `Note`, an aside as a `Div`, and a heading past
+the sixth level as `H6`. Every other type the engine writes is standard
+in both. -/
+def pdf17Role (s : String) : Option String :=
+  if s == "Title" then some "P"
+  else if s == "FENote" then some "Note"
+  else if s == "Aside" then some "Div"
+  else if s.startsWith "H" && ((s.drop 1).toString.toNat?.any (6 < ·)) then some "H6"
+  else none
+
 private def hex4 (n : Nat) : String :=
   String.ofList [hexDigit (n / 4096), hexDigit (n / 256), hexDigit (n / 16), hexDigit n]
 
@@ -1056,6 +1069,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[]) : ByteArray := Id.run do
   let np := pages.size
+  let v17 := info.pdfVersion == some "1.7"
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
   -- the very function `html_fonts_cover_pdf` quantifies over, so the
   -- contract holds of the writer's own decision, not a copy. `allUsed`
@@ -1225,16 +1239,23 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- — the page travels with the identifier, so an element may span
   -- pages), and the alternative or language it carries.
   let elemRef (i : Nat) : PdfRead.Obj := .ref (t.structElemId i) 0
+  -- A file declared PDF 1.7 has one standard namespace and no namespace
+  -- objects: its 2.0-only types are role-mapped onto 1.7's (`pdf17Role`).
+  let roleMap : Array (String × PdfRead.Obj) := es.foldl (fun acc e =>
+    match pdf17Role e.s with
+    | some r => if acc.any (·.1 == e.s) then acc else acc.push (e.s, .name r)
+    | none => acc) #[]
   let structRoot : PdfRead.Obj := .dict
-    #[("Type", .name "StructTreeRoot"), ("K", .arr #[elemRef 0]),
-      ("ParentTree", .ref t.parentTree 0), ("ParentTreeNextKey", .int np),
-      ("Namespaces", .arr #[.ref t.namespaceId 0])]
+    (#[("Type", .name "StructTreeRoot"), ("K", .arr #[elemRef 0]),
+      ("ParentTree", .ref t.parentTree 0), ("ParentTreeNextKey", .int np)] ++
+     (if v17 then (if roleMap.isEmpty then #[] else #[("RoleMap", .dict roleMap)])
+      else #[("Namespaces", .arr #[.ref t.namespaceId 0])]))
   let parentEntries : Array PdfRead.Obj := (Array.range np).flatMap fun (i : Nat) =>
     #[PdfRead.Obj.int (i : Int), .arr ((parentTree[i]?.getD #[]).map fun o => match o with
       | some e => elemRef e
       | none => .null)]
   let parentTreeObj : PdfRead.Obj := .dict #[("Nums", .arr parentEntries)]
-  let namespaceObj : PdfRead.Obj := .dict
+  let namespaceObj : PdfRead.Obj := if v17 then .dict #[] else .dict
     #[("Type", .name "Namespace"), ("NS", litObj "(http://iso.org/pdf2/ssn)")]
   -- a placeholder `fill` did not replace: none remain after `fill`, and
   -- one would be a leaf with no marked content, which lists nothing
@@ -1255,7 +1276,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let attrsEntry : Array (String × PdfRead.Obj) := if e.attrs.isEmpty then #[] else
       #[("A", .dict e.attrs)]
     let nsEntry : Array (String × PdfRead.Obj) :=
-      if e.ns20 then #[("NS", .ref t.namespaceId 0)] else #[]
+      if e.ns20 && !v17 then #[("NS", .ref t.namespaceId 0)] else #[]
     .dict (#[("Type", PdfRead.Obj.name "StructElem"), ("S", .name e.s), ("P", parentRef)]
       ++ nsEntry ++ kidsEntry
       ++ optText "Alt" e.alt ++ optText "Lang" e.lang ++ optText "ActualText" e.actualText
@@ -1279,7 +1300,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- assemble the file: every object as a row first, then one `serialize`
   -- fold whose offsets are its own (`serialize_locs_covers`). Nothing
   -- records a position beside the writing any more.
-  let fileHead : ByteArray := "%PDF-2.0\n%".toUTF8 ++ ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8
+  let fileHead : ByteArray := (if v17 then "%PDF-1.7\n%" else "%PDF-2.0\n%").toUTF8 ++
+    ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8
 
   -- direct stream objects
   -- Every stream this writer owns (content, ToUnicode, font files, XMP, the
