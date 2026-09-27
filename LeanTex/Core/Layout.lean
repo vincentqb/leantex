@@ -6194,6 +6194,29 @@ the baseline the line is set on. -/
 def labelVExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (labelVStep fs size) (0, 0)
 
+/-- How far a label line's glyphs themselves reach above and below its
+baseline — the TeX box the line makes, each glyph read off its own outline
+at its run's size and raise. A glyph whose outline does not decode reaches
+its run's declared band, the measurement it would otherwise have had; an
+image stands on the baseline and a rule on its raise. This is what a node's
+text box is (pgf's), where the band above is what places the letters. -/
+def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
+  segs.foldl (fun acc seg => match seg with
+    | .run idx _ _ _ glyphs sz _ raise _ _ =>
+      let font := fs.get idx
+      let sz := if sz == 0 then size else sz
+      glyphs.foldl (fun acc (g, _) =>
+        match font.yExtent g with
+        | some (lo, hi) =>
+          (max acc.1 (hi * sz / (font.unitsPerEm : Int) + raise),
+           max acc.2 ((-lo) * sz / (font.unitsPerEm : Int) - raise))
+        | none =>
+          (max acc.1 (scaledAt sz font font.capHeight.toNat + raise),
+           max acc.2 (scaledAt sz font (-font.descent).toNat - raise))) acc
+    | .image _ _ h => (max acc.1 h, acc.2)
+    | .rule _ t raise _ => (max acc.1 (raise + t), max acc.2 (-raise))
+    | .gap _ _ => acc) (0, 0)
+
 /-- A run emptied of its glyphs contributes exactly what it contributed
 full: no arm of the step reads the payload. -/
 theorem labelVStep_glyph_id (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
@@ -6287,7 +6310,10 @@ private def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight 
   let some brk := breaks[0]? | return none
   let (segs, w, _, _) := setLine items (lineStart items 0) brk geom.textWidth false
   let (hgt, dep) := labelVExtent fs size segs
-  return some (segs, size, { w := w, height := hgt, depth := dep })
+  let (bh, bd) := labelGlyphExtent fs size segs
+  return some (segs, size, { w := w, height := hgt, depth := dep
+                             boxHeight := bh, boxDepth := bd
+                             ex := xHeight * (scale : Int) / 1000 })
 
 /-- The measurement a picture's box is computed with: `labelInk` read as an
 `Ir.Pic.LabelMetric`, the seam the IR states its containment over. A label

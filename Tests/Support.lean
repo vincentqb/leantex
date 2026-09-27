@@ -971,6 +971,15 @@ spellings set one page reads. -/
 def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
   (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
 
+/-- A source elaborated as the driver elaborates it: against the label
+measurement layout sets with (`Layout.labelMetric`), so a node's extent is
+measured from its letters rather than taken as nothing. -/
+def elabMeasured (fonts : Font.FontSet) (s : String) : Ir.Doc × Array Diag :=
+  let (toks, lds) := Lex.lex "t" s
+  let (raws, pds) := Parse.parse "t" toks
+  Elab.runRaws "t" raws (lds ++ pds)
+    (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) fonts)
+
 /-- Does a block of the document's title block satisfy `p`? The block may
 stand inside its alignment wrapper, so the probe looks one level into
 `.center`. -/

@@ -2756,6 +2756,14 @@ structure LabelInk where
   w : Sp := 0
   height : Sp := 0
   depth : Sp := 0
+  /-- How far the glyphs themselves reach above and below the baseline: the
+  TeX box the text makes (pgf's text box), which a node's border holds. The
+  band above places the letters and reads no glyph; this is their reach. -/
+  boxHeight : Sp := 0
+  boxDepth : Sp := 0
+  /-- The face's x-height at the label's size: what `ex` means in a node's
+  options, as TeX reads it (fontdimen 5). -/
+  ex : Sp := 0
   deriving Repr, BEq, Inhabited
 
 /-- What a label's content sets to at a per-mille size: the measurement
@@ -2839,6 +2847,29 @@ theorem labelBaseline_box_exact (x y : Sp) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align m = (labelInkBox x y align m).2.2 - m.height := by
   cases align <;> rfl
 
+/-- **Where a label's glyphs stand**: the TeX box its text makes, on the
+baseline the band places — the band's width, and the glyphs' own reach above
+and below that baseline (`LabelInk.boxHeight`/`boxDepth`) — held to cover the
+anchor it hangs from. This, not the band, is the ink a picture's box holds:
+the band is a placement reference, deeper than a word with no descender
+sets anything, and pgf's natural box holds a node's text box, not its
+font's. -/
+def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+  let band := labelInkBox x y align m
+  let b := labelBaseline y align m
+  ((band.1.1, min y (b - m.boxDepth)), (band.2.1, max y (b + m.boxHeight)))
+
+/-- The anchor is inside the glyphs' box, as it is inside the band
+(`labelInkSpan_covers_anchor`): widening a label from its anchor to its
+glyphs can only grow a hull. -/
+theorem labelGlyphBox_covers_anchor (x y : Sp) (align : LabelAlign) (m : LabelInk) :
+    Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
+  have hx := labelInkSpan_covers_anchor x y align (max m.w 0) (max (m.height + m.depth) 0)
+    (Int.le_max_right _ _) (Int.le_max_right _ _)
+  have lo : ∀ a b : Int, min a b ≤ a := by intro a b; omega
+  have hi : ∀ a b : Int, a ≤ max a b := by intro a b; omega
+  exact ⟨hx.1, lo _ _, hx.2.2.1, hi _ _⟩
+
 /-- **A label's baseline does not read its set width.** So the advances of
 the glyphs it sets — which face, which kerning, which characters — cannot
 move it vertically: the horizontal measurement and the vertical placement
@@ -2879,7 +2910,9 @@ would set to. A metric-only run — a phantom, whose box is its argument's
 and whose ink is nothing — enters exactly here, and `max` is why it can be
 inert. -/
 def LabelInk.join (a b : LabelInk) : LabelInk :=
-  { w := max a.w b.w, height := max a.height b.height, depth := max a.depth b.depth }
+  { w := max a.w b.w, height := max a.height b.height, depth := max a.depth b.depth
+    boxHeight := max a.boxHeight b.boxHeight, boxDepth := max a.boxDepth b.boxDepth
+    ex := max a.ex b.ex }
 
 /-- **The one surviving channel, bounded — and shut where it matters.** A
 label carrying an extra metric box sets between what it set alone and the
@@ -3005,9 +3038,10 @@ def Picture.labelContents (p : Picture) : Array (Array Inline) :=
 
 /-- The box a shape's **ink** occupies, given a measurement. Every arm but
 the label's is the declared box: a fill, an outline and a stroked edge are
-their own geometry, and only text has an extent the IR cannot compute. -/
+their own geometry, and only text has an extent the IR cannot compute — the
+glyphs' own box on the baseline the band places (`labelGlyphBox`). -/
 def Shape.inkBox (m : LabelMetric) : Shape → Box
-  | .label x y content _ scale align => labelInkBox x y align (m content scale)
+  | .label x y content _ scale align => labelGlyphBox x y align (m content scale)
   | s@(.rect _ _ _ _ _) => s.box
   | s@(.circle _ _ _ _ _) => s.box
   | s@(.frame _ _ _ _ _ _) => s.box
@@ -3346,8 +3380,7 @@ hull. Every containment `box_in_bbox` gave still holds of `inkBbox`. -/
 theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Box.le s.box (s.inkBox m) := by
   cases s with
   | label x y content color scale align =>
-    exact labelInkSpan_covers_anchor x y align _ _ (Int.le_max_right _ _)
-      (Int.le_max_right _ _)
+    exact labelGlyphBox_covers_anchor x y align _
   | rect _ _ _ _ _ => exact Box.le_refl _
   | circle _ _ _ _ _ => exact Box.le_refl _
   | frame _ _ _ _ _ _ => exact Box.le_refl _

@@ -152,11 +152,7 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let picLine := dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
     "\\begin{tikzpicture}[baseline={(c.base)}]\n\\node (x) {Nodea};\n" ++
     "\\node (c) [right =of x] {Nodeb};\n\\path (c) edge (x);\n\\end{tikzpicture}\n")
-  let elabM (s : String) : Ir.Doc × Array Diag :=
-    let (toks, lds) := Lex.lex "t" s
-    let (raws, pds) := Parse.parse "t" toks
-    Elab.runRaws "t" raws (lds ++ pds)
-      (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) oneFace)
+  let elabM (s : String) : Ir.Doc × Array Diag := elabMeasured oneFace s
   let (pd, _) := elabM picLine
   let pls := (allLines (layoutOf oneFace pd)).filter fun l => !l.furniture && !l.segs.isEmpty
   t "a box and a picture on one line: the label stands beside the graph, on its node's baseline"

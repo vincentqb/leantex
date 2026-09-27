@@ -121,3 +121,84 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a switch the engine cannot read is still named"
     (picLoss (doc "" "\\node[font=\\undefinedswitch] at (0,0) {Nodeword};") &&
       !picLoss (doc "" "\\node[font=\\itshape] at (0,0) {Nodeword};"))
+
+
+/-- The deepest reach below the baseline of a word's glyphs, set in `font`
+at `size`: the depth of the TeX box the word makes. -/
+def wordDepth (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+  word.toList.foldl (fun d c =>
+    match (font.gid c).bind font.yExtent with
+    | some (lo, _) => max d (-lo * size / (font.unitsPerEm : Int))
+    | none => d) 0
+
+/-- The height of an SVG's viewBox in the emitted page, in sp (to the
+thousandth of a point the emitter writes). -/
+def viewBoxHeight (page : String) : Option Dim.Sp := do
+  let rest ← (page.splitOn "viewBox=\"0 0 ")[1]?
+  let v ← (rest.splitOn "\"")[0]?
+  let h ← (v.splitOn " ")[1]?
+  let (m, sc) ← Decl.parseDecimal h
+  pure (m * Dim.pt 1 / sc)
+
+/-- **A node's box is its text box plus inner sep, as TikZ's** (pgf's
+`\pgfnodeparttextbox`; tikz.code.tex, `\tikz@fig@continue`, where `text
+height` and `text depth` set the box's `\ht` and `\dp`). A declared text box
+is the node's, exactly: its north and south anchors stand one inner sep
+beyond the declared height above the label's baseline and the declared depth
+below it. An undeclared one is the glyphs' own, so a picture reserves below
+a label with no descender its inner sep and no more — not the face's descent
+as well (review F9). The defect named both keys dropped and measured every
+border from the face's band. Asserted over the shipped page, and the SVG's
+box. Invented content. -/
+def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let font := oneFace.body
+  let near (p q : Int) : Bool := decide (p - q ≤ 3 ∧ q - p ≤ 3)
+  let size := (Layout.Geom.ofPage (elabStr (picDoc "" "" "")).1.page).fontSize
+  let ex := font.xHeight * size / (font.unitsPerEm : Int)
+  let sep := Picture.innerSep size
+  -- The label's baseline and the first point of the first two paths, on the
+  -- page (y down): the anchors those paths start from.
+  let anchors (src : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp) := do
+    let (doc, _) := elabMeasured oneFace src
+    let page ← (layoutOf oneFace doc).pages[0]?
+    let label ← page.lines.find? fun l => hasStr (lineText l) "Label"
+    let starts := page.paths.filterMap fun q => match q.path with
+      | .segs ss => ss[0]?.map fun s => match s with
+        | .line _ y1 _ _ => y1
+        | .cubic _ y1 _ _ _ _ _ _ => y1
+      | _ => none
+    let north ← starts[0]?
+    let south ← starts[1]?
+    pure (label.y, north, south)
+  let declared := picDoc "" ""
+    ("\\node[text height=2ex, text depth=0.5ex] (a) at (0,0) {Label};\n" ++
+     "\\draw (a.north) -- (0,2);\n\\draw (a.south) -- (0,-2);")
+  t "a declared text box puts the node's anchors one inner sep beyond it, and names nothing"
+    ((match anchors declared with
+      | some (base, north, south) =>
+        near (base - north) (2000 * ex / 1000 + sep) && near (south - base) (500 * ex / 1000 + sep)
+      | none => false) && !picLoss declared)
+  let below (word : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++
+    "\\begin{tikzpicture}\\node at (0,0) {" ++ word ++ "};\\end{tikzpicture}\n\n" ++
+    "Below.\n\\end{document}"
+  let room (word : String) : Option Dim.Sp := do
+    let (doc, _) := elabMeasured oneFace (below word)
+    let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+    let a ← lineYOf c 0 word
+    let b ← lineYOf c 0 "Below."
+    pure (b - a)
+  let deeper := wordDepth font size "vowelp" - wordDepth font size "vowel"
+  t "the room a picture keeps below a label is the label's own depth, not the face's descent"
+    (match room "vowel", room "vowelp" with
+     | some a, some b => decide (0 < deeper) && near (b - a) deeper
+     | _, _ => false)
+  let svgHeight (word : String) : Option Dim.Sp := do
+    let (doc, _) := elabMeasured oneFace (below word)
+    viewBoxHeight (HtmlDoc.emit
+      { labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) oneFace } doc).1
+  t "the SVG's box grows by the same depth"
+    (match svgHeight "vowel", svgHeight "vowelp" with
+     | some a, some b => decide (b - a - deeper ≤ 70 ∧ deeper - (b - a) ≤ 70)
+     | _, _ => false)

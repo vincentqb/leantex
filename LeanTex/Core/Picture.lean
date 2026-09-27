@@ -2531,6 +2531,15 @@ private def readDim (toks : List Tok) : Except String Sp :=
     | u => .error s!"the unit '{u}' is outside the rendered picture subset"
   | _ => .error "a length like '8mm' is needed"
 
+/-- A length in a node's options, the font-relative units included: `em` is
+the node's em and `ex` its face's x-height at the node's size, which is how
+TeX reads them where the key is evaluated (fontdimens 6 and 5). -/
+private def readNodeDim (em ex : Sp) (toks : List Tok) : Except String Sp :=
+  match toks with
+  | [.num m, .ident "em"] => .ok (m * em / 1000)
+  | [.num m, .ident "ex"] => .ok (m * ex / 1000)
+  | ts => readDim ts
+
 /-- pgf's named line widths, as tikz.code.tex defines them (lines
 1575–1581): each is the style `line width=<w>`, so a name and the key it
 abbreviates stroke one width. `thin` and `thick` are the IR's own two
@@ -2765,7 +2774,8 @@ def readsNodeOpt (opt : Array Tok) : Bool :=
   else match opt.toList with
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
-      "inner sep", "inner xsep", "inner ysep", "node contents", "font"].contains (keyPath ts) ||
+      "inner sep", "inner xsep", "inner ysep", "node contents", "font",
+      "text height", "text depth"].contains (keyPath ts) ||
       (readLineWidth ts).isSome
 
 /-- An entry some statement of this subset reads: what a declaration made
@@ -2951,6 +2961,10 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut width : Sp := Ir.Pic.thinWidth
   -- The declarations a `font=` named, wrapping every label line.
   let mut fontStyles : Array Ir.Style := #[]
+  -- `text height=`/`text depth=` as written: font-relative units resolve
+  -- against the node's own face, once its label is measured.
+  let mut textHt : Option (List Tok) := none
+  let mut textDp : Option (List Tok) := none
   let mut minW : Sp := 0
   let mut minH : Sp := 0
   -- `inner sep` as the document set it, per axis; `none` is pgf's default,
@@ -3023,6 +3037,8 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       for w in unread do
         ev := ev.diag (.W0334, s!"node option 'font={w}' is outside the rendered \
 picture subset; the switch is dropped")
+    | .ident "text" :: .ident "height" :: .sym '=' :: rest => textHt := some rest
+    | .ident "text" :: .ident "depth" :: .sym '=' :: rest => textDp := some rest
     | .ident "text" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
@@ -3117,45 +3133,77 @@ outside the rendered picture subset; the label is not drawn")
       | none =>
         .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
   let bodyOf := bodyOf.map fun (ls, ds) => (fontLines fontStyles ls, ds)
-  -- The extent the label's own ink asks for, measured through the face the
-  -- driver resolved (`Cx.metric`): the shapes this node's body would emit,
-  -- hulled at the origin, which is the same measurement the picture's box
-  -- reads (`Ir.Pic.Shape.inkBox`) and so cannot drift from it.
+  -- The label's lines set at the origin: the one set of shapes the node's
+  -- extent, its baseline and its text box are all read off, through the
+  -- face the driver resolved (`Cx.metric`) — the measurement the picture's
+  -- box reads (`Ir.Pic.Shape.inkBox`), so neither can drift from it.
+  let shapes0 : Array Ir.Pic.Shape :=
+    match bodyOf with
+    | .ok (lines, _) => stackLabels 0 0 cx.bodySize scale color .center lines #[]
+    | .error _ => #[]
+  -- The half-extents the anchors stand on: the face's band around each line
+  -- (`Ir.Pic.labelInkBox`), which is where the engine seats the letters.
   let inkHalf : Sp × Sp :=
-    match bodyOf with
-    | .ok (lines, _) =>
-      let ls := stackLabels 0 0 cx.bodySize scale color .center lines #[]
-      let ((bx0, by0), (bx1, by1)) := Ir.Pic.Box.hull (ls.map (Ir.Pic.Shape.inkBox cx.metric))
-      (max (-bx0) bx1, max (-by0) by1)
-    | .error _ => (0, 0)
-  -- Where this node's own text baseline stands, relative to its centre:
-  -- what the `base` family of anchors reads. The label's *first* line is
-  -- the node's baseline, as it is for any TeX box, and the offset is read
-  -- off the same shapes the extent was measured from — so the anchor and
-  -- the ink cannot disagree about where the letters sit.
-  let baseOff : Sp :=
-    match bodyOf with
-    | .ok (lines, _) =>
-      match (stackLabels 0 0 cx.bodySize scale color .center lines #[])[0]? with
-      | some (Ir.Pic.Shape.label _ ly content _ sz al) =>
-        Ir.Pic.labelBaseline ly al (cx.metric content sz)
-      | _ => 0
-    | .error _ => 0
+    let bands := shapes0.filterMap fun s => match s with
+      | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
+      | .rect .. | .circle .. | .frame .. | .edge .. => none
+    let ((bx0, by0), (bx1, by1)) := Ir.Pic.Box.hull bands
+    (max (-bx0) bx1, max (-by0) by1)
+  -- Each line's baseline and measurement. The label's *first* line is the
+  -- node's baseline, as it is for any TeX box: what the `base` family of
+  -- anchors reads.
+  let lineInks : Array (Sp × Ir.Pic.LabelInk) := shapes0.filterMap fun s =>
+    match s with
+    | .label _ ly content _ sz al =>
+      let m := cx.metric content sz
+      some (Ir.Pic.labelBaseline ly al m, m)
+    | .rect .. | .circle .. | .frame .. | .edge .. => none
+  let baseOff : Sp := (lineInks[0]?.map (·.1)).getD 0
+  -- The border is the text *plus* `inner sep` (pgf manual §17.2.2), so an
+  -- anchor stands clear of the letters rather than on them. The default is
+  -- font-relative and this node's own size is its em, which is why it is
+  -- resolved here and not a constant; its ex is the face's.
+  let em : Sp := cx.bodySize * (scale : Int) / 1000
+  let ex : Sp := (lineInks[0]?.map (·.2.ex)).getD 0
+  let sepX : Sp := xsep.getD (innerSep em)
+  let sepY : Sp := ysep.getD (innerSep em)
+  -- **The node's text box** (pgf's `\pgfnodeparttextbox`), around the
+  -- node's centre: how far the glyphs of its lines reach above and below
+  -- them, or the height and depth `text height`/`text depth` declare
+  -- (tikz.code.tex, `\tikz@fig@continue`, which sets the box's `\ht` and
+  -- `\dp`). A declared box is TikZ's to the letter: the node centres it, so
+  -- its baseline stands half the height less the depth below the centre
+  -- and every anchor is one inner sep beyond it. An undeclared one keeps the
+  -- engine's placement — the face's band centred on the node, the same seat
+  -- for every label whatever its letters (`Ir.Pic.labelBaseline`), and the
+  -- anchors on that band's border — and the room the picture reserves is
+  -- the glyphs' own box, so a label with no descender keeps one inner sep
+  -- below it and not the face's descent as well.
+  let glyphs : Sp × Sp := lineInks.foldl (fun (lo, hi) (b, m) =>
+    (min lo (b - m.boxDepth), max hi (b + m.boxHeight))) (baseOff, baseOff)
+  let dimOf (ts : Option (List Tok)) : Option Sp :=
+    ts.bind fun ts => (readNodeDim em ex ts).toOption
+  let declHt := dimOf textHt
+  let declDp := dimOf textDp
+  for (key, ts) in [("text height", textHt), ("text depth", textDp)] do
+    if let some ts := ts then
+      if let .error e := readNodeDim em ex ts then
+        ev := ev.diag (.W0334, s!"in '{key}', {e}; the option is dropped")
+  let (base, boxLo, boxHi, halfB) : Sp × Sp × Sp × Sp :=
+    if declHt.isNone && declDp.isNone then (baseOff, glyphs.1, glyphs.2, inkHalf.2)
+    else
+      let ht := declHt.getD (glyphs.2 - baseOff)
+      let dp := declDp.getD (baseOff - glyphs.1)
+      let b0 := -((ht - dp) / 2)
+      (b0, b0 - dp, b0 + ht, (ht + dp) / 2)
   -- The placed node's own half-extents, its side of the border-to-border
   -- gap a relative placement leaves: the declared minimum, or the label's
   -- own reach where the text stands proud of it (`Ir.Pic.nodeExtent`, whose
   -- `nodeExtent_covers` is why a placement parts text and not centres).
   let declA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
   let declB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
-  -- The border is the text *plus* `inner sep` (pgf manual §17.2.2), so an
-  -- anchor stands clear of the letters rather than on them. The default is
-  -- font-relative and this node's own size is its em, which is why it is
-  -- resolved here and not a constant.
-  let em : Sp := cx.bodySize * (scale : Int) / 1000
-  let sepX : Sp := xsep.getD (innerSep em)
-  let sepY : Sp := ysep.getD (innerSep em)
   let ownA : Sp := borderHalf declA inkHalf.1 sepX
-  let ownB : Sp := borderHalf declB inkHalf.2 sepY
+  let ownB : Sp := borderHalf declB halfB sepY
   let pos : Except PDiag (Sp × Sp) :=
     match atCoord with
     | some (xs, ys) =>
@@ -3199,8 +3247,12 @@ this one against; the node is not drawn")
   match pos with
   | .ok (sx, sy) =>
         -- pgf's natural bounding box includes the node's shape — its text
-        -- plus `inner sep` — whether or not a path paints it (§17.2.2).
-        ev := { ev with borders := ev.borders.push ((sx - ownA, sy - ownB), (sx + ownA, sy + ownB)) }
+        -- box plus `inner sep`, or the declared minimum where larger —
+        -- whether or not a path paints it (§17.2.2).
+        let border : Ir.Pic.Box :=
+          ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
+           (sx + ownA, sy + max (boxHi + sepY) declB))
+        ev := { ev with borders := ev.borders.push border }
         -- A named node registers its anchoring geometry whether or not
         -- its border draws: pgf anchors edges on the shape's border even
         -- when the path itself is never painted.
@@ -3208,9 +3260,9 @@ this one against; the node is not drawn")
           let geom : NodeGeom :=
             if isCircle then
               { x := sx, y := sy, a := ownA, b := ownB, circle := true
-                base := sy + baseOff }
+                base := sy + base }
             else
-              { x := sx, y := sy, a := ownA, b := ownB, base := sy + baseOff }
+              { x := sx, y := sy, a := ownA, b := ownB, base := sy + base }
           ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. Extent is the declared minimum: pgf manual §"Shapes"
@@ -3248,7 +3300,11 @@ here); its outline is not drawn")
         | .error d => return ev.diag d
         | .ok (lines, mdiags) =>
           ev := mdiags.foldl Ev.diag ev
-          ev := { ev with shapes := stackLabels sx sy cx.bodySize scale color .center lines ev.shapes }
+          -- A declared text box moves the letters to its baseline; the
+          -- engine's own placement moves nothing.
+          let placed := stackLabels sx (sy + (base - baseOff)) cx.bodySize scale color
+            .center lines ev.shapes
+          ev := { ev with shapes := placed }
           return ev
   | .error d =>
     return (if unresolved then { ev with deferred := ev.deferred + 1 } else ev).diag d
