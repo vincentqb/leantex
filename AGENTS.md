@@ -246,6 +246,10 @@ in this repo; refer to the private reference corpus abstractly.
   module downstream. A zero-argument `def` is evaluated when its module
   initializes, in every process; take `Unit` to defer the cost to first
   use.
+- The inline elaboration knot compiles at its heartbeat budget (more than
+  198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
+  fields: state the knot never reads goes in a record of its own
+  (`Counters` is the shape), never a new top-level field.
 - A cache over an external tool caches the tool's *whole* answer, not
   only the answer that succeeded. A verdict remembered for the drawn case
   and dropped for the refused one means the slow path is the one that

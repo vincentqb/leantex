@@ -22016,3 +22016,83 @@ after a blank line. The engine's list realization adds the outer
 adds it to both. `\fontseries` inside a `\style` font template ships its
 marker as text (found on the way; the template reader does not read the
 `@series:` marker the arm emits).
+
+
+### 2026-09-27 — every length setting builds: read where it stands, or named once, and the counters leave the knot's state
+
+Review-d found the settings door's failure class untouched: twelve
+LaTeX-valid length spellings failed the build (E0321, E0323, E0313, and the
+commonest list idiom of all, `\begin{itemize}\setlength{\itemsep}{0pt}\item`,
+with E0310), and on the landing chain the branch did not build at all.
+
+**The knot's budget (SL-2), measured.** The inline elaboration knot needs
+more than 198k of its 200k heartbeats on main `8d3df368` (a scratch
+`set_option maxHeartbeats` before the knot: fails at 198k, builds at 200k;
+never committed). The `secnumdepth` field this branch added to `ESt` took it
+past 200k; without that one field it builds. The seven counter fields the
+knot never reads (sections, secnumdepth, heading formats, the appendix mark,
+equation, listing and footnote) are now one `Counters` record, so `ESt` has
+31 top-level fields where main has 36, and the knot builds at the same
+>198k: the refactor restores main's standing and buys nothing beyond it.
+The profile says where the rest goes: "process pre-definitions" is most of
+the command, and in every variant the well-founded packing unfolds
+`String.Slice.Pos.skipWhile._unary` 98,304 times and `PSigma.rec` 137,642
+times. The existing string seals do not reach it and sealing
+`Palette.resolve`, the list membership tests or the icon maps changes
+nothing. Found, not fixed: it is the knot's owner's factorization.
+
+**The door reads a value as TeX copies a register (SL-1).** `lenValue`
+evaluates the raws where the assignment stands. A kernel parameter the
+document set is the value it holds, and `\smallskipamount`,
+`\medskipamount` and `\bigskipamount` are the kernel's fixed skips
+(ltspace.dtx). `-\x` negates, and `\dimexpr … \relax` is its parenthesized
+expression. A document's own length stays a token reference, which the
+reader resolves where it reads. TeX's own `\parskip 6pt plus 1pt` and
+`\parskip=6pt` reach the same door (`plainAssign?`), unless the parameter is
+an operand (`\hskip\parindent`) or words follow it. What the door cannot
+evaluate is one W0104 keyed `ctrl:setlength:<n>:value`, and the setting is
+skipped, so the page is the one the document ships without it. That covers
+a kernel parameter's class value (`0.5\baselineskip`, `0.5\tabcolsep`),
+infinite glue, `\stretch`, calc's `\widthof` and a box's `\ht`: never an
+error, and never stray text. In a definition's body nothing is judged,
+because the body runs where the command is used. A list parameter set
+inside a list is named once as spacing that one list, and no longer lands
+before the first `\item`. A counter command there is read as a declaration.
+`\setcounter` reads `\value{c}` of a counter the flow keeps.
+
+**The value arithmetic reads is written only where TeX assigns (WE-3).**
+An assignment in a definition body, in a group or in an environment is not
+the value an `\addtolength` after it reads (TeXbook ch. 24: an assignment
+is local to its group), and `\begin{document}` ends the preamble's size
+lengths, which `\normalsize` sets again.
+
+**Guards:** `unreadableLengthChecks` covers the reviewer's spellings, each
+readable one against its literal spelling, each unreadable one against the
+page without it, plus the list idiom and the counter rows.
+`registerScopeChecks` covers the four scopes, measured as a `\vspace` of
+the length. They gave 38 FAILs on the pre-fix tip `e2b9d54a`. Two defects
+the first version shipped were found on the private reference corpus's
+paper and have their own rows. A lone `\z@` value was handed on as a token
+name: E0321, 3 FAILs at `1d2b2de7`. A copy inside a definition body, and
+an `@` length, were refused: 6 FAILs at `1efd36b3`. Three mutants
+(the refusal deleted, a group's restore deleted, the splitter arm deleted)
+each fail the suite.
+
+**Measured.** Of the reviewer's 60 probes, 59 build, against 46 on main;
+`{\small}` in a preamble group (E0313) is not a length. Against lualatex,
+with bottoms of text lines from `pdftotext -bbox-layout`:
+- `\setlength{\parskip}{-\gapx}` gives a paragraph gap of 5.00 bp (lualatex 4.98);
+- `\medskipamount` and `\parskip 6pt plus 1pt` give 18.00 (17.93);
+- `\dimexpr 1em+2pt\relax` indents a list 12.00 bp (11.93).
+
+The private reference corpus is raster-identical at 110 dpi to the pre-fix
+tip, all five documents, and HTML and site are byte-identical. The paper
+gains four translation notes, and nothing else changes. The bench is
+within noise: medians of 15, alternating binaries, differ by 1–5 ms.
+
+**Left.** A list's own `\itemsep` needs a per-list gap on `Ir.Block.list`
+(today the item gap stays the level's: 20 bp where lualatex has 15.94).
+`\setcounter{enumi}` needs the list to carry its start (items 1, 2 where
+lualatex numbers 4, 5). `\baselineskip` wants an engine token (the page's
+leading), so `0.5\baselineskip` reads. And `fil` glue on `parskip` wants a
+carrier.
