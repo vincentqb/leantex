@@ -1941,6 +1941,31 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (sout.pages.size ≥ 2 && sout.pages.all (·.frame == some 1))
   let spillOffs := artPageGroundOffences sgeom (artFrameGrounds sdoc) sout.pages
   t s!"stage ground spill deck pdf: {spillOffs.toList}" spillOffs.isEmpty
+  -- beamer's own spelling of the ground: `background canvas`'s bg is the
+  -- canvas fill (the default template's full-page rule), so in the preamble
+  -- it declares the document's ground and in the body an epoch's.
+  let canvas := "\\setbeamercolor{background canvas}{bg=#203040}\n"
+  let frame (s : String) := s!"\\begin\{frame}\{{s}}\nx\n\\end\{frame}\n"
+  let (pdoc, pds) := elabStr ("\\documentclass{beamer}\n" ++ canvas ++
+    "\\begin{document}\n" ++ frame "One" ++ "\\end{document}\n")
+  t s!"background canvas in the preamble declares the document's ground: {pds.toList.map (·.code)}"
+    (pdoc.palette.find? "bg" == some { r := 0x20, g := 0x30, b := 0x40 } &&
+     pds.all (·.severity == .note))
+  let (bdoc, bds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    frame "One" ++ canvas ++ frame "Two" ++ "\\end{document}\n")
+  t s!"background canvas in the body declares the frames after it: {bds.toList.map (·.code)}"
+    (artFrameGrounds bdoc == #[bdoc.palette.find? "bg", some { r := 0x20, g := 0x30, b := 0x40 }] &&
+     bds.all (·.severity == .note))
+  let bgeom := Layout.Geom.ofPage bdoc.page
+  let bOffs := artPageGroundOffences bgeom (artFrameGrounds bdoc) (layoutOf oneFace bdoc bgeom).pages
+  let (bhead, bbody, _) := HtmlDoc.emitTree {} bdoc
+  let bcss := artTreeCssList (artTreeCssList "" bhead.toList) bbody.toList
+  let bHtml := artStageGroundOffences (artFrameGrounds bdoc) bcss bbody
+  t s!"background canvas in the body reaches both artifacts: {bOffs.toList} {bHtml.toList}"
+    (bOffs.isEmpty && bHtml.isEmpty)
+  t "background canvas has no ink: its fg is named, not taken"
+    (warnCodes ("\\documentclass{beamer}\n\\setbeamercolor{background canvas}{fg=#101010}\n" ++
+      "\\begin{document}\n" ++ frame "One" ++ "\\end{document}\n") == ["W0104"])
 
 
 

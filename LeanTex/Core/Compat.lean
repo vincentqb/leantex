@@ -69,9 +69,13 @@ poster lineage draws it under the second name), the three `progress bar`
 placements are one bar — moloch itself derives its two placement variants
 from `progress bar` with `parent=`, so the collapse is the inheritance it
 declares — and `footline` and `page number in head/foot` are the one footer
-ink. -/
+ink. `background canvas` has a ground and no ink: beamer's default canvas
+template reads only its `bg`, painting it as a full-page rule
+(beamerouterthemedefault.sty, `\defbeamertemplate*{background canvas}`), so
+it is the page's `bg`, and in the body the ground of the frames after it. -/
 def beamerColorRoles : List (String × String × String) :=
   [("normal text", "fg", "bg"),
+   ("background canvas", "", "bg"),
    ("frametitle", "frametitlefg", "frametitlebg"),
    ("headline", "frametitlefg", "frametitlebg"),
    ("block title", "blocktitlefg", "blocktitlebg"),
