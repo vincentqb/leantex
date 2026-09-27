@@ -22757,3 +22757,79 @@ initialization and section GC already do the work it aimed at. Converting
 `Main.lean` alone to the module system fails, since a `module` cannot import
 the legacy modules; converting the whole graph is an API migration with no
 measured prize either. `LeanTex` stays the executable's one import.
+
+
+### 2026-09-27 — a fill-framed block stands centred on the box TeX centres, under the \topskip the document declares
+
+The idiom that centres a block on a page — `\nointerlineskip`,
+`\vspace*{\fill}`, the block, `\vspace*{\fill}`, `\pagebreak`, with
+`\topskip` set to 0pt — centres it exactly in lualatex (TeX Live 2026).
+Measured on the idiom at 1200 dpi, the block's ink stands −0.06 and
+−0.03 bp from the text area's centre on two synthetic faces, and within
+0.03 bp on the private corpus's card. `\tracingoutput` shows why: the
+minipage is one `\vcenter`ed box from its first line's tallest glyph to
+its last line's deepest, `\@topsepadd` stands above and below it, and the
+two fills take equal shares. After the round-9 landings the engine still
+missed by three causes, each a rule of TeX's:
+
+- **The distribution read the face's descent as the last line's depth.**
+  TeX's line is an hbox of its glyphs. `placeLine` now records the line's
+  deepest glyph with it (`B.keepInk`), keyed by the baseline and depth it
+  committed, so any later band at `y` falls back to its own depth
+  (`B.boxDepth`, `placeLine_boxDepth_exact`). `B.contentEnd` reads it where
+  the page is TeX's.
+- **The declared `\topskip` was unread.** `\setlength{\topskip}` reaches
+  `Layout.run` as the token of that name, and the page model set the body
+  size over it. The token now wins, and the class's body size is the
+  default.
+- **On a page opened by `\vspace*`, `\topskip` goes above the rule.** The
+  rule is the page's first item, so the page builder sets `\topskip`,
+  less the rule's zero height, above it. The first line then stands on its
+  own box below the kept glue (`B.firstRise`). That is why the idiom sets
+  `\topskip` to 0pt: under the class's 10 pt the block stands 5 pt low in
+  lualatex (4.92 and 4.95 bp measured), and the engine now does the same.
+
+`finishPage_fill_centre_exact` states the split at the page close that
+ships it. With the engine's one fil order, two fills of equal order and
+stretch give every line between them the same share of the leftover, and
+the share left below differs from it by at most one sp.
+`faceCentreChecks` holds the idiom on two faces over `Layout.Out`: the gap
+above the box less the gap below is 0 to 1 sp, and 10 or 14 pt under the
+class's or a declared `\topskip`. At `8d3df368` it was −5.1 and −13.6 pt
+under every `\topskip`, and at `f16b1321` −2.4 and +1.8. Mutants
+through the shipping path: the old depth fails 7 checks, an unread token
+4, the old anchor rule 5, and the two theorems fail the build. The one
+survivor is the rider reset in `pushSibling`: no check reaches an
+underlined last line on a fill page. `filChecks`' sandwich had asserted
+the old split (lesson 9), and now asserts TeX's under
+`\nointerlineskip`. The paper, deck, résumé and site PDF and HTML are
+byte-identical before and after this change.
+
+**A correction to the round-9 entry.** `\@vspacer` restores `\prevdepth`,
+but that sets no interline glue only after `\nointerlineskip`. At a
+document's start `\prevdepth` is 0: lualatex puts 12 − h of
+`\baselineskip` glue between the rule and the line (5.06 pt for "hello" in
+cmr10).
+
+**Owed, and routed.**
+- *A frame's last line* is a glyph box in beamer too: a `[c]` frame ending
+  on "ppp" stands 1.00 bp above one ending on "ooo". Taken alone, the
+  change lowers `slides-moloch/centred-top.within` from 1 to 0: Walnut
+  moves from +0.45 to +1.98 bp against lualatex. The frame's window stands
+  low by more than the descent gives back, because the title box's bottom
+  sits 1.3 bp low and the leading under it is 13.2 against 13.6. The frame
+  keeps the face's descent until the window moves with it (the page
+  model's region). `faceCentreChecks` holds that as an owed row that fails
+  in both directions.
+- *`\nointerlineskip`* is read as nothing (`Compat`), so an anchor without
+  it cannot take TeX's interline glue. This needs an IR marker from
+  `Compat` to the first line after the anchor.
+- *A bare line closing a fill page.* The output routine cancels the output
+  box's depth when a line is its last item (`\@make@normalcolbox`, after
+  `\@outputbox@removebskip`), so a bottom-flush line's baseline lands on
+  the floor. The engine lands its glyph there.
+
+**The user's.** No change here departs from LaTeX. The size ladder's
+leading stays open: on the corpus's card the engine's line pitch differs
+from lualatex's by up to 1.2 bp on a face. The centring is exact either
+way.
