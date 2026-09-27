@@ -796,6 +796,16 @@ does (`partopsepFor`). A name no document command can spell (it carries a
 hyphen), as `trivlistRole`'s is. -/
 def inParagraphRole : String := "in-paragraph"
 
+/-- The inline role a description item's label rides in, first in the item's
+first paragraph and followed by `\labelsep` (latex.ltx `description`:
+`\list{}{\labelwidth\z@ \itemindent-\leftmargin
+\let\makelabel\descriptionlabel}`, the label `\normalfont\bfseries`). The
+page sets that paragraph with the label run in at the list's outer margin
+and every further line at the item's indent; HTML sets the item as a
+`<dt>`/`<dd>` pair. A name no document command can spell (it carries a
+hyphen), so no authored role collides with it. -/
+def descLabelRole : String := "description-label"
+
 /-- **The quantized trivlist space lies inside every size file's glue.** One
 quantum at LaTeX's three standard bodies sits between `\topsep`'s own
 minimum and maximum there — 4..10 pt at 10 pt, 4..12 pt at 10.95 pt,
@@ -4179,6 +4189,16 @@ def flushedText (k : Nat) (after : Array Block) : Bool :=
     match after.back? with
     | some (.para content) => !content.all (· matches .label _)
     | _ => false
+
+/-- A description item's first paragraph read at its label (`descLabelRole`,
+whose body closes with the `\labelsep` separator): the label and the text
+after it; `none` for any other paragraph. The one reading both backends
+use, so the page's run-in label and HTML's `<dt>` are the same inlines. -/
+def descLabel? (content : Array Inline) : Option (Array Inline × Array Inline) :=
+  match content[0]? with
+  | some (Inline.role n label) =>
+    if n == descLabelRole then some (label, content.extract 1 content.size) else none
+  | _ => none
 
 /-- A centred block's body that is one display formula and nothing else,
 labels aside — the shape `\[…\]` and the unnumbered display environments

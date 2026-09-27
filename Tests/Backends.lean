@@ -432,7 +432,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn ":where(h1, h2, h3, h4) { margin: 0 0 0.725rem; }").length == 2 &&
      (plainPage.splitOn ":where(:is(h1, h2, h3, h4) + *) { margin-top: 0; }").length == 2)
   t "html block elements' own margins are the emitter's zero-specificity resets"
-    ((plainPage.splitOn ":where(p, ul, ol, li, pre, blockquote) { margin: 0; }").length == 2 &&
+    ((plainPage.splitOn ":where(p, ul, ol, li, dl, dd, pre, blockquote) { margin: 0; }").length == 2 &&
      (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
      !hasStr plainPage "\nli { margin")
   t "html peer gap is the page's parskip over one screen quantum, top-owned"

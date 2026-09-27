@@ -341,8 +341,10 @@ def premiseFault (pages : Array MPage) (s : Spec) : Option String := do
 /-! ## The two artifacts, read -/
 
 /-- The engine's pages. Text is every glyph run the line ships, gaps as
-spaces; marks are picture paths, fills, and the rules and images a line
-carries. -/
+spaces — and a kern too (a glyphless run: `\,`, `\quad`, `~`, a label's
+`\labelsep`), which the reference's PDF reads as the space it is, so a
+marker a kern precedes or follows stays a word; marks are picture paths,
+fills, and the rules and images a line carries. -/
 def ofOut (out : Layout.Out) : Array MPage :=
   out.pages.map fun p => Id.run do
     let mut lines : Array MLine := #[]
@@ -351,7 +353,10 @@ def ofOut (out : Layout.Out) : Array MPage :=
       let mut text := ""
       for s in l.segs do
         match s with
-        | .run _ _ _ _ glyphs _ _ _ _ _ => for (_, c) in glyphs do text := text.push c
+        | .run _ _ _ w glyphs _ _ _ _ _ =>
+          if glyphs.isEmpty then
+            if w > 0 then text := text.push ' '
+          else for (_, c) in glyphs do text := text.push c
         | .gap _ _ => text := text.push ' '
         | .rule _ th raise _ => marks := marks.push (l.y - raise - th, l.y - raise)
         | .image _ _ h => marks := marks.push (l.y - h, l.y)

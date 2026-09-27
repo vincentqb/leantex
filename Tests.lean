@@ -180,6 +180,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   quoteChecks ref oneFace
   kernelThmChecks ref
   kernelVerseChecks ref oneFace
+  kernelDescChecks ref
   refChecks ref oneFace
   titleChecks ref
   outlineChecks ref

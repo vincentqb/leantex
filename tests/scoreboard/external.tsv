@@ -2,7 +2,7 @@
 # encoding: raw
 # corpus: tests/external/flashtex/documents.txt, 216 documents, each built by lualatex under -halt-on-error when it was imported (tests/external/flashtex/PROVENANCE.txt)
 # value: elaboration alone, through the driver's input splice — 2 no error and no unknown construct (W0301/W0302), 1 no error, 0 an error
-# counts: 145 at 2, 20 at 1, 51 at 0
+# counts: 147 at 2, 23 at 1, 46 at 0
 crates/compiler/tests/amsmath_corpus/fixtures/01-align.tex	2
 crates/compiler/tests/amsmath_corpus/fixtures/02-align-star.tex	2
 crates/compiler/tests/amsmath_corpus/fixtures/03-align-two-pairs.tex	2
@@ -135,7 +135,7 @@ fixtures/divergence-probes/min-abstract/main.tex	1
 fixtures/divergence-probes/min-bigdelim-12pt/main.tex	2
 fixtures/divergence-probes/min-chapter/main.tex	1
 fixtures/divergence-probes/min-curly-quote/main.tex	2
-fixtures/divergence-probes/min-description/main.tex	0
+fixtures/divergence-probes/min-description/main.tex	2
 fixtures/divergence-probes/min-float-table/main.tex	2
 fixtures/divergence-probes/min-footnote-float/main.tex	2
 fixtures/divergence-probes/min-footnote/main.tex	2
@@ -179,7 +179,7 @@ fixtures/divergence-probes/min4-itemize-wrap/main.tex	2
 fixtures/divergence-probes/min4-lig-hyphen/main.tex	2
 fixtures/divergence-probes/min4-mapsto-rel/main.tex	2
 fixtures/divergence-probes/min4-small-math/main.tex	2
-fixtures/divergence-probes/min5-description-label/main.tex	0
+fixtures/divergence-probes/min5-description-label/main.tex	2
 fixtures/divergence-probes/min5-emph-punct-hyphen/main.tex	0
 fixtures/divergence-probes/min5-proof-close-shrink/main.tex	2
 fixtures/divergence-probes/min5-url-break/main.tex	2
@@ -188,7 +188,7 @@ fixtures/proof-corpus/analysis-proofs/main.tex	2
 fixtures/proof-corpus/hw-problem-solution/main.tex	0
 fixtures/proof-corpus/induction-numbering/main.tex	1
 fixtures/proof-corpus/lecture-notes-groups/main.tex	2
-fixtures/proof-corpus/linalg-theorem-lists/main.tex	0
+fixtures/proof-corpus/linalg-theorem-lists/main.tex	1
 fixtures/proof-corpus/nested-proofs/main.tex	2
 fixtures/proof-corpus/paper-cref/main.tex	1
 fixtures/proof-corpus/problem-set-solution-env/main.tex	1
@@ -203,14 +203,14 @@ fixtures/real-world/beamer-polish/main.tex	1
 fixtures/real-world/beamer-visuals/main.tex	1
 fixtures/real-world/conf-paper/main.tex	0
 fixtures/real-world/cv/main.tex	1
-fixtures/real-world/enumitem-worksheet/main.tex	0
+fixtures/real-world/enumitem-worksheet/main.tex	1
 fixtures/real-world/hyperref-toc/main.tex	1
 fixtures/real-world/input-bibliography/main.tex	0
 fixtures/real-world/lab-report/main.tex	2
 fixtures/real-world/lecture-notes/main.tex	1
 fixtures/real-world/letter/main.tex	0
 fixtures/real-world/listings-manual/main.tex	0
-fixtures/real-world/lmodern-report/main.tex	0
+fixtures/real-world/lmodern-report/main.tex	1
 fixtures/real-world/math-sheet/main.tex	2
 fixtures/real-world/natbib-review/main.tex	0
 fixtures/real-world/plain-article/main.tex	0

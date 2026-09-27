@@ -4662,7 +4662,8 @@ theorem take_args_consumes_forward
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "figure",
-   "figure*", "table", "table*", "quote", "quotation", "verse", "abstract", "ifbackend",
+   "figure*", "table", "table*", "quote", "quotation", "verse", "description",
+   "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
@@ -6613,7 +6614,7 @@ decreasing_by
 `\pause` count standing before each, the warnings of the old in-loop split
 fired at the same points — explicit recursion so the split's conservation
 (no item outweighs the body) is a fact the item elaboration stands on. -/
-private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
+private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (j : Nat)
     (items : Array (Array Raw)) (steps : Array (Option (Nat × Option Nat)))
     (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
     (curStep : Option (Nat × Option Nat)) (curPauses : Nat)
@@ -6628,7 +6629,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
     match body[j] with
     | .ctrl "item" _ =>
       if seen then
-        itemSplitGo ctx body pos (j + 1) (items.push curItem)
+        itemSplitGo ctx body pos desc (j + 1) (items.push curItem)
           (steps.push curStep) (itemPauses.push curPauses) pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
           (by
@@ -6639,7 +6640,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
             have hpj := slicePars_here body h
             rw [itemsP_push]; simp [nestedParsList]; omega)
       else
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses #[]
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -6652,7 +6653,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
       -- Counted for the items that follow; kept in the item so a
       -- mid-item pause still steps the item's own remaining blocks.
       if seen then
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses (pauses + 1)
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses (pauses + 1)
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
           strayDiagged bound pbound
           (by
@@ -6663,7 +6664,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
             have h2 := rawPars_split body[j]
             rw [nestedParsList_push]; omega)
       else
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses (pauses + 1)
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses (pauses + 1)
           curItem curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -6678,7 +6679,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
       -- closing bracket.
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -6694,10 +6695,13 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
       -- enumitem's per-item override: consumed and named (W0110).
       if seen && awaitSpec && !isSpace item then
         if item matches .sym '[' _ then
-          warnOnce ctx "item:marker" .W0110
-            "'\\item' [marker] override is not modelled; the level's marker stands" pos
-            (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
-          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+          -- A description item's label is its content (`descItems`), not
+          -- an override of a marker.
+          unless desc do
+            warnOnce ctx "item:marker" .W0110
+              "'\\item' [marker] override is not modelled; the level's marker stands" pos
+              (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
+          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
             curStep curPauses false true seen strayDiagged bound pbound
             (by
               have hwj := sliceWeight_here body h
@@ -6713,7 +6717,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
             | none => do
               warnOverlaySpec ctx w pos
               pure curStep
-          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
             curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
             (by
               have hwj := sliceWeight_here body h
@@ -6724,7 +6728,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
               have h2 := rawPars_split body[j]
               omega)
         else
-          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses
+          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses
             (curItem.push body[j]) curStep curPauses false inOpt seen strayDiagged
             bound pbound
             (by
@@ -6737,7 +6741,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
               rw [nestedParsList_push]
               omega)
       else if seen then
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen strayDiagged
           bound pbound
           (by
@@ -6769,7 +6773,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
                 omega)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
-        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
           (by
@@ -7418,15 +7422,17 @@ does not, so without amsthm it stays unknown, as LaTeX has it). -/
 def thmEnv (thm : ThmDecls) (n : String) : Bool :=
   (thmOf? thm n).isSome || (n == "proof" && thm.ams)
 
-/-- What separates a theorem-like head from its body: `\labelsep`, .5 em
-(article.cls, `\setlength\labelsep{.5em}`), with which the kernel's head
-(latex.ltx `\@begintheorem`, `\item[\hskip\labelsep …]`) and amsthm's proof
-head (`\item[\hskip\labelsep\itshape …]`) both close. amsthm's theorem head
-closes with `\thm@headsep`, `5pt plus 1pt minus 1pt` (amsthm.sty `\@thm`):
-the same length at a 10 pt body, 0.5 pt over at 11 pt and 1 pt at 12 pt,
-its ±1 pt rubber not carried — the IR has no fixed-length inline glue, and
-the en space (U+2002, `\enspace`) stands for both. -/
-def thmHeadSep : String := "\u2002"
+/-- `\labelsep`, .5 em (article.cls, `\setlength\labelsep{.5em}`): what a
+list's `\item` sets between its label and the text (ltlists.dtx `\@item`,
+`\hskip\labelsep` after the label box) — a description label's, the
+kernel's theorem head (latex.ltx `\@begintheorem`, `\item[\hskip\labelsep
+…]`) and amsthm's proof head (`\item[\hskip\labelsep\itshape …]`).
+amsthm's theorem head closes with `\thm@headsep`, `5pt plus 1pt minus 1pt`
+(amsthm.sty `\@thm`): the same length at a 10 pt body, 0.5 pt over at 11 pt
+and 1 pt at 12 pt, its ±1 pt rubber not carried — the IR has no
+fixed-length inline glue, and the en space (U+2002, `\enspace`, a kern of
+half the em) stands for both. -/
+def labelSep : String := "\u2002"
 
 /-- `\@addpunct{.}` (amsthm.sty): a period after a head, unless the head
 already ends in one of the punctuation marks it tests for. -/
@@ -7451,7 +7457,7 @@ def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
     let noted : Array Inline := match note with
       | some nt => #[.text " ("] ++ nt ++ #[.text ")"]
       | none => #[]
-    #[.styled .bold (name ++ numRun ++ noted), .text thmHeadSep]
+    #[.styled .bold (name ++ numRun ++ noted), .text labelSep]
   | _ =>
     let font : Style := if style == .remark then .italic else .bold
     let numRun : Array Inline := match num with
@@ -7462,7 +7468,7 @@ def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
           (#[.text "("] ++ nt ++ #[.text ")"])]]
       | none => #[]
     #[.styled font (name ++ numRun)] ++ noteRun ++
-      #[.styled font #[.text "."], .text thmHeadSep]
+      #[.styled font #[.text "."], .text labelSep]
 
 /-- A theorem-like scope's state at its `\begin`: the head its first
 paragraph opens with, whether a QED closes it (amsthm's `proof`) and the
@@ -7550,7 +7556,7 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
       let name ← match note with
         | some nt => pure nt
         | none => definedOr ctx "proofname" pos (pure #[.text ctx.locale.proof])
-      pure (#[.styled .italic (name ++ addPunct name), .text thmHeadSep], false, true)
+      pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true)
   if italic then
     modify fun s => { s with blockDecls := st.blockDecls ++ [.style .italic] }
   return ({ head := Ir.wrapDecls st.blockDecls head, qed,
@@ -7585,7 +7591,49 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
     else pure inner
   return #[.role Ir.trivlistRole #[.role n inner]]
 
-seal thmOf? thmEnv thmOpen thmClose
+/-- The labels a description list's `\item`s carry, one per item in the
+order `itemSplitGo` splits them: the `[...]` run after each top-level
+`\item`, past an overlay spec, `none` where the item carries none. -/
+private def descLabelRaws (body : Array Raw) : Array (Option (Array Raw)) := Id.run do
+  let mut out := #[]
+  for i in [0:body.size] do
+    if body[i]? matches some (.ctrl "item" _) then
+      let mut j := i + 1
+      let mut label : Option (Array Raw) := none
+      for _ in [0:body.size] do
+        match body[j]? with
+        | some .space => j := j + 1
+        | some (.sym '[' _) =>
+          label := (closeBracketFrom body (j + 1)).map (body.extract (j + 1) ·)
+          break
+        | some r => if (specWord? r).isSome then j := j + 1 else break
+        | none => break
+      out := out.push label
+  return out
+
+/-- A description list's items with their labels run in (latex.ltx
+`\descriptionlabel`: `\hspace\labelsep\normalfont\bfseries #1`, the
+`\hspace` taken back by the label box's `\hskip-\labelsep`): each label in
+the description label role with `\labelsep` after it, first in the item's
+first paragraph, or a paragraph of its own when the item opens with another
+block. An item with no label keeps the separator, as LaTeX's empty label box
+still leaves `\labelsep` before the text. -/
+private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block)) :
+    EM (Array (Array Block)) := do
+  let labels := descLabelRaws body
+  let mut out := #[]
+  for (item, i) in items.zipIdx do
+    let label ← match labels[i]?.join with
+      | some raws => elabInlines ctx raws
+      | none => pure #[]
+    let head : Array Inline :=
+      #[.role Ir.descLabelRole #[.styled .normal #[.styled .bold label], .text labelSep]]
+    out := out.push (match item[0]? with
+      | some (Block.para c) => item.modify 0 fun _ => .para (head ++ c)
+      | _ => #[Block.para head] ++ item)
+  return out
+
+seal thmOf? thmEnv thmOpen thmClose descItems
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
@@ -8730,7 +8778,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     -- `.golden` distribution is the one to keep — as in beamer, where the
     -- title-page template's glue sits inside the frame the author opened.
     blocks := blocks.push (flattenFrame title standout valign breakable inner)
-  else if n == "itemize" || n == "enumerate" then
+  else if n == "itemize" || n == "enumerate" || n == "description" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the
     -- old path let the bracket land as content before the first
@@ -8753,7 +8801,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     -- `\pause` between items steps the rest of the LIST, not just
     -- the rest of an item's own blocks: each item records how many
     -- pauses stand before it and reveals one step after the last.
-    let ⟨(items, steps, itemPauses), hsplit⟩ ← itemSplitGo ctx lbody pos 0
+    let ⟨(items, steps, itemPauses), hsplit⟩ ← itemSplitGo ctx lbody pos
+      (n == "description") 0
       #[] #[] #[] 0 #[] none 0 false false false false
       (sliceWeight lbody 0) (slicePars lbody 0)
       (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
@@ -8766,6 +8815,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     let elabItems ← elabItemsGo ctx items steps itemPauses 0 #[]
       (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
       (by omega) (by omega)
+    let elabItems ← if n == "description" then descItems ctx lbody elabItems
+      else pure elabItems
     blocks := blocks.push (.list (n == "enumerate") elabItems)
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
@@ -9972,7 +10023,7 @@ unseal isColumnStray
 unseal Ir.markInParagraph Ir.flushedText
 unseal scanBracketArg Parse.inputEnvFile?
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
-unseal thmOf? thmEnv thmOpen thmClose
+unseal thmOf? thmEnv thmOpen thmClose descItems
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/

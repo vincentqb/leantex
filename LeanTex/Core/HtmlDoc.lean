@@ -723,7 +723,7 @@ stated: everything following a heading binds at that one peer gap — a
 float or a second heading directly under a heading realizes 1 quantum
 here where the PDF walk gives that element its own larger gap. -/
 def blockGapKinds : List (String × String) :=
-  [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("pre", "peer"),
+  [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("dl", "peer"), ("pre", "peer"),
    ("table.booktabs", "peer"),
    ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading")]
 
@@ -829,7 +829,7 @@ def listRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
 
 /-- The resets: every block element's own vertical margins, first. -/
 private def gapResets : List GapRule :=
-  [.reset "p, ul, ol, li, pre, blockquote" "0",
+  [.reset "p, ul, ol, li, dl, dd, pre, blockquote" "0",
    .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
    .reset "figure.float" "0 auto"]
 
@@ -3786,6 +3786,8 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- conforming hyphenators (the agreement is about tags, never breaks).
   "p { hyphens: auto; }\n" ++
   "ul, ol { padding-left: 1.35rem; }\n" ++
+  -- A description's text stands one list indent in, under its label.
+  "dd { padding-left: 1.35rem; }\n" ++
   -- A quotation moves both edges in, as the PDF sets it (classes.dtx:
   -- `\rightmargin\leftmargin`); its vertical margins are the gap
   -- emitter's, as every block element's are.
@@ -5278,6 +5280,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | none => kids
     Html.elem tag kids (if st.rule.isSome then #[("class", "ruled")] else #[])
   | .list ordered items =>
+    -- A description list (every item run in by its label) is HTML's own
+    -- `<dl>`; the label reading is the page's (`Ir.descLabel?`).
+    let desc := !ordered && !items.isEmpty && items.all fun it => match it[0]? with
+      | some (Block.para c) => (Ir.descLabel? c).isSome
+      | _ => false
+    if desc then Html.elem "dl" (descItemsInto cfg.into #[] items.toList) else
     let tag := if ordered then "ol" else "ul"
     Html.elem tag (listItemsInto cfg.into #[] items.toList)
   | .center body =>
@@ -5589,6 +5597,23 @@ private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
   | [] => acc
   | item :: rest =>
     listItemsInto cfg (acc.push (Html.elem "li" (listItem cfg item.toList))) rest
+
+/-- A description list's items as HTML's own description list: each label a
+`<dt>` (the inlines the page runs in, `Ir.descLabel?`), the text after it
+and the item's further blocks a `<dd>` — one paragraph's text bare, as a
+list item's is (`listItem`). -/
+private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
+  | [] => acc
+  | ⟨Block.para c :: bs⟩ :: rest =>
+    let (label, after) := (Ir.descLabel? c).getD (#[], c)
+    let dd := match bs with
+      | [] => inlines cfg after
+      | _ => blockNodesInto cfg #[Html.elem "p" (inlines cfg after) #[]] bs
+    descItemsInto cfg ((acc.push (Html.elem "dt" (inlines cfg label) #[])).push
+      (Html.elem "dd" dd #[])) rest
+  | item :: rest =>
+    descItemsInto cfg ((acc.push (Html.elem "dt" #[] #[])).push
+      (Html.elem "dd" (listItem cfg item.toList) #[])) rest
 
 -- A one-paragraph item carries its content directly: wrapping it in <p> is
 -- what makes generated lists render with extra vertical space.

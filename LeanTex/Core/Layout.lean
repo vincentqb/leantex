@@ -5093,6 +5093,13 @@ private structure ParaJob where
   numbers keep one column whatever each line's depth. `none` hangs the
   marker off the indent, the list-bullet shape. -/
   markerIndent : Option Sp := none
+  /-- TeX's `\hangindent`, the list's `\itemindent` negated: every line but
+  the first stands this far in from `indent`, which already includes it.
+  The items then open with a `-hangIndent` kern, so the breaker prices the
+  first line as that much longer; placement sets the first line past the
+  kern, on the widened measure (`paraLineGeom`), so no glyph box stands
+  in for the offset and the expansion factor never scales it. -/
+  hangIndent : Sp := 0
   /-- A rule filling the first line after the content. -/
   rule : Option HeadingRule := none
   /-- The paragraph's footnotes, pre-broken: each with the item index of
@@ -5664,8 +5671,10 @@ private def collectPara (r : Rd) (a : Acc)
     (markerIndent : Option Sp := none)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
-    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0) : Acc :=
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
+    (hangIndent : Sp := 0) : Acc :=
   let a := a.flushGap r
+  let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
   -- `\textwidth` image size resolves against: inside a `column` the
   -- current measure, not the page's. A column is a minipage of its
@@ -5759,6 +5768,14 @@ private def collectPara (r : Rd) (a : Acc)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
+  -- A hanging indent opens the items with its kern; what is indexed by
+  -- item position (a forced break's extra space, a footnote mark) moves
+  -- with them.
+  let (items, extras, noteBlocks) :=
+    if hangIndent == 0 then (items, extras, noteBlocks)
+    else (#[Item.box (-hangIndent) 0 a.fg none #[] size false 0 a.ground .unattributed] ++ items,
+      extras.fold (fun m k v => m.insert (k + 1) v) {},
+      noteBlocks.map fun (i, nb) => (i + 1, nb))
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
@@ -5769,7 +5786,8 @@ private def collectPara (r : Rd) (a : Acc)
       justify := r.geom.justify
       protrude := r.geom.protrude
       expand := r.geom.expand
-      markerSegs := markerSegs, markerIndent := markerIndent, rule := rule
+      markerSegs := markerSegs, markerIndent := markerIndent, hangIndent := hangIndent
+      rule := rule
       notes := noteBlocks
       inFloat := r.inFloat
       leaf := leaf
@@ -7080,18 +7098,30 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
       | none => collectBlock r a blk indent
     collectSlots r a slots rest indent
 
-/-- One list item: its leading paragraph carries the marker. -/
+/-- One list item: its leading paragraph carries the marker — or, in a
+description list, runs its label in (`Ir.descLabel?`). `hang` is the list's
+indent step, what a description item's first line stands out by. -/
 private def collectItem (r : Rd) (a : Acc)
-    (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline) : Acc :=
+    (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline)
+    (hang : Sp) : Acc :=
   match item with
   | [] => a
   | blk :: rest =>
     if statefulBlock blk then
-      collectItem r (collectBlock r a blk indent) rest indent first marker
+      collectItem r (collectBlock r a blk indent) rest indent first marker hang
     else
     let a := if first then a else a.wantGap
     let a := match blk, first with
       | .para content, true =>
+        if (Ir.descLabel? content).isSome then
+          -- latex.ltx `description`: `\labelwidth\z@`, `\itemindent
+          -- -\leftmargin` — the label runs in at the list's outer margin,
+          -- `\labelsep` after it, every further line at the item's indent,
+          -- and no marker column at all.
+          let (a, leaf) := a.leafRange (leafCount content)
+          collectPara r a content (indent - hang) false r.geom.fontSize
+            (leaf := leaf) (span := leafCount content) (hangIndent := hang)
+        else
         -- A covered item (dim-not-hide, PLAN M5) is one anonymous colour
         -- wrapper around the whole paragraph, painted by the shade walk;
         -- the marker dims with its item, as beamer's transparent cover
@@ -7103,11 +7133,11 @@ private def collectItem (r : Rd) (a : Acc)
         collectPara r a content indent false r.geom.fontSize
           (marker := some marker) (leaf := leaf) (span := leafCount content)
       | _, _ => collectBlock r a blk indent
-    collectItem r a rest indent false marker
+    collectItem r a rest indent false marker hang
 
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
-    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) : Acc :=
+    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Sp) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
@@ -7127,8 +7157,8 @@ private def collectItems (r : Rd) (a : Acc)
     let covered := fun c =>
       (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
     let marker := st.marker.getD (ListMark.marker ordered level idx covered)
-    let a := collectItem r a item.toList indent true marker
-    collectItems r a rest indent st ordered level (idx + 1) itemsep
+    let a := collectItem r a item.toList indent true marker hang
+    collectItems r a rest indent st ordered level (idx + 1) itemsep hang
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (r : Rd) (a : Acc)
@@ -7243,14 +7273,15 @@ private def collectBlock (r : Rd) (a : Acc)
       | some g, _ => a.addvspace (r.resolve g)
       | none, some t => if a.afterHeading then a.flushGap r else (a.listSpace t).flushGap r
       | none, none => a
-    let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
+    let step := (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
+    let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
     let ri := match sk with
       | some s => { r with inPar := false,
                            geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
       | none => { r with inPar := false }
     let a := collectItems ri a items.toList indent st ordered level 1
-      (sk.map fun s => r.resolve s.itemsep)
+      (sk.map fun s => r.resolve s.itemsep) step
     let a := if ordered then { a with enumDepth := depth - 1 }
       else { a with itemDepth := depth - 1 }
     match st.before, top with
@@ -7855,8 +7886,12 @@ geometry — so the placement pipeline below is the only part of a
 paragraph line that touches pages. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp × Int :=
-  let width := j.target
-  let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
+  -- A hanging first line starts past its kern, a hang wider and a hang
+  -- further out: the breaker priced exactly that line (`ParaJob.hangIndent`).
+  let lead := if first then j.hangIndent else 0
+  let width := j.target + lead
+  let a := if first then lineStart j.items (if j.hangIndent == 0 then 0 else 1)
+    else lineStart j.items (prev + 1)
   let (segs0, w0, overfull, hang, exf) :=
     setLine j.items a brk width (!j.center && !j.flushRight && j.justify)
       j.protrude j.expand
@@ -7866,7 +7901,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   -- line back at the left, which is why `setLine` is told ragged here too.
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
     else if j.flushRight then b.geom.hmargin + j.indent + (width - w0)
-    else b.geom.hmargin + j.indent - hang
+    else b.geom.hmargin + j.indent - lead - hang
   -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
   -- own separation (classes.dtx: \setlength\labelsep{.5em}).
   let sep := b.geom.fontSize / 2

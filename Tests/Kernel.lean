@@ -144,3 +144,58 @@ def kernelVerseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((lineWith "Dogwood").any fun l => l.x == geom.hmargin)
   t "html: verse is a blockquote"
     (hasStr (HtmlDoc.emit {} doc).1 "<blockquote>")
+
+
+/-- **A description item runs its bold label in at the list's outer margin,
+`\labelsep` before its text, and hangs every further line at the item's
+indent** (latex.ltx `description`: `\labelwidth\z@`,
+`\itemindent-\leftmargin`, `\descriptionlabel` bold): no marker glyph, the
+list's vertical space itemize's, and HTML's own `<dl>`. On the merge base
+the environment was unknown and every `\item` in it was E0312: the build
+failed. Asserted over `Layout.Out` under the serif faces (bold is face 1).
+Invented content. -/
+def kernelDescChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fs ← serifFacesSet | t "description checks: the serif faces load" false
+  let long := "a described term whose text runs long enough to wrap onto a second line of the list"
+  let src := dvDoc "" ("Alder opens.\n\\begin{description}\n\\item[Birch] " ++ long ++
+    ".\n\\item[Cedar] follows.\n\\item plain words.\n\\end{description}\nDogwood closes.\n")
+  let (doc, ds) := elabStr src
+  t "description: the environment and its items elaborate clean"
+    (ds.all fun d => d.severity != .warning && d.severity != .error)
+  let geom := Layout.Geom.ofPage doc.page
+  let ls := bodyLines (layoutOf fs doc geom)
+  let lineWith (w : String) : Option Layout.LineOut := ls.find? fun l => hasStr (lineText l) w
+  t "description: the label opens its line at the list's outer margin, no marker before it"
+    ((lineWith "Birch").any fun l => l.x == geom.hmargin && (lineText l).startsWith "Birch")
+  t "description: the label is bold, the text after it is not"
+    ((lineWith "Birch").any fun l => faceOfWord l "Birch" == some 1 && faceOfWord l "described" == some 0)
+  -- Read on an item's last line, which is set at its natural width: a
+  -- justified line's font expansion scales every box on it, a kern too.
+  t "description: \\labelsep between the label and the text"
+    ((lineWith "Cedar").any fun l =>
+      let rs := (lineRuns l).filter (!·.2.1.isEmpty)
+      match rs[0]?, rs[1]? with
+      | some a, some b => a.2.1 == "Cedar" && b.2.2.1 - (a.2.2.1 + a.2.2.2) == Dim.pt 5
+      | _, _ => false)
+  t "description: a wrapped line hangs at the item's indent"
+    (ls.any fun l => l.x == geom.hmargin + geom.listIndent && !hasStr (lineText l) "Birch" &&
+      (hasStr (lineText l) "line" || hasStr (lineText l) "list"))
+  t "description: an unlabelled item opens \\labelsep from the outer margin"
+    ((lineWith "plain").any fun l =>
+      (((lineRuns l).find? (hasStr ·.2.1 "plain")).map (·.2.2.1)) == some (l.x + Dim.pt 5))
+  -- The vertical space is the list's: one-line items stand where the same
+  -- items of an itemize stand.
+  let short (env pre : String) : String := dvDoc "" ("Alder opens.\n\\begin{" ++ env ++
+    "}\n\\item" ++ pre ++ " Birch.\n\\item" ++ pre ++ " Cedar.\n\\end{" ++ env ++ "}\nDogwood closes.\n")
+  let ys (s : String) : List Dim.Sp :=
+    let xs := bodyLines (layoutOf fs (elabStr s).1 geom)
+    ["Alder", "Birch", "Cedar", "Dogwood"].filterMap fun w =>
+      (xs.find? fun l => hasStr (lineText l) w).map (·.y)
+  t "description: its items stand where itemize's do"
+    (ys (short "description" "[Term]") == ys (short "itemize" "") &&
+      (ys (short "itemize" "")).length == 4)
+  let page := (HtmlDoc.emit {} doc).1
+  t "html: a description is a dl of dt and dd"
+    (hasStr page "<dl>" && hasStr page "<strong>Birch</strong>" &&
+      hasStr page "<dd>follows.</dd>")

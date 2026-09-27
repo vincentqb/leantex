@@ -103,7 +103,7 @@ def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
 arguments and body it needs to build. -/
 def blockUse (n : String) : String :=
   let body := match n with
-    | "itemize" | "enumerate" => "\\item One item"
+    | "itemize" | "enumerate" | "description" => "\\item One item"
     | "minipage" => "{4cm}Mini words."
     | "ifbackend" => "{pdf}Backend words."
     | "tabular" => "{ll}Left & Right\\\\"
