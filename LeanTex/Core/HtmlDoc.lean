@@ -5249,7 +5249,7 @@ theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture) :
       | _ => none) = some "visible" := by
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, pictureRole, attrOf?]
-  split <;> simp
+  split <;> (try split) <;> simp
 
 /-- **The SVG's box is the IR's box** (`_projects`): the `viewBox` a
 picture's SVG declares spans `Ir.Pic.Picture.box` under the configured
