@@ -3928,9 +3928,12 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  text-align: center; text-wrap: balance; }\n" ++
   -- The text-side skip is padding: it stands inside the float, beside
   -- the float's own separation, and a margin there would collapse into it.
+  -- The object's own peer margin yields to the caption's skip facing it,
+  -- as the page's float plan pays that skip alone.
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
+  "figure.float > figcaption:first-child + * { margin-top: 0; }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.

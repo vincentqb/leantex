@@ -185,6 +185,12 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the HTML table caption above its table reads the skip its placement faces there"
     (hasStr (html venue) "--ltx-capsep-top: var(--tablebelowcaptionskip, var(--belowcaptionskip, 0px))" &&
       hasStr (html packaged) "--ltx-capsep-top: var(--tablecaptionsep, var(--captionsep,")
+  -- The object's own peer margin (`* + table.booktabs`, the paragraph
+  -- gap) collapsed with the caption's skip facing it, so no skip below
+  -- the paragraph gap reached the rendered page (Chromium, the swap under
+  -- tableposition=top: 11.59px where the page's plan sets 0).
+  t "the HTML object after a caption above takes no peer margin of its own"
+    (hasStr (html packaged) "figure.float > figcaption:first-child + * { margin-top: 0; }")
   let selfRef := "\\captionsetup[table]{skip=\\abovecaptionskip}\n"
   t "a skip set to the caption skip itself changes nothing and is honoured"
     (shippedLines fonts (dvDoc selfRef body) == shippedLines fonts (dvDoc "" body) &&
