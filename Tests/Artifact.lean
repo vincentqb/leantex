@@ -975,7 +975,7 @@ layout produced and this identifier is not among them. -/
 def artRegidTextOp (gid : Nat) : Pdf.TextOp → Pdf.TextOp
   | .show items => .show (items.map fun it => match it with
       | .glyphs gs => .glyphs (if gs.isEmpty then gs else gs.set! 0 gid)
-      | .kerned gs => .kerned (if gs.isEmpty then gs else gs.set! 0 (gid, gs[0]!.2))
+      | .kerned gs ns => .kerned (if gs.isEmpty then gs else gs.set! 0 gid) ns
       | a@(.adjust _) => a)
   | .marked t body => .marked t (artRegidTextList gid #[] body.toList)
   | o@(.scale _) => o

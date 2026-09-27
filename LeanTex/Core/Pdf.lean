@@ -506,10 +506,12 @@ document actually uses and the structure tree's leaf tags: what
 `pageStreams` renders, before spelling. -/
 def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩) : Array (Array ContentOp) :=
-  let remap := remapOf fs (keepFaces fs pages)
+  let keep := keepFaces fs pages
+  let remap := remapOf fs keep
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
   let tags := tagsOf tree
-  pages.map (contentOps geom remap (fun f g => pdfWidthμ (fs.get f) g) imgMap tags)
+  let wt := widthTable fs.fonts keep
+  pages.map (contentOps geom remap wt imgMap tags)
 
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
@@ -1102,7 +1104,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- The typed operators: the caller's when it built them (`pageOps`, the
   -- same walk — `streams` are their render), else built here.
   let ops := if ops.size == np then ops
-    else pages.map (contentOps geom remap (fun f g => pdfWidthμ (fs.get f) g) imgMap tags)
+    else let wt := widthTable fs.fonts keep
+      pages.map (contentOps geom remap wt imgMap tags)
   let marks := ops.map pageMarks
   let es := fill sk (leafPagesOf nLeaves marks)
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)

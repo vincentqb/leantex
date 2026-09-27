@@ -2827,13 +2827,14 @@ def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Na
 em: each glyph's laid advance at its run's size, so the writer places
 every glyph where its run already put it and the only numbers in the
 stream are the gaps'. -/
-def contentOpsWidths (_ : Nat) (g : Nat) : Int :=
-  match g with
-  | 36 | 37 | 70000 | 4096 => 1250000
-  | 38 => 1666667
-  | 39 | 40 => 2222222
-  | 1 => 2500000
-  | _ => 833333
+def contentOpsWidths (_ : Unit) : Array (Array Int) :=
+  let face := (Array.range 70001).map fun g => match g with
+    | 36 | 37 | 70000 | 4096 => 1250000
+    | 38 => 1666667
+    | 39 | 40 => 2222222
+    | 1 => 2500000
+    | _ => 833333
+  #[face, face]
 
 /-- The leaf tags the synthetic pages are marked under: leaf 0 a paragraph,
 leaf 1 a heading, leaf 2 a leaf no element holds. -/
@@ -2955,11 +2956,11 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
   let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOpsPlain g remap contentOpsWidths imgMap tags p)
+    Pdf.render (Pdf.contentOpsPlain g remap (contentOpsWidths ()) imgMap tags p)
   let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    stripMarkLines (Pdf.render (Pdf.contentOps g remap contentOpsWidths imgMap tags p))
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags p))
   let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap contentOpsWidths imgMap tags p))
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags p))
   t "content ops: text, fills, images and rules render to the recorded stream"
     (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
@@ -2978,7 +2979,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
-    (Pdf.runsOf (Pdf.contentOps geom remap contentOpsWidths imgMap tags contentOpsTextPage)
+    (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags contentOpsTextPage)
       == Pdf.pageRuns contentOpsTextPage)
   -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
@@ -2995,7 +2996,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
   let typed (p : Layout.PageOut) : String :=
     stripMarkLines (Pdf.render (Pdf.contentOps geom remap
-      (fun f g => Pdf.pdfWidthμ (twoFace.get f) g) imgMap (Pdf.tagsOf ⟨#[]⟩) p))
+      (Pdf.widthTable twoFace.fonts #[0, 1]) imgMap (Pdf.tagsOf ⟨#[]⟩) p))
   t "content ops: pageStreams is the typed render under the faces' own widths"
     (streams.map (stripMarkLines <| String.fromUTF8! ·)
       == #[typed contentOpsTextPage, typed contentOpsPathPage])
@@ -3439,14 +3440,14 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
-  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap contentOpsWidths imgMap tags p
+  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags p
   t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; leaves under their types"
     (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
   t "artifacts: furniture lines are pagination groups inside the text object, a leafless line a bare one"
     (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
   t "artifacts: the furniture page strips to its plain twin"
     (stripMarkLines artifactFurnitureExpected
-      == Pdf.render (Pdf.contentOpsPlain geom remap contentOpsWidths imgMap tags artifactFurniturePage))
+      == Pdf.render (Pdf.contentOpsPlain geom remap (contentOpsWidths ()) imgMap tags artifactFurniturePage))
   t "artifacts: picture paths are grouped per picture under the holder's type"
     (Pdf.render (ops contentOpsPathPage) == artifactPathExpected)
   t "artifacts: the marks of the text page are its two leaves, numbered in stream order"

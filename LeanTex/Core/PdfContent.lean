@@ -51,12 +51,13 @@ inductive PathOp where
 
 /-- One element of a `TJ` array (§9.4.3): a glyph string, or a horizontal
 adjustment in thousandths of the text space unit. `kerned` is a glyph
-string whose glyphs each carry the number set before them (0: none) —
-one run's string with its pair kerns, spelled `<…>n<…>` as lualatex
-spells it, and one run for the glyph census all the same. -/
+string whose glyphs each carry the number set before them — `nums`
+beside `gids`, 0 for none — one run's string with its pair kerns, spelled
+`<…>n<…>` as lualatex spells it, and one run for the glyph census all the
+same. -/
 inductive TextItem where
   | glyphs (gids : Array Nat)
-  | kerned (gs : Array (Nat × Int))
+  | kerned (gids : Array Nat) (nums : Array Int)
   | adjust (d : Int)
   deriving Repr, BEq, Inhabited
 
@@ -168,9 +169,13 @@ def PathOp.render : PathOp → String
 
 def TextItem.render : TextItem → String
   | .glyphs gids => (gids.foldl pushGid "<").push '>'
-  | .kerned gs =>
-    (gs.foldl (fun acc (g, n) =>
-      pushGid (if n == 0 then acc else ((acc.push '>') ++ toString n).push '<') g) "<").push '>'
+  | .kerned gids nums => Id.run do
+    let mut s := "<"
+    for h : i in [0:gids.size] do
+      let n := nums.getD i 0
+      if n != 0 then s := ((s.push '>') ++ toString n).push '<'
+      s := pushGid s gids[i]
+    return s.push '>'
   | .adjust d => toString d
 
 mutual
@@ -277,8 +282,19 @@ to three decimals of a thousandth, and so the width a viewer's pen
 advances by (`TextSt.widths`). Exact in thousandths for a face on a
 1000-unit em; to 5·10⁻⁷ em otherwise, where whole thousandths would drift
 the pen up to one per glyph. -/
+def widthμOf (upem units : Nat) : Int := ((units * 1000000 + upem / 2) / upem : Nat)
+
 def pdfWidthμ (font : Font.Font) (g : Nat) : Int :=
-  (((font.widths[g]?.getD 0) * 1000000 + font.unitsPerEm / 2) / font.unitsPerEm : Nat)
+  widthμOf font.unitsPerEm (font.widths[g]?.getD 0)
+
+/-- The embedded faces' `pdfWidthμ` widths, by layout face index (`keep`,
+the faces the file embeds; any other face ships no glyph): the writer's
+pen reads one width per glyph shipped, so they are tabled once per
+document — by the same `widthμOf` — and read by index with a `0` past a
+face's last glyph, as `pdfWidthμ` answers there. -/
+def widthTable (fonts : Array Font.Font) (keep : Array Nat) : Array (Array Int) :=
+  fonts.mapIdx fun k f => if keep.contains k then f.widths.map (widthμOf f.unitsPerEm) else #[]
+
 
 /-- The viewer's pen inside the open `TJ` array, as the writer computes it
 from what it wrote (§9.4.4): `xm` the x the array's `Tm` spells, in
@@ -299,8 +315,9 @@ exactly when no array is open. `font` is the layout face index in force
 (`-1` before the first `Tf`), `size` and `color` likewise; `tz` the live
 expansion in per-mille delta from 100 %; `x` the layout position; `pen`
 where the viewer's pen is (`Pen`), once a `Tm` has set it; `widths` each
-face's `/W` widths in millionths of the em, by layout face index — what
-the file tells the viewer, and so what the pen advances by. Rules and
+face's `/W` widths in millionths of the em, by layout face index and glyph
+id (`widthTable`) — what the file tells the viewer, and so what the pen
+advances by. Rules and
 images gather here and paint after `ET`: path and `Do` operators may not
 appear inside a text object. -/
 structure TextSt where
@@ -312,7 +329,7 @@ structure TextSt where
   tz : Int := 0
   x : Sp := 0
   pen : Option Pen := none
-  widths : Nat → Nat → Int := fun _ _ => 0
+  widths : Array (Array Int) := #[]
   rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
   images : Array ImgOut := #[]
 
@@ -321,21 +338,41 @@ def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st.ops.pus
 def TextSt.closeTJ (st : TextSt) : TextSt :=
   if st.items.isEmpty then st else { st with ops := st.ops.push (.show st.items), items := #[] }
 
+/-- `num / den` rounded to the nearest integer, half away from zero, the
+numerator given as a sign and a magnitude: every product the pen's
+conversions round is formed in `Nat`, where a value below 2⁶³ is a machine
+word — an `Int` past 2³¹ is a heap number, and these run once per glyph. -/
+@[inline] def roundDiv (neg : Bool) (num den : Nat) : Int :=
+  if den == 0 then 0 else
+    let q : Nat := (2 * num + den) / (2 * den)
+    if neg then -(q : Int) else q
+
 /-- A layout x as the pen advance that reaches it, in the pen's unit:
 `(x − Tm) / (size · scale)` in millionths, with the `Tm` x and the size as
 the file spells them (`xm`, `sm`: thousandths of a point) and the scale
-`1000 + tz` per mille, rounded to the nearest millionth. 10⁹ / 65536 =
-1953125 / 128, so every term is an exact integer. -/
+`1000 + tz` per mille, rounded to the nearest millionth — that is,
+`(1000·x − 65536·xm) · 1953125 / (128 · sm · (1000 + tz))`, since
+10⁹ / 65536 = 1953125 / 128; the difference is split into its positive and
+negative parts so it is formed as a magnitude (`roundDiv`). -/
 def penTarget (sm tz xm : Int) (x : Sp) : Int :=
-  let den := 128 * sm * (1000 + tz)
-  if den ≤ 0 then 0 else
-    (2 * ((1000 * x - 65536 * xm) * 1953125) + den) / (2 * den)
+  let den : Nat := 128 * sm.toNat * (1000 + tz).toNat
+  let pos : Nat := 1000 * x.toNat + 65536 * (-xm).toNat
+  let neg : Nat := 65536 * xm.toNat + 1000 * (-x).toNat
+  if neg ≤ pos then roundDiv false ((pos - neg) * 1953125) den
+  else roundDiv true ((neg - pos) * 1953125) den
+
+/-- A laid-out advance `P` from a run's start as the pen advance it needs,
+in millionths of the size the file spells (`sm`): `P · 1953125 / (128 · sm)`,
+rounded. The line's expansion cancels out of it — the layout scales the run
+by the factor the viewer scales the pen by. -/
+@[inline] def runOffset (sm : Int) (P : Sp) : Int :=
+  roundDiv (P < 0) (P.natAbs * 1953125) (128 * sm.natAbs)
 
 /-- The `TJ` number that brings a pen standing `d` millionths past its
 target (short of it when negative) to within half a thousandth: `d / 1000`
 rounded to the nearest integer, half up — zero exactly when the pen is
 already that close. -/
-def nudge (d : Int) : Int := (d + 500) / 1000
+@[inline] def nudge (d : Int) : Int := (d + 500) / 1000
 
 /-- **A nudged pen stands within half a thousandth of the em of its
 target.** Whatever the distance `d`, the residue `d − 1000 · nudge d` lies
@@ -386,16 +423,25 @@ def TextSt.setFace (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
     (color : Ir.Color) : TextSt :=
   ((st.closeTJ).setFont remap idx size).setColor color
 
+/-- A run's string being placed: its glyph ids, their numbers beside
+them, the pen (`Pen.adv`'s unit) and the laid-out advance `P` reached. One
+record of scalars and scalar arrays, updated in place — a nested tuple
+would cost the loop three allocations a glyph. -/
+structure PlaceSt where
+  gids : Array Nat
+  nums : Array Int
+  adv : Int
+  P : Sp
+
 /-- One glyph of a run onto its string: the number that brings the pen
 from where the previous glyph's `/W` width left it to `tgt P` — the
 glyph's layout position, `P` its laid-out advance from the run's start —
-then the glyph and its own width. The state is the string so far, the pen
-(`Pen.adv`'s unit) and `P`. -/
-def placeStep (wμ : Nat → Int) (tgt : Sp → Int) :
-    Array (Nat × Int) × Int × Sp → Nat × Char × Sp → Array (Nat × Int) × Int × Sp
-  | (acc, adv, P), (g, _, a) =>
-    let n := nudge (adv - tgt P)
-    (acc.push (g, n), adv - 1000 * n + wμ g, P + a)
+then the glyph and its own width. -/
+@[inline] def placeStep (wμ : Nat → Int) (tgt : Sp → Int) (st : PlaceSt) :
+    Nat × Char × Sp → PlaceSt
+  | (g, _, a) =>
+    let n := nudge (st.adv - tgt st.P)
+    ⟨st.gids.push g, st.nums.push n, st.adv - 1000 * n + wμ g, st.P + a⟩
 
 /-- `placeStep`'s string as a list: each glyph with the number set before
 it, from pen `adv` at laid-out advance `P`. -/
@@ -418,16 +464,22 @@ def glyphStarts : Sp → List (Nat × Char × Sp) → List Sp
   | _, [] => []
   | P, (_, _, a) :: rest => P :: glyphStarts (P + a) rest
 
+/-- The fold builds `placeSpec`'s string: its glyph ids, and beside them
+its numbers. -/
 theorem placeStep_foldl (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
-    (acc : Array (Nat × Int)) (adv : Int) (P : Sp) :
-    (gs.foldl (placeStep wμ tgt) (acc, adv, P)).1.toList = acc.toList ++ placeSpec wμ tgt adv P gs := by
-  induction gs generalizing acc adv P with
+    (ga : Array Nat) (na : Array Int) (adv : Int) (P : Sp) :
+    (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).gids.toList
+        = ga.toList ++ (placeSpec wμ tgt adv P gs).map (·.1)
+      ∧ (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).nums.toList
+        = na.toList ++ (placeSpec wμ tgt adv P gs).map (·.2) := by
+  induction gs generalizing ga na adv P with
   | nil => simp [placeSpec]
   | cons x rest ih =>
     obtain ⟨g, c, a⟩ := x
     simp only [List.foldl_cons, placeStep, placeSpec]
-    rw [ih]
-    simp
+    obtain ⟨h1, h2⟩ := ih (ga.push g) (na.push (nudge (adv - tgt P)))
+      (adv - 1000 * nudge (adv - tgt P) + wμ g) (P + a)
+    exact ⟨by rw [h1]; simp, by rw [h2]; simp⟩
 
 theorem placeSpec_ids (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (adv : Int) (P : Sp) : (placeSpec wμ tgt adv P gs).map (·.1) = gs.map (·.1) := by
@@ -439,10 +491,18 @@ theorem placeSpec_ids (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × 
 
 /-- Placing a run keeps its glyphs, in order: only numbers are added. -/
 theorem place_ids (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
-    (adv : Int) : (glyphs.foldl (placeStep wμ tgt) (#[], adv, 0)).1.map (·.1) = glyphs.map (·.1) := by
+    (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).gids = glyphs.map (·.1) := by
   apply Array.toList_inj.mp
-  rw [Array.toList_map, Array.toList_map, ← Array.foldl_toList, placeStep_foldl]
+  rw [Array.toList_map, ← Array.foldl_toList, (placeStep_foldl ..).1]
   simpa using placeSpec_ids wμ tgt glyphs.toList adv 0
+
+/-- The numbers the fold writes are `placeSpec`'s, the ones `place_between`
+places by. -/
+theorem place_nums (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
+    (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).nums.toList
+      = (placeSpec wμ tgt adv 0 glyphs.toList).map (·.2) := by
+  rw [← Array.foldl_toList, (placeStep_foldl ..).2]
+  simp
 
 theorem placeSpec_length (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (adv : Int) (P : Sp) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
@@ -485,8 +545,8 @@ theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) (P : Sp
     · exact ih _ _ d hd
 
 /-- A run's string: plain when no glyph needed a number, kerned otherwise. -/
-def runItem (gs : Array (Nat × Int)) : TextItem :=
-  if gs.all (·.2 == 0) then .glyphs (gs.map (·.1)) else .kerned gs
+def runItem (gids : Array Nat) (nums : Array Int) : TextItem :=
+  if nums.all (· == 0) then .glyphs gids else .kerned gids nums
 
 /-- A placed run onto the open array: its string, the layout x past its
 width, and the pen where the file's arithmetic left it. -/
@@ -510,9 +570,11 @@ def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
   let st := st.toPen changes runY
   let st := if changes then st.setFace remap idx size color else st
   let p := st.pen.getD { xm := st.x.toPtMilli, y := runY, adv := 0 }
-  let tgt := fun P : Sp => penTarget st.size.toPtMilli st.tz p.xm (st.x + P + P * st.tz / 1000)
-  let r := glyphs.foldl (placeStep (st.widths idx) tgt) (#[], p.adv, 0)
-  st.pushRun (runItem r.1) w { p with adv := r.2.1 }
+  let sm := st.size.toPtMilli
+  let t0 := penTarget sm st.tz p.xm st.x
+  let wf := st.widths.getD idx #[]
+  let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => t0 + runOffset sm P)) ⟨#[], #[], p.adv, 0⟩
+  st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }
 
 def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
     (og : Origin) (st : TextSt) : Seg → TextSt
@@ -750,7 +812,7 @@ over the middle — paths, text, images; the two artifact blocks hold fills
 only and carry none, and a rule-heavy page would pay their rebuild for
 nothing. Every painting operator sits under exactly one wrapper
 (`mcids_partition_covers`). -/
-def contentOps (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     Array ContentOp :=
   let fills := page.fills.map fun f =>
@@ -765,7 +827,7 @@ def contentOps (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
 /-- The specification twin of `contentOps`: the same operations with no
 marked content — the writer before this layer, kept so `mark_ink_exact`
 can name the stream it must reproduce. -/
-def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     Array ContentOp :=
   let fills := page.fills.map fun f =>
@@ -783,7 +845,7 @@ def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → 
 adjustment none. -/
 def TextItem.runs : TextItem → List (Array Nat)
   | .glyphs gids => [gids]
-  | .kerned gs => [gs.map (·.1)]
+  | .kerned gids _ => [gids]
   | .adjust _ => []
 
 mutual
@@ -1131,7 +1193,7 @@ theorem setFace_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) (
   unfold TextSt.setFace
   rw [setColor_runs, setFont_runs, closeTJ_runs]
 
-theorem runItem_runs (gs : Array (Nat × Int)) : (runItem gs).runs = [gs.map (·.1)] := by
+theorem runItem_runs (gids : Array Nat) (nums : Array Int) : (runItem gids nums).runs = [gids] := by
   unfold runItem
   split <;> rfl
 
@@ -1394,7 +1456,7 @@ census of the typed content stream is the page's run census: no run
 dropped, none invented, none reordered — the `_text` fact for the
 PageOut → ContentOp projection (not a `Conserves` instance: the walk
 changes type, as `structTree_text` does). -/
-theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     runsOf (contentOps geom remap widths imgMap tags page) = pageRuns page := by
   unfold contentOps
@@ -2147,7 +2209,7 @@ acceptance runs is this equation on the file. Both wrapper kinds are
 covered: artifacts and structure content alike hide nothing, and the
 identifier numbering rewrites tags only. A fact of the content stream,
 not a projection of an IR statement: the IR never sees marked content. -/
-theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     inkOps (contentOps geom remap widths imgMap tags page)
       = contentOpsPlain geom remap widths imgMap tags page := by
@@ -2307,7 +2369,7 @@ object, and every operator of the text object is a marked-content
 sequence: no fill, path, glyph run or image is bare — real content under
 its structure type, everything else an artifact. The identifier half of
 the statement is `numberMarks_mcids_exact`. -/
-theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     ∀ o ∈ contentOps geom remap widths imgMap tags page, o.wrapped = true := by
   unfold contentOps numberMarks
@@ -2329,7 +2391,7 @@ theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat �
 
 /-- **No decoration is left bare** — the corollary `wrapped_covers`
 projects: every fill and every placeholder box sits under a wrapper. -/
-theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     ∀ o ∈ contentOps geom remap widths imgMap tags page, o.decoration = false := by
   intro o ho
@@ -2639,7 +2701,7 @@ theorem fillBlock_contentOpens (k : Option ArtifactKind) (fills : Array ContentO
 operator of a page is under exactly one wrapper (`wrapped_covers`), and the
 identifiers its content wrappers carry are `0 … n−1` in stream order —
 the two fill blocks around the numbered middle carry none. -/
-theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths : Nat → Nat → Int)
+theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     (∀ o ∈ contentOps geom remap widths imgMap tags page, o.wrapped = true)
     ∧ (pageMarks (contentOps geom remap widths imgMap tags page)).toList.map Prod.fst
