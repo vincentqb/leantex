@@ -233,7 +233,9 @@ def inked (s : String) : List Char :=
   s.toList.filter fun c => !c.isWhitespace
 
 /-- A page's lines, top to bottom: the runs grouped by exact baseline, each
-group's runs left to right, each line's scalars joined.
+group's runs left to right. The one line partition every level above the
+census reads, so the order, line and placement levels cannot disagree about
+what a line is.
 
 The grouping key is the exact `y`, with no tolerance, because the question
 is which scalars share a line and not where the line is. The *order* is the
@@ -243,14 +245,11 @@ writer paints at its source position and places elsewhere reverses it — so
 two pages carrying the same lines stacked in a different vertical order
 would read identically off paint order and do not read identically here.
 
-Whitespace is dropped per line, after grouping, for the reason `inked`
-gives: which side spelled a space as a glyph is a writer's choice.
-
 This is a single-column reading order. A two-column page's baselines
 interleave the columns, so `Level.order` is not asking about such a page
 yet; the fixture that first sets two columns needs a column-aware reading
 or a declared divergence, and the ladder will say so by disagreeing. -/
-def linesOf (p : ArtPage) : Array String := Id.run do
+def runLines (p : ArtPage) : Array (Array (Nat × ArtRun)) := Id.run do
   let mut ys : Array Dim.Sp := #[]
   let mut groups : Array (Array (Nat × ArtRun)) := #[]
   let mut n := 0
@@ -262,10 +261,19 @@ def linesOf (p : ArtPage) : Array String := Id.run do
       groups := groups.push #[(n, r)]
     n := n + 1
   let order := (Array.range ys.size).qsort fun i j => ys[j]! < ys[i]!
-  let mut out : Array String := #[]
+  let mut out : Array (Array (Nat × ArtRun)) := #[]
   for i in order do
-    let line := groups[i]!.qsort fun a b =>
-      a.2.x < b.2.x || (a.2.x == b.2.x && a.1 < b.1)
+    out := out.push (groups[i]!.qsort fun a b =>
+      a.2.x < b.2.x || (a.2.x == b.2.x && a.1 < b.1))
+  return out
+
+/-- Every line a page inks, in reading order: `runLines`' partition read as
+text, whitespace dropped per line for the reason `inked` gives — which side
+spelled a space as a glyph is a writer's choice — and lines left empty by
+that dropped. -/
+def linesOf (p : ArtPage) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for line in runLines p do
     let s := String.ofList (inked (String.join (line.toList.map (·.2.text))))
     unless s.isEmpty do out := out.push s
   return out
@@ -492,39 +500,15 @@ def parityNames : IO (Array String) := do
       out := out.push ((n.take (n.length - 4)).toString)
   return out.qsort (· < ·)
 
-/-- A page's glyph origins, one per inked scalar: where the glyph starts and
-what it spells. Whitespace is dropped for the reason `inked` gives. The unit
-of a placement comparison is the glyph and never the run — the two writers
-segment runs differently by construction (`Divergence.runSegmentation`). -/
-def placedOf (p : ArtPage) : Array (Dim.Sp × Dim.Sp × String) := Id.run do
-  let mut out : Array (Dim.Sp × Dim.Sp × String) := #[]
-  for r in p.runs do
-    for (x, t) in r.glyphs do
-      if t.any (fun c => !c.isWhitespace) then out := out.push (x, r.y, t)
-  return out
-
-/-- A page's glyph origins by line: the same grouping `linesOf` uses, each
-line's glyphs left to right, each carrying the offset in that line's
-character stream where it starts. The offset is the glyph's identity across
-writers — a ligature is one glyph spelling two characters on one side and
-two glyphs on the other, and nothing but the character stream says which
-glyph is which. -/
+/-- A page's glyph origins by line: `runLines`' partition, each line's
+glyphs left to right, each carrying the offset in that line's character
+stream where it starts. The offset is the glyph's identity across writers —
+a ligature is one glyph spelling two characters on one side and two glyphs
+on the other, and nothing but the character stream says which glyph is
+which. -/
 def placedLines (p : ArtPage) : Array (Array (Nat × Dim.Sp × Dim.Sp × String)) := Id.run do
-  let mut ys : Array Dim.Sp := #[]
-  let mut groups : Array (Array (Nat × ArtRun)) := #[]
-  let mut n := 0
-  for r in p.runs do
-    match ys.findIdx? (· == r.y) with
-    | some i => groups := groups.set! i (groups[i]!.push (n, r))
-    | none =>
-      ys := ys.push r.y
-      groups := groups.push #[(n, r)]
-    n := n + 1
-  let order := (Array.range ys.size).qsort fun i j => ys[j]! < ys[i]!
   let mut out : Array (Array (Nat × Dim.Sp × Dim.Sp × String)) := #[]
-  for i in order do
-    let line := groups[i]!.qsort fun a b =>
-      a.2.x < b.2.x || (a.2.x == b.2.x && a.1 < b.1)
+  for line in runLines p do
     let mut glyphs : Array (Nat × Dim.Sp × Dim.Sp × String) := #[]
     let mut off := 0
     for (_, r) in line do
