@@ -21349,11 +21349,12 @@ argument shipped as source (`($\ast$)`, `(\textbf {C})`), and
 `\dfrac` and `\tfrac` set as `\frac` in the current style, and nothing
 the index checks saw it. All three are fixed, each behind a guard that
 fails on `ae063c0b`. With the engine files put back to that sha and the
-tests at this branch's tip, 34 of the new checks fail, at least one per
-defect named here; those that pass there are controls (tag-free bodies,
-index rows that already held, a spacing that a source-text floor also
-satisfies), and the one that passed by accident, a stack drawing no rule,
-now also reads its glyphs.
+tests at this branch's tip, 35 of the new checks fail, at least one per
+defect named here (43 failures with the three goldens and four compat
+rows this entry changes, and one probe row). Those that pass there are
+controls: tag-free bodies, index rows that already held, a spacing that
+a source-text floor also satisfies. One of the 35, a stack drawing no
+rule, passed there until it also read its glyphs.
 
 **`\[` is `equation*`.** amsmath defines it so
 (`\DeclareRobustCommand{\[}{\begin{equation*}}`), and the block arm now
