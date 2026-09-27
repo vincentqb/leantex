@@ -204,10 +204,7 @@ def runCensus (paths : List String) : IO UInt32 := do
 
 /-! ## The selftest: each rule broken once -/
 
-def selftest : IO UInt32 := do
-  let fails ← IO.mkRef ([] : List String)
-  let no (why : String) (ok : Bool) : IO Unit := do
-    unless ok do fails.modify (why :: ·)
+def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
   let suite ← suiteText
   -- P5: a pin that holds nothing is a fault, never a quiet unbinding.
   let broken := registry ++ [⟨.W0303, .refusal, .skipped, .tier "compat" "zz-no-such.impl"⟩]
@@ -272,12 +269,6 @@ def selftest : IO UInt32 := do
   no "a backend that reports a different count is a disagreement" (oneShort.disagreements == 1)
   no "a line whose loss disagrees with the registry is counted"
     ((census #[("s", site "warning" "degraded" "")]).misfiled == 1)
-  let failed := (← fails.get).reverse
-  if failed.isEmpty then
-    IO.println "diagaudit selftest: all passed"
-    return 0
-  for f in failed do IO.eprintln s!"FAIL {f}"
-  return 1
 
 def main (args : List String) : IO UInt32 :=
   match args with
