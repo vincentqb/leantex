@@ -296,6 +296,7 @@ def main (args : List String) : IO UInt32 := do
   pendingChecks ref
   salvageChecks ref
   diagSiteCountChecks ref
+  porcelainCensusChecks ref
   siteAccountingChecks ref
   optionRunAccountingChecks ref
   visibleRunAccountingChecks ref

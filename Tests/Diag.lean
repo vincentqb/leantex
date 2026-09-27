@@ -1263,12 +1263,6 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   -- voice lint, and the name-refusal registry's closure against the code list.
   nameRefusalRegistryChecks ref one mapped withMath probeOf
   subjectCensusChecks ref one mapped withMath probeOf
-  let lossLabel : Loss → String
-    | .dropped => "dropped"
-    | .pending => "pending"
-    | .degraded => "degraded"
-    | .config => "config"
-    | .info => "info"
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
     let fired := (diagWitness one mapped withMath probeOf c).filter (·.code == c.code)
@@ -1278,7 +1272,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
       failures ref s!"diag voice {c.code} meaning: repo-internal reference: {c.meaning}"
     unless dvTerminalOk c.meaning do
       failures ref s!"diag voice {c.code} meaning: terminal punctuation: {c.meaning}"
-    let mut block := s!"── {c.code} ({lossLabel c.loss}) {c.meaning}\n"
+    let mut block := s!"── {c.code} ({c.loss.label}) {c.meaning}\n"
     let mut seen : Array String := #[]
     for d in fired do
       dvLint (fun m => failures ref s!"diag voice {m}") d
@@ -1668,6 +1662,42 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "two heading levels each name their own unused short title"
     (((of "N0103" shorts).map (·.message)).toList.eraseDups.length == 2 &&
       (of "N0103" shorts).all (·.sites == 1))
+
+/-- **A census reads the structured fields, never the words.** The porcelain
+line carries the code's declared `loss` and the diagnostic's `subject`, so a
+machine reader bands by the loss and groups sites by (code, subject) — the
+`_named` shape — without a table of its own and without the message text.
+Without them one corpus census filed six ink-owed codes as notes, because a
+repeat site's note won the band, and grouped by message, which names the
+document's own macros. Invented names throughout. -/
+def porcelainCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let field (k v : String) : String := "\"" ++ k ++ "\":\"" ++ v ++ "\""
+  let misfiled := DiagCode.all.filter fun c =>
+    !hasStr (Render.porcelainDiag (Diag.of c "m")) (field "loss" c.loss.label)
+  t s!"porcelain: every code's line carries its declared loss ({misfiled.map (·.code)})"
+    misfiled.isEmpty
+  -- Demotion rewrites what a line says it is, never what was lost.
+  let (acc, accepted) := Diag.accept #["W0301"] false (Diag.of .W0301 "m")
+  let accLine := Render.porcelainDiag acc
+  t "porcelain: an accepted loss reads note and keeps its declared class"
+    (accepted && hasStr accLine (field "severity" "note") && hasStr accLine (field "loss" "degraded"))
+  let repeated := (elabStr (dvDoc "" "\\zzpcrep{a}\n\n\\zzpcrep{b}")).2.filter (·.code == "W0301")
+  t "porcelain: a repeat site's note keeps its declared class"
+    (repeated.size == 2 && repeated.any (·.severity == .note) &&
+      repeated.all fun d => hasStr (Render.porcelainDiag d) (field "loss" "degraded"))
+  -- One probe per subject namespace: the key the census groups by is on the line.
+  let probes : List (String × String × String) :=
+    [("ctrl:zzpccmd", "ctrl:zzpccmd", "Alpha \\zzpccmd{bravo} charlie."),
+     ("env:zzpcenv", "env:zzpcenv", "\\begin{zzpcenv}Delta.\\end{zzpcenv}"),
+     ("math:\\zzpcsym", "math:\\\\zzpcsym", "Echo $\\zzpcsym$ foxtrot.")]
+  for (key, spelled, body) in probes do
+    let ds := (elabStr (dvDoc "" body)).2
+    t s!"porcelain: the {key} site's line carries its subject"
+      (ds.any fun d => d.subject == some key &&
+        hasStr (Render.porcelainDiag d) (field "subject" spelled))
+  t "porcelain: a subjectless line carries no subject field"
+    (!hasStr (Render.porcelainDiag (Diag.of .W0104 "m")) "\"subject\"")
 
 
 

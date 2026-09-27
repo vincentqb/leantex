@@ -77,6 +77,21 @@ rendered `error[E0333]` prefix come from the one declared `Loss`, so a
 prefix like `error[W…]` is unrepresentable. -/
 def Loss.letter (l : Loss) : Char := l.severity.letter
 
+/-- The declared class as a machine reader sees it. A census bands on this,
+never on the rendered severity: demotion (`Diag.accept`, `Diag.demote`, a
+repeat site's note) changes what a line says it is, and never what was lost. -/
+def Loss.label : Loss → String
+  | .dropped => "dropped"
+  | .pending => "pending"
+  | .degraded => "degraded"
+  | .config => "config"
+  | .info => "info"
+
+/-- Two classes never share a label, so banding on the label is banding on
+the loss. -/
+theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
+  cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
+
 /-- **What the construct's place on the page owes a reader.** The recovery
 floor, declared once per loss class and derived at a salvage site exactly as
 severity and the code letter already are.

@@ -1589,7 +1589,7 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let d : Diag := Diag.of .E0002 "bad \"quote\"\nline" (some ⟨"a.tex", ⟨3, 7⟩⟩)
     (help := "fix it")
   t "porcelain diag" (Render.porcelainDiag d ==
-    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\"," ++
+    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\",\"loss\":\"dropped\"," ++
     "\"message\":\"bad \\\"quote\\\"\\nline\",\"file\":\"a.tex\",\"line\":3,\"col\":7," ++
     "\"help\":\"fix it\"}")
   t "porcelain summary" (Render.porcelainSummary "a.tex" false 2 17 ==

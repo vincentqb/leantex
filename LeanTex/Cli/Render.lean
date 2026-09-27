@@ -73,9 +73,13 @@ private def jstr (s : String) : String := "\"" ++ jsonEscape s ++ "\""
 private def obj (fields : List (String × String)) : String :=
   "{" ++ String.intercalate "," (fields.map fun (k, v) => jstr k ++ ":" ++ v) ++ "}"
 
+/-- One diagnostic as a JSON line. `loss` is the declared class, so a reader
+bands without a table and without trusting `severity`, which demotion
+rewrites; `subject` is the structured key a census groups by, so no
+consumer has to group by message text. -/
 def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
-    ("code", jstr d.code), ("message", jstr d.message)]
+    ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
   let withSpan := match d.span with
     | some sp => base ++ [("file", jstr sp.file), ("line", toString sp.pos.line),
         ("col", toString sp.pos.col)]
@@ -83,6 +87,9 @@ def porcelainDiag (d : Diag) : String :=
   let all := match d.help with
     | some h => withSpan ++ [("help", jstr h)]
     | none => withSpan
+  let all := match d.subject with
+    | some s => all ++ [("subject", jstr s)]
+    | none => all
   let all := if d.sites ≤ 1 then all else all ++ [("sites", toString d.sites)]
   obj all
 
