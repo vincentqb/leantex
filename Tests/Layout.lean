@@ -4106,6 +4106,33 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      !hasStr (Html.document "en" #[] (body (art ("Alpha.\n" ++ item ++ "\nCharlie."))))
        (HtmlDoc.roleClass Ir.inParagraphRole))
 
+/-- **A list right after a heading opens no `\topsep`** (`Acc.afterHeading`).
+`\@afterheading` sets `\@nobreak` until the next paragraph starts, and a
+list's first `\item` meeting it spends `\@nbitem` (latex.ltx:16044-16047),
+`\@outerparskip − \parskip`, which the item's own `\parskip` cancels: the item
+stands where a paragraph after the heading stands, and the list's closing
+space is the `\@topsepadd` it opened with. Asserted over `Layout.Out` as a
+pair against the same heading over a paragraph; lualatex, article 10pt,
+puts both 23.26 pt below the heading and the text after the list 22 pt
+below it (TeX Live 2026). Invented words. -/
+def afterHeadingListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (body : String) : String :=
+    "\\documentclass{article}\\begin{document}Alpha.\n\n\\section*{Bravo}\n\n" ++ body ++
+      "\n\nDelta.\n\\end{document}"
+  let steps (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    let v := words.filterMap (lineYOf c 0 ·)
+    (v.zip v.tail).map fun (a, b) => b - a
+  let lead := Ir.leadingFor (Dim.pt 10) 1000
+  let para := steps (doc "Charlie.") ["Bravo", "Charlie."]
+  for (name, el) in [("itemize", "\\begin{itemize}\n\\item Charlie.\n\\end{itemize}"),
+      ("quote", "\\begin{quote}\nCharlie.\n\\end{quote}")] do
+    t s!"{name} right after a heading stands where a paragraph after it stands"
+      (!para.isEmpty && steps (doc el) ["Bravo", "Charlie."] == para)
+    t s!"{name} right after a heading still closes with its topsep and partopsep"
+      (steps (doc el) ["Charlie.", "Delta."] == [lead + Dim.pt 10])
+
 /-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
 break between a heading and the first lines of its text (`\@xsect`'s
 `\nobreak`, `\@afterheading`'s `\clubpenalty`), so a heading that would be a

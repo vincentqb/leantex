@@ -5239,6 +5239,12 @@ private structure Acc where
   (`Geom.texParskip`) on top, which is what `\@trivlist` spends, rather
   than the engine's peer gap. -/
   trivOwed : Bool := false
+  /-- A display heading was the last thing set, with no line after it yet:
+  LaTeX's `\@afterheading` sets `\@nobreak` until the next paragraph
+  starts, and a list's first `\item` meeting it spends `\@nbitem`
+  (latex.ltx:16044-16047) — no `\topsep`, the item standing where a
+  paragraph after the heading stands. Cleared by the next line's gap. -/
+  afterHeading : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
@@ -5378,7 +5384,8 @@ private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
     else if a.wantDefault && a.declaredSkip then
       { a with ops := (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) }
     else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
-  { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false }
+  { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
+           afterHeading := false }
 
 /-- **A stacked boundary's two items are its glue** (`_exact`): the peer mark
 and the declared glue `flushGap` ships at a peer boundary with a document
@@ -5464,7 +5471,7 @@ private def Acc.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.isEmpty then a
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false,
-           trivOwed := false }
+           trivOwed := false, afterHeading := false }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
@@ -6496,7 +6503,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
       collectDisplay r a title indent false (sectionSize r.geom level)
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
-  let a := a.vskip after
+  let a := { a.vskip after with afterHeading := true }
   if r.slides then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
@@ -7100,10 +7107,12 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The list's `\topsep` stands above it with TeX's `\parskip` on top,
     -- paid before the reader switches to the list's own `\parskip`; a
     -- declared `before` is the whole space, as it was, and the web's
-    -- lineage opens only the peer gap a paragraph would.
+    -- lineage opens only the peer gap a paragraph would. Right after a
+    -- heading the first item spends `\@nbitem`: it stands where a paragraph
+    -- after the heading stands (`Acc.afterHeading`).
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
-      | none, some t => (a.listSpace t).flushGap r
+      | none, some t => if a.afterHeading then a.flushGap r else (a.listSpace t).flushGap r
       | none, none => a
     let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
@@ -7177,7 +7186,8 @@ private def collectBlock (r : Rd) (a : Acc)
     | some sk =>
       let g := if r.inPar then r.resolve sk.topsep
         else (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
-      let sub := { (a.listSpace g).flushGap r with measure := narrow }
+      let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
+      let sub := { top with measure := narrow }
       let ri := { r with inPar := false,
                          geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectBlocks ri sub body (indent + r.geom.listIndent)

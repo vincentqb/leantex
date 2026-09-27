@@ -135,6 +135,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   vspaceKeptChecks ref oneFace
   fillCentreChecks ref oneFace
   partopsepChecks ref oneFace
+  afterHeadingListChecks ref oneFace
   headingKeepChecks ref oneFace
   frameBodyChecks ref oneFace
   frameContentEndChecks ref oneFace
