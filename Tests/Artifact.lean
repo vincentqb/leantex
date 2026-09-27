@@ -1925,17 +1925,17 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- beamer's own spelling of the ground: `background canvas`'s bg is the
   -- canvas fill (the default template's full-page rule), so in the preamble
   -- it declares the document's ground and in the body an epoch's.
-  let canvas := "\\setbeamercolor{background canvas}{bg=#203040}\n"
+  let canvas := "\\setbeamercolor{background canvas}{bg=#F0E8D8}\n"
   let frame (s : String) := s!"\\begin\{frame}\{{s}}\nx\n\\end\{frame}\n"
   let (pdoc, pds) := elabStr ("\\documentclass{beamer}\n" ++ canvas ++
     "\\begin{document}\n" ++ frame "One" ++ "\\end{document}\n")
   t s!"background canvas in the preamble declares the document's ground: {pds.toList.map (·.code)}"
-    (pdoc.palette.find? "bg" == some { r := 0x20, g := 0x30, b := 0x40 } &&
+    (pdoc.palette.find? "bg" == some { r := 0xF0, g := 0xE8, b := 0xD8 } &&
      pds.all (·.severity == .note))
   let (bdoc, bds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
     frame "One" ++ canvas ++ frame "Two" ++ "\\end{document}\n")
   t s!"background canvas in the body declares the frames after it: {bds.toList.map (·.code)}"
-    (artFrameGrounds bdoc == #[bdoc.palette.find? "bg", some { r := 0x20, g := 0x30, b := 0x40 }] &&
+    (artFrameGrounds bdoc == #[bdoc.palette.find? "bg", some { r := 0xF0, g := 0xE8, b := 0xD8 }] &&
      bds.all (·.severity == .note))
   let bgeom := Layout.Geom.ofPage bdoc.page
   let bOffs := artPageGroundOffences bgeom (artFrameGrounds bdoc) (layoutOf oneFace bdoc bgeom).pages

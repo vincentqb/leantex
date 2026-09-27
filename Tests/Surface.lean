@@ -4694,8 +4694,8 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- off `Layout.Out`, the HTML token the title slide resolves the run's
   -- `var(--role)` through off the stylesheet the typed tree ships.
   let night : Ir.Color := { r := 0x20, g := 0x28, b := 0x33 }
-  let rust : Ir.Color := { r := 0xB0, g := 0x50, b := 0x2A }
-  let preR := "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeRust}{HTML}{B0502A}" ++
+  let rust : Ir.Color := { r := 0xC8, g := 0x68, b := 0x3A }
+  let preR := "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeRust}{HTML}{C8683A}" ++
     "\\definecolor{probeSnow}{HTML}{F4F4F0}" ++
     "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
     "\\fill[probeNight] (current page.south west) rectangle (current page.north east);" ++

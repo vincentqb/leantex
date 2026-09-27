@@ -246,9 +246,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
     let ds := (Elab.runRaws "t" raws).2
     spliced.map fun (s, src, p) => Compat.styRead (src.getD "t") s p ds
   | .N0021 => dvL one (dvDoc "\\page{ headsep = 20pt, footskip = 30pt }\n" "x")
-  -- moloch's alert passes on its page and fails on its own frame-title
-  -- bar: the pair realizes there (lighter, same hue), the note says so.
-  | .N0022 => dvE (dvDeck "\\theme{moloch}\n"
+  -- An accent the moloch frame-title bar fails by a move inside the ink
+  -- bound: the pair realizes there (lighter, same hue), the note says so.
+  | .N0022 => dvE (dvDeck "\\theme{moloch}\\palette{ alert = #D8691F }\n"
       "\\begin{frame}{An \\alert{urgent} word}\nx\n\\end{frame}")
   | .W0368 => dvE (dvDoc "\\usepackage[klingon]{babel}\n" "x") ++
       dvE (dvDoc "\\pdfmeta{ language = \"xx\" }\n" "x")

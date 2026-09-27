@@ -2700,7 +2700,7 @@ Outside after.")
   let codesOf := dvE
   -- A use whose epoch declares a dark page is judged on that page.
   let dsDark := codesOf (doc
-    "\\palette{ bg = #202020, dim = #333333 }\n\n\\textcolor{dim}{dim words} here.")
+    "\\palette{ bg = #202020, dim = #787878 }\n\n\\textcolor{dim}{dim words} here.")
   t "a use inside a dark-page epoch is judged on that page, and realizes there"
     (dsDark.any fun d => d.code == "N0022" && hasStr d.message "#202020")
   -- A body epoch that declares a page and leaves the ink defaulted is the
@@ -2710,8 +2710,8 @@ Outside after.")
   -- The decorative exemption is the epoch's: a plain redeclaration removes
   -- it for the uses after, and only those.
   let dsRedecl := codesOf ("\\documentclass{article}\
-\\palette[decorative]{ q = #BBBBBB }\\begin{document}\n\
-\\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #BBBBBB }\n\n\
+\\palette[decorative]{ q = #888888 }\\begin{document}\n\
+\\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #888888 }\n\n\
 \\textcolor{q}{loud after} is judged.\n\\end{document}")
   t "a plain body redeclaration removes the decorative exemption from here on"
     (dsRedecl.any fun d => d.code == "N0022" && hasStr d.message "'q'")
@@ -2723,27 +2723,29 @@ Outside after.")
 \\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
     "\\begin{frame}{B}\ntwo\n\\end{frame}\n\n" ++ tail ++ "\\end{document}"
   t "a bad frame-title pair declared before a frame is judged for it, and realizes"
-    ((codesOf (deckDoc "\\palette{ frametitlebg = #F2F2F0 }\n\n" "")).any
+    ((codesOf (deckDoc "\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }\n\n"
+      "")).any
       fun d => d.code == "N0022" && hasStr d.message "'frametitlefg'")
   t "a bad frame-title pair declared after the last frame styles nothing"
-    ((codesOf (deckDoc "" "\\palette{ frametitlebg = #F2F2F0 }\n\n")).all
+    ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }\n\n")).all
       fun d => d.code != "W0345" && d.code != "N0022")
   -- Per (fg, bg) pair, not per token: moloch's darkened alert passes on
   -- the light page and fails on the dark frame-title bar — the same
-  -- colour, two grounds, judged where each sits.
+  -- colour, two grounds, judged where each sits. Its nearest legible ink
+  -- there lies past the ink bound (ΔEOK 0.155), so it warns where it sits.
   let deckAlert (title body : String) : String :=
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
-  t "an accent inside the frame title is judged on the bar, and realizes there"
+  t "an accent inside the frame title is judged on the bar, and warns there"
     ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
-      fun d => d.code == "N0022" && hasStr d.message "the frame-title bar")
+      fun d => d.code == "W0315" && hasStr d.message "the frame-title bar")
   t "the same accent in the body is judged on the page, and passes there"
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
       fun d => d.code != "W0315" && d.code != "N0022")
-  t "an accent inside a standout frame is judged on the inversion, and realizes"
+  t "an accent inside a standout frame is judged on the inversion, and warns there"
     ((codesOf ("\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
-      fun d => d.code == "N0022" && hasStr d.message "the standout frame")
+      fun d => d.code == "W0315" && hasStr d.message "the standout frame")
 
 /-- Tables and floats: the too-wide diagnostic, the caption's source side,
 and the rule extents on the shipped page — a rule claim is judged from
@@ -3463,7 +3465,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- through the same docDiags walk as every other class.
   t "an illegible card pairing realizes through the colour contract (N0022)"
     ((noteCodes (card "" "\\textcolor{washed}{faint}"
-      "\\palette{ washed = #DDDDDD }\n")).contains "N0022")
+      "\\palette{ washed = #888888 }\n")).contains "N0022")
   t "declared decorative intent silences it on a card too"
     (let src := card "" "\\textcolor{washed}{faint}"
       "\\palette[decorative]{ washed = #DDDDDD }\n"

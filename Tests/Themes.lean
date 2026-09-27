@@ -1580,10 +1580,19 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- fg is judged against a declared bg directly.
   let pale := "\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
     "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
-  t "a pale role pairing realizes, the note naming role and requirement"
-    ((elabStr pale).2.any fun d => d.code == "N0022" &&
+  -- #888888 on the shipped surface reaches 4.5:1 at #737373, ΔEOK 0.071:
+  -- inside the ink bound, so it realizes. #DDDDDD needs a move past it.
+  let quiet := "\\documentclass{article}\\palette{ washed = #888888 }" ++
+    "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
+  t "a failing role pairing inside the bound realizes, the note naming role and requirement"
+    ((elabStr quiet).2.any fun d => d.code == "N0022" &&
       (d.message.splitOn "'washed'").length == 2 &&
       (d.message.splitOn "4.50:1").length == 2)
+  t "a pale role past the bound warns, its help naming the nearest legible colour"
+    (((elabStr pale).2.any fun d => d.code == "W0315" &&
+      d.subject.any (·.startsWith "washed:") &&
+      d.help.any fun h => hasStr h "#737373" && hasStr h "past the 0.080") &&
+     (elabStr pale).2.all (·.code != "N0022"))
   t "declared intent silences the pairing judge whole"
     (let src := "\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
@@ -1593,10 +1602,10 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- key: a plain redeclaration replaces the excused value, so it restores
   -- the contrast check; only redeclaring with the opt-out keeps it.
   t "a plain redeclaration drops the decorative exemption"
-    ((noteCodes ("\\documentclass{article}" ++
+    ((warnCodes ("\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\palette{ washed = #DDDDDD }" ++
-      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "N0022")
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
   t "a decorative redeclaration keeps the exemption"
     (!(warnCodes ("\\documentclass{article}" ++
       "\\palette{ washed = #DDDDDD }" ++
@@ -1639,10 +1648,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- element ships. p5's archetype: moloch + a near-white frametitlebg
   -- shipped frame titles at 1.07:1 with zero diagnostics.
   let titled := "\\begin{frame}{T}x\\end{frame}"
-  t "an overridden frame-title pair realizes, the note naming the requirement"
-    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
+  t "an overridden frame-title pair inside the bound realizes, the note naming the requirement"
+    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }"
+      titled)).2.any
       fun d => d.code == "N0022" && (d.message.splitOn "'frametitlefg'").length == 2 &&
         (d.message.splitOn "4.50:1").length == 2)
+  t "an overridden frame-title pair past the bound warns, naming the bound"
+    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
+      fun d => d.code == "W0345" && d.help.any (hasStr · "past the 0.080"))
   t "the untouched bundle's frame-title pair is silent"
     (!(warnCodes (dvDeck "\\theme{moloch}" titled)).contains "W0345")
   t "an illegible frame-title pair without a titled frame is silent"
@@ -1652,7 +1665,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(warnCodes (dvDeck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
       "\\palette[decorative]{ frametitlefg = #FAFAF9 }") titled)).contains "W0345")
   t "an overridden standout pair realizes at the large-scale threshold"
-    ((elabStr (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
+    ((elabStr (dvDeck "\\palette{ standoutfg = #A0A0A0, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
       fun d => d.code == "N0022" && (d.message.splitOn "'standoutfg'").length == 2 &&
         (d.message.splitOn "3.00:1").length == 2)
@@ -1693,10 +1706,10 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
      !(noteCodes (sizedSection "10pt")).contains "N0022")
   t "a declared fg is judged against the declared bg, and realizes there"
     ((elabStr ("\\documentclass{article}" ++
-      "\\palette{ fg = #999999, bg = #888888 }" ++
+      "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}x\\end{document}")).2.any fun d =>
         d.code == "N0022" && (d.message.splitOn "'fg'").length == 2 &&
-          (d.message.splitOn "#888888").length == 2)
+          (d.message.splitOn "#F0F0F0").length == 2)
   -- The effective pair (F3): the contract judges the pair the page ships,
   -- not only the pair the document spelled. A declared dark page with the
   -- ink left defaulted is black-on-dark in both backends — its own code
@@ -1719,7 +1732,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}x\\end{document}")).contains "W0330")
   t "a body use of the effective pair is not reported twice"
     ((((elabStr ("\\documentclass{article}" ++
-      "\\palette{ fg = #999999, bg = #888888 }" ++
+      "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}\\textcolor{fg}{x}\\end{document}")).2.filter
         fun d => d.code == "N0022" || d.code == "W0315" || d.code == "W0330").size) == 1)
   t "the built-in themes raise no pairing warning"
@@ -1780,7 +1793,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- grounds is two pairings. Both are the key's doing, not the colour's.
   t "one colour under two names is two pairings"
     (((elabStr ("\\documentclass{article}" ++
-      "\\palette{ alpha = #C4C4C4, beta = #C4C4C4 }\\begin{document}" ++
+      "\\palette{ alpha = #888888, beta = #888888 }\\begin{document}" ++
       "\\textcolor{alpha}{a} \\textcolor{beta}{b} \\textcolor{alpha}{c}" ++
       "\\end{document}")).2.filter (·.code == "N0022")).size == 2)
   t "one role on two grounds is two pairings"
@@ -1794,9 +1807,9 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- message to read. Within a pairing key the only dimension left is the
   -- epoch's palette, which is what the write's dedup is keyed on.
   let twoEpochs := elabStr ("\\documentclass{article}" ++
-    "\\palette{ washed = #DDDDDD }\\begin{document}\\textcolor{washed}{a}" ++
-    "\n\n\\palette{ washed = #DDDDDD }\n\n\\textcolor{washed}{b}\\end{document}")
-  let declared : Ir.Color := { r := 0xDD, g := 0xDD, b := 0xDD }
+    "\\palette{ washed = #888888 }\\begin{document}\\textcolor{washed}{a}" ++
+    "\n\n\\palette{ washed = #888888 }\n\n\\textcolor{washed}{b}\\end{document}")
+  let declared : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
   t "two epochs declaring one failing role read one note"
     ((twoEpochs.2.filter fun d =>
       d.code == "N0022" || d.code == "W0315").size == 1)
@@ -1833,7 +1846,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- paid once. Measured in the judge: 3,000 uses of one failing role cost
   -- 1,101 ms solved per use.
   let washedNotes (uses : Nat) : Array String :=
-    ((elabStr ("\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
+    ((elabStr ("\\documentclass{article}\\palette{ washed = #888888 }" ++
       "\\begin{document}" ++
       String.join ((List.range uses).map fun i =>
         "\\textcolor{washed}{w" ++ toString i ++ "} ") ++
@@ -2102,9 +2115,11 @@ def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a title-page ink with no ground declares no ground"
     ((designOf "\\palette{ titlepagefg = #F4F6F8 }").titlepage.isNone)
   -- The judge, on the author's own pair. The ground stands and the ink
-  -- moves: a dark-on-dark title page realizes its ink lighter, naming the
-  -- body requirement (4.5:1) because a title page carries body-size matter.
-  let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #2A3038 }"
+  -- moves: a title page whose ink falls just short realizes it lighter
+  -- (ΔEOK 0.040, inside the ink bound), naming the body requirement
+  -- (4.5:1) because a title page carries body-size matter; a dark-on-dark
+  -- ink the bound cannot reach keeps its declared value and warns.
+  let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #747474 }"
   t "an illegible title-page pair realizes its ink at the body threshold"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
       d.code == "N0022" && (d.message.splitOn "'titlepagefg'").length == 2 &&
@@ -2113,6 +2128,10 @@ def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the realized note names the declared ground, not an invented one"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
       d.code == "N0022" && (d.message.splitOn "#101822").length == 2)
+  t "a title-page ink past the bound keeps its declared value and warns"
+    ((elabStr (deckOf "\\palette{ titlepagebg = #101822, titlepagefg = #2A3038 }"
+      "\\maketitle")).2.any fun d =>
+        d.code == "W0345" && hasStr d.message "#2A3038" && d.help.any (hasStr · "past the 0.080"))
   -- Only where the page ships: a deck with no \maketitle has no title page,
   -- so an illegible pair is a declaration nothing stands on.
   t "an illegible title-page pair without a title page is silent"
@@ -2163,8 +2182,12 @@ def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The realization rule's executable census — the cross-ground half of
 `Contrast.realized_builtin_contract`, whose kernel check covers the pairs
-a bundle's design creates itself: for every shipped bundle the content
-colours realize on the frame-title bar and the standout inversion (the
+a bundle's design creates itself: for every shipped bundle, each content
+colour that fails the frame-title bar or the standout inversion either
+realizes there inside the ink bound or is a row of `beyondBound`, the
+bundle pairs whose nearest legible ink lies past it — a registry that
+fails in both directions, so a bundle change that brings a pair inside
+the bound, or pushes one out, is a decision someone writes down (the
 lightness search is not the identity there, and the kernel does not
 evaluate it cheaply, so this half is an oracle). And the backend
 agreement, `features_agree` shape: the run the PDF path ships and the
@@ -2172,6 +2195,16 @@ scoped custom property the HTML path declares both carry the one
 solver's answer. -/
 def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  -- Each needs a move past four JNDs (ΔEOK 0.12–0.44) to meet 4.5:1, so a
+  -- document that sets the role on that ground keeps the declared ink and
+  -- warns. Whether a bundle should ship another ink there is the user's.
+  let beyondBound : List (String × String × String) :=
+    [("moloch", "alert", "the frame-title bar"), ("moloch", "example", "the frame-title bar"),
+     ("moloch", "alert", "the standout frame"), ("moloch", "example", "the standout frame"),
+     ("plain", "alert", "the standout frame"), ("plain", "example", "the standout frame"),
+     ("daylight", "alert", "the standout frame"), ("daylight", "example", "the standout frame"),
+     ("gemini", "alert", "the frame-title bar"), ("gemini", "example", "the frame-title bar")]
+  let mut seen : List (String × String × String) := []
   for th in Theme.builtin do
     let d := Ir.Design.ofDoc { palette := th.palette }
     let grounds := (match d.frametitle with
@@ -2180,16 +2213,26 @@ def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (gname, ground) in grounds do
       for role in ["alert", "example"] do
         if let some c := th.palette.find? role then
-          t s!"'{role}' of '{th.name}' realizes on {gname}"
-            (match Contrast.realize Contrast.aaText ground c with
-             | some c' => Contrast.aaText ≤ Contrast.contrastMilli c' ground
-             | none => false)
-  -- One solver, two backends: moloch's alert inside a frame title.
-  let deck := "\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
-    "\\begin{frame}{An \\alert{urgent} word}x\\end{frame}\\end{document}"
+          if Contrast.contrastMilli c ground < Contrast.aaText then
+            let row := (th.name, role, gname)
+            match Contrast.realize Contrast.aaText ground c with
+            | some c' =>
+              t s!"'{role}' of '{th.name}' realizes on {gname}, inside the bound"
+                (Contrast.aaText ≤ Contrast.contrastMilli c' ground &&
+                  Contrast.deltaEOkSq c c' ≤ Contrast.inkBoundSq && !beyondBound.contains row)
+            | none =>
+              seen := row :: seen
+              t s!"'{role}' of '{th.name}' on {gname} is past the bound, and registered"
+                (beyondBound.contains row)
+  t "every registered bundle pair past the bound is one the census meets"
+    (beyondBound.all seen.contains)
+  -- One solver, two backends: an accent inside a moloch frame title, one
+  -- the bar fails by a move inside the bound (ΔEOK 0.061).
+  let deck := "\\documentclass{slides}\\theme{moloch}\\palette{ alert = #D8691F }" ++
+    "\\begin{document}\\begin{frame}{An \\alert{urgent} word}x\\end{frame}\\end{document}"
   let (doc, ds) := elabStr deck
   let bar := (Theme.moloch.palette.find? "frametitlebg").getD Ir.Color.black
-  let alert := (Theme.moloch.palette.find? "alert").getD Ir.Color.black
+  let alert : Ir.Color := { r := 0xD8, g := 0x69, b := 0x1F }
   match Contrast.realize Contrast.aaText bar alert with
   | some c' =>
     t "the realized run ships the solver's value (the PDF half)"
@@ -3183,9 +3226,10 @@ def realizeDocIdChecks (ref : IO.Ref (List String)) : IO Unit := do
       Contrast.aaText ≤ Contrast.contrastMilli p.1 p.2)
   t "a legible document draws no realization note and no pairing warning"
     (ds.all fun d => d.code != "N0022" && d.code != "W0315" && d.code != "W0345")
-  -- The same machinery moves a document that fails: one pale role, judged
-  -- on the page it sits on, realizes and the returned document differs.
-  let pale : Ir.Color := { r := 0xBB, g := 0xBB, b := 0xBB }
+  -- The same machinery moves a document that fails: one quiet role, judged
+  -- on the page it sits on, realizes inside the ink bound and the returned
+  -- document differs.
+  let pale : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
   let failing := { doc with
     palette := legible.declare "quiet" pale
     body := #[.para #[.colored pale (some "quiet") #[.text "pale role ink"]]] }

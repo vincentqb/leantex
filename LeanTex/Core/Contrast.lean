@@ -165,9 +165,9 @@ chroma reaches the ratio (a saturated hue against a mid ground), chroma
 reduces stepwise toward the neutral axis before giving up. `none` means
 the declared colour stands and the pairing warning fires as before —
 realization is never silent and never approximate: every returned colour
-re-judges against the requirement by construction
-(`realize_meets_contract`), and a pair that already passes is returned
-unchanged (`realize_id_of_passing`). -/
+re-judges against the requirement and lies within the ink bound of the
+declared one by construction (`realize_between`, below), and a pair that
+already passes is returned unchanged (`realize_id_of_passing`). -/
 
 /-- The candidate at lightness `L` (the `labOf` 10¹⁸ scale) with chroma
 scaled to `f`% of the declared: hue held, tone the variable. -/
@@ -208,59 +208,15 @@ private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab)
     | none, some d => some (realizeCand lab f d)
     | none, none => none
 
-/-- Realize a colour on a ground: unchanged when the pair already meets
-`req` (milli-ratio, `contrastMilli`'s scale); otherwise the nearest
-lightness at the declared hue and chroma that does, reducing chroma toward
-the neutral axis when the full-chroma axis never reaches it; `none` when
-nothing does — the declared colour then stands and the pairing diagnostic
-fires as before. -/
-def realize (req : Nat) (ground c : Color) : Option Color :=
-  if req ≤ contrastMilli c ground then some c
-  -- A colour carrying a print model is declared in DeviceCMYK: realizing
-  -- it would repaint the declaration in sRGB and silently drop the
-  -- declared components, so the pair keeps its warning instead.
-  else if c.cmyk.isSome then none
-  else
-    (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-        realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
-      if req ≤ contrastMilli cand ground then some cand else none
-
-/-- The realized colour passes the pair's requirement whenever the solver
-returns one — the postcondition by construction: every return is guarded
-by the judged quantity itself, so no monotonicity or search argument is
-load-bearing. -/
-theorem realize_meets_contract {req : Nat} {ground c c' : Color}
-    (h : realize req ground c = some c') : req ≤ contrastMilli c' ground := by
-  unfold realize at h
-  split at h
-  next hp => cases h; exact hp
-  next =>
-    split at h
-    next => cases h
-    next =>
-      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-          realizeAt req ground (Oklab.labOf c) f with
-      | none => rw [hb] at h; cases h
-      | some cand =>
-        rw [hb, Option.bind_some] at h
-        split at h
-        next hp => cases h; exact hp
-        next => cases h
-
-/-- A pair that already passes is unchanged: realization is the identity
-on every legible pairing, so a passing document's artifact cannot move. -/
-theorem realize_id_of_passing {req : Nat} {ground c : Color}
-    (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
-  simp [realize, h]
-
 /-! ## The bound on a repair: barely different, measurably better
 
-A repair ships a colour the author did not write — a mix's weight moved
-(`remix`) — so it departs from what LaTeX ships, xcolor's value of the
-declaration. A departure stands only when it is measurably better, which
-the guard on every return makes true (the pair then meets its WCAG 2.2
-requirement), and barely different: within `inkBoundSq` of the declared
-colour, in ΔEOK. Sources, and the rule taken from each:
+A repair ships a colour the author did not write — a role's lightness
+realized on a ground (`realize`), a mix's weight moved (`remix`) — so it
+departs from what LaTeX ships, xcolor's value of the declaration. A
+departure stands only when it is measurably better, which the guard on
+every return makes true (the pair then meets its WCAG 2.2 requirement),
+and barely different: within `inkBoundSq` of the declared colour, in
+ΔEOK. Sources, and the rule taken from each:
 
 * https://www.w3.org/TR/css-color-4/ §20.3 "ΔEOK" — the colour difference
   "is simply the Euclidean distance in Oklab color space".
@@ -279,6 +235,9 @@ def deltaEOkSq (c c' : Color) : Nat :=
   let q := Oklab.labOf c'
   ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) +
     (p.b - q.b) * (p.b - q.b)).toNat
+
+theorem deltaEOkSq_self (c : Color) : deltaEOkSq c c = 0 := by
+  simp [deltaEOkSq]
 
 /-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS
 Color 4 §14.2.1). -/
@@ -307,6 +266,86 @@ def deltaEOkMilli (c c' : Color) : Nat := Nat.sqrt (deltaEOkSq c c') / 10 ^ 15
 def milliString (m : Nat) : String :=
   let f := toString (m % 1000)
   s!"{m / 1000}.{"".pushn '0' (3 - f.length)}{f}"
+
+/-- The nearest legible colour on a ground, however far it lies: the
+colour itself when the pair already meets `req` (milli-ratio,
+`contrastMilli`'s scale); otherwise the nearest lightness at the declared
+hue and chroma that does, reducing chroma toward the neutral axis when the
+full-chroma axis never reaches it; `none` when nothing does. The solver
+`realize` bounds, and what a warning past the bound offers the author. -/
+def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
+  if req ≤ contrastMilli c ground then some c
+  -- A colour carrying a print model is declared in DeviceCMYK: realizing
+  -- it would repaint the declaration in sRGB and silently drop the
+  -- declared components, so the pair keeps its warning instead.
+  else if c.cmyk.isSome then none
+  else
+    (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+        realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
+      if req ≤ contrastMilli cand ground then some cand else none
+
+/-- Realize a colour on a ground: unchanged when the pair already meets
+`req`; otherwise the nearest legible colour (`realizeNearest`) when it lies
+within the ink bound of the declared one; `none` otherwise — the declared
+colour then stands and the pairing diagnostic fires as before. -/
+def realize (req : Nat) (ground c : Color) : Option Color :=
+  if req ≤ contrastMilli c ground then some c
+  else (realizeNearest req ground c).bind fun cand =>
+    if withinInkBound c cand then some cand else none
+
+/-- The unbounded solver's answer meets the requirement: every return is
+guarded by the judged quantity itself, so no monotonicity or search
+argument is load-bearing. -/
+theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
+    (h : realizeNearest req ground c = some c') : req ≤ contrastMilli c' ground := by
+  unfold realizeNearest at h
+  split at h
+  next hp => cases h; exact hp
+  next =>
+    split at h
+    next => cases h
+    next =>
+      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+          realizeAt req ground (Oklab.labOf c) f with
+      | none => rw [hb] at h; cases h
+      | some cand =>
+        rw [hb, Option.bind_some] at h
+        split at h
+        next hp => cases h; exact hp
+        next => cases h
+
+/-- **A realized colour is measurably better and barely different** — the
+rule every departure from LaTeX answers to, as the two bounds the shipped
+colour sits between: it meets the pair's requirement, and it lies within
+the ink bound of the colour the document declared. -/
+theorem realize_between {req : Nat} {ground c c' : Color}
+    (h : realize req ground c = some c') :
+    req ≤ contrastMilli c' ground ∧ deltaEOkSq c c' ≤ inkBoundSq := by
+  unfold realize at h
+  split at h
+  next hp => cases h; exact ⟨hp, by simp [deltaEOkSq_self]⟩
+  next =>
+    match hb : realizeNearest req ground c with
+    | none => rw [hb] at h; cases h
+    | some cand =>
+      rw [hb, Option.bind_some] at h
+      split at h
+      next hw =>
+        cases h
+        exact ⟨realizeNearest_meets hb, by simpa [withinInkBound] using hw⟩
+      next => cases h
+
+/-- The realized colour passes the pair's requirement whenever the solver
+returns one — the postcondition by construction. -/
+theorem realize_meets_contract {req : Nat} {ground c c' : Color}
+    (h : realize req ground c = some c') : req ≤ contrastMilli c' ground :=
+  (realize_between h).1
+
+/-- A pair that already passes is unchanged: realization is the identity
+on every legible pairing, so a passing document's artifact cannot move. -/
+theorem realize_id_of_passing {req : Nat} {ground c : Color}
+    (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
+  simp [realize, h]
 
 /-- The weight nearest `pct` that `pass` accepts, searched outward from it
 over 0..100, the heavier side first at each distance. -/
@@ -393,6 +432,18 @@ theorem remix_between {req pct q : Nat} {ground a b c : Color}
 
 private def hexOf (c : Color) : String :=
   s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+
+/-- The help a failing role pair carries: past the ink bound, the colour
+that would meet the requirement and how far from the declared one it lies;
+where nothing meets it, the decorative spelling alone. -/
+private def lowHelp (key : String) (req : Nat) (ground c : Color) : String :=
+  let keep := "\\palette[decorative]{ " ++ s!"{key} = {hexOf c} " ++ "}"
+  match realizeNearest req ground c with
+  | some c' =>
+    s!"{hexOf c'} meets it, ΔEOK {milliString (deltaEOkMilli c c')} away, past the " ++
+      s!"{milliString inkBoundMilli} a repair may move a colour: declare it, or {keep} " ++
+      "to keep it low"
+  | none => "deliberate low contrast is declared, not defaulted: " ++ keep
 
 /-- One palette-entry realization: applied to the palette equal to `pal`
 wherever it stands (the document's or a `.setPalette`'s), so every reader
@@ -864,8 +915,7 @@ def effectivePairJudged (doc : Doc) : Judged :=
               (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
                 s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
                 "WCAG 2.2 asks of text (SC 1.4.3)")
-              (help := some ("deliberate low contrast is declared, not defaulted: " ++
-                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))
+              (help := some (lowHelp "fg" aaText p.bg p.fg))
               (subject := some (inkKey "fg" p.fg p.bg))] }
       else
         -- A defaulted ink was never declared: there is no hue to keep, so
@@ -914,8 +964,7 @@ private def epochStep (s : Judged × Array ColorPair) (pal : Palette) :
               (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
                 s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
                 "WCAG 2.2 asks of text (SC 1.4.3)")
-              (help := some ("deliberate low contrast is declared, not defaulted: " ++
-                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))
+              (help := some (lowHelp "fg" aaText p.bg p.fg))
               (subject := some (inkKey "fg" p.fg p.bg))) },
            done)
       else
@@ -980,8 +1029,7 @@ private def blockTitleStep (s : Judged) (kp : TitledKind × Palette) : Judged :=
         (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
           s!"{hexOf ground} at {ratioString milli}, below the " ++
           s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}"))) }
+        (help := some (lowHelp s!"{kind.name}titlefg" aaText ground look.fg))) }
   else s
 
 private def frameTitleStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
@@ -1002,8 +1050,7 @@ private def frameTitleStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
           (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
             s!"{ratioString milli}, below the {ratioString aaText} " ++
             "WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}"))) }
+          (help := some (lowHelp "frametitlefg" aaText p.bg p.fg))) }
     else s
 
 private def standoutStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
@@ -1022,8 +1069,7 @@ private def standoutStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
         (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
           s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
           s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}"))) }
+        (help := some (lowHelp "standoutfg" aaLargeText d.standout.bg d.standout.fg))) }
   else s
 
 /-- The title page's own pair, per epoch that ships one. Judged at the body
@@ -1056,8 +1102,7 @@ private def titlePageStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
           (s!"the title page pairs {hexOf p.fg} on {hexOf p.bg} at " ++
             s!"{ratioString milli}, below the {ratioString aaText} " ++
             "WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"titlepagefg = {hexOf p.fg} " ++ "}"))) }
+          (help := some (lowHelp "titlepagefg" aaText p.bg p.fg))) }
     else s
 
 /-- The covering judged, per epoch that ships pending content: SC 1.4.11's
@@ -1262,8 +1307,7 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
               s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
               s!"below the {ratioString threshold} " ++
               s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-            ("deliberate low contrast is declared, not defaulted: " ++
-              "\\palette[decorative]{ " ++ s!"{role} = {hexOf u.color} " ++ "}")
+            (if dup then "" else lowHelp role aaText u.surface u.color)
             ((site u.name u.color).map (·.2))
           { s with done := done, solved := solved }
       | none =>
@@ -1291,28 +1335,29 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
           let label := match origin with
             | some (e, _) => s!"'{e}' ({hexOf u.color})"
             | none => hexOf u.color
-          -- Past the bound, the repair a document can write itself.
-          let far := mix.bind fun (e, (a, pct, b)) =>
-            (remixNearest aaText u.surface a b pct).map fun (q, c) => (e, a.mix pct b, q, c)
+          -- The help is the first run's alone (`pairing`): past the bound,
+          -- the repair a document can write itself.
+          let help := if dup then "" else
+            match mix.bind fun (e, (a, pct, b)) =>
+                (remixNearest aaText u.surface a b pct).map fun (q, c) => (e, a.mix pct b, q, c) with
+            | some (e, declared, q, c) =>
+              s!"'{mixReweighed e q}' ({hexOf c}) meets it, ΔEOK " ++
+                s!"{milliString (deltaEOkMilli declared c)} from the declared colour, past " ++
+                s!"the {milliString inkBoundMilli} a repair may move it: write that weight, " ++
+                "or keep it low: \\palette[decorative]{ <name> = " ++ s!"{hexOf u.color} " ++ "}"
+            | none =>
+              s!"{if mix.isSome then "no weight of this mix meets its ground"
+                 else "a colour with no role is not realized"}: " ++
+                "name it in \\palette{ <name> = " ++
+                s!"{hexOf u.color} " ++ "} to have it met on its ground, or declare that " ++
+                "entry under \\palette[decorative] to keep it low"
           let s := s.pairing dup key u.site
             (inkKey ((origin.map (·.1)).getD (hexOf u.color)) u.color u.surface)
             (s!"text coloured {label} reads at {ratioString milli} " ++
               s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
               s!"below the {ratioString threshold} " ++
               s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-            (match far with
-             | some (e, declared, q, c) =>
-               s!"'{mixReweighed e q}' ({hexOf c}) meets it, ΔEOK " ++
-                 s!"{milliString (deltaEOkMilli declared c)} from the declared colour, past " ++
-                 s!"the {milliString inkBoundMilli} a repair may move it: write that weight, " ++
-                 "or keep it low: \\palette[decorative]{ <name> = " ++ s!"{hexOf u.color} " ++ "}"
-             | none =>
-               s!"{if mix.isSome then "no weight of this mix meets its ground"
-                  else "a colour with no role is not realized"}: " ++
-                 "name it in \\palette{ <name> = " ++
-                 s!"{hexOf u.color} " ++ "} to have it met on its ground, or declare that " ++
-                 "entry under \\palette[decorative] to keep it low")
-            (origin.map (·.2))
+            help (origin.map (·.2))
           { s with done := done }
     else { s with done := done }
 
