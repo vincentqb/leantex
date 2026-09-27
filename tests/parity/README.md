@@ -113,6 +113,14 @@ nothing is judged on its measurement alone.
   and order hold exactly when the engine's symbol table
   (`LeanTex/Core/MathSymData.lean`) names the scalar lualatex sets, so this
   is that table's check against the reference engine.
+- `mathsym.tex` — the same check for the rest of the table: the 161 kernel
+  symbols (the hand rows of `MathParse.ctrlAtom` and the generated ones from
+  `fontmath.ltx`) the shipped face draws, spelled alike on both sides.
+  Three are left out and named in its header: `\bullet` and `\colon`, where
+  the table keeps its own scalar, and the text-style big operators, which
+  lualatex centres on the math axis 0.02 bp off their line's baseline — a
+  placement difference the order level's exact-baseline grouping reads as
+  a reading-order one.
 
 ## The probe whose pairing is not yet declared alike
 

@@ -1,0 +1,14 @@
+fixture: mathsym
+compiles: yes
+pdf-key: ADA612B013BA110E8FE7778CEFE2A63C
+pdf-size: 15322
+src-key: B7E35BD1FA4775D7760BC125DB87B7A9
+src-body-key: F0D6925DED0ADBD090FF9456FC93DACE
+ref-src-key: 3FEC8209518258A3A56539936D34CC31
+engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
+format: LaTeX2e <2025-11-01>
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=mathsym.ref \pdfvariable trailerid{[<3FEC8209518258A3A56539936D34CC31> <3FEC8209518258A3A56539936D34CC31>]}\input{mathsym.ref.tex}
+inputs: ./mathsym.ref.tex=3FEC8209518258A3A56539936D34CC31 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D ../corpus/fonts/FiraMath-Regular.otf=F3679A96A22E06D6F7FE6170BF36B968
+pages: 1
+overfull: 0
+provenance: every math symbol the engine's table sets that neither AMS package declares and the shipped math face draws, ten to a line; the reference sets each through unicode-math from the same face, so census and order hold exactly when the table names the scalar lualatex sets

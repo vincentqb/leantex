@@ -167,9 +167,10 @@ def ctrlAtom : List (String × MathClass × Char) :=
    ("angle", .ord, '\u2220'), ("top", .ord, '\u22A4'),
    ("bot", .ord, '\u22A5'), ("prime", .ord, '\u2032'),
    ("backslash", .ord, '\\'),
-   -- inner: the dotses, TeX's \mathinner forms
+   -- inner: the dotses, TeX's \mathinner forms; `\vdots` is a `\vbox`
+   -- (fontmath.ltx), which TeX sets as an ordinary atom
    ("ldots", .inner, '…'), ("dots", .inner, '…'),
-   ("cdots", .inner, '\u22EF'), ("vdots", .inner, '\u22EE'),
+   ("cdots", .inner, '\u22EF'), ("vdots", .ord, '\u22EE'),
    ("ddots", .inner, '\u22F1'),
    -- big operators: Op atoms; display-size variants and above/below limits
    -- are the layout's, per atom `limits` (see `limitOps`)
@@ -210,7 +211,7 @@ style — TeX's `\displaylimits` default for every `\mathop` except the
 integrals, which plain TeX declares `\nolimits` (TeXbook p. 144). -/
 def limitOps : List String :=
   ["sum", "prod", "coprod", "bigcup", "bigcap", "bigvee", "bigwedge",
-   "bigoplus", "bigotimes"]
+   "bigoplus", "bigotimes", "bigodot", "bigsqcup", "biguplus"]
 
 /-- The named functions TeX sets upright (TeXbook p. 162): Op atoms whose
 nucleus is a word. -/

@@ -1,11 +1,14 @@
 /-
-Regenerate LeanTex/Core/MathSymData.lean: the math symbols a package
-declares, each with the scalar lualatex sets for it under OpenType math.
-Run with:
+Regenerate LeanTex/Core/MathSymData.lean: the math symbols the kernel and
+two packages declare, each with the scalar lualatex sets for it under
+OpenType math. Run from the repository root with:
 
   lake env lean --run scripts/gen-mathsym-data.lean
 
 Sources, located with kpsewhich and never vendored:
+- fontmath.ltx (the LaTeX kernel's math font setup) for the class of each
+  symbol the manual's "Math formulas" chapter documents — the names
+  `tests/coverage/latex2e-index.txt` records there;
 - amsfonts.sty and amssymb.sty (AMS, LPPL-compatible notice in each file):
   a `\DeclareMathSymbol{\name}{\mathclass}{font}{"slot}` is the package's
   own statement of what the command is — its TeX atom class, and its glyph
@@ -16,17 +19,20 @@ Sources, located with kpsewhich and never vendored:
   (`\protected\def\hbar{\hslash}`) and its normal-style alphabet positions
   (`\usv_set:nnn {normal} {varkappa} {"1D718}`).
 
-A row's class is the declaring package's (a parameterless composite takes
+A row's class is the declaring file's (a parameterless composite takes
 the class of the `\mathrel{…}` it opens with, else unicode-math's); its
 scalar is unicode-math's, found by the first rule that answers:
-1. unicode-math's table names the command;
-2. unicode-math aliases the command to a name its table has;
-3. unicode-math's normal-style alphabet places it;
-4. the package `\global\let`s it to a resolved command;
-5. the package declares it at a font slot a resolved command occupies;
-6. `renamed`: unicode-math sets the same glyph under another name.
-A declared command no rule answers is refused and listed: the engine sets
-nothing it cannot name a scalar for.
+1. unicode-math's normal-style alphabet places the name — the position its
+   default `math-style=TeX` sets, ahead of the table (so ∂ sets italic);
+2. unicode-math's table names the command;
+3. unicode-math aliases the command to a name its table has;
+4. `renamed`: unicode-math sets the same glyph under another name;
+5. the package `\global\let`s it to a command a rule above resolved;
+6. the package declares it at a font slot such a command occupies.
+A package's declared command no rule answers is refused and listed: the
+engine sets nothing it cannot name a scalar for. A kernel name no rule
+answers, or answers with an accent, radical or fence, is a construct the
+parser reads structurally, and is not a row.
 -/
 import Std.Data.HashMap
 
@@ -62,6 +68,11 @@ def renamed : List (String × String) :=
 
 /-- The packages read, in load order: amssymb loads amsfonts first. -/
 def packages : List String := ["amsfonts", "amssymb"]
+
+/-- Kernel commands unicode-math's table lists with a symbol class although
+LaTeX defines them to take an argument (latex.ltx: `\sqrt[…]{…}`): the
+parser reads them structurally, so they are not symbol rows. -/
+def kernelConstructs : List String := ["sqrt"]
 
 /-- A line with its TeX comment removed. -/
 def uncomment (line : String) : String := Id.run do
@@ -121,6 +132,18 @@ inductive Decl where
 def Decl.name : Decl → String
   | .sym n _ _ | .alias n _ | .composite n _ => n
 
+/-- The class a parameterless definition's body declares by what it opens
+with: an explicit `\mathrel{…}` and its siblings, or a box or group, which
+TeX sets as an ordinary atom; empty when the body says nothing. -/
+def compositeClass (body : String) : String :=
+  let b := body.trimAscii.toString
+  let lead := [("\\mathinner", "mathinner"), ("\\mathrel", "mathrel"), ("\\mathbin", "mathbin"),
+    ("\\mathopen", "mathopen"), ("\\mathclose", "mathclose"), ("\\mathop", "mathop"),
+    ("\\mathpunct", "mathpunct"), ("\\mathord", "mathord"), ("\\mathit", "mathord"),
+    ("\\noexpand\\mathhexbox", "mathord"), ("\\vbox", "mathord"), ("\\hbox", "mathord"),
+    ("{", "mathord")]
+  ((lead.find? fun (p, _) => b.startsWith p).map (·.2)).getD ""
+
 /-- The symbol declarations of one package file, in file order. -/
 def declsOf (text : String) : Array Decl := Id.run do
   let body := String.intercalate "\n" ((text.splitOn "\n").map uncomment)
@@ -154,10 +177,18 @@ def declsOf (text : String) : Array Decl := Id.run do
       if let some name := ctrlWord piece then
         let rest := (piece.trimAscii.toString.drop (name.length + 1)).toString
         if rest.startsWith "{" then
-          let inner := ((groups rest 1).headD "").trimAscii.toString
-          let cls := if inner.startsWith "\\mathrel" then "mathrel"
-            else if inner.startsWith "\\noexpand\\mathhexbox" then "mathord" else ""
-          out := out.push (pos, .composite name cls)
+          out := out.push (pos, .composite name (compositeClass ((groups rest 1).headD "")))
+  -- The kernel spells its composites `\DeclareRobustCommand\name{…}`, the
+  -- name braced or not and the body on the next line or not; one that takes
+  -- an argument is a construct, not a symbol.
+  for (pos, piece) in at_ "\\DeclareRobustCommand" do
+    let p := piece.trimAscii.toString
+    let p := if p.startsWith "{" then (p.drop 1).toString else p
+    if let some name := ctrlWord p then
+      let rest := (p.drop (name.length + 1)).toString
+      let rest := (if rest.startsWith "}" then (rest.drop 1).toString else rest).trimAscii.toString
+      if rest.startsWith "{" then
+        out := out.push (pos, .composite name (compositeClass ((groups rest 1).headD "")))
   return (out.qsort (·.1 < ·.1)).map (·.2)
 
 /-- unicode-math's table: name ↦ (scalar, class). -/
@@ -240,12 +271,26 @@ def strList (xs : Array String) : String := Id.run do
   return out ++ "]"
 
 def provides (text : String) : String :=
-  match (text.splitOn "\\ProvidesPackage").drop 1 with
+  let kw := if (text.splitOn "\\ProvidesPackage").length > 1 then "\\ProvidesPackage" else "\\ProvidesFile"
+  match (text.splitOn kw).drop 1 with
   | piece :: _ =>
     let g := groups piece 1
     let rest := (piece.dropWhile (· != '}')).drop 1
-    s!"{g.headD ""} {((rest.toString.dropWhile (· != '[')).drop 1).takeWhile (· != ']')}"
+    let stamp := ((rest.toString.dropWhile (· != '[')).drop 1).takeWhile (· != ']')
+    s!"{g.headD ""} {" ".intercalate ((stamp.toString.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty))}"
   | [] => "?"
+
+/-- The kernel's documented math symbols: the names the LaTeX2e manual's
+"Math formulas" chapter indexes, as `tests/coverage/latex2e-index.txt`
+records them, that lualatex confirmed as a math symbol or a command. The
+rows it confirmed only as an error stub are the packages' to declare. -/
+def kernelNames (index : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for line in index.splitOn "\n" do
+    match line.splitOn "\t" with
+    | [n, "Math formulas", m] => if m == "math_given" || m == "call" then out := out.push n
+    | _ => pure ()
+  return out
 
 def main : IO UInt32 := do
   let umT ← IO.FS.readFile (← locate "unicode-math-table.tex")
@@ -260,6 +305,35 @@ def main : IO UInt32 := do
   let mut refused : Array String := #[]
   let mut names : Array (String × Array String) := #[]
   let mut stamps : Array String := #[]
+  let byName (n : String) : Option (Nat × String) :=
+    match usv[n]? with
+    | some v => some (v, "mathord")
+    | none =>
+      match table[n]? with
+      | some v => some v
+      | none =>
+        match al[n]?.bind (table[·]?) with
+        | some v => some v
+        | none => (renamed.lookup n).bind (table[·]?)
+  -- The kernel first: its documented symbols, each with the class
+  -- fontmath.ltx declares for it (unicode-math's where it declares none).
+  -- A name unicode-math answers with an accent, a radical or a fence is a
+  -- construct the parser reads structurally, not a symbol atom.
+  let fontmath ← IO.FS.readFile (← locate "fontmath.ltx")
+  stamps := stamps.push (provides fontmath)
+  let fmDecls := declsOf fontmath
+  let index ← IO.FS.readFile "tests/coverage/latex2e-index.txt"
+  stamps := stamps.push ("the kernel's documented names: tests/coverage/latex2e-index.txt, " ++
+    "chapter Math formulas")
+  for n in kernelNames index do
+    if kernelConstructs.contains n then continue
+    if let some (v, umCls) := byName n then
+      let declared := (fmDecls.findSome? fun d => match d with
+        | .sym m c _ => if m == n then some c else none
+        | .composite m c => if m == n && !c.isEmpty then some c else none
+        | _ => none).getD umCls
+      if let some cls := classOf declared then
+        unless rows.any (·.1 == n) do rows := rows.push (n, cls, v)
   for pkg in packages do
     let text ← IO.FS.readFile (← locate s!"{pkg}.sty")
     stamps := stamps.push (provides text)
@@ -271,19 +345,9 @@ def main : IO UInt32 := do
       unless seen.contains d.name do
         seen := seen.push d.name
         own := own.push d
-    let byName (n : String) : Option (Nat × String) :=
-      match table[n]? with
-      | some v => some v
-      | none =>
-        match al[n]?.bind (table[·]?) with
-        | some v => some v
-        | none =>
-          match usv[n]? with
-          | some v => some (v, "mathord")
-          | none => (renamed.lookup n).bind (table[·]?)
     let mut resolved : Std.HashMap String (Nat × String) := {}
-    -- Rules 1–3 and 6 first, then aliases and slot siblings, which read
-    -- what the first pass resolved (one level is all these packages use).
+    -- Rules 1–4 first, then aliases and slot siblings, which read what the
+    -- first pass resolved (one level is all these packages use).
     for d in own do
       if let some v := byName d.name then resolved := resolved.insert d.name v
     for d in own do
@@ -324,11 +388,11 @@ Sources, read from the TeX tree and never vendored:
 {String.intercalate "\n" (stamps.toList.map (s!"- {·}"))}
 - unicode-math {umVersion} (unicode-math-table.tex, unicode-math-luatex.sty;
   LPPL 1.3c).
-Each row is a command the package declares, its TeX atom class as the
-package declares it, and the scalar unicode-math sets for it; the rules
-that find the scalar are the generator's header. This module carries only
-data: the parser reads it through `MathParse.ctrlAtom`, and its contracts
-are checked by the suite.
+Each row is a command the kernel or a package declares, its TeX atom class
+as the declaring file gives it, and the scalar unicode-math sets for it;
+the rules that find the scalar are the generator's header. This module
+carries only data: the parser reads it through `MathParse.ctrlAtom`, and its
+contracts are checked by the suite.
 -/
 import LeanTex.Core.Math
 
@@ -336,7 +400,8 @@ namespace LeanTex.Core.MathSymData
 
 open LeanTex.Core.Math
 
-/-- The symbol rows, first declaration of a name first. -/
+/-- The symbol rows: the kernel's documented symbols, then each package's;
+the first declaration of a name stands. -/
 def rows : List (String × MathClass × Char) :=
   ["
   let mut first := true

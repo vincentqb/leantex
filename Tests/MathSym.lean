@@ -2,25 +2,38 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Cli
 
-/-- The symbols of the generated table that Fira Math, the shipped math face,
-has no glyph for: each sets from a fallback face that has one, or is dropped
-and named (E0405). A row of `MathSymData.rows` whose scalar the face lacks is
-here, and every name here is such a row — both ways, so the list is the
-face's coverage and not a guess about it. -/
+/-- The table's atoms (each name's first row in `MathParse.ctrlAtom`, the one
+`lookup` answers) that Fira Math, the shipped math face, has no glyph for:
+each sets from a fallback face that has one, or is dropped and named
+(E0405). An atom whose scalar the face lacks is here, and every name here
+is such an atom — both ways, so the list is the face's coverage and not a
+guess about it. -/
 def firaGaps : List String :=
-  ["checkmark", "maltese", "ulcorner", "urcorner", "llcorner", "lrcorner", "vartriangleright",
-   "vartriangleleft", "trianglerighteq", "trianglelefteq", "lhd", "unlhd", "rhd", "unrhd",
-   "Join", "boxdot", "boxplus", "boxtimes", "blacklozenge", "boxminus", "Vdash", "Vvdash",
-   "vDash", "circeq", "gtrapprox", "multimap", "triangleq", "lessapprox", "eqslantless",
-   "eqslantgtr", "bigstar", "between", "blacktriangledown", "vartriangle", "blacktriangle",
-   "triangledown", "eqcirc", "lesseqqgtr", "gtreqqless", "veebar", "barwedge", "doublebarwedge",
-   "Subset", "Supset", "Cup", "doublecup", "Cap", "doublecap", "leftthreetimes",
-   "rightthreetimes", "subseteqq", "supseteqq", "bumpeq", "Bumpeq", "pitchfork", "intercal",
-   "circledcirc", "circledast", "circleddash", "lneq", "gneq", "precneqq", "succneqq",
-   "precnapprox", "succnapprox", "lnapprox", "gnapprox", "diagup", "diagdown", "subsetneqq",
-   "supsetneqq", "nvdash", "nVdash", "nvDash", "nVDash", "ntrianglerighteq", "ntrianglelefteq",
-   "ntriangleleft", "ntriangleright", "divideontimes", "Finv", "Game", "ltimes", "rtimes",
-   "succapprox", "precapprox", "digamma"]
+  ["star", "setminus", "Re", "Im", "wp", "top", "bot", "vdots", "ddots", "bigcup", "bigcap",
+   "bigvee", "bigwedge", "bigoplus", "bigotimes", "amalg", "asymp", "bigodot", "bigsqcup",
+   "bigtriangledown", "bigtriangleup", "biguplus", "bowtie", "dashv", "diamond", "diamondsuit",
+   "flat", "frown", "heartsuit", "models", "natural", "preceq", "sharp", "smile", "succeq",
+   "triangleleft", "triangleright", "vdash", "checkmark", "maltese", "ulcorner", "urcorner",
+   "llcorner", "lrcorner", "vartriangleright", "vartriangleleft", "trianglerighteq",
+   "trianglelefteq", "lhd", "unlhd", "rhd", "unrhd", "Join", "boxdot", "boxplus", "boxtimes",
+   "blacklozenge", "boxminus", "Vdash", "Vvdash", "vDash", "circeq", "gtrapprox", "multimap",
+   "triangleq", "lessapprox", "eqslantless", "eqslantgtr", "bigstar", "between",
+   "blacktriangledown", "vartriangle", "blacktriangle", "triangledown", "eqcirc", "lesseqqgtr",
+   "gtreqqless", "veebar", "barwedge", "doublebarwedge", "Subset", "Supset", "Cup", "doublecup",
+   "Cap", "doublecap", "leftthreetimes", "rightthreetimes", "subseteqq", "supseteqq", "bumpeq",
+   "Bumpeq", "pitchfork", "intercal", "circledcirc", "circledast", "circleddash", "lneq", "gneq",
+   "precneqq", "succneqq", "precnapprox", "succnapprox", "lnapprox", "gnapprox", "diagup",
+   "diagdown", "subsetneqq", "supsetneqq", "nvdash", "nVdash", "nvDash", "nVDash",
+   "ntrianglerighteq", "ntrianglelefteq", "ntriangleleft", "ntriangleright", "divideontimes",
+   "Finv", "Game", "ltimes", "rtimes", "succapprox", "precapprox", "digamma"]
+
+/-- Hand rows of `MathParse.ctrlAtom` that shadow a generated row saying
+otherwise: the hand row is what the engine sets, and the difference is a
+decision recorded here, both ways — an undeclared disagreement fails, and
+so does a declaration whose rows have come to agree. -/
+def handDivergences : List (String × String) :=
+  [("bullet", "the engine sets U+2219 BULLET OPERATOR, the binary operator; \
+unicode-math sets U+2022 BULLET, its \\smblkcircle")]
 
 /-- The index rows of one package whose call is exactly one math symbol,
 `$\name$`: name ↦ verdict, in file order. -/
@@ -77,13 +90,15 @@ The index side: `tests/compat-index/<pkg>.txt` carries one row per symbol
 command the package declares (`MathSymData.<pkg>`, read off the package file
 by the generator), and a row is `impl` exactly when the table sets the name
 and `refuse:W0012` exactly when it refuses it — a missing row, a stray one or
-a verdict the table contradicts fails. The table side: a name both the hand
-rows and the generated rows carry is one atom, since `lookup` returns the
-hand row and a disagreement would be a silent override; and a refused name
-is unknown to the parser, which is what makes its W0012 the refusal it
-declares. The face side: every generated scalar has a glyph in the shipped
-math face or is one of `firaGaps`, and a gap reaches the page as a named
-loss, never as silence. -/
+a verdict the table contradicts fails. The table side: a hand row that
+shadows a generated one says the same or is a declared divergence, since
+`lookup` returns the hand row and a disagreement would be a silent override;
+no symbol row is a name the parser reads structurally, where the row would
+be dead or would change what a script argument means; and a refused name is
+unknown to the parser, which is what makes its W0012 the refusal it
+declares. The face side: every atom the table sets has a glyph in the
+shipped math face or is one of `firaGaps`, and a gap reaches the page as a
+named loss, never as silence. -/
 def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (pkg, documented) in [("amsfonts", MathSymData.amsfonts), ("amssymb", MathSymData.amssymb)] do
@@ -102,16 +117,29 @@ def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let hand := MathParse.ctrlAtom.take (MathParse.ctrlAtom.length - gen.length)
   t "the generated rows are the tail of ctrlAtom"
     (MathParse.ctrlAtom.drop hand.length == gen)
-  for (n, cls, c) in gen do
-    if let some (cls', c') := hand.lookup n then
-      t s!"\\{n}: the hand row shadows a generated row that says otherwise"
-        (cls == cls' && c == c')
+  let disagree := gen.filter fun (n, cls, c) => match hand.lookup n with
+    | some (cls', c') => cls != cls' || c != c'
+    | none => false
+  for (n, _, _) in disagree do
+    t s!"\\{n}: the hand row shadows a generated row that says otherwise, undeclared"
+      (handDivergences.any (·.1 == n))
+  for (n, _) in handDivergences do
+    t s!"handDivergences lists \\{n}, whose hand row agrees with its generated row"
+      (disagree.any (·.1 == n))
+  for (n, _, _) in gen do
+    t s!"\\{n} is a symbol row the parser reads structurally first"
+      (!MathParse.structuralCtrl.contains n && (MathParse.alphaCtrl.lookup n).isNone &&
+        (MathParse.accentCtrl.lookup n).isNone && (MathParse.ctrlSpace.lookup n).isNone &&
+        (MathParse.ctrlWord.lookup n).isNone)
   for n in MathSymData.refused do
     t s!"\\{n} is refused yet the parser knows it" (!MathParse.knownCtrl n)
   let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"math symbols: FiraMath unparsable: {e}")
-  let uncovered := gen.filter fun (_, _, c) => (fira.gid c).isNone
+  -- The atoms `lookup` answers: each name's first row.
+  let effective := MathParse.ctrlAtom.foldl (fun acc r =>
+    if acc.any (·.1 == r.1) then acc else acc.push r) #[]
+  let uncovered := effective.filter fun (_, _, c) => (fira.gid c).isNone
   for (n, _, c) in uncovered do
     t s!"Fira Math has no glyph for \\{n} (U+{String.ofList (Nat.toDigits 16 c.toNat)}), \
 and firaGaps does not say so" (firaGaps.contains n)
@@ -136,16 +164,17 @@ and firaGaps does not say so" (firaGaps.contains n)
   t "a covered symbol inks its own scalar" (ink.contains '\u2A7D')
   t "a covered symbol raises no glyph loss"
     (!ds.any fun d => d.code == "E0405" || d.code == "W0009")
-  -- The parity fixture's engine half, in HTML: the MathML leaves are the
+  -- The parity fixtures' engine halves, in HTML: the MathML leaves are the
   -- table's atoms in the source's order — each scalar, under the leaf its
-  -- class maps to. The parity tier holds the PDF of the same source to
+  -- class maps to. The parity tier holds the PDF of the same sources to
   -- lualatex's scalars, so the two artifacts agree through the one table.
-  let src ← IO.FS.readFile "tests/parity/amssymb.tex"
-  let calls := symbolCalls src
-  let want := calls.filterMap fun n => (MathParse.ctrlAtom.lookup n).map fun (cls, c) =>
-    (MathMl.leafTag cls c, String.ofList [c])
-  t "the parity fixture spells every symbol it sets through the table"
-    (!calls.isEmpty && want.size == calls.size)
-  let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
-  t "the fixture's HTML sets each symbol as the table's leaf, in order"
-    (mathLeavesList #[] body.toList == want)
+  for fixture in ["amssymb", "mathsym"] do
+    let src ← IO.FS.readFile s!"tests/parity/{fixture}.tex"
+    let calls := symbolCalls src
+    let want := calls.filterMap fun n => (MathParse.ctrlAtom.lookup n).map fun (cls, c) =>
+      (MathMl.leafTag cls c, String.ofList [c])
+    t s!"parity fixture {fixture}: every symbol it sets is spelled through the table"
+      (!calls.isEmpty && want.size == calls.size)
+    let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
+    t s!"parity fixture {fixture}: the HTML sets each symbol as the table's leaf, in order"
+      (mathLeavesList #[] body.toList == want)

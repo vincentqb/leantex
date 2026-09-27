@@ -1,0 +1,48 @@
+% The reference half of mathsym.tex: the same symbols, ten to a line,
+% spelled alike, set through unicode-math from the shipped Fira Math.
+% Geometry, body size and paragraph gap are declared as in prose.ref.tex.
+\documentclass{article}
+\usepackage[letterpaper,margin=72bp]{geometry}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/]
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6bp}
+\pagestyle{plain}
+\AtBeginDocument{\fontsize{10bp}{12bp}\selectfont}
+\begin{document}
+$\alpha$ $\beta$ $\gamma$ $\delta$ $\epsilon$ $\varepsilon$ $\zeta$ $\eta$ $\theta$ $\vartheta$
+
+$\iota$ $\kappa$ $\lambda$ $\mu$ $\nu$ $\xi$ $\pi$ $\varpi$ $\rho$ $\varrho$
+
+$\sigma$ $\varsigma$ $\tau$ $\upsilon$ $\phi$ $\varphi$ $\chi$ $\psi$ $\omega$ $\Gamma$
+
+$\Delta$ $\Theta$ $\Lambda$ $\Xi$ $\Pi$ $\Sigma$ $\Upsilon$ $\Phi$ $\Psi$ $\Omega$
+
+$\times$ $\cdot$ $\pm$ $\mp$ $\div$ $\ast$ $\circ$ $\cup$ $\cap$ $\wedge$
+
+$\land$ $\vee$ $\lor$ $\oplus$ $\ominus$ $\otimes$ $\odot$ $\le$ $\leq$ $\ge$
+
+$\geq$ $\ne$ $\neq$ $\equiv$ $\sim$ $\simeq$ $\approx$ $\cong$ $\propto$ $\subset$
+
+$\supset$ $\subseteq$ $\supseteq$ $\in$ $\notin$ $\ni$ $\ll$ $\gg$ $\prec$ $\succ$
+
+$\mid$ $\parallel$ $\perp$ $\to$ $\rightarrow$ $\leftarrow$ $\gets$ $\mapsto$ $\leftrightarrow$ $\Rightarrow$
+
+$\Leftarrow$ $\Leftrightarrow$ $\iff$ $\infty$ $\partial$ $\nabla$ $\forall$ $\exists$ $\neg$ $\lnot$
+
+$\emptyset$ $\ell$ $\aleph$ $\prime$ $\backslash$ $\ldots$ $\dots$ $\cdots$ $\langle$ $\rangle$
+
+$\lfloor$ $\rfloor$ $\lceil$ $\rceil$ $\vert$ $\Vert$ $\Downarrow$ $\Uparrow$ $\Updownarrow$ $\bigcirc$
+
+$\clubsuit$ $\dagger$ $\ddagger$ $\doteq$ $\downarrow$ $\hookleftarrow$ $\hookrightarrow$ $\imath$ $\jmath$ $\lbrace$
+
+$\lbrack$ $\leftharpoondown$ $\leftharpoonup$ $\longleftarrow$ $\longleftrightarrow$ $\longmapsto$ $\longrightarrow$ $\mathdollar$ $\mathparagraph$ $\mathsection$
+
+$\mathsterling$ $\nearrow$ $\nwarrow$ $\oslash$ $\owns$ $\rbrace$ $\rbrack$ $\rightharpoondown$ $\rightharpoonup$ $\searrow$
+
+$\spadesuit$ $\sqcap$ $\sqcup$ $\sqsubseteq$ $\sqsupseteq$ $\surd$ $\swarrow$ $\uparrow$ $\updownarrow$ $\uplus$
+
+$\wr$
+\end{document}
