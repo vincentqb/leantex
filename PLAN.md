@@ -21216,3 +21216,125 @@ the PDF's text fills):
 - Picture labels are still judged by nothing: a label-only pairing (the
   private deck's one) ships unjudged. `Pic.fillUnder` is the ground the
   judge's picture arm would read.
+
+
+### 2026-09-27 — a printed deck loses nothing and wastes no sheet: paper has no scroll
+
+review-b's DECK-1: the deck's stage rule (`height: 100dvh; overflow-y:
+auto`) moved to the stage partition, which applies on paper too, and a
+scroll container is monolithic in fragmentation (CSS Fragmentation 3
+§4.1), so a frame that ran past its sheet was cut at the sheet's edge.
+Reproduced at `ae063c0b` with the reviewer's synthetic probe (one
+`[allowframebreaks]` frame of 30 items), printed from Chromium 151 with the
+page's size preferred and backgrounds off: 14 of 30 items on 2 sheets,
+where the PDF sets all 30 on 3 pages. Two corpus decks spill the same way:
+`themed` lost its items fifteen to eighteen, `valign` the last three lines
+of its overflowing frame.
+
+**The invariant, on the typed rules.** `print_lifts_stage_bounds_covers`:
+every bound a stage rule declares (`stageBounds`: `height`, `overflow-y`)
+is lifted by an ungated print rule at its own selector, which the print
+partition's later position wins by source order. Evaluated over
+`ae063c0b`'s rules it is false (the stage rule, for a stepless and a
+stepped deck); with the lift's `overflow-y: visible` deleted the build
+fails. `_covers`, the shape of `guards_by_construction`: a stage rule
+that declares a bound enters the contract when it is written.
+
+**The rule on paper.** A stage opens and ends its sheet, grows with its
+content (`height: auto; min-height: 100dvh; overflow-y: visible`), and
+a frame that runs long breaks between its lines onto the next sheet, each
+continuation opening below the safe area on the stage's ground
+(`box-decoration-break: clone`, CSS Fragmentation 3 §5.4); the root paints
+the stage's ground where a last continuation leaves its sheet unfilled
+(measured on a dark-ground probe: the tail was white, 255/255/255, and is
+now the ground). The branch's first cut of this rule made two new defects,
+both measured and fixed before landing:
+- three blank sheets in a 31-frame deck: frames whose content fit the
+  sheet but not the sheet less its bottom safe area grew by that padding
+  alone. On paper a frame's bottom safe area is now a trailing spacer
+  (`printFrameEnd`) that takes its whole safe area from the leftover first
+  (`printEndGrow`, a hundredfold over every declared distribution:
+  `printEndGrow_outranks_contract`) and gives it back when the content
+  needs the room, so only content longer than the sheet continues;
+- an unthemed deck's section heading, which a stage that could not split
+  used to push onto a sheet of its own, shared one with the next frame and
+  sent that frame's empty tail to a blank sheet (`deck`, `trio-deck`). A
+  stage now breaks before as well as after.
+
+Measured with the shipped binary on the 22 buildable corpus decks: every
+deck that does not spill prints pixel-identical to `ae063c0b` at 2% fuzz
+(ImageMagick `compare -metric AE`, 110 dpi, every sheet), save
+`footer-collide`, whose two sheets move about 2 pt toward the PDF's
+positions (its stage is no longer a scroll container on paper; the cause
+is inferred, the positions are `pdftotext -bbox`); `themed` prints 7
+sheets for 6 and `valign` 6 for 5, their continuations.
+
+**Declared differences from the PDF.** The HTML has no layout pass to
+know where a sheet breaks, so a continuation sheet repeats neither the
+frame's title band nor its footer, and a non-final continuation's last
+line may stand at the sheet's bottom edge; a frame that overruns its sheet
+by less than the safe area sets its last line that much nearer the edge.
+reveal.js's print export does the same (a slide taller than a page
+expands onto the next).
+
+**The guards, on the artifact.** The reader oracle prints every corpus
+deck once and reads paper back with `pdftotext` (now on the tools line):
+- `print-spill`: a deck with a stage taller than its sheet prints every
+  letter and digit its page lays out — the multiset, NFKC and case folded.
+  It fails on `ae063c0b` on `themed` (142 characters) and `valign` (242).
+- `print-sheets`: no sheet goes to paper blank, beyond one per stage that
+  lays out no text. It fails on the branch's first commit, `cc157d89`, on
+  `deck` and `trio-deck` (1 blank sheet each), and passes on `ae063c0b`.
+A corpus with no spilling deck leaves `print-spill` untested, which the
+check and the `htmlreader` tier count against. No corpus deck overruns by
+less than its safe area, so that blank-sheet mechanism is guarded by the
+row but witnessed only by the private reference deck (below); a fixture
+that holds a frame inside that window would drift out of it with the
+next rhythm change, which is why none was added.
+
+**A correction to the brief.** It proposed the printed census "equals the
+PDF's" (`pdftotext`, both ways). Measured on the 22 decks at `ae063c0b`,
+a word census of paper against the engine's PDF flags five decks for
+differences that are not print loss — a superscript read as one token
+beside its base (`deck`), page numbers the HTML cannot show
+(`footer-mixed`), the alternation print shows one group of
+(`overprint`), a date `pdftotext` dehyphenates (`titleground`), and a note
+deliberately wider than the page in both artifacts (`footer-collide`) —
+and it is blind to a lost line whose words repeat (`valign` at the base
+lost three lines and the census saw only its frame number). The judge
+censuses paper against the page's own layout instead, one renderer both
+ways; the backends' agreement on content is the census checks' over the
+IR, already in `lake test`. The review also said the private deck has no
+spilling frame; in HTML it has four stages taller than the sheet.
+
+**The private reference deck** (acceptance, out of the repository):
+printed at `ae063c0b`, 31 sheets and 90 laid-out characters missing on
+paper; at `cc157d89`, 35 sheets, 3 of them blank; at this branch's tip,
+32 sheets, none blank. Three characters still read short, none a print
+loss: two tofu boxes where the deck's math face has no glyph for a
+mathematical script capital (both media; a synthetic article on the
+default math face draws the same capitals), and a picture label clipped
+at its SVG's left edge (at the base too).
+
+**Routed.**
+- The HTML shows a tofu box for a mathematical script capital the private
+  deck's math face lacks, where the PDF draws the glyph: the HTML's math
+  font stack has no fallback for a face's gap (HtmlDoc's math font stack,
+  the fonts owner).
+- `pre`'s `overflow-x: auto` clips a long code line on paper in every
+  class (a synthetic article printed "…the measure of t"): the base
+  sheet's print block owes the same lift (HtmlDoc's typography CSS).
+- The deck's gaps are in `rem` while its type rides the stage in `vh`, so
+  the rhythm's proportion to the type changes with the viewport: on paper
+  1rem is about 1.09 em of the deck's 11 pt type, on a 720 px screen 0.52.
+  This is why HTML frames overrun sheets the PDF's frames fit (the gap and
+  typography CSS, rhythm's owners).
+- beamer titles a breaking frame's pages with `\insertcontinuationcountroman`
+  (the default `frametitle continuation` template, beamerbaseframe.sty
+  l.186); the engine's continuation pages repeat the bare title (Layout's
+  frame arm).
+
+**The user's.** Whether a continuation sheet should repeat its frame's
+title band — which the HTML cannot without a layout pass or a second copy
+of the title in the tree — and whether a frame that overruns its sheet by
+less than its safe area may take that room, as now, or should continue.
