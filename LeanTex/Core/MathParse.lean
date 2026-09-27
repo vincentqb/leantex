@@ -741,6 +741,15 @@ private def skipNamedArg (toks : Array MTok) (i : Nat) (cmd : String) :
   let some .closeGrp := toks[j]? | throw "an unbalanced group"
   return (name, j + 1)
 
+/-- One atom joins the list: on its own when nothing is pending, otherwise
+through the pending chain's resolution. Every site that emits an atom goes
+through here, so a new one cannot land an atom past a pending script,
+accent or alphabet. -/
+private def joinAtom (acc : Array MItem) (pending : List Dest) (atom : MItem) :
+    Except String (Array MItem × List Dest) :=
+  if pending.isEmpty then return (acc.push atom, pending)
+  else resolveChain acc pending (.cons atom .nil)
+
 /-- amsmath's even alignment columns open with an empty Ord (`{}#` in
 `\align@preamble`, amsmath.dtx), so a cell beginning with a relation keeps
 its thick space and a leading `+` stays binary. -/
@@ -1027,12 +1036,9 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       let some .closeGrp := toks[j]? | throw "an unbalanced group"
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
       let atom : MItem := .atom cls (.word s) .nil .nil false
-      if pending.isEmpty then
-        acc := acc.push atom
-      else
-        let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
-        acc := acc'
-        pending := pending'
+      let (acc', pending') ← joinAtom acc pending atom
+      acc := acc'
+      pending := pending'
       i := j + 1
     | .ctrl n =>
       if n == "textcolor" then
@@ -1062,12 +1068,9 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       | none =>
         match tokAtom tok with
         | some atom =>
-          if pending.isEmpty then
-            acc := acc.push atom
-          else
-            let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
-            acc := acc'
-            pending := pending'
+          let (acc', pending') ← joinAtom acc pending atom
+          acc := acc'
+          pending := pending'
           i := i + 1
         | none => throw (tokName tok)
     | .ch '\'' =>
@@ -1077,12 +1080,9 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
     | .ch _ =>
       match tokAtom tok with
       | some atom =>
-        if pending.isEmpty then
-          acc := acc.push atom
-        else
-          let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
-          acc := acc'
-          pending := pending'
+        let (acc', pending') ← joinAtom acc pending atom
+        acc := acc'
+        pending := pending'
         i := i + 1
       | none => throw (tokName tok)
   unless pending.isEmpty do throw "a trailing script mark"
