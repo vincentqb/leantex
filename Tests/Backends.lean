@@ -1048,7 +1048,9 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Print pages the stages: the stage, its type and its furniture hold on
   -- both media (the `@media screen, print` block), the sheet is the PDF's
   -- page (160 × 90 mm, the MediaBox's own points), every stage ends its
-  -- sheet, and the card the handout drew is gone.
+  -- sheet and grows onto the next rather than clip what runs long, the
+  -- sheet a continuation leaves unfilled keeps the stage's ground, and the
+  -- card the handout drew is gone.
   let printOf (page : String) : String :=
     (((page.splitOn "@media print {").getD 1 "").splitOn "\n}\n").headD ""
   let stageOf (page : String) : String :=
@@ -1056,7 +1058,11 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the deck prints its stages, one per sheet, on the PDF's page"
     (has (printOf deckPage) "@page { size: 453.543pt 255.118pt; margin: 0; }" &&
      has (printOf deckPage) ("section.slide, section.section-page { break-after: page; " ++
-       "break-inside: avoid; print-color-adjust: exact; }") &&
+       "height: auto; min-height: 100dvh; overflow-y: visible; " ++
+       "box-decoration-break: clone; print-color-adjust: exact; }") &&
+     has (printOf deckPage) ("html { background: var(--bg, var(--surface)); " ++
+       "print-color-adjust: exact; }") &&
+     !has (printOf deckPage) "break-inside" &&
      has (stageOf deckPage) "section.slide, section.section-page { width: 100vw;" &&
      has (stageOf deckPage) "main { max-width: none; margin: 0; font-size: " &&
      !has (stageOf deckPage) "scroll-snap" &&

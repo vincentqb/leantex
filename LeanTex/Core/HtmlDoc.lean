@@ -1946,7 +1946,9 @@ narrows the viewport under it), one stage tall, its ground and ink the
 declared pair in force (`stageGround`, `stageInk`) — opaque on every path,
 the user's own rule — and content that spills the stage stays reachable
 through the frame's own scroll (`overflow-y: auto`; the scrollbar is the
-visible control, the honest floor). `position: relative` anchors the
+visible control, the honest floor). Paper has no scroll, so print lifts
+the bound and the stage grows onto the next sheet
+(`print_lifts_stage_bounds_covers`). `position: relative` anchors the
 stage's own furniture (`deckLogoRule`); in a stepped track the sticky
 override (`stepStageRule`, higher specificity) is a positioned box
 already. -/
@@ -2468,19 +2470,44 @@ two numbers `Pdf.ptObj` writes the MediaBox with. -/
 def deckPageSize (page : PageSpec) : String :=
   s!"{page.width.toPtString}pt {page.height.toPtString}pt"
 
+/-- A stage on paper: it ends its sheet, and it grows with its content
+instead of clipping it — `height` and `overflow-y` lifted
+(`print_lifts_stage_bounds_covers`), one sheet tall at least
+(`min-height`), so a frame that fits still fills its sheet, its declared
+distribution and its furniture where the screen puts them. A frame that
+runs long breaks between its lines onto the next sheet, as the PDF's
+continuation pages do, and each continuation sheet keeps the stage's
+safe-area padding and ground (`box-decoration-break: clone`, CSS
+Fragmentation 3 §5.4). The ground is the author's, not decoration a
+reader's toner setting may drop (`print-color-adjust: exact`, CSS Color
+Adjustment 1 §3.1). What the PDF adds on a continuation page and a sheet
+cannot is the frame's title band: the HTML has no layout pass to know
+where a sheet breaks, so the title stands once, where the frame opens. -/
+def printStageRule : DeckRule :=
+  { selector := [.lit "section.slide, section.section-page"]
+    decls := [("break-after", "page"), ("height", "auto"), ("min-height", "100dvh"),
+      ("overflow-y", "visible"), ("box-decoration-break", "clone"),
+      ("print-color-adjust", "exact")]
+    part := .print }
+
+/-- The sheet's own ground: where a frame's last continuation leaves its
+sheet unfilled, the page shows the stage's ground (`stageGround`), not
+white paper — the PDF paints the ground on every page of a frame. The
+root carries it on every sheet, exactly, and the adjustment inherits. -/
+def printSheetGround : DeckRule :=
+  { selector := [.lit "html"]
+    decls := [("background", stageGround), ("print-color-adjust", "exact")]
+    part := .print }
+
 /-- The print partition: the screen deck's stages, paged — the stage
-partition carries their box, type and furniture onto paper. Every stage
-(a frame, a section page) ends its sheet and never splits, and keeps its
-declared ground (`print-color-adjust: exact`, CSS Color Adjustment 1
-§3.1: the ground is the author's, not decoration a reader's toner setting
-may drop). For a stepped deck the snap spacers hide and every step prints
-at full colour: paper has no steps to reveal (the user's own rule, beside
-the unconditional covered floor it was written against). -/
+partition carries their box, type and furniture onto paper, and the stage
+itself grows onto as many sheets as its content needs
+(`printStageRule`, `printSheetGround`). For a stepped deck the snap
+spacers hide and every step prints at full colour: paper has no steps to
+reveal (the user's own rule, beside the unconditional covered floor it
+was written against). -/
 def deckPrint (maxSteps : Nat) : List DeckRule :=
-  [ { selector := [.lit "section.slide, section.section-page"]
-      decls := [("break-after", "page"), ("break-inside", "avoid"),
-        ("print-color-adjust", "exact")]
-      part := .print } ] ++
+  [printStageRule, printSheetGround] ++
     (if 2 ≤ maxSteps then
       [ { selector := [.lit ".snap"], decls := [("display", "none")]
           part := .print },
@@ -2691,7 +2718,12 @@ Firefox 101+, Safari 15.4+; 2022). The box offset properties (`bottom`,
 §7) and `print-color-adjust` (CSS Color Adjustment 1 §3.1) are print-only
 and degrade to the reader's own page and toner setting where unsupported
 — measured honoured by Chromium 151 (the page size and the grounds of a
-printed deck, `print-color-adjust` with backgrounds off). The selector
+printed deck, `print-color-adjust` with backgrounds off). The same holds
+for `box-decoration-break` (CSS Fragmentation 3 §5.4), print-only here:
+Chromium 151 clones a continuing stage's padding onto each sheet
+(measured on a printed breaking frame); where unsupported it degrades to
+`slice`, and every line still reaches paper — a continuation sheet's text
+just starts at its edge. The selector
 side of the floor is `deck_css_partition`; attribute selectors
 (`[data-snap]`, `[data-deck-script]`) are CSS 2. -/
 def baselineProps : List String :=
@@ -2702,7 +2734,7 @@ def baselineProps : List String :=
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
-   "size", "print-color-adjust",
+   "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right"]
 
 /-- Is the rule part of the floor — the CSS every engine applies? The
@@ -2803,8 +2835,11 @@ theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with rfl | h2
-    · exact fun o ho => nomatch ho
+    rcases hr2 with (rfl | rfl) | h2
+    · intro o ho
+      simp [opacityValues, printStageRule] at ho
+    · intro o ho
+      simp [opacityValues, printSheetGround] at ho
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
         rcases h2 with rfl | rfl
@@ -2917,7 +2952,85 @@ theorem guards_by_construction (v pg : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with rfl | h2
+    rcases hr2 with (rfl | rfl) | h2
+    · rfl
+    · rfl
+    · split at h2
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
+        rcases h2 with rfl | rfl <;> rfl
+      · cases h2
+
+/-- The declarations that bound a stage on screen and would clip it on
+paper, each with the value that lifts it in print. A scroll container is
+monolithic — it holds no break point, so what exceeds its box is clipped
+at the sheet's edge (CSS Fragmentation 3 §4.1) — and a fixed height stops
+the box growing with its content. Paper has no scroll: the stage grows
+instead, and breaks between its lines as the PDF's continuation pages
+do. -/
+def stageBounds : List (String × String) := [("height", "auto"), ("overflow-y", "visible")]
+
+/-- Does print-partition rule `g` lift every bound stage rule `r` declares?
+Ungated, so it holds in every engine, and at `r`'s own selector, so the
+print partition — emitted after the stage partition (`emitDeckRules`) —
+wins at equal specificity by source order (CSS Cascade 5 §6.4). -/
+def liftsOnPaper (g r : DeckRule) : Bool :=
+  g.part == Part.print && g.requires == Gate.base &&
+    renderSel g.selector == renderSel r.selector &&
+    r.decls.all fun d => match List.lookup d.1 stageBounds with
+      | none => true
+      | some lift => g.decls.contains (d.1, lift)
+
+/-- A content rule of the stage partition that declares a bound is lifted
+on paper by some rule of the searched set. -/
+def printLifts (rules : List DeckRule) (r : DeckRule) : Bool :=
+  !(r.part == Part.stage && targetsContent r &&
+      r.decls.any fun d => (List.lookup d.1 stageBounds).isSome) ||
+    rules.any fun g => liftsOnPaper g r
+
+/-- `printLifts` from one named witness. -/
+private theorem printLifts_of_lift {rules : List DeckRule} {r g : DeckRule}
+    (hg : g ∈ rules) (hl : liftsOnPaper g r = true) : printLifts rules r = true := by
+  unfold printLifts
+  rw [List.any_eq_true.mpr ⟨g, hg, hl⟩, Bool.or_true]
+
+private theorem mem_deckRules_print {r : DeckRule} {v pg : String} {cp ms : Nat}
+    (h : r ∈ deckPrint ms) : r ∈ deckRules v pg cp ms := by
+  simp only [deckRules, List.mem_append, List.mem_cons]
+  exact Or.inr (Or.inr h)
+
+/-- A stage never clips on paper: every bound a stage rule declares
+(`stageBounds`) is lifted by an ungated print rule at its own selector, so
+on paper a frame grows with its content and a frame that runs long
+continues on the next sheet, as the PDF's continuation pages do, where on
+screen it scrolls. Before the lift the stage's `height: 100dvh;
+overflow-y: auto` held on paper too, and a breaking frame printed 14 of
+its 30 items. `_covers`'s grade over the rule set, the shape of
+`guards_by_construction`: a stage rule that declares a bound enters the
+contract the moment it is written. -/
+theorem print_lifts_stage_bounds_covers (v pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms, printLifts (deckRules v pg cp ms) r = true := by
+  refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
+    (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
+    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) ?_
+  · exact deckBase_cases rfl rfl rfl rfl rfl
+      (printLifts_of_lift (g := printStageRule)
+        (mem_deckRules_print (List.mem_append_left _ (List.mem_cons_self ..))) (by decide))
+      rfl rfl rfl rfl rfl rfl rfl rfl
+  · intro r hr
+    simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
+      or_false] at hr
+    rcases hr with rfl
+    rfl
+  · intro _ r hr
+    simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl | rfl | rfl <;> rfl
+  · intro r hr
+    have hr2 := deckPrint_subset r hr
+    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
+      or_false] at hr2
+    rcases hr2 with (rfl | rfl) | h2
+    · rfl
     · rfl
     · split at h2
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at h2
