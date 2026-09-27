@@ -252,6 +252,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   natbibChecks ref oneFace
   natbibListChecks ref oneFace
   bibTextChecks ref oneFace
+  plainnatChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and

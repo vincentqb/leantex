@@ -595,6 +595,22 @@ def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
     | .gap _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
+/-- Whether a shipped line sets any glyph: a link's underline or a rule ships
+as a line of its own that sets none. -/
+def hasGlyphRun (l : Layout.LineOut) : Bool :=
+  l.segs.any fun s => match s with
+    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+    | _ => false
+
+/-- A line's text as a reader sees it: `lineText`, but a glyphless run — a
+tie, which ships as a box a space wide (Layout's no-break-space arm) —
+reads as the space the page shows. -/
+def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
+  | .run _ _ _ _ glyphs _ _ _ _ _ =>
+    if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c) => s.push c) s
+  | .gap _ _ => s.push ' '
+  | _ => s) ""
+
 /-- The furniture baselines (head y, foot y) a geometry owes under `font`'s
 ink and a declared gap: functions of the geometry alone
 (`furnHeadY`/`furnFootY` take no content) — what the shipped furniture

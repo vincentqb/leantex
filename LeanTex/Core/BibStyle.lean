@@ -138,48 +138,67 @@ inductive SortOrder where
   | authorYear
   deriving Repr, BEq, Inhabited
 
-/-- One field of a reference-list entry, rendered by kind: the field kind
-owes its own dressing (the `In` before a booktitle, the `pages` word, the
-`12(3):45–67` join), so a per-type template never exists — an entry type
-contributes only an *order* over these kinds. `title` carries its one
-per-type property (plainnat.bst: `format.btitle` emphasizes a book title
-and leaves its case; `format.title` sets an article title plain in
-sentence case), a parameter of the field, not a template of the type. -/
+/-- One formatted piece of a reference-list entry: plainnat.bst's `format.*`
+functions (unsrtnat.bst shares them verbatim), each owing its own dressing —
+the `In` before a booktitle, the `pages` word, the `12(3):45–67` join — so
+an entry type contributes only its sequence of pieces and boundaries
+(`Step`). `field` outputs a stored value as written: a publisher, an
+address, a school, an institution, an organization, a note. -/
 inductive Field where
   | authors
-  /-- Emphasized titles keep their case; plain titles take sentence case
-  (plainnat.bst FUNCTION {format.btitle} vs {format.title}). -/
-  | title (emph : Bool)
-  /-- The journal name, emphasized (plainnat.bst FUNCTION {article}). -/
+  /-- `Sam Roe, editor`, or `…, editors` for more than one (FUNCTION
+  {format.editors}). -/
+  | editors
+  /-- Sentence case (FUNCTION {format.title}). -/
+  | title
+  /-- Emphasized, its case kept (FUNCTION {format.btitle}). -/
+  | btitle
+  /-- The journal name, emphasized (FUNCTION {article}). -/
   | journal
-  /-- `12(3):45–67`: volume, parenthesized number, `:pages` (plainnat.bst
-  FUNCTION {format.vol.num.pages}). -/
-  | volumePages
-  /-- `In *Booktitle*` (plainnat.bst FUNCTION {format.in.ed.booktitle}). -/
-  | booktitle
-  /-- `pages 45–67` spelled out (plainnat.bst FUNCTION {format.pages}). -/
+  /-- `12(3):45–67`, or `pages 45–67` when no volume or number stands
+  (FUNCTION {format.vol.num.pages}). -/
+  | volNumPages
+  /-- `volume 3 of *Series*` (FUNCTION {format.bvolume}). -/
+  | bvolume
+  /-- `number 4 in Series`, or the series alone, when no volume stands
+  (FUNCTION {format.number.series}). -/
+  | numberSeries
+  /-- `In Sam Roe, editor, *Booktitle*` (FUNCTION {format.in.ed.booktitle}). -/
+  | inEdBooktitle
+  /-- `pages 1–10`, or `page 5` (FUNCTION {format.pages}). -/
   | pages
-  | publisher
-  | address
-  /-- `Third edition` as written plus the word (plainnat.bst FUNCTION
-  {format.edition}). -/
+  /-- `chapter 3, pages 1–10` (FUNCTION {format.chapter.pages}). -/
+  | chapterPages
+  /-- `third edition` inside a sentence, `Third edition` opening one
+  (FUNCTION {format.edition}). -/
   | edition
-  | howpublished
-  /-- `PhD thesis, School` (plainnat.bst FUNCTION {phdthesis}). -/
-  | school
-  /-- `Technical report number, Institution` (plainnat.bst FUNCTION
+  /-- `Technical Report 42`, or `Technical report` unnumbered (FUNCTION
   {format.tr.number}). -/
-  | reportNumber
-  | institution
-  | note
-  /-- `month year` when the month is there (plainnat.bst FUNCTION
-  {format.date}). -/
-  | year
-  /-- `doi: value`, linked to `https://doi.org/value` (plainnat.bst
-  FUNCTION {format.doi}). -/
+  | trNumber
+  /-- The entry's `type`, else the kind's own words (FUNCTION
+  {format.thesis.type}). -/
+  | thesisType (words : String)
+  /-- `month year` (FUNCTION {format.date}). -/
+  | date
+  /-- `doi: value`, linked to `https://doi.org/value` (FUNCTION
+  {format.doi}). -/
   | doi
-  /-- `URL value`, linked (plainnat.bst FUNCTION {format.url}). -/
+  /-- `URL value`, the value set as `\url` sets it (FUNCTION {format.url}). -/
   | url
+  | isbn
+  | issn
+  | field (name : String)
+  deriving Repr, BEq
+
+/-- One step of an entry type's function: a piece's `output`, or a block or
+sentence boundary — the conditional ones (`new.block.checka`, `checkb`,
+`new.sentence.checkb`) taken when any of the named fields is present. -/
+inductive Step where
+  | out (f : Field)
+  | newBlock
+  | newSentence
+  | newBlockIf (fields : List String)
+  | newSentenceIf (fields : List String)
   deriving Repr, BEq
 
 /-- How one name is written, used by the inline citation style and the
@@ -206,10 +225,9 @@ structure Style where
   replaces whatever was declared before it. -/
   punct : CitePunct
   sort : SortOrder
-  /-- Sentences of fields per entry kind: fields inside a sentence join
-  with `, `, sentences close with `.` — the shared punctuation model every
-  type renders through. -/
-  order : String → Array (Array Field)
+  /-- The steps an entry's type writes, the entry at hand deciding the
+  branches the style's own function takes (`plainnatSteps`). -/
+  steps : Entry → Array Step
   names : NameFormat
 
 /-- One name as the format writes it. Initials abbreviate each first-name
@@ -461,141 +479,239 @@ def fieldInlines (v : String) : Array Ir.Inline := Id.run do
   unless pending.isEmpty do out := out.push (.text (Ir.smartPunct pending))
   return out
 
-/-- One field of one entry, by kind: THE field renderer — every entry type
-renders through this one function, and what varies per type is only the
-order that calls it. An absent field renders empty and its sentence slot
-closes over it. -/
-def renderField (nf : NameFormat) (e : Entry) : Field → Array Ir.Inline
+/-- A stored value is present when it holds anything but white space —
+BibTeX's `empty$` false. -/
+def Entry.has (e : Entry) (name : String) : Bool :=
+  (e.field? name).any fun v => !v.trimAscii.toString.isEmpty
+
+/-- plainnat's `tie.or.space.connect`: a value shorter than three characters
+ties to its word, so `volume 3` never breaks between them. -/
+private def tieOrSpace (word v : String) : String :=
+  word ++ (if v.length < 3 then "\u00a0" else " ") ++ v
+
+/-- plainnat's `format.pages`: `pages` for a range or a list (a `-`, `,` or
+`+` in the value, `multi.page.check`), `page` for one. -/
+private def formatPages (p : String) : String :=
+  if p.any fun c => c == '-' || c == ',' || c == '+' then tieOrSpace "pages" (pageRange p)
+  else tieOrSpace "page" (text p)
+
+/-- A URL or DOI as `\url` reads it: braces dropped and an escaped character
+itself, everything else verbatim — never `text`'s ligatures and ties, which
+would turn `--` into a dash and `~` into a space. -/
+private def urlText (u : String) : String := Id.run do
+  let mut out := ""
+  let mut esc := false
+  for c in u.trimAscii.toString.toList do
+    if esc then
+      out := out.push c
+      esc := false
+    else if c == '\\' then esc := true
+    else if c != '{' && c != '}' then out := out.push c
+  return out
+
+/-- An editor list as plainnat writes it (FUNCTION {format.editors}). -/
+private def editorsText (nf : NameFormat) (ed : String) : String :=
+  Ir.smartPunct (nf.renderList ed ++ if (splitNames ed).size > 1 then ", editors" else ", editor")
+
+/-- One piece of one entry: THE piece renderer — every entry type renders
+through this one function, and what varies per type is only the steps that
+call it. `mid` is whether the piece continues a sentence, which the edition
+and the series number read, as plainnat's do. An absent field renders
+empty, and its step writes nothing. -/
+def renderField (nf : NameFormat) (e : Entry) (mid : Bool) : Field → Array Ir.Inline
   | .authors =>
     match e.field? "author" with
     | some a => #[.text (Ir.smartPunct (nf.renderList a))]
-    | none =>
-      -- plainnat falls back to editors before giving up (format.authors
-      -- then format.editors in FUNCTION {book}).
-      match e.field? "editor" with
-      | some ed => #[.text (Ir.smartPunct (nf.renderList ed ++ ", editors"))]
-      | none => #[]
-  | .title emph =>
+    | none => #[]
+  | .editors =>
+    match e.field? "editor" with
+    | some ed => #[.text (editorsText nf ed)]
+    | none => #[]
+  | .title => ((e.field? "title").map (fieldInlines ∘ sentenceCase)).getD #[]
+  | .btitle =>
     match e.field? "title" with
-    | some t =>
-      if emph then #[.styled .emph (fieldInlines t)]
-      else fieldInlines (sentenceCase t)
+    | some t => #[.styled .emph (fieldInlines t)]
     | none => #[]
   | .journal =>
     match e.field? "journal" with
     | some j => #[.styled .emph (fieldInlines j)]
     | none => #[]
-  | .volumePages =>
-    let vol := (e.field? "volume").map text
-    let num := (e.field? "number").map text
-    let pg := (e.field? "pages").map pageRange
-    match vol, num, pg with
-    | none, none, none => #[]
-    | _, _, _ =>
-      let v := vol.getD ""
-      let n := match num with | some n => s!"({n})" | none => ""
-      let p := match pg with | some p => s!":{p}" | none => ""
-      #[.text (v ++ n ++ p)]
-  | .booktitle =>
-    match e.field? "booktitle" with
-    | some b => #[.text "In ", .styled .emph (fieldInlines b)]
-    | none => #[]
-  | .pages =>
+  | .volNumPages =>
+    let head := ((e.field? "volume").map text).getD "" ++
+      ((e.field? "number").map fun n => s!"({text n})").getD ""
     match e.field? "pages" with
-    | some p => #[.text s!"pages {pageRange p}"]
+    | some p => #[.text (if head.isEmpty then formatPages p else head ++ ":" ++ pageRange p)]
+    | none => if head.isEmpty then #[] else #[.text head]
+  | .bvolume =>
+    match e.field? "volume" with
+    | some v =>
+      let vol := tieOrSpace "volume" (text v)
+      match e.field? "series" with
+      | some sr => #[.text (vol ++ " of "), .styled .emph (fieldInlines sr)]
+      | none => #[.text vol]
     | none => #[]
-  | .publisher =>
-    match e.field? "publisher" with
-    | some p => fieldInlines p
+  | .numberSeries =>
+    if e.has "volume" then #[] else
+    match e.field? "number", e.field? "series" with
+    | some n, some sr =>
+      #[.text (tieOrSpace (if mid then "number" else "Number") (text n) ++ " in ")] ++
+        fieldInlines sr
+    | some n, none => #[.text (tieOrSpace (if mid then "number" else "Number") (text n))]
+    | none, some sr => fieldInlines sr
+    | none, none => #[]
+  | .inEdBooktitle =>
+    match e.field? "booktitle" with
+    | some b =>
+      let eds := ((e.field? "editor").map fun ed => editorsText nf ed ++ ", ").getD ""
+      #[.text ("In " ++ eds), .styled .emph (fieldInlines b)]
     | none => #[]
-  | .address =>
-    match e.field? "address" with
-    | some a => fieldInlines a
-    | none => #[]
+  | .pages => ((e.field? "pages").map fun p => #[.text (formatPages p)]).getD #[]
+  | .chapterPages =>
+    match e.field? "chapter" with
+    | some c =>
+      let head := tieOrSpace (((e.field? "type").map (lowerCase false)).getD "chapter") (text c)
+      match e.field? "pages" with
+      | some p => #[.text (head ++ ", " ++ formatPages p)]
+      | none => #[.text head]
+    | none => ((e.field? "pages").map fun p => #[.text (formatPages p)]).getD #[]
   | .edition =>
     match e.field? "edition" with
-    | some ed => fieldInlines (ed ++ " edition")
+    | some ed => fieldInlines ((if mid then lowerCase false ed else sentenceCase ed) ++ " edition")
     | none => #[]
-  | .howpublished =>
-    match e.field? "howpublished" with
-    | some h => fieldInlines h
-    | none => #[]
-  | .school =>
-    match e.field? "school" with
-    | some s => fieldInlines s!"PhD thesis, {s}"
-    | none => #[.text "PhD thesis"]
-  | .reportNumber =>
+  | .trNumber =>
+    let ty := ((e.field? "type").map text).getD "Technical Report"
     match e.field? "number" with
-    | some n => fieldInlines s!"Technical report {n}"
-    | none => #[.text "Technical report"]
-  | .institution =>
-    match e.field? "institution" with
-    | some i => fieldInlines i
-    | none => #[]
-  | .note =>
-    match e.field? "note" with
-    | some n => fieldInlines n
-    | none => #[]
-  | .year =>
-    match e.field? "year" with
-    | some y =>
-      match e.field? "month" with
-      | some m => #[.text (text m ++ " " ++ text y)]
-      | none => #[.text (text y)]
-    | none => #[]
+    | some n => #[.text (tieOrSpace ty (text n))]
+    | none => fieldInlines (sentenceCase ty)
+  | .thesisType words =>
+    match e.field? "type" with
+    | some ty => fieldInlines (sentenceCase ty)
+    | none => #[.text (Ir.smartPunct words)]
+  | .date =>
+    match e.field? "year", e.field? "month" with
+    | some y, some m => #[.text (text m ++ " " ++ text y)]
+    | some y, none => #[.text (text y)]
+    | none, _ => #[]
   | .doi =>
     match e.field? "doi" with
-    | some d => #[.text "doi: ", .link ("https://doi.org/" ++ text d) #[.text (text d)]]
+    | some d => #[.text "doi: ", .link ("https://doi.org/" ++ urlText d) #[.text (urlText d)]]
     | none => #[]
   | .url =>
     match e.field? "url" with
-    | some u => #[.text "URL ", .link (text u) #[.text (text u)]]
+    | some u => #[.text "URL ", .link (urlText u) #[.styled .mono #[.text (urlText u)]]]
     | none => #[]
+  | .isbn => ((e.field? "isbn").map fun v => #[.text ("ISBN " ++ text v)]).getD #[]
+  | .issn => ((e.field? "issn").map fun v => #[.text ("ISSN " ++ text v)]).getD #[]
+  | .field name => ((e.field? name).map fieldInlines).getD #[]
 
-/-- The sentences of fields each entry kind contributes — the whole of what
-an entry type is under this decomposition. The six orders transcribe
-plainnat.bst's FUNCTION {article}, {inproceedings}, {book}, {misc},
-{phdthesis}, {techreport}; an unknown kind takes `misc`'s order, the
-catch-all `.bst` files also route through. -/
-def standardOrder (kind : String) : Array (Array Field) :=
-  match kind with
+/-- The entry functions of plainnat.bst, whose steps unsrtnat.bst shares
+verbatim — FUNCTION {article}, {book}, {booklet}, {inbook},
+{incollection}, {inproceedings}, {manual}, {mastersthesis}, {misc},
+{phdthesis}, {proceedings}, {techreport}, {unpublished} — one step
+sequence per type, the entry deciding the branch `inproceedings` takes
+on its address. An unknown type is `misc` (FUNCTION {default.type}); a
+type's cross-reference branch is not taken (no `crossref` is read). -/
+def plainnatSteps (e : Entry) : Array Step :=
+  let url : Array Step := #[.newBlockIf ["url"], .out .url]
+  let note : Array Step := #[.newBlock, .out (.field "note")]
+  let tail : Array Step := #[.newBlockIf ["doi"], .out .doi] ++ url ++ note
+  let isbn : Array Step := #[.newBlockIf ["isbn"], .out .isbn]
+  let who : Step := if e.has "author" then .out .authors else .out .editors
+  match e.kind with
   | "article" =>
-    #[#[.authors], #[.title false],
-      #[.journal, .volumePages, .year], #[.doi, .url], #[.note]]
-  | "inproceedings" | "conference" =>
-    #[#[.authors], #[.title false],
-      #[.booktitle, .pages, .year], #[.doi, .url], #[.note]]
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out .journal, .out .volNumPages,
+      .out .date, .newBlockIf ["issn"], .out .issn] ++ tail
   | "book" =>
-    #[#[.authors], #[.title true],
-      #[.publisher, .address, .edition, .year], #[.note]]
+    #[who, .newBlock, .out .btitle, .out .bvolume, .newBlock, .out .numberSeries,
+      .newSentence, .out (.field "publisher"), .out (.field "address"), .out .edition,
+      .out .date] ++ isbn ++ tail
+  | "inbook" =>
+    #[who, .newBlock, .out .btitle, .out .bvolume, .out .chapterPages, .newBlock,
+      .out .numberSeries, .newSentence, .out (.field "publisher"), .out (.field "address"),
+      .out .edition, .out .date] ++ isbn ++ tail
+  | "booklet" =>
+    #[.out .authors, .newBlock, .out .title, .newBlockIf ["howpublished", "address"],
+      .out (.field "howpublished"), .out (.field "address"), .out .date] ++ isbn ++ tail
+  | "incollection" =>
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out .inEdBooktitle, .out .bvolume,
+      .out .numberSeries, .out .chapterPages, .newSentence, .out (.field "publisher"),
+      .out (.field "address"), .out .edition, .out .date] ++ isbn ++ tail
+  | "inproceedings" | "conference" =>
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out .inEdBooktitle, .out .bvolume,
+      .out .numberSeries, .out .pages] ++
+    (if e.has "address" then
+      #[.out (.field "address"), .out .date, .newSentence, .out (.field "organization"),
+        .out (.field "publisher")]
+    else
+      #[.newSentenceIf ["organization", "publisher"], .out (.field "organization"),
+        .out (.field "publisher"), .out .date]) ++ isbn ++ tail
+  | "manual" =>
+    #[.out .authors, .newBlock, .out .btitle, .newBlockIf ["organization", "address"],
+      .out (.field "organization"), .out (.field "address"), .out .edition, .out .date] ++
+      url ++ note
+  | "mastersthesis" =>
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out (.thesisType "Master's thesis"),
+      .out (.field "school"), .out (.field "address"), .out .date] ++ url ++ note
   | "phdthesis" =>
-    #[#[.authors], #[.title true], #[.school, .address, .year], #[.note]]
+    #[.out .authors, .newBlock, .out .btitle, .newBlock, .out (.thesisType "PhD thesis"),
+      .out (.field "school"), .out (.field "address"), .out .date] ++ url ++ note
+  | "proceedings" =>
+    #[.out .editors, .newBlock, .out .btitle, .out .bvolume, .out .numberSeries,
+      .out (.field "address"), .out .date, .newSentence, .out (.field "organization"),
+      .out (.field "publisher")] ++ isbn ++ tail
   | "techreport" =>
-    #[#[.authors], #[.title false],
-      #[.reportNumber, .institution, .address, .year], #[.note]]
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out .trNumber,
+      .out (.field "institution"), .out (.field "address"), .out .date] ++ url ++ note
+  | "unpublished" =>
+    #[.out .authors, .newBlock, .out .title, .newBlock, .out (.field "note"), .out .date] ++ url
   | _ =>
-    #[#[.authors], #[.title false],
-      #[.howpublished, .year], #[.doi, .url], #[.note]]
+    #[.out .authors, .newBlockIf ["title", "howpublished"], .out .title,
+      .newBlockIf ["howpublished"], .out (.field "howpublished"), .out .date,
+      .newBlockIf ["issn"], .out .issn] ++ url ++ note
 
-/-- One reference-list entry through the shared punctuation model: fields
-of a sentence join with `, `, each nonempty sentence closes with `.`, and
-a sentence whose fields are all absent leaves nothing behind. -/
-def renderEntry (nf : NameFormat) (order : Array (Array Field)) (e : Entry) :
+/-- The output state plainnat.bst threads through an entry (`output.state`):
+nothing written yet, inside a sentence, or a block or a sentence boundary
+pending. -/
+inductive OutState where
+  | beforeAll
+  | mid
+  | afterBlock
+  | afterSentence
+  deriving BEq
+
+/-- BibTeX's `add.period$`: the entry so far takes a period unless it
+already ends with `.`, `?` or `!`. -/
+def addPeriod (out : Array Ir.Inline) : Array Ir.Inline :=
+  match (Ir.plainText out).toList.getLast? with
+  | none => out
+  | some c => if c == '.' || c == '?' || c == '!' then out else out.push (.text ".")
+
+/-- One reference-list entry as plainnat.bst's `output` writes it: a piece
+joins its sentence with `, `; after a block or sentence boundary the entry
+so far takes its period (`add.period$`) and the piece opens the next; the
+entry closes with its period (`fin.entry`). natbib's `\newblock` adds
+`\hskip .11em plus .33em minus .07em` at a block boundary, which no IR
+node spells: the boundary is one word space. -/
+def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) :
     Array Ir.Inline := Id.run do
   let mut out : Array Ir.Inline := #[]
-  for sentence in order do
-    let mut sent : Array Ir.Inline := #[]
-    let mut firstField := true
-    for f in sentence do
-      let r := renderField nf e f
+  let mut st := OutState.beforeAll
+  for step in steps do
+    match step with
+    | .out f =>
+      let r := renderField nf e (st == .mid) f
       unless r.isEmpty do
-        unless firstField do sent := sent.push (.text ", ")
-        firstField := false
-        sent := sent ++ r
-    unless sent.isEmpty do
-      unless out.isEmpty do out := out.push (.text " ")
-      out := (out ++ sent).push (.text ".")
-  return out
+        out := match st with
+          | .beforeAll => out
+          | .mid => out.push (.text ", ")
+          | _ => (addPeriod out).push (.text " ")
+        out := out ++ r
+        st := .mid
+    | .newBlock => if st != .beforeAll then st := .afterBlock
+    | .newSentence => if st == .mid then st := .afterSentence
+    | .newBlockIf fs => if st != .beforeAll && fs.any e.has then st := .afterBlock
+    | .newSentenceIf fs => if st == .mid && fs.any e.has then st := .afterSentence
+  return addPeriod out
 
 /-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
 share (natbib.sty: `\bibpunct{[}{]}{,}{a}{,}{,}`): author-year, square
@@ -616,7 +732,7 @@ the standard field orders, full names, natbib's author-year row — what
 def Style.unsrtnat : Style where
   punct := natPunct
   sort := .citation
-  order := standardOrder
+  steps := plainnatSteps
   names := {}
 
 /-- `plainnat`: the same fields and names, the list sorted by author then
@@ -624,7 +740,7 @@ year (natbib manual §4: plainnat is the author-year companion of plain). -/
 def Style.plainnat : Style where
   punct := natPunct
   sort := .authorYear
-  order := standardOrder
+  steps := plainnatSteps
   names := {}
 
 /-- `plain`: what the record model buys — plain.bst is numbers over an
@@ -632,7 +748,7 @@ author-sorted list, zero new code, only another pairing of the axes. -/
 def Style.plain : Style where
   punct := latexPunct
   sort := .authorYear
-  order := standardOrder
+  steps := plainnatSteps
   names := {}
 
 /-- `unsrt`: `plain` in first-citation order, as unsrt.bst is. -/
@@ -762,7 +878,7 @@ def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
   resolved.map fun r =>
     { key := r.key
       marker := if p.numbers then some (toString r.position) else none
-      content := renderEntry style.names (style.order r.entry.kind) r.entry }
+      content := renderEntry style.names (style.steps r.entry) r.entry }
 
 /-! ### The theorems the four-axis shape earns
 

@@ -5016,11 +5016,6 @@ def attrLineText (l : Layout.LineOut) : String :=
     | .gap _ _ => s.push ' '
     | _ => s) ""
 
-def hasGlyphRun (l : Layout.LineOut) : Bool :=
-  l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
-    | _ => false
-
 /-- The text of a block's lines, in page order: gaps as spaces, a line-end
 hyphen joined away. -/
 def joinAttributed (ls : Array Layout.LineOut) : String :=

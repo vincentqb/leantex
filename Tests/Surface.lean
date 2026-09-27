@@ -3807,7 +3807,7 @@ def bibChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The four style axes: one field renderer under per-type field orders,
 citation rendering per style, name formatting, and the named records. The
 expected strings transcribe plainnat.bst's output shapes for each FUNCTION
-named in `standardOrder`'s docstring. -/
+named in `plainnatSteps`'s docstring. -/
 def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let entry (kind : String) (fields : List (String × String)) : Bib.Entry :=
@@ -3816,7 +3816,7 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       fields := fields.toArray
       pos := {} }
   let render (e : Bib.Entry) : String :=
-    Ir.plainText (Bib.renderEntry {} (Bib.standardOrder e.kind) e)
+    Ir.plainText (Bib.renderEntry {} (Bib.plainnatSteps e) e)
   t "bibstyle: article renders authors, sentence title, journal group"
     (render (entry "article"
       [("author", "Doe, Alex and Roe, Sam"), ("title", "A Grand Study of Things"),
@@ -3827,7 +3827,7 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (render (entry "book"
       [("author", "Doe, Alex"), ("title", "The Grand Book"),
        ("publisher", "Example Press"), ("edition", "Third"), ("year", "2020")]) ==
-      "Alex Doe. The Grand Book. Example Press, Third edition, 2020.")
+      "Alex Doe. The Grand Book. Example Press, third edition, 2020.")
   t "bibstyle: inproceedings takes In booktitle, pages spelled out"
     (render (entry "inproceedings"
       [("author", "Doe, Alex"), ("title", "On Tests"),
@@ -3835,10 +3835,11 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
        ("year", "2021")]) ==
       "Alex Doe. On tests. In Proceedings of Examples, pages 1–10, 2021.")
   t "bibstyle: misc renders howpublished and a linked URL"
-    (let out := Bib.renderEntry {} (Bib.standardOrder "misc") (entry "misc"
+    (let e := entry "misc"
       [("author", "Doe, Alex"), ("title", "A Web Thing"),
        ("howpublished", "Online"), ("year", "2022"),
-       ("url", "https://example.org/x")])
+       ("url", "https://example.org/x")]
+     let out := Bib.renderEntry {} (Bib.plainnatSteps e) e
      Ir.plainText out ==
        "Alex Doe. A web thing. Online, 2022. URL https://example.org/x." &&
      out.any fun x => match x with
@@ -3849,7 +3850,7 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("year", "2024")]) == "Alex Doe. T. 2024.")
   t "bibstyle: an entry with no author falls back to editors"
     (render (entry "book" [("editor", "Roe, Sam"), ("title", "Edited"),
-      ("year", "2019")]) == "Sam Roe, editors. Edited. 2019.")
+      ("year", "2019")]) == "Sam Roe, editor. Edited. 2019.")
   let e1 : Bib.Entry := entry "article"
     [("author", "Doe, Alex and Roe, Sam"), ("year", "2024")]
   let r1 : Bib.Resolved := { key := "k1", position := 3, entry := e1 }
@@ -3967,7 +3968,7 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (paraText outU 0 == "x [1] y Doe [2]" && paraText outU 1 == "[3, 1]")
   t "apply: entries format through the style"
     ((itemsOf outU).map (fun i => Ir.plainText i.content) ==
-      #["Sam Roe. Second. 2020.", "Alex Doe. First. 2024.", "Kim Poe. Third. 2022."])
+      #["Sam Roe. Second, 2020.", "Alex Doe. First, 2024.", "Kim Poe. Third, 2022."])
   -- plainnat: the same document, the other record, natbib loaded.
   let (outP, dsP) := run (some "plainnat") (some #[])
   t "apply: plainnat sorts by author then year, marks nothing"
@@ -3981,7 +3982,7 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "apply: abbrvnat abbreviates list names and keeps plainnat's order"
     (dsA.isEmpty && (itemsOf outA).map (·.key) == #["a", "c", "b"] &&
       ((itemsOf outA).map fun i => Ir.plainText i.content) ==
-        #["A. Doe. First. 2024.", "K. Poe. Third. 2022.", "S. Roe. Second. 2020."])
+        #["A. Doe. First, 2024.", "K. Poe. Third, 2022.", "S. Roe. Second, 2020."])
   t "apply: style independence — each entry's content identical across styles"
     (dsP.isEmpty &&
       (itemsOf outU).all fun i =>
@@ -4174,17 +4175,10 @@ prints `[? ]`, a space its source line leaves after the bold `?`, where
 the engine prints `[?]` with the separators a resolved key would have. -/
 def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- A tie ships as a glyphless box a space wide (Layout's no-break-space
-  -- arm), which `lineText` reads as nothing; the page shows a space.
-  let ink (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ _ _ =>
-      if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c) => s.push c) s
-    | .gap _ _ => s.push ' '
-    | _ => s) ""
   let shipped (pre style : String) (calls : List String) : Array String × String × Bool :=
     let (doc, _) := elabStr (natbibSrc pre style calls)
     let (doc, bibDiags) := Bib.apply #[("refs", natbibBib)] doc
-    ((bodyLines (layoutOf oneFace doc)).map ink, htmlVisibleText (HtmlDoc.emit {} doc).1,
+    ((bodyLines (layoutOf oneFace doc)).map lineInk, htmlVisibleText (HtmlDoc.emit {} doc).1,
       bibDiags.isEmpty)
   let calls := natbibRows.map (·.1)
   for (mode, pre, pick) in [("numbers", "\\usepackage[numbers]{natbib}",
@@ -4253,12 +4247,13 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
   return out
 
 /-- The reference list's shipped lines, one array per entry: the lines after
-the References heading, split where the leaf changes. -/
+the References heading that set glyphs (a link's underline ships as a
+sibling line of rules), split where the leaf changes. -/
 def bibEntryLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) := Id.run do
   let start := ((lines.findIdx? (lineText · == "References")).map (· + 1)).getD lines.size
   let mut out : Array (Array Layout.LineOut) := #[]
   let mut cur : Array Layout.LineOut := #[]
-  for l in lines.extract start lines.size do
+  for l in (lines.extract start lines.size).filter hasGlyphRun do
     if !cur.isEmpty && cur.back?.map (·.leaf) != some l.leaf then
       out := out.push cur
       cur := #[]
@@ -4432,6 +4427,113 @@ def bibTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let html := (HtmlDoc.emit {} doc).1
   t "bib text: the HTML entry carries the formula as MathML and the curly quotes"
     (hasStr html "<math" && hasStr html "“quoted” things" && ds.isEmpty)
+
+/-- One entry per type plainnat.bst writes, and the branches its functions
+take: invented people, titles and venues. -/
+def plainnatBib : String :=
+  "@article{art1, author = {Doe, Alex and Roe, Sam}, title = {A Grand Study of Things},\n\
+    journal = {Journal of Tests}, volume = {12}, number = {3}, pages = {45--67}, year = {2024}}\n\
+  @article{art2, author = {Doe, Alex}, title = {T}, year = {2024}}\n\
+  @article{art3, author = {Poe, Kim}, title = {No Journal Here}, volume = {7}, pages = {1--9}, year = {2019}}\n\
+  @article{art4, author = {Poe, Kim}, title = {Single Page}, journal = {Letters}, pages = {5}, year = {2018}}\n\
+  @article{art5, author = {Poe, Kim}, title = {With a URL and a Note}, journal = {Letters},\n\
+    year = {2017}, url = {https://example.org/a}, note = {An invented note}}\n\
+  @article{art6, author = {Poe, Kim}, title = {Did It Work?}, journal = {Letters}, year = {2016}}\n\
+  @book{bk1, author = {Doe, Alex}, title = {The Grand Book}, publisher = {Example Press},\n\
+    edition = {Third}, year = {2020}}\n\
+  @book{bk2, editor = {Roe, Sam}, title = {Edited}, year = {2019}}\n\
+  @book{bk3, editor = {Roe, Sam and Lee, Jo}, title = {Edited Twice}, publisher = {Example Press}, year = {2015}}\n\
+  @book{bk4, author = {Doe, Alex}, title = {A Series Book}, volume = {3}, series = {Example Series},\n\
+    publisher = {Example Press}, address = {Springfield}, year = {2014}}\n\
+  @inproceedings{inp1, author = {Doe, Alex}, title = {On Tests}, booktitle = {Proceedings of Examples},\n\
+    pages = {1--10}, year = {2021}}\n\
+  @inproceedings{inp2, author = {Doe, Alex}, title = {With Volume}, booktitle = {Advances in Examples},\n\
+    volume = {12}, year = {2019}}\n\
+  @inproceedings{inp3, author = {Doe, Alex}, title = {No Booktitle}, volume = {21}, number = {44},\n\
+    pages = {1--30}, year = {2015}}\n\
+  @inproceedings{inp4, author = {Doe, Alex}, title = {With Address}, booktitle = {Proceedings of Examples},\n\
+    address = {Springfield}, organization = {Example Society}, publisher = {Example Press}, year = {2013}}\n\
+  @inproceedings{inp5, author = {Doe, Alex}, title = {With Editors}, editor = {Roe, Sam},\n\
+    booktitle = {Proceedings of Examples}, publisher = {Example Press}, year = {2012}}\n\
+  @misc{misc1, author = {Doe, Alex}, title = {A Web Thing}, howpublished = {Online}, year = {2022},\n\
+    url = {https://example.org/x}}\n\
+  @misc{misc2, author = {Moss, Ann}, title = {Counting Invented Widgets}, year = {2023},\n\
+    note = {An internal note, Example Group}}\n\
+  @misc{misc3, title = {Only a Title}, year = {2011}}\n\
+  @phdthesis{phd1, author = {Lee, Jo}, title = {A Thesis on Examples}, school = {Example University},\n\
+    year = {2018}}\n\
+  @mastersthesis{ms1, author = {Lee, Jo}, title = {A Masters Thesis}, school = {Example University},\n\
+    year = {2010}}\n\
+  @techreport{tr1, author = {Ray, Casey}, title = {A Technical Report}, institution = {Example Lab},\n\
+    number = {42}, year = {2017}}\n\
+  @techreport{tr2, author = {Ray, Casey}, title = {An Unnumbered Report}, institution = {Example Lab},\n\
+    year = {2009}}\n\
+  @unpublished{unp1, author = {Ray, Casey}, title = {An Unpublished Draft}, note = {Manuscript in preparation},\n\
+    year = {2008}}\n\
+  @incollection{inc1, author = {Doe, Alex}, title = {A Chapter}, booktitle = {The Collected Examples},\n\
+    editor = {Roe, Sam}, publisher = {Example Press}, pages = {10--20}, year = {2007}}\n\
+  @manual{man1, author = {Doe, Alex}, title = {The Manual}, organization = {Example Society},\n\
+    edition = {Second}, year = {2006}}\n\
+  @proceedings{pro1, editor = {Roe, Sam}, title = {Proceedings of the Example Meeting},\n\
+    publisher = {Example Press}, address = {Springfield}, year = {2005}}\n\
+  @booklet{bkl1, author = {Doe, Alex}, title = {A Booklet}, howpublished = {Distributed by hand}, year = {2004}}\n"
+
+/-- The lines lualatex set for `plainnatBib` under
+`\usepackage[numbers]{natbib}` and `\bibliographystyle{unsrtnat}` (TeX Live
+2026: bibtex 0.99d, unsrtnat.bst from natbib 8.31b), read through
+`pdftotext -layout` in TeX Gyre Termes, one entry to a line. -/
+def plainnatLines : List String :=
+  ["[1] Alex Doe and Sam Roe. A grand study of things. Journal of Tests, 12(3):45–67, 2024.",
+   "[2] Alex Doe. T. 2024.",
+   "[3] Kim Poe. No journal here. 7:1–9, 2019.",
+   "[4] Kim Poe. Single page. Letters, page 5, 2018.",
+   "[5] Kim Poe. With a url and a note. Letters, 2017. URL https://example.org/a. An invented note.",
+   "[6] Kim Poe. Did it work? Letters, 2016.",
+   "[7] Alex Doe. The Grand Book. Example Press, third edition, 2020.",
+   "[8] Sam Roe, editor. Edited. 2019.",
+   "[9] Sam Roe and Jo Lee, editors. Edited Twice. Example Press, 2015.",
+   "[10] Alex Doe. A Series Book, volume 3 of Example Series. Example Press, Springfield, 2014.",
+   "[11] Alex Doe. On tests. In Proceedings of Examples, pages 1–10, 2021.",
+   "[12] Alex Doe. With volume. In Advances in Examples, volume 12, 2019.",
+   "[13] Alex Doe. No booktitle. volume 21, pages 1–30, 2015.",
+   "[14] Alex Doe. With address. In Proceedings of Examples, Springfield, 2013. Example Society, Example Press.",
+   "[15] Alex Doe. With editors. In Sam Roe, editor, Proceedings of Examples. Example Press, 2012.",
+   "[16] Alex Doe. A web thing. Online, 2022. URL https://example.org/x.",
+   "[17] Ann Moss. Counting invented widgets, 2023. An internal note, Example Group.",
+   "[18] Only a title, 2011.",
+   "[19] Jo Lee. A Thesis on Examples. PhD thesis, Example University, 2018.",
+   "[20] Jo Lee. A masters thesis. Master’s thesis, Example University, 2010.",
+   "[21] Casey Ray. A technical report. Technical Report 42, Example Lab, 2017.",
+   "[22] Casey Ray. An unnumbered report. Technical report, Example Lab, 2009.",
+   "[23] Casey Ray. An unpublished draft. Manuscript in preparation, 2008.",
+   "[24] Alex Doe. A chapter. In Sam Roe, editor, The Collected Examples, pages 10–20. Example Press, 2007.",
+   "[25] Alex Doe. The Manual. Example Society, second edition, 2006.",
+   "[26] Sam Roe, editor. Proceedings of the Example Meeting, Springfield, 2005. Example Press.",
+   "[27] Alex Doe. A booklet. Distributed by hand, 2004."]
+
+/-- **An entry reads as plainnat.bst writes it**, type by type: every entry of
+`plainnatBib` on the shipped page is the line lualatex set for it — the
+pieces and their order, the block and sentence boundaries, `add.period$`
+(a title's `?` closes its own sentence), the singular `editor`, the
+`page`/`pages` word, the edition's case inside a sentence, a series under
+its volume, and the branches `inproceedings` and `misc` take on what the
+entry holds. -/
+def plainnatChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let keys := (plainnatBib.splitOn "\n").filterMap fun l =>
+    let l := l.trimAscii.toString
+    if l.startsWith "@" then ((l.splitOn "{")[1]?).bind (·.splitOn "," |>.head?) else none
+  let (doc, _) := elabStr s!"\\documentclass\{article}\n\\usepackage[numbers]\{natbib}\n\
+    \\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]\{geometry}\n\
+    \\bibliographystyle\{unsrtnat}\n\\begin\{document}\n\
+    L1 \\citep\{{String.intercalate "," keys}} end.\n\n\\bibliography\{refs}\n\\end\{document}\n"
+  let (doc, ds) := Bib.apply #[("refs", plainnatBib)] doc
+  let shipped := (bibEntryLines (bodyLines (layoutOf oneFace doc))).map fun e =>
+    String.intercalate " " (e.toList.map lineInk)
+  t s!"plainnat: every entry resolves, one per key ({shipped.size} of {keys.length})"
+    (shipped.size == keys.length && ds.isEmpty)
+  for want in plainnatLines, got in shipped.toList do
+    t s!"plainnat: the page sets '{want}' ({got})" (got == want)
 
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a

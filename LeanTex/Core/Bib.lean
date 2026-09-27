@@ -468,17 +468,18 @@ reference list's to set (`BibStyle.fieldInlines`); accents outside
 `accentTable` keep their base letter. -/
 def text (v : String) : String := (textSpan v).trimAscii.toString
 
-/-- BibTeX's `"t" change.case$` (bibtex.web, the title-lowering case of
-its change-case procedure): the sentence case plainnat's `format.title` applies. At
-brace depth zero a letter lowercases unless it is the value's first
-character or follows a colon and white space; a closing brace forgets the
-colon. A brace group stays as written, except a special character — a
-group opening `{\` — which lowercases its letters outside its control
-words and turns the five foreign-letter words (`\AA`, `\AE`, `\L`, `\O`,
-`\OE`) into their lowercase words, unless it stands where a kept letter
-would. Only ASCII letters change, as in bibtex 0.99d. The value is read as
-BibTeX's `.bib` reader leaves it: surrounding white space trimmed. -/
-def sentenceCase (v : String) : String := Id.run do
+/-- BibTeX's `change.case$` lowering a value (bibtex.web's change-case
+procedure): `"t"` (`title`) is the sentence case plainnat's `format.title`
+applies, `"l"` lowers everything. At brace depth zero a letter lowercases
+unless, under `"t"`, it is the value's first character or follows a colon
+and white space; a closing brace forgets the colon. A brace group stays as
+written, except a special character — a group opening `{\` — which
+lowercases its letters outside its control words and turns the five
+foreign-letter words (`\AA`, `\AE`, `\L`, `\O`, `\OE`) into their
+lowercase words, unless it stands where a kept letter would. Only ASCII
+letters change, as in bibtex 0.99d. The value is read as BibTeX's `.bib`
+reader leaves it: surrounding white space trimmed. -/
+def lowerCase (title : Bool) (v : String) : String := Id.run do
   let cs := v.trimAscii.toString.toList.toArray
   let mut out := ""
   let mut depth : Nat := 0
@@ -488,7 +489,7 @@ def sentenceCase (v : String) : String := Id.run do
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
-      let kept := i == 0 || (prevColon && i > 0 && isWs (cs[i - 1]?.getD 'x'))
+      let kept := title && (i == 0 || (prevColon && i > 0 && isWs (cs[i - 1]?.getD 'x')))
       if c == '{' then
         if depth == 0 then
           special := !kept && cs[i + 1]? == some '\\'
@@ -516,6 +517,9 @@ def sentenceCase (v : String) : String := Id.run do
         i := i + 1
     else break
   return out
+
+/-- `"t" change.case$`: the title's sentence case (`lowerCase`). -/
+def sentenceCase (v : String) : String := lowerCase true v
 
 /-! ## Names
 
