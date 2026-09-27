@@ -20452,3 +20452,131 @@ background):
 - *How far a re-weighting may move* is the human's decision. The palette
   golden's `warn!40` becomes `warn!97`; a cap would keep more of the
   intent and warn more often.
+
+
+### 2026-09-27 — what reveal.js teaches: a frame's ground is the palette in force, and the printed deck is its stages
+
+The user asked which design principles or presentation features to bring
+in from reveal.js (revealjs.com, 28 feature pages read 2026-09-27; the
+site's highest version badge is 6.0.0). The answer is decided by
+AGENTS.md's script rule before any feature list: a feature whose
+behaviour *is* the runtime (auto-animate, transitions, overview, speaker
+view, auto-slide, lightbox, fit-text, jump-to-slide) needs the three
+properties the deck script earns or a design discussion, and is not
+ported. What reveal.js does declaratively, or does with script where this
+engine already has a declaration, is imported: a slide's background, and
+its print export. Both were defects here before they were features.
+
+**The audit, one row per feature.**
+
+| reveal.js | what it is for | here before this entry | declarative, with a PDF meaning? | verdict |
+|---|---|---|---|---|
+| markup: one `<section>` per slide | the deck skeleton | one `section.slide` per frame, `section.section-page` per themed section | yes, both backends from one IR | present |
+| backgrounds: colour | a slide's own ground | the declaration existed (a body `\palette{ bg = … }`) and neither artifact painted it at a frame | yes: the page ground, the stage ground | **imported** (below) |
+| backgrounds: gradient, image | a shaded or pictured ground | none | yes, with a PDF shading or a full-bleed image under the page; beamer's doors are `\setbeamertemplate{background canvas}[vertical shading]` and `\usebackgroundtemplate` | import later: the image is a *declared decorative* image (no alternative text, a PDF `/Artifact`) |
+| backgrounds: video, iframe, parallax | motion and embedded pages behind a slide | none | no PDF meaning; an iframe needs the network | decline: self-contained output, motion none by default |
+| fragments | step-by-step reveal | steps dim in place on the reader's key (scroll timelines, the constant script's floor), the PDF one page per step | yes, `Ir` overlay ranges | present, founded better: dim-not-hide, one semantics in both artifacts |
+| fragment styles (highlight, strike, grow) | emphasis per step | `\alert<n>` is the highlight | highlight yes; strike and grow have no beamer idiom | present for highlight; decline the rest |
+| `fragmentInURL` | a URL per step | frames are deep links by title slug; steps are snap spacers with no id | yes, HTML only (a PDF named destination per step page) | import candidate: step anchors |
+| auto-animate, transitions | tweened motion between slides | the native scroll glide, with its reduced-motion guard | the effect is the runtime | decline: script rule, motion none by default |
+| `r-stack` | alternatives in one place | `\only`/`\alt`/`{overprint}` alternation groups | yes | present |
+| `r-fit-text` | text as large as fits | none | the size depends on measured text (fitty) | decline: a measurement, not a declaration |
+| `r-stretch` | an image filling the remaining height | none | yes: a declared vertical distribution in the frame | import later: needs a spelling (LaTeX has none; a user decision) and the frame arm's vertical placement |
+| `r-frame` | a decorative border | `\style` | content styling | decline as a deck feature |
+| vertical slides | two-axis navigation | none | a second page axis | decline here: a page-model question for the kernel |
+| overview | a zoomed-out grid of slides | none | HTML only; every stage is `100vw × 100dvh` by contract, so a grid is a second layout of every stage | decline for now: a design discussion, not an import |
+| slide numbers `c`, `c/t` | the position in the deck | `\framenumber`, `\framefraction` in the chrome footer, static text from `Ir.frameNumbers` in both artifacts | yes | present; moloch's `numbering=` option is dropped silently (routed) |
+| speaker view, notes, timers | the presenter's window | notes ship as hidden asides; the window is a named user decision (PLAN, Status) | the window is a second runtime | decline (standing decision) |
+| PDF export (`?print-pdf`) | print one slide per page | the handout card on the reader's default sheet | yes: `@page` is the stage | **imported** (below) |
+| presentation size, scaling | fit any display | the stage is the viewport; type in `vh` at the PDF's own ratio (`deck_type_is_stage_ratio`) | yes | present, without a layout pass |
+| scroll view, scroll progress | read as a page; a progress bar | the deck is a native scroll-snap row; the hairline is a scroll-driven animation | yes | present |
+| themes as CSS | one stylesheet per look | `\theme` token bundles as custom properties, contrast judged per bundle | yes, both backends | present, stronger |
+| links between slides | internal navigation | frame anchors by title slug | yes | present |
+| slide visibility | hidden and uncounted slides | beamer's `<0>` and `noframenumbering` | yes | present |
+| keyboard, touch | navigation | native snap paging plus the constant script's keys | yes | present |
+| controls (arrows) | a visible pager | none: paging is keys, wheel and swipe, with no control a pointer can press | HTML only; beamer's navigation symbols are the PDF's (moloch removes them) | import candidate: declarative prev/next anchors per stage |
+| math, code, media plugins | typesetting and media in the browser | native MathML; listings typeset by the engine | plugins are runtimes | present for math; decline plugins |
+| auto-slide, jump-to-slide, state, events | runtime control | none | the runtime | decline: script rule |
+
+**A frame's ground is the palette in force, and both artifacts paint it.**
+Measured on synthetic probes at `b312cf2b` (Chromium 151, Playwright
+1.62): a deck declaring a dark `bg` in its preamble shipped a light stage
+under light ink in HTML, because the paged deck's stage painted the
+stylesheet's `--surface` whatever the design declared; a body
+`\palette{ bg, fg }` before a frame changed the PDF's ink and no page's
+ground, so the frame shipped its light ink on a light page while the
+contrast judge judged that ink against the declared dark ground; and a
+private reference deck, whose theme declares a light ground and dark ink,
+was dark ink on the dark scheme's surface for any reader in dark mode.
+Now `Ir.frameGroundOf` is the one reading of a frame's ground — the
+standout inversion, the title page's declared ground, else the declared
+`bg` in force — and `frameGround_exact` states the plain case: a ground
+nobody declared is never invented, and an epoch's own ground is never the
+document's. The PDF's frame, standout and section-page arms paint through
+it (the standout arm's second copy of `Design.standout`'s chain is gone),
+and a continuation page keeps its frame's ground. The HTML stage reads
+`stageGround`/`stageInk`, the declared pair before the stylesheet's; an
+epoch's redefinition already stood on the stage's own node, so a
+per-frame ground needed no new emission. `schemeColors` follows the
+artifact. beamer's own spelling, `\setbeamercolor{background canvas}{bg=…}`,
+was skipped (W0104) in the preamble and the body — a correction to the
+2026-09-25 title-ground entry, which said it named the document's `bg`: it
+does now, as a `beamerColorRoles` row sourced from the default canvas
+template (beamerouterthemedefault.sty, the full-page rule of the canvas's
+`bg`). `artStageGroundChecks` holds both artifacts to one value per plain
+frame: the stage rule paints from `--bg` and inks from `--fg`, each stage
+resolves `--bg` to the declared value, and every PDF page of the frame
+ships it as its full-page ground (five judge mutants; the base emission
+failed 19 slides fixtures and the epoch deck, the parent layout the epoch
+deck's PDF, and a reverted continuation carry the breakable deck's second
+page). `htmla11y` rose: 19 decks lost a dark-scheme contrast failure
+(deficit 72 → 53).
+
+**The printed deck is its stages.** Printing the HTML deck shipped the
+handout card on the reader's default sheet: measured on the private
+reference deck, 29 US Letter portrait sheets, a section page sharing a
+sheet with the next frame, a blank last sheet, and every stage-share
+length (`deckStageMilli`, in `vw`/`dvh`) resolved against the paper, so
+figures printed at the wrong size. reveal.js answers with a print layout
+pass; here the stage is already a CSS box in viewport units, so the pass
+is one declaration. `deckPageRule` sets `@page` to the PDF's own MediaBox
+(`deckPageSize`: `Sp.toPtString`, the formatter `Pdf.ptObj` writes the box
+with, in CSS `pt`, the engine's point being PostScript's), and with the
+page area the stage every stage-share length and the `vh` type mean on
+paper what they mean on screen. The rules that make a frame a stage move
+to a `stage` partition emitted under `@media screen, print`; print adds a
+sheet per stage (`break-after`, the reader oracle's own print contract),
+the declared ground kept (`print-color-adjust`), hidden spacers and
+full-colour steps, and the hairline stays off paper (Chromium opened a
+blank 32nd sheet for it). The deck theorems quantify over the new
+partition and the page rule; `motionGuarded` now exempts reduce and print
+only, so a stage rule owes a guard like a screen rule. Measured: the same
+deck prints 31 sheets — every frame and section page once, its steps at
+full colour as beamer's handout mode shows them — at 454.08 × 255.12 pt
+against the PDF's 453.543 × 255.118 (the width is Chromium's rounding),
+grounds included with the dialog's backgrounds off; its 35 screen snap
+pages are pixel-identical before and after, and its PDF is byte-identical
+across the whole branch.
+
+**Routed, with their sites.**
+- The group idiom `{\setbeamercolor{background canvas}{bg=…}\begin{frame}…\end{frame}}`
+  exits 1: E0336 and W0302 "unknown environment '{frame}'" — a frame inside
+  a body brace group is not a frame. Elab's group and environment path
+  (warn-elab this round); the scoping it needs is the palette's, which is
+  flow-scoped today, so a group must revert it.
+- `\usetheme[numbering=fraction]{moloch}` drops its options silently:
+  Compat's `usetheme` arm discards `takeOpt`'s result. `numbering=` has a
+  native target (`\chrome{ footer = { right = \framefraction } }`); every
+  other moloch option needs a name (Compat's preamble path).
+- In a flow class a body epoch's `bg` reaches no artifact while the
+  contrast judge judges the epoch's ink against it, and HTML ignores an
+  epoch's `fg` there (the inline `--fg` has no reader below `body`).
+  Contrast and HtmlDoc's colour emission (warn-ink).
+
+**The user's.** The print partition was the Tufte handout (one bordered
+card per frame); it is now the deck's own pages, which is what reveal.js
+prints and what the stage-share lengths require. A theme that declares
+its ground and ink is honoured in both colour schemes: the deck no longer
+takes the stylesheet's dark surface in dark mode, and a dark variant of a
+declared theme is not invented. `r-stretch` needs a spelling. Overview and
+the speaker window stay declined.
