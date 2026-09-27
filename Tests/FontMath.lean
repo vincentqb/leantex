@@ -615,6 +615,16 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: a face with no pairs answers 0 for every pair"
     ((osans.kernData.get).1.isEmpty && (osans.kernData.get).2.isEmpty &&
       osans.kernAdv ((osans.gid 'T').getD 0) ((osans.gid 'a').getD 0) == 0)
+  -- Fira Sans keeps every kern lookup behind an extension (GPOS type 9):
+  -- read through the hop, its pairs answer hb-shape's own numbers (Te −55,
+  -- AV −14, LT −83, aa −5 at upem 1000, HH none); without it the face read
+  -- as unkerned.
+  let firaSans ← load "FiraSans-Regular.otf"
+  let fk (a b : Char) : Int :=
+    firaSans.kernAdv ((firaSans.gid a).getD 0) ((firaSans.gid b).getD 0)
+  t "kern: pairs behind an extension lookup answer hb-shape's values"
+    (fk 'T' 'e' == -55 && fk 'A' 'V' == -14 && fk 'L' 'T' == -83 && fk 'a' 'a' == -5 &&
+      fk 'H' 'H' == 0)
   -- The applied value reaches the box: a "Ta" word's width is the two
   -- advances plus the (negative) kern, exactly
   -- (kern_symmetric_in_measure holds the general fact).

@@ -416,9 +416,13 @@ private structure KernSub where
 
 /-- The PairPos subtables one GPOS `kern` feature carries for
 `latn`/`DFLT`, formats 1 and 2, XAdvance of the first glyph only — the
-one value horizontal Latin kerning uses. Extension lookups (type 9) and
-contextual positioning are outside this slice; a font with no GPOS kern
-reads as empty (Open Sans) and the legacy `kern` table answers instead. -/
+one value horizontal Latin kerning uses. A PairPos subtable behind an
+extension lookup (type 9, `ExtensionPosFormat1`: its type at +2, a 32-bit
+offset at +4) is read through its one hop — the spec forbids a second,
+and a face compiled with extensions (Fira Sans, Inter) keeps all or most of
+its pairs there. Contextual positioning is outside this slice; a font with
+no GPOS kern reads as empty (Open Sans) and the legacy `kern` table
+answers instead. -/
 private def parseKernSubs (b : ByteArray) : Array KernSub := Id.run do
   let some t := findTable b "GPOS" | return #[]
   unless fits b t && t.length ≥ 10 do return #[]
@@ -431,10 +435,13 @@ private def parseKernSubs (b : ByteArray) : Array KernSub := Id.run do
   for li in lookups do
     if li ≥ u16 b lookupList then continue
     let lo := lookupList + u16 b (lookupList + 2 + 2 * li)
-    unless u16 b lo == 2 do continue
+    let ty := u16 b lo
+    unless ty == 2 || ty == 9 do continue
     let nSub := u16 b (lo + 4)
     for s in [0:nSub] do
-      let so := lo + u16 b (lo + 6 + 2 * s)
+      let so0 := lo + u16 b (lo + 6 + 2 * s)
+      if ty == 9 && !(u16 b so0 == 1 && u16 b (so0 + 2) == 2) then continue
+      let so := if ty == 9 then so0 + u32 b (so0 + 4) else so0
       let fmt := u16 b so
       unless fmt == 1 || fmt == 2 do continue
       let cov := parseCoverage b (so + u16 b (so + 2))
