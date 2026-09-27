@@ -264,6 +264,71 @@ its own and an overfull line warns by itself", none),
     "'\\flushbottom' picks a vertical distribution; pages keep their declared distribution",
     none)]
 
+/-- Where a LaTeX length parameter's value goes, decided by what LaTeX's
+own code does with it and by which engine site reads it. -/
+inductive ParamSite where
+  /-- A page property: `\page{ key = ... }`. -/
+  | page (key : String)
+  /-- A token an engine site reads under this name. -/
+  | token (name : String)
+  /-- `\leftmargin` at list depth `level`: the class's `\@list` for that
+  depth reads `\leftmargin<level>` into it at every list (size10.clo). -/
+  | listIndent (level : Nat)
+  /-- `\normalsize`, which `\begin{document}` runs, sets it again (size10.clo,
+  measured under lualatex): a preamble value never reaches the body, where
+  `body` is its site. -/
+  | sizeReset (body : ParamSite)
+  /-- `\list` or the class's `\@listi` sets it again at every list
+  (ltlists.dtx, size10.clo): a value set outside a list reaches no list. -/
+  | listReset
+  /-- LaTeX reads it where `what` says; no engine site does. -/
+  | unmodelled (what : String)
+  deriving Repr, BEq
+
+/-- The kernel and booktabs length parameters, each with its site. A name
+not here is a length of the document's own: a token of its name. -/
+def paramSites : List (String × ParamSite) :=
+  [("parskip", .page "parskip"),
+   ("abovecaptionskip", .token "captionsep"),
+   ("topsep", .token "topsep"),
+   ("footins", .token "footins"),
+   ("tabcolsep", .token "tabcolsep"),
+   ("heavyrulewidth", .token "heavyrulewidth"),
+   ("lightrulewidth", .token "lightrulewidth"),
+   ("cmidrulewidth", .token "cmidrulewidth"),
+   ("cmidrulekern", .token "cmidrulekern"),
+   ("aboverulesep", .token "aboverulesep"),
+   ("belowrulesep", .token "belowrulesep"),
+   ("abovetopsep", .token "abovetopsep"),
+   ("belowbottomsep", .token "belowbottomsep"),
+   ("doublerulesep", .token "doublerulesep"),
+   ("leftmargini", .listIndent 1), ("leftmarginii", .listIndent 2),
+   ("leftmarginiii", .listIndent 3), ("leftmarginiv", .listIndent 4),
+   ("leftmarginv", .listIndent 5), ("leftmarginvi", .listIndent 6),
+   ("abovedisplayskip", .sizeReset (.token "abovedisplayskip")),
+   ("belowdisplayskip", .sizeReset (.token "belowdisplayskip")),
+   ("abovedisplayshortskip", .sizeReset (.unmodelled
+      "spaces a display after a short line; a display here opens its long skip")),
+   ("belowdisplayshortskip", .sizeReset (.unmodelled
+      "spaces a display after a short line; a display here opens its long skip")),
+   ("baselineskip", .sizeReset (.unmodelled
+      "sets the leading; the leading here is the page's")),
+   ("leftmargin", .listReset), ("itemsep", .listReset), ("parsep", .listReset),
+   ("itemindent", .listReset), ("listparindent", .listReset), ("rightmargin", .listReset),
+   ("parindent", .unmodelled "indents a paragraph's first line; paragraphs here are set flush"),
+   ("partopsep", .unmodelled
+      "adds to a list's opening space after a blank line, which the engine does not record"),
+   ("labelsep", .unmodelled "separates a list label from its item; the gap here is half an em"),
+   ("labelwidth", .unmodelled "boxes a list label; a label here sets at its own width"),
+   ("footnotesep", .unmodelled "struts a footnote's first line; the strut here follows the type"),
+   ("columnsep", .unmodelled "separates a two-column page's columns; the text here is one column"),
+   ("arraycolsep", .unmodelled "pads an array's columns; the padding here is half an em"),
+   ("jot", .unmodelled "adds space between an alignment's rows, which no site here reads"),
+   ("fboxsep", .unmodelled "pads a framed box, which no site here reads"),
+   ("fboxrule", .unmodelled "rules a framed box, which no site here reads"),
+   ("arrayrulewidth", .unmodelled "sets a table rule's thickness, which no site here reads"),
+   ("unitlength", .unmodelled "scales a picture environment, which no site here reads")]
+
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
 construct, its options, and its arguments — with one warning naming it (and
@@ -2920,20 +2985,71 @@ private def lengthSrc (raws : Array Raw) : String := Id.run do
     | other => s := s ++ rawSrcOne other
   return s.trimAscii.toString
 
-/-- One length assignment, natively: TeX's paragraph glue is a page
-property here, not a token; the object-side caption gap (classes.dtx
-`\@makecaption`: `\abovecaptionskip` stands between the object and its
-caption) is exactly the engine's `captionsep` token; every other length is
-a token of its own name. The value is recorded, so register arithmetic on
-the length reads it. -/
+/-- The parameter a `\setlength` target names: a control word, or TeX's
+register reference `\skip\footins` (the skip an insertion holds, TeXbook
+ch. 15), read as the name it holds. -/
+private def paramName (raws : Array Raw) : Option String :=
+  match raws.toList.filter (fun r => match r with | .space => false | _ => true) with
+  | [.ctrl n _] => some n
+  | [.ctrl "skip" _, .ctrl n _] => some n
+  | _ => none
+
+/-- One length assignment, natively, at the site `paramSites` gives it: a
+page property, a token an engine site reads, a list level's indent, or —
+where LaTeX's own code sets the value again before anything reads it —
+nothing, said so. A parameter no engine site reads is named where it stands,
+and a length of the document's own is a token of its name. Inside a
+definition nothing is judged: the assignment runs where the command is used.
+The value is recorded either way, so register arithmetic on the length reads
+it. -/
 private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
-  let native := match n with
-    | "parskip" => s!"\\page\{ parskip = {src} }"
-    | "abovecaptionskip" => s!"\\tokens\{ captionsep = {src} }"
-    | _ => s!"\\tokens\{ {n} = {src} }"
-  became what native pos
   write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
-  synthAt native pos
+  let st ← get
+  let preamble ← preambleProper
+  let own := s!"\\tokens\{ {n} = {src} }"
+  let emit (native : String) : M (Array Raw) := do
+    became what native pos
+    synthAt native pos
+  let nothing (why : String) (tokens : Bool := true) : M (Array Raw) := do
+    discard what why s!"setlength:{n}" pos
+    if tokens then synthAt own pos else pure #[]
+  let named (why : String) : M (Array Raw) := do
+    sayOnce ("ctrl:setlength:" ++ n) .W0104 s!"'\\{n}' is not honoured: it {why}" pos
+      -- premise: paramDemoteChecks — a setting in a style file ships the page the
+      -- same setting ships from the document, and only its severity moves
+      (demote := packageFile st.file)
+    synthAt own pos
+  let list (level : Nat) (kind : String) : String :=
+    if level == 1 then kind else s!"{kind}{level}"
+  match (paramSites.lookup n).getD (.token n), st.inDef with
+  | .page key, _ => emit s!"\\page\{ {key} = {src} }"
+  | .token t, _ => emit s!"\\tokens\{ {t} = {src} }"
+  | _, true => emit own
+  | .listIndent level, false =>
+    if level > 4 then
+      nothing "lists here nest four levels, and a deeper one reuses the fourth's"
+    else if preamble then
+      let styles := s!"\\style\{{list level "itemize"}}\{ indent = {n} }\
+\\style\{{list level "enumerate"}}\{ indent = {n} }"
+      became what s!"\\style\{{list level "itemize"}}\{ indent = {n} }, and enumerate's" pos
+      synthAt (own ++ styles) pos
+    else named "indents the lists after it; a list's indent here is declared in the preamble"
+  | .sizeReset body, false =>
+    if preamble then
+      nothing "'\\begin{document}' runs '\\normalsize', which sets it again"
+        (tokens := !(body matches .token _))
+    else match body with
+      | .token t => emit s!"\\tokens\{ {t} = {src} }"
+      | .unmodelled why => named why
+      | _ => emit own
+  | .listReset, false =>
+    if preamble then
+      nothing s!"every list sets '\\{n}' again from its class's parameters, so no list reads it"
+    else named "spaces one list; a list here is spaced per level, in the preamble"
+  | .unmodelled why, false =>
+    if n == "parindent" && Decl.parseGlue src == some {} then
+      nothing "paragraphs here are set flush, as declared"
+    else named why
 
 /-- A length operand the rewrite evaluates: a literal (`2pt`, `-2pt`), or a
 length whose value it set, negated or not. -/
@@ -2944,7 +3060,6 @@ private def lenOperand (lens : Array (String × String)) : List Raw → Option S
   | [.sym '-' _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | _ => none
-
 /-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
@@ -5186,7 +5301,7 @@ face serves every language, so the binding is dropped" pos
 arithmetic truncates toward zero as TeX's '\\divide' does" pos
           (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
         return some (#[], k)
-      match ctrlName args[0] with
+      match paramName args[0] with
       | some "belowcaptionskip" =>
         -- The caption's text side: in this engine that is the float
         -- separation (`floatsep`), not a caption property; the LaTeX
@@ -5195,7 +5310,8 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
 text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         return some (#[], k)
       | some n =>
-        return some (← setLength n (lengthSrc args[1]) s!"\\setlength\{\\{n}}" pos, k)
+        let target := (rawSrc args[0]).trimAscii.toString
+        return some (← setLength n (lengthSrc args[1]) s!"\\setlength\{{target}}" pos, k)
       | none => return none
     else return none
   | "addtolength" =>

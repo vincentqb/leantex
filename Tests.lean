@@ -23,6 +23,7 @@ import Tests.AmsMath
 import Tests.Refusal
 import Tests.EndInput
 import Tests.Redefine
+import Tests.Settings
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -237,6 +238,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   globalCaptionSkipChecks ref oneFace
   environChecks ref oneFace
   abstractSkipChecks ref oneFace
+  paramSiteChecks ref oneFace
+  paramDemoteChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
