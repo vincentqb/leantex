@@ -1013,9 +1013,9 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "html { scroll-behavior: smooth; }" &&
      has deckPage "@media (prefers-reduced-motion: reduce) {" &&
      has deckPage "html { scroll-behavior: auto; }")
-  t "the deck slide fills the viewport as an opaque column on the declared page"
-    (has deckPage
-      "background: var(--bg, var(--surface)); display: flex; flex-direction: column;")
+  t "the deck slide fills the viewport as an opaque column on the declared ground"
+    (has deckPage ("background: var(--bg, var(--surface)); color: var(--fg, var(--ink)); " ++
+      "display: flex; flex-direction: column;"))
   t "the deck prints as the handout, one card per page"
     (has deckPage "@media print" &&
      has deckPage "break-inside: avoid" &&

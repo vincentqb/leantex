@@ -1873,22 +1873,38 @@ def deckLogoRule : DeckRule :=
     decls := [("position", "absolute"), ("bottom", safeareaVar),
       ("left", safeareaVar), ("right", safeareaVar), ("display", "flex")] }
 
+/-- The stage's ground and ink: the declared pair in force where the stage
+stands — the document's (`:root`, `paletteVars`) or a body epoch's (the
+node's own inline redefinition, `withEpoch`; custom properties inherit) —
+and the stylesheet's own surface and ink only where nothing is declared.
+The value reveal.js spells per slide as `data-background-color` is the
+declaration this engine already has, the `bg` of the palette in force, so
+a frame's ground is data both backends read, never a stylesheet constant:
+painting `--surface` whatever the document declared shipped a dark
+declared ground as light ink on a light stage, and a theme's dark ink on
+the dark scheme's surface. -/
+def stageGround : String := "var(--bg, var(--surface))"
+
+/-- The stage's ink, paired with `stageGround`: `color` is computed where it
+is declared, so a body epoch's `--fg` redefined on the stage reaches its text
+only through a declaration on the stage itself. -/
+def stageInk : String := "var(--fg, var(--ink))"
+
 /-- Every frame fills the viewport as one opaque column of the row:
 `100vw` wide (exactly the scrollport — the root clips y, so no scrollbar
-narrows the viewport under it), one stage tall, `background: var(--bg,
-var(--surface))` — opaque on every path, the user's own rule, and the
-document's declared page where it declares one, the ground the PDF paints
-and the contrast judge reads — and content that spills the stage stays
-reachable through the
-frame's own scroll (`overflow-y: auto`; the scrollbar is the visible
-control, the honest floor). `position: relative` anchors the stage's own
-furniture (`deckLogoRule`); in a stepped track the sticky override
-(`stepStageRule`, higher specificity) is a positioned box already. -/
+narrows the viewport under it), one stage tall, its ground and ink the
+declared pair in force (`stageGround`, `stageInk`) — opaque on every path,
+the user's own rule — and content that spills the stage stays reachable
+through the frame's own scroll (`overflow-y: auto`; the scrollbar is the
+visible control, the honest floor). `position: relative` anchors the
+stage's own furniture (`deckLogoRule`); in a stepped track the sticky
+override (`stepStageRule`, higher specificity) is a positioned box
+already. -/
 def deckStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw"),
       ("height", "100dvh"), ("overflow-y", "auto"),
-      ("background", "var(--bg, var(--surface))"), ("display", "flex"),
+      ("background", stageGround), ("color", stageInk), ("display", "flex"),
       ("flex-direction", "column"), ("padding", safeareaVar),
       ("position", "relative")] }
 
@@ -5987,11 +6003,14 @@ as the cascade resolves them. A palette entry named after a token (`ink`,
 specificity (`tokenVars`), so it holds in both schemes; an undeclared
 token keeps the scheme's own. The text is the design's declared ink when it
 declares one (`themeCss`: `body { color: var(--fg) }`), and the ground
-under it is the declared page (`body { background: var(--bg) }`, and on the
-paged deck the stage's `var(--bg, var(--surface))`, `deckStageRule`), both
-read off `Design.ofDoc`, their one resolving site. Under `bulma` or `none`
-the engine ships no colour of its own and claims nothing; `schemeFailures`
-counts none. -/
+under it is the declared page (`body { background: var(--bg) }`), both read
+off `Design.ofDoc`, their one resolving site. The paged deck's stage paints
+the same declared page (`deckStageRule` reads `stageGround`, the declared
+`bg` before the scheme's surface), so every class judges one pair: until it
+did, the stage painted `var(--surface)` whatever the document declared, and
+a theme's declared ink stood on the dark scheme's surface. Under `bulma` or
+`none` the engine ships no colour of its own and claims nothing;
+`schemeFailures` counts none. -/
 def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColors :=
   let tok (n : String) (d : Ir.Color) : Ir.Color := (doc.palette.find? n).getD d
   let d := Design.ofDoc doc

@@ -1710,6 +1710,184 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t s!"ground parity: declared grounds are reached ({declaredSeen})" (0 < declaredSeen)
   t s!"ground parity: carried grounds are reached ({carriedSeen})" (0 < carriedSeen)
 
+/-! ## A frame's own ground: the palette in force, and both artifacts paint it
+
+The third ground the engine paints, beside the band and the title page: the
+plain frame's. reveal.js declares a slide's background per slide
+(`data-background-color`); here the declaration already exists — the `bg`
+of the palette in force where the frame stands, the document's or a body
+`\palette`'s — so the class this block closes is a declared ground one
+artifact does not paint. Before it, the paged deck's stage painted the
+stylesheet's `--surface` whatever the document declared: a dark declared
+ground shipped its light ink on a light stage while the PDF was right, and
+a reader in dark mode got a theme's dark ink on the stylesheet's dark
+surface. -/
+
+/-- The property a frame's plain ground is declared under: the palette's
+`bg`, which `:root` carries for the document and a body epoch redefines on
+the node it stands on (`HtmlDoc.withEpoch`). -/
+def artStageRole : String := "bg"
+
+/-- The last value a declaration list gives one custom property. -/
+def artVarIn (decls : String) (name : String) : Option String :=
+  ((decls.splitOn ";").filterMap fun d =>
+    match d.splitOn ":" with
+    | [k, v] => if k.trimAscii.toString == s!"--{name}" then some v.trimAscii.toString else none
+    | _ => none).getLast?
+
+/-- The last value the stylesheet's `:root` blocks give one custom property:
+the document's own declaration, which the backend writes after the
+colour-scheme defaults. -/
+def artRootVar (css : String) (name : String) : Option String :=
+  ((artCssBlocks css).filterMap fun (sel, decls) =>
+    if sel == ":root" then artVarIn decls name else none).back?
+
+mutual
+
+/-- The plain frames' stages in document order — a `section.slide` that is
+neither the standout inversion nor the title page — each with the value the
+nearest inline redefinition of the role, on it or on an ancestor, gives it:
+where a body epoch's ground lands (the section, or a stepped frame's track;
+custom properties inherit). -/
+def artStagesOne (inl : Option String) (acc : Array (Option String)) :
+    Html.Node → Array (Option String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let own := (attrs.find? (·.1 == "style")).bind fun a => artVarIn a.2 artStageRole
+    let inl := own.orElse fun _ => inl
+    let cs := (((attrs.find? (·.1 == "class")).map (·.2)).getD "").splitOn " "
+    let acc := if t == "section" && cs.contains "slide" && !cs.contains "standout" &&
+        !cs.contains "title-page" then acc.push inl else acc
+    artStagesList inl acc kids.toList
+
+def artStagesList (inl : Option String) (acc : Array (Option String)) :
+    List Html.Node → Array (Option String)
+  | [] => acc
+  | k :: rest => artStagesList inl (artStagesOne inl acc k) rest
+
+end
+
+/-- The plain frames' declared grounds in document order: the `bg` of the
+palette in force at each top-level frame that is neither standout nor the
+title page — the top-level walk both backends make. -/
+def artFrameGrounds (doc : Ir.Doc) : Array (Option Ir.Color) := Id.run do
+  let mut pal := doc.palette
+  let mut out : Array (Option Ir.Color) := #[]
+  for b in doc.body do
+    match b with
+    | .setPalette p => pal := p
+    | .frame _ standout valign _ _ =>
+      if !standout && !(valign matches .golden) then out := out.push (pal.find? "bg")
+    | _ => pure ()
+  return out
+
+/-- The path a plain stage stands on in the emitted tree. -/
+def artStagePath : Array ArtElem := artBodyPath ++ #[("main", #[]), ("section", #["slide"])]
+
+/-- Every way the HTML deck disagrees with the palette in force about a
+plain frame's ground and ink: the stage count, the rule painting the stage
+from the role, the rule inking it from `--fg`, and each stage's resolved
+value against the declared one. Pure in its three arguments, so the mutants
+below exercise the judge the corpus runs. -/
+def artStageGroundOffences (expected : Array (Option Ir.Color)) (css : String)
+    (body : Array Html.Node) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let stages := artStagesList none #[] body.toList
+  if stages.size != expected.size then
+    out := out.push s!"{expected.size} plain frames and {stages.size} plain stages"
+  if expected.any Option.isSome then
+    let blocks := (artCssBlocks css).filter fun (sel, _) =>
+      (artSelChains sel).any fun c => artChainMatchesPath c artStagePath
+    unless blocks.any fun (_, d) => artPaintsFrom artStageRole d do
+      out := out.push s!"no rule paints the plain stage from --{artStageRole}"
+    unless blocks.any fun (_, d) => (d.splitOn ";").any fun x =>
+        match x.splitOn ":" with
+        | [p, v] => p.trimAscii.toString == "color" && hasStr v "var(--fg"
+        | _ => false do
+      out := out.push "no rule inks the plain stage from --fg"
+  let root := artRootVar css artStageRole
+  for i in [0:min stages.size expected.size] do
+    let got := stages[i]!.orElse fun _ => root
+    let want := expected[i]!.map HtmlDoc.cssColor
+    if got != want then
+      out := out.push s!"plain frame {i + 1}: the stage resolves --{artStageRole} to \
+{got}, the palette in force declares {want}"
+  return out
+
+/-- A deck whose middle frame stands in a body epoch with its own dark
+ground and light ink, restored after: reveal.js's per-slide background,
+spelled as the declaration this engine already has. Invented values. -/
+def artEpochDeck : String :=
+  "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++
+  "\\begin{frame}{On the document's ground}\nA first frame.\n\\end{frame}\n" ++
+  "\\palette{ bg = #14213D, fg = #F5F5F5 }\n" ++
+  "\\begin{frame}{On a declared dark ground}\nA second frame.\n\\end{frame}\n" ++
+  "\\palette{ bg = #FFFFFF, fg = #000000 }\n" ++
+  "\\begin{frame}{Back on a light ground}\nA third frame.\n\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- The judge broken once for each link, and the shape the backend writes
+accepted: the rule gone, the rule reading the stylesheet's surface, the
+epoch's redefinition dropped, and the ink rule gone. -/
+def artStageMutants : List (String × String × Array Html.Node × Bool) :=
+  let stage (style : String) : Html.Node :=
+    Html.elem "section" #[] (#[("class", "slide")] ++
+      (if style.isEmpty then #[] else #[("style", style)]))
+  let root := ":root {\n    --bg: #fdfcf9;\n}\n"
+  let rule (bg : String) : String :=
+    s!"@media screen \{\nsection.slide, section.section-page \{ background: {bg}; \
+color: var(--fg, var(--ink)); }\n}\n"
+  let live := #[Html.elem "main" #[stage "", stage "--bg: #14213d"]]
+  [ ("the shape the backend writes", root ++ rule "var(--bg, var(--surface))", live, false),
+    ("the rule gone", root, live, true),
+    ("the stage painting the stylesheet's surface", root ++ rule "var(--surface)", live, true),
+    ("the epoch's redefinition dropped", root ++ rule "var(--bg, var(--surface))",
+      #[Html.elem "main" #[stage "", stage ""]], true),
+    ("the ink rule gone", root ++
+      "section.slide { background: var(--bg, var(--surface)); }\n", live, true)]
+
+/-- **A plain frame's ground is the palette in force, and the stage paints
+it.** Over the judge's own mutants, the slides fixtures of the corpus, and
+the epoch deck: every plain stage resolves the role to the declared value
+of the palette in force at its frame, through a rule that paints the stage
+from it and inks the stage from `--fg`. -/
+def artStageGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let want : Array (Option Ir.Color) :=
+    #[some { r := 0xFD, g := 0xFC, b := 0xF9 }, some { r := 0x14, g := 0x21, b := 0x3D }]
+  for (label, css, body, wantOffence) in artStageMutants do
+    let offs := artStageGroundOffences want css body
+    if wantOffence then
+      t s!"stage ground mutant, {label}: the judge refuses it" (!offs.isEmpty)
+    else
+      t s!"stage ground mutant, {label}: the judge accepts it: {offs.toList}" offs.isEmpty
+  let mut judged := 0
+  let mut declared := 0
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    unless doc.docClass == .slides do continue
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    let css := artTreeCssList (artTreeCssList "" head.toList) body.toList
+    let expected := artFrameGrounds doc
+    judged := judged + 1
+    if expected.any Option.isSome then declared := declared + 1
+    let offs := artStageGroundOffences expected css body
+    t s!"stage ground {n}: {offs.toList}" offs.isEmpty
+  t s!"stage ground: slides fixtures are judged ({judged})" (0 < judged)
+  t s!"stage ground: declared grounds are reached ({declared})" (0 < declared)
+  let (edoc, eds) := elabStr artEpochDeck
+  t s!"stage ground epoch deck elaborates clean: {eds.toList.map (·.code)}" eds.isEmpty
+  let expected := artFrameGrounds edoc
+  t "stage ground epoch deck: the middle frame declares its own ground"
+    (expected == #[(edoc.palette.find? "bg"), some { r := 0x14, g := 0x21, b := 0x3D }, some { r := 0xFF, g := 0xFF, b := 0xFF }])
+  let (ehead, ebody, _) := HtmlDoc.emitTree {} edoc
+  let ecss := artTreeCssList (artTreeCssList "" ehead.toList) ebody.toList
+  let offs := artStageGroundOffences expected ecss ebody
+  t s!"stage ground epoch deck html: {offs.toList}" offs.isEmpty
+
 
 
 /-! ## The pitch the artifact declares
