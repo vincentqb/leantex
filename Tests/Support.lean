@@ -984,3 +984,23 @@ file carries (fonts embedded, filters, page count) — `PdfCensus.census`
 with its refusal surfaced as the test's own failure text. -/
 def pdfCensusOf (pdf : ByteArray) : Except String PdfCensus.Census :=
   PdfCensus.census pdf
+
+
+mutual
+
+/-- Every element of a tree whose tag `want` accepts, with its attributes,
+in document order. -/
+def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String × String))) :
+    Html.Node → Array (String × Array (String × String))
+  | .elem tag attrs kids =>
+    elemAttrsList want (if want tag then acc.push (tag, attrs) else acc) kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String))) :
+    List Html.Node → Array (String × Array (String × String))
+  | [] => acc
+  | k :: rest => elemAttrsList want (elemAttrsOne want acc k) rest
+
+end

@@ -3855,6 +3855,17 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     { labelMetric := Layout.labelMetric (Layout.Geom.ofPage dd.page) oneFace } dd).1
   t "the SVG's viewBox is the declared box"
     (hasStr page s!"viewBox=\"0 0 {(4 * cm).toPtString} {(2 * cm).toPtString}\"")
+  -- The declared box is a size, not a clip: ink past it paints in HTML as
+  -- it does on the page (`Ir.Pic.Picture.declared`). An inline SVG's user
+  -- agent default is `overflow: hidden`, which cut a label placed beside a
+  -- declared box; the SVG itself declares the overflow, so no stylesheet
+  -- mode can bring the clip back.
+  let (od, _) := elabM (src "\\useasboundingbox (0,0) rectangle (2,1);\n\\fill (0,0) rectangle (1,1);\n"
+    "\\node at (3.5,0.5) {Outside};")
+  let svgs := elemAttrsList (· == "svg") #[] (HtmlDoc.emitTree
+    { labelMetric := Layout.labelMetric (Layout.Geom.ofPage od.page) oneFace } od).2.1.toList
+  t "html: a picture's SVG paints ink outside its declared box"
+    (!svgs.isEmpty && svgs.all fun (_, a) => HtmlDoc.attrOf? a "overflow" == some "visible")
   -- The natural box: an undrawn node's inner sep still reserves room, one
   -- sep above the letters and one below (the lower edge may take the odd sp
   -- of a centred band's halving).

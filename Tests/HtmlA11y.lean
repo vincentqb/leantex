@@ -63,25 +63,6 @@ def a11yCorpus : IO (Array (String × List (String × Nat))) := do
     out := out.push (n, a11yDeficits doc body)
   return out
 
-mutual
-
-/-- Every element of a tree whose tag `want` accepts, with its attributes,
-in document order. -/
-def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String × String))) :
-    Html.Node → Array (String × Array (String × String))
-  | .elem tag attrs kids =>
-    elemAttrsList want (if want tag then acc.push (tag, attrs) else acc) kids.toList
-  | .text _ => acc
-  | .style _ => acc
-  | .script _ _ => acc
-
-def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String))) :
-    List Html.Node → Array (String × Array (String × String))
-  | [] => acc
-  | k :: rest => elemAttrsList want (elemAttrsOne want acc k) rest
-
-end
-
 /-- The `aria-label` of every `<svg>` a body carries. -/
 def svgLabels (body : Array Html.Node) : Array (Option String) :=
   (elemAttrsList (· == "svg") #[] body.toList).map (HtmlDoc.attrOf? ·.2 "aria-label")

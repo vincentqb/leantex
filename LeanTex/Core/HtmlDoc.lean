@@ -4726,11 +4726,27 @@ PDF reserves, never the hull of label anchors. -/
 def pictureBoxOf (cfg : Config) (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
   pic.box cfg.labelMetric
 
-/-- The picture as inline SVG. -/
+/-- The picture as inline SVG. The declared box is a size, never a clip
+(`Ir.Pic.Picture.declared`): the SVG declares `overflow` visible as its
+own presentation attribute, so ink placed past the box paints as the PDF
+paints it, whatever stylesheet mode the page ships under — an inline
+SVG's user-agent default is `overflow: hidden`. -/
 def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
   Html.elem "svg" (pictureKids pic px0 py1)
-    (pictureBox cfg (px1 - px0) (py1 - py0) ++ pictureRole cfg.locale pic)
+    (pictureBox cfg (px1 - px0) (py1 - py0) ++ pictureRole cfg.locale pic ++
+      #[("overflow", "visible")])
+
+/-- **A picture's SVG never clips its ink** (`_contract`): every picture
+ships `overflow="visible"`, the HTML half of the IR's "ink may stand
+outside it, and nothing is clipped". -/
+theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture) :
+    (match pictureSvg cfg pic with
+      | .elem _ attrs _ => attrOf? attrs "overflow"
+      | _ => none) = some "visible" := by
+  rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
+  simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, pictureRole, attrOf?]
+  split <;> simp
 
 /-- **The SVG's box is the IR's box** (`_projects`): the `viewBox` a
 picture's SVG declares spans `Ir.Pic.Picture.box` under the configured
