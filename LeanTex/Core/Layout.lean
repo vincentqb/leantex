@@ -31,6 +31,14 @@ structure Geom where
   (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
   through `\page{ parskip = ... }`. -/
   parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
+  /-- The `\parskip` TeX adds when the paragraph after a trivlist's
+  `\topsep` starts (ltlists.dtx, `\@trivlist`: `\advance\@topsep\parskip`):
+  the declared parskip where a document or class declares one, else the
+  standard classes' own `0pt plus 1pt` (classes.dtx). It differs from
+  `parskip` only where nothing is declared: there `parskip` is the engine's
+  paragraph mark, a skip standing in for the `\parindent` the engine does
+  not set, and TeX spends no indent at a list's edge. -/
+  texParskip : SymGlue := { stretch := Dim.Length.ofSp (pt 1) } -- classes.dtx: \parskip 0pt plus 1pt
   /-- Per-level list indent. The default is the engine's own choice —
   `listIndentFor`'s 1.5 em, shallower than classes.dtx's 2.5/2.2/1.87 em
   stack, which reads deep at this engine's narrower default measure; no
@@ -887,6 +895,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     listIndent := listIndentFor spec.fontSize
     leading := spec.leading
     parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
+    texParskip := spec.parskip.getD base.texParskip
     hyphenate := spec.hyphenate.getD base.hyphenate
     justify := spec.justify.getD base.justify
     protrude := spec.protrude.getD base.protrude
@@ -5035,6 +5044,8 @@ private structure Rd where
   locale : Locale := Locale.en
   /-- The `slides` class: frames and sections open fresh pages. -/
   slides : Bool := false
+  /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
+  lists : Ir.ListLineage := .sizeFile
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   imgs : Image.Store := {}
@@ -5121,6 +5132,11 @@ private structure Acc where
   list's `topsep`, the furniture gaps — keeps the older replace-the-default
   shape; once a skip is present the boundary pays both. -/
   declaredSkip : Bool := false
+  /-- A list's `\topsep` or `\itemsep` stands in the owed glue
+  (`Acc.listSpace`): the paragraph after it adds TeX's `\parskip`
+  (`Geom.texParskip`) on top, which is what `\@trivlist` spends, rather
+  than the engine's peer gap. -/
+  trivOwed : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
@@ -5185,12 +5201,21 @@ private theorem addvspace_zero_adds_exact (a : Acc) (g last : Glue)
 so two trivlists meeting pay the larger of their spaces once — and paid on
 top of the peer gap, not in place of it, because TeX contributes `\parskip`
 when the following paragraph starts, after the trivlist's space already
-stands (ltlists.dtx `\@trivlist`, `\@endparenv`; measured under lualatex:
-baseline to baseline across `\end{center}` is `\topsep + \parskip +
-\baselineskip`). At a frame's or page's first block no peer gap is open, so
-the space stands alone, as beamer's frame start cancels its `\parskip`. -/
+stands (ltlists.dtx `\@trivlist`, `\@endparenv`;
+measured under lualatex: baseline to baseline across `\end{center}` is
+`\topsep + \parskip + \baselineskip`). At a frame's or page's first block no peer gap is open, so the space stands
+alone, as beamer's frame start cancels its `\parskip`. -/
 private def Acc.trivSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true }
+
+/-- A list's own space (`\topsep`, `\itemsep`, `Ir.listSkips`): the
+trivlist's `\addvspace`, with TeX's own `\parskip` (`Geom.texParskip`) on
+top — what `\@trivlist` and `\@item` spend — rather than the engine's
+paragraph mark, which stands in for an indent TeX sets nowhere at a list's
+edge. The `\trivlist` role (`{center}`, `{flush…}`) keeps the peer gap, and
+its quantized `\topsep`, until its HTML half moves with it. -/
+private def Acc.listSpace (a : Acc) (g : Glue) : Acc :=
+  { a.addvspace g with declaredSkip := true, trivOwed := true }
 
 /-- The glue one boundary pays: the declared glue owed, and — when a
 document skip stands in it at a peer boundary — the page's parskip *on top
@@ -5207,14 +5232,15 @@ the furniture gaps) still stands in place of the default, a remainder
 carried as `elementSpace_monotone`. -/
 private def Acc.gapGlue (a : Acc) (r : Rd) : Glue :=
   let declared := a.owed.foldl Glue.add {}
-  if a.wantDefault && a.declaredSkip then r.parskip.add declared else declared
+  let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
+  if a.wantDefault && a.declaredSkip then par.add declared else declared
 
 /-- Emit the gap owed, just before a line is placed. -/
 private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
   let a := if a.owed.isEmpty then
       (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
     else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
-  { a with wantDefault := false, owed := #[], declaredSkip := false }
+  { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false }
 
 /-- Glue's width grows by a non-negative addend on the right. -/
 private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
@@ -5231,24 +5257,29 @@ width at a boundary pays at least what the boundary paid without it. This is
 the property `\smallskip` between two paragraphs broke: its 3 pt stood *in
 place of* the 6 pt parskip it displaced, so inserting 3 pt of glue made the
 two paragraphs 3 pt *closer*. Positive glue cannot do that under any
-convention. The parskip's own non-negativity is the one hypothesis: a page
-declaring negative parskip could narrow a gap by opening one, as it could
-in TeX. -/
+convention. The two parskips' non-negativity — the engine's peer gap and
+TeX's (`Geom.texParskip`) — are the hypotheses: a page declaring negative
+parskip could narrow a gap by opening one, as it could in TeX. -/
 private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
-    (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width) :
+    (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width)
+    (hq : (0 : Int) ≤ (r.resolve r.geom.texParskip).width) :
     (a.gapGlue r).width ≤ ((a.vskip g).gapGlue r).width := by
   have hf : ((a.vskip g).owed.foldl Glue.add {}) = (a.owed.foldl Glue.add {}).add g := by
     simp [Acc.vskip]
   have hd : (a.vskip g).declaredSkip = true := rfl
   have hw : (a.vskip g).wantDefault = a.wantDefault := rfl
-  simp only [Acc.gapGlue, hf, hd, hw, Bool.and_true]
+  have ht : (a.vskip g).trivOwed = a.trivOwed := rfl
+  have hpar : (0 : Int) ≤ (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip).width := by
+    split <;> assumption
+  simp only [Acc.gapGlue, hf, hd, hw, ht, Bool.and_true]
+  generalize (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip) = par at hpar ⊢
   cases hwd : a.wantDefault
   · simpa [hwd] using glue_width_le_add (a.owed.foldl Glue.add {}) g hg
   · cases hds : a.declaredSkip
     · simpa [hwd, hds] using Int.le_trans (glue_width_le_add (a.owed.foldl Glue.add {}) g hg)
-        (glue_width_le_add_left r.parskip ((a.owed.foldl Glue.add {}).add g) hp)
+        (glue_width_le_add_left par ((a.owed.foldl Glue.add {}).add g) hpar)
     · simpa [hwd, hds, Glue.add] using
-        Int.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) r.parskip.width
+        Int.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) par.width
 
 /-- The gap the walk pays at an undeclared peer boundary is the declared
 default and only it: one `.skip` of the page's parskip — the resolved
@@ -5281,7 +5312,8 @@ sandwich into a bottom-flush page. -/
 private def Acc.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.isEmpty then a
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
-  { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false }
+  { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false,
+           trivOwed := false }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
@@ -6780,15 +6812,17 @@ private def collectItem (r : Rd) (a : Acc)
 
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
-    (ordered : Bool) (level : Nat) (idx : Nat) : Acc :=
+    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Glue) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
-    -- Items are peers separated by the declared gap. The default is none,
-    -- as it was: a list is one block, and its leading is its rhythm.
+    -- Items are peers: LaTeX's `\@item` spends `\addvspace\itemsep`, and
+    -- the item's paragraph its `\parskip`, which is `\parsep` inside the
+    -- list — the reader's peer gap here. A declared gap is the whole gap.
     let a := match idx == 1, st.gap with
+      | true, _ => a
       | false, some g => a.addvspace (r.resolve g)
-      | _, _ => a
+      | false, none => a.wantGap.listSpace itemsep
     -- The item's marker: the declared style, or the class default for the
     -- level and, for enumerate, this item's number. The class glyph is
     -- checked against the loaded faces so it degrades to its stand-in
@@ -6797,7 +6831,7 @@ private def collectItems (r : Rd) (a : Acc)
       (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
     let marker := st.marker.getD (ListMark.marker ordered level idx covered)
     let a := collectItem r a item.toList indent true marker
-    collectItems r a rest indent st ordered level (idx + 1)
+    collectItems r a rest indent st ordered level (idx + 1) itemsep
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (r : Rd) (a : Acc)
@@ -6893,18 +6927,25 @@ private def collectBlock (r : Rd) (a : Acc)
     let element := if ordered then "enumerate" else "itemize"
     let st := if level == 1 then r.style element
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
-    -- LaTeX's `topsep`: the declared space stands above the list and below it.
+    -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the
+    -- nesting depth over both kinds, as `\@listdepth` counts it.
+    let sk := Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1)
+    let top := r.resolve sk.topsep
+    -- The list's `\topsep` stands above it with the surrounding paragraph's
+    -- peer gap on top, paid before the reader switches to the list's own
+    -- `\parskip`; a declared `before` is the whole space, as it was.
     let a := match st.before with
       | some g => a.addvspace (r.resolve g)
-      | none => a
+      | none => (a.listSpace top).flushGap r
     let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
-    let a := collectItems r a items.toList indent st ordered level 1
+    let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+    let a := collectItems ri a items.toList indent st ordered level 1 (r.resolve sk.itemsep)
     let a := if ordered then { a with enumDepth := depth - 1 }
       else { a with itemDepth := depth - 1 }
     match st.before with
     | some g => a.addvspace (r.resolve g)
-    | none => a
+    | none => a.listSpace top
   | .center body =>
     -- A display formula's block reads through the shared shape
     -- (`Ir.displayContent?`) and opens the display skips; any other
@@ -6950,13 +6991,17 @@ private def collectBlock (r : Rd) (a : Acc)
     -- the same indent the engine's lists take. The right edge moves in by
     -- narrowing the measure the body collects against; the outer measure
     -- is restored after, exactly as a column restores it. Being a list, it
-    -- is a trivlist: its `\topsep` stands above and below it.
-    let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+    -- spends its level's `\topsep` (`Ir.listSkips`) above and below — so a
+    -- declared `\topsep` does not reach it, as `\@listi` resets the length
+    -- on entry — and sets its paragraphs `\parsep` apart.
+    let sk := Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1)
+    let g := r.resolve sk.topsep
     let saved := a.measure
-    let sub := { a.trivSpace g with
+    let sub := { (a.listSpace g).flushGap r with
       measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
-    let sub := collectBlocks r sub body (indent + r.geom.listIndent)
-    { sub.trivSpace g with measure := saved }
+    let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+    let sub := collectBlocks ri sub body (indent + r.geom.listIndent)
+    { sub.listSpace g with measure := saved }
   | .titled kind title body =>
     collectBlocks r (collectTitledTitle r a kind title indent) body indent
   | .abstract body =>
@@ -9231,6 +9276,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
                    styles := doc.styles
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
+                   lists := doc.docClass.record.lists
                    imgs := imgs
                    headline := doc.headline }
   let acc0 : Acc := { pal := doc.palette

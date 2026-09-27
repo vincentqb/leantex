@@ -3832,10 +3832,15 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let c := censusOfSrc oneFace src
     words.filterMap (lineYOf c 0 ·)
   let q := (Ir.trivlistSkipDefault (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize).width.sp
+  -- size10.clo:218, the top level's `\topsep`, which `\@listi` resets on list entry
+  let lq : Dim.Sp := Dim.pt 8
   let peer : Dim.Sp := match ys (doc "" "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
     | [a, b] => b - a
     | _ => 0
   t "trivlist fixtures lay out their peer boundary" (peer > 0)
+  -- A quote is a list: TeX's `\parskip` stands over its `\topsep`, which is
+  -- article's `0pt plus 1pt` (classes.dtx), not the engine's paragraph mark.
+  let lead := Ir.leadingFor (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize
   let gaps (src : String) : List Dim.Sp :=
     match ys src ["Alpha.", "Bravo.", "Charlie."] with
     | [a, b, c] => [b - a, c - b]
@@ -3846,9 +3851,13 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "a flushleft environment opens the same space"
     (gaps (doc "" "Alpha.\n\n\\begin{flushleft}\nBravo.\n\\end{flushleft}\n\nCharlie.")
       == [peer + q, peer + q])
-  t "a quote opens the same space"
+  t "a quote opens its list level's topsep above and below, under TeX's own parskip"
     (gaps (doc "" "Alpha.\n\n\\begin{quote}\nBravo.\n\\end{quote}\n\nCharlie.")
-      == [peer + q, peer + q])
+      == [lead + lq, lead + lq])
+  t "a declared \\topsep does not reach a quote, as \\@listi resets it on entry"
+    (gaps (doc "\\setlength{\\topsep}{3pt}"
+      "Alpha.\n\n\\begin{quote}\nBravo.\n\\end{quote}\n\nCharlie.")
+      == [lead + lq, lead + lq])
   t "two trivlists meeting pay the larger space once, not both"
     (gaps (doc "" ("Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n" ++
       "\\begin{center}\nCharlie.\n\\end{center}")) == [peer + q, peer + q])
@@ -3886,6 +3895,58 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }") &&
      hasStr page (":where(.u-trivlist-env + *, blockquote + *) { margin-top: " ++
       "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }"))
+
+/-- **A list spends LaTeX's own list spacing** (`Ir.listSkips`, the class's
+`\@list⟨n⟩`). A list's `\topsep` stands above and below it with TeX's
+`\parskip` on top (`Geom.texParskip`), two items stand `\itemsep + \parsep` apart,
+two paragraphs of one item `\parsep` (the list's `\parskip`), and a nested
+list reads its own level. Asserted over `Layout.Out` against the size file's
+values and a peer boundary of the same document; lualatex sets article 10pt
+items 20 pt apart baseline to baseline (12 + 4 + 4). Invented words. -/
+def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (cls body : String) : String :=
+    s!"\\documentclass{cls}\\begin\{document}" ++ body ++ "\n\\end{document}"
+  let ys (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    words.filterMap (lineYOf c 0 ·)
+  let steps (src : String) (words : List String) : List Dim.Sp :=
+    let v := ys src words
+    (v.zip v.tail).map fun (a, b) => b - a
+  let geomOf (src : String) : Layout.Geom := Layout.Geom.ofPage (elabStr src).1.page
+  let peerOf (cls : String) : Dim.Sp :=
+    match steps (doc cls "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
+    | [d] => d
+    | _ => 0
+  let three := "Alpha.\n\n\\begin{itemize}\n\\item Bravo.\n\\item Charlie.\n\\end{itemize}\n\nDelta."
+  let words := ["Alpha.", "Bravo.", "Charlie.", "Delta."]
+  -- size10.clo:216-219 and size12.clo:216-219: `\topsep`, and `\itemsep + \parsep`
+  for (cls, size, top, item) in [("{article}", 10, 8, 4 + 4), ("[12pt]{article}", 12, 10, 5 + 5)] do
+    let src := doc cls three
+    let g := geomOf src
+    let lead := Ir.leadingFor g.fontSize g.leading
+    t s!"a list at {size}pt opens its topsep under TeX's parskip, and its items stand itemsep plus parsep apart"
+      (steps src words == [lead + Dim.pt top, lead + Dim.pt item, lead + Dim.pt top])
+  let lead10 := Ir.leadingFor (Dim.pt 10) 1000
+  t "a declared parskip stacks on a list's topsep, as TeX's does"
+    (steps ("\\documentclass{article}\\setlength{\\parskip}{5pt}\\begin{document}" ++ three ++
+      "\n\\end{document}") words == [lead10 + Dim.pt 5 + Dim.pt 8,
+        lead10 + Dim.pt 8, lead10 + Dim.pt 5 + Dim.pt 8])
+  t "two paragraphs of one item stand parsep apart"
+    (steps (doc "{article}" "\\begin{itemize}\n\\item Bravo.\n\nCharlie.\n\\end{itemize}")
+      ["Bravo.", "Charlie."] == [lead10 + Dim.pt 4])
+  t "a nested list opens its own level's topsep and items"
+    (steps (doc "{article}" ("\\begin{itemize}\n\\item Bravo.\n\\begin{itemize}\n\\item Charlie.\n" ++
+      "\\item Delta.\n\\end{itemize}\n\\end{itemize}")) ["Bravo.", "Charlie.", "Delta."]
+      == [lead10 + Dim.pt 4 + Dim.pt 4, lead10 + Dim.pt 2 + Dim.pt 2])
+  t "article list fixtures lay out their peer boundary" (peerOf "{article}" > 0)
+  -- beamer's own family: 3 pt items and topsep, no parsep, in a frame.
+  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n" ++
+    "\\begin{itemize}\n\\item Bravo.\n\\item Charlie.\n\\end{itemize}\nDelta.\n\\end{frame}\\end{document}"
+  let dg := geomOf deck
+  let dlead := Ir.leadingFor dg.fontSize dg.leading
+  t "a deck's items stand beamer's itemsep apart, its list beamer's topsep from the text"
+    (steps deck words == [dlead + Dim.pt 3, dlead + Dim.pt 3, dlead + Dim.pt 3])
 
 /-- **A frame's content opens on a baseline below the title box, and a
 picture's bottom is a baseline** (`B.openBody`, `B.strutBelow`,

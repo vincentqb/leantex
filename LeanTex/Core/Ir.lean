@@ -740,8 +740,8 @@ theorem displaySkips_default_exact (size : Sp) :
     displayBelow {} size = displaySkipDefault size := ⟨rfl, rfl⟩
 
 /-- The space a trivlist environment — `{center}`, `{flushleft}`,
-`{flushright}` (ltlists.dtx: `\center` is `\trivlist\centering\item`),
-`{quote}`, `{quotation}` — opens against the text above and below it:
+`{flushright}` (ltlists.dtx: `\center` is `\trivlist\centering\item`) —
+opens against the text above and below it:
 LaTeX's top-level `\topsep`, which the size file's `\@listi` sets
 (size10.clo:218 `8pt plus 2pt minus 4pt`, size11.clo:218 `9pt plus 3pt
 minus 5pt`, size12.clo:218 `10pt plus 4pt minus 6pt`) and beamer keeps at top
@@ -789,6 +789,96 @@ theorem trivlist_between :
       (trivlistSkipDefault (Dim.pt 1095 / 100)).width.sp ≤ Dim.pt 12 ∧
     Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 12)).width.sp ∧
       (trivlistSkipDefault (Dim.pt 12)).width.sp ≤ Dim.pt 14 := by
+  decide
+
+/-- Where a class's list spacing comes from: the size file of the standard
+classes for the body size, or beamer's own list family, which a deck and a
+poster inherit (beamerposter loads beamer). -/
+inductive ListLineage where
+  | sizeFile
+  | beamer
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- One list level's vertical parameters, LaTeX's `\@list⟨n⟩` (ltlists.dtx):
+`topsep` above and below the list, taken by `\addvspace` with the
+surrounding paragraph's `\parskip` on top (`\@trivlist`, `\@item`,
+`\@endparenv`); `itemsep` before every item after the first; and `parsep`,
+which is `\parskip` inside the list (`\list` sets `\parskip\parsep`), so two
+items stand `itemsep + parsep` apart and two paragraphs of one item
+`parsep`. -/
+structure ListSkips where
+  topsep : SymGlue
+  itemsep : SymGlue
+  parsep : SymGlue
+  deriving Repr, BEq
+
+/-- Glue spelled in hundredths of a point: natural, stretch, shrink. -/
+private def ptsGlue (w st sh : Int) : SymGlue :=
+  { width := { sp := Dim.pt w / 100 }, stretch := { sp := Dim.pt st / 100 },
+    shrink := { sp := Dim.pt sh / 100 } }
+
+/-- The sourced list levels, verbatim: per lineage, size file and level one
+to three. A deeper level keeps the third's values, because `\@listiv` and
+beyond set margins only, so the values in force stand. -/
+def listSkipsTable : ListLineage → Nat → Nat → ListSkips
+  -- size10.clo:216-233
+  | .sizeFile, 10, 1 => ⟨ptsGlue 800 200 400, ptsGlue 400 200 100, ptsGlue 400 200 100⟩
+  | .sizeFile, 10, 2 => ⟨ptsGlue 400 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100⟩
+  | .sizeFile, 10, _ => ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}⟩
+  -- size11.clo:216-233
+  | .sizeFile, 11, 1 => ⟨ptsGlue 900 300 500, ptsGlue 450 200 100, ptsGlue 450 200 100⟩
+  | .sizeFile, 11, 2 => ⟨ptsGlue 450 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100⟩
+  | .sizeFile, 11, _ => ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}⟩
+  -- size12.clo:216-233
+  | .sizeFile, _, 1 => ⟨ptsGlue 1000 400 600, ptsGlue 500 250 100, ptsGlue 500 250 100⟩
+  | .sizeFile, _, 2 => ⟨ptsGlue 500 250 100, ptsGlue 250 100 100, ptsGlue 250 100 100⟩
+  | .sizeFile, _, _ => ⟨ptsGlue 250 100 100, ptsGlue 250 100 100, {}⟩
+  -- beamerbaselocalstructure.sty:152-163
+  | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}⟩
+  | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0⟩
+
+/-- The size file a body size reads: the standard classes' `10pt`, `11pt`
+and `12pt` options, and the nearest of them for any other size. -/
+def sizeFileOf (size : Sp) : Nat :=
+  if size < Dim.pt 21 / 2 then 10 else if size < Dim.pt 23 / 2 then 11 else 12
+
+/-- **The one resolving site for a list level's spacing**: the lineage's
+sourced values at the body size and nesting level. At 10, 11 and 12 pt
+they are the size file's own. A body size no size file sets scales its
+nearest file's values with the type; LaTeX has no value there, and the
+engine's other defaults follow the type the same way. beamer's values do
+not depend on the size, as its `\@listi` does not. -/
+def listSkips (l : ListLineage) (size : Sp) (level : Nat) : ListSkips :=
+  let lv := min (max level 1) 3
+  match l with
+  | .beamer => listSkipsTable .beamer 0 lv
+  | .sizeFile =>
+    let f := sizeFileOf size
+    let s := listSkipsTable .sizeFile f lv
+    let base := Dim.pt f
+    if size == base then s
+    else { topsep := s.topsep.scale size base.toNat
+           itemsep := s.itemsep.scale size base.toNat
+           parsep := s.parsep.scale size base.toNat }
+
+/-- At the three standard body sizes a list's spacing is the size file's,
+exactly: `\topsep` 8, 9, 10 pt and `\itemsep + \parsep` 8, 9, 10 pt at the
+top level (size10/11/12.clo:216-219), and beamer's `\topsep` and
+`\itemsep` are 3 pt with a zero `\parsep` (beamerbaselocalstructure
+.sty:152-155). -/
+theorem listSkips_exact :
+    (listSkips .sizeFile (Dim.pt 10) 1).topsep.width.sp = Dim.pt 8 ∧
+    (listSkips .sizeFile (Dim.pt 10) 1).itemsep.width.sp
+      + (listSkips .sizeFile (Dim.pt 10) 1).parsep.width.sp = Dim.pt 8 ∧
+    (listSkips .sizeFile (Dim.pt 11) 1).topsep.width.sp = Dim.pt 9 ∧
+    (listSkips .sizeFile (Dim.pt 11) 1).itemsep.width.sp
+      + (listSkips .sizeFile (Dim.pt 11) 1).parsep.width.sp = Dim.pt 9 ∧
+    (listSkips .sizeFile (Dim.pt 12) 1).topsep.width.sp = Dim.pt 10 ∧
+    (listSkips .sizeFile (Dim.pt 12) 1).itemsep.width.sp
+      + (listSkips .sizeFile (Dim.pt 12) 1).parsep.width.sp = Dim.pt 10 ∧
+    (listSkips .beamer (Dim.pt 11) 1).topsep.width.sp = Dim.pt 3 ∧
+    (listSkips .beamer (Dim.pt 11) 1).itemsep.width.sp = Dim.pt 3 ∧
+    (listSkips .beamer (Dim.pt 11) 1).parsep.width.sp = 0 := by
   decide
 
 /-- The heading's default spaces, their own tokens rather than the
@@ -5434,6 +5524,10 @@ structure ClassRecord where
   past this engine's, and a spilt frame costs a continuation page
   (W0384). -/
   parskip : Option Dim.SymGlue := none
+  /-- Where the class's list spacing comes from (`listSkips`): the size
+  file of the standard classes, or beamer's own list family for a deck
+  and a poster (beamerposter loads beamer). -/
+  lists : ListLineage := .sizeFile
   /-- Headings number by default; `\section*` opts out either way.
   `article` numbers (classes.dtx `\@startsection` with counters); a résumé
   is scanned, not cross-referenced, so `resume` does not (moderncv.cls
@@ -5564,6 +5658,7 @@ def DocClass.record : DocClass → ClassRecord
     { model := .frame
       fontSize := some slidesFontSize
       parskip := some {}
+      lists := .beamer
       chrome := true }
   | .card =>
     { model := .face
@@ -5596,6 +5691,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
   | .poster =>
     { model := .face
       fontSize := some posterFontSize
+      lists := .beamer
       headline := true
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \

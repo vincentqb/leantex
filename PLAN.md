@@ -20832,3 +20832,62 @@ which is the `[c]` area's floor: the engine ends the area 26.4 bp above the
 page bottom, where moloch ends it at its footline's top. That floor is the
 next unit. The deck ships 35 pages before and after, the paper 8, and the
 diagnostic census is identical on both documents.
+
+
+**Lists spend LaTeX's list spacing.** Before this, a list opened no space
+and its items stood one leading apart. In LaTeX, `\list` runs the level's
+`\@list⟨n⟩`:
+- `\topsep` stands above and below the list, with `\parskip` on top;
+- `\itemsep` stands before each item after the first;
+- `\parsep` becomes the list's own `\parskip`.
+
+So two items stand `\itemsep + \parsep` apart, which is 20 pt baseline to
+baseline in article at 10pt. `Ir.listSkips` is the one resolving site. It
+reads the class's lineage (`ClassRecord.lists`): the standard size files,
+or beamer's own family for a deck and a poster. The values are copied
+verbatim from size10/11/12.clo:216-233 and beamerbaselocalstructure.sty:152-163,
+levels one to three, and `listSkips_exact` pins the top level at each
+size. A body size that no size file sets scales the nearest file's
+values with the type; LaTeX has no value there. `{quote}` is a `\list`
+too, so it now spends its level's `\topsep`. A declared `\topsep` no
+longer reaches it, since `\@listi` resets the length on entry (the
+review's `a-quote-topsep`, where lualatex measures 21.92 with or without
+the declaration).
+
+The skip that stacks on a list's space is TeX's own `\parskip`
+(`Geom.texParskip`): the declared parskip, or else the standard classes'
+`0pt plus 1pt`. It is not the engine's undeclared 6 bp paragraph mark,
+which stands in for an indent that TeX sets nowhere at a list's edge. On
+the first attempt the mark stacked. Then the paragraph → list boundary went
+from 1.9 bp short to 6.1 bp past lualatex, and two `rhythm` items fell.
+With TeX's skip it lands within 0.1 bp. The `\trivlist` role (`{center}`,
+`{flush…}`) keeps the peer gap and its quantized `\topsep` for now, and
+the next paragraph says why.
+
+A declared `\style{itemize}{ before/gap }` keeps its old meaning: it is
+the whole gap. Eight checks (six in `listRhythmChecks`, two in
+`trivlistChecks`) each fail on `da9b049d`. Breaking once through the shipped
+path, by
+setting items under the outer reader instead of the list's own `\parskip`,
+fails four of them. The `rhythm` tier rises from 9 to 28 boundaries within
+0.5 bp of lualatex, and from 30 to 44 within 3 bp: every list boundary in
+article and in both deck fixtures, and the quote boundaries. Nothing
+falls. Neither private document has an active list, and both ship
+byte-identical PDFs.
+
+**Why `{center}` keeps its quantized `\topsep` (review F8).** Rule 2 decides
+F8: the default is the exact sourced glue, which is 8 pt at 10pt against the
+engine's 6. The quantum misses it by 2–2.8 pt across the three size files,
+and that is not "barely different". But the quantum is not only the PDF's
+constant. `Ir.rhythmGapQuanta`'s trivlist row is also what the HTML base
+sheet computes its `var(--topsep, …)` fallback from, as `trivlist − peer`
+quanta, and what `HtmlDoc.backend_gaps_agree` cross-multiplies. An exact
+8 pt is 4/3 of a quantum, and no integer row can say that. So the change
+has two halves. The PDF half is `trivlistSkipDefault` reading
+`listSkips … 1`, which is the same value, since `{center}` spends the
+`\topsep` that `\@listi` set at load. The HTML half gives the agreement
+exact ratios: the fallback becomes `calc(1.45rem * 8 / 12)`, the
+topsep-to-leading ratio of the PDF, and the theorem states that ratio in
+place of a quantum multiple. That HTML region is site-fix's this round
+(F6 rewrites the same two rules), so the whole move is routed there as
+one unit, with TeX's `\parskip` for the role as well.
