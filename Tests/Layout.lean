@@ -4133,34 +4133,44 @@ def afterHeadingListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"{name} right after a heading still closes with its topsep and partopsep"
       (steps (doc el) ["Charlie.", "Delta."] == [lead + Dim.pt 10])
 
-/-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
-break between a heading and the first lines of its text (`\@xsect`'s
-`\nobreak`, `\@afterheading`'s `\clubpenalty`), so a heading that would be a
-page's last line opens the next page. Asserted over `Layout.Out`: as the
-filler above it grows, the heading slides down one page's worth of
-positions, and at every one it shares a page with its text. The paper in
-the private corpus stranded a heading at a page foot this way, where the
-lualatex reference breaks above it. Invented words. -/
+/-- **A heading keeps with the next block's first box** (`B.keepHeading`,
+`keepWithNext`): TeX finds no legal break between a heading and what
+follows it (`\@xsect`'s `\nobreak`, `\@afterheading`'s `\clubpenalty`), so
+a heading that would be a page's last line opens the next page — with the
+first two lines of its text, the whole box of a picture, or a second
+heading and what that one keeps. Asserted over `Layout.Out`: as the filler
+above it grows, the heading slides down one page's worth of positions, and
+at every one it shares a page with what follows it. The paper in the
+private corpus stranded a heading at a page foot this way, where the
+lualatex reference breaks above it; lualatex strands none of the three
+shapes at any position (TeX Live 2026). Invented words. -/
 def headingKeepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let src (n : Nat) : String :=
-    "\\documentclass{article}\\begin{document}" ++
+  let src (n : Nat) (after : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}" ++
     String.join ((List.range n).map fun i => s!"Filler line {i}.\n\n") ++
-    "\\section{Heading}\nBody text after the heading, long enough to run onto a second line " ++
-    "of the page so that the club rule has two lines to keep together.\n\\end{document}"
+    "\\section{Heading}\n" ++ after ++ "\n\\end{document}"
   let pageOf (c : Array CensusPage) (needle : String) : Option Nat :=
     (List.range c.size).find? fun i => (lineYOf c i needle).isSome
-  let placements := (List.range 40).map fun k =>
-    let c := censusOfSrc oneFace (src (20 + k))
-    (20 + k, pageOf c "Heading", pageOf c "Body text")
-  let strands := placements.filterMap fun (n, h, b) =>
-    match h, b with
-    | some h, some b => if h == b then none else some n
-    | _, _ => some n
-  t s!"a heading shares a page with its text wherever it falls (strands: {strands})"
-    strands.isEmpty
-  t "the heading fixtures reach a page boundary"
-    (placements.any fun (_, h, _) => h == some 1)
+  let shapes : List (String × String × String) :=
+    [("its text", "Body text after the heading, long enough to run onto a second line " ++
+        "of the page so that the club rule has two lines to keep together.", "Body text"),
+     ("a tall picture", "\\begin{tikzpicture}\\draw (0,0) -- (0,5);\\node at (0.5,4.5) {Kilo};" ++
+        "\\end{tikzpicture}\n\nMore text after the picture.", "Kilo"),
+     ("a second heading", "\\subsection{Second}\nBody text after both headings, long enough to " ++
+        "run onto a second line of the page so that the club rule has two lines.", "Second")]
+  for (what, after, needle) in shapes do
+    let placements := (List.range 40).map fun k =>
+      let c := censusOfSrc oneFace (src (20 + k) after)
+      (20 + k, pageOf c "Heading", pageOf c needle)
+    let strands := placements.filterMap fun (n, h, b) =>
+      match h, b with
+      | some h, some b => if h == b then none else some n
+      | _, _ => some n
+    t s!"a heading shares a page with {what} wherever it falls (strands: {strands})"
+      strands.isEmpty
+    t s!"the heading fixtures with {what} reach a page boundary"
+      (placements.any fun (_, h, _) => h == some 1)
 
 /-- **A frame's content opens on a baseline below the title box, and a
 picture's bottom is a baseline** (`B.openBody`, `B.strutBelow`,

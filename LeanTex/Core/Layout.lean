@@ -8002,11 +8002,13 @@ private structure StepSt where
   prose : Nat := 0
 
 /-- **A heading never ends a page** (`ParaJob.keepNext`): when a heading's
-own lines and the text it keeps cannot stand on the page within its shrink,
+own lines and what it keeps — the next block's first box, as placement
+reads it (`keepExt`): two lines of text, a picture's whole box, a second
+heading and its own reserve — cannot stand on the page within its shrink,
 the page closes before the heading, as TeX's page builder finds no legal
-break between a heading and the first lines of its text and breaks above
-it. Only in flow and outside a float replay: a frame or a float decides
-its own page. `n` is the heading's line count. -/
+break between a heading and the box after it and breaks above it. Only in
+flow and outside a float replay: a frame or a float decides its own page.
+`n` is the heading's line count. -/
 private def B.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
   if 0 < j.keepNext && b.frameBreak.isNone && !b.noBreak &&
       !(b.cur.lines.isEmpty || b.freshStart) &&
@@ -8956,6 +8958,45 @@ private theorem matchingClose_ge (staged : Array StagedOp) (j depth : Nat) :
     try split
     all_goals omega
 
+/-- **A heading keeps with the next block's first box** (`B.keepHeading`):
+TeX's `\nobreak` after a display heading (`\@xsect`, latex.ltx:17279-17285)
+leaves no legal break before the box that follows it, so a heading's
+reserve is that box and the glue before it — a picture's whole box, or a
+second heading's own lines and its reserve (`\@startsection` adds no break
+while `\@nobreak` stands, latex.ltx:17239-17243); before a paragraph it
+stays the two lines `\@afterheading`'s club penalty keeps, as the walk
+reserved (`ParaJob.keepNext`). `keepExt` reads the ops after the heading
+at `k` with the glue met so far; a run of headings keeps as one chain. -/
+private def keepExt (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
+    (staged : Array StagedOp) (k : Nat) (glue : Sp) : Sp :=
+  if h : k < staged.size then
+    match staged[k] with
+    | .skip g => keepExt geom fs imgs xHeight staged (k + 1) (glue + g.width)
+    | .anchor _ => keepExt geom fs imgs xHeight staged (k + 1) glue
+    | .picture _ pic _ =>
+      let ((_, py0), (_, py1)) := pictureBox geom fs imgs xHeight pic
+      glue + inkClearance + (py1 - py0)
+    | .para j t =>
+      if 0 < j.keepNext then
+        glue + (t.get.size : Int) * Ir.leadingFor j.size geom.leading
+          + max j.keepNext (keepExt geom fs imgs xHeight staged (k + 1) 0)
+      else 0
+    | _ => 0
+  else 0
+termination_by staged.size - k
+
+/-- The op placement steps: a heading's reserve reaching the box after it
+(`keepExt`), every other op as staged. -/
+private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array StagedOp)
+    (si : Nat) (s : StagedOp) : StagedOp :=
+  match s with
+  | .para j t =>
+    if 0 < j.keepNext then
+      let reserve := max j.keepNext (keepExt b.geom fs imgs b.xHeight staged (si + 1) 0)
+      .para { j with keepNext := reserve } t
+    else s
+  | _ => s
+
 /-- Placement, one op at a time (`stepStaged`) — except a float's ops,
 which travel as one unbreakable group between `floatOpen` and its
 matching close (`runFloat`). Explicit index recursion (the elabBlocks
@@ -8970,7 +9011,7 @@ private def placeFrom (fs : FontSet) (imgs : Image.Store)
       have hj : si + 1 ≤ j := matchingClose_ge staged (si + 1) 1
       placeFrom fs imgs staged (runFloat fs imgs st (staged.extract (si + 1) j))
         (j + 1)
-    | s => placeFrom fs imgs staged (stepStaged fs imgs st s) (si + 1)
+    | s => placeFrom fs imgs staged (stepStaged fs imgs st (keepAt st.b fs imgs staged si s)) (si + 1)
   else st
 termination_by staged.size - si
 decreasing_by all_goals omega
