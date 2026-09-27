@@ -12277,11 +12277,86 @@ structure Prepared where
   warned : Array String
   compatDiags : Array Diag
 
+/-- The name a definer's head binds, when its next item (past spaces and a
+`*`) is a one-word group. -/
+private def definedEnvName : List Raw → Option String
+  | .space :: rest => definedEnvName rest
+  | .sym '*' _ :: rest => definedEnvName rest
+  | .group #[.word n _] _ :: _ => some n
+  | _ => none
+
+mutual
+
+/-- **Only a definer judges its bodies.** The parse keeps an environment
+opened in one of an environment definer's bodies and closed in the other as
+two halves (`Parse.splitOpen`, `Parse.splitClose`), because LaTeX balances
+them where the environment is used. A refused definition — a built-in name,
+W0303's — ignores its bodies, so its halves raise nothing and ship nothing;
+every other definition's halves settle to the tree a plain parse builds, the
+open half closed at its body's brace and the close half dropped, with that
+parse's diagnostics. A package file's splice drops them, as it drops its
+parse's (`Cli.Input.expandLocalSty`). `skip` counts the groups a refused
+definition still holds at this level: its name and its two bodies. -/
+-- conserves: none — settling rebuilds the parse's recovery tree by design.
+private def settleList (file : String) (skip : Nat) (out : Array Raw)
+    (ds : Array Diag) : List Raw → Array Raw × Array Diag
+  | [] => (out, ds)
+  | .ctrl d p :: rest =>
+    -- premise: refusedEnvChecks — a built-in's definition is ignored whole
+    -- (W0303), so its halves owe no diagnostic
+    let refused := Parse.envDefiners.contains d &&
+      (definedEnvName rest).any builtinEnvNames.contains
+    settleList file (if refused then 3 else skip) (out.push (.ctrl d p)) ds rest
+  | .group body p :: rest =>
+    if skip > 0 then settleList file (skip - 1) (out.push (.group body p)) ds rest
+    else
+      let (rs, ds) := settleOne file ds (.group body p)
+      settleList file 0 (out ++ rs) ds rest
+  | r :: rest =>
+    let (rs, ds) := settleOne file ds r
+    settleList file skip (out ++ rs) ds rest
+
+/-- One raw of `settleList`'s walk: a half settles, anything else descends. -/
+private def settleOne (file : String) (ds : Array Diag) : Raw → Array Raw × Array Diag
+  | .group body p =>
+    let (body', ds) := settleList file 0 #[] ds body.toList
+    (#[.group body' p], ds)
+  | .env n body p =>
+    let quiet := Compat.packageFile file
+    match Parse.splitOpen? n, Parse.splitClose? n with
+    | some e, _ =>
+      let (body', ds) := settleList file 0 #[] ds body.toList
+      (#[.env e body' p], if quiet then ds else
+        ds.push (Parse.unclosedAtBrace file (.env e) p))
+    | none, some e =>
+      (#[], if quiet then ds else
+        ds.push (Parse.unmatchedEnd file e p))
+    | none, none =>
+      let (body', ds) :=
+        settleList ((Parse.inputEnvFile? n).getD file) 0 #[] ds body.toList
+      (#[.env n body' p], ds)
+  | .math dm body p =>
+    let (body', ds) := settleList file 0 #[] ds body.toList
+    (#[.math dm body' p], ds)
+  | .word w p => (#[.word w p], ds)
+  | .space => (#[.space], ds)
+  | .par p => (#[.par p], ds)
+  | .ctrl c p => (#[.ctrl c p], ds)
+  | .sym c p => (#[.sym c p], ds)
+  | .verb e s p => (#[.verb e s p], ds)
+
+end
+
+/-- Settle every definer body's halves in a parsed tree (`settleList`). -/
+def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
+  settleList file 0 #[] #[] raws.toList
+
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
 option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 def prepare (file : String) (raws : Array Raw) : Prepared :=
+  let (raws, splitDiags) := settleSplits file raws
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=
@@ -12289,7 +12364,7 @@ def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
-    compatDiags := compatDiags ++ textDiags }
+    compatDiags := splitDiags ++ compatDiags ++ textDiags }
 
 /-- What a source's own pictures could ask a face for. `draws` is whether an
 environment the native subset draws stands anywhere in the rewritten tree;

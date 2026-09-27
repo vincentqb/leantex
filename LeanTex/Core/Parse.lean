@@ -32,11 +32,86 @@ def Stop.name : Stop → String
   | .displayMath => "'\\]'"
   | .env n => s!"'\\end\{{n}}'"
 
-/-- An open delimiter, holding the items collected before it. -/
+/-- An open delimiter, holding the items collected before it. `body` marks a
+brace group that is one of an environment definer's two bodies. -/
 private structure Frame where
   stop : Stop
   openPos : Pos
   outer : Array Raw
+  body : Bool := false
+
+/-- The definers whose two body groups are token lists: LaTeX's
+`\newenvironment{name}{begin}{end}` defines `\name` and `\endname` as macros
+(ltdefns.dtx), so an environment opened in the first and closed in the
+second is balanced where the environment is used, never inside one body. -/
+def envDefiners : List String :=
+  ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
+
+/-- A definer body's half of an environment its other body completes, kept
+by name for the definer to judge: `@` starts no control word, so no document
+can spell one. -/
+def splitOpen (name : String) : String := "@open:" ++ name
+def splitClose (name : String) : String := "@close:" ++ name
+
+def splitOpen? (n : String) : Option String :=
+  if n.startsWith "@open:" then some ((n.drop "@open:".length).toString) else none
+
+def splitClose? (n : String) : Option String :=
+  if n.startsWith "@close:" then some ((n.drop "@close:".length).toString) else none
+
+/-- The two diagnostics a definer's settled halves raise (`Elab.settleSplits`)
+are the parse's own, built here once. -/
+def unclosedAtBrace (file : String) (stop : Stop) (pos : Pos) : Diag :=
+  Diag.of .E0201 s!"unclosed: expected {stop.name} before the group's '}'" (some ⟨file, pos⟩)
+
+def unmatchedEnd (file name : String) (pos : Pos) : Diag :=
+  Diag.of .E0205 s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" (some ⟨file, pos⟩)
+
+/-- The index past the last item before `j` that is not a space. -/
+private def backSkip (acc : Array Raw) (j : Nat) : Nat := Id.run do
+  let mut k := j
+  for _ in [0:j] do
+    if k == 0 then break
+    match acc[k - 1]? with
+    | some .space => k := k - 1
+    | _ => break
+  return k
+
+/-- The item just before index `k`, if any. -/
+private def before (acc : Array Raw) (k : Nat) : Option Raw :=
+  if k == 0 then none else acc[k - 1]?
+
+private def isSym (c : Char) : Option Raw → Bool
+  | some (.sym d _) => d == c
+  | _ => false
+
+/-- Does `acc` end, before `k0`, with a definer's head: option runs (`[..]`,
+`(..)`), the name group, an optional `*`, and an `envDefiners` word? -/
+private def definerHeadAt (acc : Array Raw) (k0 : Nat) : Bool := Id.run do
+  let mut k := backSkip acc k0
+  for _ in [0:acc.size] do
+    let opener := if isSym ']' (before acc k) then '['
+      else if isSym ')' (before acc k) then '(' else ' '
+    if opener == ' ' then break
+    let mut j := k - 1
+    for _ in [0:k] do
+      if j == 0 || isSym opener (before acc j) then break
+      j := j - 1
+    unless isSym opener (before acc j) do return false
+    k := backSkip acc (j - 1)
+  unless before acc k matches some (.group _ _) do return false
+  k := backSkip acc (k - 1)
+  if isSym '*' (before acc k) then k := backSkip acc (k - 1)
+  match before acc k with
+  | some (.ctrl d _) => return envDefiners.contains d
+  | _ => return false
+
+/-- Is the group opening after `acc` one of an environment definer's two
+bodies? -/
+private def envBodyNext (acc : Array Raw) : Bool :=
+  let k := backSkip acc acc.size
+  definerHeadAt acc k ||
+    (before acc k matches some (.group _ _) && definerHeadAt acc (k - 1))
 
 /-- Wrap a closed frame's body into the node its delimiter denotes. -/
 private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
@@ -77,23 +152,29 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
       i := i + 1
       match tok with
       | .lbrace =>
-        frames := frames.push ⟨.brace, pos, acc⟩
+        frames := frames.push ⟨.brace, pos, acc, envBodyNext acc⟩
         acc := #[]
       | .rbrace =>
         -- The group boundary wins: a delimiter opened inside `{...}` and
         -- still open at the `}` closes here, diagnosed — dropping the `}`
         -- instead would leave that frame to swallow everything after the
         -- group (a `\def` body's unbalanced `\begin{tabular}` once ate the
-        -- rest of a venue's `.sty`, silently).
+        -- rest of a venue's `.sty`, silently). In a definer's body the
+        -- environment is the other body's to close: it is kept as a half.
         if frames.any (·.stop == .brace) then
+          let body := (frames.findRev? (·.stop == .brace)).any (·.body)
           for _ in [0:frames.size] do
             match frames.back? with
             | some f =>
               if f.stop == .brace then break
-              diags := diags.push (err file .E0201
-                s!"unclosed: expected {f.stop.name} before the group's '}'" f.openPos)
-              frames := frames.pop
-              acc := f.close acc
+              match body, f.stop with
+              | true, .env n =>
+                frames := frames.pop
+                acc := f.outer.push (.env (splitOpen n) acc f.openPos)
+              | _, _ =>
+                diags := diags.push (unclosedAtBrace file f.stop f.openPos)
+                frames := frames.pop
+                acc := f.close acc
             | none => break
           match frames.back? with
           | some f =>
@@ -109,13 +190,13 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
             frames := frames.pop
             acc := f.close acc
           else
-            frames := frames.push ⟨.math, pos, acc⟩
+            frames := frames.push ⟨.math, pos, acc, false⟩
             acc := #[]
         | none =>
-          frames := frames.push ⟨.math, pos, acc⟩
+          frames := frames.push ⟨.math, pos, acc, false⟩
           acc := #[]
       | .ctrl "(" =>
-        frames := frames.push ⟨.parenMath, pos, acc⟩
+        frames := frames.push ⟨.parenMath, pos, acc, false⟩
         acc := #[]
       | .ctrl ")" =>
         match frames.back? with
@@ -128,7 +209,7 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
         | none =>
           diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
       | .ctrl "[" =>
-        frames := frames.push ⟨.displayMath, pos, acc⟩
+        frames := frames.push ⟨.displayMath, pos, acc, false⟩
         acc := #[]
       | .ctrl "]" =>
         match frames.back? with
@@ -144,7 +225,7 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
         i := j
-        frames := frames.push ⟨.env name, pos, acc⟩
+        frames := frames.push ⟨.env name, pos, acc, false⟩
         acc := #[]
       | .ctrl "end" =>
         let (name, j, ds) := envName toks file i pos
@@ -159,12 +240,13 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
                 (err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos)
             frames := frames.pop
             acc := f.close acc
+          | .brace =>
+            if f.body then acc := acc.push (.env (splitClose name) #[] pos)
+            else diags := diags.push (unmatchedEnd file name pos)
           | _ =>
-            diags := diags.push (err file .E0205
-              s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
+            diags := diags.push (unmatchedEnd file name pos)
         | none =>
-          diags := diags.push (err file .E0205
-            s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
+          diags := diags.push (unmatchedEnd file name pos)
       | .ctrl name => acc := acc.push (.ctrl name pos)
       | .word s => acc := acc.push (.word s pos)
       | .space => acc := acc.push .space
