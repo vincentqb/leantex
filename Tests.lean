@@ -30,6 +30,7 @@ import Tests.PictureKeys
 import Tests.TextSym
 import Tests.InlineVerb
 import Tests.OwnBib
+import Tests.Reports
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -382,6 +383,7 @@ def main (args : List String) : IO UInt32 := do
   porcelainCensusChecks ref
   siteAccountingChecks ref
   diagAuditChecks ref
+  reportChecks ref
   optionRunAccountingChecks ref
   visibleRunAccountingChecks ref
   monoSlotChecks ref

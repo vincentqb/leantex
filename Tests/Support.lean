@@ -544,6 +544,22 @@ def compatRowSrc (pkg place call : String) : String :=
   else
     s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
 
+/-- How many times `word` stands in `text` as a whole name: not inside a
+longer identifier, and not as a field after a dot — a call to
+`pdfStreamChecks` is no call to `StreamChecks`. -/
+def wordCount (text word : String) : Nat := Id.run do
+  let parts := (text.splitOn word).toArray
+  let nameChar (c : Char) : Bool :=
+    c.isAlphanum || c == '_' || c == '\'' || c == '!' || c == '?' || c == '.'
+  let mut n := 0
+  for i in [0:parts.size - 1] do
+    let before := parts[i]?.getD ""
+    let after := parts[i + 1]?.getD ""
+    let leftOk := if before.isEmpty then i == 0 else !nameChar before.back
+    let rightOk := if after.isEmpty then i + 2 == parts.size else !nameChar after.front
+    if leftOk && rightOk then n := n + 1
+  return n
+
 def censusText (c : Array CensusPage) : String :=
   String.intercalate " " (c.toList.map (·.text))
 

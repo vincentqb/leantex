@@ -131,22 +131,27 @@ def moduleItem (path : String) : String :=
   let p := if p.endsWith ".lean" then (p.dropEnd ".lean".length).toString else p
   p.replace "/" "."
 
+/-- The registries: each names the blocks it pins by writing them, so a
+mention there is never the suite running one. -/
+def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean"]
+
 /-- The suite's own code, which a check pin must be run from: the driver and
-every suite module but this one, which names each pinned block once by
+every suite module but the registries, which name each pinned block once by
 writing it. -/
 def suiteText : IO String := do
   let mut text := stripNonCode (← IO.FS.readFile "Tests.lean")
   for f in ← System.FilePath.walkDir "Tests" do
-    if f.toString.endsWith ".lean" && f.toString != "Tests/DiagAudit.lean" then
+    if f.toString.endsWith ".lean" && !registryFiles.contains f.toString then
       text := text ++ stripNonCode (← IO.FS.readFile f)
   return text
 
 /-- Does the pin hold anything? A theorem pin always does — it is a proof.
-A check pin does while the suite both defines and calls the block. A tier
-pin does while the tier's committed baseline has a row for the item. -/
+A check pin does while the suite both defines and calls the block, each as
+the whole name (`wordCount`). A tier pin does while the tier's committed
+baseline has a row for the item. -/
 def Pin.resolves (suite : String) : Pin → IO Bool
   | .thm .. => pure true
-  | .check n _ => pure ((suite.splitOn n.toString).length ≥ 3)
+  | .check n _ => pure (wordCount suite n.toString ≥ 2)
   | .tier t item => do
     let path : System.FilePath := s!"tests/scoreboard/{t}.tsv"
     if !(← path.pathExists) then return false
@@ -195,6 +200,11 @@ def diagAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
     (← (check% a11yChecks).resolves suite)
   t "diag audit: a check nothing runs does not"
     !(← (Pin.check `zzNoSuchChecks ()).resolves suite)
+  -- A name standing only inside a longer one holds nothing: the suite
+  -- spells `StreamChecks` solely as the tail of the block it calls.
+  t "diag audit: a name inside a longer name does not resolve"
+    (hasStr suite "StreamChecks" && wordCount suite "pdfStreamChecks" ≥ 2 &&
+      !(← (Pin.check `StreamChecks ()).resolves suite))
   t "diag audit: a committed tier item resolves"
     (← (Pin.tier "compat" "cancel.impl").resolves suite)
   t "diag audit: an item no baseline holds does not"
