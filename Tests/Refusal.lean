@@ -226,6 +226,22 @@ def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the definitions stay refused by name"
     ((dvE (dvDoc pre "Body.")).any (·.code == "W0357"))
 
+/-- **A use reads the signature in force where it stands.** A later
+definition of the same name — undelimited, through any definer, or
+delimited anew — replaces a delimited one, so a use after it ships the page
+of the document holding only the later definition: the delimiter the use no
+longer takes is the author's ink. The defect: every use read the first
+delimited definition in the tree, and a period the author typed vanished. -/
+def delimitedSigChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let first := "\\def\\probedot#1.{[#1]}\n"
+  let use := "Lead \\probedot inner words. tail words."
+  for later in ["\\def\\probedot{B}", "\\gdef\\probedot{B}", "\\renewcommand{\\probedot}{B}",
+      "\\renewcommand\\probedot{B}", "\\def\\probedot#1;{(#1)}"] do
+    t s!"a use after '{later}' reads it, not the first definition"
+      (pageTextOf fonts (dvDoc (first ++ later ++ "\n") use) ==
+        pageTextOf fonts (dvDoc (later ++ "\n") use))
+
 
 /-- Register arithmetic on a length the document set is evaluated, not
 skipped.** TeX's `\advance`, `\multiply`, `\divide` and LaTeX's

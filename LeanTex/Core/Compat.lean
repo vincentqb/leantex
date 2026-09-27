@@ -5665,40 +5665,86 @@ private def delimitedDefs (raws : Array Raw) :
     Array (String × (Array DelimAtom × Array (Array DelimAtom))) :=
   delimDefsList (delimDefsLevel raws #[]) raws.toList
 
+/-- The definers after which a name means something new: every one that
+replaces a definition, so a delimited signature ends there. `\providecommand`
+keeps a definition that stands, so it is not one. -/
+private def redefiners : List String :=
+  ["def", "gdef", "edef", "xdef", "let", "define", "newcommand", "renewcommand",
+   "DeclareRobustCommand", "NewDocumentCommand", "RenewDocumentCommand",
+   "DeclareDocumentCommand"]
+
+/-- The command a definer standing at `i` names: the control word after it,
+past spaces and a `*`, bare or as a one-word group. -/
+private def definedCmd (xs : Array Raw) (i : Nat) : Option String :=
+  let j := skipSpaces xs (i + 1)
+  let j := if xs[j]? matches some (.sym '*' _) then skipSpaces xs (j + 1) else j
+  match xs[j]? with
+  | some (.ctrl n _) => some n
+  | some (.group g _) =>
+    match g.toList.filter (!· matches .space) with
+    | [.ctrl n _] => some n
+    | _ => none
+  | _ => none
+
+/-- The signatures in force after the definer at `i`: its name's delimited
+parameter text when it is a delimited `\def` or `\gdef`, and none otherwise. -/
+private def sigsAfter (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom))))
+    (xs : Array Raw) (i : Nat) (d n : String) :
+    Array (String × (Array DelimAtom × Array (Array DelimAtom))) :=
+  let kept := sigs.filter (·.1 != n)
+  if d == "def" || d == "gdef" then
+    let params := ((xs.extract (i + 2) xs.size).toList.takeWhile
+      fun r => !(r matches .group _ _)).toArray
+    match delimShape params with
+    | some sh => kept.push (n, sh)
+    | none => kept
+  else kept
+
 mutual
 
 /-- Every use of a refused delimited definition spelled as its braced call
-(`delimCall`), whole tree, before the rewrite walk: the delimiter is the
-call's syntax, consumed as TeX consumes it, never ink. The definition's own
+(`delimCall`), whole tree, in document order, before the rewrite walk: the
+delimiter is the call's syntax, consumed as TeX consumes it, never ink. A
+use reads the signature in force where it stands — the last definition of
+its name met so far — so a later redefinition ends it. The definition's own
 head is not a use. -/
 -- conserves: none — a use's delimiters are syntax, not text.
 private def delimCallsRaw (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
-    Raw → Raw
-  | .group body p => .group (delimCallsList sigs body #[] body.toList 0 0) p
-  | .env n body p => .env n (delimCallsList sigs body #[] body.toList 0 0) p
-  | .math d body p => .math d body p
-  | .word s p => .word s p
-  | .space => .space
-  | .par p => .par p
-  | .ctrl n p => .ctrl n p
-  | .sym c p => .sym c p
-  | .verb env s p => .verb env s p
+    Raw → Raw × Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+  | .group body p =>
+    let (b, sigs) := delimCallsList sigs body #[] body.toList 0 0
+    (.group b p, sigs)
+  | .env n body p =>
+    let (b, sigs) := delimCallsList sigs body #[] body.toList 0 0
+    (.env n b p, sigs)
+  | .math d body p => (.math d body p, sigs)
+  | .word s p => (.word s p, sigs)
+  | .space => (.space, sigs)
+  | .par p => (.par p, sigs)
+  | .ctrl n p => (.ctrl n p, sigs)
+  | .sym c p => (.sym c p, sigs)
+  | .verb env s p => (.verb env s p, sigs)
 
 private def delimCallsList (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom))))
-    (xs : Array Raw) (out : Array Raw) : List Raw → Nat → Nat → Array Raw
-  | [], _, _ => out
+    (xs : Array Raw) (out : Array Raw) : List Raw → Nat → Nat →
+    Array Raw × Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+  | [], _, _ => (out, sigs)
   | _ :: rest, i, skip + 1 => delimCallsList sigs xs out rest (i + 1) skip
   | .ctrl d p :: rest, i, 0 =>
-    if d == "def" || d == "gdef" then
+    match (if redefiners.contains d then definedCmd xs i else none) with
+    | some n =>
+      let sigs := sigsAfter sigs xs i d n
       match xs[i + 1]? with
-      | some (.ctrl n q) =>
-        delimCallsList sigs xs ((out.push (.ctrl d p)).push (.ctrl n q)) rest (i + 1) 1
+      | some (.ctrl m q) =>
+        delimCallsList sigs xs ((out.push (.ctrl d p)).push (.ctrl m q)) rest (i + 1) 1
       | _ => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
-    else
+    | none =>
       match (sigs.find? (·.1 == d)).bind fun (_, sh) => delimCall xs i d p sh with
       | some (call, stop) => delimCallsList sigs xs (out ++ call) rest (i + 1) (stop - (i + 1))
       | none => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
-  | r :: rest, i, 0 => delimCallsList sigs xs (out.push (delimCallsRaw sigs r)) rest (i + 1) 0
+  | r :: rest, i, 0 =>
+    let (r', sigs) := delimCallsRaw sigs r
+    delimCallsList sigs xs (out.push r') rest (i + 1) 0
 
 end
 
@@ -6307,8 +6353,8 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws ← condDocument raws
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
-    let sigs := delimitedDefs raws
-    let raws := if sigs.isEmpty then raws else delimCallsList sigs raws #[] raws.toList 0 0
+    let raws := if (delimitedDefs raws).isEmpty then raws
+      else (delimCallsList #[] raws #[] raws.toList 0 0).1
     let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList

@@ -216,6 +216,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   groupedBlockChecks ref oneFace
   reservedEnvNameChecks ref oneFace
   delimitedUseChecks ref oneFace
+  delimitedSigChecks ref oneFace
   registerArithChecks ref oneFace
   composedLengthChecks ref
   endInputChecks ref oneFace

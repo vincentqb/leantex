@@ -21068,3 +21068,18 @@ reference is the shipped CLI's comparison, and each guard fails at
   (18.93). Owed: glue arithmetic itself (TeX gives `12pt plus 2pt`) —
   composing at the value level needs an exact printer for `SymGlue`,
   since a held value may name tokens only the elaborator resolves.
+
+- **A use reads the signature in force where it stands.** The delimited
+  pass gathered every delimited `\def` in the tree and matched a use
+  against the first one found, so after `\def\x#1.{…}` and a later
+  `\def\x{B}` (or `\renewcommand{\x}{B}`) the use `\x y.` lost its period.
+  The pass is now one walk in document order that threads the signatures
+  in force: a definer (`redefiners`, every one that replaces a definition;
+  not `\providecommand`) ends its name's signature, and a delimited `\def`
+  or `\gdef` starts a new one (`sigsAfter`). `delimitedSigChecks`: after
+  each later definition, the use ships the page of the document holding
+  only that definition (5 rows fail at `ae063c0b`). Still owed (rule 2):
+  a refused delimited macro does not run its body — its use ships the
+  braced call's arguments as text where lualatex ships `[inner words]`;
+  defining it natively needs its unmatched uses (a TeX error) kept loud
+  rather than read as an undelimited call.
