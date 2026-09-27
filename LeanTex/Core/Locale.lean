@@ -42,6 +42,11 @@ structure Locale where
   algorithm : String
   abstract : String
   references : String
+  /-- `\proofname` (amsthm's proof head) and `\contentsname` (the contents
+  list's heading): the ini's `captions` `proof` and `contents` keys, as
+  babel defines both names from them. -/
+  proof : String
+  contents : String
   /-- The twelve wide month names, January first (`months.wide.*`). -/
   months : Array String
   /-- Outer and inner quote delimiters (`delimiters.quotes`, four

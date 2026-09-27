@@ -49,6 +49,8 @@ structure IniLocale where
   table : String := ""
   abstract : String := ""
   references : String := ""
+  proof : String := ""
+  contents : String := ""
   months : Array String := #[]
   quotes : String := ""
   leftMin : Nat := 0
@@ -75,6 +77,8 @@ def parseIni (text : String) : IniLocale := Id.run do
         else if k == "table" then loc := { loc with table := v }
         else if k == "abstract" then loc := { loc with abstract := v }
         else if k == "ref" then loc := { loc with references := v }
+        else if k == "proof" then loc := { loc with proof := v }
+        else if k == "contents" then loc := { loc with contents := v }
       else if sec == "date.gregorian" && k.startsWith "months.wide." then
         loc := { loc with months := loc.months.push v }
       else if sec == "typography" then
@@ -201,6 +205,8 @@ def {name} : Locale := \{
   algorithm := {leanStr (algorithmName l.tag)}
   abstract := {leanStr l.abstract}
   references := {leanStr l.references}
+  proof := {leanStr l.proof}
+  contents := {leanStr l.contents}
   months := #[{String.intercalate ", " (l.months.toList.map leanStr)}]
   quoteOpen := {leanStr (quoteAt l.quotes 0)}
   quoteClose := {leanStr (quoteAt l.quotes 1)}
