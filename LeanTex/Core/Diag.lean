@@ -50,6 +50,12 @@ inductive Loss where
   source text, a placeholder box, a substituted face): the reader sees
   *something stands here*. -/
   | degraded
+  /-- The output is exactly what the document declared, and the declaration
+  falls below a standard the engine holds documents to: a readable measure,
+  a heading nearer its text than what precedes it, a WCAG contrast ratio or
+  text alternative. Nothing was lost in translation; the remedy is the
+  author's, so the engine has nothing to recover in its place. -/
+  | standard
   /-- A skipped construct with no content operand (packages, templating,
   TeX conditionals): the meaning of the content survives. -/
   | config
@@ -69,6 +75,7 @@ def Loss.severity : Loss → Severity
   | .dropped => .error
   | .pending => .warning
   | .degraded => .warning
+  | .standard => .warning
   | .config => .warning
   | .info => .note
 
@@ -84,6 +91,7 @@ def Loss.label : Loss → String
   | .dropped => "dropped"
   | .pending => "pending"
   | .degraded => "degraded"
+  | .standard => "standard"
   | .config => "config"
   | .info => "info"
 
@@ -123,7 +131,8 @@ inductive Floor where
   | content
   /-- Nothing is owed and nothing appears: a `config` or `info` loss has no
   content operand, so ink in its place would be invention rather than
-  recovery. -/
+  recovery, and a `standard` loss's construct already stands as declared,
+  so there is nothing to recover. -/
   | inert
   deriving Repr, BEq, DecidableEq
 
@@ -135,6 +144,7 @@ def Loss.floor : Loss → Floor
   | .dropped => .refuse
   | .pending => .absent
   | .degraded => .content
+  | .standard => .inert
   | .config => .inert
   | .info => .inert
 
@@ -309,8 +319,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0106 => ("0106", .config, "expl3 code skipped")
   | .W0108 => ("0108", .degraded, "\\centering is inert inside an argument")
   | .W0110 => ("0110", .degraded, "unsupported command option; ignored")
-  | .W0201 => ("0201", .degraded, "measure outside the readable band")
-  | .W0202 => ("0202", .degraded, "heading sets more space below than above")
+  | .W0201 => ("0201", .standard, "measure outside the readable band")
+  | .W0202 => ("0202", .standard, "heading sets more space below than above")
   | .W0301 => ("0301", .degraded, "unknown command; {...} arguments kept as text")
   | .W0302 => ("0302", .degraded, "unknown environment; body kept")
   | .W0303 => ("0303", .config, "built-in name cannot be redefined")
@@ -352,7 +362,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0340 => ("0340", .config, "a declaration in the document body is ignored")
   | .W0342 => ("0342", .degraded, "a definition shadows a palette role; the role is frozen where it is used")
   | .W0343 => ("0343", .config, "one setting is given two different values; the later declaration wins")
-  | .W0345 => ("0345", .degraded, "a themed element's resolved colour pairing is illegible (WCAG 2.2)")
+  | .W0345 => ("0345", .standard, "a themed element's resolved colour pairing is illegible (WCAG 2.2)")
   | .W0346 => ("0346", .config, "a declaration inside inline content is ignored")
   | .E0347 => ("0347", .dropped, "a running head or foot declared in the body is dropped with its content")
   | .W0348 => ("0348", .config, "a theme replaces a key the document already declared; the theme wins")
@@ -386,7 +396,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0372 => ("0372", .degraded, "a footnote taller than the text block overruns its page")
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
-  | .W0376 => ("0376", .degraded, "an image ships no text alternative (WCAG 2.2)")
+  | .W0376 => ("0376", .standard, "an image ships no text alternative (WCAG 2.2)")
   | .N0022 => ("0022", .info, "a palette role is realized at a new lightness on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
@@ -565,13 +575,14 @@ structure Diag where
 `pending` diagnostic says content did not reach the page as declared, so a
 reader sizing the damage counts its sites — which `Diag.tallySites` can only
 do through `subject`. A `config` or `info` loss has no content operand and
-nothing to count.
+nothing to count, and a `standard` loss's content reached the page as
+declared.
 
 Declared here, beside `Loss.severity` and `Loss.floor`, and for the same
 reason: it is a function of the loss class and of nothing else, so no call
 site chooses it. A code since retired is why it is written down: it named a
 fragment of an unknown command's arguments with no subject at all, which put
-it outside the census entirely — `tallySites` returns a subjectless
+it outside the census entirely — `tallySites` returned a subjectless
 diagnostic untouched, so it fired once per site, repeated its help at each,
 and billed every site to `--werror`, while `W0301`, the same loss at the same
 site, reported `(2 sites)` on one line. Neither arm chose that; one reached
@@ -582,7 +593,7 @@ carrying the construct's code and the subject `ctrl:<name>`), and
 `subjectCensusChecks` is the gate. -/
 def Loss.censused : Loss → Bool
   | .degraded | .pending => true
-  | .dropped | .config | .info => false
+  | .dropped | .standard | .config | .info => false
 
 /-- The census question, per code — the projection a witness check reads. -/
 def DiagCode.censused (c : DiagCode) : Bool := c.loss.censused

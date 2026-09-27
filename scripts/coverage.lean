@@ -359,6 +359,7 @@ def rungOfLoss : Loss → Rung
   | .dropped => .fails
   | .pending => .degraded
   | .degraded => .degraded
+  | .standard => .native
   | .config => .skipped
   | .info => .rewritten
 
@@ -1359,8 +1360,8 @@ def selftest : IO UInt32 := do
       && !Rung.degraded.counted && !Rung.skipped.counted && !Rung.fails.counted
       && !Rung.unknown.counted && !Rung.unprobed.counted)
   expect "every loss has a rung"
-    ([Loss.dropped, .pending, .degraded, .config, .info].map rungOfLoss
-      == [.fails, .degraded, .degraded, .skipped, .rewritten])
+    ([Loss.dropped, .pending, .degraded, .standard, .config, .info].map rungOfLoss
+      == [.fails, .degraded, .degraded, .native, .skipped, .rewritten])
   expect "rung words are distinct"
     ((Rung.all.map Rung.word).eraseDups.length == Rung.all.length)
   -- The exclusions and the register grouping are read from the class.

@@ -1121,11 +1121,11 @@ put this list on both gates is retired: its loss is a clause of `W0301`'s own
 message now, so it no longer owes a row here. -/
 def subjectDebt : List String :=
   ["W0003", "W0005", "W0006", "W0007", "W0009", "W0010", "W0011", "W0102",
-   "W0201", "W0202", "W0310", "W0311", "W0312", "W0315", "W0319", "W0320",
+   "W0310", "W0311", "W0312", "W0315", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
-   "W0333", "W0335", "W0336", "W0338", "W0342", "W0345", "W0352",
+   "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
    "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
-   "W0376", "W0377", "W0378", "W0379", "W0380", "W0381", "W0386", "W0388"]
+   "W0377", "W0378", "W0379", "W0380", "W0381", "W0386", "W0388"]
 
 /-- **Every counted loss can be counted.** A `degraded` or `pending` code
 says content did not reach the page as declared, and a reader sizing that

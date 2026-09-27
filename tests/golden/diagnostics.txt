@@ -247,10 +247,10 @@ warning[W0110]: '\includegraphics' option 'angle=45' is not modelled; ignored
 ── W0111 (config) a styling declaration names no styleable element; ignored
 warning[W0111]: '\setkomafont{banana}' names no styleable element; ignored
   help: \style{element}{ font = {...} } styles the elements the engine draws
-── W0201 (degraded) measure outside the readable band
+── W0201 (standard) measure outside the readable band
 warning[W0201]: the measure holds about 98 characters per line, outside the readable 45–90 band
   help: narrow the text block (\page{ hmargin = ... }; 66 characters is the ideal) or declare \page{ measure = free }
-── W0202 (degraded) heading sets more space below than above
+── W0202 (standard) heading sets more space below than above
 warning[W0202]: 'section' sets more space below the heading (10pt) than above it (2pt)
   help: a heading binds to the text it introduces: in \style{section}{...} keep 'after' at most 'before'
 ── W0301 (degraded) unknown command; {...} arguments kept as text
@@ -371,7 +371,7 @@ warning[W0343]: 'margin' in '\page' was already set to '20pt'; this later value 
   help: one value per key: keep the 'margin = ...' you mean
 warning[W0343]: a second '\runningfoot' replaces the first
   help: one '\runningfoot' declares the line; delete the one you do not mean
-── W0345 (degraded) a themed element's resolved colour pairing is illegible (WCAG 2.2)
+── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
 warning[W0345]: covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
   help: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0346 (config) a declaration inside inline content is ignored
@@ -462,7 +462,7 @@ warning[W0373]: '\thanks' content is kept inline in the title block
 ── W0374 (degraded) a footnote on a card face is kept inline; a face has no note apparatus
 warning[W0374]: a footnote on this card is kept inline; a card face has no note apparatus
   help: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
-── W0376 (degraded) an image ships no text alternative (WCAG 2.2)
+── W0376 (standard) an image ships no text alternative (WCAG 2.2)
 warning[W0376]: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   help: describe the image — \includegraphics[alt={...}] — or caption its figure: the caption becomes the alternative
 warning[W0376]: this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
