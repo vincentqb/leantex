@@ -657,6 +657,22 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
          #[(ssp.widths[sspT]! : Int) * geom.fontSize / 1000 + (-41 : Int) * geom.fontSize / 1000,
            (ssp.widths[sspA]! : Int) * geom.fontSize / 1000]
      | none => false)
+  -- Space kerning, as luaotfload applies it: the face's pairs with its
+  -- space glyph move the interword glue beside a glyph — (T, space) −19,
+  -- (V, space) −39 and (space, V) −30 in Source Serif Pro, the pairs
+  -- lualatex applied at 10 pt (T a 2.14, a V 2.03, V a 1.94 against a
+  -- 2.33 pt space) — and a pairless neighbour leaves the space alone.
+  let (skDoc, _) := Elab.run "t" "T a V V x y"
+  let skOut := layoutOf sspSet skDoc ({} : Layout.Geom)
+  let skGaps := ((skOut.pages.flatMap (·.lines)).flatMap (·.segs)).filterMap
+    fun s => match s with
+      | .gap w true => some w
+      | _ => none
+  t "space kern: each interword gap is the space plus its neighbours' pairs"
+    (let fsz := ({} : Layout.Geom).fontSize
+     let u (n : Int) : Dim.Sp := n * fsz / 1000
+     let sp := u ssp.spaceAdvance
+     skGaps == #[sp + u (-19), sp + u (-30), sp + u (-39) + u (-30), sp + u (-39), sp])
   t "no MATH face anywhere: the pick is none"
     ((← FontDb.pickMathFace
         (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))

@@ -225,18 +225,22 @@ theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
 can kern where that record does not ask: the HTML stylesheet carries its
 kerning request exactly when the record asks for it (`HtmlDoc.kernCss`),
 and the PDF path's pair kern is zero on every box and glyph when the
-request is off (`Layout.kernVal`). What the PDF *does* under a live request
+request is off — a glyph's against the one before it (`Layout.kernVal`) and
+a glyph's against the space beside it, both through `Layout.pairKern`. What
+the PDF *does* under a live request
 is the face's own kern data, not this statement's business. Stated here
 because this is the one module both backends are in scope in; the IR value
 behind it is `Ir.features` itself. -/
 theorem features_agree (size : Sp) (font : Font)
-    (box : Array (Nat × Char × Sp)) (g1 : Nat) :
+    (box : Array (Nat × Char × Sp)) (g1 g2 : Nat) :
     (HtmlDoc.kernCss ≠ "" ↔ Ir.features.kern = true) ∧
-      Layout.kernVal false size font box g1 = 0 := by
-  refine ⟨?_, ?_⟩
+      Layout.kernVal false size font box g1 = 0 ∧
+      Layout.pairKern false size font g1 g2 = 0 := by
+  refine ⟨?_, ?_, ?_⟩
   · simp [HtmlDoc.kernCss, Ir.features]
   · unfold Layout.kernVal
-    cases box.back? <;> simp
+    cases box.back? <;> simp [Layout.pairKern]
+  · simp [Layout.pairKern]
 
 /-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
 reserves and places a picture by `Layout.pictureBox`, and the SVG's

@@ -1712,6 +1712,11 @@ theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char × Sp) :
   unfold boxWidth
   rw [Array.foldl_push]
 
+/-- A face's pair kern between two glyphs, scaled to `size`: 0 when
+kerning is off, and 0 for every pair of a face with no kern data. -/
+def pairKern (kern : Bool) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
+  (if kern then font.kernAdv g1 g2 else 0) * size / (font.unitsPerEm : Int)
+
 /-- The scaled pair kern the next glyph owes against the box's last: 0
 at a box head, and 0 for every pair of a face with no kern data (Open
 Sans ships none). Both backends read one `Ir.Features` value for whether
@@ -1721,8 +1726,7 @@ two projections of it. -/
 def kernVal (kern : Bool) (size : Sp) (font : Font)
     (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
   match box.back? with
-  | some (pg, _, _) =>
-    (if kern then font.kernAdv pg g1 else 0) * size / (font.unitsPerEm : Int)
+  | some (pg, _, _) => pairKern kern size font pg g1
   | none => 0
 
 /-- Apply a pair kern to the box's last glyph's advance: the pen position
@@ -3118,6 +3122,31 @@ private structure ItemsAcc where
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
   extras : Std.HashMap Nat Sp := {}
   cache : Std.HashMap String (Array Nat) := {}
+  /-- The item count just after the last word's items: a space kerns
+  against the glyph before it only while nothing has been set since, so a
+  formula's, an icon's or a mark's box never counts as a word's glyph. -/
+  wordEnd : Nat := 0
+
+/-- The pair kern a set glyph declares with its own face's space glyph —
+the box's last glyph when `after` (the space follows it), its first
+otherwise — scaled at the box's size; 0 for anything but a box of glyphs.
+This is luaotfload's space kerning (the fontloader's `injectspaces`,
+triggered by the `kern` feature): each face's `(g, space)` and `(space, g)`
+pairs move the interword glue beside `g` by that face's own value, and the
+glue's stretch and shrink stay. Where the two faces on either side differ in
+size, luaotfload scales both values by the left face's factor; here each
+value keeps its own face's, the one departure — it differs only where both
+sides kern and their scales differ, and it is the face's own pair at the
+face's own size. -/
+private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
+  | some (.box _ fontIdx _ _ glyphs size _ _ _ _) =>
+    let font := fs.get fontIdx
+    match font.gid ' ', (if after then glyphs.back? else glyphs[0]?) with
+    | some sp, some (g, _, _) =>
+      if after then pairKern Ir.features.kern size font g sp
+      else pairKern Ir.features.kern size font sp g
+    | _, _ => 0
+  | _ => 0
 
 /-- One flatten token into the accumulator — the fold step of
 `itemsOfInlines`, named so a conservation statement can induct over it:
@@ -3143,7 +3172,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
         sty.ground sty.link sty.underline useGsub attr fs font chars
         acc.dropped acc.substs acc.cache
-    { acc with items := acc.items ++ ws, dropped := m, substs := s, cache := c' }
+    let items := match acc.items.back? with
+      | some (.glue g) =>
+        if g.word then
+          acc.items.pop.push (.glue { g with width := g.width + spaceKern fs false ws[0]? })
+        else acc.items
+      | _ => acc.items
+    { acc with items := items ++ ws, dropped := m, substs := s, cache := c'
+               wordEnd := if ws.isEmpty then acc.wordEnd else items.size + ws.size }
   | .icon sty c attr =>
     -- The styled face first (an icon font declared as the body face is
     -- legal), then the fallback chain; either hit is the icon's own face
@@ -3216,8 +3252,9 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     | none => acc
   | .space sty =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
-    let g : Item := .glue (interword (size * sty.scale / 1000) (fs.get idx))
-    { acc with items := acc.items.push g }
+    let g := interword (size * sty.scale / 1000) (fs.get idx)
+    let after := if acc.wordEnd == acc.items.size then spaceKern fs true acc.items.back? else 0
+    { acc with items := acc.items.push (.glue { g with width := g.width + after }) }
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
     { acc with items := acc.items.push (.glue { fil := true }) }
