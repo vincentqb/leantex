@@ -99,11 +99,6 @@ def groupPrimitiveChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"and the change stops at '\\{c}'" (strong.all fun s => !hasStr s "After words.")
     t s!"a matched '\\{o}' is no unknown command" (ds.all (·.code != "W0301"))
 
-/-- The laid-out lines of a source, baseline and text: what a claim that two
-spellings set one page reads. -/
-def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
-  (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
-
 /-- A bare use of an environment the engine gives a meaning, with the
 arguments and body it needs to build. -/
 def blockUse (n : String) : String :=
