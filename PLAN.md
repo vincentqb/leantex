@@ -22841,3 +22841,82 @@ nothing pending now keeps minus that depth (`B.closingOwed`,
 leading stays open: on the corpus's card the engine's line pitch differs
 from lualatex's by up to 1.2 bp on a face. The centring is exact either
 way.
+
+### 2026-09-27 — a \multicolumn spans its columns, by TeX's rule for a spanned entry
+
+The round-10 branch audit found this unported on an old branch: a
+`\multicolumn` modelled as a span. Main still dropped the count and the
+alignment, kept the text in one cell with a W0337, and shifted later cells
+left. The `spanAccounting` registry owed the fix by name. This entry is the
+port onto main, with what main had grown since the branch was written: the
+walked text group, definition bodies, and the tagged PDF.
+
+**The invariant** is TeX's, from tex.web §801:
+$w_j=\max_{i≤j}(w_{ij}-\sum_{i≤k<j}(t_k+w_k))$.
+- A spanned entry enters no single column's maximum.
+- When it is wider than the columns it covers plus their gaps, the excess
+  goes to the last covered column.
+- Columns settle in order, so a span reads the final widths of the columns
+  before its last.
+
+`Layout.tableColWidths` computes it: `colBase`, then `widenAt` column by
+column. `table_natural_width_exact` states the spanless case, and
+`inSpan_nil` says it is every row's widest cell.
+
+**Where each piece lives.**
+- *The IR.* `Ir.ColSpan` holds the row, the column, the count and the
+  head's own `ColSpec`, which the table's spec reader parses, so a `p{…}`
+  span keeps its width. It sits beside `rules`, and the covered cells stay
+  empty in `rows`, so rectangularity and every text walk are unchanged.
+- *The tabular arm.* It reads the construct at a cell's head. At a head it
+  also expands a user command whose definition opens with `\multicolumn`,
+  as TeX expands a cell's first tokens. It uses the math path's
+  terminating raw expansion.
+- *Compat.* It keeps the construct whole where those two readers see it:
+  a tabular body's top level (`St.tableTop`) and the head of a definition
+  body. Its premise is pinned to `multicolumnSpanChecks`. Anywhere else,
+  both doors print the same `ctrl:multicolumn:misplaced` line. A count
+  that is not a numeral keeps `ctrl:multicolumn:unread`.
+- *HTML.* The head carries `colspan` and its own alignment, and a covered
+  cell ships no element. `th_iff_header_row` is restated over membership.
+
+**Guards.** Each fails at `c3604728` and passes here. They are judged on
+`Layout.Out`, the typed HTML tree and structured diagnostics.
+- `multicolumnSpanChecks`: a span that fits leaves the box at its column
+  maxima; an overflowing one widens it by exactly its excess, equal to the
+  two-column table holding it; a centred head stands over its columns; a
+  one-column realignment sets its own alignment. A `p{2cm}` span wraps at
+  its width.
+- `tableHtmlChecks`: `colspan`, the alignment, and no covered element.
+- The grid checks in `compatFragmentChecks`.
+- "A set span prints no W0337" for every `spanAccountingProbes` shape.
+  The registry is now empty.
+- The tables fixture carries a spanned head, with its census row.
+
+**Measured against lualatex**, with `pdftotext -bbox` word boxes over one
+synthetic five-table probe set in the same face (Source Serif Pro), in pt,
+as word positions relative to each table's first cell:
+- a head that fits: the columns are unchanged, as in lualatex; the head's
+  centre is 0.16 off the span's (0.0 in lualatex; base 14.73);
+- an overflowing head: the last column's edge is 248.65 (lualatex 247.52;
+  base 285.65);
+- a one-column `r` realignment: −0.05 (base −35.45);
+- a `p{2cm}` span: three lines as in lualatex, the first line 57.29 wide
+  (lualatex 56.70; base one line, 156.85).
+
+The residual is the per-glyph advance gap that a spanless table shows too
+(0.43–0.57 there), plus a pre-existing gap between measured and set width
+for a long cell: 0.6 for a seven-word cell at base, with no span involved.
+
+**Owed.**
+- The PDF structure tree tags a head with no `/ColSpan`, and its covered
+  cells as empty `TD`s, as padded rows were before. `StructElem.attrs` is
+  still written by no one.
+- An `@{}` inside a `\multicolumn` spec is named (W0104,
+  `tabular:multicolumn-pad`), not modelled.
+- A command whose definition opens with `\multicolumn`, used where no
+  cell opens, reaches the inline elaborator as an unknown command. LaTeX
+  refuses that use too ("Misplaced \omit").
+- Markdown's pipe table has no span.
+- Layout's measuring pass reads a long cell narrower than `collectPara`
+  sets it.
