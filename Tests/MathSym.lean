@@ -124,7 +124,8 @@ def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"\\{n}: the hand row shadows a generated row that says otherwise, undeclared"
       (handDivergences.any (·.1 == n))
   for (n, _) in handDivergences do
-    t s!"handDivergences lists \\{n}, whose hand row agrees with its generated row"
+    t s!"handDivergences lists \\{n}, but no hand row of that name shadows a generated row \
+that says otherwise"
       (disagree.any (·.1 == n))
   for (n, _, _) in gen do
     t s!"\\{n} is a symbol row the parser reads structurally first"
