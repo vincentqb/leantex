@@ -432,27 +432,31 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn ":where(h1, h2, h3, h4) { margin: 0 0 0.725rem; }").length == 2 &&
      (plainPage.splitOn ":where(:is(h1, h2, h3, h4) + *) { margin-top: 0; }").length == 2)
   t "html block elements' own margins are the emitter's zero-specificity resets"
-    ((plainPage.splitOn ":where(p, ul, ol, pre, blockquote) { margin: 0; }").length == 2 &&
+    ((plainPage.splitOn ":where(p, ul, ol, li, pre, blockquote) { margin: 0; }").length == 2 &&
      (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
-     (plainPage.splitOn "li { margin: 0; }").length == 2)
+     !hasStr plainPage "\nli { margin")
   t "html peer gap is the page's parskip over one screen quantum, top-owned"
     ((plainPage.splitOn ":where(* + p) { margin-top: var(--parskip, 0.725rem); }").length == 2 &&
-     !hasStr plainPage "--parskip:")
+     !hasStr plainPage "    --parskip:")
   -- The owner contract's text half (`HtmlDoc.blockGap_owner_contract` holds
   -- the emitter's order): on no golden page does a base-sheet rule outside
   -- the zero-specificity emitter declare a vertical margin on an element
   -- the emitter spaces. Such a rule outranks every boundary rule on it:
   -- `p { margin: 0 }` at (0,0,1) once kept every peer gap from rendering
   -- while the sheet declared them. The subjects are read off the emitter's
-  -- own boundary rules, never a hand list.
-  let subjects : List String := HtmlDoc.blockGapRules.flatMap fun r => match r with
+  -- own boundary rules, never a hand list: every lineage's, each subject's
+  -- element or class before any pseudo-class, so an exclusion the emitter
+  -- writes (`li:not(.algorithm *)`) still names the element it spaces.
+  let subjects : List String := [Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
+    (HtmlDoc.blockGapRules l Ir.baseFontSize).flatMap fun r => match r with
     | .boundary sel _ => (sel.splitOn ",").filterMap fun part =>
         match (part.splitOn "+").reverse with
         | last :: _ :: _ =>
-          let s := last.trimAscii.toString
-          if s == "*" then none else some s
+          let s := ((last.trimAscii.toString).splitOn ":").headD ""
+          if s == "*" || s.isEmpty then none else some s
         | _ => none
     | .reset _ _ => []
+    | .parskip _ _ => []
   let setsMargin (decls : String) : Bool := (decls.splitOn ";").any fun d =>
     match d.splitOn ":" with
     | p :: _ :: _ => ["margin", "margin-top"].contains p.trimAscii.toString
@@ -465,7 +469,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
           (sel.splitOn ",").any (subjects.contains ·.trimAscii.toString) then
         shadows := shadows.push s!"{n}: {sel}"
   t "html gap subjects are read off the emitter"
-    (["p", "ul", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)
+    (["p", "ul", "ol", "li", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)
   unless shadows.isEmpty do IO.eprintln s!"  shadowing rules: {shadows.toList}"
   t "html: no base-sheet rule outranks a gap rule on the element it spaces" shadows.isEmpty
   t "html heading gap is two screen quanta"
@@ -508,6 +512,49 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
       "  height: var(--progressheight, 1pt);")).length == 2)
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
+
+/-- **A list's spaces are the class's `\@list⟨n⟩` in HTML too** (review
+RF-5): the sheet realizes each level's `\topsep`, `\itemsep` and `\parsep`
+in the screen's quanta — the values the size files and beamer source,
+hand-converted here (size10.clo and size12.clo:216-233,
+beamerbaselocalstructure.sty:152-163; one quantum is 6, 7.2 and 6.6 pt of
+print and 0.725 rem of screen), never read back from the emitter — and the
+web's lineage keeps its lists a peer gap apart and its items a leading. It
+fails on the sheet that set every item at zero (`8d3df368`). The rendered
+half is the rhythm tier's browser report (`scripts/rhythm.lean --html`). -/
+def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let page (cls : String) : String := (HtmlDoc.emit {} (elabStr (s!"\\documentclass{cls}" ++
+    "\\begin{document}x\n\n\\begin{itemize}\\item a\\item b\\end{itemize}\\end{document}")).1).1
+  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+  let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
+  let art := page "{article}"
+  t "html a 10pt list's items stand itemsep over the item's parsep apart"
+    (hasStr art s!":where(li + {item}) \{ margin-top: {space "0.483"}; }" &&
+     hasStr art ":where(li, blockquote > *) { --parskip: 0.483rem; }")
+  t "html a 10pt list and quote stand topsep over the parskip in force from their neighbours"
+    (hasStr art (":where(* + ul:not(.bibliography), * + ol:not(.algorithm):not(.algorithm *), " ++
+      s!"* + blockquote) \{ margin-top: {space "0.966"}; }") &&
+     hasStr art (":where(ul:not(.bibliography) + *, ol:not(.algorithm):not(.algorithm *) + *, " ++
+      s!"blockquote + *) \{ margin-top: {space "0.966"}; }"))
+  t "html a nested 10pt list reads its own level"
+    (hasStr art ":where(li li, li blockquote > *) { --parskip: 0.241rem; }" &&
+     hasStr art s!":where(li li + {item}) \{ margin-top: {space "0.241"}; }" &&
+     hasStr art s!"li * + blockquote) \{ margin-top: {space "0.483"}; }")
+  let art12 := page "[12pt]{article}"
+  t "html a 12pt list reads size12's spacing"
+    (hasStr art12 ":where(li, blockquote > *) { --parskip: 0.503rem; }" &&
+     hasStr art12 s!"* + blockquote) \{ margin-top: {space "1.006"}; }")
+  let deck := page "{beamer}"
+  t "html a deck's list reads beamer's spacing"
+    (hasStr deck ":where(li, blockquote > *) { --parskip: 0.000rem; }" &&
+     hasStr deck s!":where(li + {item}) \{ margin-top: {space "0.329"}; }" &&
+     hasStr deck s!"* + blockquote) \{ margin-top: {space "0.329"}; }")
+  let web := page "{webpage}"
+  t "html a webpage's lists keep the peer gap and its items a leading"
+    (!hasStr web "li + li" && !hasStr web "--parskip:" &&
+     hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
+     hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
 
 /-- Article sections become anchored containers: `<section id="slug">` wraps
 the heading and its content, ids stay unique under repeated titles, and an

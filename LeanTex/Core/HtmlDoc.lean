@@ -663,6 +663,37 @@ def quantaRem (k : Nat) : String := milliFactor (k * bodyLeadingMilli / 2) ++ "r
 /-- A boundary kind's declared multiple, from the one table. -/
 private def gapK (kind : String) : Nat := (Ir.rhythmGapQuanta.lookup kind).getD 0
 
+/-- A print length as screen milli-rem: its multiple of the print quantum
+at the body size (`Ir.rhythmQuantum`) realized in the screen's, the
+per-context unit `backend_gaps_agree` states, rounded down to the
+milli-rem. The one conversion from a print length to a screen gap: the
+declared parskip (`parskipVar`) and a list level's spaces (`listRules`)
+read it. -/
+def screenMilli (size v : Int) : Nat :=
+  if Ir.rhythmQuantum size ≤ 0 then 0
+  else (v * ((bodyLeadingMilli / 2 : Nat) : Int) / Ir.rhythmQuantum size).toNat
+
+/-- `m` milli-rem as CSS. -/
+private def milliRem (m : Nat) : String := milliFactor m ++ "rem"
+
+/-- **A converted gap is its print gap in the screen's quanta** (`_between`):
+cross-multiplied, as `backend_gaps_agree` compares the table's rows, the
+milli-rem `screenMilli` emits stands at most one milli-rem under the print
+length's exact multiple of its quantum — 0.016 CSS px at a 16 px root —
+whatever the size and the length. -/
+theorem screenMilli_between (size v : Int) (hq : 0 < Ir.rhythmQuantum size) (hv : 0 ≤ v) :
+    (screenMilli size v : Int) * Ir.rhythmQuantum size ≤ v * ((bodyLeadingMilli / 2 : Nat) : Int) ∧
+      v * ((bodyLeadingMilli / 2 : Nat) : Int) <
+        ((screenMilli size v : Int) + 1) * Ir.rhythmQuantum size := by
+  have hh : (0 : Int) ≤ ((bodyLeadingMilli / 2 : Nat) : Int) := by decide
+  unfold screenMilli
+  generalize (Ir.rhythmQuantum size : Int) = q at *
+  generalize ((bodyLeadingMilli / 2 : Nat) : Int) = h at *
+  have hnq : ¬ q ≤ 0 := Int.not_le.mpr hq
+  have hnn : 0 ≤ v * h / q := Int.ediv_nonneg (Int.mul_nonneg hv hh) (Int.le_of_lt hq)
+  simp only [hnq, ↓reduceIte, Int.toNat_of_nonneg hnn]
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hq), Int.lt_ediv_add_one_mul_self _ hq⟩
+
 /-- The base sheet's block boundaries: every block-level element the
 backend emits into flow, with the declared kind of gap it opens. Emitted
 as adjacent-sibling rules (`blockGapCss`): the element below owns the
@@ -717,20 +748,26 @@ theorem blockGap_kinds_covers :
 /-- One rule of the block-boundary sheet. `reset` states an element's own
 vertical margins — zero, replacing the user agent's, or a heading's band
 below; `boundary` is a boundary's one emitter, the lower side's
-`margin-top`. Both render inside `:where()` (`GapRule.render`), so the
-whole sheet stands at zero specificity and order alone ranks its rules. -/
+`margin-top`; `parskip` is the paragraph gap in force inside an element,
+its `--parskip`, which every peer and list boundary under it reads — as
+`\list` makes `\parsep` the `\parskip` inside a list. All render inside
+`:where()` (`GapRule.render`), so the whole sheet stands at zero
+specificity and order alone ranks its rules. -/
 inductive GapRule where
   | reset (sel margin : String)
   | boundary (sel value : String)
+  | parskip (sel value : String)
   deriving Repr, DecidableEq
 
 def GapRule.render : GapRule → String
   | .reset sel m => s!":where({sel}) \{ margin: {m}; }\n"
   | .boundary sel v => s!":where({sel}) \{ margin-top: {v}; }\n"
+  | .parskip sel v => s!":where({sel}) \{ --parskip: {v}; }\n"
 
 def GapRule.isReset : GapRule → Bool
   | .reset _ _ => true
   | .boundary _ _ => false
+  | .parskip _ _ => false
 
 /-- The peer gap: the document's resolved `\parskip` where the page
 declares one (`--parskip`, written by `baseCss` through `parskipVar`),
@@ -742,61 +779,184 @@ token the PDF walk reads (`Ir.trivlistSkip`). -/
 private def trivlistGap : String :=
   s!"calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + {peerGap})"
 
+/-- The elements a list level spaces: every list a list block emits and
+every quotation (classes.dtx: `quote` is a `\list`), and not the reference
+list, whose entries the PDF walk sets a peer gap apart
+(`Layout.collectBibliography`), nor an algorithm's line lists, whose lines
+stand a leading apart. -/
+private def listElems : List String :=
+  ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote"]
+
+/-- A list block's item, and not a reference-list entry, an algorithm's
+line or an endnote. -/
+private def itemSubject : String :=
+  "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+
+/-- A list's own space at a boundary: the level's length over the
+paragraph gap in force where the boundary stands, read on the lower
+element — `\@trivlist`'s `\topsep` over the surrounding `\parskip`, and
+`\@item`'s `\itemsep` over the item's own. The fallback is TeX's
+`\parskip`, zero at its natural width (`Layout.Geom.texParskip`), not the
+engine's paragraph mark. -/
+private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip, 0rem))"
+
+/-- One list level's three spaces in screen milli-rem, `\topsep`,
+`\itemsep` and `\parsep` of `Ir.listSkips`, each through `screenMilli`. -/
+def listLevelGaps (size : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
+  (screenMilli size sk.topsep.width.sp, screenMilli size sk.itemsep.width.sp,
+   screenMilli size sk.parsep.width.sp)
+
+/-- One list level's rules, `pre` reaching the level — an item ancestor
+per enclosing list, as `\@listdepth` counts them over both kinds: its
+items' and quotations' paragraphs stand `\parsep` apart, each list and
+quotation stands `\topsep` from its neighbours above and below, and each
+item after the first opens `\itemsep`. -/
+private def listLevelRules (pre : String) (g : Nat × Nat × Nat) : List GapRule :=
+  [.parskip s!"{pre}li, {pre}blockquote > *" (milliRem g.2.2),
+   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace g.1),
+   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace g.1),
+   .boundary s!"{pre}li + {itemSubject}" (listSpace g.2.1)]
+
+/-- The list rules a page's class owes: LaTeX's `\@list⟨n⟩` for levels one
+to three — a deeper level keeps the third's, as `Ir.listSkips` clamps —
+read from the one resolving site the PDF walk spends and converted once
+(`listLevelGaps`). The web's lineage owes none: its lists open the peer
+gap and its items stand a leading apart, as its print twin sets them. -/
+def listRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+  [1, 2, 3].flatMap fun n => match Ir.listSkips l size n with
+    | some sk => listLevelRules (String.join (List.replicate (n - 1) "li ")) (listLevelGaps size sk)
+    | none => []
+
+/-- The resets: every block element's own vertical margins, first. -/
+private def gapResets : List GapRule :=
+  [.reset "p, ul, ol, li, pre, blockquote" "0",
+   .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
+   .reset "figure.float" "0 auto"]
+
+/-- The boundaries the list levels stand after: the peer elements', then
+the trivlist's pair. -/
+private def gapBeforeLists : List GapRule :=
+  (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
+    .boundary s!"* + {sel}" peerGap) ++
+  [.boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
+   .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
+
+/-- The boundaries the list levels stand before: the headings', the float's
+and the display's pairs, and the heading's follower, last. -/
+private def gapAfterLists : List GapRule :=
+  (blockGapKinds.filter (·.2 == "heading")).map (fun (sel, kind) =>
+    .boundary s!"* + {sel}" (quantaRem (gapK kind))) ++
+  [.boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
+   .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
+   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
+   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
+   .boundary ":is(h1, h2, h3, h4) + *" "0"]
+
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
 at zero specificity, so no element rule stands above a boundary rule —
 the defect this list replaced, where `p { margin: 0 }` at (0,0,1) beat
 every `:where(* + p)` and no peer gap rendered. Then one adjacent-sibling
-rule per block element (`blockGapKinds`); the float's pair (`--floatsep`),
-the display's (`Ir.displayAbove`/`displayBelow`) and the trivlist's
-(`\topsep`) — a pair rule stands later, so its value wins the boundary
-while the neighbour's own margin stays zero, the PDF walk's `addvspace`
-taking the larger; and last, the follower of a heading, whose band below
-is the heading's own (the reset's `margin-bottom`). Any consumer rule — a
-declared `\style` on the bare element or a reader stylesheet owning a
-container's spacing with `gap` — wins without a specificity fight, which
-is the HTML backend's override contract. -/
-def blockGapRules : List GapRule :=
-  [.reset "p, ul, ol, pre, blockquote" "0",
-   .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
-   .reset "figure.float" "0 auto"] ++
-  blockGapKinds.map (fun (sel, kind) =>
-    .boundary s!"* + {sel}" (if kind == "peer" then peerGap else quantaRem (gapK kind))) ++
-  [.boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
-   .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
-   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
-   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
-   .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
-   .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap,
-   .boundary ":is(h1, h2, h3, h4) + *" "0"]
+rule per block element (`blockGapKinds`), a pair rule standing later than
+the element rules it meets, so its value wins the boundary while the
+neighbour's own margin stays zero — the PDF walk's `addvspace` taking the
+larger: the trivlist's (`\topsep`); the page's list levels
+(`listRules`), after it, so a list's `\topsep` against a centred block is
+the larger, and before the headings, so a heading's space against a list
+is; the float's (`--floatsep`) and the display's
+(`Ir.displayAbove`/`displayBelow`); and last, the follower of a heading,
+whose band below is the heading's own (the reset's `margin-bottom`). Any
+consumer rule — a declared `\style` on the bare element or a reader
+stylesheet owning a container's spacing with `gap` — wins without a
+specificity fight, which is the HTML backend's override contract. -/
+def blockGapRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+  gapResets ++ gapBeforeLists ++ listRules l size ++ gapAfterLists
 
-def blockGapCss : String := String.join (blockGapRules.map GapRule.render)
+def blockGapCss (l : Ir.ListLineage) (size : Int) : String :=
+  String.join ((blockGapRules l size).map GapRule.render)
 
-/-- **Each boundary's gap is its emitter's, and it renders** (`_contract`):
-every rule of the one emitter stands at zero specificity, so order alone
-ranks them, and no reset stands after a boundary rule — the premise
-`single_owner_gap_exact` needs before the emitted gap is the rendered one;
-the heading's follower rule stands last. That no base-sheet rule outside
-the emitter declares a margin on an element it spaces is the text's to
-show, and `htmlRhythmChecks` reads it off every golden page's sheet. -/
-theorem blockGap_owner_contract :
-    (blockGapRules.dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
-    blockGapRules.getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
-  decide
+private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
+    (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    simp [h.1, ih h.2]
+
+private theorem dropWhile_none {α : Type} (p : α → Bool) (ys : List α)
+    (h : ys.all (fun y => !p y) = true) : ys.dropWhile p = ys := by
+  cases ys with
+  | nil => rfl
+  | cons y ys =>
+    simp only [List.all_cons, Bool.and_eq_true, Bool.not_eq_true'] at h
+    simp [h.1]
+
+private theorem listLevelRules_noReset (pre : String) (g : Nat × Nat × Nat) :
+    (listLevelRules pre g).all (fun r => !r.isReset) = true := rfl
+
+private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) :
+    (listRules l size).all (fun r => !r.isReset) = true := by
+  simp only [listRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true]
+  refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _
+
+/-- **Each boundary's gap is its emitter's, and it renders** (`_contract`),
+for every class's list lineage and body size: every rule of the one
+emitter stands at zero specificity, so order alone ranks them, and no
+reset stands after a boundary rule — the premise `single_owner_gap_exact`
+needs before the emitted gap is the rendered one; the heading's follower
+rule stands last. That no base-sheet rule outside the emitter declares a
+margin on an element it spaces is the text's to show, and
+`htmlRhythmChecks` reads it off every golden page's sheet. -/
+theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) :
+    ((blockGapRules l size).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
+    (blockGapRules l size).getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+  have hall : (gapBeforeLists ++ listRules l size ++ gapAfterLists).all
+      (fun r => !r.isReset) = true := by
+    simp only [List.all_append, listRules_noReset, Bool.and_true, Bool.and_eq_true]
+    exact ⟨by decide, by decide⟩
+  refine ⟨?_, ?_⟩
+  · simp only [blockGapRules, List.append_assoc] at hall ⊢
+    rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
+    exact hall
+  · have hlast : gapAfterLists.getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+      decide
+    simp only [blockGapRules, List.getLast?_append, hlast, Option.some_or]
+
+/-- **A list's spaces are LaTeX's `\@list⟨n⟩` on both artifacts** (`_agree`):
+for any level's spaces — so at every lineage, body size and level
+`Ir.listSkips` answers for, the one resolving site the PDF walk spends —
+each of the three lengths the level's rules carry (`listLevelGaps`), its
+`\topsep` above and below a list, its `\itemsep` before an item and its
+`\parsep` inside one, is the print length as the screen's multiple of its
+quantum, to within a milli-rem (`screenMilli_between`). -/
+theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (hq : 0 < Ir.rhythmQuantum size)
+    (h0 : 0 ≤ sk.topsep.width.sp ∧ 0 ≤ sk.itemsep.width.sp ∧ 0 ≤ sk.parsep.width.sp) :
+    let h : Int := ((bodyLeadingMilli / 2 : Nat) : Int)
+    let q := Ir.rhythmQuantum size
+    let g := listLevelGaps size sk
+    ((g.1 : Int) * q ≤ sk.topsep.width.sp * h ∧ sk.topsep.width.sp * h < ((g.1 : Int) + 1) * q) ∧
+    ((g.2.1 : Int) * q ≤ sk.itemsep.width.sp * h ∧
+      sk.itemsep.width.sp * h < ((g.2.1 : Int) + 1) * q) ∧
+    ((g.2.2 : Int) * q ≤ sk.parsep.width.sp * h ∧
+      sk.parsep.width.sp * h < ((g.2.2 : Int) + 1) * q) :=
+  ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
+   screenMilli_between size _ hq h0.2.2⟩
+
+/-- The web's lineage owes no list space: a webpage's lists keep the peer
+gap and its items a leading apart, where its print twin sets them. -/
+theorem listRules_web_exact (size : Int) : listRules .web size = [] := rfl
 
 /-- The document's declared `\parskip` as the screen peer gap: its multiple
 of the print quantum at the document's size, realized in the screen's
-(`backend_gaps_agree`'s per-context unit). Written only where the page
+(`screenMilli`). Written only where the page
 declares one — the `slides` and `resume` class records declare zero, as
 their PDF spends nothing between paragraphs — so an undeclared page keeps
 the peer rules' fallback. -/
 def parskipVar (page : Ir.PageSpec) : String :=
   match page.parskip with
   | none => ""
-  | some g =>
-    let q := Ir.rhythmQuantum page.fontSize
-    let milli := if q ≤ 0 then 0 else (g.width.sp * ((bodyLeadingMilli / 2 : Nat) : Int) / q).toNat
-    s!"    --parskip: {milliFactor milli}rem;\n"
+  | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize g.width.sp)};\n"
 
 /-- The PDF backend's shipped default gap at a boundary kind: the values
 placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
@@ -3543,10 +3703,6 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- conforming hyphenators (the agreement is about tags, never breaks).
   "p { hyphens: auto; }\n" ++
   "ul, ol { padding-left: 1.35rem; }\n" ++
-  -- No per-item gap, as the PDF declares none: a list is one block, and
-  -- its leading is its rhythm. A document declares its own through
-  -- `\style{itemize}{ gap = ... }`.
-  "li { margin: 0; }\n" ++
   -- A quotation moves both edges in, as the PDF sets it (classes.dtx:
   -- `\rightmargin\leftmargin`); its vertical margins are the gap
   -- emitter's, as every block element's are.
@@ -3688,7 +3844,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  text-align: center; text-wrap: balance; }\n" ++
   s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
   s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++
-  blockGapCss ++
+  blockGapCss doc.docClass.record.lists doc.page.fontSize ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
