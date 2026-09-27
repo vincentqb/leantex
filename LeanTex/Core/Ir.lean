@@ -7614,6 +7614,31 @@ rewritten on the title page and painted there. -/
 def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
   if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg) else none
 
+/-- **The one reading of the ground a frame's pages stand on**, off the
+palette in force where the frame stands — the document's, or a body
+`\palette`'s epoch, which is how a deck declares one frame's background
+(reveal.js's per-slide `data-background-color`, here a declaration both
+backends already carry). A `[standout]` frame stands on its inversion
+(`Design.standout`), the title page on its own declared ground when it
+has one (`titleGroundOf`), and every other frame on the palette's
+declared `bg`. `none` is an undeclared ground, which neither backend
+paints: the PDF ships no fill and the HTML stage its stylesheet surface.
+The page painter reads this (`Layout.collectBlock`'s frame arm), and the
+HTML stage resolves the same `--bg` from the epoch's redefinition on its
+node (`HtmlDoc.stageGround`); `artStageGroundChecks` holds the two
+artifacts to it. -/
+def frameGroundOf (pal : Palette) (standout : Bool) (valign : VAlign) : Option Color :=
+  if standout then some (Design.ofPalette pal).standout.bg
+  else (titleGroundOf pal valign).orElse fun _ => pal.find? "bg"
+
+/-- **A plain frame stands on the declared `bg` in force, and on nothing
+else**: a ground nobody declared is never invented, and an epoch's own
+ground is never replaced by the document's — the half of a per-slide
+background the page painter owed before it read the palette in force. -/
+theorem frameGround_exact (pal : Palette) (valign : VAlign) (h : ¬ valign = .golden) :
+    frameGroundOf pal false valign = pal.find? "bg" := by
+  cases valign <;> simp_all [frameGroundOf, titleGroundOf]
+
 /-- The document's resolved design: `ofPalette` over its palette, with the
 two declarations a palette does not carry. -/
 def Design.ofDoc (doc : Doc) : Design :=
@@ -7665,7 +7690,9 @@ each named with its consumers; `Tests.lean` checks every role a built-in
 bundle declares appears here or is a content colour, so a decorative key no
 code reads is a named warning, never silence. -/
 def Design.consumedRoles : List String :=
-  ["fg", "bg",                        -- Layout.run / B.docBg, HtmlDoc.themeCss
+  ["fg", "bg",                        -- Layout.run / B.docBg, the frame and section-
+                                      -- page arms (frameGroundOf), HtmlDoc.themeCss
+                                      -- and the deck stage (stageGround)
    "covered",                         -- Layout.run's overlay dimming
    "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
    "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss

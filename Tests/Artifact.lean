@@ -1769,9 +1769,10 @@ def artStagesList (inl : Option String) (acc : Array (Option String)) :
 
 end
 
-/-- The plain frames' declared grounds in document order: the `bg` of the
-palette in force at each top-level frame that is neither standout nor the
-title page — the top-level walk both backends make. -/
+/-- The plain frames' declared grounds in document order, read at the one
+resolving site both backends answer to (`Ir.frameGroundOf`): the palette in
+force at each top-level frame that is neither standout nor the title page —
+the top-level walk both backends make. -/
 def artFrameGrounds (doc : Ir.Doc) : Array (Option Ir.Color) := Id.run do
   let mut pal := doc.palette
   let mut out : Array (Option Ir.Color) := #[]
@@ -1779,7 +1780,8 @@ def artFrameGrounds (doc : Ir.Doc) : Array (Option Ir.Color) := Id.run do
     match b with
     | .setPalette p => pal := p
     | .frame _ standout valign _ _ =>
-      if !standout && !(valign matches .golden) then out := out.push (pal.find? "bg")
+      if !standout && !(valign matches .golden) then
+        out := out.push (Ir.frameGroundOf pal false valign)
     | _ => pure ()
   return out
 
@@ -1828,6 +1830,16 @@ def artEpochDeck : String :=
   "\\begin{frame}{Back on a light ground}\nA third frame.\n\\end{frame}\n" ++
   "\\end{document}\n"
 
+/-- One breakable frame in a dark epoch, taller than its stage: its
+continuation page is the frame's page as much as the first, so both stand
+on the epoch's ground. Invented values. -/
+def artEpochSpillDeck : String :=
+  "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++
+  "\\palette{ bg = #14213D, fg = #F5F5F5 }\n" ++
+  "\\begin{frame}[allowframebreaks]{A frame that continues}\n\\begin{itemize}\n" ++
+  String.join ((List.range 24).map fun i => s!"\\item Filler beat {i + 1}.\n") ++
+  "\\end{itemize}\n\\end{frame}\n\\end{document}\n"
+
 /-- The judge broken once for each link, and the shape the backend writes
 accepted: the rule gone, the rule reading the stylesheet's surface, the
 epoch's redefinition dropped, and the ink rule gone. -/
@@ -1848,12 +1860,35 @@ color: var(--fg, var(--ink)); }\n}\n"
     ("the ink rule gone", root ++
       "section.slide { background: var(--bg, var(--surface)); }\n", live, true)]
 
-/-- **A plain frame's ground is the palette in force, and the stage paints
-it.** Over the judge's own mutants, the slides fixtures of the corpus, and
-the epoch deck: every plain stage resolves the role to the declared value
-of the palette in force at its frame, through a rule that paints the stage
-from it and inks the stage from `--fg`. -/
-def artStageGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
+/-- Every page of a plain frame that does not stand on the frame's declared
+ground: the PDF half of the stage-ground claim, read off `Layout.Out` — the
+fill the page ships first, which `finishPage` prepends whole. A frame on an
+undeclared ground ships no full-page fill; a declared one ships its own
+colour and not the document's. -/
+def artPageGroundOffences (geom : Layout.Geom) (expected : Array (Option Ir.Color))
+    (pages : Array Layout.PageOut) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut i := 0
+  for p in pages do
+    i := i + 1
+    let some k := p.frame | continue
+    let want := expected[k - 1]?.getD none
+    let ground := p.fills[0]?.bind fun f =>
+      if f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH then some f.color
+      else none
+    if ground != want then
+      out := out.push s!"page {i} (frame {k}) ships the ground \
+{ground.map HtmlDoc.cssColor}, the palette in force declares {want.map HtmlDoc.cssColor}"
+  return out
+
+/-- **A plain frame's ground is the palette in force, and both artifacts
+paint it.** Over the judge's own mutants, the slides fixtures of the corpus,
+and the epoch deck: every plain stage resolves the role to the declared
+value of the palette in force at its frame, through a rule that paints the
+stage from it and inks the stage from `--fg`; and every PDF page of that
+frame ships the same colour as its ground. -/
+def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
   let t := check ref
   let want : Array (Option Ir.Color) :=
     #[some { r := 0xFD, g := 0xFC, b := 0xF9 }, some { r := 0x14, g := 0x21, b := 0x3D }]
@@ -1863,6 +1898,8 @@ def artStageGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"stage ground mutant, {label}: the judge refuses it" (!offs.isEmpty)
     else
       t s!"stage ground mutant, {label}: the judge accepts it: {offs.toList}" offs.isEmpty
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
   let mut judged := 0
   let mut declared := 0
   for n in goldenNames do
@@ -1876,6 +1913,11 @@ def artStageGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
     if expected.any Option.isSome then declared := declared + 1
     let offs := artStageGroundOffences expected css body
     t s!"stage ground {n}: {offs.toList}" offs.isEmpty
+    let geom := Layout.Geom.ofPage doc.page
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let out := layoutOf fs doc geom none (← corpusStore doc)
+    let pageOffs := artPageGroundOffences geom expected out.pages
+    t s!"stage ground {n} pdf: {pageOffs.toList}" pageOffs.isEmpty
   t s!"stage ground: slides fixtures are judged ({judged})" (0 < judged)
   t s!"stage ground: declared grounds are reached ({declared})" (0 < declared)
   let (edoc, eds) := elabStr artEpochDeck
@@ -1887,6 +1929,18 @@ def artStageGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ecss := artTreeCssList (artTreeCssList "" ehead.toList) ebody.toList
   let offs := artStageGroundOffences expected ecss ebody
   t s!"stage ground epoch deck html: {offs.toList}" offs.isEmpty
+  let egeom := Layout.Geom.ofPage edoc.page
+  let eout := layoutOf oneFace edoc egeom
+  t s!"stage ground epoch deck: one page per frame ({eout.pages.size})" (eout.pages.size == 3)
+  let pageOffs := artPageGroundOffences egeom expected eout.pages
+  t s!"stage ground epoch deck pdf: {pageOffs.toList}" pageOffs.isEmpty
+  let (sdoc, _) := elabStr artEpochSpillDeck
+  let sgeom := Layout.Geom.ofPage sdoc.page
+  let sout := layoutOf oneFace sdoc sgeom
+  t s!"stage ground spill deck: the frame continues ({sout.pages.size} pages)"
+    (sout.pages.size ≥ 2 && sout.pages.all (·.frame == some 1))
+  let spillOffs := artPageGroundOffences sgeom (artFrameGrounds sdoc) sout.pages
+  t s!"stage ground spill deck pdf: {spillOffs.toList}" spillOffs.isEmpty
 
 
 

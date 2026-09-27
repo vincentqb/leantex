@@ -4249,12 +4249,14 @@ private theorem warnSpill_accounts (b : B) (o : Sp) :
   rcases h : b.frameBreak with _ | (_ | _) <;> rcases hw : b.spillWarned <;> simp
 
 /-- Close an overfull page mid-frame and repeat the frame's chrome on the
-next. Where no chrome is set — an article page, a plain or standout
-frame — the page ships exactly as `finishPage` ships it. `over` is how
-far the band that did not fit reached past the page bottom, for the
+next, and its ground: a continuation page is the frame's page as much as
+the first, so it stands on the ground the frame declared (`.pageStyle`) and
+not on the document's. Where no chrome is set — an article page, a plain or
+standout frame — the page ships exactly as `finishPage` ships it. `over` is
+how far the band that did not fit reached past the page bottom, for the
 account (`warnSpill`). -/
 private def B.spillPage (b : B) (over : Sp := 0) : B :=
-  b.finishPage.reopenChrome.warnSpill over
+  { b.finishPage.reopenChrome.warnSpill over with pageBg := b.pageBg }
 
 @[simp] private theorem reopenChrome_pages (b : B) :
     b.reopenChrome.pages = b.pages := by
@@ -6157,7 +6159,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     -- A divider carries no footer; the break above closed the previous
     -- page with its own.
     let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
-    let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
+    -- One page of the deck like any frame, on the palette's own ground.
+    let ground := Ir.frameGroundOf a.pal false .center
+    let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
     -- The centred measure the title and the bar share: moloch's own
     -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
     -- progressbar template: \begin{minipage}{0.7875\linewidth}).
@@ -7037,23 +7041,26 @@ private def collectBlock (r : Rd) (a : Acc)
     let titleSpan := leafCount title
     let (a, titleLeaf) := a.leafRange titleSpan
     if standout then
-      -- Inverted, centred, Large bold. The palette's standout keys
-      -- override; without them the frame inverts the page's own colours.
-      let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
-      let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
-      let a := { a with ops := a.ops.push (.pageStyle (some bg) (VDist.of valign)) }
-      let a := collectStandout r { a with fg := fg, ground := some bg } body.toList indent
+      -- Inverted, centred, Large bold: the design's standout pair
+      -- (`Ir.Design.ofPalette`, the one resolving site), painted as the
+      -- frame's ground (`Ir.frameGroundOf`).
+      let so := (Ir.Design.ofPalette a.pal).standout
+      let ground := Ir.frameGroundOf a.pal true valign
+      let a := { a with ops := a.ops.push (.pageStyle ground (VDist.of valign)) }
+      let a := collectStandout r { a with fg := so.fg, ground := some so.bg } body.toList indent
       -- Restore by recomputing from the palette in force: a `.setPalette`
       -- inside the frame must reach what follows it (flow scope), so a
       -- saved copy would restore a stale epoch's ink.
       let a := { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
       a.pageBreak
     else
-    -- The title page's own ground, when the design declares one: the same
-    -- `.pageStyle` door the standout frame paints through, so one page of a
-    -- document can carry a ground the rest does not. `none` for every other
-    -- frame, which is the undeclared page.
-    let pageGround := titleGround a.pal valign
+    -- The frame's own ground (`Ir.frameGroundOf`): the title page's
+    -- declared one, else the `bg` of the palette in force where the frame
+    -- stands, through the same `.pageStyle` door the standout frame paints
+    -- through — so a body `\palette` declares the background of the frames
+    -- after it, and a page never stands on the document's ground where
+    -- its epoch declared its own. `none` is the undeclared page.
+    let pageGround := Ir.frameGroundOf a.pal false valign
     let a := { a with ops := a.ops.push (.pageStyle pageGround (VDist.of valign)) }
     let a := match titleInk a.pal valign with
       | some ink => { a with fg := ink, ground := pageGround }
