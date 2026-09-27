@@ -83,6 +83,7 @@ in this repo; refer to the private reference corpus abstractly.
   | an `Ir` constructor | an explicit arm in every IR-to-IR walk and both backends — no wildcard (compiler + hook) — and its census fact once it ships ink |
   | a golden fixture | a `censusTable` row asserting its shipped pages (`lake test` coverage check) |
   | a backend emission | the census assertion that it appeared (`censusTable`) |
+  | a PDF text-positioning emission (a `TJ` element, `Tm`, `Tz`, a `/W` width) | placement by the viewer's arithmetic over what the file states — the pen model reads the file's own spellings (`Sp.toPtMilli`, `pdfWidthμ`), never the writer's belief of where its pen stands (`place_between`) — and every corpus page held to its layout's glyph positions by the artifact tier (`artGlyphPlacementOffences`). The writer once believed its pen stood at the layout's x after each run while the viewer advanced by nominal widths: kerns never reached a page, and text after a font change overlapped the word before it |
   | a diagnostic code | a `DiagCode` constructor with its declared `Loss` — severity and the code letter derive from the loss, one code one meaning (compiler + `lake test`; the hook rejects a severity written outside Diag.lean) — a firing witness in `diagWitness` whose rendered form lands in the diagnostics golden, and a message that passes the voice lint: self-contained (no repo file, no milestone), an action or no help, one convention (Tests.lean; the hook rejects repo-internal references in strings). Registering a new code is one constructor, one `spec` arm, and `count + 1` — nothing else: `all` is derived, and `all_complete`/`all_nodup` make a miscount a build failure in both directions. It also owes a decision: a `DiagAudit.registry` row (`Tests/DiagAudit.lean`) with its verdict, target rung and a pin that resolves, or the `diagaudit` tier falls |
   | a design constant | a token, or the source written where it stands (hook, backend files) |
   | a recursive IR walk | a `List` companion + accumulator (hook), and its census statement: a public Block/Inline walk ships a theorem named with a registered conservation suffix — `_text` (census equality, stated as a `Conserves` instance), `_covers`, `_id` — or the one-line refusal `-- conserves: none — <why>` beside the def (hook, whole tree) |
@@ -166,9 +167,8 @@ in this repo; refer to the private reference corpus abstractly.
   property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
-  for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an
-  `_exact` statement and takes that suffix the next time Layout.lean is
-  open. A contract over shipped bundles quantifies over `Theme.builtin`,
+  for. `_in_measure` is not a shape (`kern_measure_exact` once carried
+  it). A contract over shipped bundles quantifies over `Theme.builtin`,
   never per bundle — adding a bundle is entering the contract.
 
 - A new collector over the IR is a `foldBlocks`/`foldInlines` leaf

@@ -1747,11 +1747,12 @@ private theorem back?_pop_push {α : Type} (xs : Array α) (a : α)
   rw [Option.some_inj.mp hg] at this
   exact this.symm
 
-/-- kern_symmetric_in_measure: setting the next glyph after a kern moves
-the box width by exactly the glyph's advance plus the applied pair value,
-and nothing else — the KP breaker's widths stay the exact sum of what
-the box carries, GPOS application included. -/
-theorem kern_symmetric_in_measure (box : Array (Nat × Char × Sp))
+/-- Setting the next glyph after a kern moves the box width by exactly the
+glyph's advance plus the applied pair value, and nothing else — the KP
+breaker's widths stay the exact sum of what the box carries, GPOS
+application included; and since the run carries these advances
+(`Seg.run`), the PDF writer places each glyph by the same sum. -/
+theorem kern_measure_exact (box : Array (Nat × Char × Sp))
     (ks : Sp) (g : Nat × Char × Sp) (h : box.back?.isSome) :
     boxWidth ((kernApply box ks).push g) = boxWidth box + ks + g.2.2 := by
   cases hb : box.back? with

@@ -627,7 +627,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       fk 'H' 'H' == 0)
   -- The applied value reaches the box: a "Ta" word's width is the two
   -- advances plus the (negative) kern, exactly
-  -- (kern_symmetric_in_measure holds the general fact).
+  -- (kern_measure_exact holds the general fact).
   let sspSet := oneFaceOf ssp
   let (taDoc, _) := Elab.run "t" "Ta"
   let taOut := layoutOf sspSet taDoc ({} : Layout.Geom)
