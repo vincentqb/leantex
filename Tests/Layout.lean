@@ -1538,8 +1538,13 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       (leadedAt hugeSize).2 + (leadedAt body).1 + (geom.parskip.resolve body 0).width)
   t "the line after a Huge title is not a Huge leading away"
     (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
-  t "the first line hangs the title's own leaded ascent below the margin"
-    (huge.size == 2 && huge[0]! == geom.vmargin + max (scaled body font.ascent) (leadedAt hugeSize).1)
+  -- TeX's page builder: `\topskip` (the body size) above the first line,
+  -- or the line's own glyph box where that is taller, as a Huge title is.
+  let hugeBox := ((layoutOf oneFace (Elab.run "t" "{\\Huge Title \\par}\n\nbody").1 geom).pages[0]?.bind
+    fun p => p.lines.find? fun l => !l.furniture).map fun l => (Layout.segsInk oneFace l.segs).1
+  t "the first line stands on its own glyph box below the margin, taller than \\topskip"
+    (huge.size == 2 && hugeBox.any fun h =>
+      body < h && huge[0]! == geom.vmargin + h)
   -- The grid, realized: a uniform paragraph's baselines sit exactly one
   -- leading apart — `baselines_on_grid`'s algebra on the shipped page,
   -- unconditional, no per-font inequality.
@@ -1663,7 +1668,8 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
            shrink := Dim.Length.ofSp (Dim.pt 1) })
   -- A page is set like a line: skips shrink, within their limits, before a
   -- break is taken; beyond them the page breaks.
-  let firstY := geom.vmargin + scaled body font.ascent
+  -- The first line of the page stands `\topskip` (the body size) down.
+  let firstY := geom.vmargin + body
   let three := "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc"
   let natural := firstY + 2 * (leading + pq + Dim.pt 20) + scaled body (-font.descent)
   let tight : Layout.Geom := { geom with pageH := natural - Dim.pt 10 + geom.vmargin }
@@ -4361,6 +4367,43 @@ def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((number noted 0).map (·.y == l.y)).getD false).getD false)
   t "footline: and the centred line rises with the floor, as in lualatex"
     (((baseline noted 0 "Alpha").map fun y => near y (bp 150412) tol).getD false)
+
+/-- **The first line of a page stands `\topskip` below the text area's top,
+or on its own box where that is taller** (`B.firstRise`, TeX's page
+builder). Asserted over `Layout.Out` on one-construct synthetic pages in
+the shipped Open Sans, each value first measured under lualatex on the
+same source (bp from the page top to the baseline; the text area's top at
+72): a body line at 81.963 in article 10pt (`\topskip` 10 pt, whatever
+the face), 82.959 at 11pt and 83.955 at 12pt; a line of x-height letters
+on the same grid line; a `\LARGE` first line on its own glyph box, 85.080;
+the next page's first line by the same rule, and a `\parskip` dropped at a
+page's top. The engine reads pt as bp, 0.4% long, so each is held to
+0.1 bp. At `8d3df368` the body line stood 0.725 bp low (the face's
+ascent) and the `\LARGE` line 3.99 bp low (its leaded ascent). Invented
+words. -/
+def topskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let page (opts body : String) : String :=
+    s!"\\documentclass[{opts}]\{article}" ++
+    "\\usepackage[paperwidth=5in,paperheight=4in,top=1in,bottom=1in,left=1in,right=1in]{geometry}" ++
+    "\\pagestyle{empty}\\begin{document}" ++ body ++ "\\end{document}"
+  let first (src : String) (pg : Nat) (word : String) : Option Dim.Sp :=
+    lineYOf (censusOfSrc oneFace src) pg word
+  let near (y : Option Dim.Sp) (milli : Int) : Bool :=
+    (y.map fun v => let want := Dim.pt 1 * milli / 1000
+      v - want ≤ Dim.pt 1 / 10 && want - v ≤ Dim.pt 1 / 10).getD false
+  t "topskip: a body line stands \\topskip below the text area, as in lualatex"
+    (near (first (page "10pt" "Alpha Hotel words.") 0 "Alpha") 81963)
+  t "topskip: at 11pt and 12pt it is the class's own \\topskip"
+    (near (first (page "11pt" "Alpha Hotel words.") 0 "Alpha") 82959 &&
+     near (first (page "12pt" "Alpha Hotel words.") 0 "Alpha") 83955)
+  t "topskip: a line of x-height letters stands on the same grid line"
+    (near (first (page "10pt" "acme.") 0 "acme") 81963)
+  t "topskip: a first line taller than \\topskip stands on its own glyph box"
+    (near (first (page "10pt" "{\\LARGE Alpha Hotel}") 0 "Alpha") 85080)
+  t "topskip: the next page's first line keeps the rule, and a top parskip is dropped"
+    (near (first (page "10pt" "Alpha words.\\newpage Hotel words.") 1 "Hotel") 81963 &&
+     near (first (page "10pt" "\\setlength{\\parskip}{6pt}Alpha words.") 0 "Alpha") 81963)
 
 /-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
 `Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over

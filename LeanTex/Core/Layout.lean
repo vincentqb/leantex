@@ -27,6 +27,15 @@ structure Geom where
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
   fontSize : Sp := Ir.baseFontSize
+  /-- TeX's `\topskip`, where the page is TeX's: the first line of a fresh
+  page stands this far below the text area's top unless its own box is
+  taller — the page builder puts `\topskip` less the first box's height
+  above it, floored at zero (TeXbook, ch. 15). The standard classes set it
+  to the body size (size10/11/12.clo:97, `\setlength\topskip{10\p@}`).
+  `none` on a frame page: beamer sets a frame as one box, whose content
+  opens on its `\vbox{}` (`B.openBody`), and the engine's metric rule
+  stands there. -/
+  topskip : Option Sp := none
   /-- The gap between peer paragraphs. The default is the declared token
   (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
   through `\page{ parskip = ... }`. -/
@@ -4825,6 +4834,18 @@ private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B �
         ((b.commit (mk (retryY b)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (retryY b) inkBelow
 
+/-- How far the first line of a fresh page stands below the text area's
+top. Where the page is TeX's (`Geom.topskip`), TeX's rule: `\topskip`, or
+the line's own box where that is taller — the box read from its glyphs, as
+TeX's box is (`segsInk`), so body text starts on one line of the page grid
+in every face and only display type or a tall box stands on its ink. On a
+frame page, the engine's metric rule: the body's ascent or the line's own
+leaded above. -/
+private def B.firstRise (b : B) (fs : FontSet) (box : LineBox) (segs : Array Seg) : Sp :=
+  match b.geom.topskip with
+  | some t => max t (segsInk fs segs).1
+  | none => max b.ascent box.above
+
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
 not the paragraph's nominal size: a line carrying `\Huge` needs room above
 its baseline and below it.
@@ -4850,6 +4871,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     (leaf : Option Nat := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
+  let rise := b.firstRise fs box segs
   let rl := ruleOnly segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
@@ -4865,11 +4887,11 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand, counted := counted, leaf := leaf }
-  -- The first baseline is the body top plus the larger of the body's
-  -- metric ascent and the line's own leaded above (`first_baseline_declared`),
+  -- The first baseline is the body top plus the first line's rise
+  -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
   -- and the pending skip an anchor keeps (`B.topKept`).
   b.fitCommit mk
-    (fun b => b.geom.bodyTop + max b.ascent box.above + b.topKept)
+    (fun b => b.geom.bodyTop + rise + b.topKept)
     (fun b => b.y + b.skip.width
       + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
     -- Below the reopened frame chrome: interline from the chrome's own
@@ -4924,18 +4946,18 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   simp [Array.back?_push]
 
 /-- The first baseline, declared: on a fresh page the line lands at the
-body top plus the larger of the body's metric ascent and the line's own
-leaded above — today's `\topskip`-shaped rule restated over metric
-ascent — and below whatever pending skip an anchor keeps (`B.topKept`:
+body top plus its rise (`B.firstRise`) — TeX's `\topskip` floored by the
+line's own glyph box where the page is TeX's, the metric rule on a frame
+page — and below whatever pending skip an anchor keeps (`B.topKept`:
 none unless a fil stands in it). Constant for a document unless a taller
 first line honestly needs more, or the page opens on a `\vspace*{\fill}`;
 what furniture symmetry measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
-      some (b.geom.bodyTop + max b.ascent
+      some (b.geom.bodyTop + b.firstRise fs
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs).above + b.topKept) := by
+          b.geom.leading size segs) segs + b.topKept) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
@@ -9707,6 +9729,11 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   let geom := if doc.head.isSome then
       { geom with headBand := headFurn.band }
     else geom
+  -- TeX's `\topskip` where the page is TeX's: the standard classes set it
+  -- to the body size (size10/11/12.clo:97); a frame is one box, and its
+  -- first line keeps the engine's metric rule (`B.firstRise`).
+  let geom := if doc.docClass.record.model == .frame then geom
+    else { geom with topskip := some geom.fontSize }
   let xHeight := scale font.xHeight
   -- The resolved design is the one resolving site for the document-level
   -- colours (`Design.ofDoc`): the ink here is the ink `Contrast.docDiags`
