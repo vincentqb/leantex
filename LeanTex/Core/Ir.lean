@@ -7001,11 +7001,11 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
     let tag := match kind with
       | .align => "align"
       | .gather => "gather"
-      | .array cols =>
+      | .array cols s =>
         "array:" ++ String.join (cols.toList.map fun a => match a with
           | .left => "l"
           | .center => "c"
-          | .right => "r")
+          | .right => "r") ++ (if s == 1000 then "" else s!"*{s}")
     dumpMathRows (acc ++ tag ++ "[") rows ++ "]"
 
 def dumpMathRows (acc : String) (rs : Math.MRows) : String :=

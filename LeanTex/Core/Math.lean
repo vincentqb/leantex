@@ -615,11 +615,13 @@ space — amsmath's `\align@preamble`, whose even columns read `{}#`
 (amsmath.dtx). `gather` is one centred column. `array` takes its
 alignments from the document's own column spec (`{lcr}`), text-style
 cells, `\arraycolsep` padding around every column (article.cls sets
-`\arraycolsep` to 5pt at the 10pt base — half an em a side). -/
+`\arraycolsep` to 5pt at the 10pt base — half an em a side), and rows
+`\arraystretch` baselines apart, in permille: 1000, LaTeX's default,
+unless the definition sets its own (amsmath's `\env@cases`: 1.2). -/
 inductive GridKind where
   | align
   | gather
-  | array (cols : Array ColAlign)
+  | array (cols : Array ColAlign) (stretch : Nat)
   deriving Repr, BEq, Inhabited
 
 /-- The alignment of column `k` under a grid kind. An `array` column past
@@ -627,7 +629,7 @@ its spec centres — the spec mismatch was already diagnosed at elaboration. -/
 def GridKind.colAlign : GridKind → Nat → ColAlign
   | .align, k => if k % 2 == 0 then .right else .left
   | .gather, _ => .center
-  | .array cols, k => cols.getD k .center
+  | .array cols _, k => cols.getD k .center
 
 /-- The gap after column `k` of `n`, in mu (18ths of an em at the current
 size). `align`'s pair halves abut (the alignment point is exactly the
@@ -639,7 +641,7 @@ base is 18 mu (article.cls). -/
 def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .align, k, n => if k + 1 == n then 0 else if k % 2 == 0 then 0 else 36
   | .gather, _, _ => 0
-  | .array _, k, n => if k + 1 == n then 0 else 18
+  | .array _ _, k, n => if k + 1 == n then 0 else 18
 
 /-- Where column `k` starts, given each column's width and the gap that
 follows it: the sum of everything before it. One definition placed cells

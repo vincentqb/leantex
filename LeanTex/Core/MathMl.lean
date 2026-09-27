@@ -52,6 +52,17 @@ def muWidth (mu : Int) : String :=
     let fs := toString frac
     s!"{whole}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
 
+/-- The padding a stretched array's cells add above and below, so its rows
+stand `\arraystretch` times the one-baseline pitch apart: half the stretch
+past one, of the 1.2 em baseline the PDF assembly reads (`leadingFor`), on
+top of MathML Core's default 0.5ex. `none` at the default stretch. -/
+def stretchPad (stretch : Nat) : Option String :=
+  if stretch ≤ 1000 then none else
+    let m := (stretch - 1000) * 6 / 10
+    let fs := toString (m % 1000)
+    let em := s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
+    some s!"padding-top: calc(0.5ex + {em}); padding-bottom: calc(0.5ex + {em})"
+
 /-- A `\left`/`\right` delimiter: stretchy, and symmetric about the math
 axis (`mo` attributes, MathML Core §3.2.4.2) — rule 19's centring, which
 `Layout.delimAssemble` realizes on the PDF side. -/
@@ -162,11 +173,11 @@ def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
           #[.text (charText mark)]]
   | .grid kind rows =>
     let cellDisp := match kind with
-      | .array _ => false
+      | .array _ _ => false
       | .align => true
       | .gather => true
     let attrs : Array (String × String) := match kind with
-      | .array _ => #[]
+      | .array _ _ => #[]
       | .align => #[("displaystyle", "true")]
       | .gather => #[("displaystyle", "true")]
     .elem "mtable" attrs (rowsNodes cellDisp kind #[] rows)
@@ -203,10 +214,14 @@ def rowNodes (disp : Bool) (kind : GridKind) (k : Nat)
       | .gather, .left => #[("style", "text-align: left")]
       | .gather, .right =>
         #[("style", "text-align: right; text-align: -webkit-right")]
-      | .array _, .center => #[]
-      | .array _, .left => #[("style", "text-align: left")]
-      | .array _, .right =>
-        #[("style", "text-align: right; text-align: -webkit-right")]
+      | .array _ s, a =>
+        let align := match a with
+          | .center => none
+          | .left => some "text-align: left"
+          | .right => some "text-align: right; text-align: -webkit-right"
+        match [align, stretchPad s].filterMap id with
+        | [] => #[]
+        | parts => #[("style", "; ".intercalate parts)]
     rowNodes disp kind (k + 1)
       (acc.push (.elem "mtd" attrs (listNodes disp #[] cell))) rest
 

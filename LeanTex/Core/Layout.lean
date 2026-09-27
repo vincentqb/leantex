@@ -2466,8 +2466,13 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
   -- inline math's grid and takes none, as LaTeX's array does not.
   let jot := match kind with
-    | .array _ => 0
+    | .array _ _ => 0
     | _ => size * 3 / 10
+  -- An array's rows stand `\arraystretch` baselines apart: the stretch
+  -- scales the strut every row carries (latex.ltx, `\@arstrutbox`).
+  let pitch := match kind with
+    | .array _ s => bl * (s : Int) / 1000
+    | _ => bl
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.font cell
@@ -2476,7 +2481,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   let mut y : Sp := 0
   for i in [0:cells.size] do
     if i > 0 then
-      let d := max (bl + jot)
+      let d := max (pitch + jot)
         ((-(rowExtents[i-1]!.2)) + rowExtents[i]!.1 + gridSkip)
       y := y - d
     ys := ys.push y
@@ -2871,7 +2876,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     -- theirs in display style wherever they stand (`\start@aligned` and
     -- `gathered` in amsmath.sty: `$\m@th\displaystyle{##}$`).
     let cellSt : Math.MathStyle := match kind with
-      | .array _ => if st.rank > 2 then .text st.cramped else st
+      | .array _ _ => if st.rank > 2 then .text st.cramped else st
       | _ => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)

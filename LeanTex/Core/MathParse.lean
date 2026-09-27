@@ -283,18 +283,18 @@ grid it expands to and the delimiters `\left`/`\right` grow around it
 (amsmath.sty, TeX Live 2026: `\env@matrix` is `\array{*\c@MaxMatrixCols c}`
 with `MaxMatrixCols` 10, the five delimited matrices wrap it in
 `\left…\right`; `\env@cases` is `\left\lbrace\array{@{}l@{\quad}l@{}}`
-closed by `\right.`; `aligned`, `gathered` and `split` are the display
-alignments' own column models). `\substack` is `subarray{c}`, one centred
-column. -/
+closed by `\right.`, under `\def\arraystretch{1.2}`; `aligned`,
+`gathered` and `split` are the display alignments' own column models).
+`\substack` is `subarray{c}`, one centred column. -/
 def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
-  let matrix : GridKind := .array (Array.replicate 10 .center)
+  let matrix : GridKind := .array (Array.replicate 10 .center) 1000
   [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),
    ("bmatrix", matrix, some '[', some ']'), ("Bmatrix", matrix, some '{', some '}'),
    ("vmatrix", matrix, some '|', some '|'),
    ("Vmatrix", matrix, some '\u2016', some '\u2016'),
-   ("cases", .array #[.left, .left], some '{', none),
+   ("cases", .array #[.left, .left] 1200, some '{', none),
    ("aligned", .align, none, none), ("gathered", .gather, none, none),
-   ("split", .align, none, none), ("substack", .array #[.center], none, none)]
+   ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none)]
 
 /-- Does this slice model the control word at all? -/
 def knownCtrl (n : String) : Bool :=
@@ -774,7 +774,7 @@ private def buildGrid (kind : GridKind) (rows : Array (Array MList)) :
       notes := notes.push (.ragged
         s!"row {k + 1} has {widths[k]!} cell(s) where {maxCols} align; \
 padded with empty cells")
-  if let GridKind.array cols := kind then
+  if let GridKind.array cols _ := kind then
     if maxCols > cols.size then
       notes := notes.push (.ragged
         s!"a row has {maxCols} cells where the column spec declares \
@@ -888,7 +888,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | none => break
       let some .closeGrp := toks[j]? | throw "an array without its column spec"
       stack := stack.push
-        { acc, overNum, dests := [.grid (.array cols) (some (none, none)) #[] #[]] }
+        { acc, overNum, dests := [.grid (.array cols 1000) (some (none, none)) #[] #[]] }
       acc := #[]
       overNum := none
       i := j + 1
