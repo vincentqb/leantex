@@ -21450,3 +21450,118 @@ rule over every index file belongs to the rung owner
 **The user's.** None of the three fixes departs from LaTeX. The one
 reading a user might question is that every fraction lost its thin
 spaces: that is LaTeX's spacing, measured.
+
+
+
+### 2026-09-27 — the vertical space, round 9: a \vspace stays whole, a fill-framed block centres whole, \partopsep is spent, and a heading keeps its next box
+
+The round-8 review (review-c RF-1 to RF-4, CF-1) found LaTeX's
+vertical-space invariants broken where rhythm-fix and card-fix met. Each
+fix below is LaTeX's own rule, measured with lualatex (TeX Live 2026) on
+one-construct synthetic probes through the shipped CLI, and held by checks
+over `Layout.Out` that fail at `8d3df368`: 38 of them, run as the branch's
+tests applied to `8d3df368` in a scratch clone with one shim, the role
+name as a string constant.
+
+**An explicit `\vspace` is never absorbed** (RF-2, CF-1). `\@vspace` ends
+with `\vskip\z@skip` (latex.ltx:9362-9390), so the `\addvspace` of a list,
+a trivlist or a heading after it finds a zero `\lastskip` and adds.
+`Acc.vspace` is the door `\vspace` and the skip macros ship through: the
+glue, then a zero skip. An element's space appended after it keeps its
+own convention, standing in place of the peer default as after a
+paragraph. `addvspace_after_vspace_exact` states the rule over the three
+element doors, and `skip_monotone` now reads the door that ships.
+`vspaceKeptChecks` holds `\vspace{12pt}` and `\bigskip` before six
+elements: each moves by exactly the skip, as lualatex moves them by 12 pt.
+A list after the skip went from 24 to 34 bp, where lualatex sets 33.87 bp
+(34 pt).
+
+**A fill-framed block centres whole** (RF-1). A trivlist or list between
+two `\vspace*{\fill}` stood half its `\topsep` high: the page top dropped
+the pending skip's width and kept its fil, and the page close counted the
+closing `\topsep`. TeX discards glue at a page top up to the first box or
+rule, and `\vspace*`'s zero rule is one (`\@vspacer`), so what follows it
+stays. Glue now reaching an empty page is discarded until a fil anchors
+it, and the first line stands below what the anchor kept (`B.topKept`). A
+stacked boundary ships its peer mark before its declared glue, so a page
+top never keeps the engine's separator between paragraphs
+(`flushGap_items_exact`). Separately, a column opened on a fresh page
+seeded its bottom with the previous page's last line, which the page close
+read as this page's content end: a second minipage face stood 6.55 bp
+above the same face alone. `fillCentreChecks` holds both. On the probes,
+a centred line, a list and a quote now stand on their bare line (lualatex
+0.00, base −3.00 and −4.00 bp), and a second face stands where it stands
+alone.
+
+**`\partopsep` is spent** (RF-3). `\@trivlist` adds it to `\topsep` in
+vertical mode — after a blank line, another list's end, a scope's start —
+and the same `\@topsepadd` stands below the list (latex.ltx:15871-15878,
+15937-15938). The one case that does not open a paragraph — a list or
+quote whose `\begin` follows the text of an open paragraph — rides in the
+engine's in-paragraph role (`Ir.markInParagraph`, `markInParagraph_text`).
+`Ir.partopsepFor` is the one resolving site: the level's own where its
+`\@list⟨n⟩` sets it (size10/11/12.clo:233, 1pt at level three, which a
+declared `\partopsep` does not reach), else a declared value, else the
+class's (size10/11/12.clo:215; beamer's zero). `partopsep_exact` pins the
+values. HTML ships the environment's own element either way: the 82 corpus
+pages that build are byte-identical, and the 83rd builds in neither. On the
+probes, every spelling now matches lualatex within its pt-to-bp scale: a
+blank-line list is 22 pt from both neighbours, the same list without the
+blank line 20, levels two and three, a declared value, 12pt, and a list
+after a list. `listRhythmChecks` and `trivlistChecks` had asserted the
+short value on the blank-line spelling (lesson 9). They now assert
+lualatex's. **A list right after a heading** spends `\@nbitem`
+(latex.ltx:16044-16047): no `\topsep`, its item standing where a paragraph
+after the heading stands (`Acc.afterHeading`). `afterHeadingListChecks`
+holds it.
+
+**A heading keeps with the next block's first box** (RF-4). `\@xsect`'s
+`\nobreak` leaves no legal break before the box after a heading, and
+`\@startsection` adds none while `\@nobreak` stands. The walk reserved two
+lines whatever followed, so a heading over a tall picture ended its page
+at 6 of 26 swept positions, and a `\section` over a `\subsection` at 1 of
+44. `keepExt` reads the staged ops after a heading at its own placement
+step (`keepAt`): the glue, then a picture's box, or a following heading's
+lines and reserve, as one chain. `headingKeepChecks` sweeps the three
+shapes, and the review's own CLI sweeps strand nowhere now.
+
+**Measured on the private corpus** (scratch copies, base `8d3df368`
+against the tip). The card passes its print checks 14 of 14 at both. The
+ink bands per face, top line and second line against lualatex at 300 dpi:
+at base −0.96/−2.40 bp (front) and −8.40/−7.92 (back); at the tip
++1.92/+0.72 and +0.96/+1.44. The back face's 8.4 bp regression is gone,
+but the faces do not yet stand within 1 bp, and the rest decomposes as
+follows:
+- about 1.3 bp common to both faces: the first baseline on an anchored
+  page. On a page opened by `\vspace*`, TeX's first box is the zero rule,
+  `\topskip` stands above it, and the first line follows the kept glue at
+  its own box height. `\@vspacer` restores `\prevdepth`,
+  so no interline glue is set. The engine stands the line at the larger of
+  the metric ascent and its leaded above. This is the page model's
+  `\topskip` unit, and `B.topKept` is what it adds.
+- ±0.6 bp of pitch per face: the size ladder's leading, the user's open
+  decision in the card entry.
+
+The paper, the deck and the résumé ship identical rasters (72 dpi) and
+diagnostic censuses. The site's HTML is byte-identical. Its print twin's
+page 2 moves 4 bp, where its list after a heading now stands as a
+paragraph would. The `rhythm` tier does not move: its fixtures open every
+list inside a paragraph.
+
+**Routed.**
+- *The page model* (page-model): the anchored first baseline above, in
+  `placeLine`'s `firstY`. An untitled `[c]` frame opening on a `{center}`
+  keeps the asymmetry fixed here, because its top is no anchor: beamer
+  opens every frame on a `\vbox{}`, and the engine only for titled frames.
+- *The HTML* (html-rhythm2): the in-paragraph role reaches `HtmlDoc`, which
+  drops it. Its partopsep and `\@nbitem` halves are the HTML list gap's.
+- *Headings over headings*: `\@startsection` adds no before-skip while
+  `\@nobreak` stands, where the engine takes the larger of the two skips.
+  With the engine's quantized heading skips the LaTeX rule would tighten
+  the gap below LaTeX's. It waits on the heading-skip unit.
+- *`\vspace*`'s star* is dropped by `Compat` (`skipStar`), so a starred skip
+  with no fil is discarded at a page top, where TeX keeps it.
+
+**The user's.** None of these fixes departs from LaTeX. The two open
+decisions stand as the card entry left them: whether the size ladder's
+leading is reproduced exactly, and the `pt`-as-`bp` reading.

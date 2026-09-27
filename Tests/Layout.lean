@@ -4025,9 +4025,9 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     "\\vspace*{\\fill}\n\\begin{center}\n\\begin{minipage}{\\textwidth}\n\\" ++ size ++ "\n" ++
       w1 ++ "\\\\\n" ++ w2 ++ "\n\\end{minipage}\n\\end{center}\n\\vspace*{\\fill}\n\\pagebreak\n"
   let card := "\\usepackage{geometry}\\geometry{paperwidth=4in, paperheight=2.5in, margin=0.3in}"
-  let alone := y (doc card (face "large" "Delta words" "Echo words")) 0 "Delta"
-  let second := y (doc card (face "LARGE" "Alpha words" "Bravo words" ++
-    face "large" "Delta words" "Echo words")) 1 "Delta"
+  let alone := y (doc card (face "normalsize" "Delta words" "Echo words")) 0 "Delta"
+  let second := y (doc card (face "Huge" "Alpha words" "Bravo words" ++
+    face "normalsize" "Delta words" "Echo words")) 1 "Delta"
   t "a second face stands where the same face stands on a page of its own"
     (alone.isSome && second == alone)
 
@@ -4057,10 +4057,10 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   for (name, el) in [("itemize", "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}"),
       ("enumerate", "\\begin{enumerate}\n\\item Bravo.\n\\end{enumerate}"),
       ("quote", "\\begin{quote}\nBravo.\n\\end{quote}")] do
-    t s!"a {name} after a blank line opens topsep and partopsep above and below it"
+    t s!"{name} after a blank line opens topsep and partopsep above and below it"
       (steps (art ("Alpha.\n\n" ++ el ++ "\n\nCharlie.")) abc == [lead + Dim.pt 10, lead + Dim.pt 10])
     -- The other half of the pair, a guard that holds at the base too.
-    t s!"a {name} inside an open paragraph opens topsep alone"
+    t s!"{name} inside an open paragraph opens topsep alone"
       (steps (art ("Alpha.\n" ++ el ++ "\nCharlie.")) abc == [lead + Dim.pt 8, lead + Dim.pt 8])
   let item := "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}"
   t "the space below a list follows the mode the list opened in"
