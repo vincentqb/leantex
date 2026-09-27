@@ -194,3 +194,39 @@ def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"a preamble '\\{name}' says what LaTeX does with it, and is not unknown"
       ((dvE src).any (·.subject == some s!"ctrl:nothing:size:{name}") &&
         !(dvE src).any (·.code == "W0301"))
+
+
+/-- **A counter set in the preamble holds where the body starts, and
+`secnumdepth` decides which headings number.** LaTeX's counter commands are
+preamble-legal (ltcounts.dtx), so they move to the body's start and the one
+counter arm reads them in flow order. A heading deeper than `secnumdepth`
+neither numbers nor steps (ltsect.dtx `\@sect`, measured under lualatex: a
+subsection hidden at depth 1 leaves the next numbered one `1.1`), and the
+footnote and equation counters start where they were set. Asserted on the
+shipped page, against the document spelled with the number by hand. -/
+def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let heads := "\\section{Alpha}\nOne.\n\n\\subsection{Bravo}\nTwo."
+  let shallow := pagesOf oneFace (doc "\\setcounter{secnumdepth}{1}" heads)
+  t "secnumdepth 1 sets a subsection the page a starred one sets"
+    (shallow == pagesOf oneFace (doc "" "\\section{Alpha}\nOne.\n\n\\subsection*{Bravo}\nTwo."))
+  t "secnumdepth moves the page" (shallow != pagesOf oneFace (doc "" heads))
+  let deeper := censusOfSrc oneFace (doc "\\setcounter{secnumdepth}{1}"
+    (heads ++ "\n\n\\setcounter{secnumdepth}{2}\n\\subsection{Charlie}\nThree."))
+  t "a heading above secnumdepth steps nothing: the next numbered one is 1.1"
+    (pageHas deeper 0 "1.1" && !pageHas deeper 0 "1.2")
+  let note := "Alpha words.\\footnote{Bravo note.}"
+  t "a preamble footnote counter numbers the next note after it"
+    (pagesOf oneFace (doc "\\setcounter{footnote}{4}" note) ==
+      pagesOf oneFace (doc "" "Alpha words.\\footnote[5]{Bravo note.}"))
+  let eq := censusOfSrc oneFace (doc "\\addtocounter{equation}{6}"
+    "Alpha.\n\\begin{equation}\nx = y\n\\end{equation}")
+  t "a preamble equation counter numbers the next equation after it" (pageHas eq 0 "(7)")
+  t "a preamble counter command is not unknown"
+    (!(dvE (doc "\\setcounter{secnumdepth}{1}\\stepcounter{footnote}" heads)).any
+      (·.code == "W0301"))
+  t "a preamble counter the engine does not keep is named as it is in the body"
+    ((dvE (doc "\\setcounter{tocdepth}{2}" heads)).any fun d =>
+      d.code == "W0104" && d.subject == some "ctrl:setcounter:tocdepth")

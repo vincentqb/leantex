@@ -384,6 +384,10 @@ structure ESt where
   pass in document order, so stepping them here is exactly LaTeX's
   \refstepcounter sequence. -/
   secNums : Nat × Nat × Nat := (0, 0, 0)
+  /-- LaTeX's `secnumdepth` counter: the deepest level a heading numbers
+  at, and above which it neither numbers nor steps (ltsect.dtx `\@sect`).
+  3 is article's (classes.dtx), and the three counters stop there. -/
+  secDepth : Int := 3
   /-- Declared heading-number formats, one per level, last wins — the
   flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
   it stands, as LaTeX's redefinition applies from its own position. Empty
@@ -2671,6 +2675,27 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
     -- kind, so the binding is kindless — a `\cref` to it is W0380.
     modify fun st => { st with refTarget := some { kind := none, num := num } }
 
+/-- The counters besides the sections that the flow keeps (ltcounts.dtx):
+`secnumdepth`, how deep headings number; `footnote` and `equation`, the
+last number each gave. Each is its reader and its writer over the state. -/
+private def flowCounter? (ctr : String) : Option ((ESt → Int) × (ESt → Int → ESt)) :=
+  match ctr with
+  | "secnumdepth" => some (fun st => st.secDepth, fun st v => { st with secDepth := v })
+  | "footnote" => some (fun st => st.fnNum, fun st v => { st with fnNum := v.toNat })
+  | "equation" => some (fun st => st.eqNum, fun st v => { st with eqNum := v.toNat })
+  | _ => none
+
+/-- Set, add to or step a flow counter, as `applyCounter` does a section's:
+a count below zero clamps to zero, and the depth may go negative, as
+LaTeX's `-1` turns every heading's number off. -/
+private def applyFlowCounter (name : String) (rw : (ESt → Int) × (ESt → Int → ESt))
+    (n : Int) : EM Unit :=
+  modify fun st =>
+    rw.2 st (match name with
+      | "setcounter" => n
+      | "addtocounter" => rw.1 st + n
+      | _ => rw.1 st + 1)
+
 /-- One counter command with its arguments starting at `i` (just past
 the control word): scan, apply over the section counters, name any
 other counter (W0104) with its arguments consumed — configuration,
@@ -2699,8 +2724,12 @@ private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | some _, none =>
       diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
     | none, _ =>
-      warnOnce ctx ("ctrl:" ++ n ++ ":" ++ ctr) .W0104
-        s!"counter '{ctr}' is not modelled; '\\{n}' changes nothing" pos
+      match flowCounter? ctr, amt with
+      | some rw, some v => applyFlowCounter n rw v
+      | some _, none => diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
+      | none, _ =>
+        warnOnce ctx ("ctrl:" ++ n ++ ":" ++ ctr) .W0104
+          s!"counter '{ctr}' is not modelled; '\\{n}' changes nothing" pos
     return ⟨j2, by omega⟩
   | _ =>
     diag ctx .E0304 s!"'\\{n}' needs a \{counter} group" pos
@@ -4760,16 +4789,18 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
 `none`, which is also the answer for every heading of a class that does
 not number. classes.dtx §Sectioning: `\thesection` is `\arabic{section}`
 (`\Alph` after `\appendix`), each deeper level prefixes its parent, a
-starred form neither numbers nor steps, and secnumdepth is 3, so
-`\paragraph` and below never number. A document's own
+starred form neither numbers nor steps, and neither does a heading deeper
+than `secnumdepth` (`ESt.secDepth`: 3, article's, unless the document sets
+it), so `\paragraph` and below never number. A document's own
 `\renewcommand{\the<counter>}{...}` format (`ESt.secFmts`) renders
 instead where one stands. Stepping a level zeroes the deeper
 ones, so `2.1` after a fresh `\section` is impossible by construction. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
-  if starred || !ctx.numberHeadings || level == 0 || level > 3 then
-    return none
   let st ← get
+  if starred || !ctx.numberHeadings || level == 0 || level > 3 ||
+      (level : Int) > st.secDepth then
+    return none
   let (s1, s2, s3) := st.secNums
   let nums := match level with
     | 1 => (s1 + 1, 0, 0)

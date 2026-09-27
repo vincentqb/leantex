@@ -596,6 +596,12 @@ private structure St where
   environment — rather than of a value's text re-read on its own, whose top
   level is inline content (`preambleProper`). -/
   wholeDoc : Bool := false
+  /-- The file the rewrite was asked for: a site in any other stands in an
+  included file, and moves with that file's wrapper. -/
+  docFile : String := ""
+  /-- Counter commands the preamble's top level holds, in order, moved to
+  where the body starts: what they set holds there (ltcounts.dtx). -/
+  preCounters : Array Raw := #[]
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -5383,6 +5389,21 @@ face serves every language, so the binding is dropped" pos
       return some (← synthAt "\\page{ trim = marks }" pos, k)
     addToHook pos
     return some (#[], k)
+  | "setcounter" | "addtocounter" | "stepcounter" | "refstepcounter" =>
+    -- LaTeX's counter commands are legal in the preamble, and what they
+    -- set holds where the body starts (ltcounts.dtx): at a document's
+    -- preamble top level the command moves there, to the one arm that
+    -- reads counters in flow order. Anywhere else it stands.
+    if !(← docPreamble) then return none
+    let n := if name == "setcounter" || name == "addtocounter" then 2 else 1
+    let (args, k) := takeGroups raws start n
+    if args.size < n then return none
+    let st ← get
+    let cmd := raws.extract (start - 1) k
+    let cmd := if st.file == st.docFile then cmd
+      else #[Raw.env (Parse.inputEnv st.file) cmd pos]
+    write fun st => { st with preCounters := st.preCounters ++ cmd }
+    return some (#[], k)
   | "newlength" =>
     -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
     -- "Defining lengths"); the native store is a token, so a later
@@ -6779,13 +6800,14 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
         preSide := preSide ++ wrap p
         bodySide := bodySide ++ wrap b
     write fun st => { st with inDoc := saved, file := savedFile, seam := false }
+    let counters := (← get).preCounters
     let isBody : Raw → Bool
       | .env "document" _ _ => true
       | _ => false
     return match out.findIdx? isBody with
       | some i =>
         let tail := match out[i]? with
-          | some (.env n dbody p) => #[Raw.env n (bodySide ++ dbody) p]
+          | some (.env n dbody p) => #[Raw.env n (counters ++ bodySide ++ dbody) p]
           | some r => #[r]
           | none => #[]
         out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
@@ -6793,7 +6815,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
   let st0 : St :=
     { file := file, provideKeeps := provideKeeps, warned := warned,
       boundaryOpen := !boundaryRefused raws,
-      wholeDoc := raws.any (· matches .env "document" _ _) }
+      wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
   let (out, st) := go.run st0
   (out, st.diags, st.warned)
 
