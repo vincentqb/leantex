@@ -22562,3 +22562,70 @@ was a stale `scripts/Board.olean`, which `lake env lean --run` loads as it
 stands. It had been built against the three-field `LabelInk`. After
 `lake build scoreboard`, the interpreted run writes a matrix byte-identical
 to the committed one. The rule is now a sentence in AGENTS.md, Build / test.
+
+
+### 2026-09-27 — pictures, round 9: a loss the boundary can avoid is avoided, and a refusal withdraws only what the subset can draw
+
+Review-d's WP-1 blocked the order above: with `rectangle` and `cycle` native,
+a picture the boundary had drawn whole shipped natively with parts missing
+(square corners for rounded ones, a grid's frame without its grid, one of
+five transformed shapes). Rule 2 decides it, so the finding's question is
+answered rather than left to the user.
+
+- **Routing** (`c24b7ac6`). `tikzArm` sends a picture to the boundary when
+  the door is open and the subset draws nothing of it, or draws it with a
+  content loss (`Picture.namesLoss`: a code whose floor is not inert —
+  `dropped`, `pending`, `degraded`). A picture the subset draws whole stays
+  native, and a note routes nothing. The first pass still states every
+  request from the document alone (`boundary_request_env_free` holds).
+- **Withdrawal.** The subset's drawing is the request's fallback, not waste.
+  A routed picture the subset drew in part is recorded
+  (`ReqSpans.fallbacks`). The driver now resolves the boundary before it
+  reads the document's diagnostics; `Cli.Boundary.withdraw` turns each
+  refused fallback request (W0379's no tool, E0382's failed run) into a
+  withdrawn id and one N0419 note carrying the cause — the tool's own words
+  where it ran (`resolvePictures` returns them). The document is elaborated
+  again with `picWithdrawn`, so the page is the subset's drawing and the
+  diagnostics are exactly those `\pictures{ tool = none }` gives it. E0382
+  is left for a picture the subset drew nothing of, the only case with
+  nothing to fall back to. `Elab.runRaws`, the face that fulfils nothing,
+  withdraws every fallback itself: its document is the page a build with no
+  tool ships, which is what the suite and the compat index read.
+- **Knot budget.** A sixth picture field on `Ctx` tipped the inline knot past
+  200,000 heartbeats. The five picture fields and the new one travel as one
+  `PicCtx` field now, so `Ctx` is four fields narrower than before.
+- **Names** (`ad8e1d6a`). A routed picture's image carries the words its
+  labels set as its text alternative (`Ir.Pic.Picture.said`, which
+  `HtmlDoc.pictureSaid` projects), so a picture keeps its name whoever
+  draws it; an unlabelled one is judged for W0376 as any boundary picture.
+- **`\tikz`** (`12be1991`, WP-2). Both forms (pgfmanual §12.2.2), a braced
+  list and one command up to its `;`, become the `{tikzpicture}` node with
+  that body (`Compat.tikzCommand` splits a mid-word `;`). Its path code is
+  never ink. In a sentence the picture is still set as its own block, and
+  W0334 names that.
+- **Drawn nodes** (`2967cf9b`, WP-3). A drawn node that does not declare
+  both minimums is outlined as pgf's `rectangle`/`circle` shapes outline it
+  (`Picture.nodeOutline`, `nodeOutline_covers`): centred on the glyph box,
+  per axis the box plus two inner seps or the minimum where larger, a
+  circle's radius the half-diagonal one inner sep out. Its anchors stand on
+  that outline, so an edge meets what is drawn. `text width` stays a named
+  key: such a picture goes whole to TikZ, which breaks the lines.
+
+**Measured** (the review's 34 + 30 synthetic probes, `lualatex` and three
+binaries — main `8d3df368`, the rebased tip `3e43a23e`, this entry's head;
+page 1 of each, `pdftoppm -r 110`, compared with `compare -metric AE`). Every
+probe with no routed picture and no drawn node lacking a minimum is AE 0
+against the tip.
+The rounded, grid and transform probes now match lualatex and main, where
+the tip dropped their parts. With no tool on PATH and an empty cache, those
+three ship the tip's native drawing (AE 0) with W0334 and N0419. The private
+deck and paper, built the same way, are AE 0 against the tip on all 43
+pages, and their HTML is byte-identical (`cmp`).
+
+**Owed, not done.** A picture in a sentence could stand inline as the
+boundary's image (TikZ's default baseline is the picture's bottom, as an
+image's is); both knots need an arm for it. An unread `\tikzset` key is named
+at its line but is not attributed to the pictures it affects, so they stay
+native. A node declaring both minimums keeps its declared outline when its
+text is wider (pgf grows it), which moves the private deck if changed. And
+`text width` natively needs a line breaker the picture walk cannot reach.
