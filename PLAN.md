@@ -22096,3 +22096,96 @@ within noise: medians of 15, alternating binaries, differ by 1–5 ms.
 lualatex numbers 4, 5). `\baselineskip` wants an engine token (the page's
 leading), so `0.5\baselineskip` reads. And `fil` glue on `parskip` wants a
 carrier.
+
+
+### 2026-09-27 — kernel environments set as LaTeX sets them: theorems, proof, verse, description
+
+Four constructs were unknown to the engine. `\newtheorem` was an unknown
+preamble command. `proof`, `verse` and `description` were unknown
+environments, and their bodies merged into the paragraph before them. Every
+`\item` of a description was E0312, so a document holding one failed to
+build. Each now elaborates into the existing IR, reproducing latex.ltx and
+amsthm.sty. No IR constructor was added: every sibling this round edits
+`Ir`, `Layout` and `HtmlDoc`.
+
+- **Theorem-like environments** (latex.ltx `\@begintheorem`; amsthm.sty
+  `\@thm`, `\th@plain`/`definition`/`remark`, `proof`) are a
+  `.role trivlist-env` around `.role <env>`. The first paragraph opens
+  with the head.
+  - The kernel's head is bold "Theorem 1 (note)", then `\labelsep`, over an
+    italic body.
+  - amsthm's head sets name and number in the style's head font, the number
+    `\@upn` upright, the note in the note font, and the head period.
+  - The proof's head is italic `\proofname` with `\@addpunct{.}`, over an
+    upright body. Its QED is `\hfill\quad` and a □ on the last line; a
+    `\qedsymbol` the document or the proof body redefines is used, and an
+    emptied one omits the mark.
+  - Counters step in flow order: `[shared]`, and `[within]` restarting when
+    its heading moves. A `\label` inside binds the number.
+  - `\usepackage{amsthm}` reads as its documented default,
+    `\theoremstyle{plain}`. amsthm is native, with
+    `tests/compat-index/amsthm.txt`.
+  - The state is one record inside `Counters` on `ESt`, beside the equation,
+    listing and footnote counters it joins. One more `ESt` field put the
+    inline knot over its 200,000-heartbeat budget; the settings-lengths
+    branch reached the same record for the same reason.
+- **verse** is the quote node (both margins in, `\\` a line at the leading).
+- **description** is the itemize list, each item's label in the engine role
+  `Ir.descLabelRole`, then `\labelsep`, first in the item's first paragraph.
+  - The page runs the bold label in at the outer margin and hangs every
+    further line at the item's indent. The hang is `ParaJob.hangIndent`,
+    taken verbatim from the natbib branch so the two agree.
+  - HTML sets `<dl>`, the label a `<dt>`. `Ir.descLabel?` is the one reading
+    both backends use.
+- `\proofname` and `\contentsname` come from babel's ini (`proof`,
+  `contents`), through the locale generator.
+- U+2002 is a kern, as the other fixed spaces are. The rhythm tool reads a
+  kern as the space the reference's PDF reads.
+
+**Measured.** Guards `kernelThmChecks`, `kernelVerseChecks` and
+`kernelDescChecks` assert over `Layout.Out` and the HTML tree. On
+`8d3df368` with the module grafted on, 36 of 37 rows fail. The 37th, proof
+staying unknown without amsthm, is kept behaviour.
+
+Two tiers moved:
+
+- **Rhythm:** the description and verse boundaries measure within 0.08 bp
+  of lualatex, 28 → 33 within 0.5 bp.
+- **External:** 140 → 147 at 2, and 51 → 46 at 0.
+
+The theorem boundaries measure +4.1 bp. That is the engine's trivlist space
+(`Ir.trivlistSkip`, one quantum), which theorems now inherit with center.
+Probes, rasters beside lualatex, and the base run are in
+`leantex-evidence/r9-kernel-envs/`.
+
+**Owed**, each with its site:
+
+- **`thebibliography`/`\bibitem`** (11 flashtex documents; E0336 fails the
+  build). `BibStyle.analyse` must take entries from an in-document list and
+  `resolveBlocks` keep its items. That is the natbib owner's file. The
+  elaborator's half (heading plus a pre-filled `.bibliography`) is useless
+  alone: its citations would show "?" under a W0351 that says no
+  bibliography exists.
+- **`\qedhere`.** In a display it degrades the whole formula to text
+  (W0012, 4 proof-corpus fixtures). Owed: strip it in `stripMathMeta`, set
+  the mark in the tag slot, and omit the end QED (a flag in
+  `Counters.thm`).
+- **`\cref` to a theorem label** is W0380, worded as a bare counter step.
+  `RefKind` has no theorem kind, and cleveref names each environment.
+- **amsthm's remark style** spends half a `\topsep`. The trivlist role has
+  no fraction.
+- **`\rule`, `\colorbox`, and the QED's rule-drawn `\openbox`** need an
+  inline box node. The □ glyph adds 0.93 bp of depth to its line.
+- **`\tableofcontents`** (35 documents). The locale word exists; page
+  numbers need a layout-time page reference, and `\pageref` is W0307.
+- **verse's 1.5 em hang** on a wrapped line. `hangIndent` exists now; the
+  quote arm needs to know it sets verse.
+- A body `\newtheorem`, and beamer's predefined theorem blocks.
+
+**The user's.**
+
+- amsthm's head separator is the .5 em kern for amsthm's
+  `5pt plus 1pt minus 1pt`. It is exact at 10 pt, 0.5/1 pt over at 11/12 pt,
+  and carries no rubber.
+- HTML's description is the browser's `<dl>`: the term above its
+  definition, not the page's run-in label.
