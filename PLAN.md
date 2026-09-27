@@ -19807,3 +19807,107 @@ targets per tier to work around it. Listing the libraries and gate binaries in
 build paying for them, and it would give the fuzz oracles and the four
 `hasCmd`/`haveTool` sites a shared home that needs no extra build step. Worth
 deciding rather than inheriting.
+
+
+### 2026-09-27 — the warnings census adds up, and every code owes a decision with a gate behind it
+
+The warnings audit of the private reference corpus found its own instrument
+wrong three ways before it found anything about the engine. This entry
+fixes the instrument and turns the audit into a ledger that cannot be
+skipped.
+
+**The porcelain line carries `loss` and `subject`.** A census had to band
+on the rendered severity and group by message text: demotion rewrites the
+severity (an accepted code, a repeat site's note), so six ink-owed codes
+read as notes, and the message quotes the document's own names — the
+grouping the `_named` shape forbids. `Loss.label` is the one spelling
+(`Loss.label_inj`), and `porcelainCensusChecks` holds both fields over the
+structured `Diag`, each row failing on the base renderer.
+
+**Each site is counted once.** `tallySites` stamped a loss's total on every
+one of its diagnostics, so adding the counts squared them. The first
+diagnostic of a loss now carries the count, every later one 0, a
+subjectless one 1, and the statement is `Diag.tallySites_sum_exact`: the
+sum of `sites` over a run's records is the number of records, whatever the
+run. `tallySites_exact` keeps its claim for the line the default log shows,
+`tallySites_later_exact` and `tallySites_subjectless_id` say the rest. The
+porcelain omits `sites` only when it is 1. A mutant that stamps every
+member fails the proofs; the `-v` note stopped repeating "(2 sites)", the
+one golden line that moved.
+
+**`Loss.standard`.** W0201, W0202, W0345 and W0376 ship exactly what the
+document declared, and judge the declaration against a standard (a
+readable measure, heading proximity, WCAG). `degraded` claimed the content
+was not as declared. The new class is a warning with the `W` letter; its
+floor is `inert` (nothing to recover: the construct stands as declared) and
+it is not censused (no content lost), so the four leave `subjectDebt`
+(diagdebt 953 → 957, through its writer). The diagnostics golden moves by
+exactly the four header lines that print the class; every rendered line is
+byte-identical. W0315 stays `degraded`: its emission is being reworked
+(colour provenance, re-mixing) and it is re-keyed after that, if its artifact
+then matches its declaration. `coverage.lean` reads `standard` as `native`;
+the coverage tier does not move.
+
+**One-site accounting over the whole corpus.** `siteAccountingChecks` ran
+`siteCollisions` over six probes; over every golden fixture it finds three
+pairs, now rows: a rewrite's translation note (N0100) beside the refusal of
+what the rewrite produced (W0319 for `\usetheme`, W0361 for
+`\renewcommand`) — one class, owed by the rewrite accounting in
+Compat/Elab — and an all-refused picture's constructs (W0334) reported at
+the picture's position, where W0362 names its placeholder.
+
+**The `diagaudit` tier.** `DiagAudit.registry` (`Tests/DiagAudit.lean`)
+holds a decided code as a value: code, ruling (native, divergence, refusal,
+keep, merge, resite, message), target rung, pin. The rung type is the one
+`coverage` ranks constructs by, moved verbatim to `scripts/Rung.lean` so
+both tiers read one vocabulary. A row has no free-text field: `thm% n`
+carries the proof and `check% n` elaborates the block, so each resolves or
+does not compile; a check binds only while the suite calls it, a tier pin
+only while a committed baseline holds the item, and a pin that stops
+resolving is a fault rather than a quiet unbinding. So a row can only point
+at what the tree already holds, and an audit of a private document cannot
+leave its words there. The tier is `verdict-debt-absent`, headroom over
+the codes no row binds: 836 today, 10 bound, 164 owed. Two deliberate
+departures from the audit's process design, each for a measured reason:
+- *Headroom, not `pairs bound/codes`.* Under the one ratchet a new unbound
+  code is a stale rise in `pairs`, which regeneration clears; as headroom it
+  is a fall, which only a verdict row or a human's request clears. That is
+  what "a new code owes a decision" needs. AGENTS.md's diagnostic-code row
+  says so.
+- *One item, modules as provenance.* Per-module items would make a
+  behaviour-preserving move of an emission between modules a fall. The
+  modules that apply each owed code are printed (`Core.Elab 78`,
+  `Core.Compat 26`, `Cli.DriverDiag 19`, `Core.Layout 16`, …) and never
+  gated.
+
+Broken twice through `--check`: a dropped row reads 836 → 835 and
+regresses; a dead tier pin exits 1 naming the row.
+
+**The census, as a report.** `diagaudit --census <porcelain>…` reads
+streams, never documents: it bands by declared loss, groups by (code,
+subject) and by span only when there is no subject, adds each line's
+`sites`, counts a document once however many backends built it, and names
+a backend difference. Its rows hold a registered code and counts and
+nothing else, so nothing a document wrote can reach its output, wherever
+that output goes; the selftest injects a marker in every string position
+and finds none. Over the private reference corpus (both documents, PDF and
+HTML): every code's sites now equal its lines, and 0 backend
+disagreements. The audit's own worked example was still squared per span:
+W0104 is 17 sites (it said 37), N0114 49 (66), and the colour-in-math code
+is one loss at five sites in one group, not the largest ink-owed deficit.
+The ink-owed band is 6 codes and 13 groups, led by unknown commands (8
+groups, ranked in `blockers`). Info is 79.5% of lines: presentation, not
+work.
+
+**Open, and routed.**
+- The queue's fourth group (rank the census by band, groups and documents
+  blocked) belongs in `scripts/scoreboard.lean`; the census rows are its
+  input.
+- A sibling branch that registers a code lands after this one only with a
+  registry row for it, or with a human's `# lowered:` request.
+- The two siteAccounting classes close in the rewrite accounting
+  (Compat/Elab) and the picture diagnostics loop (Elab).
+- The next rows to bind, each once its gate lands: W0303, W0104, W0357,
+  W0361, N0114 (the refusal and conditional fixes), N0022, W0315, W0385
+  (the ink fixes), N0102, W0334 (the picture fixes), and W0301/W0302 once
+  the coverage tier grows an item that ranks unknown names.
