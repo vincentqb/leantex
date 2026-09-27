@@ -22189,3 +22189,119 @@ Probes, rasters beside lualatex, and the base run are in
   and carries no rubber.
 - HTML's description is the browser's `<dl>`: the term above its
   definition, not the page's run-in label.
+
+
+### 2026-09-27 — natbib: its citations, its modes and its reference list, as natbib and plainnat.bst set them
+
+The natbib branch reads the citation family, decides the mode, and sets
+the reference list and each entry the way natbib.sty and plainnat.bst
+do. Eight commits since round 6; this entry is their record (review-d
+NB-4), and the round-9 fixes are its last three.
+
+**One table, one arm, one renderer.** A citation carries the form it was
+written in (`Ir.CiteForm`: the command, the starred full list, the
+capitalized form, the pre- and post-notes). The commands are rows of
+`Ir.natbibCites` (natbib's sixteen, and the kernel's `\cite` and
+`\nocite`), read by `Elab.citeArm`, which lives outside the elaboration
+knot: the knot stands at its heartbeat budget, and adding a member or a
+call site there timed out. `Bib.renderCite` is natbib's own loop
+(`\NAT@citex`, `\NAT@citexnum`) under a `CitePunct`, the seven values
+`\bibpunct` sets; `renderCite_plain` keeps the fact that no citation
+reaches a backend.
+
+**The mode is natbib's.** Three facts decide it (natbib.sty): the load's
+options, replayed in natbib's declaration order; the style's
+`\bibstyle@<name>` row, which replaces every value at
+`\begin{document}` while no declaration has closed that door; and a
+style whose `\bibitem`s carry no author-year label, which puts natbib in
+numbers mode whatever was declared. `Doc.natbib` carries the
+declarations and `CitePunct.ofDoc` replays them against the declared
+style. `\setcitestyle` and `\bibpunct` are read in the preamble; a body
+declaration is named (W0340), and an item natbib drops is named where it
+stands (W0101, keyed to the command).
+
+**The list is natbib's list.** An author-year entry hangs `\bibhang`
+(1em) and a numbered one stands its `[n]` in a column the widest label
+fills; `\bibsep` stands between entries (`Ir.bibHang`/`Ir.bibSep`,
+sourced to natbib.sty and size10/11/12.clo), on the page and in the HTML.
+
+**An entry is body text, written as plainnat.bst writes it.** A title
+takes BibTeX's own sentence case (`Bib.sentenceCase`, bibtex.web's
+change.case$ for "t"); TeX quotes and dashes read as the body's
+typography; a `$…$` span is a formula, its floor named W0012.
+`plainnatSteps` transcribes the thirteen entry functions into steps over
+the `format.*` pieces, and `renderEntry` runs plainnat's output state
+with `add.period$`.
+
+**Round 9.**
+- *Letters.* Two entries with the same label names and year take a
+  letter, as plainnat.bst's `forward.pass`/`reverse.pass` give it (and
+  unsrtnat.bst's): `a`, `b`, … in list order (`extraLabels`, over
+  `labelOf`, the names a citation prints and the year). The date in the
+  list carries the letter, and natbib's loop prints only the letter for
+  a key whose names and year repeat the last key's, so `\citet{a,b}` sets
+  `Gamma and Eta [2019a,b]`. Numbers mode prints none, as natbib's
+  `\natexlab` there prints nothing.
+- *`\nocite`.* Its keys enter the list in first-citation order and it
+  sets nothing; `*` is BibTeX's `\citation{*}`, every entry in the
+  database's order at that point (`expandStar`). A space before it
+  swallows the spaces after it (`\@bsphack`/`\@esphack`). With no
+  bibliography it is silent, as LaTeX is; a key no entry answers is
+  W0351, worded for what is lost.
+- *The reader matrix* reran over the pages the list now emits: the
+  cells are main's, and only the src-key moved.
+- *Confinement.* The branch's history was rewritten before landing so
+  that no commit carries a fixture value drawn from the private
+  reference corpus: the sentence-case rows are invented titles of the
+  same shapes, measured again with bibtex.
+
+**How the expectations were measured.** Every expected string in
+`natbibChecks`, `natbibListChecks`, `plainnatChecks`,
+`natbibLabelChecks` and `nociteChecks` is a line lualatex set for a
+synthetic document of invented entries — TeX Live 2026, natbib 8.31b,
+BibTeX 0.99e (every probe's `.blg`; two docstrings said 0.99d and are
+corrected), one citation per paragraph `Lk <call> end.`, read through
+`pdftotext -layout`, on a page wide enough that an entry is one line.
+The sentence-case rows come from a one-function style writing
+`title "t" change.case$`. Each guard was run against its parent before
+its fix: 80 letter checks and 43 `\nocite` checks failed there, and a
+mutant of each rule (the letter after `yysep`, the space rule) failed 40
+and 11.
+
+**The private reference corpus.** The paper's build is byte-identical
+before and after round 9, in PDF and HTML (it neither shares a label
+between entries nor uses `\nocite`), 8 pages, its diagnostic census
+unchanged. Against main, its reference list reads as lualatex's: 46
+differing word spans at main `8d3df368` and 6 at this branch (review-d's
+`bibwords.py`, `pdftotext` after the References heading, against a
+lualatex build); the citations were already lualatex's text.
+
+**Declared departures.** natbib's `\newblock` adds
+`\hskip .11em plus .33em minus .07em` at a block boundary, which no IR
+node spells: the boundary is one word space. An unresolved key prints
+`[?]` with the separators a resolved one has, where numbers mode prints
+natbib's `[? ]`. A key cited twice in one citation prints its year
+again, where natbib prints `?` and warns.
+
+**Open, with their sites.**
+- plainnat's `presort` orders by the full sort names
+  (`sort.format.names`), then year and key; `SortOrder.compare` orders
+  by the label names, so two entries sharing a label but not their full
+  names order (and take letters) by key here.
+- `calc.short.authors` labels a book or inbook by its editors when it
+  has no author, a proceedings by its editor or organization, a manual
+  by its organization, and an entry with none of these by its `key`
+  field or the first three characters of its cite key; `citeAuthors`
+  reads the author list or the whole key.
+- `\defcitealias`, `\citetalias` and `\citepalias` stay refused (W0301).
+- On the paper's list, what is left against lualatex is kerning before
+  italics (kern-fix2's row), two math-extraction spellings and a
+  line-break hyphen, the last three the same ink. Its URLs set in the
+  body face, where lualatex sets Latin Modern Mono (fontspec's default
+  `\ttfamily` when a document names only its main font): the entry asks
+  for mono, and the PDF embeds no monospace face (`pdffonts`); the font
+  environment's mono fallback is the owner's to decide.
+- The land-time confinement scan (`confine2.sh`) holds no bibliography
+  fields; review-d's `bibconfine.py` (title 4-grams, surnames, keys)
+  found this branch's fixture titles. Folding it into the scan the lander
+  runs would catch the class on every landing (the coordinator's tool).

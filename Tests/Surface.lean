@@ -4355,7 +4355,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
      hasStr nhtml "grid-template-columns: subgrid;")
 
 /-- BibTeX's own sentence case, row by row: a title as a `.bib` spells it,
-and what `"t" change.case$` returned for it under bibtex 0.99d (TeX Live
+and what `"t" change.case$` returned for it under bibtex 0.99e (TeX Live
 2026), through a one-function style writing `title "t" change.case$` for
 each of these invented values. -/
 def sentenceCaseRows : List (String × String) :=
@@ -4480,7 +4480,7 @@ def plainnatBib : String :=
 
 /-- The lines lualatex set for `plainnatBib` under
 `\usepackage[numbers]{natbib}` and `\bibliographystyle{unsrtnat}` (TeX Live
-2026: bibtex 0.99d, unsrtnat.bst from natbib 8.31b), read through
+2026: bibtex 0.99e, unsrtnat.bst from natbib 8.31b), read through
 `pdftotext -layout` in TeX Gyre Termes, one entry to a line. -/
 def plainnatLines : List String :=
   ["[1] Alex Doe and Sam Roe. A grand study of things. Journal of Tests, 12(3):45–67, 2024.",
