@@ -2227,8 +2227,8 @@ def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.maxStepBlocks #[.section 1 false none #[.step 2 none #[.text "t"]]] == 1)
 
 /-- The paragraph boundary, judged from a body's shape: an unknown
-environment follows the same rule as the `@input:` wrapper — an inline body
-stays in its sentence, block content breaks it. -/
+environment follows the same rule as the `\input` wrapper (`Parse.inputEnv`) —
+an inline body stays in its sentence, block content breaks it. -/
 def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "an inline unknown environment stays in its paragraph"

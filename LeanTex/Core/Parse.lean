@@ -48,16 +48,18 @@ def envDefiners : List String :=
   ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
 
 /-- A definer body's half of an environment its other body completes, kept
-by name for the definer to judge: `@` starts no control word, so no document
-can spell one. -/
-def splitOpen (name : String) : String := "@open:" ++ name
-def splitClose (name : String) : String := "@close:" ++ name
+by name for the definer to judge. The name holds a space, which no word
+token holds (`Lex`: a word is a run of characters neither special nor
+white space), and a document's environment name is one word (`envName`),
+so no document can spell one. -/
+def splitOpen (name : String) : String := "open " ++ name
+def splitClose (name : String) : String := "close " ++ name
 
 def splitOpen? (n : String) : Option String :=
-  if n.startsWith "@open:" then some ((n.drop "@open:".length).toString) else none
+  if n.startsWith "open " then some ((n.drop "open ".length).toString) else none
 
 def splitClose? (n : String) : Option String :=
-  if n.startsWith "@close:" then some ((n.drop "@close:".length).toString) else none
+  if n.startsWith "close " then some ((n.drop "close ".length).toString) else none
 
 /-- The two diagnostics a definer's settled halves raise (`Elab.settleSplits`)
 are the parse's own, built here once. -/
@@ -300,11 +302,12 @@ this string, so it must round-trip what the lexer accepted. -/
 
 /-- The synthetic environment the driver wraps an `\input` file's content in,
 so every stage downstream knows which file a position belongs to. The name
-starts with `@`, which no control word can lex, so no document can forge one. -/
-def inputEnv (file : String) : String := "@input:" ++ file
+holds a space, as a split half's does (`splitOpen`), so no document can
+forge one. -/
+def inputEnv (file : String) : String := "input " ++ file
 
 def inputEnvFile? (name : String) : Option String :=
-  if name.startsWith "@input:" then some ((name.drop "@input:".length).toString)
+  if name.startsWith "input " then some ((name.drop "input ".length).toString)
   else none
 
 /-- The index past the leading run of `.space` raws at `i`: the one spaces

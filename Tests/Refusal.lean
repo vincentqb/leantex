@@ -165,6 +165,27 @@ def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     t s!"and ships the unwrapped body's text ('{o}')"
       (pageTextOf fonts grouped == pageTextOf fonts (wrap tab))
 
+/-- **No document spells an environment name the engine makes.** A
+definer body's halves (`Parse.splitOpen`, `Parse.splitClose`) and an
+`\input` file's wrapper (`Parse.inputEnv`) each hold a character no word
+token holds (`Lex.special`, `Lex.isWs`), and a document's environment name
+is one word, so the names the engine once used are ordinary unknown
+environments. The defect: `\begin{@open:center}` was read as a split half
+and failed the build (E0201), and `\begin{@input:x.sty}` passed for a
+spliced file. -/
+def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for n in [Parse.splitOpen "center", Parse.splitClose "center", Parse.inputEnv "probe.sty"] do
+    t s!"the engine's environment name '{n}' holds a character no word holds"
+      (n.any fun c => Lex.special c || Lex.isWs c)
+  let use (n : String) :=
+    dvDoc "" s!"Lead words.\n\n\\begin\{{n}}Marker words.\\end\{{n}}\nBody words."
+  let codes (src : String) := (dvE src).toList.map (·.code)
+  let unknown := use "probeunknown"
+  for n in ["@open:center", "@close:center", "@input:probe.sty"] do
+    t s!"'\{{n}}' is an unknown environment like any other" (codes (use n) == codes unknown)
+    t s!"and ships its page ('{n}')" (pageLines fonts (use n) == pageLines fonts unknown)
+
 
 /-- **A refused delimited definition's use ships what its braced spelling
 ships.** TeX reads a delimited parameter up to its delimiter and consumes

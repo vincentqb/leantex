@@ -20983,3 +20983,40 @@ After both fixes, the résumé and the business card still build byte-identical
 to `da9b049d`, the deck matches the list commit, and the website's HTML is
 unchanged. The paper's census drops one N0200, a page set short. The
 `rhythm` tier does not move.
+
+
+### 2026-09-27 — a group scopes declarations and nothing else, and no document spells a name the engine makes
+
+The reviewed regressions of the refusal entry above (review WE-1…WE-8), on
+main `ae063c0b`. Probes are synthetic, one construct each; the lualatex
+reference is the shipped CLI's comparison, and each guard fails at
+`ae063c0b`.
+
+- **A block inside a scope group stays a block.** Pairing the group
+  primitives made `\begingroup … \endgroup` the brace group it is, and a
+  brace group was inline content wherever it stood: a list, a table, a
+  minipage or a heading inside one failed the build (E0312, E0336, E0311),
+  a quote or centre lost its block (W0302) and an equation its number
+  (W0015). The brace spelling had failed that way before pairing; pairing
+  extended it to both primitives. The block spine
+  (`Elab.elabBlocksGo`'s group arm) now reads a non-argument group whose
+  body is block-shaped (`bodyIsBlock`) as a block scope, the reading it
+  already gave a group carrying `\centering`. `groupedBlockChecks`
+  quantifies over every block environment the engine gives a meaning
+  (`builtinEnvNames` read by `bodyIsBlock`), a heading, a display and
+  verbatim, for each group spelling: the grouped use builds, raises
+  nothing its bare use does not, and ships the bare use's page and HTML;
+  with `\small` inside, the same text, and the size stops at the group's
+  edge. 483 of its assertions fail at `ae063c0b`. Not a WE-1 case, and
+  unchanged: `description` is not an engine environment, bare or grouped.
+- **Correction to the entry above:** "`@open:`/`@close:` names no source
+  can spell" was false — an environment name is a word, and a word may
+  hold `@` and `:`, so `\begin{@open:center}` was read as a split half
+  and failed the build (E0201). The same held for the `\input` wrapper,
+  `@input:`, whose docstring made the same claim. The engine's three
+  environment names (`Parse.splitOpen`, `splitClose`, `inputEnv`) now
+  hold a space, which no word token holds (a word is a run of characters
+  neither special nor white space), and `envName` reads one word, so the
+  claim holds by the lexer's construction. `reservedEnvNameChecks` holds
+  each name to that alphabet and each old spelling to an unknown
+  environment's diagnostics and page.
