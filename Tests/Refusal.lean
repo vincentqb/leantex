@@ -258,3 +258,34 @@ def registerArithChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (pageLines fonts arith == pageLines fonts literal)
   t "a length the rewrite never set is still named and skipped"
     ((dvE (dvDoc "\\advance\\probeunset by 2pt\n" "Body.")).any (·.code == "W0104"))
+
+
+/-- **A composed length assignment is one the length grammar reads, or it
+is named.** Register arithmetic composes the value a length holds with its
+operand; per unit, `\addtolength` and `\advance` build, and the length then
+holds exactly the sum `Decl.parseLength` reads from the two parts. A sum
+the grammar cannot read — glue, whose stretch has no place in an
+expression — builds too, and is named (W0104), the value left as set. The
+defect: the em and ex sums and every glue sum were handed to the grammar
+unread and failed the build (E0321). -/
+def composedLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let body := "First words.\n\n\\vspace{\\probegap}\nSecond words."
+  let tok (v : String) := s!"\\newlength\{\\probegap}\n\\setlength\{\\probegap}\{{v}}\n"
+  let held (src : String) := (elabStr src).1.tokens.find? "probegap"
+  for u in ["pt", "bp", "sp", "mm", "cm", "in", "pc", "em", "ex"] do
+    let sum : Option Dim.SymGlue := do
+      let a ← Decl.parseLength "10pt"
+      let b ← Decl.parseLength ("1" ++ u)
+      return { width := a.add b }
+    for arith in [s!"\\addtolength\{\\probegap}\{1{u}}", s!"\\advance\\probegap by 1{u}"] do
+      let src := dvDoc (tok "10pt" ++ arith ++ "\n") body
+      t s!"'{arith}' builds" ((dvE src).all (·.severity != .error))
+      t s!"and the length holds the sum of its parts ('{arith}')"
+        (sum.isSome && held src == sum)
+  for arith in ["\\addtolength{\\probegap}{2pt}", "\\advance\\probegap by 2pt"] do
+    let src := dvDoc (tok "10pt plus 2pt" ++ arith ++ "\n") body
+    let ds := dvE src
+    t s!"'{arith}' on glue builds" (ds.all (·.severity != .error))
+    t s!"and is named where the grammar cannot read the sum ('{arith}')"
+      (ds.any (·.code == "W0104"))

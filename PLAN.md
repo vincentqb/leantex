@@ -21047,3 +21047,24 @@ reference is the shipped CLI's comparison, and each guard fails at
   default included. `scripts/bench.lean`, median of 7 in scratch clones,
   `ae063c0b` → head: paragraphs 83 → 86 ms, lorem 323 → 326 ms, paper
   158 → 154 ms — noise.
+
+- **A composed length is one the grammar reads, or it is named.** Register
+  arithmetic composes `(held) + operand` and handed it to the declaration
+  unread: an em or ex operand, or a glue value, failed the build (E0321).
+  Two causes. `Decl.parseValue` routed any value ending in `em`/`ex` to
+  the single-literal reader, so `(10pt) + 1em` never reached the
+  expression reader that reads it — any expression ending so, native
+  `\tokens{ a = b + 1em }` included; the literal reader now falls through
+  to the expression one. And a glue value has no place in an expression,
+  so the two composing arms (`\addtolength`, `\advance`/`\multiply`/
+  `\divide`) compose only a sum `Decl.readsAsLengthExpr` accepts (the
+  expression grammar's syntax, names unresolved), and otherwise name the
+  statement (W0104) and leave the length as set. `composedLengthChecks`:
+  per unit (pt, bp, sp, mm, cm, in, pc, em, ex) both spellings build and
+  hold exactly the sum `Decl.parseLength` reads from the parts; glue
+  builds and is named (12 assertions fail at `ae063c0b`). Shipped CLI
+  against lualatex, the gap's change over `+0pt`: `1em` +10.00 pt
+  (lualatex +9.96), `1cm` +28.35 (+28.34), `\parskip` + `0.5em` 19.00
+  (18.93). Owed: glue arithmetic itself (TeX gives `12pt plus 2pt`) —
+  composing at the value level needs an exact printer for `SymGlue`,
+  since a held value may name tokens only the elaborator resolves.

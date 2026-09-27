@@ -598,6 +598,14 @@ def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
   | .ok g => return g
   | .error n => throw s!"'{n}' is not a declared token"
 
+/-- Does the length-expression grammar read `s`? Its syntax alone, names
+unresolved: what a rewrite that composes an expression checks before it
+emits one, so it never hands the declaration a value the grammar refuses. -/
+def readsAsLengthExpr (s : String) : Bool :=
+  match exprToks s.trimAscii.toString with
+  | some toks => (exprParse toks).isOk
+  | none => false
+
 /-- Whether a string looks like a length expression rather than a single
 value: an operator or a parenthesis somewhere, or a coefficient directly
 against a name (`2cardbleed`). Routing, not validation — the parser has
@@ -662,7 +670,10 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
   else if (s.splitOn " plus ").length > 1 || (s.splitOn " minus ").length > 1 then
     (parseGlue s).map Value.glue
   else if s.endsWith "em" || s.endsWith "ex" then
-    (parseLength s).map fun l => Value.glue { width := l }
+    -- A literal (`1.5em`), or an expression whose last term is one
+    -- (`(10pt) + 1em`): the expression reader has the final say.
+    ((parseLength s).map fun l => Value.glue { width := l }) <|>
+      (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
   else if let some (_, g) := tokens.find? (·.1 == s) then
     some (.glue g)
   else if s == "fill" || s == "fil" then

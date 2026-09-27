@@ -5056,7 +5056,16 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
       match (st.lens.find? (·.1 == n)).map (·.2),
           lenOperand st.lens (args[1].toList.filter (!· matches .space)) with
       | some p, some v =>
-        return some (← setLength n s!"({p}) + {v}" s!"\\addtolength\{\\{n}}" pos, k)
+        -- premise: composedLengthChecks — a sum the grammar reads is the
+        -- value the declaration holds; one it cannot is named, never handed on
+        let expr := s!"({p}) + {v}"
+        if Decl.readsAsLengthExpr expr then
+          return some (← setLength n expr s!"\\addtolength\{\\{n}}" pos, k)
+        sayOnce "ctrl:addtolength" .W0104
+          s!"'\\addtolength' on a value the length grammar cannot compose ('{expr}'): \
+skipped, and the length keeps its value" pos
+          (demote := styInternal (← get).file name)
+        return some (#[], k)
       | _, _ => return none
     else return none
   | "advance" | "multiply" | "divide" =>
@@ -5101,13 +5110,22 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
           | [.word w _] => w.toNat?.map toString
           | _ => none
       -- premise: registerArithChecks — a length this rewrite set holds the
-      -- value it recorded
-      match (st.lens.find? (·.1 == tgt)).map (·.2), value with
-      | some p, some v =>
-        let expr := if name == "advance" then s!"({p}) + {v}"
-          else if name == "multiply" then s!"{v} * ({p})" else s!"({p}) / {v}"
-        return some (← setLength tgt expr s!"\\{name}\\{tgt}" pos, k)
-      | _, _ =>
+      -- value it recorded; composedLengthChecks — and the sum is one the
+      -- grammar reads, or the statement is named and skipped
+      let expr? := match (st.lens.find? (·.1 == tgt)).map (·.2), value with
+        | some p, some v => some (if name == "advance" then s!"({p}) + {v}"
+            else if name == "multiply" then s!"{v} * ({p})" else s!"({p}) / {v}")
+        | _, _ => none
+      match expr? with
+      | some expr =>
+        if Decl.readsAsLengthExpr expr then
+          return some (← setLength tgt expr s!"\\{name}\\{tgt}" pos, k)
+        sayOnce ("ctrl:" ++ name) .W0104
+          s!"'\\{name}' on a value the length grammar cannot compose ('{expr}'): \
+skipped, and the length keeps its value" pos
+          (demote := styInternal (← get).file name)
+        return some (#[], k)
+      | none =>
         sayOnce ("ctrl:" ++ name) .W0104
           s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
           (demote := styInternal (← get).file name)
