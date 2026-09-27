@@ -20774,3 +20774,61 @@ with it, which argues for exact. And whether `\edef` gets a total evaluator — 
 arithmetic fragment `\the`, `\strip@pt`, `\dimexpr`, definition-ordered
 macros — is the termination design's boundary, so it is a design discussion
 before it is code.
+
+
+
+### 2026-09-27 — the rhythm, round 7: where a frame's content ends, and the skips LaTeX sources
+
+The round-6 review blocked the picture-rhythm landing on one finding, F4.
+A centred frame measured its content only down to the last *text line*
+(`B.finishPage`). Its vertical distribution counted the space the picture
+work had added above the content, but not the space below it. A declared
+picture box then centred only when something followed the picture, and a
+lone `{center}` line stood half a `\topsep` low. The private deck's
+page 16 is a `[c]` frame holding a figure whose declared box reserves room
+for the nodes later overlays add. Its figure stood 21 px (at 110 dpi)
+below the lualatex reference.
+
+**One site says where the content ends.** `B.contentEnd` is the last placed
+box's bottom: `b.y`, which is the last line's baseline or the lower edge of
+a picture's box, declared or natural. To it the site adds the box's depth
+and the space the content still owes, and subtracts the shrink the page
+gave. The page close reads the leftover from this site and from nowhere
+else. The owed space had never reached placement: `Acc.pageBreak` dropped
+every non-fil gap at a page boundary, as if TeX discarded glue *before* a
+break. TeX discards glue *after* a break. A frame's box keeps its closing
+`\addvspace`, and the glue before `\newpage`'s penalty stays on the page
+it ends. So the boundary now emits the owed gap, and `finishPage` takes it
+as an argument. The deliberate closes pass the pending skip: `.brk` and
+the document's end. The breaks pass nothing: a spill, and a float moved
+to the next page. The distribution already refuses a negative leftover
+(`filShare`), so content that overfills its area stays top-flush, as a
+`\vbox` overfull past its fil glue does. `VDist.center_split_exact`'s claim
+that "the two shares are the content's gaps" now holds, because its bottom
+names `B.contentEnd`.
+
+**Guards** (`frameContentEndChecks`, over `Layout.Out`, from the reviewer's
+probes). Each pair differs in one declaration and was first measured under
+lualatex (beamer 10pt, moloch):
+- a lone `{center}` line stands where a plain line stands (lualatex 0.00
+  pt; the engine was +3.00, and now shows 0.00);
+- a declared box grown one cm below its ink lifts the ink half a cm. The
+  review's probe grew the box 2.9 cm: lualatex lifts the ink 29.76 pt, and
+  the engine lifted it 0 at base and now lifts it 29.77;
+- two frames that share one declared box, the second adding a node inside
+  it, keep their shared nodes still (lualatex 0.03 pt; the engine moved
+  them 28.34, and now 0.00).
+
+All three fail on `da9b049d` and pass here (`lake test` in a scratch clone
+of the base with only the tests applied). Broken once through the shipped
+path, `Acc.pageBreak` put back as it was makes exactly the first check fail.
+
+**Measured on the private deck** (first ink band of the body, px at 110 dpi,
+against the lualatex reference). Page 16 moves from 21 px low to 14 px high.
+Pages 15, 21–23 and 33 move 9–10 px up. Those pages end in a trailing
+`\topsep` or a picture box, and the uncounted space had pushed them lower
+by chance. Now every centred page shows the same offset, 10–19 px high,
+which is the `[c]` area's floor: the engine ends the area 26.4 bp above the
+page bottom, where moloch ends it at its footline's top. That floor is the
+next unit. The deck ships 35 pages before and after, the paper 8, and the
+diagnostic census is identical on both documents.

@@ -3942,6 +3942,46 @@ def frameBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the line under a centred picture stands as far below it as under a centred line"
     (below.isSome && below == pitch)
 
+/-- **A centred frame centres its content box whole** (`B.contentEnd`).
+beamer sets a frame's content as one `\vbox` and centres the box: a
+picture's declared `\useasboundingbox` is its extent however far the ink
+stands from it, and `\addvspace` leaves the closing `\topsep` of a
+`{center}` inside the box. Asserted over `Layout.Out` as pairs of builds
+differing in one declaration, each pair measured first under lualatex
+(beamer 10pt, moloch): a lone `{center}` line stands where a plain line
+stands (0.00 pt); a declared box grown below its ink lifts the ink by half
+the growth (a 2.9 cm growth, 29.76 pt); two frames sharing one declared box
+keep their shared nodes still (0.03 pt). Invented labels. -/
+def frameContentEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let deck (frames : List String) : String :=
+    "\\documentclass{beamer}\\usetheme{moloch}\\pictures{ tool = none }" ++
+    "\\begin{document}" ++
+    String.join (frames.map fun f => "\\begin{frame}{Heading}\n" ++ f ++ "\n\\end{frame}") ++
+    "\\end{document}"
+  let y (src : String) (page : Nat) (word : String) : Option Dim.Sp :=
+    lineYOf (censusOfSrc oneFace src) page word
+  let lone := y (deck ["\\begin{center}\nWords on one line.\n\\end{center}"]) 0 "Words"
+  t "a centred frame's lone center line stands where its plain line stands"
+    (lone.isSome && lone == y (deck ["Words on one line."]) 0 "Words")
+  let pic (below extra : String) : String :=
+    "\\begin{center}\n\\begin{tikzpicture}\n" ++
+    s!"\\useasboundingbox (-1,{below}) rectangle (4,1);\n" ++ extra ++
+    "\\node (a) at (0,0) {Kilo};\n\\node (b) at (3,0) {Lima};\n\\draw[->] (a) -- (b);\n" ++
+    "\\end{tikzpicture}\n\\end{center}"
+  match y (deck [pic "-1" ""]) 0 "Kilo", y (deck [pic "-2" ""]) 0 "Kilo" with
+  | some y1, some y2 =>
+    let lift := y1 - y2
+    t "a declared box grown one cm below lifts a centred frame's ink half a cm"
+      (Dim.mm 5 - 1 ≤ lift && lift ≤ Dim.mm 5 + 1)
+  | _, _ => t "declared-box frame fixtures lay out" false
+  let two := deck [pic "-2" "", pic "-2" "\\node at (1.5,-1.5) {November};\n"]
+  match y two 0 "Kilo", y two 1 "Kilo" with
+  | some k1, some k2 =>
+    t "two centred frames sharing one declared box keep their shared nodes still" (k1 == k2)
+  | _, _ => t "shared-box frame fixtures lay out" false
+
 /-- **A picture occupies TikZ's box** (`Ir.Pic.Picture.box_declared_exact`,
 `Ir.Pic.Picture.box_covers`, `Pdf.picture_box_agree`). Asserted over
 `Layout.Out` and the emitted SVG, through the shipped path — source,

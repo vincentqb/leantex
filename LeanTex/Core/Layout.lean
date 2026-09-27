@@ -507,7 +507,8 @@ lualatex as a split of exactly one half; plain beamer's own key is
 `1fill` against `1.5fill` (beamerbaseframe.sty:257-258), a ratio the
 vocabulary can declare but no shipped bundle does. The content's top is the
 title box's bottom (`B.openBody`), as the fil above stands there in beamer,
-so the two shares are the content's gaps. -/
+and its bottom is `B.contentEnd` — the last box with its depth and the
+closing space the box keeps — so the two shares are the content's gaps. -/
 theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
     VDist.center.aboveShare l ≤ l - VDist.center.aboveShare l ∧
       l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + 1 := by
@@ -4055,10 +4056,29 @@ private theorem note_whole (b : B) :
   · exact ⟨_, Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, hl, rfl⟩)),
       rfl, rfl⟩
 
+/-- **Where the page's content ends**, the one site the vertical
+distribution reads: the last placed box's bottom — `b.y` is the last
+line's baseline or the lower edge of a picture's box, declared or natural
+(`placePicture`) — plus its depth and the space the content still owes
+below it (`owed`), less the shrink the page gave, which moved the last box
+up by all of `needed` (its shrink ledger entry is the page's whole shrink).
+TeX sets a frame's content as one box: beamer centres the `\vbox` whole, a
+declared `\useasboundingbox` is its picture's extent however far the ink
+stands from it, and `\addvspace` leaves a trivlist's closing `\topsep`
+inside the box. Never the lowest line: a label can stand below a declared
+box, and a picture's box reaches below its labels. -/
+private def B.contentEnd (b : B) (owed : Sp) : Sp :=
+  b.y + b.prevDepth + owed - (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
+
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
-above it, the glue set at one ratio like a justified line's. -/
-private def B.finishPage (b : B) : B :=
+above it, the glue set at one ratio like a justified line's. `owed` is the
+pending glue the content keeps: at a boundary the content declared (a
+frame's end, `\newpage`, the document's end) the caller passes the pending
+skip's width, since TeX keeps that glue inside the frame's box or before
+`\newpage`'s `\vfil`; at a break (a spill, a float moved on) nothing,
+since TeX discards glue at a page break. -/
+private def B.finishPage (b : B) (owed : Sp := 0) : B :=
   let lines := if b.needed > 0 && b.pageShrink > 0 then
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
         { l with y := l.y - above * b.needed / b.pageShrink }
@@ -4078,11 +4098,10 @@ private def B.finishPage (b : B) : B :=
   -- glue brackets the content whole.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
   let leftover := if lines.size > b.pinnedLines then
-      let lastY := lines.foldl (fun m l => max m l.y) 0
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
       -- after the shift, anchored at bodyBottom)
-      noteFloor b.geom b.footins b.notesH - (lastY + b.prevDepth)
+      noteFloor b.geom b.footins b.notesH - b.contentEnd owed
     else 0
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
@@ -4158,9 +4177,9 @@ index. The census tests over `Layout.Out` are the realisation check, as
 `runFloat_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
 insertion on the page of its mark (TeXbook ch. 15; ltmiscen.dtx's
 `\@makecol` builds the page as body then rule then notes). -/
-private theorem footnote_with_mark (b : B)
+private theorem footnote_with_mark (b : B) (owed : Sp)
     (hs : b.shrinkAbove.size = b.cur.lines.size) :
-    (b.finishPage.pages.back?.map fun p => p.lines.map (·.segs)) =
+    ((b.finishPage owed).pages.back?.map fun p => p.lines.map (·.segs)) =
       some (b.cur.lines.map (·.segs) ++ b.noteLines.map (·.segs)) := by
   simp only [B.finishPage, Array.back?_push, Option.map_some, Option.some.injEq,
     Array.map_append]
@@ -4788,12 +4807,12 @@ block's position belongs to the declared distribution. The two excluded
 negotiations are declared, never silent: a consumed-shrink page reports
 itself (N0200, below), and fil glue exists only where the document asked
 for it. -/
-private theorem finishPage_shift_uniform (b : B)
+private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) :
     ∃ d, ∀ i, b.pinnedLines ≤ i →
-      (b.finishPage.pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
+      ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y + d) := by
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
@@ -4802,8 +4821,7 @@ private theorem finishPage_shift_uniform (b : B)
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
-      noteFloor b.geom b.footins b.notesH
-        - (b.cur.lines.foldl (fun m l => max m l.y) 0 + b.prevDepth)
+      noteFloor b.geom b.footins b.notesH - b.contentEnd owed
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
@@ -5251,15 +5269,18 @@ private theorem heading_default_before_exact (r : Rd) :
     ((r.parskip).add (r.parskip)).width = 2 * r.parskip.width := by
   simp [Glue.add, Int.two_mul]
 
-/-- A page boundary. Whatever gap was owed dies with the old page, as TeX
-discards glue at the top of a new one — except fil: infinite glue standing
-before the break stretches on the page it ends (TeX discards only what
-follows the break point), and dropping it would turn a centring sandwich
-into a bottom-flush page. -/
+/-- A page boundary. The gap owed stands before the break, so it is the old
+page's own, fil or not: TeX keeps glue that precedes `\newpage`'s penalty,
+and a frame's box keeps its closing `\addvspace` — beamer centres the box
+with that `\topsep` inside it. What TeX discards is glue after a break,
+the new page's opening, and the reset below starts that page clean. The
+placement's page close counts the emitted glue as content
+(`B.contentEnd`), where a flush-top page never reads it, and a fil among
+it stretches on the page it ends — dropping it would turn a centring
+sandwich into a bottom-flush page. -/
 private def Acc.pageBreak (a : Acc) : Acc :=
-  let a := if a.owed.any (·.fil) then
-      { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
-    else a
+  let a := if a.owed.isEmpty then a
+    else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
@@ -7905,7 +7926,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- for a page that never got content dies with the boundary. Fills
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
-      b := { b.finishPage with chrome := none, frameBreak := none, spillWarned := false }
+      b := { b.finishPage b.skip.width with chrome := none, frameBreak := none,
+                                            spillWarned := false }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
@@ -8184,9 +8206,9 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem warnOverfull_geom (b : B) : b.warnOverfull.geom = b.geom := rfl
 @[simp] private theorem warnOverfull_docBg (b : B) :
     b.warnOverfull.docBg = b.docBg := rfl
-@[simp] private theorem finishPage_geom (b : B) : b.finishPage.geom = b.geom := rfl
-@[simp] private theorem finishPage_docBg (b : B) :
-    b.finishPage.docBg = b.docBg := rfl
+@[simp] private theorem finishPage_geom (b : B) (o : Sp) : (b.finishPage o).geom = b.geom := rfl
+@[simp] private theorem finishPage_docBg (b : B) (o : Sp) :
+    (b.finishPage o).docBg = b.docBg := rfl
 @[simp] private theorem reopenChrome_geom (b : B) : b.reopenChrome.geom = b.geom := by
   unfold B.reopenChrome; split <;> rfl
 @[simp] private theorem reopenChrome_docBg (b : B) :
@@ -8210,7 +8232,7 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
   repeat' split
   all_goals first | rfl | simp
 
-private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
+private theorem finishPage_extends (b : B) {o : Sp} : PagesExtend b (b.finishPage o) :=
   ⟨#[_], rfl⟩
 
 private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
@@ -8222,7 +8244,7 @@ private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
   repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
-    | (refine pagesExtend_trans (finishPage_extends b) (pagesExtend_of_eq ?_);
+    | (refine pagesExtend_trans (finishPage_extends b (o := 0)) (pagesExtend_of_eq ?_);
        simp; done)
 
 /-- Under `noBreak` a committed band never closes a page and never clears
@@ -8279,7 +8301,7 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_of_eq ?_
        simp
        done)
-    | (refine pagesExtend_trans (finishPage_extends b) (pagesExtend_of_eq ?_)
+    | (refine pagesExtend_trans (finishPage_extends b (o := 0)) (pagesExtend_of_eq ?_)
        simp
        done)
 
@@ -8388,9 +8410,9 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placePara_extends ..
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
-    | (refine pagesExtend_congr ?_ (finishPage_extends _); simp; done)
+    | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.skip.width)); simp; done)
     | (refine pagesExtend_congr ?_
-        (pagesExtend_trans (finishPage_extends _) (pagesExtend_of_eq ?_)) <;> simp <;> done)
+        (pagesExtend_trans (finishPage_extends _ (o := st.b.skip.width)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
 
 /-- Under `noBreak`, a step that is not a page boundary ships nothing
 and keeps the flag: the whole group lands on the page being built. -/
@@ -8467,8 +8489,8 @@ private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
 carries the full-page background fill whenever the document declared
 one — `pageBg.orElse docBg` is some either way, and the fill it selects
 is prepended whole, before anything can shift it. -/
-private theorem finishPage_bg (b : B) :
-    b.docBg.isSome = true → ∀ p ∈ b.finishPage.pages,
+private theorem finishPage_bg (b : B) {o : Sp} :
+    b.docBg.isSome = true → ∀ p ∈ (b.finishPage o).pages,
       p ∈ b.pages ∨ bgFilled b.geom p := by
   intro hd p hp
   simp only [B.finishPage, Array.mem_push] at hp
@@ -8487,7 +8509,7 @@ private theorem finishPage_bg (b : B) :
                 color := c }, ?_, rfl, rfl, rfl, rfl⟩
       simp
 
-private theorem bgStep_finishPage (b : B) : BgStep b b.finishPage :=
+private theorem bgStep_finishPage (b : B) {o : Sp} : BgStep b (b.finishPage o) :=
   ⟨rfl, rfl, finishPage_bg b⟩
 
 /-- The full-page fill, *with its colour*: what `bgFilled` deliberately
@@ -8507,8 +8529,8 @@ document's — so a title page carrying a `.pageStyle` ground of its own
 covers the page; this says whose colour it is, which is the claim a
 per-page ground rests on and the one the document-level statement cannot
 make. -/
-private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color)
-    (h : b.pageBg = some c) : ∀ p ∈ b.finishPage.pages,
+private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp}
+    (h : b.pageBg = some c) : ∀ p ∈ (b.finishPage o).pages,
       p ∈ b.pages ∨ bgFilledWith b.geom c p := by
   intro p hp
   simp only [B.finishPage, Array.mem_push] at hp
@@ -8523,7 +8545,7 @@ private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color)
     simp
 
 private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
-  (bgStep_finishPage b).trans
+  (bgStep_finishPage b (o := 0)).trans
     (BgStep.of_eq (by simp [B.spillPage]) (by simp [B.spillPage]) (by simp [B.spillPage]))
 
 private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
@@ -8535,7 +8557,7 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_finishPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b (o := 0)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
@@ -8553,7 +8575,7 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_finishPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b (o := 0)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
@@ -8585,7 +8607,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     | exact bgStep_placePicture ..
     | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1
         (placeSlot_keeps ..).1
-    | (refine (bgStep_finishPage _).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage _ (o := st.b.skip.width)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
@@ -9350,7 +9372,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- document is never given an empty page for it.
   let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
       || st.b.pages.isEmpty then
-      st.b.finishPage
+      st.b.finishPage st.b.skip.width
     else st.b
   -- The measure, checked against the readable band once the document has
   -- shown continuous text (a paragraph of four or more full-measure lines).
@@ -9445,7 +9467,7 @@ private theorem runCore_bg
   -- the final close, taken abstractly: splitting the giant term is the
   -- wall, so the ite is covered by a lemma over an opaque condition
   have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
-      BgStep b0 X → BgStep b0 (if c then X.finishPage else X) := by
+      BgStep b0 X → BgStep b0 (if c then X.finishPage X.skip.width else X) := by
     intro c inst b0 X h
     split
     · exact h.trans (bgStep_finishPage _)
