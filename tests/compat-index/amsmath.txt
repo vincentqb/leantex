@@ -40,6 +40,7 @@ body refuse:W0012 $\begin{smallmatrix}a & b\end{smallmatrix}$
 body refuse:W0302 \begin{subequations}\begin{equation}x\end{equation}\end{subequations}
 body impl \begin{equation}\label{e}x\end{equation}\eqref{e}
 body impl \begin{equation}x\tag{5}\end{equation}
+body impl \[ a = b \tag{A} \]
 body refuse:W0015 \begin{align}x &= y\notag\end{align}
 pre refuse:W0301 \numberwithin{equation}{section}
 body refuse:W0012 \begin{align}a &= b\\ \intertext{so} c &= d\end{align}

@@ -3,8 +3,8 @@
 # documented-command coverage, kernel half: per manual chapter (and the register file), <item>.counted names at the `rewritten` rung or above (rewritten | native | verified) of <item>.rows names in tests/coverage/latex2e-index.txt.
 # kernel: 9 unprobed, 409 unknown, 0 fails, 27 skipped, 7 degraded, 20 rewritten, 207 native, 0 verified (the parity ladder's to award).
 # kernel excluded: 165 math-mode symbol commands (math_given), 11 commands latex.ltx defines only as an error (not_base).
-# package half, gated by the compat tier as <p>.impl/<p>.rows: 579 implemented of 888 documented (tests/compat-index; `impl` or `inert:`).
-# total: 806/1567 = 51.4%
+# package half, gated by the compat tier as <p>.impl/<p>.rows: 580 implemented of 889 documented (tests/compat-index; `impl` or `inert:`).
+# total: 807/1568 = 51.5%
 kernel/Boxes.counted	2
 kernel/Boxes.rows	7
 kernel/Command line interface.counted	0

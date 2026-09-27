@@ -159,6 +159,25 @@ def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
   let aligned := dvDoc "" "\\begin{align*}x &= y\\tag{3}\\end{align*}"
   t "amsmath tag: an alignment's tag is named, never set inside the formula"
     ((warnCodes aligned).contains "W0015" && !(pageTextOf fs aligned).contains '3')
+  -- amsmath's `\[` is `equation*` (amsmath.sty:
+  -- `\DeclareRobustCommand{\[}{\begin{equation*}}`): one construct under two
+  -- spellings, so every body elaborates to one document and one accounting
+  -- under both. `\[`'s own arm once dropped a tag, silently.
+  for body in ["a = b", "a = b \\label{k}", "a = b \\tag{A}", "a = b \\tag*{B}",
+      "\\label{k} a = b \\tag{A}", "a = b \\nonumber"] do
+    let (bd, bds) := elabStr (dvDoc "" s!"Text.\n\\[ {body} \\]\nMore \\ref\{k}.")
+    let (ed, eds) := elabStr (dvDoc ""
+      s!"Text.\n\\begin\{equation*} {body} \\end\{equation*}\nMore \\ref\{k}.")
+    t s!"amsmath tag: '\\[ {body} \\]' is equation*"
+      (bd == ed && bds.map (·.code) == eds.map (·.code))
+  let bracket := dvDoc "" "\\[ a = b \\tag{A} \\]"
+  let bracketPage := squash (pageTextOf fs bracket)
+  t s!"amsmath tag: '\\[ … \\tag \\]' sets its tag in the number's place \
+(got '{bracketPage}')"
+    ((dvE bracket).isEmpty &&
+      bracketPage == String.ofList [v 'a', '=', v 'b', '(', 'A', ')'])
+  t "amsmath tag: the HTML number span of '\\[ … \\tag \\]' carries the tag"
+    (hasStr (HtmlDoc.emit {} (elabStr bracket).1).1 "<span class=\"eqnum\">(A)</span>")
 
 /-- amsmath's modulo commands are their definitions (amsmath.sty), measured
 on the laid line: each formula is as wide as the definition spelled with

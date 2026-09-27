@@ -9023,19 +9023,13 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'
     | .math display body mpos =>
       if display then
-        -- A display formula: one centred block of its own, so it
-        -- participates in the block machinery like any other line.
-        -- `\[` never numbers (amsldoc §3), but a label inside it still
-        -- binds to the flow's last number rather than degrading the
-        -- formula to source text.
+        -- A display formula is amsmath's `equation*` (amsmath.sty:
+        -- `\DeclareRobustCommand{\[}{\begin{equation*}}`), so it takes that
+        -- environment's one arm: unnumbered, a label binding to the flow's
+        -- last number, and a `\tag` standing in the number's place.
         let blocks ← flushPara ctx' blocks cur
-        let (cleaned, keys, _) ← stripMathMeta ctx' body
-        let inl ← elabMathInline ctx' true cleaned mpos
-        for key in keys do
-          recordLabel ctx' key (← get).refTarget mpos
-        let content := keys.map (Ir.Inline.label ·) |>.push inl
-        elabBlocksGo ctx' raws (i + 1)
-          (blocks.push (.center #[.para content])) #[] gen'
+        let blocks ← displayMathArm ctx' false body mpos blocks
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .env n body epos =>
