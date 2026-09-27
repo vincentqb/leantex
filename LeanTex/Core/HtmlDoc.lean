@@ -5068,7 +5068,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   | .equation num content =>
     let kids := inlines cfg content
     Html.elem "div"
-      (kids.push (Html.elem "span" #[Html.text num] #[("class", "eqnum")]))
+      (kids.push (Html.elem "span" (inlines cfg num) #[("class", "eqnum")]))
       #[("class", "equation display")]
   -- The abstract is HTML's own titled region: a <section> with a heading,
   -- exactly the thing a reader's tooling looks for. The heading word is

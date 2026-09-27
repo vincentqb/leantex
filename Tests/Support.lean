@@ -525,6 +525,25 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- Does a compat-index row's call load the row's own package? Then the
+scaffold does not load it a second time: a duplicate load puts the call's
+whole effect in the baseline as well, and a `\usepackage{times}` row could
+not witness anything. The decision is read off the row's own text — never a
+list of package names here, which would drift from the directory. -/
+def compatRowSelfLoads (pkg call : String) : Bool :=
+  hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
+
+/-- The document a compat-index row elaborates as: the call at its declared
+place, with the package loaded unless the call loads it itself. -/
+def compatRowSrc (pkg place call : String) : String :=
+  let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
+  if place == "pre" then
+    s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
+  else if place == "frame" then
+    s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
+  else
+    s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
+
 def censusText (c : Array CensusPage) : String :=
   String.intercalate " " (c.toList.map (·.text))
 
@@ -869,6 +888,26 @@ def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
   return { oneFace with
     fonts := oneFace.fonts.push fira
     math := some oneFace.fonts.size }
+
+/-- The four shipped Source Serif faces in every slot — regular 0, bold 1,
+italic 2, bold italic 3 — and Fira Math as the math face, 4: a set in which
+a run's face index says its weight, its slant, and whether it is maths.
+`none` when a face does not load. -/
+def serifFacesSet : IO (Option Font.FontSet) := do
+  let mut loaded : Array Font.Font := #[]
+  for n in #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
+      "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf", "FiraMath-Regular.otf"] do
+    let p := testFonts ++ "/" ++ n
+    unless ← System.FilePath.pathExists p do return none
+    match Font.parse (← IO.FS.readBinFile p) with
+    | .ok f => loaded := loaded.push f
+    | .error _ => return none
+  return some {
+    fonts := loaded
+    index := ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 1),
+       ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray
+    math := some 4 }
 
 /-- Every shipped line, furniture included, in page order: what a claim
 about absolute placement (a fil sandwich, a frame's vertical distribution)

@@ -2057,17 +2057,18 @@ private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBindin
 top-level `\label{...}` keys (returned for binding to the display's
 number), `\nonumber`/`\notag` (amsldoc §3: a numbered form opts out), and
 the first `\tag{t}`/`\tag*{t}` (amsldoc §3.4: the tag takes the number's
-place, parenthesised unless starred, and steps no counter). None is
-mathematics; left in place they would push the whole formula into the
-W0012 source-text degradation — with the label spelled inside the
-rendered text — or set a tag inside the formula. A second `\tag` stays, so
-the containment that names it still does. -/
+place, parenthesised unless starred, and steps no counter), returned as its
+argument's raws for the caller to set as text. None is mathematics; left
+in place they would push the whole formula into the W0012 source-text
+degradation — with the label spelled inside the rendered text — or set a
+tag inside the formula. A second `\tag` stays, so the containment that
+names it still does. -/
 private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
-    EM (Array Raw × Array String × Bool × Option (String × Bool)) := do
+    EM (Array Raw × Array String × Bool × Option (Array Raw × Bool)) := do
   let mut out : Array Raw := #[]
   let mut keys : Array String := #[]
   let mut nonum := false
-  let mut tag : Option (String × Bool) := none
+  let mut tag : Option (Array Raw × Bool) := none
   let mut i : Nat := 0
   repeat
     if h : i < body.size then
@@ -2088,7 +2089,7 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
           | _ => (false, j)
         match body[k]?, tag with
         | some (.group tagRaw _), none =>
-          tag := some (argText ctx tagRaw, star)
+          tag := some (tagRaw, star)
           i := k + 1
         | _, _ =>
           out := out.push (.ctrl "tag" pos)
@@ -6872,20 +6873,36 @@ the engine's own step, mono at footnotesize" (some pos)
       pure { caption := none, numbers := numbers, language := language }
   return .verbatim none content spec
 
+/-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)
+around an elaborated tag, the parentheses joining the tag's first and last
+runs of text where it has them — so a plain tag is the one run a counter's
+number is, and ships the same ink. -/
+private def tagForm (t : Array Ir.Inline) : Array Ir.Inline :=
+  let opened : Array Ir.Inline := match t[0]? with
+    | some (Ir.Inline.text s) => t.set! 0 (.text ("(" ++ s))
+    | _ => #[Ir.Inline.text "("] ++ t
+  match opened.back? with
+  | some (Ir.Inline.text s) => opened.pop.push (.text (s ++ ")"))
+  | _ => opened.push (.text ")")
+
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
   let inl ← elabMathInline ctx true cleaned pos
-  if let some (t, star) := tag then
+  if let some (raws, star) := tag then
     -- `\tag{t}` stands in the number's place, `(t)` unless starred, and
-    -- steps no counter (amsldoc §3.4); a label binds to it, so `\ref`
-    -- sets `t` and `\eqref` `(t)`, as it would a number.
+    -- steps no counter (amsldoc §3.4). Its argument is text set in an
+    -- `\hbox` (amsmath's `\maketag@@@`), so it elaborates as inline content
+    -- — markup and math are ink, never source — with the spaces at its
+    -- edges dropped (`\ignorespaces…\unskip`). A label binds to the tag's
+    -- text, so `\ref` sets `t` and `\eqref` `(t)`, as it would a number.
+    let t ← elabInlines ctx (trimRaws raws)
     for key in keys do
-      recordLabel ctx key (some { kind := some .equation, num := t }) pos
+      recordLabel ctx key (some { kind := some .equation, num := Ir.plainText t }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
-    blocks := blocks.push (.equation (if star then t else s!"({t})") content)
+    blocks := blocks.push (.equation (if star then t else tagForm t) content)
   else if numbered && !nonum then
     -- The display takes the next equation number (amsldoc §3);
     -- its labels bind to it, scoped to the environment as
@@ -6895,7 +6912,7 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     for key in keys do
       recordLabel ctx key (some { kind := some .equation, num := toString num }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
-    blocks := blocks.push (.equation s!"({num})" content)
+    blocks := blocks.push (.equation #[.text s!"({num})"] content)
   else
     -- The unnumbered forms; a label here binds to whatever the
     -- flow last numbered, as LaTeX's \@currentlabel does.

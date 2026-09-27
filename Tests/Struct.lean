@@ -65,7 +65,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The formula's body carries the atom its source spells, so the leaf text
   -- witnesses the floor (`Ir.formulaFloor`) rather than the spelling: the
   -- tagged tree is accessibility text and may not carry markup either.
-  let eq := Struct.ofBlocks #[.equation "(1)"
+  let eq := Struct.ofBlocks #[.equation #[.text "(1)"]
     #[.formula true "x" (Math.MList.ofList [.atom .ord (.sym 'x') .nil .nil false])]]
   t "equation is a formula whose number is a label leaf after the content"
     (structKinds eq == #[.formula] && structKinds (structKids eq) == #[.formula, .label]

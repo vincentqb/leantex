@@ -733,7 +733,8 @@ private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
 
 private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .para content => usesInlines cx acc content.toList
-  | .equation _ content => usesInlines cx acc content.toList
+  | .equation number content =>
+    usesInlines cx (usesInlines cx acc content.toList) number.toList
   | .section level _ _ title =>
     usesInlines { headingCx cx.base level with cur := cx.cur } acc title.toList
   | .list _ items => usesItems cx acc items.toList

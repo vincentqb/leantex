@@ -1991,8 +1991,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     Block → ScalarAcc
   | .para xs => textAndMath out xs
   -- the equation's number is set in the body face beside the formula
-  | .equation num xs =>
-    textAndMath { out with texts := out.texts.push num } xs
+  | .equation num xs => textAndMath (textAndMath out num) xs
   -- A heading's number is set beside its title, so its digits are asked
   -- of the bold face like the title's own text.
   | .section _ _ num title =>
@@ -2225,7 +2224,8 @@ mutual
 private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
     Ir.Block → Array (Nat × Nat × Bool)
   | .para content => weightKeysInlineList acc {} content.toList
-  | .equation _ content => weightKeysInlineList acc {} content.toList
+  | .equation num content =>
+    weightKeysInlineList (weightKeysInlineList acc {} content.toList) {} num.toList
   | .section _ _ _ title => weightKeysInlineList acc {} title.toList
   | .list _ items => weightKeysBlockItems acc items.toList
   | .center body => weightKeysBlockList acc body.toList
@@ -6218,7 +6218,7 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
     collectPara r a content indent false r.geom.fontSize
       (leaf := leaf) (span := leafCount content)
 
-private def collectEquation (r : Rd) (a : Acc) (num : String) (content : Array Inline) (indent : Sp) : Acc := Id.run do
+private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Sp) : Acc := Id.run do
   -- A numbered display: the formula centred on the measure, the tag
   -- right-aligned on its baseline (amsmath's equation shape). The line
   -- is [mirror box, fil, formula, fil, tag]: a glyphless box as wide as
@@ -6230,8 +6230,9 @@ private def collectEquation (r : Rd) (a : Acc) (num : String) (content : Array I
   -- declares: the fils are the alignment. The display skips stand
   -- above and below, the formula's own space (`Acc.openDisplay`).
   let a := (a.openDisplay r).flushGap r
-  -- The formula's leaves, then the number's `.label` leaf (`Struct`'s shape).
-  let (a, leaf) := a.leafRange (leafCount content + 1)
+  -- The formula's leaves, then the number's (`Struct`'s shape: the number
+  -- is its `.label` node).
+  let (a, leaf) := a.leafRange (leafCount content + leafCount num)
   let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
   -- Image fractions resolve against the current measure, as collectPara's.
   let target := (a.measure.getD r.geom.textWidth) - indent
@@ -6239,11 +6240,11 @@ private def collectEquation (r : Rd) (a : Acc) (num : String) (content : Array I
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
       r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
-  -- the number is the `.label` leaf after the content's
+  -- the number's leaves follow the content's
   let numLeaf := leaf.map (· + leafCount content)
   let (nitems, ds2, cache2, _, _) :=
-    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
-      cache1 (LeafCtr.of numLeaf 1 #[.text num]) r.imgs target r.geom.textHeight
+    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
+      cache1 (LeafCtr.of numLeaf (leafCount num) num) r.imgs target r.geom.textHeight
       (ladder := r.geom.scale)
   -- both walks close with parfill glue and a forced pen; the assembled
   -- line supplies its own ending

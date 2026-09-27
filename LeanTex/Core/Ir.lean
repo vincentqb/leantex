@@ -3925,12 +3925,15 @@ inductive Block where
   conventions (amsldoc §3 — `equation` numbers, `equation*` and `\[` do
   not, `\nonumber`/`\notag` opts a numbered form out). `number` is the
   rendered tag, parentheses included (`(1)`), assigned per document at
-  elaboration; `content` is the formula — or its source-text degradation —
-  preceded by the `\label` anchors the environment carried. The number is
-  structural in both backends: right-aligned beside the centred formula on
-  the page, its own element in HTML, never text glued into the formula.
-  The unnumbered forms keep the plain centred-paragraph shape. -/
-  | equation (number : String) (content : Array Inline)
+  elaboration, or an author's `\tag` elaborated as text the way amsmath's
+  `\tagform@` sets it (`\hbox{\normalfont(#1)}`: markup and math inside it
+  are ink, never source); `content` is the formula — or its source-text
+  degradation — preceded by the `\label` anchors the environment carried.
+  The number is structural in both backends: right-aligned beside the
+  centred formula on the page, its own element in HTML, never text glued
+  into the formula. The unnumbered forms keep the plain centred-paragraph
+  shape. -/
+  | equation (number : Array Inline) (content : Array Inline)
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. `covered` is the
   dim colour painted by the overlay shade — code pending its step must read
@@ -6466,7 +6469,9 @@ the marker itself and does not descend into them. -/
 def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
   match b with
   | .para content => foldInlineList fi (fb acc b) content.toList
-  | .equation _ content => foldInlineList fi (fb acc b) content.toList
+  -- the formula, then the number beside it: an author's tag is inline content
+  | .equation number content =>
+    foldInlineList fi (foldInlineList fi (fb acc b) content.toList) number.toList
   | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
   | .list _ items => foldBlockItems fb fi (fb acc b) items.toList
   | .center body => foldBlockList fb fi (fb acc b) body.toList
@@ -6620,9 +6625,10 @@ def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
   | .para content =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
-  | .equation _ content =>
+  | .equation number content =>
     let r := w.openBlock ctx acc b
-    w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+    w.closeBlock ctx
+      (foldCtxInlineList w r.2 (foldCtxInlineList w r.2 r.1 content.toList) number.toList) b
   | .section _ _ _ title =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxInlineList w r.2 r.1 title.toList) b
@@ -6835,10 +6841,11 @@ theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → �
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxInlineList_covers fb fi _ content.toList
-  | .equation _ content =>
+  | .equation number content =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
-    exact foldCtxInlineList_covers fb fi _ content.toList
+    rw [foldCtxInlineList_covers fb fi _ content.toList,
+      foldCtxInlineList_covers fb fi _ number.toList]
   | .section _ _ _ title =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
@@ -7085,7 +7092,8 @@ def navLinkList (out : Array (String × String)) : List Block → Array (String 
 
 def navLinkOne (out : Array (String × String)) : Block → Array (String × String)
   | .para content => navLinkInlineList out content.toList
-  | .equation _ content => navLinkInlineList out content.toList
+  | .equation number content =>
+    navLinkInlineList (navLinkInlineList out content.toList) number.toList
   | .section _ _ _ title => navLinkInlineList out title.toList
   | .verbatim _ _ _ => out
   | .logo _ => out
@@ -7423,7 +7431,12 @@ def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
   | .equation number content =>
-    s!"{ind}equation {number.quote}\n" ++ dumpInlines (ind ++ "  ") content
+    -- A number that is one run of text keeps its one-line spelling; a tag
+    -- carrying markup or math dumps its inlines, as a title does.
+    (match number with
+      | #[.text s] => s!"{ind}equation {s.quote}\n"
+      | _ => s!"{ind}equation\n{ind}  number\n" ++ dumpInlines (ind ++ "    ") number) ++
+    dumpInlines (ind ++ "  ") content
   | .section level starred num title =>
     let star := if starred then "*" else ""
     let n := match num with
@@ -8455,7 +8468,8 @@ def blockTextOne (acc : String) : Block → String
   -- an equation's number ships beside its formula in every backend
   | .equation number content =>
     let t := plainText content
-    acc ++ t ++ number
+    let n := plainText number
+    acc ++ t ++ n
   | .section _ _ _ title =>
     let t := plainText title
     acc ++ t
@@ -8714,7 +8728,8 @@ def footnoteBlockList (out : Array (Option Nat × Array Inline)) :
 def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
     Block → Array (Option Nat × Array Inline)
   | .para content => footnoteInlineList out content.toList
-  | .equation _ content => footnoteInlineList out content.toList
+  | .equation number content =>
+    footnoteInlineList (footnoteInlineList out content.toList) number.toList
   | .section _ _ _ title => footnoteInlineList out title.toList
   | .list _ items => footnoteItems out items.toList
   | .center body => footnoteBlockList out body.toList
@@ -9643,7 +9658,8 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .para content =>
     (.para (recolorRolesInlines recolor pal ground #[] content.toList), pal)
   | .equation num content =>
-    (.equation num (recolorRolesInlines recolor pal ground #[] content.toList), pal)
+    (.equation (recolorRolesInlines recolor pal ground #[] num.toList)
+      (recolorRolesInlines recolor pal ground #[] content.toList), pal)
   -- A heading's title is judged on the page wherever it stands (the
   -- judge's headingCx carries no local ground); the walk mirrors it.
   | .section l st num title =>
@@ -10000,7 +10016,8 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
   | .equation num content =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal ground content.toList #[], plainTextList]
+      recolorRolesInlines_text recolor pal ground content.toList #[],
+      recolorRolesInlines_text recolor pal ground num.toList #[], plainTextList]
   | .section l st num title =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
@@ -11815,7 +11832,7 @@ def mapBlockList (f : Inline → Inline) (out : Array Block) :
 
 def mapBlock (f : Inline → Inline) : Block → Block
   | .para content => .para (mapInlines f content)
-  | .equation n content => .equation n (mapInlines f content)
+  | .equation n content => .equation (mapInlines f n) (mapInlines f content)
   | .section l st n title => .section l st n (mapInlines f title)
   | .list o items => .list o (mapBlockItems f #[] items.toList)
   | .center body => .center (mapBlockList f #[] body.toList)
@@ -12133,7 +12150,7 @@ theorem mapBlock_text (f : Inline → Inline)
   match b with
   | .para content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
   | .equation n content =>
-    simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+    simp [mapBlock, blockTextOne, mapInlines_text f hf content, mapInlines_text f hf n]
   | .section l st n title =>
     simp [mapBlock, blockTextOne, mapInlines_text f hf title]
   | .list o items =>

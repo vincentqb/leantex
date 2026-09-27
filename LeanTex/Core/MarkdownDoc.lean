@@ -133,7 +133,7 @@ place is after the title line, wherever that line comes from (`emit`). -/
 private def blockInto (loc : Locale) (summary ind acc : String) : Block → String
   | .para xs => acc ++ ind ++ inlineText xs ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
-  | .equation num xs => acc ++ ind ++ inlineText xs ++ " " ++ num ++ "\n\n"
+  | .equation num xs => acc ++ ind ++ inlineText xs ++ " " ++ inlineText num ++ "\n\n"
   | .section level _ num title =>
     -- The heading line carries its resolved number the way the page does;
     -- a level-0 heading (the document title) never has one.

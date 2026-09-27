@@ -1832,25 +1832,6 @@ def compatUnknown (call : String) : String := Id.run do
   if st == 2 then out := out ++ "Zq"
   return out
 
-/-- Does the row's call load the row's own package? Then the scaffold does
-not load it a second time: a duplicate load puts the call's whole effect in
-the baseline as well, and a `\usepackage{times}` row could not witness
-anything. The decision is read off the row's own text — never a list of
-package names here, which would drift from the directory. -/
-def compatRowSelfLoads (pkg call : String) : Bool :=
-  hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
-
-/-- The document a row elaborates as: the call at its declared place, with
-the package loaded unless the call loads it itself. -/
-def compatRowSrc (pkg place call : String) : String :=
-  let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
-  if place == "pre" then
-    s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
-  else if place == "frame" then
-    s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
-  else
-    s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
-
 /-- The one predicate every `impl` row answers to: recognising this call
 changes the elaborated document. Both arms elaborate the same source; the
 baseline's control words are the same call with names the engine does not
@@ -5832,25 +5813,10 @@ presentation per character. The plain, coloured and math rows held before
 the fix and are the instrument's controls. Invented content. -/
 def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (n : String) : IO (Option Font.Font) := do
-    let p := testFonts ++ "/" ++ n
-    unless ← System.FilePath.pathExists p do return none
-    return (Font.parse (← IO.FS.readBinFile p)).toOption
-  let faces := #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
-    "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf", "FiraMath-Regular.otf"]
-  let mut loaded : Array Font.Font := #[]
-  for n in faces do
-    if let some f ← load n then loaded := loaded.push f
-  t "the four shipped Source Serif faces and the math face load" (loaded.size == 5)
-  unless loaded.size == 5 do return
   -- Index 0 regular, 1 bold, 2 italic, 3 bold italic, in every slot; 4 is
   -- the math face, so a formula sets in it as it does in a document.
-  let fs : Font.FontSet := {
-    fonts := loaded
-    index := ((List.range 3).flatMap fun slot =>
-      [((slot, 400, false), 0), ((slot, 700, false), 1),
-       ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray
-    math := some 4 }
+  let some fs ← serifFacesSet
+    | t "the four shipped Source Serif faces and the math face load" false
   let boldIdx (i : Nat) : Bool := i == 1 || i == 3
   let italIdx (i : Nat) : Bool := i == 2 || i == 3
   let doc (inner : String) : String :=

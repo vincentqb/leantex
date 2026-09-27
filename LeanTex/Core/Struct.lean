@@ -246,10 +246,11 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .abstract body => out.push (.node .section (blocksRaw #[] body.toList))
   | .titled _ title body =>
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
-  -- the number is census text, set beside the formula in every backend
+  -- the number is census text, set beside the formula in every backend: a
+  -- counter's digits, or an author's tag elaborated as inline content
   | .equation number content =>
     out.push (.node .formula
-      ((inlinesRaw #[] content.toList).push (.node .label #[.leaf 0 (.text number)])))
+      ((inlinesRaw #[] content.toList).push (.node .label (inlinesRaw #[] number.toList))))
   -- a listing's caption is one leaf, as `textLeaves` and the shared fold
   -- read it (the fold does not descend a `.verbatim`)
   | .verbatim _ content spec =>
@@ -879,8 +880,7 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
     rw [blocksRaw_text, titleRaw_text]
   | .equation number content =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
-    rw [inlinesRaw_text_nil]
-    simp [leafTextList_nil_exact, leafTextList_cons_exact, leafTextOne_leaf_exact, Leaf.census]
+    rw [inlinesRaw_text_nil, inlinesRaw_text_nil]
   | .verbatim covered content spec =>
     simp only [blockRaw, blockTextOne]
     split
@@ -1205,7 +1205,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
     rw [inlinesRaw_headings_nil]
-    simp [headingsList_nil_exact, headingsList_cons_exact, headingsOne_leaf_exact]
+    simp [inlinesRaw_headings_nil]
   | .verbatim covered content spec =>
     simp only [blockRaw, headingLevelOne]
     split
@@ -1524,7 +1524,7 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
   | .equation number content =>
     simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [inlinesRaw_images_nil]
-    simp [imagesList_nil_exact, imagesList_cons_exact, imagesOne_leaf_exact, Leaf.imageCensus]
+    simp [inlinesRaw_images_nil]
   | .verbatim covered content spec =>
     simp only [blockRaw, foldBlock]
     split

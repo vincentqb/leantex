@@ -179,6 +179,122 @@ def amsTagChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
   t "amsmath tag: the HTML number span of '\\[ … \\tag \\]' carries the tag"
     (hasStr (HtmlDoc.emit {} (elabStr bracket).1).1 "<span class=\"eqnum\">(A)</span>")
 
+mutual
+
+/-- Every `span.eqnum` of an emitted tree, in document order: the number
+beside each numbered display, as the HTML ships it. -/
+def eqnumSpansOne (acc : Array Html.Node) : Html.Node → Array Html.Node
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    if tag == "span" && attrs.contains ("class", "eqnum") then acc.push (.elem tag attrs kids)
+    else eqnumSpansList acc kids.toList
+
+def eqnumSpansList (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | k :: rest => eqnumSpansList (eqnumSpansOne acc k) rest
+
+end
+
+mutual
+
+/-- Does a subtree hold an element with this tag? -/
+def hasElemOne (tag : String) : Html.Node → Bool
+  | .text _ | .style _ | .script _ _ => false
+  | .elem t _ kids => t == tag || hasElemList tag kids.toList
+
+def hasElemList (tag : String) : List Html.Node → Bool
+  | [] => false
+  | k :: rest => hasElemOne tag k || hasElemList tag rest
+
+end
+
+/-- A tag's argument is text set in an `\hbox` (amsmath's `\tagform@` and
+`\maketag@@@`): markup and math in it are ink, never source. One argument
+per kind — math, a command, text with a script, a reference with a prime —
+each read off the laid page as face and scalar per glyph, and off the HTML
+number span's tree; a label on a tag binds the tag's text, not its source.
+On the base engine each shipped its argument's source as text, silently. -/
+def amsTagTextChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fs ← serifFacesSet
+    | t "amsmath tag text: the serif faces and the math face load" false
+  let (roman, bold, math) := (0, 1, 4)
+  let v (c : Char) : Char := MathParse.italicVar c
+  let ast := ((MathParse.ctrlAtom.lookup "ast").map (·.2)).getD '?'
+  let glyphs (src : String) : Array (Nat × Char × Dim.Sp) :=
+    (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.flatMap fun s =>
+      match s with
+      | .run idx _ _ _ gs _ _ raise _ _ => gs.map fun g => (idx, g.2, raise)
+      | _ => #[]
+  let formula : List (Nat × Char) := [(math, v 'a'), (math, '='), (math, v 'b')]
+  let cases : List (String × List (Nat × Char) × String × String) := [
+    ("$\\ast$", [(roman, '('), (math, ast), (roman, ')')], s!"({ast})", "math"),
+    ("\\textbf{C}", [(roman, '('), (bold, 'C'), (roman, ')')], "(C)", "strong"),
+    ("C$_1$", [(roman, '('), (roman, 'C'), (math, '1'), (roman, ')')], "(C1)", "msub")]
+  for (arg, want, html, elem) in cases do
+    let src := dvDoc "" s!"\\begin\{equation} a = b \\tag\{{arg}} \\end\{equation}"
+    let got := (glyphs src).toList.map fun (i, c, _) => (i, c)
+    t s!"amsmath tag text: \\tag\{{arg}} ships its argument as ink (got {got})"
+      ((dvE src).isEmpty && got == formula ++ want)
+    let (_, tree, _) := HtmlDoc.emitTree {} (elabStr src).1
+    let spans := eqnumSpansList #[] tree.toList
+    t s!"amsmath tag text: the HTML number span of \\tag\{{arg}} is its ink"
+      (spans.size == 1 && spans.all fun s => nodeTextOne "" s == html && hasElemOne elem s)
+  t "amsmath tag text: a tag's script is a script"
+    ((glyphs (dvDoc "" "\\begin{equation} a = b \\tag{C$_1$} \\end{equation}")).any
+      fun (i, c, r) => i == math && c == '1' && r < 0)
+  -- A reference inside a tag resolves where the number stands, as amsmath's
+  -- `\@currentlabel` is the tag's own text: `(1′)`, the prime a script.
+  let primed := dvDoc "" ("\\begin{equation} x \\label{p} \\end{equation}\n" ++
+    "\\begin{equation} y \\tag{\\ref{p}$'$} \\end{equation}")
+  let pg := (glyphs primed).toList.map fun (i, c, _) => (i, c)
+  t s!"amsmath tag text: a reference in a tag resolves beside its prime (got {pg})"
+    ((dvE primed).isEmpty && pg == [(math, v 'x'), (roman, '('), (roman, '1'), (roman, ')'),
+      (math, v 'y'), (roman, '('), (roman, '1'), (math, '\u2032'), (roman, ')')])
+  -- A label on a tag binds the tag's text: `\eqref` reads the ink, not the
+  -- argument's spelling.
+  let labelled := dvDoc "" ("\\begin{equation} a = b \\label{d} \\tag{$\\ast$} \\end{equation}\n\n" ++
+    "See \\eqref{d}.")
+  let text := nodeTextList "" (HtmlDoc.emitTree {} (elabStr labelled).1).2.1.toList
+  t s!"amsmath tag text: \\eqref reads a tag's ink (got '{text}')"
+    ((dvE labelled).isEmpty && hasStr text s!"See ({ast}).")
+
+/-- The control words a call spells: `\name` runs of letters. -/
+def callCtrlWords (call : String) : List String := Id.run do
+  let cs := call.toList
+  let mut out : List String := []
+  let mut i := 0
+  for _ in [0:cs.length + 1] do
+    if i ≥ cs.length then break
+    if cs[i]! == '\\' then
+      let name := (cs.drop (i + 1)).takeWhile Char.isAlpha
+      unless name.isEmpty do out := ("\\" ++ String.ofList name) :: out
+      i := i + 1 + name.length
+    else i := i + 1
+  return out
+
+/-- An implemented amsmath row ships no source: no control word its call
+spells reaches the laid page or the HTML text. The class the tag's
+argument belonged to, where recognising the command changed the document
+(so `compatRowEffect` held) and the change was its own spelling set as
+text. -/
+def amsIndexInkChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let content ← IO.FS.readFile "tests/compat-index/amsmath.txt"
+  for line in content.splitOn "\n" do
+    let line := line.trimAscii.toString
+    if line.isEmpty || line.startsWith "#" then continue
+    match line.splitOn " " with
+    | place :: "impl" :: _ =>
+      let call := (line.drop (place.length + " impl ".length)).toString
+      let src := compatRowSrc "amsmath" place call
+      let page := pageTextOf fs src
+      let html := nodeTextList "" (HtmlDoc.emitTree {} (elabStr src).1).2.1.toList
+      let leaked := (callCtrlWords call).filter fun w => hasStr page w || hasStr html w
+      check ref s!"amsmath index: '{call}' ships its own source {leaked}" leaked.isEmpty
+    | _ => pure ()
+
 /-- amsmath's modulo commands are their definitions (amsmath.sty), measured
 on the laid line: each formula is as wide as the definition spelled with
 the engine's own kerns (`\;` 5 mu, `\:` 4, `\,` 3, `\quad` 18) and an
@@ -222,4 +338,6 @@ def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathSetOf (oneFaceOf serif)
   amsGridChecks ref fs
   amsTagChecks ref fs
+  amsTagTextChecks ref
   amsModChecks ref fs
+  amsIndexInkChecks ref fs

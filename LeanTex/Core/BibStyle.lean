@@ -786,7 +786,8 @@ private def resolveBlock (style : Style) (find : Resolver)
   match b with
   | .bibliography src declared _ => out.push (.bibliography src declared items)
   | .para content => out.push (.para (resolveArr style.cite find content))
-  | .equation n content => out.push (.equation n (resolveArr style.cite find content))
+  | .equation n content =>
+    out.push (.equation (resolveArr style.cite find n) (resolveArr style.cite find content))
   | .section l st num title => out.push (.section l st num (resolveArr style.cite find title))
   | .abstract body => out.push (.abstract (resolveBlocks style find items #[] body.toList))
   | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
@@ -1174,10 +1175,16 @@ theorem resolveBlock_pending (style : Style) (find : Resolver) (items : Array Ir
         (resolveBlock style find items out b).toList →
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match b with
-  | .para content | .equation _ content | .framefoot content | .logo content =>
+  | .para content | .framefoot content | .logo content =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending style.cite find content.toList _ q h
+  | .equation n content =>
+    intro out acc q h
+    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
+    rcases resolveInlines_pending style.cite find n.toList _ q h with h' | hc
+    · exact resolveInlines_pending style.cite find content.toList _ q h'
+    · exact .inr hc
   | .section _ _ _ title =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
