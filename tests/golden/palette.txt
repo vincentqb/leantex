@@ -44,8 +44,8 @@ list unordered
       color soft #D8C4FA
         text "soft"
       text ", and an inline pale one that earns the pairing warning: "
-      color #B65810
+      color #E1BA9D
         text "a tint"
       text "."
 -- diagnostics
-note[N0022] - 'warn!40' is realized as 'warn!97' (#B65810) on the page (#FAFAF9) to meet 4.50:1
+warning[W0315] 34:46 text coloured 'warn!40' (#E1BA9D) reads at 1.71:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: 'warn!97' (#B65810) meets it, ΔEOK 0.263 from the declared colour, past the 0.080 a repair may move it: write that weight, or keep it low: \palette[decorative]{ <name> = #E1BA9D }

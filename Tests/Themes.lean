@@ -1613,13 +1613,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (anonDiag.any fun d => d.subject.any (·.startsWith "yellow!50:"))
   t "the anonymous help invents no role name"
     (anonDiag.any fun d => d.help.any fun h => hasStr h "<name>" && !hasStr h "quiet")
-  -- A mix of two named colours that fails its ground is re-weighted: the
-  -- note is the mix's own, under the author's expression.
+  -- A mix of two named colours that fails its ground is re-weighted inside
+  -- the ink bound: the note is the mix's own, under the author's
+  -- expression (fg!60!bg reaches its nearest legible weight at ΔEOK 0.054).
   let reMix := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-    "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}")
+    "\\begin{document}\\textcolor{fg!60!bg}{quiet}\\end{document}")
   t "a failing mix of two named colours is re-weighted, not warned"
     (reMix.2.all (·.code != "W0315") &&
-      reMix.2.any fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!50!bg:"))
+      reMix.2.any fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!60!bg:"))
   let mixed := ((({ entries := #[("fg", { r := 0x23, g := 0x37, b := 0x3B }),
       ("bg", { r := 0xFA, g := 0xFA, b := 0xFA })] } : Ir.Palette).resolve "fg!50!bg").getD
     Ir.Color.black)
@@ -2279,28 +2280,57 @@ def realizedAgreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (shipped.all fun k => ds.any fun d => d.code == "N0022" && d.subject == some k)
   t "every N0022 note names a realization the artifacts ship"
     (ds.all fun d => d.code != "N0022" || d.subject.any shipped.contains)
-  -- A mix of two named colours re-weighted on its page: the PDF's run and
-  -- the HTML's inline colour are one value, a mix of the author's two
-  -- colours at a heavier weight, legible on the page it ships on.
+
+/-- **A repair is barely different, and past the bound the declared colour
+ships** — the ink bound read off both artifacts (review INK-1: a pale mix
+shipped at near full strength, ΔEOK 0.263 from the declared colour, with no
+warning). A mix whose nearest legible weight lies inside the bound ships
+re-weighted in the PDF run and the HTML span alike, within the bound of
+xcolor's value, and notes it; a mix whose nearest legible weight lies past
+it ships xcolor's value in both, and warns under its own key, naming the
+weight a document can write. -/
+def inkBoundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
   let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xFA }
-  let (mDoc, _) := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-    "\\begin{document}\\textcolor{fg!50!bg}{Mixed words here.}\\end{document}")
-  let mInk := (layoutOf oneFace mDoc).pages.findSome? fun p =>
-    (p.lines.find? fun l => hasStr (lineText l) "Mixed").bind fun l =>
-      l.segs.findSome? fun s => match s with
-        | .run _ c .. => some c
-        | _ => none
-  let (_, mBody, _) := HtmlDoc.emitTree {} mDoc
-  match mInk with
+  let shipOf (w : Nat) : Ir.Doc × Array Diag × Option Ir.Color × Array (String × String) :=
+    let (doc, ds) := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+      "\\begin{document}\\textcolor{fg!" ++ toString w ++ "!bg}{Mixed words here.}" ++
+      "\\end{document}")
+    let ink := (layoutOf oneFace doc).pages.findSome? fun p =>
+      (p.lines.find? fun l => hasStr (lineText l) "Mixed").bind fun l =>
+        l.segs.findSome? fun s => match s with
+          | .run _ c .. => some c
+          | _ => none
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    (doc, ds, ink, elemStylesList #[] body.toList)
+  let htmlShips (styles : Array (String × String)) (c : Ir.Color) : Bool :=
+    styles.any fun (txt, st) => hasStr txt "Mixed" && st == s!"color: {HtmlDoc.cssColor c}"
+  -- Inside the bound: ΔEOK 0.054 to the nearest legible weight.
+  let near := fg.mix 60 bg
+  let (_, nDs, nInk, nStyles) := shipOf 60
+  match nInk with
   | some ink =>
-    t "the PDF ships the mix re-weighted toward its ink, legible on its page"
-      (Contrast.aaText ≤ Contrast.contrastMilli ink bg &&
-        ((List.range 101).any fun q => 50 < q && fg.mix q bg == ink))
-    t "the HTML run carries the ink the PDF paints"
-      ((elemStylesList #[] mBody.toList).any fun (txt, st) =>
-        hasStr txt "Mixed" && st == s!"color: {HtmlDoc.cssColor ink}")
-  | none => failures ref "no mixed run in the PDF"
+    t "a mix inside the bound ships re-weighted, legible on its page"
+      (ink != near && Contrast.aaText ≤ Contrast.contrastMilli ink bg &&
+        ((List.range 101).any fun q => 60 < q && fg.mix q bg == ink))
+    t "the re-weighted mix lies within the ink bound of xcolor's value"
+      (Contrast.deltaEOkSq near ink ≤ Contrast.inkBoundSq)
+    t "the HTML run carries the re-weighted ink the PDF paints" (htmlShips nStyles ink)
+    t "the re-weighting is noted under the mix's key, and nothing warns"
+      (nDs.any (fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!60!bg:")) &&
+        nDs.all (·.code != "W0315"))
+  | none => failures ref "no mixed run in the PDF (inside the bound)"
+  -- Past the bound: the nearest legible weight, 68, is ΔEOK 0.122 away.
+  let far := fg.mix 50 bg
+  let (_, fDs, fInk, fStyles) := shipOf 50
+  t "a mix past the bound ships xcolor's value in the PDF" (fInk == some far)
+  t "a mix past the bound ships xcolor's value in the HTML" (htmlShips fStyles far)
+  t "a mix past the bound is never noted as realized"
+    (fDs.all fun d => !(d.code == "N0022" && d.subject.any (·.startsWith "fg!50!bg:")))
+  t "a mix past the bound warns under its key, naming the weight to write"
+    (fDs.any fun d => d.code == "W0315" && d.subject.any (·.startsWith "fg!50!bg:") &&
+      d.help.any (hasStr · "'fg!68!bg'"))
 
 /-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
 order lives in `elabInlines`, whose sanctioned recursion no theorem can

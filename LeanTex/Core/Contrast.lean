@@ -253,22 +253,119 @@ theorem realize_id_of_passing {req : Nat} {ground c : Color}
     (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
   simp [realize, h]
 
+/-! ## The bound on a repair: barely different, measurably better
+
+A repair ships a colour the author did not write — a mix's weight moved
+(`remix`) — so it departs from what LaTeX ships, xcolor's value of the
+declaration. A departure stands only when it is measurably better, which
+the guard on every return makes true (the pair then meets its WCAG 2.2
+requirement), and barely different: within `inkBoundSq` of the declared
+colour, in ΔEOK. Sources, and the rule taken from each:
+
+* https://www.w3.org/TR/css-color-4/ §20.3 "ΔEOK" — the colour difference
+  "is simply the Euclidean distance in Oklab color space".
+* https://www.w3.org/TR/css-color-4/ §14.2.1 "Binary Search Gamut Mapping
+  with Local MINDE" — "For the OkLCh color space, one JND is an OkLCh
+  difference of 0.02", with ΔEOK the metric.
+
+Beyond the bound the declared colour ships as xcolor computes it, and the
+pairing warning fires, naming the repair a document can write itself. -/
+
+/-- ΔEOK², squared so the bound compares with no root: the Euclidean
+distance between two colours' `labOf` coordinates, at its 10¹⁸ scale
+(10³⁶ per unit²). -/
+def deltaEOkSq (c c' : Color) : Nat :=
+  let p := Oklab.labOf c
+  let q := Oklab.labOf c'
+  ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) +
+    (p.b - q.b) * (p.b - q.b)).toNat
+
+/-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS
+Color 4 §14.2.1). -/
+def okJnd : Nat := 2 * 10 ^ 16
+
+/-- How far a repair may move a declared colour, in JNDs: four, ΔEOK 0.08 —
+a difference a reader sees only beside the original, with the colour still
+the one its name says. A declared reading of "barely different", not a
+measurement: a smaller count repairs less and warns more. -/
+def inkBoundJnds : Nat := 4
+
+/-- The bound on `deltaEOkSq`'s scale. -/
+def inkBoundSq : Nat := (inkBoundJnds * okJnd) * (inkBoundJnds * okJnd)
+
+/-- The bound in thousandths of ΔEOK, for messages. -/
+def inkBoundMilli : Nat := inkBoundJnds * okJnd / 10 ^ 15
+
+/-- A repair stays within the bound of the colour it repairs. -/
+def withinInkBound (declared shipped : Color) : Bool :=
+  decide (deltaEOkSq declared shipped ≤ inkBoundSq)
+
+/-- ΔEOK in thousandths, truncated: what a message prints. -/
+def deltaEOkMilli (c c' : Color) : Nat := Nat.sqrt (deltaEOkSq c c') / 10 ^ 15
+
+/-- `0.078` from 78: thousandths spelled for a message. -/
+def milliString (m : Nat) : String :=
+  let f := toString (m % 1000)
+  s!"{m / 1000}.{"".pushn '0' (3 - f.length)}{f}"
+
+/-- The weight nearest `pct` that `pass` accepts, searched outward from it
+over 0..100, the heavier side first at each distance. -/
+private def nearestWeight (pass : Nat → Bool) (pct : Nat) : Option Nat :=
+  (List.range 101).findSome? fun d =>
+    if pct + d ≤ 100 && pass (pct + d) then some (pct + d)
+    else if d ≤ pct && pct - d ≤ 100 && pass (pct - d) then some (pct - d)
+    else none
+
+private theorem nearestWeight_mem {pass : Nat → Bool} {pct q : Nat}
+    (h : nearestWeight pass pct = some q) : q ≤ 100 ∧ pass q = true := by
+  unfold nearestWeight at h
+  obtain ⟨d, _, hd⟩ := List.exists_of_findSome?_eq_some h
+  split at hd
+  · rename_i hup
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hup
+    simp only [Option.some.injEq] at hd
+    exact hd ▸ hup
+  · split at hd
+    · rename_i _ hdn
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hdn
+      simp only [Option.some.injEq] at hd
+      exact hd ▸ ⟨hdn.1.2, hdn.2⟩
+    · exact absurd hd (by simp)
+
+/-- The weight nearest the declared one whose mix meets `req` on `ground`,
+however far it moves the colour: what the warning offers the author when a
+repair would pass the bound. -/
+def remixNearest (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
+  if a.cmyk.isSome then none
+  else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground)) pct).map
+    fun q => (q, a.mix q b)
+
 /-- Re-weight a two-colour mix to meet `req` on `ground`: the weight nearest
-the declared one whose mix passes, searched outward from it. A mix states a
+the declared one whose mix passes and stays within the bound of xcolor's
+value of the declared mix, searched outward from it. A mix states a
 relation between two colours the author named (`a!P!b`: P% of `a` over
 `b`), so its repair keeps both colours and moves only the weight; `none`
-when no weight reaches the ratio — the mix then keeps its warning — and for
-a mix in the print model, whose declared components the press reads, as
-`realize` refuses a print colour. -/
+when no weight within the bound reaches the ratio — the mix then keeps its
+warning — and for a mix in the print model, whose declared components the
+press reads, as `realize` refuses a print colour. -/
 def remix (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
   if a.cmyk.isSome then none
-  else (List.range 101).findSome? fun d =>
-    let up := pct + d
-    let dn := pct - d
-    if up ≤ 100 && req ≤ contrastMilli (a.mix up b) ground then some (up, a.mix up b)
-    else if d ≤ pct && dn ≤ 100 && req ≤ contrastMilli (a.mix dn b) ground then
-      some (dn, a.mix dn b)
-    else none
+  else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground) &&
+      withinInkBound (a.mix pct b) (a.mix q b)) pct).map fun q => (q, a.mix q b)
+
+private theorem remix_parts {req pct q : Nat} {ground a b c : Color}
+    (h : remix req ground a b pct = some (q, c)) :
+    q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground ∧
+      deltaEOkSq (a.mix pct b) c ≤ inkBoundSq := by
+  unfold remix at h
+  split at h
+  · exact absurd h (by simp)
+  · obtain ⟨q', hq', he⟩ := Option.map_eq_some_iff.mp h
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨rfl, rfl⟩ := he
+    have ⟨h100, hp⟩ := nearestWeight_mem hq'
+    simp only [withinInkBound, Bool.and_eq_true, decide_eq_true_eq] at hp
+    exact ⟨h100, rfl, hp.1, hp.2⟩
 
 /-- **A re-weighted mix is a mix of the author's two colours, and it
 passes.** The weight is a percentage and the colour is exactly the mix of
@@ -278,25 +375,19 @@ makes meets the requirement, by construction: every return is guarded by
 the judged quantity. -/
 theorem remix_mem {req pct q : Nat} {ground a b c : Color}
     (h : remix req ground a b pct = some (q, c)) :
-    q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground := by
-  unfold remix at h
-  split at h
-  · exact absurd h (by simp)
-  obtain ⟨d, _, hd⟩ := List.exists_of_findSome?_eq_some h
-  simp only at hd
-  split at hd
-  · rename_i hup
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hup
-    simp only [Option.some.injEq, Prod.mk.injEq] at hd
-    obtain ⟨rfl, rfl⟩ := hd
-    exact ⟨hup.1, rfl, hup.2⟩
-  · split at hd
-    · rename_i _ hdn
-      simp only [Bool.and_eq_true, decide_eq_true_eq] at hdn
-      simp only [Option.some.injEq, Prod.mk.injEq] at hd
-      obtain ⟨rfl, rfl⟩ := hd
-      exact ⟨hdn.1.2, rfl, hdn.2⟩
-    · exact absurd hd (by simp)
+    q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground :=
+  let p := remix_parts h
+  ⟨p.1, p.2.1, p.2.2.1⟩
+
+/-- **A repaired mix is measurably better and barely different** — the
+rule every departure from LaTeX answers to, as the two bounds the shipped
+mix sits between: it meets the requirement on its ground, and it lies
+within the ink bound of xcolor's value of the mix the author wrote. -/
+theorem remix_between {req pct q : Nat} {ground a b c : Color}
+    (h : remix req ground a b pct = some (q, c)) :
+    req ≤ contrastMilli c ground ∧ deltaEOkSq (a.mix pct b) c ≤ inkBoundSq :=
+  let p := remix_parts h
+  ⟨p.2.2.1, p.2.2.2⟩
 
 -- The document-level check: the pairings a document's own colours create.
 
@@ -1200,17 +1291,27 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
           let label := match origin with
             | some (e, _) => s!"'{e}' ({hexOf u.color})"
             | none => hexOf u.color
+          -- Past the bound, the repair a document can write itself.
+          let far := mix.bind fun (e, (a, pct, b)) =>
+            (remixNearest aaText u.surface a b pct).map fun (q, c) => (e, a.mix pct b, q, c)
           let s := s.pairing dup key u.site
             (inkKey ((origin.map (·.1)).getD (hexOf u.color)) u.color u.surface)
             (s!"text coloured {label} reads at {ratioString milli} " ++
               s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
               s!"below the {ratioString threshold} " ++
               s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-            (s!"{if mix.isSome then "no weight of this mix meets its ground"
-                else "a colour with no role is not realized"}: " ++
-              "name it in \\palette{ <name> = " ++
-              s!"{hexOf u.color} " ++ "} to have it met on its ground, or declare that " ++
-              "entry under \\palette[decorative] to keep it low")
+            (match far with
+             | some (e, declared, q, c) =>
+               s!"'{mixReweighed e q}' ({hexOf c}) meets it, ΔEOK " ++
+                 s!"{milliString (deltaEOkMilli declared c)} from the declared colour, past " ++
+                 s!"the {milliString inkBoundMilli} a repair may move it: write that weight, " ++
+                 "or keep it low: \\palette[decorative]{ <name> = " ++ s!"{hexOf u.color} " ++ "}"
+             | none =>
+               s!"{if mix.isSome then "no weight of this mix meets its ground"
+                  else "a colour with no role is not realized"}: " ++
+                 "name it in \\palette{ <name> = " ++
+                 s!"{hexOf u.color} " ++ "} to have it met on its ground, or declare that " ++
+                 "entry under \\palette[decorative] to keep it low")
             (origin.map (·.2))
           { s with done := done }
     else { s with done := done }
