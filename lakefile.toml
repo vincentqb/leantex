@@ -70,7 +70,7 @@ root = "scripts.cites"
 # convention tier discovery relies on.
 [[lean_lib]]
 name = "BoardLib"
-globs = ["scripts.Board"]
+globs = ["scripts.Board", "scripts.Rung"]
 
 [[lean_exe]]
 name = "scoreboard"
