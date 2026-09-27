@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)
 date: 2026-09-27
-src-key: ba7fab706652b7e6
-fixtures: 77 built, unbuilt: theme-modern
+src-key: 02f09dbbabc49153
+fixtures: 82 built, unbuilt: theme-modern
 
 [feature]
 # feature         chromium      firefox
@@ -32,6 +32,11 @@ blocks            pass          untested      load,fonts,lang,landmarks,snaps,co
 centering         pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 chrome            pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 columns           pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
+cond-ifdefined    pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+cond-ifnum        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+cond-ifx          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+cond-loaded       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+cond-newif        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 crossref          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 daylight          pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
 deck              pass          untested      load,fonts,mathml,lang,landmarks,snaps,color-scheme,reduced-motion,print,no-script
