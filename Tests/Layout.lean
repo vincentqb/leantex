@@ -3402,6 +3402,30 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (d.message.splitOn "text.xheight").length == 2)
   t "a reasonable card passes its whole contract"
     ((judge (card "" "Pat Placeholder\\\\ {\\small pat@example.org}")).isEmpty)
+  -- One judge for every ink-bearing segment kind: a rule and an image box
+  -- are held to the same four edges a glyph run is. Over a `Layout.Out`
+  -- built for the purpose, so dropping a kind from the area walk — or one
+  -- of its four comparisons — turns a row red.
+  let areaGeom : Layout.Geom := {}
+  let areaEdges (box : Dim.Sp → Dim.Sp → Layout.Seg) : List String :=
+    let edge (x y w h : Dim.Sp) : String :=
+      let line : Layout.LineOut :=
+        { x := x, y := y, size := Dim.pt 10, segs := #[box w h], setWidth := Dim.pt 100 }
+      let out : Layout.Out := { diags := #[], pages := #[{ lines := #[line] }] }
+      let s := Check.Shipped.ofOut areaGeom oneFace out true
+      if s.inArea then "inside" else s.areaActual
+    [edge (Dim.pt 40) (Dim.pt 300) (Dim.pt 10) (Dim.pt 10),
+     edge (Dim.pt 72) (Dim.pt 300) (Dim.pt 600) (Dim.pt 10),
+     edge (Dim.pt 72) (Dim.pt 72) (Dim.pt 10) (Dim.pt 20),
+     edge (Dim.pt 72) (Dim.pt 760) (Dim.pt 10) (Dim.pt 10)]
+  let namesEveryEdge (es : List String) : Bool :=
+    es.length == 4 &&
+    (["left", "right", "top", "bottom"].zip es).all fun (e, s) =>
+      (s.splitOn s!"{e} margin").length == 2
+  t "the area judge holds a rule to all four edges"
+    (namesEveryEdge (areaEdges fun w h => .rule w h 0 Ir.Color.black))
+  t "the area judge holds an image box to all four edges"
+    (namesEveryEdge (areaEdges fun w h => .image none w h))
   -- Running furniture stands in the margin by design — LaTeX's own page
   -- styles put it there — and the furniture pass reserves its band by
   -- construction, so the area judge exempts the lines it marks: the ink

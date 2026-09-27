@@ -36,6 +36,17 @@ structure Shipped where
   declared. -/
   pdfViolations : Array String := #[]
 
+/-- The worse of `cur` and one ink rectangle's overshoot past the text
+area, with the edge it overshot. Every ink-bearing segment kind is judged
+here, so a kind added later cannot arrive with its own copy of these four
+comparisons — nor with one of them missing. -/
+private def worstOvershoot (left right top bottom x0 x1 y0 y1 : Sp)
+    (cur : Sp × String) : Sp × String :=
+  let past (d : Sp) (edge : String) (cur : Sp × String) : Sp × String :=
+    if d > cur.1 then (d, edge) else cur
+  past (y1 - bottom) "bottom" (past (top - y0) "top"
+    (past (x1 - right) "right" (past (left - x0) "left" cur)))
+
 /-- Measure the shipped pages. A glyph run's ink box is its advance across
 and its font's ascent/descent at the run's size vertically; a rule's is the
 rectangle it fills. A font that declares no x-height is read at the
@@ -52,8 +63,7 @@ whose furniture works as declared. Its glyphs still feed the x-height
 floor: margin text must stay legible too. -/
 def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     (fontsEmbedded : Bool) : Shipped := Id.run do
-  let mut worst : Sp := 0
-  let mut worstEdge := ""
+  let mut worstAt : Sp × String := (0, "")
   let mut minX : Option Sp := none
   let right := geom.pageW - geom.hmargin
   let bottom := geom.bodyBottom
@@ -66,33 +76,13 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
         | .image _ w h =>
           -- The image box is ink: its full rectangle must respect the area.
           unless l.furniture do
-            if geom.hmargin - x > worst then
-              worst := geom.hmargin - x
-              worstEdge := "left"
-            if x + w - right > worst then
-              worst := x + w - right
-              worstEdge := "right"
-            if geom.vmargin - (l.y - h) > worst then
-              worst := geom.vmargin - (l.y - h)
-              worstEdge := "top"
-            if l.y - bottom > worst then
-              worst := l.y - bottom
-              worstEdge := "bottom"
+            worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
+              x (x + w) (l.y - h) l.y worstAt
           x := x + w
         | .rule w thickness raise _ =>
           unless l.furniture do
-            if geom.hmargin - x > worst then
-              worst := geom.hmargin - x
-              worstEdge := "left"
-            if x + w - right > worst then
-              worst := x + w - right
-              worstEdge := "right"
-            if geom.vmargin - (l.y - raise - thickness) > worst then
-              worst := geom.vmargin - (l.y - raise - thickness)
-              worstEdge := "top"
-            if l.y - raise - bottom > worst then
-              worst := l.y - raise - bottom
-              worstEdge := "bottom"
+            worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
+              x (x + w) (l.y - raise - thickness) (l.y - raise) worstAt
           x := x + w
         | .run idx _ _ w glyphs size _ raise _ _ =>
           unless glyphs.isEmpty do
@@ -105,18 +95,8 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             -- superscript rides above the line's.
             let base := l.y - raise
             unless l.furniture do
-              if geom.hmargin - x > worst then
-                worst := geom.hmargin - x
-                worstEdge := "left"
-              if x + w - right > worst then
-                worst := x + w - right
-                worstEdge := "right"
-              if geom.vmargin - (base - asc) > worst then
-                worst := geom.vmargin - (base - asc)
-                worstEdge := "top"
-              if base + desc - bottom > worst then
-                worst := base + desc - bottom
-                worstEdge := "bottom"
+              worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
+                x (x + w) (base - asc) (base + desc) worstAt
             let xhUnits := if font.xHeight > 0 then font.xHeight else upem / 2
             let xh := xhUnits * sz / upem
             minX := some (match minX with
@@ -126,8 +106,8 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
   return {
     pages := out.pages.size
     fontsEmbedded := fontsEmbedded
-    inArea := worst ≤ 0
-    areaActual := s!"ink {worst.toPtString}pt past the {worstEdge} margin"
+    inArea := worstAt.1 ≤ 0
+    areaActual := s!"ink {worstAt.1.toPtString}pt past the {worstAt.2} margin"
     minXHeight := minX }
 
 private def failure (a : Assertion) (actual : String) : Diag :=
