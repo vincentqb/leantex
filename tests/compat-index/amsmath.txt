@@ -1,9 +1,10 @@
 # source: amsldoc (amsmath user's guide) — §3 displayed equations and their
 # environments, §4 miscellaneous math (fractions, matrices, \substack, dots,
 # mod spellings), §5 operator names, §7 \text; the command index is the row
-# list. The math slice renders the starred one-column displays; numbered rows
-# degrade W0015 and the rest of the construct set degrades W0012, set as
-# source text.
+# list. The math slice renders the starred one-column displays, and the
+# grids amsmath builds inside a formula (cases, the matrices, aligned,
+# gathered, split, \substack) as those grids; numbered rows degrade W0015
+# and the rest of the construct set degrades W0012, set as source text.
 # \DeclareMathOperator is a preamble declaration: it binds the operator name
 # and moves no ink where it stands (inert:binds). What it binds the name to
 # is \operatorname, whose own row below carries the drawn evidence.
@@ -25,16 +26,16 @@ body refuse:W0015 \begin{gather}x = y\end{gather}
 body impl \begin{gather*}x = y\end{gather*}
 body refuse:W0302 \begin{multline}a + b\\ + c\end{multline}
 body refuse:W0302 \begin{flalign}x &= y\end{flalign}
-body refuse:W0012 \begin{equation}\begin{split}a &= b\\ &= c\end{split}\end{equation}
-body refuse:W0012 $\begin{aligned}a &= b\end{aligned}$
-body refuse:W0012 $\begin{gathered}a = b\end{gathered}$
-body refuse:W0012 $\begin{cases}a & b\\ c & d\end{cases}$
-body refuse:W0012 $\begin{matrix}a & b\end{matrix}$
-body refuse:W0012 $\begin{pmatrix}a & b\end{pmatrix}$
-body refuse:W0012 $\begin{bmatrix}a & b\end{bmatrix}$
-body refuse:W0012 $\begin{Bmatrix}a & b\end{Bmatrix}$
-body refuse:W0012 $\begin{vmatrix}a & b\end{vmatrix}$
-body refuse:W0012 $\begin{Vmatrix}a & b\end{Vmatrix}$
+body impl \begin{equation}\begin{split}a &= b\\ &= c\end{split}\end{equation}
+body impl $\begin{aligned}a &= b\end{aligned}$
+body impl $\begin{gathered}a = b\end{gathered}$
+body impl $\begin{cases}a & b\\ c & d\end{cases}$
+body impl $\begin{matrix}a & b\end{matrix}$
+body impl $\begin{pmatrix}a & b\end{pmatrix}$
+body impl $\begin{bmatrix}a & b\end{bmatrix}$
+body impl $\begin{Bmatrix}a & b\end{Bmatrix}$
+body impl $\begin{vmatrix}a & b\end{vmatrix}$
+body impl $\begin{Vmatrix}a & b\end{Vmatrix}$
 body refuse:W0012 $\begin{smallmatrix}a & b\end{smallmatrix}$
 body refuse:W0302 \begin{subequations}\begin{equation}x\end{equation}\end{subequations}
 body impl \begin{equation}\label{e}x\end{equation}\eqref{e}
@@ -50,7 +51,7 @@ body refuse:W0012 $\pmb{x}$
 body refuse:W0012 $\overset{a}{b}$
 body refuse:W0012 $\underset{a}{b}$
 body refuse:W0012 $\sideset{_a}{^b}\prod$
-body refuse:W0012 $\sum_{\substack{i\\ j}}$
+body impl $\sum_{\substack{i\\ j}}$
 body refuse:W0012 $a, \dotsc, b$
 body refuse:W0012 $a \dotsb b$
 body refuse:W0012 $a \bmod b$

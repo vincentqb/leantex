@@ -2,23 +2,6 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
-/-- The first elaborated formula in a document's paragraphs, equations,
-and centred display blocks (a display alignment sets under `.center`):
-enough reach for the one-formula snippets below. -/
-def blockFormula (b : Ir.Block) : Option Math.MList :=
-  let inls := match b with
-    | .para content => content
-    | .equation _ content => content
-    | _ => #[]
-  inls.findSome? fun x => match x with
-    | .formula _ _ body => some body
-    | _ => none
-
-def firstFormula (d : Ir.Doc) : Option Math.MList :=
-  d.body.findSome? fun b => match b with
-    | .center bs => bs.findSome? blockFormula
-    | b => blockFormula b
-
 /-- Math in HTML is MathML Core from the parsed atoms — one row per
 construct, judged on the emitted page. The shapes cite MathML Core (W3C CR
 2025-06-24): scripts (§3.4.1 child order base, sub, sup), limits in

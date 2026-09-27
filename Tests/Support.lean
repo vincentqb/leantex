@@ -94,6 +94,23 @@ def toks (s : String) : List Lex.Tok :=
 def elabStr (s : String) : Ir.Doc × Array Diag :=
   Elab.run "t" s
 
+/-- The first elaborated formula in a document's paragraphs, equations,
+and centred display blocks (a display alignment sets under `.center`):
+enough reach for a one-formula snippet. -/
+def blockFormula (b : Ir.Block) : Option Math.MList :=
+  let inls := match b with
+    | .para content => content
+    | .equation _ content => content
+    | _ => #[]
+  inls.findSome? fun x => match x with
+    | .formula _ _ body => some body
+    | _ => none
+
+def firstFormula (d : Ir.Doc) : Option Math.MList :=
+  d.body.findSome? fun b => match b with
+    | .center bs => bs.findSome? blockFormula
+    | b => blockFormula b
+
 /-- A *markdown* source through the one elaborator: the reader, the
 desugaring, then `Elab.runRaws` — the same path `leantex doc.md` takes. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=

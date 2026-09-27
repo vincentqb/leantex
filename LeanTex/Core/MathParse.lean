@@ -278,6 +278,24 @@ def structuralCtrl : List String :=
   ["over", "frac", "dfrac", "tfrac", "sqrt", "ensuremath", "left", "right",
    "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor"]
 
+/-- amsmath's environments that build a grid inside a formula, each as the
+grid it expands to and the delimiters `\left`/`\right` grow around it
+(amsmath.sty, TeX Live 2026: `\env@matrix` is `\array{*\c@MaxMatrixCols c}`
+with `MaxMatrixCols` 10, the five delimited matrices wrap it in
+`\left…\right`; `\env@cases` is `\left\lbrace\array{@{}l@{\quad}l@{}}`
+closed by `\right.`; `aligned`, `gathered` and `split` are the display
+alignments' own column models). `\substack` is `subarray{c}`, one centred
+column. -/
+def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
+  let matrix : GridKind := .array (Array.replicate 10 .center)
+  [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),
+   ("bmatrix", matrix, some '[', some ']'), ("Bmatrix", matrix, some '{', some '}'),
+   ("vmatrix", matrix, some '|', some '|'),
+   ("Vmatrix", matrix, some '\u2016', some '\u2016'),
+   ("cases", .array #[.left, .left], some '{', none),
+   ("aligned", .align, none, none), ("gathered", .gather, none, none),
+   ("split", .align, none, none), ("substack", .array #[.center], none, none)]
+
 /-- Does this slice model the control word at all? -/
 def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
@@ -302,6 +320,9 @@ private inductive MTok where
   | rowEnd
   | arrOpen
   | arrClose
+  /-- A `gridEnvs` environment opens: the grid its row names, closed by
+  `arrClose` as an `array` is. -/
+  | gridOpen (env : String)
   | ctrl (name : String)
   deriving Repr, BEq, Inhabited
 
@@ -320,6 +341,9 @@ mutual
 private def flattenList (out : Array MTok) : List Parse.Raw →
     Except String (Array MTok)
   | [] => .ok out
+  | .ctrl "substack" _ :: .group body _ :: rest => do
+    let o ← flattenList (out.push (.gridOpen "substack")) body.toList
+    flattenList (o.push .arrClose) rest
   | r :: rest => do flattenList (← flattenOne out r) rest
 
 private def flattenOne (out : Array MTok) : Parse.Raw →
@@ -342,6 +366,13 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
     -- reads the position and spec back out of the tokens after `arrOpen`.
     let o ← flattenList (out.push .arrOpen) body.toList
     .ok (o.push .arrClose)
+  | .env n body p =>
+    if (gridEnvs.lookup n).isSome then do
+      let o ← flattenList (out.push (.gridOpen n)) body.toList
+      .ok (o.push .arrClose)
+    else match flattenErr (.env n body p) with
+      | some what => .error what
+      | none => .error "this construct"
   | r => match flattenErr r with
     | some what => .error what
     | none => .error "this construct"
@@ -580,6 +611,7 @@ private def tokName : MTok → String
   | .rowEnd => "'\\\\'"
   | .arrOpen => "'\\begin{array}'"
   | .arrClose => "'\\end{array}'"
+  | .gridOpen n => s!"'\\begin\{{n}}'"
 
 /-- The delimiter after `\left`/`\right` (the twins read one shape): the
 char actually set (`none` for the empty `.`) and the index past it,
@@ -612,7 +644,12 @@ private inductive Dest where
   /-- A math accent's base: the mark sets over it when it closes. -/
   | accentBody (mark : Char) (stretch : Bool)
   | leftRight (l : Option Char)
-  | grid (kind : GridKind) (rows : Array (Array MList)) (cells : Array MList)
+  /-- A grid awaiting its rows. `wrap` is `none` for the formula's own
+  alignment (`top`), which only the end of the formula closes; a nested
+  grid carries the delimiters it closes between, `(none, none)` for an
+  `array` or an undelimited `gridEnvs` row. -/
+  | grid (kind : GridKind) (wrap : Option (Option Char × Option Char))
+      (rows : Array (Array MList)) (cells : Array MList)
 
 private structure PFrame where
   acc : Array MItem
@@ -672,7 +709,7 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
       arg := .cons (.atom .ord (.accent mark stretch arg) .nil .nil false) .nil
       rest := more
     | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
-    | .grid _ _ _ :: _ => throw "an unbalanced group"
+    | .grid _ _ _ _ :: _ => throw "an unbalanced group"
   throw "an unbalanced group"
 
 /-- A command's naming argument: the `{...}` whose content is a name rather
@@ -761,7 +798,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
   let mut pending : List Dest := []
   let mut notes : Array Note := #[]
   if let some kind := top then
-    stack := stack.push { acc := #[], overNum := none, dests := [.grid kind #[] #[]] }
+    stack := stack.push { acc := #[], overNum := none, dests := [.grid kind none #[] #[]] }
   let mut i := 0
   for _ in [0:toks.size] do
     let some tok := toks[i]? | break
@@ -787,7 +824,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "an unbalanced group"
       match frame.dests with
-      | .grid _ _ _ :: _ => throw "an unbalanced group"
+      | .grid _ _ _ _ :: _ => throw "an unbalanced group"
       | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
       | [] => throw "an unbalanced group"
       | dests =>
@@ -801,23 +838,23 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
     | .amp =>
       unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'&'"
-      let [.grid kind rows cells] := frame.dests | throw "'&'"
+      let [.grid kind wrap rows cells] := frame.dests | throw "'&'"
       if kind matches .gather then throw "'&'"
       let cells := closeCell kind cells overNum acc
       acc := #[]
       overNum := none
-      stack := stack.pop.push { frame with dests := [.grid kind rows cells] }
+      stack := stack.pop.push { frame with dests := [.grid kind wrap rows cells] }
       i := i + 1
     | .rowEnd =>
       unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'\\\\'"
-      let [.grid kind rows cells] := frame.dests | throw "'\\\\'"
+      let [.grid kind wrap rows cells] := frame.dests | throw "'\\\\'"
       if let some (.ch '[') := toks[i+1]? then
         throw "'\\\\[...]' extra row space"
       let cells := closeCell kind cells overNum acc
       acc := #[]
       overNum := none
-      stack := stack.pop.push { frame with dests := [.grid kind (rows.push cells) #[]] }
+      stack := stack.pop.push { frame with dests := [.grid kind wrap (rows.push cells) #[]] }
       i := i + 1
     | .arrOpen =>
       -- `[pos]{spec}`: the position is burned (the grid centres on the
@@ -850,15 +887,33 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | some t => throw s!"the array column spec {tokName t}"
         | none => break
       let some .closeGrp := toks[j]? | throw "an array without its column spec"
-      stack := stack.push { acc, overNum, dests := [.grid (.array cols) #[] #[]] }
+      stack := stack.push
+        { acc, overNum, dests := [.grid (.array cols) (some (none, none)) #[] #[]] }
       acc := #[]
       overNum := none
       i := j + 1
+    | .gridOpen n =>
+      unless pending.isEmpty do throw (tokName tok)
+      let some (kind, l, r) := gridEnvs.lookup n | throw (tokName tok)
+      -- `aligned` and `gathered` read amsmath's `[t]`/`[b]`/`[c]` position
+      -- (`\aligned@a[1][c]`; `t` is a `\vtop`, `b` a `\vbox`); this grid
+      -- centres on the axis, which is `[c]`, so the other two are named.
+      -- Every other row's `[` is its first cell's content.
+      let mut j := i + 1
+      if n == "aligned" || n == "gathered" then
+        let k := if toks[j]? == some .ws then j + 1 else j
+        if toks[k]? == some (.ch '[') then
+          unless toks[k+1]? == some (.ch 'c') && toks[k+2]? == some (.ch ']') do
+            throw s!"'\\begin\{{n}}[...]' top or bottom alignment"
+          j := k + 3
+      stack := stack.push { acc, overNum, dests := [.grid kind (some (l, r)) #[] #[]] }
+      acc := #[]
+      overNum := none
+      i := j
     | .arrClose =>
       unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'\\end{array}'"
-      let [.grid kind rows cells] := frame.dests | throw "'\\end{array}'"
-      let .array _ := kind | throw "'\\end{array}'"
+      let [.grid kind (some (l, r)) rows cells] := frame.dests | throw "'\\end{array}'"
       stack := stack.pop
       let rows :=
         if cells.isEmpty && acc.isEmpty && overNum.isNone then rows
@@ -866,7 +921,9 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       if rows.isEmpty then throw "an empty array"
       let (grid, gnotes) := buildGrid kind rows
       notes := notes ++ gnotes
-      acc := frame.acc.push (.atom .ord grid .nil .nil false)
+      let atom : MItem := .atom .ord grid .nil .nil false
+      acc := frame.acc.push <| if l.isNone && r.isNone then atom
+        else .atom .inner (.delim l r (.cons atom .nil)) .nil .nil false
       overNum := frame.overNum
       i := i + 1
     | .ctrl "over" =>
@@ -1057,7 +1114,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
     unless stack.size == 1 do
       throw (unbalanced stack.back?)
     let some frame := stack.back? | throw "an unbalanced group"
-    let [.grid _ rows cells] := frame.dests | throw "an unbalanced group"
+    let [.grid _ _ rows cells] := frame.dests | throw "an unbalanced group"
     let rows :=
       if cells.isEmpty && acc.isEmpty && overNum.isNone then rows
       else rows.push (closeCell kind cells overNum acc)

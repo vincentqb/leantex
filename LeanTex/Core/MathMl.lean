@@ -159,12 +159,12 @@ def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
   | .grid kind rows =>
     let cellDisp := match kind with
       | .array _ => false
-      | .align => disp
-      | .gather => disp
+      | .align => true
+      | .gather => true
     let attrs : Array (String × String) := match kind with
       | .array _ => #[]
-      | .align => if disp then #[("displaystyle", "true")] else #[]
-      | .gather => if disp then #[("displaystyle", "true")] else #[]
+      | .align => #[("displaystyle", "true")]
+      | .gather => #[("displaystyle", "true")]
     .elem "mtable" attrs (rowsNodes cellDisp kind #[] rows)
 
 /-- The `mtd` cells of one row. A cell's alignment is the grid kind's for

@@ -2867,9 +2867,12 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       bItems m1
     (acc.1 ++ items, missing)
   | .grid kind rows =>
+    -- An `array` sets its cells in text style; amsmath's alignments set
+    -- theirs in display style wherever they stand (`\start@aligned` and
+    -- `gathered` in amsmath.sty: `$\m@th\displaystyle{##}$`).
     let cellSt : Math.MathStyle := match kind with
       | .array _ => if st.rank > 2 then .text st.cramped else st
-      | _ => st
+      | _ => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
 
