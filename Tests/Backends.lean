@@ -563,6 +563,46 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a reference list's entries stand the page's peer gap apart"
     (hasStr art ":where(.bibliography > li + li) { margin-top: var(--parskip, 0.725rem); }")
 
+mutual
+
+/-- The first element child's tag of every `<section id>` a tree carries:
+the article's heading-opened containers (`HtmlDoc.sectionize`), and the
+premise of the rule that spaces them — its heading is its first child. -/
+def sectionHeadsOne (acc : Array String) : Html.Node → Array String
+  | .elem tag attrs kids =>
+    let acc := if tag == "section" && attrs.any (·.1 == "id") then
+        acc.push (match kids.toList.find? (· matches .elem _ _ _) with
+          | some (.elem t _ _) => t
+          | _ => "")
+      else acc
+    sectionHeadsList acc kids.toList
+  | _ => acc
+
+def sectionHeadsList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => sectionHeadsList (sectionHeadsOne acc k) rest
+
+end
+
+/-- **A section's heading opens its space above, in HTML too** (the gap
+site-fix routed: 2.34 against the PDF's 4.72 quanta in the rhythm tier's
+browser report). A level-1 heading is its `<section>`'s first child, so
+`* + h2` never met it and nothing stood above the section; the heading now
+owns that boundary at the heading row's two quanta, as the PDF walk's
+heading `before` spends. Fails on the sheet at `8d3df368`, which carries
+no such rule; the tree half holds the rule's premise. -/
+def htmlSectionGapChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}Alpha.\n\n" ++
+    "\\section{Bravo}Charlie.\n\n\\section{Delta}Echo.\\end{document}")
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let page := (HtmlDoc.emit {} doc).1
+  t "html section fixture elaborates clean" ds.isEmpty
+  t "html every article section opens with its heading"
+    (sectionHeadsList #[] body.toList == #["h2", "h2"])
+  t "html a section's heading owns the heading gap above its section"
+    (hasStr page ":where(* + section[id] > h2:first-child) { margin-top: 1.450rem; }")
+
 /-- Article sections become anchored containers: `<section id="slug">` wraps
 the heading and its content, ids stay unique under repeated titles, and an
 in-page `\href{#...}` has a real target. Invented titles throughout. -/

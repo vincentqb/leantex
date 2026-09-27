@@ -844,11 +844,17 @@ private def gapBeforeLists : List GapRule :=
    .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
 
 /-- The boundaries the list levels stand before: the headings', the float's
-and the display's pairs, and the heading's follower, last. -/
+and the display's pairs, and the heading's follower, last. A level-1
+heading opens its `<section>` (`sectionize`), so no sibling stands above
+it and `* + h2` never meets it; the heading owns the boundary above its
+section instead, its margin collapsing through the section's edge, which
+carries none — on the heading, where a consumer sheet styling its
+sections as bands keeps them flush. -/
 private def gapAfterLists : List GapRule :=
   (blockGapKinds.filter (·.2 == "heading")).map (fun (sel, kind) =>
     .boundary s!"* + {sel}" (quantaRem (gapK kind))) ++
-  [.boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
+  [.boundary s!"* + section[id] > h{Ir.headingRank 1}:first-child" (quantaRem (gapK "heading")),
+   .boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
    .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
    .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
    .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
