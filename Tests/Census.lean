@@ -67,6 +67,15 @@ on every counted line",
    ("each printed number stands at a counted line's own baseline",
      margin.all fun m => countedLines.any fun l => l.y == m.y)]
 
+/-- A conditional fixture's census: one page, every kept branch ships and
+no hidden branch does. The branch TeX takes is the claim, read off the page
+(lualatex ships exactly the kept branches of each). -/
+def condBranchRow (kept hidden : List String) :
+    Layout.Geom → Array CensusPage → List (String × Bool) := fun _ c =>
+  [("one page", c.size == 1)] ++
+  kept.map (fun k => (s!"the branch TeX keeps ships: {k}", hasStr (censusText c) k)) ++
+  hidden.map (fun h => (s!"the branch TeX skips does not: {h}", !hasStr (censusText c) h))
+
 /-- Census assertions, one row per golden fixture: what each fixture's
 shipped pages must show, judged from `Layout.Out` — never from the IR dump,
 which witnesses elaboration only. `censusChecks` fails when a fixture in
@@ -995,7 +1004,17 @@ frame number holds across each frame's step pages",
       c.all fun p => p.fillRects.all fun r =>
         p.fillRects.contains (geom.pageW - r.1 - r.2.2.1, r.2.1, r.2.2.1, r.2.2.2))]),
   ("lineno", linenoCensus),
-  ("lineno-modulo", linenoModuloCensus)]
+  ("lineno-modulo", linenoModuloCensus),
+  ("cond-newif", condBranchRow ["Setter branch ships.", "Initial branch ships."]
+    ["Setter branch hidden.", "Initial branch hidden."]),
+  ("cond-ifdefined", condBranchRow ["Defined branch ships.", "Absent branch ships."]
+    ["Defined branch hidden.", "Absent branch hidden."]),
+  ("cond-ifx", condBranchRow ["Equal branch ships.", "Unequal branch ships."]
+    ["Equal branch hidden.", "Unequal branch hidden."]),
+  ("cond-ifnum", condBranchRow ["Holding branch ships.", "Failing branch ships."]
+    ["Holding branch hidden.", "Failing branch hidden."]),
+  ("cond-loaded", condBranchRow ["Loaded branch ships.", "Unloaded branch ships."]
+    ["Loaded branch hidden.", "Unloaded branch hidden."])]
 
 /-- The outline tier of the census: the PDF document outline is backend
 emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a

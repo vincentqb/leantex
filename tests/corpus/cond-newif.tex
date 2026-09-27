@@ -1,0 +1,12 @@
+% Invented text. A flag declared with \newif and set in the preamble decides
+% which branch ships: the set flag keeps its first branch, the flag left at
+% its initial false keeps its \else branch.
+\documentclass{article}
+\newif\ifprobeset
+\newif\ifprobeleft
+\probesettrue
+\begin{document}
+\ifprobeset Setter branch ships.\else Setter branch hidden.\fi
+
+\ifprobeleft Initial branch hidden.\else Initial branch ships.\fi
+\end{document}

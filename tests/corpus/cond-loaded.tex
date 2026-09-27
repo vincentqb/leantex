@@ -1,0 +1,14 @@
+% Invented text. \@ifpackageloaded answers from the document's own loads: a
+% package the preamble loads keeps the true branch, one it never loads the
+% false branch.
+\documentclass{article}
+\usepackage{graphicx}
+\makeatletter
+\newcommand{\probeloaded}{\@ifpackageloaded{graphicx}{Loaded branch ships.}{Loaded branch hidden.}}
+\newcommand{\probeunloaded}{\@ifpackageloaded{tabularx}{Unloaded branch hidden.}{Unloaded branch ships.}}
+\makeatother
+\begin{document}
+\probeloaded
+
+\probeunloaded
+\end{document}

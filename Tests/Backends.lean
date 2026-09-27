@@ -2445,7 +2445,12 @@ def pdfCensusTable :
   ("listings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("algorithm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("lineno", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("lineno-modulo", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
+  ("lineno-modulo", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("cond-newif", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("cond-ifdefined", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("cond-ifx", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("cond-ifnum", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("cond-loaded", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
 
 /-- The read-side census (`PdfCensus`) and the checked reader beneath it
 (`PdfRead.objects`): the probe the writer never made judges as

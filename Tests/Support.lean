@@ -167,7 +167,8 @@ def goldenNames : List String :=
    "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "math-text", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
-   "algorithm", "lineno", "lineno-modulo"]
+   "algorithm", "lineno", "lineno-modulo",
+   "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
