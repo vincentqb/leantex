@@ -41,6 +41,11 @@ def refusedEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
         (ds.all fun d => d.severity == .note || d.code == "W0303")
       t s!"and the page is the page without it ('\{{n}}', {shape.1})"
         (pageTextOf fonts src == plain)
+  for shape in splitShapes do
+    for head in ["[1]", "[1][Default words for the argument]"] do
+      let src := dvDoc s!"\\renewenvironment\{abstract}{head}\{{shape.1}}\{{shape.2}}\n" body
+      t s!"a split redefinition with the option runs {head} is W0303 alone ({shape.1})"
+        ((dvE src).all fun d => d.severity == .note || d.code == "W0303")
 
 /-- **Parked: an accepted split-group definition is not paired yet.** The
 engine elaborates an environment's two halves apart, each under its own

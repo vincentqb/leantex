@@ -126,12 +126,42 @@ private def definerHeadAt (acc : Array Raw) (k0 : Nat) : Bool := Id.run do
   | some (.ctrl d _) => return envDefiners.contains d
   | _ => return false
 
+/-- How far back a definer head is sought from a body's `{`: a definer's
+option runs (`[n]`, `[default]`, `(params)`), its name and its word are a
+few items, so a window this wide holds the heads documents write, and the
+scan at every `{` reads at most this many items — the parse stays linear
+where scanning the level made it quadratic. -/
+def definerReach : Nat := 128
+
+/-- The items `envBodyNext` reads: the last `definerReach` of the level. -/
+def definerWindow (acc : Array Raw) : Array Raw :=
+  acc.extract (acc.size - definerReach) acc.size
+
 /-- Is the group opening after `acc` one of an environment definer's two
-bodies? -/
+bodies? Read off `definerWindow` alone (`envBodyNext_window_exact`). -/
 private def envBodyNext (acc : Array Raw) : Bool :=
-  let k := backSkip acc acc.size
-  definerHeadAt acc k ||
-    (before acc k matches some (.group _ _) && definerHeadAt acc (k - 1))
+  let w := definerWindow acc
+  let k := backSkip w w.size
+  definerHeadAt w k ||
+    (before w k matches some (.group _ _) && definerHeadAt w (k - 1))
+
+/-- The window is its own window, so the verdict at a `{` depends on the
+last `definerReach` items of the level and on nothing before them. -/
+theorem definerWindow_fixed_point (acc : Array Raw) :
+    definerWindow (definerWindow acc) = definerWindow acc := by
+  unfold definerWindow
+  rw [Array.extract_extract]
+  simp only [Array.size_extract]
+  have h1 : acc.size - definerReach
+      + (min acc.size acc.size - (acc.size - definerReach) - definerReach)
+      = acc.size - definerReach := by omega
+  have h2 : min (acc.size - definerReach + (min acc.size acc.size - (acc.size - definerReach)))
+      acc.size = acc.size := by omega
+  rw [h1, h2]
+
+private theorem envBodyNext_window_exact (acc : Array Raw) :
+    envBodyNext acc = envBodyNext (definerWindow acc) := by
+  simp only [envBodyNext, definerWindow_fixed_point]
 
 /-- Wrap a closed frame's body into the node its delimiter denotes. -/
 private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=

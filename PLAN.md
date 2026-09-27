@@ -21031,3 +21031,19 @@ reference is the shipped CLI's comparison, and each guard fails at
   over `builtinEnvNames` × `splitShapes` (240 assertions fail at
   `ae063c0b`); an accepted definition of each shape keeps its parse's
   E0201, parked shape by shape in `splitPairingOwed`.
+
+- **The definer-head scan is bounded.** `Parse.envBodyNext` runs at every
+  `{`, and after a `]` with no `[` at that level it scanned the whole level
+  back for the opener: 20,000 × `(0,1] {x}` took 19.1 s against 1.3 s for
+  the same text with `)`. It now reads `definerWindow`, the last
+  `definerReach` (128) items of the level — a definer's option runs, name
+  and word are a few items — so the scan per `{` is bounded and the parse
+  linear: 1.35 s, and 20,000 such paragraphs 20.1 s → 1.08 s, PDFs
+  identical (the shipped CLI, median of 3). `envBodyNext_window_exact`
+  states that the verdict reads the window alone (from
+  `definerWindow_fixed_point`); deleting the window fails the build. A head
+  whose option runs exceed the window is read as text, as any unknown
+  construct is; `refusedEnvChecks` holds both option runs, a sentence-long
+  default included. `scripts/bench.lean`, median of 7 in scratch clones,
+  `ae063c0b` → head: paragraphs 83 → 86 ms, lorem 323 → 326 ms, paper
+  158 → 154 ms — noise.
