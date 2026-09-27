@@ -4186,6 +4186,8 @@ the definition is skipped" pos
     let (count, j) := takeOpt raws j
     let (dflt, j) := takeOpt raws j
     if name == "renewenvironment" && count.isNone && dflt.isNone then
+      -- premise: captionScopeChecks — the float-core idiom reads as its native
+      -- kind token, the page equal to that spelling's and free of W0303
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws j pos then
         return some (out, k)
     let n := (count.bind String.toNat?).getD 0

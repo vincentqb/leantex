@@ -11357,6 +11357,8 @@ tool = none refuses the boundary")
               | some (some k) => k.captionScope ++ tok
               | _ => tok
             let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
+            -- premise: captionScopeChecks — a skip set to the caption skip
+            -- itself ships the page the document ships without it
             if key == "skip" && value == "\\abovecaptionskip" then pure true
             else
               let glue := (Decl.parseGlue value).orElse fun _ =>
