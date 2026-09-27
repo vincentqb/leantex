@@ -5748,6 +5748,63 @@ end
 def svgTextRuns (body : Array Html.Node) : Array (String × Array (String × String)) :=
   svgTextRunsList #[] body.toList
 
+/-- **One expression on one ground ships one ink, in a paragraph or a
+drawing** — review INK-2's finding: a re-weighted mix, and a realized
+role, shipped their repaired ink in text runs and their declared one in
+picture labels on the same page. Read off `Layout.Out` (the label lines a
+picture sets) and off the typed HTML tree (the label's SVG runs against
+the paragraph's spans): each expression's label run carries its text
+run's ink, in both artifacts; a label standing on a node's own fill is
+judged by that fill, so the page's ink does not follow it there.
+Invented content. -/
+def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA, soft = #888888 }" ++
+    "\\begin{document}\n\\textcolor{fg!60!bg}{Mixtext} and \\textcolor{soft}{Softtext}.\n\n" ++
+    "\\begin{tikzpicture}\n" ++
+    "\\node (a) at (0,0) {\\textcolor{fg!60!bg}{Mixlabel}};\n" ++
+    "\\node (b) at (0,2) {\\textcolor{soft}{Softlabel}};\n" ++
+    "\\node[fill=black, minimum width=3cm, minimum height=1cm] (c) at (0,4) " ++
+    "{\\textcolor{soft}{Filllabel}};\n" ++
+    "\\end{tikzpicture}\n\\end{document}"
+  let (doc, _) := elabStr src
+  let out := layoutOf oneFace doc
+  -- The run whose own glyphs spell the word: label lines at one height
+  -- would otherwise answer with a neighbour's ink.
+  let pdfInk (word : String) : Option Ir.Color := out.pages.findSome? fun p =>
+    p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
+      | .run _ c _ _ glyphs .. =>
+        if hasStr (String.ofList (glyphs.toList.map (·.2))) word then some c else none
+      | _ => none
+  let mixDeclared : Ir.Color := ({ r := 0x23, g := 0x37, b := 0x3B } : Ir.Color).mix 60
+    { r := 0xFA, g := 0xFA, b := 0xFA }
+  let softDeclared : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
+  match pdfInk "Mixtext", pdfInk "Mixlabel" with
+  | some text, some label =>
+    t "the mix's text run is re-weighted" (text != mixDeclared)
+    t "the mix's picture label ships its text run's ink in the PDF" (label == text)
+  | _, _ => failures ref "one ink: no mixed text run or label in the PDF"
+  match pdfInk "Softtext", pdfInk "Softlabel", pdfInk "Filllabel" with
+  | some text, some label, some filled =>
+    t "the role's text run is realized" (text != softDeclared)
+    t "the role's picture label ships its text run's ink in the PDF" (label == text)
+    t "a label on a node's fill is not given the page's ink" (filled == softDeclared)
+  | _, _, _ => failures ref "one ink: no soft text run or label in the PDF"
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let spans := elemStylesList #[] body.toList
+  let runs := svgTextRuns body
+  let spanHas (needle ink : String) : Bool :=
+    spans.any fun (txt, st) => hasStr txt needle && hasStr st ink
+  let runHas (needle ink : String) : Bool :=
+    runs.any fun (txt, attrs) => hasStr txt needle && attrs.any fun (_, v) => hasStr v ink
+  match pdfInk "Mixtext", pdfInk "Softtext" with
+  | some mix, some soft =>
+    t "the HTML paragraph and the HTML label carry the mix's one ink"
+      (spanHas "Mixtext" (HtmlDoc.cssColor mix) && runHas "Mixlabel" (HtmlDoc.cssColor mix))
+    t "the HTML paragraph and the HTML label carry the role's one ink"
+      (spanHas "Softtext" (HtmlDoc.cssColor soft) && runHas "Softlabel" (HtmlDoc.cssColor soft))
+  | _, _ => failures ref "one ink: no text runs to compare the HTML against"
+
 /-- **A node's text is inline content, so its styles reach both artifacts.**
 The defect: `\textbf{…}` in a node body set in the regular weight where
 lualatex sets it bold, and `\emph`, `\textit` and `\textsc` lost their

@@ -2787,6 +2787,26 @@ structure Picture where
 def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
   { p with shapes := p.shapes.map (·.recolor f) }
 
+/-- The fill a shape paints at a point, when it holds the point: a filled
+rectangle, a filled circle's disc, a filled frame's box. -/
+def Shape.fillAt (x y : Sp) : Shape → Option Color
+  | .rect rx ry w h c =>
+    if min rx (rx + w) ≤ x ∧ x ≤ max rx (rx + w) ∧ min ry (ry + h) ≤ y ∧ y ≤ max ry (ry + h)
+    then some c else none
+  | .circle cx cy r _ fl =>
+    if (x - cx) * (x - cx) + (y - cy) * (y - cy) ≤ r * r then fl else none
+  | .frame fx fy w h _ fl =>
+    if fx ≤ x ∧ x ≤ fx + w ∧ fy ≤ y ∧ y ≤ fy + h then fl else none
+  | .label _ _ _ _ _ _ => none
+  | .edge _ _ _ => none
+
+/-- The ground a label's ink stands on: the fill of the last shape drawn
+before it that paints its anchor — a node's own fill sits under its
+label — and `none` where the label stands on whatever the picture stands
+on. -/
+def fillUnder (drawn : Array Shape) (x y : Sp) : Option Color :=
+  drawn.foldl (fun g s => (s.fillAt x y).or g) none
+
 /-- The inline content each label sets, for the font-scalar walk: every
 glyph — text or math — a picture can ask a face for is here. -/
 def Picture.labelContents (p : Picture) : Array (Array Inline) :=
@@ -9692,9 +9712,9 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .setPalette p => (.setPalette (repal p), p)
   | .setTokens tk => (.setTokens tk, pal)
   | .pagebreak => (.pagebreak, pal)
-  -- A note is a side channel, verbatim and pictures carry no role-named
-  -- runs, a logo is furniture, a rule is decorative ink: the judge reads
-  -- none of them, so the walk leaves each whole.
+  -- A note is a side channel, verbatim carries no role-named runs, a logo
+  -- is furniture, a rule is decorative ink: the judge reads none of them,
+  -- so the walk leaves each whole.
   | .note body => (.note body, pal)
   | .verbatim c s sp => (.verbatim c s sp, pal)
   -- Lines are judged where they stand (`Contrast.usesBlock` descends into
@@ -9703,7 +9723,13 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
     (.algorithm n sm (recolorRolesAlgLines recolor pal ground #[] lines.toList), pal)
   | .logo content => (.logo content, pal)
   | .rule c nm th => (.rule c nm th, pal)
-  | .picture p => (.picture p, pal)
+  -- A label is a run like any other: it ships the plan's ink for its
+  -- pairing on the ground under it — a node's fill, else the ground the
+  -- picture stands on — so one expression on one ground is one ink,
+  -- whether it is set in a paragraph or in a drawing.
+  | .picture p =>
+    (.picture { p with shapes := recolorRolesShapes recolor pal ground #[] p.shapes.toList },
+      pal)
   | .table cols pl pr rows rules =>
     (.table cols pl pr (recolorRolesTableRows recolor pal ground #[] rows.toList) rules, pal)
   | .float fk num ca body caption =>
@@ -9767,6 +9793,24 @@ def recolorRolesAlgLines (recolor : RoleRecolor) (pal : Palette)
         comment := match l.comment with
           | some c => some (recolorRolesInlines recolor pal ground #[] c.toList)
           | none => Option.none }) rest
+
+/-- A picture's shapes in drawing order, each label recoloured on the ground
+under its anchor (`Pic.fillUnder` over the shapes drawn before it); every
+other shape keeps its paint. -/
+def recolorRolesShapes (recolor : RoleRecolor) (pal : Palette) (ground : Option Color)
+    (drawn : Array Pic.Shape) : List Pic.Shape → Array Pic.Shape
+  | [] => drawn
+  | s :: rest =>
+    let s' := match s with
+      | .label x y content c sc al =>
+        let g := (Pic.fillUnder drawn x y).or ground
+        .label x y (recolorRolesInlines recolor pal g #[] content.toList) (recolor pal g none c)
+          sc al
+      | .rect x y w h c => .rect x y w h c
+      | .circle x y r st fl => .circle x y r st fl
+      | .frame x y w h st fl => .frame x y w h st fl
+      | .edge segs st tip => .edge segs st tip
+    recolorRolesShapes recolor pal ground (drawn.push s') rest
 
 def recolorRolesInlines (recolor : RoleRecolor) (pal : Palette)
     (ground : Option Color) (out : Array Inline) : List Inline → Array Inline
