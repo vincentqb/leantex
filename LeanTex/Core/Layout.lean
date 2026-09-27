@@ -3973,6 +3973,11 @@ private structure B where
   /-- Ink depth of the last line placed (metric descent per run): what
   furniture, pictures, and the page bottom clear against. -/
   prevDepth : Sp := 0
+  /-- The last set line's depth as TeX's box has it — its deepest glyph
+  (`segsInk`) — keyed by the baseline and `prevDepth` it was committed
+  with, so any later writer of either leaves the key behind and the band at
+  `y` answers its own `prevDepth` (`B.boxDepth`). -/
+  lastInk : Option (Sp × Sp × Sp) := none
   /-- Leaded below of the last line placed (`LineBox.below`): the upper
   term of the metric interline rule. -/
   prevBelow : Sp := 0
@@ -4230,19 +4235,54 @@ private theorem note_whole (b : B) :
   · exact ⟨_, Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, hl, rfl⟩)),
       rfl, rfl⟩
 
+/-- The depth of the band at `y` as TeX's box has it: the last set line's
+deepest glyph while that line is still the band there (`lastInk`'s key
+holds), else the band's own depth — a picture's box, a rule, a bar. TeX's
+line is an hbox of its glyphs (TeXbook ch. 12); the interline rule keeps
+the face's descent (`prevDepth`). -/
+private def B.boxDepth (b : B) : Sp :=
+  match b.lastInk with
+  | some (y, d, ink) => if y == b.y && d == b.prevDepth then ink else b.prevDepth
+  | none => b.prevDepth
+
+/-- Record the band just committed as a set line whose box is `ink` deep. -/
+private def B.keepInk (b : B) (ink : Sp) : B :=
+  { b with lastInk := some (b.y, b.prevDepth, ink) }
+
+@[simp] private theorem keepInk_cur (b : B) (d : Sp) : (b.keepInk d).cur = b.cur := rfl
+@[simp] private theorem keepInk_pages (b : B) (d : Sp) : (b.keepInk d).pages = b.pages := rfl
+@[simp] private theorem keepInk_noBreak (b : B) (d : Sp) :
+    (b.keepInk d).noBreak = b.noBreak := rfl
+@[simp] private theorem keepInk_pendingNotes (b : B) (d : Sp) :
+    (b.keepInk d).pendingNotes = b.pendingNotes := rfl
+
+/-- **A band just set as a line answers its glyph box's depth** (`_exact`):
+`keepInk`'s key is the band's own baseline and depth, so the page's
+distribution reads the recorded depth until something else stands at `y`. -/
+private theorem keepInk_boxDepth_exact (b : B) (d : Sp) : (b.keepInk d).boxDepth = d := by
+  simp [B.keepInk, B.boxDepth]
+
 /-- **Where the page's content ends**, the one site the vertical
 distribution reads: the last placed box's bottom — `b.y` is the last
 line's baseline or the lower edge of a picture's box, declared or natural
 (`placePicture`) — plus its depth and the space the content still owes
 below it (`owed`), less the shrink the page gave, which moved the last box
 up by all of `needed` (its shrink ledger entry is the page's whole shrink).
-TeX sets a frame's content as one box: beamer centres the `\vbox` whole, a
-declared `\useasboundingbox` is its picture's extent however far the ink
-stands from it, and `\addvspace` leaves a trivlist's closing `\topsep`
-inside the box. Never the lowest line: a label can stand below a declared
-box, and a picture's box reaches below its labels. -/
+Where the page is TeX's (`Geom.topskip`) the depth is TeX's box's
+(`B.boxDepth`: a set line's deepest glyph, not its face's descent), as the
+first line's rise is (`B.firstRise`). A frame page keeps the face's
+descent: beamer counts the glyph there too (a last line with descenders
+lifts a `[c]` frame by half their depth, 1.00 bp measured), but the frame's
+window above it — the title box's bottom and the leading under it — stands
+low by more than the descent it would give back, so the two move together
+or not at all. TeX sets a frame's content as one box: beamer centres the
+`\vbox` whole, a declared `\useasboundingbox` is its picture's extent
+however far the ink stands from it, and `\addvspace` leaves a trivlist's
+closing `\topsep` inside the box. Never the lowest line: a label can stand
+below a declared box, and a picture's box reaches below its labels. -/
 private def B.contentEnd (b : B) (owed : Sp) : Sp :=
-  b.y + b.prevDepth + owed - (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
+  b.y + (if b.geom.topskip.isSome then b.boxDepth else b.prevDepth) + owed -
+    (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
 
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
@@ -4513,11 +4553,14 @@ private def B.pushSibling (b : B) (line : Option LineOut := none)
     (shrink : Option Sp := none) : B :=
   let b := match line with
     | some l =>
+      -- A rider joins the band at `y` unmeasured: the band answers its
+      -- metric depth again (`B.boxDepth`).
       { b with cur := { b.cur with lines := b.cur.lines.push l },
                shrinkAbove := b.shrinkAbove.push
                  (shrink.getD (b.shrinkAbove.back?.getD 0))
                filsAbove := if shrink.isSome then b.filsAbove
-                 else b.filsAbove.push (b.filsAbove.back?.getD 0) }
+                 else b.filsAbove.push (b.filsAbove.back?.getD 0)
+               lastInk := none }
     | none => b
   if fills.isEmpty && paths.isEmpty then b
   else { b with cur := { b.cur with fills := b.cur.fills ++ fills,
@@ -4672,11 +4715,13 @@ vertical metrics at each run's size — and never consults a glyph (CSS 2.1
 the box). Emptying every run's glyph array changes no component, by fold
 congruence: no arm reads the payload. Everything placed against a line
 measures from these metric lines at the run's own size; ink is read only
-to interrupt (the underline band) or to clear (math minimum gaps,
-furniture bands), never to position. The accepted cost is stated here
-once: a descender-less title keeps its full metric depth, so its optical
-gap to the next line is larger than its ink suggests — furniture that
-moved with the letters would make the artifact content-dependent. -/
+to interrupt (the underline band), to clear (math minimum gaps, furniture
+bands), or where a page stands on TeX's box (`segsInk`: its first line and
+its content's end), never to space one line from the next. The accepted
+cost is stated here once: a descender-less title keeps its full metric
+depth, so its optical gap to the next line is larger than its ink suggests
+— furniture that moved with the letters would make the artifact
+content-dependent. -/
 theorem line_box_glyph_free (fs : FontSet)
     (fontSize bodyAscent bodyCap bodyDescent : Sp) (leadFactor : Nat)
     (size : Sp) (segs : Array Seg) :
@@ -4702,10 +4747,13 @@ theorem line_box_glyph_free (fs : FontSet)
 outlines: the tallest glyph above the baseline and the deepest below it,
 each run at its own size and raise; an image stands on the baseline, a
 rule spans its extent, and a glyph whose outline does not decode answers
-its face's metric ascent and descent. The line-box convention positions
-no line from ink (`line_box_glyph_free`); this is read only where the ink
-is what must be cleared — the footline band a frame's text area stops
-above, as beamer's `\footheight` is the band's `\ht` plus `\dp`. -/
+its face's metric ascent and descent. The line-box convention spaces no
+line against its neighbour from ink (`line_box_glyph_free`); this is read
+where TeX's box is what the page places or clears — the first line of a
+TeX page (`B.firstRise`), the content's end a TeX page's distribution
+measures (`placeLine_boxDepth_exact`), and the footline band a frame's
+text area stops above, as beamer's `\footheight` is the band's `\ht` plus
+`\dp`. -/
 def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun (acc : Sp × Sp) s => match s with
     | .run idx _ _ _ glyphs sz _ raise _ _ =>
@@ -4879,15 +4927,21 @@ private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B �
           notes).warnNoteOverrun (retryY b) inkBelow
 
 /-- How far the first line of a fresh page stands below the text area's
-top. Where the page is TeX's (`Geom.topskip`), TeX's rule: `\topskip`, or
-the line's own box where that is taller — the box read from its glyphs, as
-TeX's box is (`segsInk`), so body text starts on one line of the page grid
-in every face and only display type or a tall box stands on its ink. On a
+top. Where the page is TeX's (`Geom.topskip`), TeX's rule: the page builder
+puts `\topskip` less the first box's height above the first box or rule
+(TeXbook ch. 15). On a page that opens on an anchor — `\vspace*`'s zero
+rule, which the engine reads as a fil standing in the pending skip
+(`B.topKept`) — that rule is the first item, so `\topskip` stands above it
+whole and the line stands on its own box below the glue the anchor keeps;
+otherwise the line is the first box, at `\topskip` or on its own box where
+that is taller. The box is read from its glyphs, as TeX's box is
+(`segsInk`, `ink`), so body text starts on one line of the page grid in
+every face and only display type or a tall box stands on its ink. On a
 frame page, the engine's metric rule: the body's ascent or the line's own
 leaded above. -/
-private def B.firstRise (b : B) (fs : FontSet) (box : LineBox) (segs : Array Seg) : Sp :=
+private def B.firstRise (b : B) (ink : Sp) (box : LineBox) : Sp :=
   match b.geom.topskip with
-  | some t => max t (segsInk fs segs).1
+  | some t => if b.skip.fil then t + ink else max t ink
   | none => max b.ascent box.above
 
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
@@ -4915,7 +4969,9 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     (leaf : Option Nat := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
-  let rise := b.firstRise fs box segs
+  -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
+  -- it does in TeX's hbox, so it is read before the filter below.
+  let ink := segsInk fs segs
   let rl := ruleOnly segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
@@ -4933,15 +4989,16 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
       hang := hang, expand := expand, counted := counted, leaf := leaf }
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
-  -- and the pending skip an anchor keeps (`B.topKept`).
-  b.fitCommit mk
-    (fun b => b.geom.bodyTop + rise + b.topKept)
+  -- and the pending skip an anchor keeps (`B.topKept`). The line's box
+  -- depth stays with it for the page's distribution (`B.boxDepth`).
+  (b.fitCommit mk
+    (fun b => b.geom.bodyTop + b.firstRise ink.1 box + b.topKept)
     (fun b => b.y + b.skip.width
       + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
     (fun b => b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
-    box.inkBelow box.below rl box.inkBelow bottom notes
+    box.inkBelow box.below rl box.inkBelow bottom notes).keepInk ink.2
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (neither neighbour
@@ -4982,6 +5039,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
+  simp only [keepInk_cur]
   simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, interlineFor, hnn, noteFloor,
     Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
@@ -4990,23 +5048,24 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   simp [Array.back?_push]
 
 /-- The first baseline, declared: on a fresh page the line lands at the
-body top plus its rise (`B.firstRise`) — TeX's `\topskip` floored by the
-line's own glyph box where the page is TeX's, the metric rule on a frame
-page — and below whatever pending skip an anchor keeps (`B.topKept`:
-none unless a fil stands in it). Constant for a document unless a taller
-first line honestly needs more, or the page opens on a `\vspace*{\fill}`;
-what furniture symmetry measures to. -/
+body top plus its rise (`B.firstRise`) — TeX's `\topskip` against the
+line's own glyph box where the page is TeX's, above an anchor or floored by
+the box, the metric rule on a frame page — and below whatever pending skip
+an anchor keeps (`B.topKept`: none unless a fil stands in it). Constant
+for a document unless a taller first line honestly needs more, or the page
+opens on a `\vspace*{\fill}`; what furniture symmetry measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
-      some (b.geom.bodyTop + b.firstRise fs
+      some (b.geom.bodyTop + b.firstRise (segsInk fs segs).1
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs) segs + b.topKept) := by
+          b.geom.leading size segs) + b.topKept) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
+  simp only [keepInk_cur]
   simp [hf, B.commit, B.attachNotes, Array.back?_push]
 
 /-- **The line names the leaf it was given** (`_exact`): the `LineOut`
@@ -5022,7 +5081,22 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
+  simp only [keepInk_cur]
   simp [hf, B.commit, B.attachNotes, Array.back?_push]
+
+/-- **A set line's box, for the page's distribution, is its glyphs'**
+(`_exact`): whatever branch placement takes, the band a line leaves at
+`y` answers the depth of its deepest glyph (`segsInk`, struts included),
+so on a TeX page `B.contentEnd` reads the bottom of TeX's hbox, not the
+face's descent — lualatex lifts a centred block whose last line has
+descenders by half their depth, and so does the page close
+(`faceCentreChecks`). -/
+private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) :
+    (b.placeLine fs x size segs w hang ex ns c lf).boxDepth = (segsInk fs segs).2 := by
+  simp only [B.placeLine]
+  exact keepInk_boxDepth_exact ..
 
 /-- The other half of the PDF realization: what page close does to the gaps
 placement realized — nothing, on a page that shipped without consuming
@@ -5062,8 +5136,9 @@ pinned chrome moves by one shift, and that shift — the space above the
 content — and the space left between the content's end (`B.contentEnd`)
 and the floor differ by at most the scaled point the halving assigns below.
 The bottom is the box's, as beamer centres its frame's `\vbox`: the last
-line's depth or a picture's declared box, and the closing space the content
-keeps (a trivlist's `\topsep`). `VDist.center_split_exact` is the halving's
+line's depth (`B.contentEnd`: TeX's glyph box on a TeX page, the face's
+descent on a frame) or a picture's declared box, and the closing space the
+content keeps (a trivlist's `\topsep`). `VDist.center_split_exact` is the halving's
 arithmetic; this is the page it realizes. -/
 private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
@@ -5091,6 +5166,44 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
       Nat.not_lt.mpr hi]
+
+/-- **Two fills of equal order and stretch split the slack exactly, so a
+block framed by them stands centred** (`_exact`), stated at the page close
+that ships it. The engine counts each fil as one unit of TeX's infinite
+stretch, which is TeX's split exactly where the fills are of one order and
+one stretch — `\vspace*{\fill}` above and below, the card's idiom. On a page
+whose two fil units stand one above every line past the pin and one below
+them, with no shrink given and no note block, page close moves every such
+line by the one share `filShare l 1 2` of the leftover `l` between the
+content's TeX box (`B.contentEnd`: the last line's deepest glyph and the
+space it keeps) and the floor, and the share left below differs from it by
+at most the scaled point the halving assigns below. `VDist.center_split_exact`
+is the arithmetic; on a TeX page the box it is measured on is
+`placeLine_boxDepth_exact`'s at the bottom and `B.firstRise`'s at the top. -/
+private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
+    (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
+    (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
+    (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
+    (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
+    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) :
+    (∀ i, b.pinnedLines ≤ i →
+      ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
+        (b.cur.lines[i]?.map fun l => l.y +
+          filShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) 1 2)) ∧
+    filShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) 1 2
+      ≤ (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+        - filShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) 1 2 ∧
+    (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed)
+        - filShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) 1 2
+      ≤ filShare (noteFloor b.bottom b.footins b.notesH - b.contentEnd owed) 1 2 + 1 := by
+  refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
+  have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
+    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+  unfold B.finishPage B.noteLines
+  simp only [hcond, hpn, h2, Bool.false_eq_true, ite_false, ite_true,
+    Array.append_empty, Array.back?_push, Option.bind_some]
+  simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
+    Nat.not_lt.mpr hi]
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
@@ -9967,12 +10080,14 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   let geom := if doc.head.isSome then
       { geom with headBand := headFurn.band }
     else geom
-  -- TeX's `\topskip` where the page is TeX's: the standard classes set it
-  -- to the body size (size10/11/12.clo:97); a frame is one box, and its
-  -- first line keeps the engine's metric rule (`B.firstRise`).
-  let geom := if doc.docClass.record.model == .frame then geom
-    else { geom with topskip := some geom.fontSize }
+  -- TeX's `\topskip` where the page is TeX's: the document's own
+  -- (`\setlength{\topskip}` reaches here as the token of that name), else
+  -- the standard classes' body size (size10/11/12.clo:97); a frame is one
+  -- box, and its first line keeps the engine's metric rule (`B.firstRise`).
   let xHeight := scale font.xHeight
+  let geom := if doc.docClass.record.model == .frame then geom
+    else { geom with topskip := some (((doc.tokens.find? "topskip").map
+      fun g => (g.resolve geom.fontSize xHeight).width).getD geom.fontSize) }
   -- The resolved design is the one resolving site for the document-level
   -- colours (`Design.ofDoc`): the ink here is the ink `Contrast.docDiags`
   -- judges (`judged_pair_is_shipped`), never a second `getD` chain.

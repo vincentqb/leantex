@@ -774,16 +774,18 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   let doc (body : String) : String :=
     s!"\\documentclass\{article}\\begin\{document}{body}\\end\{document}"
   let top := linesOf (doc "hello")
-  let mid := linesOf (doc "\\vspace*{\\fill}\nhello\n\\vspace*{\\fill}")
-  let low := linesOf (doc "\\vspace*{\\fill}\nhello")
+  -- `\nointerlineskip` before the anchor, as the centring idiom writes it:
+  -- TeX then adds no interline glue between `\vspace*`'s rule and the line.
+  let mid := linesOf (doc "\\nointerlineskip\\vspace*{\\fill}\nhello\n\\vspace*{\\fill}")
+  let low := linesOf (doc "\\nointerlineskip\\vspace*{\\fill}\nhello")
   t "the fill sandwich centres its page"
-    (match top[0]?, mid[0]?, low[0]? with
-     | some a, some b, some c =>
-       -- strictly between top-flush and bottom-flush, and nearer neither
-       -- edge than a line of text: the two fils split the leftover.
-       a.y < b.y && b.y < c.y &&
-         (b.y - a.y - (c.y - b.y)).natAbs ≤ 1
-     | _, _, _ => false)
+    (match mid[0]? with
+     | some b =>
+       -- `\topskip` (article's 10 pt) stands above the anchor, and the two
+       -- fils split the rest evenly around the line's own box.
+       let (h, d) := Layout.segsInk oneFace b.segs
+       ((b.y - h - geom.bodyTop - Dim.pt 10) - (geom.bodyBottom - (b.y + d))).natAbs ≤ 1
+     | none => false)
   t "a leading fill alone pushes content to the bottom"
     (match low[0]?, mid[0]? with
      | some c, some b => c.y > b.y
@@ -4078,6 +4080,76 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     face "normalsize" "Delta words" "Echo words")) 1 "Delta"
   t "a second face stands where the same face stands on a page of its own"
     (alone.isSome && second == alone)
+
+/-- **A block framed by two fills stands centred on its TeX box**
+(`finishPage_fill_centre_exact`, `placeLine_boxDepth_exact`,
+`B.firstRise`). The card's idiom, synthetic and one construct varied at a
+time: `\nointerlineskip`, `\vspace*{\fill}`, a `{center}` around a
+`\textwidth` minipage opened by `\flushleft`, two lines split by `\\`,
+`\vspace*{\fill}`, `\pagebreak`, on two faces of different sizes, equal
+margins. lualatex (TeX Live 2026, article 10pt) sets the minipage as one
+`\vcenter`ed box — its first line's tallest glyph to its last line's
+deepest — with `\@topsepadd` above and below it, and the two `\fill`s split
+the rest evenly: measured on this shape in the shipped Open Sans at 1200
+dpi, −0.06 and −0.03 bp from the text area's centre. `\topskip` goes above
+`\vspace*`'s rule, the page's first item, so under the class's own 10 pt
+the block stands half of it low (4.92 and 4.95 bp) and under a declared
+14 pt half of that (6.96 bp). Each claim is the gap above the box less the
+gap below it, held to the one sp the halving assigns below. At `8d3df368`
+the faces' gaps differed by −5.1 and −13.6 pt under every `\topskip`, and
+at `f16b1321` by −2.4 and +1.8 (the last line's metric descent read as its
+depth, and a declared `\topskip` unread). A centred frame is the same box
+in beamer — lualatex lifts a frame whose last line has descenders by half
+their depth (1.00 bp for "ppp" against "ooo", beamer 11pt, moloch) — and
+the engine's frame does not yet: that row is owed, and fails in both
+directions. Invented words. -/
+def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let face (size w1 w2 : String) : String :=
+    "\\nointerlineskip\n\\vspace*{\\fill}\n\\begin{center}\n\\begin{minipage}{\\textwidth}\n" ++
+      "\\flushleft\n\\" ++ size ++ "\n" ++ w1 ++ "\\\\\n" ++ w2 ++
+      "\n\\end{minipage}\n\\end{center}\n\\vspace*{\\fill}\n\\pagebreak\n"
+  let src (pre : String) : String :=
+    "\\documentclass{article}\\usepackage{geometry}" ++
+    "\\geometry{paperwidth=4in, paperheight=2.5in, margin=0.3in, noheadfoot}" ++
+    "\\pagestyle{empty}\\setlength{\\parindent}{0pt}\\setlength{\\parskip}{0pt}" ++ pre ++
+    "\\begin{document}" ++ face "Large" "Alpha Bravo" "Charlie Delta, Echo" ++
+    face "normalsize" "golf.example.org" "hotel@example.org" ++ "\\end{document}"
+  -- The gap above the block's box on page `i` less the gap below it, from
+  -- the shipped lines and their glyphs.
+  let skew (s : String) (i : Nat) : Option Dim.Sp := do
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    let p ← (layoutOf oneFace doc).pages[i]?
+    let first ← p.lines[0]?
+    let last ← p.lines.back?
+    let top := first.y - (Layout.segsInk oneFace first.segs).1
+    let bottom := last.y + (Layout.segsInk oneFace last.segs).2
+    pure ((top - g.bodyTop) - (g.bodyBottom - bottom))
+  let within (v : Option Dim.Sp) (want : Dim.Sp) : Bool :=
+    (v.map fun d => want - 1 ≤ d && d ≤ want + 1).getD false
+  for i in [0, 1] do
+    t s!"face {i + 1}: a block framed by two fills stands centred on its box"
+      (within (skew (src "\\setlength{\\topskip}{0pt}") i) 0)
+    t s!"face {i + 1}: the class's \\topskip stands above the fill, as in lualatex"
+      (within (skew (src "") i) (Dim.pt 10))
+    t s!"face {i + 1}: a declared \\topskip stands above the fill whole"
+      (within (skew (src "\\setlength{\\topskip}{14pt}") i) (Dim.pt 14))
+  let deck (last : String) : String :=
+    "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}[c]\n" ++
+      "Alpha words here.\n\n" ++ last ++ "\n\\end{frame}\\end{document}"
+  let lastDepth (s : String) : Option (Dim.Sp × Dim.Sp) := do
+    let p ← (layoutOf oneFace (elabStr s).1).pages[0]?
+    let l ← p.lines.find? fun l => hasStr (lineText l) "Bravo"
+    pure (l.y, (Layout.segsInk oneFace l.segs).2)
+  match lastDepth (deck "Bravo words ooo"), lastDepth (deck "Bravo words ppp") with
+  | some (yo, dO), some (yp, dp) =>
+    -- Owed, both ways: beamer lifts the `ppp` frame by half the glyphs'
+    -- depth; the engine's frame keeps the face's descent (`B.contentEnd`)
+    -- until its window moves with it. Fixing one without the other fails here.
+    t "owed: a centred frame still ends on its last line's face descent"
+      (dO < dp && yo == yp)
+  | _, _ => t "the frame depth fixtures lay out" false
 
 /-- **A list or quote that opens a paragraph spends `\partopsep`**
 (`Ir.partopsepFor`, `Ir.inParagraphRole`). LaTeX's `\@trivlist` adds
