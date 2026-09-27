@@ -6106,6 +6106,37 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (w2.standing.isEmpty && w2.notes.all fun d =>
       d.code == "N0419" && hasStr (d.help.getD "") "an invented failure")
 
+/-- **An inline picture never prints its own source.** `\tikz` in either of
+its forms (pgfmanual §12.2.2) — a braced command list, or one command up to
+its `;` — is the picture a `{tikzpicture}` with that body is: its path code
+is never ink, and the text after it still sets. Read off the shipped page's
+text and paint, never the IR. -/
+def tikzInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pageOf (body : String) : Array CensusPage × Array Diag :=
+    let (doc, ds) := elabStr (dvDoc "" body)
+    (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
+  let shipped (c : Array CensusPage) : String := String.intercalate " " (c.toList.map (·.text))
+  let noCode (s : String) : Bool :=
+    !hasStr s "rectangle" && !hasStr s "(0,0)" && !hasStr s "circle"
+  for (form, body) in
+      [("one command", "Words before \\tikz \\fill (0,0) rectangle (0.2,0.2); words after."),
+       ("a braced list", "Words before \\tikz{\\fill (0,0) rectangle (0.2,0.2);} words after."),
+       ("an option bracket", "Words before \\tikz[scale=2] \\fill (0,0) rectangle (0.2,0.2); words after.")] do
+    let (c, ds) := pageOf body
+    t s!"\\tikz with {form} ships a picture, not its path code"
+      (noCode (shipped c) && hasStr (shipped c) "Words before" && hasStr (shipped c) "words after" &&
+       c.any (·.fills ≥ 1) && ds.all (·.code != "W0301"))
+  -- A command's `;` ends it mid-word: what follows in that word is text.
+  let (c, _) := pageOf "Tail \\tikz \\fill (0,0) rectangle (0.2,0.2);kept here."
+  t "the text after a command's semicolon sets as text"
+    (hasStr (shipped c) "kept here" && noCode (shipped c))
+  -- A picture the subset draws nothing of routes, from inline too.
+  let (circ, circDs) := elabStr (dvDoc "" "Mark \\tikz \\draw (0,0) circle (0.8ex); here.")
+  t "an inline picture outside the subset states its request, no path code"
+    ((Ir.pictureRefs circ).size == 1 && circDs.all (·.code != "W0301") &&
+     noCode (shipped (censusOf (coveredColorsOf circ) (layoutOf oneFace circ))))
+
 /-- The three levels a picture's option entries are read under, read off the
 page the engine ships rather than the IR: **picture < every X < the
 bracket's own** (`Picture.mergeOpts`, whose boundaries are

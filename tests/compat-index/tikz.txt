@@ -103,7 +103,9 @@ body refuse:W0334 \begin{tikzpicture}\ifnum\notamacro=1 \node (u) at (0,0) {x};\
 body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.mid) -- (v.mid west);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
-body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
+body impl \tikz{\fill (0,0) rectangle (1,1);}
+body impl \tikz \fill (0,0) rectangle (1,1);
+body impl \tikz[scale=2] \fill (0,0) rectangle (1,1);
 body impl \def\zzw{Q}\begin{tikzpicture}\node (u) at (0,0) {\zzw};\end{tikzpicture}
 body impl \newcommand{\zzx}[1]{#1}\begin{tikzpicture}\node (u) at (0,0) {\zzx{Q}};\end{tikzpicture}
 body impl \newcommand{\zzy}[2]{#1#2}\begin{tikzpicture}\node (u) at (0,0) {\zzy{P}{Q}};\end{tikzpicture}

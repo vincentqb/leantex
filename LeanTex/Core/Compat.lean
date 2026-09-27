@@ -1065,6 +1065,27 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | _ => break
   return (out, j)
 
+/-- `\tikz`'s one-command form from `i`: the raws up to and including the
+first `;` a top-level word carries — where TikZ's path parser ends the
+command (pgfmanual §12.2.2) — with the rest of that word handed back as
+text, and the index after it. Nothing when no `;` closes the command before
+the paragraph ends: the form is then not one this reader can bound. -/
+def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw × Nat) := Id.run do
+  let mut out : Array Raw := #[]
+  for k in [i:raws.size] do
+    match raws[k]? with
+    | some (.word s p) =>
+      match s.splitOn ";" with
+      | before :: after :: more =>
+        let rest := String.intercalate ";" (after :: more)
+        return some (out.push (.word (before ++ ";") p),
+          if rest.isEmpty then #[] else #[.word rest p], k + 1)
+      | _ => out := out.push (.word s p)
+    | some (.par _) => return none
+    | some r => out := out.push r
+    | none => return none
+  return none
+
 /-- The alert style around a body, one spelling for both `\alert` forms:
 themed, the theme's alert colour AND bold — colour alone would be the only
 signal distinguishing the run, which WCAG 2.2 SC 1.4.1 forbids (metropolis
@@ -5141,6 +5162,23 @@ its value is skipped" pos
           became s!"\\setbeamerfont\{{element}}" native pos
           return some (← synthAt native pos, k)
     else return none
+  | "tikz" =>
+    -- TikZ's inline picture (pgfmanual §12.2.2): `\tikz[opts]{commands}`, or
+    -- `\tikz[opts]` and one command up to its `;`. It is the picture a
+    -- `{tikzpicture}` with that body is, so it becomes that one node, read
+    -- by the picture arm — drawn natively or at the boundary — and never
+    -- text that prints its own path code.
+    let (_, j) := takeOpts raws start 1
+    let opts := raws.extract start j
+    let k0 := skipSpaces raws j
+    let body? : Option (Array Raw × Array Raw × Nat) := match raws[k0]? with
+      | some (.group body _) => some (body, #[], k0 + 1)
+      | _ => tikzCommand raws k0
+    match body? with
+    | some (body, rest, k) =>
+      became "\\tikz" "\\begin{tikzpicture}...\\end{tikzpicture}" pos
+      return some (#[.env "tikzpicture" (opts ++ body) pos] ++ rest, k)
+    | none => return none
   | "parbox" =>
     -- `\parbox{w}{t}` and `{minipage}{w}` are the same box: latex.ltx builds
     -- both through `\@iiiparbox`, and the manual's own difference is what a
