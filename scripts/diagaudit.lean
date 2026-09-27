@@ -10,7 +10,11 @@ root after `lake build TestsModules` (the aggregate does that for you):
 The tier measures adjudication debt: the codes no `DiagAudit.registry` row binds
 (`Tests/DiagAudit.lean`), encoded as headroom, so a new code with no verdict
 is a fall that fails the commit adding it, and a row whose pin stops
-resolving is a fault. The modules that apply each owed code are provenance
+resolving is a fault. So is a row whose pin is not about its code, which is
+decided here, where the pinned declarations are readable: a theorem's
+statement, or a check's block or a table of the suite's it reads, holds the
+code's constructor or its name spelled whole; a compat item's index refuses
+with it. The modules that apply each owed code are provenance
 and never gated: moving an emission between modules decides nothing, and a
 gate on it would fail a behaviour-preserving refactor. It measures whether a
 decision is *bound*, never whether it is right — rightness stays with the
@@ -28,13 +32,95 @@ and counts each document once however many backends built it. Its rows hold a
 registered code and numbers and nothing else, so nothing a document wrote can
 reach its output, wherever that output is sent.
 -/
+import Lean
 import Tests.DiagAudit
 import scripts.Board
 
 open Scoreboard LeanTex.Core DiagAudit
 
+/-! ## Each pin is about its code -/
+
+namespace DiagAudit
+
+open Lean
+
+/-- Does `e` hold the code as a value: its constructor, or its name spelled
+whole as a string? A message mentioning the code holds it only inside a
+longer string, which is not a use. -/
+def holdsCode (e : Expr) (ctor : Name) (code : String) : Bool :=
+  (e.find? fun x => x.isConstOf ctor || x == mkStrLit code).isSome
+
+/-- A table of the suite's: a definition in a `Tests` module that takes no
+argument, so a block that names it reads its value as data. -/
+def suiteTable? (env : Environment) (n : Name) : Option Expr := do
+  let ci ← env.find? n
+  let v ← ci.value?
+  let m ← env.getModuleIdxFor? n
+  let mod ← env.header.moduleNames[m.toNat]?
+  guard (mod.getRoot == `Tests && !ci.type.isForall)
+  pure v
+
+/-- Does a row of `tests/compat-index/<pkg>.txt` refuse with `code`? -/
+def indexRefuses (pkg code : String) : IO Bool := do
+  let p : System.FilePath := s!"tests/compat-index/{pkg}.txt"
+  unless ← p.pathExists do return false
+  return ((← IO.FS.readFile p).splitOn "\n").any fun l =>
+    !l.startsWith "#" && (l.splitOn " ").contains ("refuse:" ++ code)
+
+open Elab Term Meta in
+/-- `pin_faults% rows`: how many rows `rows` holds, and each whose pin is not
+about its code. -/
+elab "pin_faults% " rows:term : term => do
+  let env ← getEnv
+  let e ← elabTerm rows none
+  synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  let e := (e.constName?.bind fun n => (env.find? n).bind (·.value?)).getD e
+  let found ← IO.mkRef (#[] : Array Expr)
+  forEachExpr' e fun x => do
+    if x.isAppOfArity ``AuditRow.mk 4 then
+      found.modify (·.push x)
+      return false
+    return true
+  let rowsE ← found.get
+  let mut faults : Array String := #[]
+  for r in rowsE do
+    let args := r.getAppArgs
+    let some ctor := args[0]!.constName?
+      | faults := faults.push s!"a row whose code is no constructor: {← ppExpr args[0]!}"
+    let some (.ctorInfo _) := env.find? ctor
+      | faults := faults.push s!"a row whose code is no constructor: {ctor}"
+    let code := ctor.getString!
+    let fault : Option String ← match args[3]!.getAppFnArgs with
+      | (``Pin.thm, #[_, stmt, proof]) =>
+        pure <| if holdsCode stmt ctor code then none
+          else some s!"{code}: its pin {proof.getAppFn.constName?.getD `_} is a theorem \
+whose statement holds neither the constructor nor \"{code}\""
+      | (``Pin.check, #[_, .letE _ _ (.const blk _) _ _]) =>
+        let v := ((env.find? blk).bind (·.value?)).getD (mkConst ``Unit.unit)
+        pure <| if holdsCode v ctor code ||
+            (v.getUsedConstants.filterMap (suiteTable? env)).any (holdsCode · ctor code) then none
+          else some s!"{code}: its pin {blk} is a check whose block, and the tables of the \
+suite it reads, hold neither the constructor nor \"{code}\""
+      | (``Pin.tier, #[.lit (.strVal t), .lit (.strVal item)]) =>
+        pure <| if t == "compat" && (← indexRefuses ((item.splitOn ".").headD "") code) then none
+          else some s!"{code}: its pin {t}/{item} is a tier item whose inputs refuse no {code}"
+      | _ => pure (some s!"{code}: a pin not written thm%, check% or as a tier item")
+    if let some f := fault then faults := faults.push f
+  return toExpr (rowsE.size, faults.toList)
+
+end DiagAudit
+
+/-- The committed registry's rows read for their pins, and the faults. -/
+def pinAudit : Nat × List String := pin_faults% registry
+
 def measureTier : IO (Array String × Array Row) := do
   let suite ← suiteText
+  unless pinAudit.1 == registry.length do
+    throw (IO.userError s!"diagaudit: {pinAudit.1} of the registry's {registry.length} rows \
+were read for their pins")
+  unless pinAudit.2.isEmpty do
+    throw (IO.userError s!"diagaudit: the registry is malformed: {"; ".intercalate pinAudit.2}")
   let bound ← match ← auditBound suite registry with
     | .ok b => pure b
     | .error e => throw (IO.userError s!"diagaudit: the registry is malformed: {e}")
@@ -47,7 +133,7 @@ def measureTier : IO (Array String × Array Row) := do
   let modules := String.intercalate ", " (byModule.toList.filterMap fun (m, u) =>
     if u.isEmpty then none else some s!"{m} {u.length}")
   return (#[s!"# codes: {DiagCode.all.length} registered, {bound.length} bound to a verdict, \
-a target rung and a pin that resolves; {owed} owed",
+a target rung and a pin that resolves and holds the code; {owed} owed",
     s!"# verdicts: {verdicts}",
     s!"# owed by the modules that apply them (a code counts in each), provenance, never gated: \
 {modules}"],
@@ -215,6 +301,33 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
     (match ← auditBound suite twice with | .error _ => true | .ok _ => false)
   no "a theorem pin is a proof, and so resolves"
     (← (thm% Diag.tallySites_sum_exact).resolves suite)
+  -- P7: a pin is about its code. Each rule is broken once, by a pin about
+  -- nothing (the reviewer's theorem), about another code (the reviewer's
+  -- check, and a compat item), and about codes its table leaves out; each
+  -- way a pin can hold its code is shown once. `pin_faults%` spells a code
+  -- by its constructor's name, which is the premise checked first.
+  no "every code is spelled as its constructor is named"
+    (DiagCode.all.all fun c => (reprStr c).endsWith ("." ++ c.code))
+  no "every row of the registry is read for its pin" (pinAudit.1 == registry.length)
+  no s!"every committed pin holds its code ({pinAudit.2})" pinAudit.2.isEmpty
+  no "a theorem whose statement names no code holds none"
+    ((pin_faults% [(⟨.W0301, .native, .native, thm% Nat.add_comm⟩ : AuditRow)]).2.length == 1)
+  no "a check whose block names another code does not hold this one"
+    ((pin_faults% [(⟨.W0302, .keep, .native, check% measureChecks⟩ : AuditRow)]).2.length == 1)
+  no "a check does not hold a code its tables leave out"
+    ((pin_faults% [(⟨.W0201, .merge, .native, check% siteAccountingChecks⟩ : AuditRow)]).2.length
+      == 1)
+  no "a compat item whose index refuses another code does not hold this one"
+    ((pin_faults% [(⟨.W0302, .keep, .native, .tier "compat" "cancel.impl"⟩ : AuditRow)]).2.length
+      == 1)
+  no "a statement naming the constructor holds the code"
+    (pin_faults% [(⟨.W0334, .keep, .native, thm% Picture.unreachedName_accounts⟩ :
+      AuditRow)]).2.isEmpty
+  no "a statement spelling the code holds it"
+    (pin_faults% [(⟨.W0320, .keep, .native, thm% Ir.headings_no_skip_judged⟩ :
+      AuditRow)]).2.isEmpty
+  no "a check holds a code through a suite table it reads"
+    (pin_faults% [(⟨.W0362, .merge, .native, check% siteAccountingChecks⟩ : AuditRow)]).2.isEmpty
   -- P6: a code losing its row is owed once more, and charged to every
   -- module that applies it and to no other.
   let sources ← codeSources

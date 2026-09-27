@@ -63,7 +63,10 @@ def Ruling.all : List Ruling :=
 /-- What holds a verdict. A theorem pin carries the proof itself, so it is a
 theorem or it does not compile; a check pin elaborates the block it names,
 so it exists or it does not compile, and it binds only while the suite runs
-it; a tier pin binds while the committed baseline holds the item. -/
+it; a tier pin binds while the committed baseline holds the item. Whether a
+pin is *about* its code is decided where the pinned declarations are
+readable, by the tier (`scripts/diagaudit.lean`): the suite's binary cannot
+read a declaration's statement or body. -/
 inductive Pin where
   | thm (name : Lean.Name) (stmt : Prop) (proof : stmt)
   | check (name : Lean.Name) (seen : Unit)
@@ -175,7 +178,7 @@ def diagAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   let suite ← suiteText
   match ← auditBound suite registry with
   | .error e => t s!"diag audit: {e}" false
-  | .ok bound => t s!"diag audit: {bound.length} rows, each held by its pin" true
+  | .ok bound => t s!"diag audit: {bound.length} rows, each pin resolving" true
   let sources ← codeSources
   let charged := DiagCode.all.filter fun c => !sources.any (·.2.contains c.code)
   t s!"diag audit: every code is applied by some engine module ({charged.map (·.code)})"
