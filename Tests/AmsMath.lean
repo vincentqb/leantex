@@ -349,8 +349,15 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     (laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
       | .rule _ th _ _ => some th
       | _ => none
-  t "amsmath binom: a stack draws no rule, where a fraction draws one"
-    ((rules "$\\binom{n}{k}$").isEmpty && (rules "$\\frac{n}{k}$").length == 1)
+  let mathGlyphs (src : String) : List (Nat × Char) :=
+    (laid src).toList.flatMap fun l => l.segs.toList.flatMap fun s => match s with
+      | .run idx _ _ _ gs _ _ _ _ _ => gs.toList.map fun g => (idx, g.2)
+      | _ => []
+  let mathFace := fs.math.getD 0
+  t "amsmath binom: a stack sets its parts between its parentheses with no rule"
+    ((rules "$\\binom{n}{k}$").isEmpty && (rules "$\\frac{n}{k}$").length == 1 &&
+      mathGlyphs "$\\binom{n}{k}$" == ['(', MathParse.italicVar 'n',
+        MathParse.italicVar 'k', ')'].map (mathFace, ·))
   t "amsmath genfrac: a declared thickness is the bar's"
     (rules "$\\genfrac{}{}{1pt}{}{a}{b}$" == [Dim.pt 1])
   -- The parenthesis's variant, read off the run and the face that set it.
