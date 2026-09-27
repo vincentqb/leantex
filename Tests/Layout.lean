@@ -3632,6 +3632,42 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
+mutual
+
+/-- A shipped tree with every `class` attribute dropped: the element tree a
+consumer stylesheet's combinators walk, which an engine role that only
+spaces may not change. -/
+def unclassOne : Html.Node → Html.Node
+  | .elem t attrs kids => .elem t (attrs.filter (·.1 != "class")) (unclassList #[] kids.toList)
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs js => .script attrs js
+
+def unclassList (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | k :: rest => unclassList (acc.push (unclassOne k)) rest
+
+end
+
+mutual
+
+/-- The parent tag of every element carrying the class token `c`, in tree
+order: what a child combinator in a consumer stylesheet resolves against. -/
+def classParentsOne (c parent : String) (acc : Array String) : Html.Node → Array String
+  | .elem t attrs kids =>
+    let cls := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
+    let acc := if (cls.splitOn " ").contains c then acc.push parent else acc
+    classParentsList c t acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def classParentsList (c parent : String) (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => classParentsList c parent (classParentsOne c parent acc k) rest
+
+end
+
 /-- **A trivlist opens its `\topsep` on top of the peer gap** (`Ir.trivlistSkip`,
 the trivlist row of `Ir.rhythm_table_exact`). LaTeX's `{center}`,
 `{flushleft}`, `{flushright}` and `{quote}` are trivlists: `\@trivlist`
@@ -3679,11 +3715,25 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (gaps (doc "" "Alpha.\n\n{\\centering Bravo.\\par}\n\nCharlie.") == [peer, peer])
   -- The HTML half: the environment's scope rides in the trivlist role, and
   -- the base sheet gives that role and `<blockquote>` both boundaries at
-  -- the table's trivlist row, through the token the PDF reads.
-  let (cdoc, _) := elabStr (doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
-  let page := (HtmlDoc.emit {} cdoc).1
-  t "html: a center environment ships inside the trivlist role"
-    (hasStr page "<div class=\"u-trivlist-env\">" && hasStr page "<div class=\"centered\">")
+  -- the table's trivlist row, through the token the PDF reads. The role is
+  -- a class on the environment's own element, never an element of its
+  -- own: the environment and its declaration ship one element tree, so a
+  -- consumer stylesheet's child combinators (`main > .centered`) meet the
+  -- tree they were written against. A wrapper once took a site's hero
+  -- layout with it.
+  let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
+  let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
+  for (env, decl) in [("center", "\\centering"), ("flushleft", "\\raggedright"),
+      ("flushright", "\\raggedleft")] do
+    t s!"html: the {env} environment and its declaration ship one element tree"
+      (shape (doc "" s!"Alpha.\n\n\\begin\{{env}}\nBravo.\n\\end\{{env}}\n\nCharlie.") ==
+        shape (doc "" s!"Alpha.\n\n\{{decl} Bravo.\\par}\n\nCharlie."))
+  let csrc := doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie."
+  let cbody := body csrc
+  t "html: a center environment's element is main's own child, carrying the trivlist role"
+    (classParentsList "centered" "body" #[] cbody.toList == #["main"] &&
+      classParentsList (HtmlDoc.roleClass Ir.trivlistRole) "body" #[] cbody.toList == #["main"])
+  let page := (HtmlDoc.emit {} (elabStr csrc).1).1
   t "html: the trivlist owns both its boundaries at topsep over the peer gap"
     (hasStr page (":where(* + .u-trivlist-env, * + blockquote) { margin-top: " ++
       "calc(var(--topsep, 0.725rem) + 0.725rem); }") &&

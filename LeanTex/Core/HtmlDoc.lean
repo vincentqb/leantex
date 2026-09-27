@@ -4080,6 +4080,18 @@ def withEpoch (style : String) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
+/-- The node with one more class token, appended to an element's `class` or
+added as it: how an engine role that only spaces or styles reaches the
+element it governs without becoming an element of its own. -/
+def withClass (c : String) : Node → Node
+  | .elem t attrs kids =>
+    if attrs.any (·.1 == "class") then
+      .elem t (attrs.map fun kv => if kv.1 == "class" then (kv.1, kv.2 ++ " " ++ c) else kv) kids
+    else .elem t (attrs.push ("class", c)) kids
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
 /-- One reference-list entry: the style's marker, the formatted content,
 and the anchor its citations link to. -/
 private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
@@ -4797,14 +4809,20 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       #[("class", raggedClass flush)]
   -- The block half of the class hook: the authored name as a class on a
-  -- generic flow container, through the typed tree and the escaper.
+  -- generic flow container, through the typed tree and the escaper. The
+  -- trivlist role only spaces, so it is a class on the environment's own
+  -- element and never an element: a consumer sheet's child combinators
+  -- (`main > .centered`) were written against the tree without it.
   | .role n body =>
     -- A title slot's role marks its content as the slot's own: set under
     -- the slot's template alone (`Config.slotTitle`), placed by the rule
     -- `titleSlotCss` writes for this class hook.
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", roleClass n)]
+    let kids := blockNodesInto cfg.into #[] body.toList
+    match n == Ir.trivlistRole, kids.toList with
+    | true, [k] => withClass (roleClass n) k
+    | _, _ => Html.elem "div" kids #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
