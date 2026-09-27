@@ -54,10 +54,6 @@ cause class is data and never a reading of a message. -/
 def fontCodes : List DiagCode :=
   [.E0401, .E0402, .E0403, .E0404, .E0405, .W0003, .W0006, .W0009, .W0011, .N0018]
 
-def lossName : Loss → String
-  | .dropped => "dropped" | .pending => "pending" | .degraded => "degraded"
-  | .config => "config" | .info => "info"
-
 -- ## Lists
 
 structure Doc where
@@ -531,7 +527,7 @@ def censusTsv (ms : Array Measure) : String := Id.run do
     if a.2 != b.2 then a.2 > b.2 else a.1.1 ++ a.1.2 < b.1.1 ++ b.1.2
   let mut out := tsvLine ["code", "loss", "severity", "documents", "records"]
   for ((c, sev), n) in rows do
-    let loss := ((DiagCode.ofString? c).map (lossName ·.loss)).getD "unregistered"
+    let loss := ((DiagCode.ofString? c).map (·.loss.label)).getD "unregistered"
     out := out ++ tsvLine [c, loss, sev, toString n, toString (recs.getD (c, sev) 0)]
   return out
 
