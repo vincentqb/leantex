@@ -27,13 +27,14 @@ para
 para
   styled italic
     text "Platform"
-list unordered
-  item
-    para
-      text "Shipped the widget pipeline, cutting build time 10%."
-  item
-    para
-      text "Deleted more code than was added, on purpose."
+role in-paragraph
+  list unordered
+    item
+      para
+        text "Shipped the widget pipeline, cutting build time 10%."
+    item
+      para
+        text "Deleted more code than was added, on purpose."
 para
   styled bold
     text "Widgets Ltd"
@@ -43,10 +44,11 @@ para
   text " "
   fill
   text "2017–2021"
-list unordered
-  item
-    para
-      text "Measured the widgets; shipped better widgets."
+role in-paragraph
+  list unordered
+    item
+      para
+        text "Measured the widgets; shipped better widgets."
 para
   styled bold
     text "Example University"
@@ -56,12 +58,13 @@ para
   text " "
   fill
   text "2013–2017"
-list unordered
-  item
-    para
-      text "Proved a small thing "
-      styled emph
-        text "carefully"
-      text "."
+role in-paragraph
+  list unordered
+    item
+      para
+        text "Proved a small thing "
+        styled emph
+          text "carefully"
+        text "."
 -- diagnostics
 (none)

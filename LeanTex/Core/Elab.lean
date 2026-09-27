@@ -7229,6 +7229,7 @@ seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 seal isColumnStray
+seal Ir.markInParagraph Ir.flushedText
 
 -- ===== Pseudocode environments: algorithm2e and algorithmicx ============
 --
@@ -9072,9 +9073,14 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
                 | none => false)
             || bodyIsBlock body
       if isB then
-        let blocks ← flushPara ctx' blocks cur
-        let blocks ← elabEnvArm ctx' n body epos blocks
-        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+        let k := blocks.size
+        let flushed ← flushPara ctx' blocks cur
+        let inPar := Ir.flushedText k flushed
+        let blocks ← elabEnvArm ctx' n body epos flushed
+        -- A list or quote opened inside an open paragraph (no blank line
+        -- before it) rides in the in-paragraph role: `\@trivlist` finds
+        -- horizontal mode there and adds no `\partopsep`.
+        elabBlocksGo ctx' raws (i + 1) (Ir.markInParagraph inPar flushed.size blocks) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -9576,6 +9582,7 @@ unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
+unseal Ir.markInParagraph Ir.flushedText
 unseal scanBracketArg Parse.inputEnvFile?
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 

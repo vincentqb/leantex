@@ -5047,6 +5047,9 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let kids := blockNodesInto cfg.into #[] body.toList
     match n == Ir.trivlistRole, kids.toList with
     | true, [k] => withClass (roleClass n) k
+    -- The in-paragraph role is the PDF's spacing fact (`\partopsep`): the
+    -- page's element tree is the environment's own either way.
+    | false, [k] => if n == Ir.inParagraphRole then k else Html.elem "div" kids #[("class", roleClass n)]
     | _, _ => Html.elem "div" kids #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.

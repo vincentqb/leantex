@@ -8,18 +8,21 @@ list unordered
   item
     para
       text "Outer point one"
-    list unordered
-      item
-        para
-          text "Second level"
-        list unordered
-          item
-            para
-              text "Third level"
+    role in-paragraph
+      list unordered
+        item
+          para
+            text "Second level"
+          role in-paragraph
             list unordered
               item
                 para
-                  text "Fourth level"
+                  text "Third level"
+                role in-paragraph
+                  list unordered
+                    item
+                      para
+                        text "Fourth level"
   item
     para
       text "Outer point two"
@@ -30,21 +33,24 @@ list ordered
   item
     para
       text "Second"
-    list ordered
-      item
-        para
-          text "Nested resets to one"
-      item
-        para
-          text "Nested second"
-        list ordered
-          item
-            para
-              text "Third level"
+    role in-paragraph
+      list ordered
+        item
+          para
+            text "Nested resets to one"
+        item
+          para
+            text "Nested second"
+          role in-paragraph
             list ordered
               item
                 para
-                  text "Fourth level"
+                  text "Third level"
+                role in-paragraph
+                  list ordered
+                    item
+                      para
+                        text "Fourth level"
   item
     para
       text "Third, the enclosing counter resumed"
@@ -52,9 +58,10 @@ list unordered
   item
     para
       text "An itemize item"
-    list ordered
-      item
-        para
-          text "with an ordered child at its own first level"
+    role in-paragraph
+      list ordered
+        item
+          para
+            text "with an ordered child at its own first level"
 -- diagnostics
 (none)

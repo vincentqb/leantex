@@ -45,10 +45,11 @@ frame
       step 2
         para
           text "Beta placeholder point"
-        list unordered
-          item
-            para
-              text "Nested under the stepped item"
+        role in-paragraph
+          list unordered
+            item
+              para
+                text "Nested under the stepped item"
 frame
   title
     text "Order on a slide"

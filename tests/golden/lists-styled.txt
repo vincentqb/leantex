@@ -9,13 +9,15 @@ list unordered
   item
     para
       text "The base override, an en dash"
-    list unordered
-      item
-        para
-          text "The level override, a coloured bullet"
-        list unordered
-          item
-            para
-              text "The base override again: level three declares nothing"
+    role in-paragraph
+      list unordered
+        item
+          para
+            text "The level override, a coloured bullet"
+          role in-paragraph
+            list unordered
+              item
+                para
+                  text "The base override again: level three declares nothing"
 -- diagnostics
 (none)

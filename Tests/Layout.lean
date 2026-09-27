@@ -511,9 +511,14 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\begin{quotation}First paragraph.\n\nSecond paragraph.\\end{quotation}" ++
     "After.\\end{document}")
   t "quote source is clean" ds.isEmpty
+  -- The first quote opens right after text, so it rides in the in-paragraph
+  -- role (`\@trivlist` finds horizontal mode); the node inside is the same.
+  let unrole : Option Ir.Block → Option Ir.Block
+    | some (.role n #[b]) => if n == Ir.inParagraphRole then some b else some (.role n #[b])
+    | b => b
   t "quote and quotation elaborate to the one quote node"
     (doc.body.size == 4 &&
-      (match doc.body[1]?, doc.body[2]? with
+      (match unrole doc.body[1]?, doc.body[2]? with
        | some (Ir.Block.quote q1), some (Ir.Block.quote q2) =>
          q1.size == 1 && q2.size == 2
        | _, _ => false))
@@ -3834,8 +3839,9 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let c := censusOfSrc oneFace src
     words.filterMap (lineYOf c 0 ·)
   let q := (Ir.trivlistSkipDefault (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize).width.sp
-  -- size10.clo:218, the top level's `\topsep`, which `\@listi` resets on list entry
-  let lq : Dim.Sp := Dim.pt 8
+  -- size10.clo:218, the top level's `\topsep`, which `\@listi` resets on list entry,
+  -- and :215, the `\partopsep` a list after a blank line adds to it
+  let lq : Dim.Sp := Dim.pt 8 + Dim.pt 2
   let peer : Dim.Sp := match ys (doc "" "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
     | [a, b] => b - a
     | _ => 0
@@ -3922,18 +3928,20 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     | _ => 0
   let three := "Alpha.\n\n\\begin{itemize}\n\\item Bravo.\n\\item Charlie.\n\\end{itemize}\n\nDelta."
   let words := ["Alpha.", "Bravo.", "Charlie.", "Delta."]
-  -- size10.clo:216-219 and size12.clo:216-219: `\topsep`, and `\itemsep + \parsep`
-  for (cls, size, top, item) in [("{article}", 10, 8, 4 + 4), ("[12pt]{article}", 12, 10, 5 + 5)] do
+  -- size10.clo:215-219 and size12.clo:215-219: `\partopsep`, `\topsep`, and
+  -- `\itemsep + \parsep`; the list opens after a blank line, so `\@trivlist`
+  -- spends `\topsep + \partopsep` above and below it.
+  for (cls, size, top, item) in [("{article}", 10, 8 + 2, 4 + 4), ("[12pt]{article}", 12, 10 + 3, 5 + 5)] do
     let src := doc cls three
     let g := geomOf src
     let lead := Ir.leadingFor g.fontSize g.leading
-    t s!"a list at {size}pt opens its topsep under TeX's parskip, and its items stand itemsep plus parsep apart"
+    t s!"a list at {size}pt opens its topsep and partopsep under TeX's parskip, and its items stand itemsep plus parsep apart"
       (steps src words == [lead + Dim.pt top, lead + Dim.pt item, lead + Dim.pt top])
   let lead10 := Ir.leadingFor (Dim.pt 10) 1000
   t "a declared parskip stacks on a list's topsep, as TeX's does"
     (steps ("\\documentclass{article}\\setlength{\\parskip}{5pt}\\begin{document}" ++ three ++
-      "\n\\end{document}") words == [lead10 + Dim.pt 5 + Dim.pt 8,
-        lead10 + Dim.pt 8, lead10 + Dim.pt 5 + Dim.pt 8])
+      "\n\\end{document}") words == [lead10 + Dim.pt 5 + Dim.pt 10,
+        lead10 + Dim.pt 8, lead10 + Dim.pt 5 + Dim.pt 10])
   t "two paragraphs of one item stand parsep apart"
     (steps (doc "{article}" "\\begin{itemize}\n\\item Bravo.\n\nCharlie.\n\\end{itemize}")
       ["Bravo.", "Charlie."] == [lead10 + Dim.pt 4])
@@ -4022,6 +4030,81 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     face "large" "Delta words" "Echo words")) 1 "Delta"
   t "a second face stands where the same face stands on a page of its own"
     (alone.isSome && second == alone)
+
+/-- **A list or quote that opens a paragraph spends `\partopsep`**
+(`Ir.partopsepFor`, `Ir.inParagraphRole`). LaTeX's `\@trivlist` adds
+`\partopsep` to `\topsep` in vertical mode — after a blank line, at a scope's
+start, after another list — and not inside an open paragraph, and the same
+`\@topsepadd` stands below the list (latex.ltx:15871-15878, 15937-15938).
+Asserted over `Layout.Out` against the size files' values (size10.clo:215,
+size12.clo:215, and level three's own at size10.clo:233); lualatex, article
+10pt, sets a blank-line list 22 pt from the text above and below it and the
+same list without the blank line 20 pt (TeX Live 2026). Invented words. -/
+def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (cls pre body : String) : String :=
+    s!"\\documentclass{cls}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let steps (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    let v := words.filterMap (lineYOf c 0 ·)
+    (v.zip v.tail).map fun (a, b) => b - a
+  let leadOf (src : String) : Dim.Sp :=
+    let g := Layout.Geom.ofPage (elabStr src).1.page
+    Ir.leadingFor g.fontSize g.leading
+  let art := doc "{article}" ""
+  let lead := leadOf (art "x")
+  let abc := ["Alpha.", "Bravo.", "Charlie."]
+  for (name, el) in [("itemize", "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}"),
+      ("enumerate", "\\begin{enumerate}\n\\item Bravo.\n\\end{enumerate}"),
+      ("quote", "\\begin{quote}\nBravo.\n\\end{quote}")] do
+    t s!"a {name} after a blank line opens topsep and partopsep above and below it"
+      (steps (art ("Alpha.\n\n" ++ el ++ "\n\nCharlie.")) abc == [lead + Dim.pt 10, lead + Dim.pt 10])
+    -- The other half of the pair, a guard that holds at the base too.
+    t s!"a {name} inside an open paragraph opens topsep alone"
+      (steps (art ("Alpha.\n" ++ el ++ "\nCharlie.")) abc == [lead + Dim.pt 8, lead + Dim.pt 8])
+  let item := "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}"
+  t "the space below a list follows the mode the list opened in"
+    (steps (art ("Alpha.\n\n" ++ item ++ "\nCharlie.")) abc == [lead + Dim.pt 10, lead + Dim.pt 10] &&
+     steps (art ("Alpha.\n" ++ item ++ "\n\nCharlie.")) abc == [lead + Dim.pt 8, lead + Dim.pt 8])
+  t "a list right after a list's end opens in vertical mode"
+    (steps (art ("Alpha.\n\n" ++ item ++ "\n\\begin{itemize}\n\\item Charlie.\n\\end{itemize}\nDelta."))
+      ["Alpha.", "Bravo.", "Charlie.", "Delta."] == [lead + Dim.pt 10, lead + Dim.pt 10, lead + Dim.pt 10])
+  -- size10.clo:225 and :231-233: level two's topsep 4 and parsep 2, level three's topsep 2
+  -- and its own partopsep 1pt, which a declared \partopsep does not reach.
+  let nest (pre inner : String) : String := doc "{article}" pre
+    ("\\begin{itemize}\n\\item Alpha.\n\\begin{itemize}\n\\item Bravo.\n\n" ++ inner ++
+      "\n\n\\item Charlie.\n\\end{itemize}\n\\end{itemize}")
+  let three := "\\begin{itemize}\n\\item Kilo.\n\\end{itemize}"
+  let kilo := ["Bravo.", "Kilo.", "Charlie."]
+  t "a level-two list after a blank line spends its level's topsep and partopsep"
+    (steps (doc "{article}" "" ("\\begin{itemize}\n\\item Alpha.\n\n" ++
+       "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}\n\\end{itemize}")) ["Alpha.", "Bravo."]
+      == [lead + Dim.pt 4 + Dim.pt 4 + Dim.pt 2] &&
+     steps (doc "{article}" "" ("\\begin{itemize}\n\\item Alpha.\n" ++
+       "\\begin{itemize}\n\\item Bravo.\n\\end{itemize}\n\\end{itemize}")) ["Alpha.", "Bravo."]
+      == [lead + Dim.pt 4 + Dim.pt 4])
+  t "a level-three list after a blank line spends its own partopsep"
+    (steps (nest "" three) kilo == [lead + Dim.pt 5, lead + Dim.pt 5])
+  t "a declared partopsep reaches the top level"
+    (steps (doc "{article}" "\\setlength{\\partopsep}{5pt}" ("Alpha.\n\n" ++ item ++ "\n\nCharlie.")) abc
+      == [lead + Dim.pt 13, lead + Dim.pt 13])
+  t "a declared partopsep does not reach level three, whose list resets it"
+    (steps (nest "\\setlength{\\partopsep}{5pt}" three) kilo == [lead + Dim.pt 5, lead + Dim.pt 5])
+  let a12 := doc "[12pt]{article}" "" ("Alpha.\n\n" ++ item ++ "\n\nCharlie.")
+  t "a 12pt list after a blank line spends size12's topsep and partopsep"
+    (steps a12 abc == [leadOf a12 + Dim.pt 13, leadOf a12 + Dim.pt 13])
+  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n\n" ++ item ++
+    "\n\nCharlie.\n\\end{frame}\\end{document}"
+  t "a deck's list after a blank line spends beamer's zero partopsep"
+    (steps deck abc == [leadOf deck + Dim.pt 3, leadOf deck + Dim.pt 3])
+  -- The HTML half: the role is the PDF's spacing fact, and the page's
+  -- element tree is the same either way.
+  let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
+  let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
+  t "html: a list inside an open paragraph ships the element tree a blank-line list ships"
+    (shape (art ("Alpha.\n" ++ item ++ "\nCharlie.")) == shape (art ("Alpha.\n\n" ++ item ++ "\n\nCharlie.")) &&
+     !hasStr (Html.document "en" #[] (body (art ("Alpha.\n" ++ item ++ "\nCharlie."))))
+       (HtmlDoc.roleClass Ir.inParagraphRole))
 
 /-- **A heading never ends a page** (`B.keepHeading`): TeX finds no legal
 break between a heading and the first lines of its text (`\@xsect`'s

@@ -5144,6 +5144,10 @@ private structure Rd where
   slides : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   lists : Ir.ListLineage := .sizeFile
+  /-- The list or quote being collected opened inside an open paragraph
+  (`Ir.inParagraphRole`): its `\topsep` takes no `\partopsep`. Read by the
+  environment's own arm and cleared for what it contains. -/
+  inPar : Bool := false
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   imgs : Image.Store := {}
@@ -7086,8 +7090,13 @@ private def collectBlock (r : Rd) (a : Acc)
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
     -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the
     -- nesting depth over both kinds, as `\@listdepth` counts it.
-    let sk := Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1)
-    let top := sk.map fun s => r.resolve s.topsep
+    let lv := a.itemDepth + a.enumDepth + 1
+    let sk := Ir.listSkips r.lists r.geom.fontSize lv
+    -- `\@trivlist`'s `\@topsepadd`: the level's `\topsep`, with `\partopsep`
+    -- on top where the list opens a paragraph (`Ir.partopsepFor`) — anywhere
+    -- but inside an open one (`Rd.inPar`) — the same space above and below.
+    let top := sk.map fun s => if r.inPar then r.resolve s.topsep
+      else (r.resolve s.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
     -- The list's `\topsep` stands above it with TeX's `\parskip` on top,
     -- paid before the reader switches to the list's own `\parskip`; a
     -- declared `before` is the whole space, as it was, and the web's
@@ -7099,8 +7108,9 @@ private def collectBlock (r : Rd) (a : Acc)
     let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
     let ri := match sk with
-      | some s => { r with geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
-      | none => r
+      | some s => { r with inPar := false,
+                           geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
+      | none => { r with inPar := false }
     let a := collectItems ri a items.toList indent st ordered level 1
       (sk.map fun s => r.resolve s.itemsep)
     let a := if ordered then { a with enumDepth := depth - 1 }
@@ -7138,6 +7148,9 @@ private def collectBlock (r : Rd) (a : Acc)
     if n == Ir.trivlistRole then
       let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
       (collectBlocks r (a.trivSpace g) body indent).trivSpace g
+    -- A list or quote opened inside an open paragraph: its arm reads the
+    -- mode (`Rd.inPar`) and spends no `\partopsep`.
+    else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
     else
     let st := r.style n
     let a := match st.before with
@@ -7159,19 +7172,22 @@ private def collectBlock (r : Rd) (a : Acc)
     -- on entry — and sets its paragraphs `\parsep` apart.
     let saved := a.measure
     let narrow := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent)
-    match Ir.listSkips r.lists r.geom.fontSize (a.itemDepth + a.enumDepth + 1) with
+    let lv := a.itemDepth + a.enumDepth + 1
+    match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
-      let g := r.resolve sk.topsep
+      let g := if r.inPar then r.resolve sk.topsep
+        else (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
       let sub := { (a.listSpace g).flushGap r with measure := narrow }
-      let ri := { r with geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+      let ri := { r with inPar := false,
+                         geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectBlocks ri sub body (indent + r.geom.listIndent)
       { sub.listSpace g with measure := saved }
     | none =>
       -- The web's lineage: the quote is the trivlist block the HTML sheet
       -- sets, its `\topsep` over the peer gap.
       let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
-      let sub := collectBlocks r { a.trivSpace g with measure := narrow } body
-        (indent + r.geom.listIndent)
+      let sub := collectBlocks { r with inPar := false } { a.trivSpace g with measure := narrow }
+        body (indent + r.geom.listIndent)
       { sub.trivSpace g with measure := saved }
   | .titled kind title body =>
     collectBlocks r (collectTitledTitle r a kind title indent) body indent
@@ -7388,14 +7404,16 @@ takes that theorem's name rather than a fresh shape suffix because it is the
 same property over the other walk. Was an oracle over the shipped pages
 (roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
 whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
-cheap. The engine's own trivlist role is the one name that is not
-transparent — an environment opens space — and a document cannot spell it. -/
+cheap. The engine's own trivlist and in-paragraph roles are the names that
+are not transparent — an environment opens space, and one opened inside a
+paragraph opens less — and a document cannot spell either. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
-    (htl : n ≠ Ir.trivlistRole) :
+    (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
-  simp only [collectBlock, Rd.style, hst, Option.getD, h, Bool.false_eq_true, ite_false]
+  have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', Bool.false_eq_true, ite_false]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open

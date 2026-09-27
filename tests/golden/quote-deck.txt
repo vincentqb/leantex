@@ -24,9 +24,10 @@ frame
     text "An Invented Epigraph"
   para
     text "Before the quotation, at the frame’s full measure."
-  quote
-    para
-      text "Typesetting is invisible until it fails, said no real person here."
+  role in-paragraph
+    quote
+      para
+        text "Typesetting is invisible until it fails, said no real person here."
   para
     text "After the quotation, back at the full measure."
 -- diagnostics

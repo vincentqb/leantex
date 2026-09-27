@@ -752,7 +752,8 @@ inside each size file's own range (`trivlist_between`), with size10's rubber
 proportions (a fifth of the body stretch, two fifths shrink). `\partopsep`
 (size10.clo:215, 2–3 pt in article; 0 in beamer, beamerbaselocalstructure
 .sty:164) is added by LaTeX only where the environment opens a new
-paragraph, which the block walk does not record, so it is not spent.
+paragraph; lists and quotes spend it (`partopsepFor`, `inParagraphRole`),
+and this quantized space does not.
 Overridable as `\tokens{ topsep = ... }` or `\setlength{\topsep}{...}`. -/
 def trivlistSkipDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size }
@@ -776,6 +777,15 @@ declarations open none, and both elaborate to the same `.center` or
 as a title slot's is (`titleSlotRole`). A name no document command can
 spell (it carries a hyphen), so no authored role collides with it. -/
 def trivlistRole : String := "trivlist-env"
+
+/-- The role a list or a quote rides in when its `\begin` follows the
+text of an open paragraph with no blank line or `\par` between: LaTeX's
+`\@trivlist` finds horizontal mode there and adds no `\partopsep` to the
+environment's `\topsep`, above or below (latex.ltx:15871-15878), where in
+vertical mode — after a blank line, another list, a scope's start — it
+does (`partopsepFor`). A name no document command can spell (it carries a
+hyphen), as `trivlistRole`'s is. -/
+def inParagraphRole : String := "in-paragraph"
 
 /-- **The quantized trivlist space lies inside every size file's glue.** One
 quantum at LaTeX's three standard bodies sits between `\topsep`'s own
@@ -808,11 +818,14 @@ surrounding paragraph's `\parskip` on top (`\@trivlist`, `\@item`,
 `\@endparenv`); `itemsep` before every item after the first; and `parsep`,
 which is `\parskip` inside the list (`\list` sets `\parskip\parsep`), so two
 items stand `itemsep + parsep` apart and two paragraphs of one item
-`parsep`. -/
+`parsep`. `partopsep` is the level's own `\partopsep` where its
+`\@list⟨n⟩` sets it (size10.clo:233, level three), `none` where the value in
+force stands (`partopsepFor`). -/
 structure ListSkips where
   topsep : SymGlue
   itemsep : SymGlue
   parsep : SymGlue
+  partopsep : Option SymGlue
   deriving Repr, BEq
 
 /-- Glue spelled in hundredths of a point: natural, stretch, shrink. -/
@@ -825,22 +838,25 @@ to three. A deeper level keeps the third's values, because `\@listiv` and
 beyond set margins only, so the values in force stand. -/
 def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   -- size10.clo:216-233
-  | .sizeFile, 10, 1 => ⟨ptsGlue 800 200 400, ptsGlue 400 200 100, ptsGlue 400 200 100⟩
-  | .sizeFile, 10, 2 => ⟨ptsGlue 400 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100⟩
-  | .sizeFile, 10, _ => ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}⟩
+  | .sizeFile, 10, 1 => ⟨ptsGlue 800 200 400, ptsGlue 400 200 100, ptsGlue 400 200 100, none⟩
+  | .sizeFile, 10, 2 => ⟨ptsGlue 400 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100, none⟩
+  | .sizeFile, 10, _ =>
+    ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}, some (ptsGlue 100 0 100)⟩
   -- size11.clo:216-233
-  | .sizeFile, 11, 1 => ⟨ptsGlue 900 300 500, ptsGlue 450 200 100, ptsGlue 450 200 100⟩
-  | .sizeFile, 11, 2 => ⟨ptsGlue 450 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100⟩
-  | .sizeFile, 11, _ => ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}⟩
+  | .sizeFile, 11, 1 => ⟨ptsGlue 900 300 500, ptsGlue 450 200 100, ptsGlue 450 200 100, none⟩
+  | .sizeFile, 11, 2 => ⟨ptsGlue 450 200 100, ptsGlue 200 100 100, ptsGlue 200 100 100, none⟩
+  | .sizeFile, 11, _ =>
+    ⟨ptsGlue 200 100 100, ptsGlue 200 100 100, {}, some (ptsGlue 100 0 100)⟩
   -- size12.clo:216-233
-  | .sizeFile, _, 1 => ⟨ptsGlue 1000 400 600, ptsGlue 500 250 100, ptsGlue 500 250 100⟩
-  | .sizeFile, _, 2 => ⟨ptsGlue 500 250 100, ptsGlue 250 100 100, ptsGlue 250 100 100⟩
-  | .sizeFile, _, _ => ⟨ptsGlue 250 100 100, ptsGlue 250 100 100, {}⟩
+  | .sizeFile, _, 1 => ⟨ptsGlue 1000 400 600, ptsGlue 500 250 100, ptsGlue 500 250 100, none⟩
+  | .sizeFile, _, 2 => ⟨ptsGlue 500 250 100, ptsGlue 250 100 100, ptsGlue 250 100 100, none⟩
+  | .sizeFile, _, _ =>
+    ⟨ptsGlue 250 100 100, ptsGlue 250 100 100, {}, some (ptsGlue 100 0 100)⟩
   -- beamerbaselocalstructure.sty:152-163
-  | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}⟩
-  | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0⟩
+  | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}, none⟩
+  | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0, none⟩
   -- the web's: no list space of its own (`listSkips` answers `none`)
-  | .web, _, _ => ⟨{}, {}, {}⟩
+  | .web, _, _ => ⟨{}, {}, {}, none⟩
 
 /-- The size file a body size reads: the standard classes' `10pt`, `11pt`
 and `12pt` options, and the nearest of them for any other size. -/
@@ -866,7 +882,47 @@ def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSkips :=
     if size == base then some s
     else some { topsep := s.topsep.scale size base.toNat
                 itemsep := s.itemsep.scale size base.toNat
-                parsep := s.parsep.scale size base.toNat }
+                parsep := s.parsep.scale size base.toNat
+                partopsep := s.partopsep.map (·.scale size base.toNat) }
+
+/-- The class's `\partopsep`, the value in force where no list level sets
+its own: size10.clo:215 `2pt plus 1pt minus 1pt`, size11.clo:215
+`3pt plus 1pt minus 1pt`, size12.clo:215 `3pt plus 2pt minus 2pt`, scaled
+with the type off the three bodies as `listSkips` scales; beamer's is zero
+(beamerbaselocalstructure.sty:164), and the web's lists open none. -/
+def partopsepDefault (l : ListLineage) (size : Sp) : SymGlue :=
+  match l with
+  | .sizeFile =>
+    let f := sizeFileOf size
+    let g := match f with
+      | 10 => ptsGlue 200 100 100
+      | 11 => ptsGlue 300 100 100
+      | _ => ptsGlue 300 200 200
+    if size == Dim.pt f then g else g.scale size (Dim.pt f).toNat
+  | .beamer | .web => {}
+
+/-- **The one resolving site for a list's `\partopsep`**, the space
+`\@trivlist` adds to `\topsep` where the list opens in vertical mode: the
+level's own where its `\@list⟨n⟩` sets it — size10/11/12.clo:233, so a
+level-three list takes 1pt whatever the document declared — else a
+declared `\partopsep` (`\setlength`, `\tokens`), else the class's
+(`partopsepDefault`). -/
+def partopsepFor (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) : SymGlue :=
+  match (listSkips l size level).bind (·.partopsep) with
+  | some g => g
+  | none => (tokens.find? "partopsep").getD (partopsepDefault l size)
+
+/-- A list opening a paragraph adds the class's `\partopsep` at the top
+level and its level-three reset below: 2, 3 and 3 pt at the three standard
+bodies (size10/11/12.clo:215), 1pt at level three (:233) whatever the
+document declared, and beamer's zero. -/
+theorem partopsep_exact :
+    (partopsepFor .sizeFile (Dim.pt 10) 1 {}).width.sp = Dim.pt 2 ∧
+    (partopsepFor .sizeFile (Dim.pt 11) 1 {}).width.sp = Dim.pt 3 ∧
+    (partopsepFor .sizeFile (Dim.pt 12) 1 {}).width.sp = Dim.pt 3 ∧
+    (partopsepFor .sizeFile (Dim.pt 10) 3 {}).width.sp = Dim.pt 1 ∧
+    (partopsepFor .beamer (Dim.pt 11) 1 {}).width.sp = 0 := by
+  decide
 
 /-- At the three standard body sizes a list's spacing is the size file's,
 exactly: `\topsep` 8, 9, 10 pt and `\itemsep + \parsep` 8, 9, 10 pt at the
@@ -4085,6 +4141,35 @@ alignment — whether modelled or carried as source? -/
 def Inline.isDisplayFormula : Inline → Bool
   | .formula true _ _ | .math true _ => true
   | _ => false
+
+/-- The environments `\@trivlist` spaces with `\partopsep` in vertical
+mode, as this engine sets them: a list and a quote. -/
+def Block.partopsepEnv : Block → Bool
+  | .list .. | .quote _ => true
+  | _ => false
+
+/-- A list or a quote marked as opened inside a paragraph
+(`inParagraphRole`). Anything else stands as it is. -/
+def inParagraph (b : Block) : Block :=
+  if b.partopsepEnv then .role inParagraphRole #[b] else b
+
+/-- Mark the block an environment arm pushed past `k` as opened inside a
+paragraph (`inParagraph`) when `inPar` says the paragraph flushed just
+before it had text; the census stands (`markInParagraph_text`). -/
+def markInParagraph (inPar : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
+  match inPar && blocks.size == k + 1, blocks.back? with
+  | true, some b => blocks.pop.push (inParagraph b)
+  | false, _ => blocks
+  | true, none => blocks
+
+/-- Did flushing the open paragraph leave one with text — anything but
+label anchors, which ship no ink and keep TeX in vertical mode — as the
+last of `after`, past the `k` blocks that stood before? -/
+def flushedText (k : Nat) (after : Array Block) : Bool :=
+  k < after.size &&
+    match after.back? with
+    | some (.para content) => !content.all (· matches .label _)
+    | _ => false
 
 /-- A centred block's body that is one display formula and nothing else,
 labels aside — the shape `\[…\]` and the unnumbered display environments
@@ -8620,6 +8705,25 @@ def titleBars (st : ElementStyle) (ink : Color × Option String)
 private theorem blocksText_push (out : Array Block) (b : Block) :
     blocksText (out.push b) = blockTextOne (blocksText out) b := by
   simp [blocksText, Array.toList_push, blockTextList_append, blockTextList]
+
+/-- The in-paragraph role is a name for the page's spacing, never text:
+marking a list or a quote ships exactly the census it had. -/
+theorem inParagraph_text (acc : String) (b : Block) :
+    blockTextOne acc (inParagraph b) = blockTextOne acc b := by
+  unfold inParagraph
+  cases b.partopsepEnv <;> simp [blockTextOne, blockTextList]
+
+/-- Marking the environment an arm pushed keeps the sequence's census:
+the one rewrite `markInParagraph` makes is `inParagraph_text`'s. -/
+theorem markInParagraph_text (inPar : Bool) (k : Nat) :
+    Conserves blocksText (markInParagraph inPar k) := fun xs => by
+  unfold markInParagraph
+  split
+  · next b _ hb =>
+    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
+    rw [Array.pop_push, blocksText_push, blocksText_push, inParagraph_text]
+  · rfl
+  · rfl
 
 private theorem blocksText_append_barSide (out : Array Block)
     (ink : Color × Option String) (before after : Dim.SymGlue)

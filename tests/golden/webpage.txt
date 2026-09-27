@@ -55,13 +55,14 @@ para
   color muted #71717A
     styled italic
       text "Invented Laboratory"
-list unordered
-  item
-    para
-      text "Studied an invented phenomenon and wrote it down."
-  item
-    para
-      text "Simplified a made-up pipeline until it fit on one page."
+role in-paragraph
+  list unordered
+    item
+      para
+        text "Studied an invented phenomenon and wrote it down."
+    item
+      para
+        text "Simplified a made-up pipeline until it fit on one page."
 para
   styled bold
     text "Assistant Example"
@@ -72,10 +73,11 @@ para
   color muted #71717A
     styled italic
       text "Fictional Institute"
-list unordered
-  item
-    para
-      text "Assisted with examples of every kind."
+role in-paragraph
+  list unordered
+    item
+      para
+        text "Assisted with examples of every kind."
 section* 1
   text "Education"
 para
