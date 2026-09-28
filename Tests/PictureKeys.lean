@@ -351,15 +351,17 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
        decide (r * r ≤ (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) + 2 * r + 2 ∧
          (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) ≤ (r + 1) * (r + 1) + 2 * r + 2)
      | _, _ => false)
-  -- An edge between two drawn nodes starts and ends on their outlines.
+  -- An edge between two drawn nodes starts and ends one outer sep (half
+  -- the line width) past their outlines.
   let (_, boxes) := paths (picDoc "" ""
     ("\\node[draw] (a) at (0,0) {Aa};\\node[draw] (b) at (3,0) {Bb};\n" ++
      "\\draw (a) -- (b);"))
+  let o := Ir.Pic.thinWidth / 2
   t "an edge meets the outlines it joins"
     (match boxes[0]?, boxes[1]?, boxes[2]? with
      | some (ax, _, aw, _), some (bx, _, _, _), some (ex, _, ew, _) =>
-       decide (ex - (ax + aw) ≤ 2 ∧ (ax + aw) - ex ≤ 2 ∧
-         (ex + ew) - bx ≤ 2 ∧ bx - (ex + ew) ≤ 2)
+       decide (ex - (ax + aw + o) ≤ 2 ∧ (ax + aw + o) - ex ≤ 2 ∧
+         (ex + ew) - (bx - o) ≤ 2 ∧ (bx - o) - (ex + ew) ≤ 2)
      | _, _, _ => false)
 
 
@@ -418,3 +420,62 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "each drawn outline holds its letters one inner sep in, above and below"
     ((pair.map fun p => holds p 0 "A" && holds p 1 "g").getD false &&
       decide (0 < wordDepth font size "g"))
+
+
+/-- **A drawn node's anchors stand half a line width beyond its border**
+(pgf's `outer sep`, pgfmoduleshapes.code.tex: `outer xsep` and `outer ysep`
+start at `.5\pgflinewidth` and are added to the rectangle's `\northeast` and
+`\southwest` and to the circle's `\radius`, while the drawn path stays on the
+border). So an edge between two drawn nodes starts and stops on the outer
+edges of their strokes, `below=of` parts two outlines by the node distance
+and two outer seps, a thicker node's outer sep is half its own width, and
+`outer sep=0pt` puts the anchors back on the outline. The defect had no
+outer sep: every anchor sat on the stroke's centre line, and a `below=of`
+gap stood 0.40 bp short of lualatex's. Asserted over the shipped page.
+Invented content. -/
+def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let pageOf (body : String) : Option Layout.PageOut :=
+    (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
+  let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    p.paths.filterMap fun q => match q.path with
+      | .rect x y w h => some (x, y, w, h)
+      | _ => none
+  let edgeXs (p : Layout.PageOut) : Option (Dim.Sp × Dim.Sp) :=
+    p.paths.findSome? fun q => match q.path with
+      | .segs ss => match ss[0]?, ss[ss.size - 1]? with
+        | some (Ir.Pic.PathSeg.line x1 _ _ _), some (Ir.Pic.PathSeg.line _ _ x2 _) =>
+          some (min x1 x2, max x1 x2)
+        | _, _ => none
+      | _ => none
+  -- The gaps from the left outline's right side to the edge's start, and
+  -- from the edge's end to the right outline's left side.
+  let gaps (opts : String) : Option (Dim.Sp × Dim.Sp) := do
+    let p ← pageOf ("\\node[draw" ++ opts ++ "] (a) at (0,0) {A};\\node[draw" ++ opts ++
+      "] (b) at (3,0) {B};\n\\draw (a) -- (b);")
+    let (ax, _, aw, _) ← (frames p)[0]?
+    let (bx, _, _, _) ← (frames p)[1]?
+    let (x1, x2) ← edgeXs p
+    pure (x1 - (ax + aw), bx - x2)
+  let half := Ir.Pic.thinWidth / 2
+  t "an edge between two drawn nodes stops half a line width outside each outline"
+    (match gaps "" with
+     | some (g1, g2) => near g1 half && near g2 half
+     | none => false)
+  t "a node's outer sep is half its own line width"
+    (match gaps ", very thick" with
+     | some (g1, g2) => near g1 (Dim.pt 3 / 5) && near g2 (Dim.pt 3 / 5)
+     | none => false)
+  t "outer sep=0pt puts the anchors on the outline, and names nothing"
+    ((match gaps ", outer sep=0pt" with
+      | some (g1, g2) => near g1 0 && near g2 0
+      | none => false) && !picLoss (picDoc "" "" "\\node[draw, outer sep=0pt] at (0,0) {A};"))
+  let below := pageOf "\\node[draw] (c) at (0,0) {A};\\node[draw, below=of c] (f) {x};"
+  t "below=of parts two drawn outlines by the node distance and two outer seps"
+    (match below.map frames with
+     | some fs => match fs[0]?, fs[1]? with
+       | some (_, cy, _, ch), some (_, fy, _, _) => near (fy - (cy + ch)) (Dim.mm 10 + 2 * half)
+       | _, _ => false
+     | none => false)

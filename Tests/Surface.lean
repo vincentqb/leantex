@@ -3667,10 +3667,11 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | .formula false "x" _ => true
           | _ => false
         | _ => false).getD false)
-  -- Edges: `\draw (a) -- (b)` border-anchors named endpoints
+  -- Edges: `\draw (a) -- (b)` border-anchors named endpoints, one outer sep
+  -- (half the line width) beyond the drawn circle
   -- (`rectBorder_exact`/`circleBorder_step` are the geometry; this is
   -- the wiring). On-axis anchors are exact, so equality is assertable.
-  let rr := 8000 * Dim.mm 10 / 10000 / 2
+  let rr := 8000 * Dim.mm 10 / 10000 / 2 + Ir.Pic.thinWidth / 2
   let twoCircles := "\\node[circle, draw, minimum size=8mm] (u) at (0,0) {x};" ++
     "\\node[circle, draw, minimum size=8mm] (v) at (2,0) {y};"
   t "an edge between two named circles border-anchors both ends"
@@ -6231,20 +6232,22 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((c[0]?.map (·.images == 0)).getD false)
   t "every placed node's body ships as ink"
     (pageHas c 0 "Pear" && pageHas c 0 "Plum" && pageHas c 0 "Fig")
-  -- `right =of aa` leaves one node distance between the two *borders*, as
-  -- pgf's `positioning` does — so the centres stand that far apart plus a
-  -- half-extent from each node. Stated against the extents the page
-  -- shipped rather than against a computed total, so the fact is the
-  -- invariant and not a restatement of one rounding.
+  -- `right =of aa` leaves one node distance between the two nodes' anchors,
+  -- as pgf's `positioning` does — each one outer sep (half the line width)
+  -- beyond its border — so the centres stand that far apart plus a
+  -- half-extent and an outer sep from each node. Stated against the extents
+  -- the page shipped rather than against a computed total, so the fact is
+  -- the invariant and not a restatement of one rounding.
+  let outs := Ir.Pic.thinWidth / 2 * 2
   t "'right =of' leaves one node distance between the borders, at the same height"
     (match box c 0, box c 1 with
      | some (ax, ay, aw, _), some (bx, byy, bw, _) =>
-       bx - ax == Dim.mm 10 + aw + bw && byy == ay
+       bx - ax == Dim.mm 10 + aw + bw + outs && byy == ay
      | _, _ => false)
   t "'below =of' leaves one node distance below, at the same x"
     (match box c 0, box c 2 with
      | some (ax, ay, _, ah), some (cx, cy, _, ch) =>
-       cy - ay == Dim.mm 10 + ah + ch && cx == ax
+       cy - ay == Dim.mm 10 + ah + ch + outs && cx == ax
      | _, _ => false)
   -- The same two nodes, the referenced one written second: TikZ rejects
   -- this, and the offset the page carries must not know the difference.
@@ -6255,7 +6258,7 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      | some (bx, byy, bw, _), some (ax, ay, aw, _),
        some (ax', ay', aw', _), some (bx', byy', bw', _) =>
        bx - ax == bx' - ax' && byy - ay == byy' - ay' &&
-         bx - ax == Dim.mm 10 + aw + bw && aw' + bw' == aw + bw
+         bx - ax == Dim.mm 10 + aw + bw + outs && aw' + bw' == aw + bw
      | _, _, _, _ => false)
   t "no boundary box stands where either order's picture is"
     (((fwd[0]?.map (·.images == 0)).getD false) &&
@@ -6987,8 +6990,8 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (eightDs.any fun d => d.code == "W0335")
   -- The placement regression guard: widening the box may not move a node
   -- relative to the node it was placed against. Declared minimums are the
-  -- case the separation is exact in, so the border-to-border distance is
-  -- the fact to pin.
+  -- case the separation is exact in, so the border-to-border distance — the
+  -- node distance and both outer seps — is the fact to pin.
   let declared :=
     "\\tikzset{node distance = 1cm and 1cm}\n\\begin{document}\n\\begin{tikzpicture}\n" ++
     "\\node (aa) [draw, minimum size=6mm] {Pear};\n" ++
@@ -7000,7 +7003,7 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (dc[0]?.bind (·.pathBoxes[k]?)).map fun (x, _, w, _) => (x + w / 2, w / 2)
   t "measuring the box leaves a declared border-to-border separation exact"
     (match dbox 0, dbox 1 with
-     | some (ax, aw), some (bx, bw) => bx - ax == Dim.mm 10 + aw + bw
+     | some (ax, aw), some (bx, bw) => bx - ax == Dim.mm 10 + aw + bw + Ir.Pic.thinWidth / 2 * 2
      | _, _ => false)
   -- **The collision the box cannot show.** A correct box holds two labels
   -- that overlap each other, so the overrun row above is silent on a
@@ -7306,12 +7309,14 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ((side[0]?.map (·.paths == 3)).getD false)
   t "no boundary box stands where the anchored picture is"
     ((side[0]?.map (·.images == 0)).getD false)
-  -- `east` is exactly the right border, `west` exactly the left: the edge
-  -- starts where the first box ends and stops where the second begins.
+  -- `east` is the right border one outer sep out (half the line width,
+  -- pgf's `outer sep`), `west` the left one: the edge starts just past where
+  -- the first box's stroke ends and stops just short of the second's.
+  let o := Ir.Pic.thinWidth / 2
   t "'east' and 'west' put the edge exactly between the two borders"
     (match box side 0, box side 1, box side 2 with
      | some (ax, ay, aw, ah), some (bx, _, _, _), some (ex, ey, ew, eh) =>
-       ex == ax + aw && ex + ew == bx && eh == 0 && ey == ay + ah / 2
+       ex == ax + aw + o && ex + ew == bx - o && eh == 0 && ey == ay + ah / 2
      | _, _, _ => false)
   -- A corner is exactly its two sides, on the page: `south east` stands at
   -- the east border and the south one at once.
@@ -7319,7 +7324,7 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a corner anchor stands at both of its sides"
     (match box corner 0, box corner 1, box corner 2 with
      | some (ax, ay, aw, _), some (bx, byy, _, bh), some (ex, ey, ew, eh) =>
-       ex == ax + aw && ey == ay && ex + ew == bx && ey + eh == byy + bh
+       ex == ax + aw + o && ey == ay - o && ex + ew == bx - o && ey + eh == byy + bh + o
      | _, _, _ => false)
   -- pgf declares the corner spelled with a space; an endpoint's tokens are
   -- space-filtered before the name is joined, so both spellings are one

@@ -19,7 +19,7 @@ picture 7 shapes
   frame 29.764 -51.024 25.512 17.008 stroke #000000 0.8
   label 42.52 -42.52 #000000 1000
     text "out"
-  edge (9.921,0)--(75.118,0) stroke #000000 0.4
+  edge (10.121,0)--(74.918,0) stroke #000000 0.4
 para
   text "The next diagram applies its style to itself, not to either edge."
 picture 2 shapes

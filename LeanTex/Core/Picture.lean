@@ -2880,8 +2880,8 @@ def readsNodeOpt (opt : Array Tok) : Bool :=
   else match opt.toList with
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
-      "inner sep", "inner xsep", "inner ysep", "node contents", "font",
-      "text height", "text depth", "align"].contains (keyPath ts) ||
+      "inner sep", "inner xsep", "inner ysep", "outer sep", "outer xsep", "outer ysep",
+      "node contents", "font", "text height", "text depth", "align"].contains (keyPath ts) ||
       (readLineWidth ts).isSome
 
 /-- An entry some statement of this subset reads: what a declaration made
@@ -3114,6 +3114,9 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- resolved below against this node's own em.
   let mut xsep : Option Sp := none
   let mut ysep : Option Sp := none
+  -- `outer sep` likewise; `none` is pgf's `auto`, half the line width.
+  let mut oxsep : Option Sp := none
+  let mut oysep : Option Sp := none
   let mut own : Array (Array Tok) := #[]
   -- pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
   -- number of times, up to the `{text}` (TikZ manual §17.2). So the
@@ -3239,6 +3242,25 @@ is dropped")
       match readDim rest with
       | .ok d => ysep := some d
       | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
+is dropped")
+    -- `outer sep` moves the anchors past the border and never the drawn
+    -- path (pgfmoduleshapes.code.tex); `auto` is its initial value, half
+    -- the node's line width.
+    | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
+      match rest, readDim rest with
+      | [.ident "auto"], _ => oxsep := none; oysep := none
+      | _, .ok d => oxsep := some d; oysep := some d
+      | _, .error e => ev := ev.diag (.W0334, s!"in 'outer sep', {e}; the option \
+is dropped")
+    | .ident "outer" :: .ident "xsep" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => oxsep := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'outer xsep', {e}; the option \
+is dropped")
+    | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => oysep := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'outer ysep', {e}; the option \
 is dropped")
     -- `node contents={...}`: the body a bundle carries, so a use site can
     -- write `\node[bundle] (n);` with nothing of its own (pgf manual
@@ -3373,6 +3395,25 @@ outside the rendered picture subset; the label is not drawn")
   let ownB : Sp := match outline? with
     | some (_, h) => h / 2
     | none => borderHalf declB halfB sepY
+  -- **pgf's anchors stand one outer sep beyond its border** (the
+  -- rectangle's `\northeast`/`\southwest` add `outer xsep`/`outer ysep`, the
+  -- circle's `\radius` the larger of the two; `auto`, their initial value,
+  -- is half the node's line width), while the drawn path stays on the
+  -- border: so an edge meets a drawn outline at its stroke's outer edge, and
+  -- a relative placement parts two drawn nodes by the node distance and both
+  -- outer seps. An undrawn node keeps its anchors on its border: pgf puts
+  -- them half a line width out there too, a remainder PLAN records beside
+  -- the engine's point, which sets a label 0.37% wider than TeX's
+  -- (`Dim.mm`: the big point).
+  let pgfBorder : Bool := draw.isSome || fillCol.isSome
+  let (outA, outB) : Sp × Sp :=
+    if !pgfBorder then (0, 0)
+    else
+      let ox := oxsep.getD (width / 2)
+      let oy := oysep.getD (width / 2)
+      if isCircle then (max ox oy, max ox oy) else (ox, oy)
+  let anchA : Sp := ownA + outA
+  let anchB : Sp := ownB + outB
   let pos : Except PDiag (Sp × Sp) :=
     match atCoord with
     | some (xs, ys) =>
@@ -3387,10 +3428,10 @@ outside the rendered picture subset; the label is not drawn")
         match ev.nodes.lookup target with
         | some g =>
           -- pgf's `positioning` leaves `node distance` between the two
-          -- *borders*, so the centres stand that much plus a half-extent
-          -- from each node apart: the target's registered geometry, and this
-          -- node's own half-extents above.
-          let (ox, oy) := dir.offset (sep.1 + g.b + ownB, sep.2 + g.a + ownA)
+          -- nodes' anchors, so the centres stand that much plus an anchor's
+          -- reach from each node apart: the target's registered geometry,
+          -- and this node's own reach above.
+          let (ox, oy) := dir.offset (sep.1 + g.b + anchB, sep.2 + g.a + anchA)
           .ok (g.x + ox, g.y + oy)
         | none =>
           if ev.gapped || cx.parseGap then
@@ -3429,15 +3470,7 @@ this one against; the node is not drawn")
         -- when the path itself is never painted.
         if let some nm := nodeName then
           let geom : NodeGeom :=
-            match outline? with
-            | some (w, h) =>
-              { x := sx, y := sy, a := w / 2, b := h / 2, circle := isCircle, base := sy + base }
-            | none =>
-              if isCircle then
-                { x := sx, y := sy, a := ownA, b := ownB, circle := true
-                  base := sy + base }
-              else
-                { x := sx, y := sy, a := ownA, b := ownB, base := sy + base }
+            { x := sx, y := sy, a := anchA, b := anchB, circle := isCircle, base := sy + base }
           ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. A declared extent is the declared minimum (pgf manual
