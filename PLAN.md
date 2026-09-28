@@ -23913,3 +23913,56 @@ closed raw-capture set remain separate gaps. `fragile=singleslide` and
 each to remain an N0102 unsupported-option diagnostic. This question
 established a compatibility decision rather than reporting a broken artifact,
 so it adds no `Reports.reports` row.
+
+
+### 2026-09-28 — a picture's text alternative, one IR value both artifacts read; latex-lab's `alt` and `artifact`
+
+What branch-audit judged valuable in `wt/picture-alt-policy` (`9ad1e81d`,
+`6de10d2a`), ported onto today's main (`agent/port-alt`).
+
+- **The value.** `Ir.Alt` — undeclared, decorative, described — replaces
+  `Inline.image`'s string, and `Pic.Picture.alt` holds what an author
+  declared on a picture. `Pic.Picture.alternative` resolves a picture once:
+  the declaration, else the words its labels set (`said`), else nothing.
+  `Alt.declare` is the one site that builds a described alternative from
+  text and refuses blank text (`Alt.declare_nonempty`); a caption fills only
+  what is undeclared (`setAltFill_fixed_point`).
+- **Two projections of it.** HTML (`pictureAltAttrs`, `imgAltAttrs`):
+  described, `role="img"` with `aria-label` (an img's `alt`); decorative,
+  `aria-hidden="true"` (an img's `alt=""` with `role="presentation"`, the
+  judge's declared decorative role); undeclared, the figure word (an img's
+  `alt=""`). PDF (`altElem`): a `Figure` with `/Alt`, a `Figure` without,
+  or no element at all, so the ink is marked an artifact (`Struct.Leaf.held`,
+  which the skeleton's leaf census reads). A picture is now its own leaf, as
+  an image is. Theorems: `html_picture_name_projects`,
+  `picture_leaf_projects`, `pdf_alt_projects`, and `alt_text_agree` /
+  `alt_hidden_agree` (Pdf.lean): the two artifacts carry one text and hide
+  the same objects. So a picture whose labels say words now carries them as
+  `/Alt`, as its svg's name already did.
+- **The surface is latex-lab's** (TeX Live 2026 on this host:
+  latex-lab-testphase-tikz.sty 0.80d, -graphic.sty 0.80i): `alt={...}` or
+  `artifact` in a `tikzpicture`'s option list and on `\includegraphics`.
+  `splitPictureAlt` consumes them before the rendered subset or the boundary
+  sees the run (they were W0334, and the named loss routed a picture the
+  subset draws whole to the boundary), and rebuilds the run as its author
+  would have written it without them, so the boundary's request hash is the
+  same picture's either way.
+- **LaTeX's behaviour, and the engine's departure, declared.** latex-lab-graphic
+  warns `alt-text-missing` for a graphic with no `alt` and uses its file
+  name as `/Alt`; latex-lab-tikz marks an unkeyed picture's ink an artifact
+  and its text content, with no warning. The engine warns (W0376, now keyed
+  by the image's source) and keeps what each artifact already shipped for an
+  undeclared image: `alt=""` and a `Figure` without `/Alt`. A file name is no
+  description, so it is not copied. The cost stands named: HTML-AAM reads
+  `alt=""` as decoration while the PDF's `Figure` fails a checker, one value
+  read two ways.
+- **Not ported.** The old branch's undeclared arm (no `alt` attribute, an svg
+  with no role) is obsolete: the svg fact holds every picture named. Owed: a
+  native picture that says nothing and declares nothing ships the figure
+  word and a `Figure` without `/Alt` with no warning, while the same picture
+  drawn at the boundary is W0376 — the route decides what a reader is told.
+  Closing it needs a picture leaf in the caption walk first (`mapBlocks` has
+  none), or a captioned figure's picture would warn falsely.
+
+Guards: `pictureAltChecks` and the written-and-read `/Alt` check in
+`structTreeChecks`, 18 of which fail at `fed62cd2`.
