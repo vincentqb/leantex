@@ -1,0 +1,46 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+meta title "An Invented Box Study"
+meta author "Pat Placeholder"
+center
+  section* 0
+    text "An Invented Box Study"
+  para
+    text "Pat Placeholder"
+  para
+    text "1 January 2099"
+role trivlist-env
+  center
+    table c
+      row
+        cell
+          styled size:LARGE
+            text "An Invented Tabular Title"
+      row
+        cell
+          text "Pat Placeholder"
+role trivlist-env
+  center
+    columns
+      column 500/1000
+        para
+          text "An invented lone minipage, narrower than the measure it stands in."
+role trivlist-env
+  center
+    columns
+      column 400/1000
+        para
+          text "An invented parbox, set as one box."
+role trivlist-env
+  ragged right
+    table r
+      row
+        cell
+          text "An invented right-set table"
+      row
+        cell
+          text "second row"
+para
+  text "Body text after the boxes, long enough to show where the measure stands on the page and to wrap across a second line of it."
+-- diagnostics
+note[N0100] 28:1 '\parbox' → \begin{minipage}{<width>}...\end{minipage}

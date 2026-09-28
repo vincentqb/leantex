@@ -819,6 +819,26 @@ def censusTable :
     ("the panels stand side by side: the right label right of the left",
       ((lineXOf c 0 "left box").bind fun xl => (lineXOf c 0 "right box").map
         fun xr => decide (xl < xr)).getD false)]),
+  ("box-sides", fun geom c =>
+    let near (a b : Dim.Sp) : Bool := decide ((a - b).natAbs ≤ (Dim.pt 1).natAbs)
+    let right := geom.hmargin + geom.textWidth
+    [("one page", c.size == 1),
+     ("the document title stands centred in the measure",
+       ((lineXOf c 0 "An Invented Box Study").bind fun x =>
+         (lineRightOf c 0 "An Invented Box Study").map fun r =>
+           near (x - geom.hmargin) (right - r)).getD false),
+     ("the tabular title stands centred in the measure",
+       ((lineXOf c 0 "An Invented Tabular Title").bind fun x =>
+         (lineRightOf c 0 "An Invented Tabular Title").map fun r =>
+           near (x - geom.hmargin) (right - r)).getD false),
+     ("the lone minipage stands centred, a quarter of the measure each side",
+       ((lineXOf c 0 "An invented lone minipage").map
+         (near · (geom.hmargin + geom.textWidth / 4))).getD false),
+     ("the parbox stands centred, three tenths of the measure each side",
+       ((lineXOf c 0 "An invented parbox").map
+         (near · (geom.hmargin + geom.textWidth * 3 / 10))).getD false),
+     ("the right-set table ends a tabcolsep before the measure's right edge",
+       ((lineRightOf c 0 "second row").map (near · (right - Dim.pt 6))).getD false)]),
   ("float-center", fun _ c => [
     ("one page", c.size == 1),
     ("the figure caption ships with its number",

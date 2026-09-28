@@ -2775,6 +2775,7 @@ def pdfCensusTable :
   ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("subfigures", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("float-center", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("box-sides", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-companion", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-first", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-text", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

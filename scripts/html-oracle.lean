@@ -45,7 +45,7 @@ def readers : List String := ["chromium", "firefox"]
 
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
-  ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps",
+  ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps", "box-side",
    "color-scheme", "reduced-motion", "print", "print-spill", "print-sheets", "no-script"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
@@ -227,6 +227,37 @@ const checks = {
     const pages = Math.round(se.scrollWidth / window.innerWidth);
     const ok = declared > 0 && computed === declared && pages === declared;
     return { ok, n: 1, why: `data-snap x${declared} computed-start x${computed} pages x${pages}` };
+  },
+  // A box its scope sets stands on the scope's side, as TeX sets a box in a
+  // line — a table or a lone minipage under `.centered` on the scope's
+  // centre, under `.ragged-right` on its right edge — and a centred
+  // headline's matter on its band's centre: within half a CSS pixel, read
+  // off the layout boxes, against the scope's content box.
+  'box-side': () => {
+    const outer = (el) => { const r = el.getBoundingClientRect(); return [r.left, r.right]; };
+    const inner = (el) => {
+      const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+      return [r.left + parseFloat(s.paddingLeft) + parseFloat(s.borderLeftWidth),
+        r.right - parseFloat(s.paddingRight) - parseFloat(s.borderRightWidth)];
+    };
+    const sideOf = (el) => el.classList.contains('centered') ? 'center' : 'right';
+    const off = [];
+    let n = 0;
+    const judge = (what, [l, r], [fl, fr], side) => {
+      n++;
+      const d = side === 'center' ? (l + r - fl - fr) / 2 : r - fr;
+      if (Math.abs(d) > 0.5) off.push(`${what} ${d.toFixed(2)}px off the ${side === 'center' ? 'centre' : 'right edge'}`);
+    };
+    for (const t of document.querySelectorAll('.centered > table, .ragged-right > table'))
+      judge('table', outer(t), inner(t.parentElement), sideOf(t.parentElement));
+    for (const row of document.querySelectorAll('.centered > .columns, .ragged-right > .columns')) {
+      const boxes = row.querySelectorAll(':scope > .column');
+      if (boxes.length === 1) judge('lone box', outer(boxes[0]), inner(row), sideOf(row.parentElement));
+    }
+    for (const m of document.querySelectorAll('body > header.headline > .headline-matter'))
+      if (getComputedStyle(m).textAlign === 'center')
+        judge('headline matter', outer(m), inner(m.parentElement), 'center');
+    return { ok: off.length === 0, n, why: off.join('; ') };
   },
 };
 

@@ -1,0 +1,41 @@
+% Invented fixture: a box its scope sets stands on the scope's side, as TeX
+% sets a box in a line. Under a \maketitle, a title in a tabular, a lone
+% minipage and a \parbox under center; a table under flushright. Every word
+% is invented.
+\documentclass{article}
+\title{An Invented Box Study}
+\author{Pat Placeholder}
+\date{1 January 2099}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\begin{tabular}{c}
+{\LARGE An Invented Tabular Title}\\
+Pat Placeholder
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{minipage}{0.5\textwidth}
+An invented lone minipage, narrower than the measure it stands in.
+\end{minipage}
+\end{center}
+
+\begin{center}
+\parbox{0.4\textwidth}{An invented parbox, set as one box.}
+\end{center}
+
+\begin{flushright}
+\begin{tabular}{r}
+An invented right-set table\\
+second row
+\end{tabular}
+\end{flushright}
+
+Body text after the boxes, long enough to show where the measure stands on
+the page and to wrap across a second line of it.
+
+\end{document}
