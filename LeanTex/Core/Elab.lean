@@ -788,7 +788,7 @@ def pageKeys : List String :=
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
-   "furnituregap", "headsep", "footskip", "rule", "trim"]
+   "furnituregap", "headsep", "footskip", "rule", "trim", "bottom"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
 claim the page as declared (`sawPage` in `elabDoc`), keeping every value
@@ -10839,6 +10839,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "footskip", v =>
       if let some d := asDim v then spec := { spec with footskip := some d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "footskip" "a dimension" v pos))
+    -- The page's bottom: `\flushbottom` sets a page the page builder broke
+    -- flush with the text area's floor, `\raggedbottom` keeps its glue.
+    | "bottom", .ident v =>
+      match v with
+      | "flush" => spec := { spec with flushBottom := some true }
+      | "ragged" => spec := { spec with flushBottom := some false }
+      | _ =>
+        evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -10851,6 +10859,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           else if key == "measure" then "'checked' or 'free'"
           else if key == "marks" then "'cut' or 'none'"
           else if key == "modulo" then "a count of at least 1"
+          else if key == "bottom" then "'flush' or 'ragged'"
           else if key == "hyphenate" || key == "justify" || key == "protrusion"
             || key == "expansion" || key == "numbers"
             || key == "linenumbers" then "on or off"
@@ -10866,11 +10875,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         -- the key that owns them — accepted, not advertised beside it.
         -- `modulo` only qualifies `linenumbers` (named beside it in the
         -- lineno translation notes), so it too is accepted without a
-        -- listing of its own.
+        -- listing of its own; `bottom` is `\flushbottom`'s and
+        -- `\raggedbottom`'s, which name it in their translation notes.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight",
-               "mark-gap", "mark-thickness", "modulo", "rule", "trim"].contains ·)) pos))
+               "mark-gap", "mark-thickness", "modulo", "rule", "trim", "bottom"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343). A
     -- `rule` adds a drawing rather than setting a value, so a second one

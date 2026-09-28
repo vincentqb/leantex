@@ -4306,6 +4306,52 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       (dO < dp && yo == yp)
   | _, _ => t "the frame depth fixtures lay out" false
 
+/-- **Under `\flushbottom` a page the builder broke stands its last baseline
+on the text area's floor** (`B.finishPage`'s `flush`, `B.flushes`). TeX's
+output box is `\vbox to \@colht` with the last box's depth cancelled, and
+`\flushbottom` leaves `\@textbottom` empty (latex.ltx `\@make@normalcolbox`),
+so the page's finite stretch takes the leftover, each line moving by its
+share of the stretch above it; `\raggedbottom`, the article class's own,
+keeps the glue natural, and a page `\newpage` or the document's end closes
+keeps its `\vfil`. Asserted over `Layout.Out` on a synthetic page of
+paragraphs under TeX's own `\parskip` (0pt plus 1pt, declared). lualatex
+(TeX Live 2026, Open Sans) sets both broken pages of such a probe with
+their last line on the floor, as the engine now does; at `8586578b` it
+stood 14.0 bp above it, and the declaration was a warning. Invented
+words. -/
+def flushBottomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let para := String.intercalate " " (List.replicate 30 "kilo lima mike november")
+  let src (decl : String) : String :=
+    "\\documentclass{article}\\usepackage{geometry}" ++
+    "\\geometry{paperwidth=5in, paperheight=4in, margin=0.5in}\\pagestyle{empty}" ++
+    "\\setlength{\\parskip}{0pt plus 1pt}" ++ decl ++ "\\begin{document}" ++
+    String.intercalate "\n\n" (List.replicate 7 para) ++ "\n\\end{document}"
+  let pages (s : String) : Array (Array Dim.Sp) × Dim.Sp :=
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    ((layoutOf oneFace doc).pages.map fun p => (p.lines.filter (!·.furniture)).map (·.y),
+     g.bodyBottom)
+  let (flush, floor) := pages (src "\\flushbottom")
+  let (ragged, _) := pages (src "\\raggedbottom")
+  let (bare, _) := pages (src "")
+  t "the flush fixture breaks across pages" (flush.size ≥ 2)
+  t "a flushbottom page the builder broke stands its last baseline on the floor"
+    ((flush[0]?.bind (·.back?)).map (· == floor) |>.getD false)
+  t "its first line keeps its place, the stretch spent below it, in order"
+    (match flush[0]?, ragged[0]? with
+     | some f, some r =>
+       let sh : List Dim.Sp := ((f.zip r).map fun (a, b) => a - b).toList
+       f.size == r.size && f[0]? == r[0]? &&
+         (sh.zip sh.tail).all (fun (a, b) => decide (a ≤ b)) &&
+         (sh.getLast?.map fun v => decide ((0 : Dim.Sp) < v)).getD false
+     | _, _ => false)
+  t "kept: raggedbottom is the undeclared page's natural glue" (ragged == bare)
+  t "kept: the document's last page stays ragged under flushbottom"
+    ((flush.back?.bind (·.back?)).map (fun v => decide (v < floor)) |>.getD false)
+  t "flushbottom is read, not named as a setting ignored"
+    ((elabStr (src "\\flushbottom")).2.all fun d => d.code != "W0104")
+
 /-- **`\vspace*`'s space stays at a page's top, and the line below it takes
 TeX's interline glue** (`B.anchored`, `anchorRise`, `Acc.flushAnchored`).
 LaTeX's `\@vspacer` sets a zero rule before the space (latex.ltx:9374-9390):

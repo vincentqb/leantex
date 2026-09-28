@@ -75,6 +75,12 @@ structure Geom where
   /-- Whether font boxes may expand within ±`expandLimit` (microtype's
   font expansion). Layout owns the gate, as it owns `protrude`'s. -/
   expand : Bool := true
+  /-- LaTeX's `\flushbottom`: a page the page builder broke stretches its
+  glue so its last baseline stands on the text area's floor
+  (`B.finishPage`); off is `\raggedbottom`, the article class's own
+  (article.cls, `\if@twoside\else\raggedbottom\fi`), where the glue
+  keeps its natural size. -/
+  flushBottom : Bool := false
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
@@ -959,6 +965,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     justify := spec.justify.getD base.justify
     protrude := spec.protrude.getD base.protrude
     expand := spec.expand.getD base.expand
+    flushBottom := spec.flushBottom.getD base.flushBottom
     bleed := spec.bleed
     marks := spec.marks
     markGap := spec.markGap
@@ -3997,6 +4004,11 @@ private structure B where
   shrinkAbove : Array Sp := #[]
   /-- Total shrink in the glue laid on the current page. -/
   pageShrink : Sp := 0
+  /-- Per line of the current page: total finite stretch in the glue above
+  it, parallel to `shrinkAbove` — what a `\flushbottom` page spends. -/
+  stretchAbove : Array Sp := #[]
+  /-- Total finite stretch in the glue laid on the current page. -/
+  pageStretch : Sp := 0
   /-- How far the current page overflows at natural glue: what closing it
   must take out of the shrink. -/
   needed : Sp := 0
@@ -4340,8 +4352,9 @@ frame's end, `\newpage`, the document's end) the caller passes
 inside the frame's box or before `\newpage`'s `\vfil`, or the last box's
 cancelled depth where nothing is pending on a TeX page; at a break (a
 spill, a float moved on) nothing, since TeX discards glue at a page
-break. -/
-private def B.finishPage (b : B) (owed : Sp := 0) : B :=
+break. `flush` is a break under `\flushbottom` (`B.flushes`): the page's
+finite stretch then takes the leftover, as TeX's output box does. -/
+private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   let lines := if b.needed > 0 && b.pageShrink > 0 then
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
         { l with y := l.y - above * b.needed / b.pageShrink }
@@ -4366,11 +4379,24 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
       -- after the shift, anchored at bodyBottom)
       noteFloor b.bottom b.footins b.notesH - b.contentEnd owed
     else 0
+  -- `\flushbottom` on a page the builder broke (`flush`): with no fil and
+  -- no shrink given, the page's finite stretch takes the leftover between
+  -- its last baseline and the floor — TeX's output box is `\vbox to
+  -- \@colht` with the last box's depth cancelled and no `\@textbottom`
+  -- fil (latex.ltx `\@make@normalcolbox`, `\flushbottom`) — each line
+  -- moving by its share of the stretch above it, at one glue-set ratio.
+  let lo := noteFloor b.bottom b.footins b.notesH - b.y
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
         else { l with y := l.y + filShare leftover (b.filsAbove.getD i 0) pageFils },
        filShare leftover (b.filsAbove.back?.getD 0) pageFils)
+    else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
+        && lines.size > b.pinnedLines then
+      (lines.mapIdx fun i l =>
+        if i < b.pinnedLines then l
+        else { l with y := l.y + b.stretchAbove.getD i 0 * lo / b.pageStretch },
+       b.stretchAbove.back?.getD 0 * lo / b.pageStretch)
     else
       let d := b.vdist.aboveShare leftover
       (if d == 0 then lines else
@@ -4403,7 +4429,8 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
                                    footBox := b.footBox,
                                    frame := b.curFrame, band := b.curBand },
            cur := {}, curBand := none,
-           shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
+           shrinkAbove := #[], pageShrink := 0, stretchAbove := #[], pageStretch := 0,
+           needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0, anchored := false,
            pendingNotes := #[], notesH := 0, opened := false,
@@ -4440,9 +4467,9 @@ index. The census tests over `Layout.Out` are the realisation check, as
 `runFloat_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
 insertion on the page of its mark (TeXbook ch. 15; ltmiscen.dtx's
 `\@makecol` builds the page as body then rule then notes). -/
-private theorem footnote_with_mark (b : B) (owed : Sp)
+private theorem footnote_with_mark (b : B) (owed : Sp) (flush : Bool)
     (hs : b.shrinkAbove.size = b.cur.lines.size) :
-    ((b.finishPage owed).pages.back?.map fun p => p.lines.map (·.segs)) =
+    ((b.finishPage owed flush).pages.back?.map fun p => p.lines.map (·.segs)) =
       some (b.cur.lines.map (·.segs) ++ b.noteLines.map (·.segs)) := by
   simp only [B.finishPage, Array.back?_push, Option.map_some, Option.some.injEq,
     Array.map_append]
@@ -4471,6 +4498,7 @@ private def B.reopenChrome (b : B) : B :=
              pinnedLines := lines.size
              pinnedFills := fills.size
              shrinkAbove := .replicate lines.size 0
+             stretchAbove := .replicate lines.size 0
              filsAbove := .replicate lines.size 0
              y := y0
              prevDepth := d0
@@ -4561,15 +4589,22 @@ private theorem warnSpill_accounts (b : B) (o : Sp) :
   unfold B.warnSpill
   rcases h : b.frameBreak with _ | (_ | _) <;> rcases hw : b.spillWarned <;> simp
 
+/-- A page the builder breaks is set flush (`B.finishPage`'s `flush`) where
+the document declared `\flushbottom` and the page is TeX's, outside a
+frame. -/
+private def B.flushes (b : B) : Bool :=
+  b.geom.flushBottom && b.geom.topskip.isSome && b.frameBreak.isNone
+
 /-- Close an overfull page mid-frame and repeat the frame's chrome on the
 next, and its ground: a continuation page is the frame's page as much as
 the first, so it stands on the ground the frame declared (`.pageStyle`) and
 not on the document's. Where no chrome is set — an article page, a plain or
-standout frame — the page ships exactly as `finishPage` ships it. `over` is
+standout frame — the page ships exactly as `finishPage` ships it, set flush
+where the document declared `\flushbottom` (`B.flushes`). `over` is
 how far the band that did not fit reached past the page bottom, for the
 account (`warnSpill`). -/
 private def B.spillPage (b : B) (over : Sp := 0) : B :=
-  { b.finishPage.reopenChrome.warnSpill over with pageBg := b.pageBg }
+  { (b.finishPage (flush := b.flushes)).reopenChrome.warnSpill over with pageBg := b.pageBg }
 
 @[simp] private theorem reopenChrome_pages (b : B) :
     b.reopenChrome.pages = b.pages := by
@@ -4580,7 +4615,7 @@ private def B.spillPage (b : B) (over : Sp := 0) : B :=
 only seeds the next page's `cur`, so every pages-extension fact about
 `finishPage` transports. -/
 @[simp] private theorem spillPage_pages (b : B) (o : Sp) :
-    (b.spillPage o).pages = b.finishPage.pages := by
+    (b.spillPage o).pages = (b.finishPage 0 b.flushes).pages := by
   unfold B.spillPage
   simp
 
@@ -4603,10 +4638,11 @@ private def B.pushSibling (b : B) (line : Option LineOut := none)
   let b := match line with
     | some l =>
       -- A rider joins the band at `y` unmeasured: the band answers its
-      -- metric depth again (`B.boxDepth`).
+      -- metric depth again (`B.boxDepth`). It rides the last band's stretch.
       { b with cur := { b.cur with lines := b.cur.lines.push l },
                shrinkAbove := b.shrinkAbove.push
                  (shrink.getD (b.shrinkAbove.back?.getD 0))
+               stretchAbove := b.stretchAbove.push b.pageStretch
                filsAbove := b.filsAbove.push (fils.getD (b.filsAbove.back?.getD 0))
                lastInk := none }
     | none => b
@@ -4625,6 +4661,7 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
   -- that consumed the pending skip banks its shrink (the fit test in
   -- `fitCommit` read the same sum); a line opening a page owes none.
   let above := if consume then b.pageShrink + b.skip.shrink else 0
+  let stretch := if consume then b.pageStretch + b.skip.stretch else 0
   -- The consumed skip's fil counts here, page top included: an author's
   -- \vspace*{\fill} above the first line is what the star means (the
   -- space survives the break), and fil width is zero, so counting it
@@ -4634,6 +4671,8 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
            anchors := b.anchors ++ b.pendingAnchors.map ((·, b.pages.size))
            pendingAnchors := #[]
            shrinkAbove := b.shrinkAbove.push above
+           stretchAbove := b.stretchAbove.push stretch
+           pageStretch := stretch
            pageFils := fils
            filsAbove := b.filsAbove.push fils
            pageShrink := above
@@ -5030,8 +5069,9 @@ body — the cap line above the text, the baseline below it.
 A page fills at natural glue until a line's ink will not fit even with
 every skip above it fully shrunk; then the page closes (shrunk to fit if
 it overflowed) and the line opens the next (`fitCommit`), its pending glue
-discarded as TeX discards glue at the top of a page. Glue is never
-stretched: the bottom is ragged. -/
+discarded as TeX discards glue at the top of a page. Glue stretches only
+where a `\flushbottom` page is broken (`finishPage`'s `flush`); otherwise
+the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
@@ -5086,7 +5126,8 @@ declared gap reaches the page 1:1 — no scaling, no second emission;
 `finishPage_shift_uniform` says page close keeps these deltas, so together
 they carry the declared gap into `Layout.Out`. Rubber is the one
 negotiation and it is never silent: a page that consumes shrink reports it
-(N0200, `finishPage`), and vertical glue is never stretched. At a default
+(N0200, `finishPage`), and vertical glue stretches only on a page a
+`\flushbottom` document's builder broke. At a default
 peer boundary the pending skip is the resolved parskip
 (`flushGap_default_exact`), so the realized baseline delta is the leading
 plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
@@ -5195,7 +5236,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
   unfold B.finishPage B.noteLines
-  simp only [hcond, hsf, hfil, hpn, Bool.false_eq_true, ite_false, ite_true,
+  simp only [hcond, hsf, hfil, hpn, Bool.false_and, Bool.false_eq_true, ite_false, ite_true,
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
@@ -5236,7 +5277,7 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
   unfold B.finishPage B.noteLines
-  simp only [hcond, hsf, hfil, hpn, hv, Bool.false_eq_true, ite_false, ite_true,
+  simp only [hcond, hsf, hfil, hpn, hv, Bool.false_and, Bool.false_eq_true, ite_false, ite_true,
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   split <;> split <;>
@@ -8754,10 +8795,12 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- The fil the box consumes with the pending skip, counted as `B.commit`
   -- counts a line's: the page's distribution moves the picture by it.
   let mut fils := b.pageFils + (if b.skip.fil then 1 else 0)
+  let mut stretch : Sp := 0
   if !b.fresh then
     let y := b.y + b.prevDepth + b.skip.width + inkClearance
     overflow := y + h - bottom
     above := b.pageShrink + b.skip.shrink
+    stretch := b.pageStretch + b.skip.stretch
     if overflow ≤ above ∨ b.noBreak then
       yTop := y
       overflow := min overflow above
@@ -8767,6 +8810,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       fils := b.pageFils
       overflow := 0
       above := 0
+      stretch := 0
   -- One transform for everything the picture ships: `Pic.Place` is the
   -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
@@ -8823,7 +8867,8 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         -- (pushed below through `pushLabels`, the rider door).
         lines := lines.push { x := x, y := top + ink.height,
                               size := size, segs := segs, setWidth := ink.w, leaf := leaf }
-  b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above fils
+  b := ({ b with pageStretch := stretch }.pushSibling (fills := fills) (paths := paths)).pushLabels
+    lines above fils
   b := { b with
     pageShrink := above
     pageFils := fils
@@ -9291,9 +9336,10 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem warnOverfull_geom (b : B) : b.warnOverfull.geom = b.geom := rfl
 @[simp] private theorem warnOverfull_docBg (b : B) :
     b.warnOverfull.docBg = b.docBg := rfl
-@[simp] private theorem finishPage_geom (b : B) (o : Sp) : (b.finishPage o).geom = b.geom := rfl
-@[simp] private theorem finishPage_docBg (b : B) (o : Sp) :
-    (b.finishPage o).docBg = b.docBg := rfl
+@[simp] private theorem finishPage_geom (b : B) (o : Sp) (f : Bool) :
+    (b.finishPage o f).geom = b.geom := rfl
+@[simp] private theorem finishPage_docBg (b : B) (o : Sp) (f : Bool) :
+    (b.finishPage o f).docBg = b.docBg := rfl
 @[simp] private theorem reopenChrome_geom (b : B) : b.reopenChrome.geom = b.geom := by
   unfold B.reopenChrome; split <;> rfl
 @[simp] private theorem reopenChrome_docBg (b : B) :
@@ -9317,7 +9363,8 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
   repeat' split
   all_goals first | rfl | simp
 
-private theorem finishPage_extends (b : B) {o : Sp} : PagesExtend b (b.finishPage o) :=
+private theorem finishPage_extends (b : B) {o : Sp} {f : Bool} :
+    PagesExtend b (b.finishPage o f) :=
   ⟨#[_], rfl⟩
 
 private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
@@ -9329,7 +9376,7 @@ private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
   repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
-    | (refine pagesExtend_trans (finishPage_extends b (o := 0)) (pagesExtend_of_eq ?_);
+    | (refine pagesExtend_trans (finishPage_extends b (o := 0) (f := b.flushes)) (pagesExtend_of_eq ?_);
        simp; done)
 
 /-- Under `noBreak` a committed band never closes a page and never clears
@@ -9386,7 +9433,7 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_of_eq ?_
        simp
        done)
-    | (refine pagesExtend_trans (finishPage_extends b (o := 0)) (pagesExtend_of_eq ?_)
+    | (refine pagesExtend_trans (finishPage_extends b (o := 0) (f := b.flushes)) (pagesExtend_of_eq ?_)
        simp
        done)
 
@@ -9485,7 +9532,7 @@ private theorem keepHeading_extends (b : B) (j : ParaJob) (n : Nat) :
     PagesExtend b (b.keepHeading j n) := by
   unfold B.keepHeading
   split
-  · obtain ⟨s, hs⟩ := finishPage_extends b (o := 0)
+  · obtain ⟨s, hs⟩ := finishPage_extends b (o := 0) (f := b.flushes)
     exact ⟨s, by rw [spillPage_pages]; exact hs⟩
   · exact pagesExtend_refl b
 
@@ -9510,9 +9557,9 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | exact pagesExtend_of_eq (alignRow_keeps ..).1
-    | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed)); simp; done)
+    | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
     | (refine pagesExtend_congr ?_
-        (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
+        (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed) (f := false)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
 
 /-- Under `noBreak`, a step that is not a page boundary ships nothing
 and keeps the flag: the whole group lands on the page being built. -/
@@ -9593,8 +9640,8 @@ private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
 carries the full-page background fill whenever the document declared
 one — `pageBg.orElse docBg` is some either way, and the fill it selects
 is prepended whole, before anything can shift it. -/
-private theorem finishPage_bg (b : B) {o : Sp} :
-    b.docBg.isSome = true → ∀ p ∈ (b.finishPage o).pages,
+private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
+    b.docBg.isSome = true → ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilled b.geom p := by
   intro hd p hp
   simp only [B.finishPage, Array.mem_push] at hp
@@ -9611,7 +9658,8 @@ private theorem finishPage_bg (b : B) {o : Sp} :
     · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
       simp
 
-private theorem bgStep_finishPage (b : B) {o : Sp} : BgStep b (b.finishPage o) :=
+private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
+    BgStep b (b.finishPage o f) :=
   ⟨rfl, rfl, finishPage_bg b⟩
 
 /-- The full-page fill, *with its colour*: what `bgFilled` deliberately
@@ -9632,8 +9680,8 @@ document's — so a title page carrying a `.pageStyle` ground of its own
 covers the page; this says whose colour it is, which is the claim a
 per-page ground rests on and the one the document-level statement cannot
 make. -/
-private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp}
-    (h : b.pageBg = some c) : ∀ p ∈ (b.finishPage o).pages,
+private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp} {f : Bool}
+    (h : b.pageBg = some c) : ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilledWith b.geom c p := by
   intro p hp
   simp only [B.finishPage, Array.mem_push] at hp
@@ -9647,7 +9695,7 @@ private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp}
     simp
 
 private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
-  (bgStep_finishPage b (o := 0)).trans
+  (bgStep_finishPage b (o := 0) (f := b.flushes)).trans
     (BgStep.of_eq (by simp [B.spillPage]) (by simp [B.spillPage]) (by simp [B.spillPage]))
 
 private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
@@ -9659,7 +9707,7 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_finishPage b (o := 0)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b (o := 0) (f := b.flushes)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
@@ -9677,7 +9725,7 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
-    | (refine (bgStep_finishPage b (o := 0)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage b (o := 0) (f := b.flushes)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
@@ -9719,7 +9767,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
         (placeSlot_keeps ..).1
     | exact BgStep.of_eq (alignRow_keeps ..).2.1 (alignRow_keeps ..).2.2.1
         (alignRow_keeps ..).1
-    | (refine (bgStep_finishPage _ (o := st.b.closingOwed)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage _ (o := st.b.closingOwed) (f := false)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)

@@ -256,15 +256,7 @@ def configSkip : List (String × Nat × String × Option String) :=
    -- (Ir.Block.ragged carries the flush side).
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
-its own and an overfull line warns by itself", none),
-   -- The vertical-distribution pair: a page-opening ask the `vdist`
-   -- obligation will own (AGENTS table), named until it lands.
-   ("raggedbottom", 0,
-    "'\\raggedbottom' picks a vertical distribution; pages keep their declared distribution",
-    none),
-   ("flushbottom", 0,
-    "'\\flushbottom' picks a vertical distribution; pages keep their declared distribution",
-    none)]
+its own and an overfull line warns by itself", none)]
 
 /-- Where a LaTeX length parameter's value goes, decided by what LaTeX's
 own code does with it and by which engine site reads it. -/
@@ -4554,6 +4546,9 @@ private def simpleNative : List (String × String) :=
    ("medskip", "\\block[before = 6pt plus 2pt minus 2pt]{}"),
    ("smallskip", "\\block[before = 3pt plus 1pt minus 1pt]{}"),
    ("singlespacing", "\\page{ leading = 1 }"),
+   -- The page's bottom (latex.ltx `\flushbottom`, `\raggedbottom`).
+   ("flushbottom", "\\page{ bottom = flush }"),
+   ("raggedbottom", "\\page{ bottom = ragged }"),
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 

@@ -208,6 +208,12 @@ structure PageSpec where
   (`Layout.latexFootY`); its declared difference from `headsep` is
   N0021's. -/
   footskip : Option Sp := none
+  /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some
+  false`), natively `\page{ bottom = flush }`: whether a page the page
+  builder broke stretches its glue to stand its last baseline on the text
+  area's floor. `none` is the class's own, ragged for the flow classes, as
+  article.cls declares for a one-sided document. -/
+  flushBottom : Option Bool := none
   /-- The rules the document draws on every page (`DrawnRule`), in the
   order drawn. Eight that are exactly the cut marks of one trim declare
   that trim (`Layout.drawnTrim`). Only the paged artifact draws them: a
