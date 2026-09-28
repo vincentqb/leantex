@@ -5318,11 +5318,13 @@ def FloatKind.captionScope : FloatKind → String
   | .sub => "sub"
   | .algorithm => "algorithm"
 
-/-- The kind a caption package float type names, if the engine has it. -/
+/-- The kind a caption package float type names, if the engine has it:
+subcaption's scope for every sub-caption (`sub`, caption manual, subcaption
+§2) and its two sub types are the engine's one sub kind. -/
 def FloatKind.ofCaptionType? : String → Option FloatKind
   | "figure" => some .figure
   | "table" => some .table
-  | "subfigure" | "subtable" => some .sub
+  | "sub" | "subfigure" | "subtable" => some .sub
   | "algorithm" => some .algorithm
   | _ => none
 

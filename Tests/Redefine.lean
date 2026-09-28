@@ -251,6 +251,19 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "the HTML table caption reads the table's own gap before the document's"
     (hasStr html "--tablecaptionsep: 3pt" &&
       hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")
+  -- subcaption's own scope for every sub-caption is `[sub]` (caption
+  -- manual, subcaption §2), `[subfigure]` and `[subtable]` its two types
+  -- (review LP-3): named unhonoured, it moved the page off both.
+  let subBody := "\\begin{figure}\\begin{subfigure}{0.4\\textwidth}Sub body words." ++
+    "\\caption{Sub words.}\\end{subfigure}\\caption{Figure words.}\\end{figure}"
+  let subPage (scope : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+    shippedLines fonts (dvDoc ("\\usepackage{subcaption}\n\\captionsetup[" ++ scope ++
+      "]{skip=2pt}\n") subBody)
+  t "a sub scope sets every sub-caption as the subfigure scope does"
+    (subPage "sub" == subPage "subfigure" &&
+      subPage "sub" != shippedLines fonts (dvDoc "\\usepackage{subcaption}\n" subBody) &&
+      !((dvE (dvDoc "\\usepackage{subcaption}\n\\captionsetup[sub]{skip=2pt}\n" subBody)).any
+        (·.code == "W0354")))
 
 
 /-- **Owed: the kernel's order for the document's own caption skips.** A
