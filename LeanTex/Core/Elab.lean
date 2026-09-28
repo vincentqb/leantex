@@ -4753,7 +4753,7 @@ def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "figure",
    "figure*", "table", "table*", "quote", "quotation", "verse", "description",
-   "abstract", "ifbackend",
+   "thebibliography", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
@@ -7867,7 +7867,59 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para head] ++ item)
   return out
 
-seal thmOf? thmEnv thmOpen thmClose descItems
+/-- A raw run with its edge spaces and paragraph ends dropped, and a
+paragraph end inside it read as a space: a `\bibitem`'s text. -/
+private def entryRaws (raws : Array Raw) : Array Raw :=
+  let rs := raws.map fun r => if r matches .par _ then Raw.space else r
+  let a := (rs.findIdx? (· != Raw.space)).getD rs.size
+  let b := rs.size - ((rs.reverse.findIdx? (· != Raw.space)).getD rs.size)
+  rs.extract a b
+
+/-- `thebibliography` (classes.dtx): an unnumbered References section, then
+each `\bibitem[label]{key}` entry in source order — its key, its label as
+written, and its text. The widest-label argument names the label column's
+width, which the layout measures from the labels themselves; `\newblock`'s
+.11 em between an entry's blocks is not set, the source's space standing. -/
+private def ownBibList (ctx : Ctx) (body : Array Raw) : EM (Array Block) := do
+  let j := skipSpaces body 0
+  let start := if body[j]? matches some (.group _ _) then j + 1 else 0
+  let mut items : Array Ir.BibItem := #[]
+  let mut cur : Option (String × Option String × Array Raw) := none
+  let mut i := start
+  for _ in [0:body.size + 1] do
+    if h : i < body.size then
+      match body[i] with
+      | .ctrl "bibitem" bpos =>
+        if let some (k, l, raws) := cur then
+          items := items.push { key := k, marker := l, content := ← elabInlines ctx (entryRaws raws) }
+        let k0 := skipSpaces body (i + 1)
+        let (label, k1) : Option String × Nat := match body[k0]? with
+          | some (.sym '[' _) => match closeBracketFrom body (k0 + 1) with
+            | some c => (some (rawSrc (body.extract (k0 + 1) c)).trimAscii.toString,
+                skipSpaces body (c + 1))
+            | none => (none, k0)
+          | _ => (none, k0)
+        match body[k1]? with
+        | some (.group kb _) =>
+          cur := some ((rawSrc kb).trimAscii.toString, label, #[])
+          i := k1 + 1
+        | _ =>
+          diag ctx .E0304 "missing argument 'key' for '\\bibitem'" bpos
+          cur := none
+          i := k1
+      | .ctrl "newblock" npos =>
+        warnOnce ctx "ctrl:nothing:newblock" .N0100
+          "'\\newblock' → nothing: the .11 em it adds between an entry's blocks is not set; the source's space stands" npos
+        i := i + 1
+      | r =>
+        cur := cur.map fun (k, l, rs) => (k, l, rs.push r)
+        i := i + 1
+    else break
+  if let some (k, l, raws) := cur then
+    items := items.push { key := k, marker := l, content := ← elabInlines ctx (entryRaws raws) }
+  return #[.section 1 true none #[.text ctx.locale.references], .bibliography "" none items]
+
+seal thmOf? thmEnv thmOpen thmClose descItems ownBibList
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
@@ -9019,6 +9071,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
   else if n == "tabular" || n == "tabular*" then
     blocks ← tabularArm ctx n body pos blocks
+  else if n == "thebibliography" then
+    blocks := blocks ++ (← ownBibList ctx body)
   else if n == "frame" then
     -- \begin{frame}[options]{title}: the options are `frameOpts`'; the
     -- title group counts only when it follows directly — a paragraph
@@ -10303,7 +10357,7 @@ unseal isColumnStray
 unseal Ir.markInParagraph Ir.flushedText
 unseal scanBracketArg Parse.inputEnvFile?
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
-unseal thmOf? thmEnv thmOpen thmClose descItems
+unseal thmOf? thmEnv thmOpen thmClose descItems ownBibList
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
@@ -13036,7 +13090,7 @@ the key is dropped" pos
   -- unexplained. The loss is W0351's (a citation names no bibliography
   -- entry); the message and help name this cause. One diagnostic per
   -- distinct key, at its first `\cite`.
-  if (Ir.bibRefsBlocks blocks).isEmpty then
+  if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
     for (key, span) in stRefs.spans.cites do
       modify fun st => { st with diags := st.diags.push (Diag.of .W0351
         s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"

@@ -29,6 +29,7 @@ import Tests.PicturePaths
 import Tests.PictureKeys
 import Tests.TextSym
 import Tests.InlineVerb
+import Tests.OwnBib
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -294,6 +295,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathSymChecks ref
   textSymChecks ref
   inlineVerbChecks ref
+  ownBibChecks ref
   amsmathChecks ref
   bibChecks ref
   bibStyleChecks ref

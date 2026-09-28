@@ -11663,7 +11663,15 @@ assembled onto a `Doc` — the no-bibliography citation judge (Elab) reads
 it where only the blocks exist. -/
 def bibRefsBlocks (blocks : Array Block) : Array String :=
   foldBlocks (fun out b => match b with
-    | .bibliography src _ _ => if out.contains src then out else out.push src
+    | .bibliography src _ _ => if src.isEmpty || out.contains src then out else out.push src
+    | _ => out) (fun out _ => out) #[] blocks
+
+/-- The document's own reference list: the items of every `thebibliography`
+(a `.bibliography` naming no `.bib` source), in document order. Nothing is
+requested for them — their text is the document's. -/
+def ownBibItemsBlocks (blocks : Array Block) : Array BibItem :=
+  foldBlocks (fun out b => match b with
+    | .bibliography "" _ items => items.foldl (·.push ·) out
     | _ => out) (fun out _ => out) #[] blocks
 
 /-- Every `.bib` source the document's `\bibliography` markers name, in

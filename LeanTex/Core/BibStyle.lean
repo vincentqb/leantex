@@ -289,6 +289,9 @@ structure Resolved where
   position : Nat
   entry : Entry
   extra : String := ""
+  /-- The mark a `thebibliography` entry's optional label sets in numbers
+  mode (latex.ltx `\@lbibitem`), in place of its position. -/
+  label : Option String := none
   deriving Repr
 
 /-- The full author list natbib's starred forms print (`\citet*`), or the
@@ -376,7 +379,7 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : Cit
     let bare := citeYear r.entry
     let letter := if p.numbers then "" else r.extra
     let year := bare ++ letter
-    let mark := if s.numeric then toString r.position else year
+    let mark := if s.numeric then r.label.getD (toString r.position) else year
     let pre := if f.pre.isEmpty then "" else f.pre ++ " "
     let same := acc.last == some names
     let sameYear := same && acc.lastYear == some bare && !letter.isEmpty
@@ -1309,6 +1312,55 @@ def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
   Ir.mapDoc (resolveArr p find)
     (fun bs => resolveBlocks p find items #[] bs.toList) doc
 
+/-- natbib's author-year label in a `\bibitem`'s optional argument
+(natbib.sty `\NAT@parse`: `Jones et al.(1990)Jones, Baker, and Williams`):
+the names before the parentheses and the year inside them. -/
+def natbibLabel? (label : String) : Option (String × String) :=
+  match label.splitOn "(" with
+  | names :: rest =>
+    match ("(".intercalate rest).splitOn ")" with
+    | year :: _ :: _ =>
+      let names := names.trimAscii.toString
+      let year := year.trimAscii.toString
+      if names.isEmpty || year.isEmpty then none else some (names, year)
+    | _ => none
+  | [] => none
+
+/-- The entry a `thebibliography` item cites as in author-year mode: its
+label's names as the author (natbib's `et al.` as BibTeX's `and others`)
+and its year. -/
+def ownEntry (key : String) (label : Option (String × String)) : Entry :=
+  let fields := match label with
+    | some (names, year) =>
+      let names := if names.endsWith " et al." then (names.dropEnd 7).toString ++ " and others"
+        else names
+      #[("author", names), ("year", year)]
+    | none => #[]
+  { (default : Entry) with key, fields }
+
+/-- A document's own reference list, `thebibliography`, resolved: its
+entries in source order (the list is printed as written, never sorted).
+natbib reads it in numbers mode unless every entry carries an author-year
+label (natbib.sty, reading each `\bibitem`); in numbers mode an entry's mark
+is its label as written, or the list counter, which only an entry without a
+label steps (latex.ltx `\@bibitem` against `\@lbibitem`). An author-year
+entry cites as its label's names and year. -/
+def ownList (p : CitePunct) (own : Array Ir.BibItem) :
+    CitePunct × Array Resolved × Array Ir.BibItem := Id.run do
+  let ay := own.map fun it => it.marker.bind natbibLabel?
+  let p := if ay.all (·.isSome) then p else { p with numbers := true }
+  let mut resolved : Array Resolved := #[]
+  let mut items : Array Ir.BibItem := #[]
+  let mut n := 0
+  for (it, i) in own.zipIdx do
+    if it.marker.isNone then n := n + 1
+    let label := if p.numbers then it.marker else none
+    resolved := resolved.push
+      { key := it.key, position := n, entry := ownEntry it.key (ay[i]?).join, label }
+    items := items.push
+      { it with marker := if p.numbers then some (label.getD (toString n)) else none }
+  return (p, resolved, items)
+
 /-- Resolve the document's citations and reference lists against its
 `.bib` sources — the pure half of the `\bibliography` effect. `sources`
 maps each requested name (`Ir.bibRefs`) to the file text the driver read;
@@ -1357,22 +1409,27 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
   let cited := expandStar entries (citedKeys doc)
   let shown := citedKeys doc (·.cmd != .nocite)
   let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id
-  unless requested.isEmpty do
+  let own := Ir.ownBibItemsBlocks doc.body
+  let (p, resolved, items) :=
+    if own.isEmpty then
+      let resolved := resolveEntries style cited findEntry
+      (p, resolved, bibItems p style resolved)
+    else ownList p own
+  let find : Resolver := fun k => resolved.find? (·.key == k)
+  unless requested.isEmpty && own.isEmpty do
     for k in cited do
-      if (findEntry k).isNone then
+      if (find k).isNone then
         let (cmd, loss) := if shown.contains k then ("cite", "it shows as '?'")
           else ("nocite", "\\nocite adds nothing for it")
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
           bibliography; {loss}"
-          (help := s!"add an entry with key '{k}' to the .bib file, or fix the \
-            spelling in \\{cmd}")
+          (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \
+            or fix the spelling in \\{cmd}"
+            else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in \\{cmd}")
           (subject := some k))
-  let resolved := resolveEntries style cited findEntry
-  let find : Resolver := fun k => resolved.find? (·.key == k)
-  let items := bibItems p style resolved
   -- A `$…$` span the math parser cannot model sets as its floor (`formulaOf`):
   -- named once per spelling, as the elaborator names one in the body.
-  let floors := items.foldl (fun acc it => Ir.foldInlines (fun acc x => match x with
+  let floors := if !own.isEmpty then #[] else items.foldl (fun acc it => Ir.foldInlines (fun acc x => match x with
     | .math _ src => if acc.contains src then acc else acc.push src
     | _ => acc) acc it.content) (#[] : Array String)
   for src in floors do

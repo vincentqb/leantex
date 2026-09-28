@@ -23107,3 +23107,46 @@ The kernel probe cannot witness `\verb`: every probe shape either leaves the
 delimiter unmatched or consumes an argument's opening brace, which lualatex
 also rejects. Owed: `\verb` resets the series and shape (`\verbatim@font` is
 `\normalfont\ttfamily`); the mono style here keeps a surrounding bold.
+
+
+### 2026-09-28 — a document's own reference list: `thebibliography` and its citations
+
+`thebibliography` was unknown, `\bibitem` with it, and every citation of
+a document that writes its own list shipped `?`: ten flashtex documents,
+seven blocked by nothing else, failed on it (E0336 followed from the
+unknown wrapper). kernel-envs routed it here because the elaborator's half
+alone would print `?`.
+
+**One node, one resolver.** The environment arm (`ownBibList`, outside the
+block knot, which only calls it) emits what `\bibliography` emits — the
+unnumbered References heading and a `.bibliography` block — with the
+source empty and the items filled from the document: each `\bibitem`'s
+key, its optional label as written, and its text elaborated inline. The
+widest-label argument is read and dropped (the layout measures the label
+column from the labels); `\newblock`'s .11 em is not set, named once by
+N0100. An empty source requests no file (`Ir.bibRefsBlocks`), and the
+no-bibliography judge reads the own list too (`Ir.ownBibItemsBlocks`).
+`Bib.analyse` resolves against the own list when there is one
+(`Bib.ownList`): entries in source order, never sorted; natbib reads the
+list in numbers mode unless every entry carries an author-year label
+(`Knuth(1984)`, parsed as `\NAT@parse` does, `et al.` as `and others`);
+in numbers mode a mark is the label as written or the list counter, which
+only an unlabelled entry steps (latex.ltx `\@bibitem` against
+`\@lbibitem`, so `\bibitem[X]` cites as X and takes no number). The one
+new field is `Resolved.label`, read where the numbers mark was the
+position.
+
+**Checked.** `ownBibChecks` (eight rows; seven fail at `fd6e1267`, the
+eighth — no file requested — broken once by letting the empty source
+through): kernel numbering with a label, the list's order and marks, the
+heading, natbib author-year cites, W0351 for a missing key, and the
+shipped page. The counter rule and the file rule broken once each: four
+failures. lualatex, run twice so its citations resolve, sets the same
+citations and entries for two of the corpus's documents (`min-natbib`
+author-year, `min-newblock` numbers), read by `pdftotext`. External tier
+151 → 158 at 2, 46 → 36 at 0; the rhythm tier measures three
+reference-list boundaries it could not before.
+
+**Owed.** A document with both a `\bibliography` and a `thebibliography`
+resolves against its own list only. natbib's long author names (the text
+after the label's year, which `\citet*` prints) are not read.
