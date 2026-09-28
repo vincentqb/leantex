@@ -182,6 +182,49 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
      shippedLines fonts (dvDoc venue body) != shippedLines fonts (dvDoc packaged body))
   t "a table redefined around the kernel's float core is no refusal"
     (!((dvE (dvDoc venue body)).any (·.code == "W0303")))
+  -- The idiom's values are read at the door every `\setlength` reads
+  -- through (review LP-1): a kernel skip amount or a `\dimexpr` is its
+  -- value, a copy of the other caption skip is what this code assigned it,
+  -- and a value the door cannot read is one keyed W0104 with the skip left
+  -- as it was. Handed to the declaration unread, each failed the build.
+  let redef (v : String) : String :=
+    "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{" ++ v ++
+      "}\\@float{table}}{\\end@float}\n"
+  let builds (pre : String) : Bool :=
+    !((dvE (dvDoc pre body)).any (·.severity == .error))
+  let reads (v lit : String) : Bool :=
+    builds (redef v) && !((dvE (dvDoc (redef v) body)).any (·.code == "W0104")) &&
+      shippedLines fonts (dvDoc (redef v) body) == shippedLines fonts (dvDoc (redef lit) body)
+  let named (pre : String) : Bool :=
+    builds pre &&
+      ((dvE (dvDoc pre body)).filter (·.code == "W0104")).map (·.subject) ==
+        #[some "ctrl:setlength:abovecaptionskip:value"]
+  t "a kernel skip amount in the float-core idiom reads as its value"
+    (reads "\\smallskipamount" "3pt plus 1pt minus 1pt")
+  t "a dimexpr in the float-core idiom reads as its value"
+    (reads "\\dimexpr 2pt+1pt\\relax" "3pt")
+  t "a declared length in the float-core idiom reads as its value"
+    (builds ("\\newlength{\\placeholdergap}\\setlength{\\placeholdergap}{5pt}\n" ++ redef "\\placeholdergap") &&
+      shippedLines fonts (dvDoc ("\\newlength{\\placeholdergap}\\setlength{\\placeholdergap}{5pt}\n" ++
+        redef "\\placeholdergap") body) == shippedLines fonts (dvDoc (redef "5pt") body))
+  t "a value the door cannot read is named once and the skip keeps its value"
+    (reads "0.5\\baselineskip" "6pt" ||
+      (named (redef "0.5\\baselineskip") &&
+        shippedLines fonts (dvDoc (redef "0.5\\baselineskip") body) ==
+          shippedLines fonts (dvDoc "\\renewenvironment{table}{\\@float{table}}{\\end@float}\n" body)))
+  let copyAfter := "\\renewenvironment{table}{\\setlength{\\belowcaptionskip}{8pt}" ++
+    "\\setlength{\\abovecaptionskip}{\\belowcaptionskip}\\@float{table}}{\\end@float}\n"
+  let copyAfterLit := "\\renewenvironment{table}{\\setlength{\\belowcaptionskip}{8pt}" ++
+    "\\setlength{\\abovecaptionskip}{8pt}\\@float{table}}{\\end@float}\n"
+  t "a copy of the skip this code assigned before reads what it assigned"
+    (builds copyAfter && shippedLines fonts (dvDoc copyAfter body) ==
+      shippedLines fonts (dvDoc copyAfterLit body))
+  let copyBefore := "\\renewenvironment{table}{\\setlength{\\abovecaptionskip}{\\belowcaptionskip}" ++
+    "\\setlength{\\belowcaptionskip}{8pt}\\@float{table}}{\\end@float}\n"
+  t "a copy of a caption skip this code never assigned is named, not handed on"
+    (named copyBefore && shippedLines fonts (dvDoc copyBefore body) ==
+      shippedLines fonts (dvDoc ("\\renewenvironment{table}{\\setlength{\\belowcaptionskip}{8pt}" ++
+        "\\@float{table}}{\\end@float}\n") body))
   let html (pre : String) : String := (HtmlDoc.emit {} (elabStr (dvDoc pre body)).1).1
   t "the HTML table caption above its table reads the skip its placement faces there"
     (hasStr (html venue) "--ltx-capsep-top: var(--tablebelowcaptionskip, var(--belowcaptionskip, 0px))" &&

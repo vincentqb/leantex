@@ -3422,15 +3422,20 @@ the length keeps its value" pos
     (demote := packageFile (← get).file)
   return #[]
 
+/-- A length value as the assignment door reads it where it stands:
+`lenValue`, then the declaration reader's own test. `none` for a value the
+door cannot read. -/
+private def doorValue? (value : Array Raw) : M (Option String) := do
+  let st ← get
+  return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
+    st.flowPage).filter readsAsLength
+
 /-- A length assignment from its value's raws (`\setlength`, TeX's own
 `\parskip 6pt`): read at the door and landed by `setLength`, or named and
 skipped (`unreadableLength`). -/
 private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
     M (Array Raw) := do
-  let st ← get
-  if let some src := lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
-      st.flowPage then
-    if readsAsLength src then return ← setLength n src what pos
+  if let some src ← doorValue? value then return ← setLength n src what pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
 /-- A document macro used in a list's body whose definition is length
@@ -4352,6 +4357,19 @@ private def floatCoreDecls (kind : String) : List Raw → Option (List (String �
     skip.bind fun r => (floatCoreDecls kind rest).map ((r, v) :: ·)
   | _ => none
 
+/-- A caption skip's value inside the float-core idiom, read where the code
+runs: one name alone copies the skip this code assigned before (TeX's
+assignments run in sequence), then the door every `\setlength` reads
+through. `\belowcaptionskip` is no token here (the `\setlength` arm's
+N0102), so a value naming it that this code never assigned has nothing
+to read. -/
+private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw) :
+    M (Option String) := do
+  if let #[.ctrl n _] := v.filter (!· matches .space) then
+    if let some (_, src) := assigned.find? (·.1 == n) then return some src
+  if v.any (· matches .ctrl "belowcaptionskip" _) then return none
+  doorValue? v
+
 /-- A float redefined around its own kernel core — the venue idiom
 `\renewenvironment{table}{\setlength{\abovecaptionskip}{…}…\@float{table}}
 {\end@float}`, which swaps the caption skips for tables — is a scoped
@@ -4376,9 +4394,19 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
   let some (.group endB _) := raws[e]? | return none
   match items endB, floatCoreDecls envName (items beginB) with
   | [.ctrl "end@float" _], some decls =>
-    let entries := decls.map fun (r, v) =>
+    -- Each skip is read at the door every `\setlength` reads through, in
+    -- the code's order, as TeX runs the assignments: a copy of the other
+    -- caption skip reads what this code assigned it before, and a value
+    -- the door cannot read is named once and skipped, the skip keeping
+    -- its value — never handed to the declaration unread.
+    let mut assigned : Array (String × String) := #[]
+    for (r, v) in decls do
+      match ← floatSkipValue? assigned v with
+      | some src => assigned := (assigned.filter (·.1 != r)).push (r, src)
+      | none => let _ ← unreadableLength r (rawSrc v).trimAscii.toString pos
+    let entries := assigned.toList.map fun (r, src) =>
       let tok := if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"
-      s!"{kind.captionScope}{tok} = {lengthSrc v}"
+      s!"{kind.captionScope}{tok} = {src}"
     -- premise: captionScopeChecks — the kernel's order is declared only
     -- where no caption package places the skips, which the loads read
     -- over the whole preamble say
