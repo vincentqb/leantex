@@ -3919,6 +3919,21 @@ private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bo
       if g.fil && !g.parfill then return true
   return false
 
+/-- A run's glyphs as the set line's own values. A paragraph's items are
+shared with the task that breaks it, and a value shared across threads is
+counted atomically from then on: a run holding the items' own glyphs paid
+two atomic counts per glyph on every walk over the page (its ink, the
+census, the pen). -/
+private def ownGlyphs (glyphs : Array (Nat × Char × Sp)) : Array (Nat × Char × Sp) :=
+  glyphs.map fun (g, c, a) => (g, c, a)
+
+/-- The copy is the value it copies: only who owns it changes. -/
+private theorem ownGlyphs_id (glyphs : Array (Nat × Char × Sp)) : ownGlyphs glyphs = glyphs := by
+  unfold ownGlyphs
+  apply Array.ext (by simp)
+  intro i _ _
+  simp only [Array.getElem_map]
+
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     (justify : Bool) (protrude : Bool := false) (expand : Bool := false) :
     Array Seg × Sp × Bool × Sp × Int := Id.run do
@@ -3972,7 +3987,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- under the same horizontal scale.
       let w := w + w * f / 1000
       segs := segs.push
-        (.run fontIdx color link w glyphs size underline raise ground attr)
+        (.run fontIdx color link w (ownGlyphs glyphs) size underline raise ground attr)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
@@ -4016,7 +4031,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
         | .run _ _ _ _ _ sz ul _ gr _ => (if sz != 0 then sz else acc.1, ul, gr)
         | _ => acc) ((0 : Sp), false, (none : Option Ir.Color))
       segs := segs.push
-        (.run fontIdx color none w glyphs inherited inheritedUl 0 inheritedGr .hyphen)
+        (.run fontIdx color none w (ownGlyphs glyphs) inherited inheritedUl 0 inheritedGr .hyphen)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
