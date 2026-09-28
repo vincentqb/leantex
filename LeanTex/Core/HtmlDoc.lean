@@ -85,6 +85,11 @@ structure Config where
   (`Pdf.picture_box_agree`). The default answers nothing — a caller with no
   font environment sizes a picture by its declared box and node borders. -/
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- Inside a fill row's group (`fillRow`): a fraction of the text width is
+  a fraction of the row, the line the fill spans, as in TeX — never of the
+  group, whose width that same fraction decides. The image emission states
+  it in `cqi` against the row, which then declares itself the container. -/
+  inFillRow : Bool := false
 
 def cssColor (c : Color) : String :=
   let r := Color.hexByte c.r false
@@ -3974,6 +3979,9 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
   "  align-items: baseline; }\n" ++
   ".entry > .group + .group, .entry-row > .group + .group { margin-left: auto; }\n" ++
+  -- A fill spans its line whatever the paragraph's alignment (TeX's glue
+  -- orders, `Layout.setsToMeasure`): the first group starts at the left.
+  ".entry > .group:first-child, .entry-row > .group:first-child { text-align: left; }\n" ++
   ".entry > .group:last-child, .entry-row > .group:last-child { text-align: right; }\n" ++
   ".entry-pair { display: grid;\n" ++
   "  grid-template-columns: minmax(0, 1fr) max-content; }\n" ++
@@ -4265,12 +4273,29 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       if cfg.deck then deckDim l vertical else cssDim l
     let wCss := size.width.bind (dim · false)
     let hCss := size.height.bind (dim · true)
+    -- In a fill row a text-width fraction is the row's (`Config.inFillRow`),
+    -- in `cqi`, after the percentage a browser without container units keeps.
+    let wRow := size.width.bind fun l =>
+      if cfg.inFillRow && l.tw != 0 && l.sp == 0 && l.th == 0 then
+        some (decMilli (l.tw * 100) ++ "cqi") else none
+    let width (w : String) : String := match wRow with
+      | some r => s!"width: {w}; width: {r}"
+      | none => s!"width: {w}"
     let style : Option String :=
       match wCss, hCss with
       | some w, some h =>
-        some (s!"width: {w}; height: {h}" ++
-          (if size.keepAspect then "; object-fit: contain" else ""))
-      | some w, none => some s!"width: {w}; height: auto"
+        -- `keepaspectratio` is graphicx's fit: the box is the image scaled
+        -- by the smaller of the two ratios (`Image.resolveSize`), so the box
+        -- is what it draws, never a letterbox around it.
+        match size.keepAspect, info? with
+        | true, some inf =>
+          let (pw, ph) := intrinsicPx inf
+          let floor := if wRow.isSome then s!"width: {w}; " else ""
+          some (s!"{floor}width: min({wRow.getD w}, calc({h} * {pw} / {ph})); " ++
+            "height: auto")
+        | true, none => some s!"{width w}; height: {h}; object-fit: contain"
+        | false, _ => some s!"{width w}; height: {h}"
+      | some w, none => some s!"{width w}; height: auto"
       | none, some h => some s!"height: {h}; width: auto"
       | none, none =>
         if size.width.isNone && size.height.isNone &&
@@ -4650,9 +4675,16 @@ def headingTag (level : Nat) : String :=
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
   let groups := splitAtFills xs
   let rowClass := if groups.size == 2 then baseClass ++ " entry-pair" else baseClass
+  -- A row holding an image sized by a text-width fraction is the container
+  -- that fraction is stated against (`Config.inFillRow`).
+  let sized := Ir.foldInlines (fun acc x => acc || match x with
+    | .image _ size _ => size.width.any fun l => l.tw != 0 && l.sp == 0 && l.th == 0
+    | _ => false) false xs
+  let cfg := { cfg with inFillRow := true }
   Html.elem tag (groups.map fun group =>
     Html.elem "span" (inlines cfg group) #[("class", "group")])
-    #[("class", rowClass)]
+    (#[("class", rowClass)] ++
+      (if sized then #[("style", "container-type: inline-size")] else #[]))
 
 /-- Grid tracks from the declared widths, through the IR's own reading
 (`Ir.BoxWidth.trackOf`, spelled by `Ir.Track.css`): a fraction is a

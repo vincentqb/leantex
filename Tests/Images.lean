@@ -1027,3 +1027,18 @@ width=.4\\textwidth]{rects.png}%\n"
         ((boxes logoOut).map (·.2.2.2.2) == #[200 * th / 1000])
     | none => t "image rows: the logo's page carries the footline" false
   | none => t "image rows: the logo's frame lays out" false
+  -- The HTML: the row is the container its fractions are stated against,
+  -- each image's box is graphicx's fit under the height, never a letterbox,
+  -- and a fill row's first group starts at the left as the fill spans the
+  -- line. Chromium measured the deck's frame this way (the report's
+  -- evidence); the typed tree carries what it read.
+  let (html, _) := HtmlDoc.emit { imgs := store } doc
+  let rowOpen := "<p class=\"entry entry-pair\" style=\"container-type: inline-size\">"
+  t "image rows html: each row declares the container its fractions read"
+    ((html.splitOn rowOpen).length == 3)
+  t "image rows html: each image is .4 of the row, fitted under its height"
+    ((html.splitOn "width: 40%; width: min(40cqi, calc(").length == 5 &&
+     (html.splitOn " * 64 / 40)); height: auto").length == 5)
+  t "image rows html: no letterboxed image" (!hasStr html "object-fit")
+  t "image rows html: a fill row's first group starts at the left"
+    (hasStr html ".entry > .group:first-child, .entry-row > .group:first-child { text-align: left; }")
