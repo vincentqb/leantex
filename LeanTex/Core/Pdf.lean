@@ -195,7 +195,7 @@ def facePrograms (fs : FontSet) (pages : Array PageOut) : Array (ByteArray × Bo
   let used := usedAll fs pages
   (keepOf used).map fun k =>
     let f := fs.get k
-    FontSubset.program f.data f.isCff ((used[k]?.getD #[]).map (·.1))
+    FontSubset.program f ((used[k]?.getD #[]).map (·.1))
 
 /-- A subset's tag (ISO 32000-2 §9.6.4): six capitals, the first two the
 face's slot in the file, so no two subsets in one file share a tag, and the
@@ -1165,7 +1165,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let programs : Array (ByteArray × Bool) := if programs.size == nf then programs
     else (keep.zip usedPerFont).map fun (fk, used) =>
       let font := fs.get fk
-      FontSubset.program font.data font.isCff (used.map (·.1))
+      FontSubset.program font (used.map (·.1))
   let usedImgs := usedImagesOf imgs pages
   let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs

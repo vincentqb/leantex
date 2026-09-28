@@ -591,6 +591,12 @@ structure Font where
   layout asks, so a text face never builds the array), and only
   glyphs math actually measures ever decode. -/
   inkExtent : Thunk (Array (Thunk (Option (Int × Int))))
+  /-- The face's outline source, prepared once and lazily (`Ink.Src.make`):
+  the source `underlineInk` and `inkExtent` decode from, and the one a
+  subset reads its CFF structure from (`FontSubset.program`), so a face
+  whose layout decoded its glyphs is never parsed a second time to embed
+  them. -/
+  inkSrc : Thunk Ink.Src
   /-- Lazily: the measured ink top of this face's own 'x' in font units,
   from its outline. `none` when the face has no 'x' or the outline does not
   decode. Optical size matching prefers this over the declared `xHeight`
@@ -995,6 +1001,7 @@ def parse (data : ByteArray) : Except String Font := do
     mathHorizVariants := parseVariants true data
     mathTopAccent := parseTopAccent data
     inkExtent := inkExtent
+    inkSrc := src
     xInkTop := Thunk.mk fun _ =>
       (gidIn cmap 'x').bind fun g => (src.get.yExtentAt g).map (·.2)
     hasSmcp := sc.1

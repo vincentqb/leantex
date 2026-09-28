@@ -854,6 +854,8 @@ inductive Src where
   | glyfSrc (data : ByteArray) (glyf loca : Table) (long : Bool) (numGlyphs : Nat)
   | opaque
 
+instance : Inhabited Src := ⟨.opaque⟩
+
 def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
   if isCff then
     match parseCff b with

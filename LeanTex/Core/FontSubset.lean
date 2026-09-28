@@ -138,13 +138,16 @@ spelling's width. `none` — keep the table as it is — for anything outside
 what this reads with certainty: a CID-keyed face, a kept glyph the outline
 decoder cannot read whole (a seac glyph composes from two others), an
 offset into the old INDEX, or one that no longer fits its spelling — and
-when there is nothing to drop. -/
-def cffDrop (b : ByteArray) (t : Table) (keep : Array Bool) : Option ByteArray := do
+when there is nothing to drop. `src` is the face's prepared outline source
+and `decodes g` whether glyph `g`'s outline reads whole under it: the
+face's own (`Font.inkSrc`, `Font.yExtent`), which its layout has mostly
+asked already, so embedding parses and decodes nothing twice. -/
+def cffDrop (b : ByteArray) (t : Table) (keep : Array Bool) (src : Src) (decodes : Nat → Bool) :
+    Option ByteArray := do
   guard (fits b t)
-  let src := Src.make b true keep.size
   let .cffSrc .. := src | failure
   for h : g in [0:keep.size] do
-    if keep[g] then guard (src.yExtentAt g).isSome
+    if keep[g] then guard (decodes g)
   let base := t.offset
   let (_, p1) ← parseIndex b (base + u8 b (base + 2))
   let (tops, p2) ← parseIndex b p1
@@ -235,7 +238,8 @@ face's tables minus `droppedTables`, its outlines minus every glyph `used`
 does not reach (`.notdef` always kept). A variable face, a table directory
 this cannot read, or a result the face parser would not read back embeds
 the face's own bytes. -/
-def program (data : ByteArray) (isCff : Bool) (used : Array Nat) : ByteArray × Bool := Id.run do
+def program (font : Font.Font) (used : Array Nat) : ByteArray × Bool := Id.run do
+  let data := font.data
   if data.size < 12 || (findTable data "fvar").isSome || (findTable data "CFF2").isSome then
     return (data, false)
   let n := match findTable data "maxp" with
@@ -256,8 +260,9 @@ def program (data : ByteArray) (isCff : Bool) (used : Array Nat) : ByteArray × 
     unless droppedTables.contains tag do
       out := out.push (tag, data.extract t.offset (t.offset + t.length))
   let mut dropped := false
-  if isCff then
-    if let some cff := cffAt.bind fun t => cffDrop data t keep then
+  if font.isCff then
+    if let some cff := cffAt.bind fun t =>
+        cffDrop data t keep font.inkSrc.get (font.yExtent · |>.isSome) then
       out := out.map fun (tag, d) => (tag, if tag == "CFF " then cff else d)
       dropped := true
   else

@@ -619,13 +619,28 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Sans draws 'é' from 'e' and an accent, and the subset holding 'é'
   -- alone draws it exactly as the face does, while an unused 'x' is empty.
   let osE := (osans.gid 'é').getD 0
-  let (osProg, osSub) := FontSubset.program osans.data false #[osE]
+  let (osProg, osSub) := FontSubset.program osans #[osE]
   let osSrc := Ink.Src.make osans.data false osans.numGlyphs
   let osEmb := Ink.Src.make osProg false osans.numGlyphs
   t "subset: a composite the page paints keeps its components"
     (osSub && ((osEmb.cmdsAt osE).map (·.size != 0)) == some true &&
       osEmb.cmdsAt osE == osSrc.cmdsAt osE &&
       osEmb.cmdsAt ((osans.gid 'x').getD 0) == some #[] && osProg.size < osans.data.size)
+  -- A CFF subset reads the face's own prepared source and memoized decode
+  -- answers (`Font.inkSrc`, `Font.yExtent`): its table is the one a fresh
+  -- decode of the same bytes builds.
+  let sspKeep := "Typesetting".toList.foldl (fun k c =>
+    match ssp.gid c with | some g => k.set! g true | none => k)
+    ((Array.replicate ssp.numGlyphs false).set! 0 true)
+  let fresh := Ink.Src.make ssp.data true ssp.numGlyphs
+  t "subset: a CFF table read through the face is the fresh decode's"
+    (match Ink.findTable ssp.data "CFF " with
+     | some ct =>
+       let viaFace := FontSubset.cffDrop ssp.data ct sspKeep ssp.inkSrc.get
+         (ssp.yExtent · |>.isSome)
+       viaFace.isSome && viaFace.map (·.data) ==
+         (FontSubset.cffDrop ssp.data ct sspKeep fresh (fresh.yExtentAt · |>.isSome)).map (·.data)
+     | none => false)
   -- Fira Sans keeps every kern lookup behind an extension (GPOS type 9):
   -- read through the hop, its pairs answer hb-shape's own numbers (Te −55,
   -- AV −14, LT −83, aa −5 at upem 1000, HH none); without it the face read
