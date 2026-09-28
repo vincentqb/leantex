@@ -23870,3 +23870,9 @@ box, which the emission cannot read (routed: the driver could hand it one,
 as it hands `labelMetric`). The elaboration token `textheight` (a
 `\setlength` expression) still reads the margins on a frame, while
 `\includegraphics`' fraction reads beamer's (owed, `Elab.engineLengthTokensOfPage`).
+A fill that opens a paragraph's first line (`\noindent\hfill …`,
+`{\centering\hfill …}`) is still dropped as break residue (`lineStart`, and
+the breaker's own first-line start in `kp`), where TeX keeps glue that no
+break precedes: on an invented probe its words stand at the left or the
+centre where lualatex sets them at the right margin (owed; no document of
+the private reference corpus writes it).
