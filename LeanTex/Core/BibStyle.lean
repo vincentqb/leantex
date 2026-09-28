@@ -35,6 +35,12 @@ structure CitePunct where
   notesep : String := ", "
   sort : Bool := false
   compress : Bool := false
+  /-- The citations are biblatex's (its standard styles' defaults, biblatex
+  manual §3.1.2.1 and §3.9): up to three label names (`maxcitenames`), no
+  von part (`useprefix=false`), a textual citation's last key joined by
+  `and`, and a key repeating the last key's names printed whole. (Its bare
+  author-year `\cite` is natbib's `\citealp`, a rename where it is read.) -/
+  biblatex : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- `\setcitestyle`'s keywords (natbib.sty `\setcitestyle`, the package
@@ -99,6 +105,7 @@ def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
   else if d == "bibstyle" then (st.1, true)
   else if d == "sort" then ({ st.1 with sort := true }, st.2)
   else if d == "compress" then ({ st.1 with compress := true }, st.2)
+  else if d == "biblatex" then ({ st.1 with biblatex := true }, st.2)
   else match citeKeywords.lookup d, keyValue? d with
     | some f, _ => (f st.1, st.2)
     | none, some (k, v) =>
@@ -142,10 +149,15 @@ def natbibOptions : List (String × List String) :=
 /-- How the reference list is ordered: `citation` keeps first-citation
 order (the "unsrt" in `unsrtnat`); `authorYear` sorts by the label names,
 then year, then key — the tiebreak that keeps the comparison total when
-two entries share authors and year. -/
+two entries share authors and year; `nty` and `nyt` are biblatex's
+default sorting schemes (biblatex manual §3.1.2.1: name, title, year for
+the numeric styles; name, year, title for the author-year ones), a name
+sorted by its family name first. -/
 inductive SortOrder where
   | citation
   | authorYear
+  | nty
+  | nyt
   deriving Repr, BEq, Inhabited
 
 /-- One formatted piece of a reference-list entry: plainnat.bst's `format.*`
@@ -276,11 +288,12 @@ def citeYear (e : Entry) : String :=
   | none => "n.d."
 
 /-- The label names of an entry's authors (`\citet`'s `Author et al.`):
-the author field through `labelNames`, or the key itself when no author
-is there — visible, never silently empty. -/
-def citeAuthors (e : Entry) : String :=
+the author field through `labelNames` — natbib's two names, or biblatex's
+three with no von part — or the key itself when no author is there,
+visible, never silently empty. -/
+def citeAuthors (e : Entry) (biblatex : Bool := false) : String :=
   match e.field? "author" with
-  | some a => Ir.smartPunct (labelNames a)
+  | some a => Ir.smartPunct (labelNames a (if biblatex then 3 else 2) (!biblatex))
   | none => e.key
 
 /-- The anchor an entry's reference-list item carries and its citations
@@ -331,6 +344,8 @@ private structure CiteAcc where
   last : Option String := none
   lastYear : Option String := none
   dated : Bool := false
+  /-- The keys read so far. -/
+  index : Nat := 0
 
 private def emit (out : Array Ir.Inline) (s : String) : Array Ir.Inline :=
   if s.isEmpty then out else out.push (.text s)
@@ -373,46 +388,61 @@ private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
     op := if brackets then p.open else ""
     cl := if brackets then p.close else "" }
 
+/-- The separator a textual citation's key leaves for the next when the
+citation has `total` keys and this is key `k` (from 0): natbib's `sep`,
+or biblatex's `\textcitedelim` — `, ` between keys, ` and ` before the last
+of two, `, and ` before the last of more. -/
+private def textSep (p : CitePunct) (f : Ir.CiteForm) (total k : Nat) : String :=
+  if p.biblatex && f.cmd == .textual then
+    if k + 2 == total then (if total ≥ 3 then ", and " else " and ") else ", "
+  else p.sep ++ " "
+
 /-- One key under natbib's loop (natbib.sty `\NAT@citex`, `\NAT@citexnum`
 in numbers mode): the separator the previous key left, this key's piece
 linked to its entry, and the separator it leaves. natbib capitalizes names
 only in author-year mode; a key repeating the previous key's names prints
 only its year after `yysep`, and one repeating the year too only its
-letter, with no space (`\NAT@exlab`: `2019a,b`). In numbers mode natbib
-defines `\natexlab` to print nothing, so no letter prints. An unresolvable
-key prints `?` in its place with the separators a resolved one would have. -/
-private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : CiteAcc) :
-    Option Resolved → CiteAcc
-  | none => { out := emit acc.out (acc.citea ++ "?"), citea := p.sep ++ " " }
+letter, with no space (`\NAT@exlab`: `2019a,b`) — biblatex's standard
+styles print every key whole. In numbers mode natbib defines `\natexlab`
+to print nothing, so no letter prints. An unresolvable key prints `?` in
+its place with the separators a resolved one would have. `total` is the
+citation's key count, which a biblatex textual citation's last separator
+reads (`textSep`). -/
+private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : Nat)
+    (acc : CiteAcc) : Option Resolved → CiteAcc
+  | none =>
+    { out := emit acc.out (acc.citea ++ "?"), citea := p.sep ++ " ", index := acc.index + 1 }
   | some r =>
-    let names := if f.full then citeFullAuthors r.entry else citeAuthors r.entry
+    let names := if f.full then citeFullAuthors r.entry else citeAuthors r.entry p.biblatex
     let names := if f.up && !s.numeric then upFirst names else names
     let bare := citeYear r.entry
     let letter := if p.numbers then "" else r.extra
     let year := bare ++ letter
     let mark := if s.numeric then r.label.getD (toString r.position) else year
     let pre := if f.pre.isEmpty then "" else f.pre ++ " "
-    let same := acc.last == some names
+    let same := !p.biblatex && acc.last == some names
     let sameYear := same && acc.lastYear == some bare && !letter.isEmpty
+    let tsep := textSep p f total acc.index
     -- (what precedes the linked piece, the piece, the separator left behind)
     let t : String × String × String := match s.part with
       | .names => (acc.citea, names, p.sep ++ " ")
-      | .year => (acc.citea, year, p.sep ++ " ")
+      | .year => (acc.citea, if p.biblatex then bare else year, p.sep ++ " ")
       | .both =>
         if s.wrap then
           if s.numeric then (acc.citea, mark, p.sep ++ " ")
           else if sameYear then (p.yysep, letter, p.sep ++ " ")
           else if same then (p.yysep ++ " ", year, p.sep ++ " ")
           else (acc.citea, s!"{names}{p.aysep} {year}", p.sep ++ " ")
-        else if sameYear then (p.yysep, letter, s.cl ++ p.sep ++ " ")
+        else if sameYear then (p.yysep, letter, s.cl ++ tsep)
         else
           (if same then p.yysep ++ " " ++ (if s.numeric then pre else "")
-            else acc.citea ++ names ++ " " ++ s.op ++ pre, mark, s.cl ++ p.sep ++ " ")
+            else acc.citea ++ names ++ " " ++ s.op ++ pre, mark, s.cl ++ tsep)
     { out := emitLink (emit acc.out t.1) (anchorOf r.key) t.2.1
       citea := t.2.2
       last := some names
       lastYear := some bare
-      dated := true }
+      dated := true
+      index := acc.index + 1 }
 
 /-- The brackets around the loop's output: a wrapping form opens them with
 its pre-note and closes them after its post-note (`notesep`); a textual
@@ -502,7 +532,7 @@ def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved
     let parts := if p.sort then sortParts parts else parts
     let s := switches p f
     finish p f s (if p.compress && s.numeric && s.wrap && s.part == .both then compressRuns p parts
-      else parts.foldl (citeStep p f s) {})
+      else parts.foldl (citeStep p f s parts.size) {})
 
 /-- An en dash between page numbers: `45--67` and `45-67` both print
 `45–67`, the range dash `.bib` files spell both ways. `text` already
@@ -907,7 +937,7 @@ def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
   | some decls =>
     let (p, door) := decls.foldl CitePunct.step ({}, true)
     let q := if door then row.getD p else p
-    let q := { q with sort := p.sort, compress := p.compress }
+    let q := { q with sort := p.sort, compress := p.compress, biblatex := p.biblatex }
     if labels then q else { q with numbers := true }
 
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
@@ -968,25 +998,52 @@ def ayKey (r : Resolved) : String × String × String :=
 def ayCompare (a b : String × String × String) : Ordering :=
   (Ord.compare a.1 b.1).then ((Ord.compare a.2.1 b.2.1).then (Ord.compare a.2.2 b.2.2))
 
+/-- biblatex's sort key, computed once per entry, as its schemes name the
+fields — `nty` (name, title, year) or `nyt` (name, year, title) — then the
+key: the names each family name first (`useprefix=false` sorts `de Pome`
+under P), the title and the year as written, lowercased. -/
+def biblatexKey (titleFirst : Bool) (r : Resolved) : String × String × String × String :=
+  let names := ((r.entry.field? "author").map fun a =>
+    String.intercalate " " ((splitNames a).toList.map fun s =>
+      let n := parseName s
+      text (String.intercalate " " ([n.last, n.first].filter (!·.isEmpty))))).getD ""
+  let title := ((r.entry.field? "title").map text).getD ""
+  let (b, c) := if titleFirst then (title, citeYear r.entry) else (citeYear r.entry, title)
+  (names.toLower, b.toLower, c.toLower, r.key)
+
+/-- The order on biblatex's keys, field by field. -/
+def biblatexCompare (a b : String × String × String × String) : Ordering :=
+  (Ord.compare a.1 b.1).then ((Ord.compare a.2.1 b.2.1).then
+    ((Ord.compare a.2.2.1 b.2.2.1).then (Ord.compare a.2.2.2 b.2.2.2)))
+
 /-- The comparison a sort order names, over entries carrying their
 first-citation position. Citation order compares the positions, which are
 distinct by construction; author-year compares the label names, then the
 year, then — the tiebreak totality forces — the key, so two entries by the
-same authors in the same year still have one order. -/
+same authors in the same year still have one order; biblatex's schemes
+compare their keys (`biblatexKey`). -/
 def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
   match so with
   | .citation => Ord.compare a.position b.position
   | .authorYear => ayCompare (ayKey a) (ayKey b)
+  | .nty => biblatexCompare (biblatexKey true a) (biblatexKey true b)
+  | .nyt => biblatexCompare (biblatexKey false a) (biblatexKey false b)
+
+/-- A merge sort over keys computed once per entry. -/
+def sortByKey {κ : Type} (key : Resolved → κ) (cmp : κ → κ → Ordering) (xs : List Resolved) :
+    List Resolved :=
+  ((xs.map fun r => (key r, r)).mergeSort fun a b => cmp a.1 b.1 != .gt).map (·.2)
 
 /-- The list sorted by the order's comparison, in `n log n` steps: a merge
-sort (stable), author-year over keys computed once per entry rather than
-once per comparison — a thesis-sized list is thousands of entries, and the
+sort (stable), over keys computed once per entry rather than once per
+comparison — a thesis-sized list is thousands of entries, and the
 insertion sort this replaces was quadratic in them. -/
 def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
   match so with
   | .citation => xs.mergeSort fun a b => decide (a.position ≤ b.position)
-  | .authorYear =>
-    ((xs.map fun r => (ayKey r, r)).mergeSort fun a b => ayCompare a.1 b.1 != .gt).map (·.2)
+  | .authorYear => sortByKey ayKey ayCompare xs
+  | .nty => sortByKey (biblatexKey true) biblatexCompare xs
+  | .nyt => sortByKey (biblatexKey false) biblatexCompare xs
 
 /-- What one key renders as, everywhere it is cited: its entry at its
 1-based position in the reference list. -/
@@ -995,8 +1052,8 @@ def Resolver := String → Option Resolved
 /-- The label plainnat.bst's `calc.label` builds and its `forward.pass`
 compares between entries: the label names a citation prints and the
 year. -/
-def labelOf (e : Entry) : String :=
-  citeAuthors e ++ "(" ++ ((e.field? "year").map text).getD ""
+def labelOf (e : Entry) (biblatex : Bool := false) : String :=
+  citeAuthors e biblatex ++ "(" ++ ((e.field? "year").map text).getD ""
 
 /-- The letter of the `i`-th entry among those sharing a label: `a`, `b`,
 … (`int.to.chr$` from `"a" chr.to.int$`). -/
@@ -1007,8 +1064,8 @@ reference list, and unsrtnat.bst's the same: the entries sharing a label
 (`labelOf`) take `a`, `b`, … in list order, and an entry whose label is its
 own takes none. Each label is computed once and grouped through a map, so
 the letters cost one pass over the list, never a comparison per pair. -/
-def extraLabels (rs : Array Resolved) : Array Resolved :=
-  let labels := rs.map (labelOf ·.entry)
+def extraLabels (rs : Array Resolved) (biblatex : Bool := false) : Array Resolved :=
+  let labels := rs.map (labelOf ·.entry biblatex)
   let counts : Std.HashMap String Nat := labels.foldl (fun m l => m.insert l (m.getD l 0 + 1)) {}
   let ranks := (labels.foldl (fun (acc : Std.HashMap String Nat × Array Nat) l =>
     (acc.1.insert l (acc.1.getD l 0 + 1), acc.2.push (acc.1.getD l 0))) ({}, #[])).2
@@ -1021,7 +1078,7 @@ the style's order, positions assigned by list index — so the numeric
 marker IS the sort position, the fact `\cite` marks rest on — and each
 entry's letter among those sharing its label (`extraLabels`). -/
 def resolveEntries (style : Style) (cited : Array String)
-    (find : String → Option Entry) : Array Resolved :=
+    (find : String → Option Entry) (biblatex : Bool := false) : Array Resolved :=
   -- First-citation positions (1-based, in cited order) feed the sort;
   -- the final position is the index in the sorted list.
   let hits := cited.foldl (fun acc k =>
@@ -1029,7 +1086,7 @@ def resolveEntries (style : Style) (cited : Array String)
     | some e => acc.push { key := k, position := acc.size + 1, entry := e }
     | none => acc) #[]
   let sorted := sortResolved style.sort hits.toList
-  extraLabels (sorted.toArray.mapIdx fun i r => { r with position := i + 1 })
+  extraLabels (sorted.toArray.mapIdx fun i r => { r with position := i + 1 }) biblatex
 
 /-- The items a `\bibliography` block ships: each resolved entry formatted
 per the style, marked by its position in numbers mode and by nothing in
@@ -1080,17 +1137,13 @@ theorem positions_exact (style : Style) (cited : Array String)
 half of "the emitted list is a permutation of the cited set". -/
 theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
     z ∈ sortResolved so xs ↔ z ∈ xs := by
-  cases so with
-  | citation => simp [sortResolved]
-  | authorYear => simp [sortResolved]
+  cases so <;> simp [sortResolved, sortByKey]
 
 /-- The sorted list is exactly as long as the input: with `sortResolved_mem`
 this is the counting half of the permutation claim. -/
 theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
     (sortResolved so xs).length = xs.length := by
-  cases so with
-  | citation => simp [sortResolved]
-  | authorYear => simp [sortResolved]
+  cases so <;> simp [sortResolved, sortByKey]
 
 /-- The comparison is total in the order-theoretic sense: two entries
 always compare, one way or the other — `gt` one way implies not-`gt` the
@@ -1471,9 +1524,13 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
           one the engine knows; the reference list is set as 'unsrtnat'{cites}"
           (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv"))
         pure (some Style.unsrtnat)
-  let style := declared.getD Style.unsrtnat
   let p := CitePunct.ofDoc doc.natbib ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
     (declared.all (·.labels))
+  -- biblatex sorts its list by its own schemes: nty for the numeric styles,
+  -- nyt for the author-year ones (sorting=none keeps citation order).
+  let style := declared.getD Style.unsrtnat
+  let style := if p.biblatex && style.sort != .citation then
+      { style with sort := if p.numbers then .nty else .nyt } else style
   let cited := expandStar entries (citedKeys doc)
   let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
   let byKey : Std.HashMap String Entry := entries.foldl (fun m e => m.insert e.key e) {}
@@ -1481,7 +1538,7 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
   let own := Ir.ownBibItemsBlocks doc.body
   let (p, resolved, items) :=
     if own.isEmpty then
-      let resolved := resolveEntries style cited findEntry
+      let resolved := resolveEntries style cited findEntry p.biblatex
       (p, resolved, bibItems p style resolved)
     else ownList p own
   let byCite : Std.HashMap String Resolved := resolved.foldl (fun m r => m.insert r.key r) {}
@@ -1573,9 +1630,9 @@ private theorem emitLink_plain (out : Array Ir.Inline) (anchor s : String)
     (h : out.all plainCite = true) : (emitLink out anchor s).all plainCite = true := by
   rw [emitLink, Array.all_push, h]; simp [plainCite]
 
-private theorem citeStep_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
+private theorem citeStep_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (n : Nat)
     (acc : CiteAcc) (o : Option Resolved) (h : acc.out.all plainCite = true) :
-    (citeStep p f s acc o).out.all plainCite = true := by
+    (citeStep p f s n acc o).out.all plainCite = true := by
   cases o with
   | none => exact emit_plain _ _ h
   | some r => exact emitLink_plain _ _ _ (emit_plain _ _ h)
@@ -1624,7 +1681,7 @@ theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
     split
     · exact compressRuns_plain p _
     · exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => a.out.all plainCite = true)
-        (by simp) (fun _ b hb => citeStep_plain p f _ b _ hb)
+        (by simp) (fun _ b hb => citeStep_plain p f _ _ b _ hb)
 
 /-- A rendered citation adds nothing to the pending census. -/
 private theorem renderCite_pending (p : CitePunct) (f : Ir.CiteForm)

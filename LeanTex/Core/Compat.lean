@@ -5649,6 +5649,11 @@ where
       M (Option (Array Raw × Nat)) := do
   if let some tok := literalReplace.lookup name then
     return some (#[tok pos], start)
+  -- premise: biblatexChecks — `\cite` under biblatex's authoryear sets bare
+  -- (`Doe 2024`, `see Doe 2024, p. 5`), the line lualatex+biber sets, where
+  -- natbib's own `\cite` is textual
+  if name == "cite" && (← get).bibStyle == some "plainnat" then
+    return some (#[.ctrl "citealp" pos], start)
   -- premise: numberingChecks — two decks differing by the package alone: the
   -- appendix numbers from 1 with it and numbers on without it
   if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
@@ -5779,9 +5784,13 @@ captions and patterns stand in" pos
           became s!"\\usepackage[style={style}]\{biblatex}"
             s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
           write fun st => { st with bibStyle := some s }
-          -- authoryear's round brackets and semicolons are natbib's own load
-          -- values; the style's square-bracket row stays out.
-          if s == "plainnat" then natbibDefer #["nobibstyle"] pos
+          -- The citations are biblatex's (`Bib.CitePunct.biblatex`). The numeric
+          -- styles take the plain row through the open door; authoryear's
+          -- round brackets and semicolons are natbib's own load values, the
+          -- style's square-bracket row shut out, and its name and year stand
+          -- apart by a space alone (`\nameyeardelim`).
+          natbibDefer (if s == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
+            else #["biblatex"]) pos
         | none =>
           say .W0353 s!"bibliography style '{style}' is not one the engine \
 knows; the reference list is set as 'unsrtnat'" pos

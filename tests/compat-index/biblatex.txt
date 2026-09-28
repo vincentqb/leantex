@@ -1,23 +1,24 @@
 # source: biblatex manual §3.1.1 (the standard styles; style defaults to
-# numeric, sorting to nty), §3.7.1 (\addbibresource), §3.7.2
-# (\printbibliography), §3.8.2 (the citation commands). The spellings land
-# on the natbib door: styles onto the four-axis record
-# (numeric→plain, numeric+sorting=none→unsrt, authoryear→plainnat;
-# alphabetic labels are outside the record set, W0353 with unsrtnat
-# standing in), \parencite/\autocite onto \citep, \textcite onto \citet,
-# the resource onto \bibliography at the \printbibliography site.
-# \citeauthor and \citeyear share natbib's names and land on its rows,
-# with natbib's name rule (et al. past two authors, where biblatex's
-# default maxcitenames prints up to three). The rest of the citation
-# family stays refused by name.
-# A style option and \addbibresource are bindings read at the
-# \printbibliography site (inert:binds): they move no ink where they stand,
-# and \printbibliography with no file declared draws nothing and says so.
-# authoryear also declares its punctuation document-wide — natbib's round
-# brackets and semicolons, not plainnat's square row — so its load is impl.
-# The drawn evidence is the citation rows below.
-pre inert:binds \usepackage[style=numeric]{biblatex}
-pre inert:binds \usepackage[style=numeric,sorting=none]{biblatex}
+# numeric, sorting to nty), §3.1.2.1 (maxcitenames, useprefix, sorting),
+# §3.7.1 (\addbibresource), §3.7.2 (\printbibliography), §3.8.2 (the
+# citation commands). The spellings land on the natbib door: styles onto
+# the four-axis record (numeric→plain, numeric+sorting=none→unsrt,
+# authoryear→plainnat; alphabetic labels are outside the record set,
+# W0353 with unsrtnat standing in), \parencite/\autocite onto \citep,
+# \textcite onto \citet, authoryear's bare \cite onto \citealp, the
+# resource onto \bibliography at the \printbibliography site. Every
+# style load also declares biblatex's citation defaults
+# (Bib.CitePunct.biblatex): up to three label names, no von part, a
+# textual list's last key after "and", no same-name compression, and the
+# list in biblatex's nty (numeric) or nyt (authoryear) order; authoryear
+# takes natbib's round brackets and semicolons with a space between name
+# and year (\nameyeardelim). So each style load is impl. The reference
+# list's entries keep the record's formatting (plainnat's or plain's
+# fields and punctuation, not standard.bbx's), which the load's note names.
+# \printbibliography with no file declared draws nothing and says so.
+# The drawn evidence is biblatexChecks' lines, measured with biber.
+pre impl \usepackage[style=numeric]{biblatex}
+pre impl \usepackage[style=numeric,sorting=none]{biblatex}
 pre impl \usepackage[style=authoryear]{biblatex}
 pre refuse:W0353 \usepackage[style=alphabetic]{biblatex}
 pre inert:binds \addbibresource{refs.bib}
@@ -25,6 +26,7 @@ body inert:no-bib-file \printbibliography
 body impl \autocite{k}
 body impl \parencite{k}
 body impl \textcite{k}
+body impl \cite{k}
 body refuse:W0301 \Textcite{k}
 body refuse:W0301 \footcite{k}
 body refuse:W0301 \fullcite{k}

@@ -2113,13 +2113,18 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("enquote", wrap "" "\\enquote{x}", wrap "" "“x”"),
     ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
       wrap "\\style{itemize}{ indent = 2em }" "x"),
-    ("biblatex", wrap "\\usepackage[style=numeric]{biblatex}\\addbibresource{refs.bib}"
-      "\\autocite{k}\n\n\\printbibliography",
-      wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}"),
     ("fontface", wrap "\\setmainfont{Alpha Serif}[FontFace={l}{n}{Alpha Serif Light}]" "x",
       wrap "\\fonts{ body = \"Alpha Serif\", body.l = \"Alpha Serif Light\" }" "x")]
   for (nm, latex, native) in pairs do
     t s!"conserves {nm}" ((elabStr latex).1 == (elabStr native).1)
+  -- biblatex's load is the native reference list and one fact beside it: its
+  -- citations are biblatex's (`Bib.CitePunct.biblatex`), which no natbib-free
+  -- native spelling declares.
+  let bl := (elabStr (wrap "\\usepackage[style=numeric]{biblatex}\\addbibresource{refs.bib}"
+    "\\autocite{k}\n\n\\printbibliography")).1
+  let nat := (elabStr (wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")).1
+  t "conserves biblatex, but for its citation style"
+    ({ bl with natbib := none } == nat && bl.natbib == some #["biblatex"])
 
 /-- Dimension evidence beyond the fixed vectors in `main`.
 
@@ -4495,22 +4500,6 @@ def plainnatChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (shipped.size == keys.length && ds.isEmpty)
   for want in plainnatLines, got in shipped.toList do
     t s!"plainnat: the page sets '{want}' ({got})" (got == want)
-
-/-- Entries whose label names and year coincide, so plainnat.bst's
-`forward.pass`/`reverse.pass` give them letters, one more year by the same
-names, one other author, and two entries the `\nocite` rows name:
-invented people and titles. -/
-def natbibLabelBib : String :=
-  "@article{gam2019a, author = {Gil Gamma and Hal Eta}, title = {An early invented result},\n\
-    journal = {Journal of Examples}, year = {2019}}\n\
-  @article{gam2019b, author = {Gil Gamma and Hal Eta}, title = {A later invented result},\n\
-    journal = {Journal of Examples}, year = {2019}}\n\
-  @article{gam2020, author = {Gil Gamma and Hal Eta}, title = {A third invented result},\n\
-    journal = {Journal of Examples}, year = {2020}}\n\
-  @book{iota2018, author = {Ivy Iota}, title = {An Invented Book}, publisher = {Example Press},\n\
-    year = {2018}}\n\
-  @misc{kap2017, author = {Kai Kappa}, title = {An invented note}, year = {2017}}\n\
-  @misc{lam2016, author = {Lu Lambda}, title = {An entry no citation names}, year = {2016}}\n"
 
 /-- The calls the letter rows set, one paragraph each (`natbibSrc`). -/
 def natbibLabelCalls : List String :=

@@ -208,3 +208,73 @@ def natbibSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       let line := s!"L{k} {w} end."
       t s!"{tag}: the page sets '{line}'" (page.contains line)
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
+
+
+/-- biblatex's citation commands, one paragraph each, over `natbibBib`: every
+form the index marks implemented, a noted form of each bracket kind, and
+one, two and three keys where biblatex's list separators differ from
+natbib's. -/
+def biblatexCalls : List String :=
+  ["\\parencite{alpha2019}", "\\textcite{eps2020}", "\\citeauthor{alpha2019}",
+   "\\parencite{alpha2019,delta2021}", "\\cite{delta2021}", "\\citeyear{delta2021}",
+   "\\parencite[p.~5]{delta2021}", "\\parencite[see][p.~5]{delta2021}", "\\autocite{eps2020}",
+   "\\textcite{delta2021,eps2020}", "\\citeauthor{pome2018}", "\\textcite[p.~5]{delta2021}",
+   "\\textcite{delta2021,eps2020,pome2018}", "\\cite{alpha2019,delta2021}",
+   "\\citeauthor{alpha2019,eps2020}", "\\citeyear{alpha2019,delta2021}"]
+
+/-- One configuration per row: the load options and the lines lualatex set
+for `biblatexCalls` (TeX Live 2026, biblatex 3.21, biber 2.22, through
+`pdftotext`). The numeric numbers are biblatex's `nty` order, which sorts
+`de Pome` under P. -/
+def biblatexModes : List (String × List String) :=
+  let names := "Alpha, Beta, and Gamma"
+  [("style=authoryear",
+    [s!"({names} 2019)", "Epsilon and Zeta (2020)", names, s!"({names} 2019; Delta 2021)",
+     "Delta 2021", "2021", "(Delta 2021, p. 5)", "(see Delta 2021, p. 5)",
+     "(Epsilon and Zeta 2020)", "Delta (2021) and Epsilon and Zeta (2020)", "Pome",
+     "Delta (2021, p. 5)", "Delta (2021), Epsilon and Zeta (2020), and Pome (2018)",
+     s!"{names} 2019; Delta 2021", s!"{names}; Epsilon and Zeta", "2019; 2021"]),
+   ("style=numeric",
+    ["[1]", "Epsilon and Zeta [3]", names, "[1, 2]", "[2]", "2021", "[2, p. 5]", "[see 2, p. 5]",
+     "[3]", "Delta [2] and Epsilon and Zeta [3]", "Pome", "Delta [2, p. 5]",
+     "Delta [2], Epsilon and Zeta [3], and Pome [4]", "[1, 2]", s!"{names}, Epsilon and Zeta",
+     "2019, 2021"]),
+   ("style=numeric,sorting=none",
+    ["[1]", "Epsilon and Zeta [2]", names, "[1, 3]", "[3]", "2021", "[3, p. 5]", "[see 3, p. 5]",
+     "[2]", "Delta [3] and Epsilon and Zeta [2]", "Pome", "Delta [3, p. 5]",
+     "Delta [3], Epsilon and Zeta [2], and Pome [4]", "[1, 3]", s!"{names}, Epsilon and Zeta",
+     "2019, 2021"])]
+
+/-- **biblatex's citations are biblatex's**, not natbib's by another name: up
+to three label names (`maxcitenames`), a name's von part dropped
+(`useprefix=false`), the author-year name and year apart by a space
+(`\nameyeardelim`), a bare author-year `\cite`, a textual list's last key
+after `and`, and the list numbered in biblatex's own `nty` order — on the
+shipped page and in the HTML, against lualatex and biber. Over entries that
+share their names and year, biblatex's letters follow its `nyt` order (`A
+later…` before `An early…`), repeat names whole, and stay out of
+`\citeyear`. -/
+def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let letters := ("style=authoryear", natbibLabelBib,
+    ["\\parencite{gam2019a,gam2019b}", "\\citeyear{gam2019a}", "\\textcite{gam2019a}",
+     "\\parencite{gam2019b,gam2020}", "\\cite{gam2019a}"],
+    ["(Gamma and Eta 2019b; Gamma and Eta 2019a)", "2019", "Gamma and Eta (2019b)",
+     "(Gamma and Eta 2019a; Gamma and Eta 2020)", "Gamma and Eta 2019b"])
+  for (opts, bib, calls, want) in letters :: biblatexModes.map fun (o, w) =>
+      (o, natbibBib, biblatexCalls, w) do
+    let body := String.join (calls.zipIdx.map fun (c, k) => s!"L{k + 1} {c} end.\n\n")
+    let (doc, eds) := elabStr s!"\\documentclass\{article}\n\
+      \\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]\{geometry}\n\
+      \\usepackage[{opts}]\{biblatex}\n\\addbibresource\{refs.bib}\n\\begin\{document}\n\
+      {body}\\printbibliography\n\\end\{document}\n"
+    let (doc, ds) := Bib.apply ((Ir.bibRefs doc).map (·, bib)) doc
+    let page := (bodyLines (layoutOf oneFace doc)).map lineInk
+    let html := htmlVisibleText (HtmlDoc.emit {} doc).1
+    let tag := s!"biblatex {opts}"
+    t s!"{tag}: no diagnostic ({(eds ++ ds).map (·.code)})"
+      (!(eds ++ ds).any fun d => d.code.startsWith "W" || d.code.startsWith "E")
+    for w in want, k in [1:want.length + 1] do
+      let line := s!"L{k} {w} end."
+      t s!"{tag}: the page sets '{line}'" (page.contains line)
+      t s!"{tag}: the html reads '{line}'" (hasStr html line)

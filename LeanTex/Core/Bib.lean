@@ -679,17 +679,22 @@ def andJoin (ns : List String) : String :=
     else if init.length == 1 then s!"{joinSp init} and {last}"
     else s!"{String.intercalate ", " init}, and {last}"
 
-/-- The label names `\citet` prints (plainnat.bst FUNCTION
-{format.lab.names}): one author's last name; two joined with ` and `;
-more, or an elided list, take `et al.`. -/
-def labelNames (v : String) : String :=
+/-- The label names a citation prints: every last name, joined as
+`andJoin` joins a list, up to `upTo` names, and past it the first with
+`et al.` — plainnat.bst FUNCTION {format.lab.names} at its two (one
+author's name; two joined with ` and `; more, or an elided list, take
+`et al.`), biblatex at its `maxcitenames` of three (`Doe, Roe, and Poe`).
+`withVon` keeps a name's von part, as BibTeX's `{vv~}{ll}` does; biblatex's
+`useprefix=false` drops it (`de Pome` cites as `Pome`). -/
+def labelNames (v : String) (upTo : Nat := 2) (withVon : Bool := true) : String :=
   let ns := splitNames v
-  let short (s : String) : String := text (parseName s).short
-  match ns.toList with
-  | [] => ""
-  | [a] => short a
-  | [a, b] => if b == "others" then s!"{short a} et al." else s!"{short a} and {short b}"
-  | a :: _ => s!"{short a} et al."
+  let short (s : String) : String :=
+    let n := parseName s
+    text (if withVon then n.short else n.last)
+  if ns.size ≤ upTo then andJoin (ns.toList.map fun s => if s == "others" then s else short s)
+  else match ns.toList with
+    | a :: _ => s!"{short a} et al."
+    | [] => ""
 
 /-- The full author list natbib's starred forms print (plainnat.bst
 FUNCTION {format.full.names}, the long names each `\bibitem` carries):
