@@ -342,9 +342,25 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "a redefinition placing BODY places the body again"
     (sets (doc "\\NewEnviron{placeholder}{}\n\\RenewEnviron{placeholder}{\\BODY}\n" use)
       "Middle words")
-  t "a final code beside a code with no BODY is refused, and the refusal says so"
-    ((dvE (doc "\\NewEnviron{placeholder}{}[Tail words]\n" use)).any fun d =>
-      d.code == "W0104" && hasStr d.message "final code")
+  -- environ runs the code where the body ends and the final code at the
+  -- end, whether or not the code places the body (review LP-2): refused,
+  -- the body LaTeX hides shipped instead.
+  let finalOnly := doc "\\NewEnviron{placeholder}{Lead words}[ Tail words]\n"
+    "Alpha words.\n\n\\begin{placeholder}Hidden words\\end{placeholder}\n\nBravo words."
+  t "a final code beside a code with no BODY ends the environment, the body hidden"
+    (sets finalOnly "Lead words Tail words" && !hasStr (pageTextOf fonts finalOnly) "Hidden" &&
+      !((dvE finalOnly).any fun d => ["W0104", "W0301", "W0302"].contains d.code))
+  -- environ's `\BODY` is the body with its edge spaces trimmed, and its
+  -- default final code `\ignorespacesafterend` skips the spaces after
+  -- `\end{…}` (environ.sty `\env@save`, `\environfinalcode`); each line
+  -- below is lualatex's for the source (review LP-2).
+  let trimmed := "Before \\begin{placeholder} Middle words \\end{placeholder} after.\n\n" ++
+    "\\begin{placeholder}\nOther words\n\\end{placeholder}"
+  t "environ trims the body's edge spaces and skips the spaces after the end"
+    (sets (doc "\\NewEnviron{placeholder}{(\\BODY)}\n" trimmed) "Before (Middle words)after." &&
+      sets (doc "\\NewEnviron{placeholder}{(\\BODY)}\n" trimmed) "(Other words)")
+  t "a given final code replaces the skip after the end"
+    (sets (doc "\\NewEnviron{placeholder}{(\\BODY}[)]\n" trimmed) "Before (Middle words) after.")
   -- A document's own `\BODY` macro in a kernel definition is that macro:
   -- only environ's definer places the collected body there (review LP-1).
   -- Split at it, the kernel's begin code left its end group unconsumed in
@@ -416,3 +432,16 @@ def seamChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
       "Inline Lead words\\ \\ Middle words\\ \\ Tail words after.")
   t "the blanks after a control space are skipped, as TeX's reader skips them"
     (same "" "Alpha\\  Bravo words." "Alpha\\ Bravo words.")
+  -- TeX's own commands at an environment's seams: `\ignorespaces` closing
+  -- the begin code skips the body's leading spaces, `\ignorespacesafterend`
+  -- in the end code the spaces after `\end{…}` — spent, never an unknown
+  -- command whose name reaches the page.
+  let lead := "\\newenvironment{placeholder}{Lead words \\ignorespaces}{ Tail words}\n"
+  let after := "\\newenvironment{placeholder}{Lead words }{ Tail words\\ignorespacesafterend}\n"
+  let use := "Inline \\begin{placeholder} Middle words \\end{placeholder} after."
+  t "ignorespaces closing a begin code skips the body's leading spaces"
+    (same lead use "Inline Lead words Middle words\\ \\ Tail words after." &&
+      !((dvE (dvDoc lead use)).any (·.code == "W0301")))
+  t "ignorespacesafterend skips the spaces after the environment's end"
+    (same after use "Inline Lead words\\ \\ Middle words\\ \\ Tail wordsafter." &&
+      !((dvE (dvDoc after use)).any (·.code == "W0301")))

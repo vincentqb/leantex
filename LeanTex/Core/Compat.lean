@@ -4345,11 +4345,15 @@ def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
     if mentionsBody before.toList || mentionsBody after.toList then none
     else some (before, after)
 
-/-- The mark the rewrite sets after the native head of an environ definition
-whose code places `\BODY` once at its top level: the elaborator splits that
-code at `\BODY` (`bodySlot?`) where the mark stands, and only there — a
-`\BODY` in a kernel definition is the document's own macro. `:` is no letter
-(`Lex.nameChar`), so no document spells the name. -/
+/-- The mark the rewrite sets after the native head of an environ
+definition, and that the elaborator's split sets closing the begin half it
+builds: the elaborator builds that definition's halves from its code where
+the mark stands — the code split at a top-level `\BODY` (`bodySlot?`), or
+all of it the end half when it places none — and only there, so a `\BODY`
+in a kernel definition is the document's own macro; in a begin half it says
+the body's edge spaces are trimmed (environ.sty `\env@save`:
+`\trim@spaces`). `:` is no letter (`Lex.nameChar`), so no document spells
+the name. -/
 def environBodyMark : String := "@environ:BODY"
 
 /-- The declarations standing in front of a float's kernel core when they
@@ -5047,11 +5051,16 @@ the definition is skipped" pos
     return some (← synthAt native pos, j)
   | "NewEnviron" | "RenewEnviron" =>
     -- environ.sty's definer (`\env@new`): the begin code collects the
-    -- environment's body into `\BODY` and runs the code, the end code runs
-    -- the final code. With `\BODY` once at the code's top level that is the
-    -- kernel's `\newenvironment` with the body standing there, so it takes
-    -- the native definer's spelling, the code group announced as a macro
-    -- body, and the elaborator splits it at `\BODY` (`bodySlot?`), a
+    -- environment's body into `\BODY`, its edge spaces trimmed, and runs
+    -- the code; the end code runs the final code, `\ignorespacesafterend`
+    -- unless one is given (`\environfinalcode`). With `\BODY` once at the
+    -- code's top level that is the kernel's `\newenvironment` with the body
+    -- standing there; a code that never places `\BODY` runs where the
+    -- environment stands and the collected body goes nowhere, the body
+    -- discarded at each use (the `.env` arm of `rewriteRaw`, which keeps
+    -- only the arguments). Either takes the native definer's spelling, the
+    -- code group announced as a macro body and the head marked, and the
+    -- elaborator builds the halves from the code (`bodySlot?`), a
     -- following `[final code]` joining the end. A `\BODY` inside a group
     -- (a box around the whole body) or placed twice has no begin and end
     -- to split into: refused where it stands, the construct consumed whole.
@@ -5066,33 +5075,25 @@ the definition is skipped" pos
     let native := s!"\\defineenv\{{envName}}({signature spec})"
     match raws[b]? with
     | some (.group code _) =>
-      let final := raws[skipSpaces raws (b + 1)]? matches some (.sym '[' _)
-      if (bodySlot? code).isSome then
-        became s!"\\{name}\{{envName}}" (native ++ " {code before \\BODY} {code after it}") pos
+      let slot := (bodySlot? code).isSome
+      if slot || !mentionsBody code.toList then
+        became s!"\\{name}\{{envName}}" (native ++ (if slot
+          then " {code before \\BODY} {code after it}" else " {} {code}, its body discarded")) pos
         write fun st => { st with bodyNext := 1 }
-        write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
-        -- The elaborator splits the code at `\BODY` where this mark stands
-        -- beside the head, and nowhere else; the body has no definer to
-        -- read it (E0312), so it is set only before `\begin{document}`.
+        write fun st => { st with discardEnvs := if slot
+          then st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
+          else st.discardEnvs.push (envName.trimAscii.toString, spec) }
+        -- The elaborator builds the halves where this mark stands beside
+        -- the head, and nowhere else; the body has no definer to read it
+        -- (E0312), so it is set only before `\begin{document}`.
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
         return some ((← synthAt native pos) ++ mark, j)
-      else if !mentionsBody code.toList && !final then
-        -- A code that never places `\BODY` runs where the environment
-        -- stands and the collected body goes nowhere, as environ.sty
-        -- leaves it: the kernel's definer with an empty begin code and the
-        -- code as the end code, the body discarded at each use (the
-        -- `.env` arm of `rewriteRaw`, which keeps only the arguments).
-        became s!"\\{name}\{{envName}}" (native ++ " {} {code}, its body discarded") pos
-        write fun st => { st with bodyNext := 1 }
-        write fun st => { st with discardEnvs := st.discardEnvs.push (envName.trimAscii.toString, spec) }
-        return some ((← synthAt native pos).push (.group #[] pos), j)
       else
         let (_, k) := takeOpt raws (b + 1)
-        let why := if mentionsBody code.toList then "places \\BODY inside a group or more than once"
-          else "gives a final code to a body its code never places"
         sayOnce ("ctrl:" ++ name) .W0104
-          s!"'\\{name}\{{envName}}' {why}; an environment's body stands between its begin \
-and its end code here, so the definition is skipped" pos
+          s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
+environment's body stands between its begin and its end code here, so the definition \
+is skipped" pos
           (help := "write the code around \\BODY at the definition's top level")
         return some (#[], k)
     | _ => return none

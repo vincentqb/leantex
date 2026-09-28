@@ -39,7 +39,9 @@ structure UserCmd where
 
 /-- A document-defined environment (`\defineenv`, the native spelling of
 `\newenvironment`): its begin and end halves wrap the environment's content,
-and its parameters bind from the groups after `\begin{name}`. -/
+and its parameters bind from the groups after `\begin{name}`. The three
+flags are the space rules TeX's own commands state at its seams
+(`envOfHalves`). -/
 structure UserEnv where
   name : String
   params : Array Param
@@ -49,6 +51,14 @@ structure UserEnv where
   That bound is what makes expansion terminate, as `limit` does for
   commands. -/
   cmdLimit : Nat
+  /-- The body's leading spaces are skipped: `\ignorespaces` closes the
+  begin code, or environ trims the body. -/
+  ignoresLead : Bool := false
+  /-- The body's trailing spaces are dropped: environ trims the body. -/
+  trimsTail : Bool := false
+  /-- The spaces after `\end{name}` are skipped: `\ignorespacesafterend` in
+  the end code, environ's default final code. -/
+  ignoresAfterEnd : Bool := false
   deriving Repr, BEq
 
 /-- A theorem-like environment's style: the kernel's (latex.ltx
@@ -1305,6 +1315,30 @@ private def trimLead (raws : Array Raw) : Array Raw :=
 private def trimTail (raws : Array Raw) : Array Raw :=
   raws.extract 0 (spanRawsEnd raws isSpaceOrPar)
 
+/-- A defined environment from its halves, with the space rules TeX's own
+commands state at its seams, each command spent here so none reaches a
+half as an unknown word: `\ignorespaces` closing the begin code skips the
+body's leading spaces (TeXbook ch. 24); environ's mark there trims both of
+the body's edges (environ.sty `\env@save`: `\trim@spaces`); and
+`\ignorespacesafterend` in the end code skips the spaces after
+`\end{name}` (latex.ltx `\end`: `\if@ignore \@ignorefalse \ignorespaces`). -/
+private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
+    (limit : Nat) : UserEnv :=
+  let isCtrl (n : String) (r : Raw) : Bool := match r with
+    | .ctrl m _ => m == n
+    | _ => false
+  let b := trimLead b
+  let e := trimTail e
+  let ink := spanRawsEnd b (· matches .space)
+  let closing := if ink > 0 then b[ink - 1]? else none
+  let environ := closing.any (isCtrl Compat.environBodyMark)
+  let lead := environ || closing.any (isCtrl "ignorespaces")
+  { name, params, cmdLimit := limit,
+    beginBody := if lead then b.extract 0 (ink - 1) else b
+    endBody := e.filter (!isCtrl "ignorespacesafterend" ·)
+    ignoresLead := lead, trimsTail := environ,
+    ignoresAfterEnd := e.any (isCtrl "ignorespacesafterend") }
+
 /-- `lookupUser` over an explicit table and prefix bound, for the math
 expansion below, which threads its own decreasing `limit`. -/
 private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
@@ -2427,6 +2461,16 @@ private theorem extract_lt_slice {raws : Array Raw} {i a : Nat} (b : Nat)
     (h : i < raws.size) (ha : i < a) :
     rawWeightList (raws.extract a b).toList < sliceWeight raws i :=
   Nat.lt_of_le_of_lt (extract_slice_le raws a b) (sliceWeight_lt raws h ha)
+
+/-- A defined environment's body from `j` (past its arguments), its edges
+as the definition reads them (`UserEnv.ignoresLead`, `trimsTail`). -/
+private def envBody (env : UserEnv) (body : Array Raw) (j : Nat) : Array Raw :=
+  let lo := if env.ignoresLead then skipSpaces body j else j
+  body.extract lo (if env.trimsTail then spanRawsEnd body (· matches .space) else body.size)
+
+private theorem envBody_le (env : UserEnv) (body : Array Raw) (j : Nat) :
+    rawWeightList (envBody env body j).toList ≤ sliceWeight body 0 :=
+  Nat.le_trans (extract_slice_le body _ _) (sliceWeight_le body (Nat.zero_le _))
 
 private theorem body_lt_slice' {raws : Array Raw} {i : Nat} (h : i < raws.size)
     {body : Array Raw} (hb : rawWeightList body.toList < rawWeight raws[i]) :
@@ -3730,17 +3774,17 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
           let envCtx : Ctx := { ctx with
             limit := env.cmdLimit, envLimit := k, args := bindings }
-          have hw2 : rawWeightList (body.extract j body.size).toList
-              < sliceWeight raws i := by
-            have h1 := extract_slice_le body j body.size
-            have h2 := sliceWeight_le body (Nat.zero_le j)
-            have h0 : sliceWeight body 0 = rawWeightList body.toList := by
-              simp [sliceWeight]
-            omega
+          let ⟨inner, hw2⟩ : { a : Array Raw // rawWeightList a.toList < sliceWeight raws i } :=
+            ⟨envBody env body j, Nat.lt_of_le_of_lt (envBody_le env body j) hb0⟩
+          let ⟨next, hnext⟩ : { n : Nat // i + 1 ≤ n } :=
+            if env.ignoresAfterEnd then ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
+            else ⟨i + 1, Nat.le_refl _⟩
+          have hadvN : sliceWeight raws next < sliceWeight raws i :=
+            Nat.lt_of_le_of_lt (sliceWeight_le raws hnext) hadv1
           let a1 ← elabInlines envCtx env.beginBody
-          let a2 ← elabInlines ctx (body.extract j body.size)
+          let a2 ← elabInlines ctx inner
           let a3 ← elabInlines envCtx env.endBody
-          elabInlinesFrom ctx raws (i + 1) (acc ++ a1 ++ a2 ++ a3) ""
+          elabInlinesFrom ctx raws next (acc ++ a1 ++ a2 ++ a3) ""
         | none =>
         if reservedEnv.contains name then
           warnOnce ctx ("env:" ++ name) .W0307
@@ -11573,27 +11617,33 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           let k2 := skipSpaces preamble k
           -- environ's spelling (`\NewEnviron`, which Compat gives the
           -- native head and marks): one code body with `\BODY` at its top
-          -- level is the begin code before it and the end code after it,
-          -- a following `[final code]` joining the end. Unmarked, the head
-          -- is the kernel's, and a `\BODY` in it the document's own macro.
+          -- level is the begin code before it — the mark closing it, the
+          -- body's edges trimmed — and the end code after it; a code with
+          -- none is all end code, its body discarded at each use. The final
+          -- code joins the end, environ's `\ignorespacesafterend` where
+          -- none follows. Unmarked, the head is the kernel's, and a `\BODY`
+          -- in it the document's own macro.
           let isMark (r : Raw) : Bool := match r with
             | .ctrl n _ => n == Compat.environBodyMark
             | _ => false
           let environ := sigRaws.any isMark
           sigRaws := sigRaws.filter (!isMark ·)
-          match if environ then beginRaws.bind Compat.bodySlot? else none with
-          | some (bb, ee) =>
+          match beginRaws, environ with
+          | some code, true =>
             let fb := skipSpaces preamble k
-            let (final, kf) := match preamble[fb]? with
+            let (final, kf) : Option (Array Raw) × Nat := match preamble[fb]? with
               | some (.sym '[' _) =>
                 match closeBracketFrom preamble (fb + 1) with
-                | some c => (preamble.extract (fb + 1) c, c + 1)
-                | none => (#[], k)
-              | _ => (#[], k)
+                | some c => (some (preamble.extract (fb + 1) c), c + 1)
+                | none => (none, k)
+              | _ => (none, k)
+            let (bb, ee) := match Compat.bodySlot? code with
+              | some (bb, ee) => (bb.push (.ctrl Compat.environBodyMark pos), ee)
+              | none => (#[], code)
             i := kf
             out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
-              (some bb) (some (ee ++ final)) pos)
-          | none =>
+              (some bb) (some (ee ++ final.getD #[.ctrl "ignorespacesafterend" pos])) pos)
+          | _, _ =>
             let endRaws : Option (Array Raw) := match preamble[k2]? with
               | some (.group e _) => some e
               | _ => none
@@ -12034,8 +12084,7 @@ the built-in's heading and margins stand{replaced}"
         | some b, some e =>
           let params ← parseSig s.ctx sig pos
           return { s with ctx := { s.ctx with
-            userEnvs := s.ctx.userEnvs.push
-              ⟨envName, params, trimLead b, trimTail e, s.ctx.limit⟩
+            userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e s.ctx.limit)
             envLimit := s.ctx.userEnvs.size + 1 } }
         | _, _ =>
           diag s.ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos

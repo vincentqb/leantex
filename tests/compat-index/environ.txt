@@ -5,16 +5,17 @@
 # An environment whose code places \BODY once at its top level is the
 # kernel's \newenvironment with the body standing there — the code before
 # \BODY its begin code, the code after it and the final code its end code —
-# and it elaborates as one. A code that never places \BODY runs where the
-# environment stands and the collected body is discarded, as environ leaves
-# it. A \BODY inside a group (a box around the whole body) or placed twice
-# has no begin and end to split into, nor has a final code beside a code
-# that never places \BODY: each is refused where it stands (W0104). The two
-# settings stay refused by name.
+# and it elaborates as one, the body's edge spaces trimmed (\trim@spaces). A
+# code that never places \BODY runs where the environment stands, the final
+# code after it, and the collected body is discarded, as environ leaves it.
+# The final code is environ's default \ignorespacesafterend unless one is
+# given. A \BODY inside a group (a box around the whole body) or placed twice
+# has no begin and end to split into: refused where it stands (W0104). The
+# two settings stay refused by name.
 pre impl \NewEnviron{placeholder}{Lead \BODY}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre impl \RenewEnviron{placeholder}{\BODY Tail}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre impl \NewEnviron{placeholder}{Lead}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre refuse:W0104 \NewEnviron{placeholder}{\fbox{\BODY}}
-pre refuse:W0104 \NewEnviron{placeholder}{}[Tail]
+pre impl \NewEnviron{placeholder}{}[Tail]\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre refuse:W0301 \environbodyname{\CONTENT}
 pre refuse:W0301 \environfinalcode{x}
