@@ -214,6 +214,17 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
                 if k > i && newlines cs i k < 2 then
                   pos := posOver cs i k pos
                   i := k
+          else if c1 == '\n' || c1 == '\r' then
+            -- `\` ending a line is `\^^M`, the control space (plain.tex and
+            -- latex.ltx: `\def\^^M{\ }`); the next line starts at its first
+            -- non-blank, and a blank one ends the paragraph.
+            toks := toks.push ⟨.ctrl " ", here⟩
+            let e := if c1 == '\r' && cs[i + 2]? == some '\n' then i + 3 else i + 2
+            let k := scanWhile cs e isWs
+            if let some tok := wsTok true (newlines cs e k) then
+              toks := toks.push ⟨tok, posOver cs i e pos⟩
+            pos := posOver cs i k pos
+            i := k
           else
             toks := toks.push ⟨.ctrl (String.ofList [c1]), here⟩
             pos := posOver cs i (i + 2) pos

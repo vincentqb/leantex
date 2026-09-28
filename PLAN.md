@@ -23150,3 +23150,16 @@ reference-list boundaries it could not before.
 **Owed.** A document with both a `\bibliography` and a `thebibliography`
 resolves against its own list only. natbib's long author names (the text
 after the label's year, which `\citet*` prints) are not read.
+
+
+### 2026-09-28 — a line that ends in `\` is the control space
+
+`i.e.\` at a line's end is the idiom for an interword space after an
+abbreviation, and the lexer read `\` and the line ending as a control
+symbol named by a newline: W0301, and the space lost. TeX reads the pair
+as `\^^M`, which plain.tex and latex.ltx define as `\ `, and the next
+line starts in state N, its leading blanks skipped and a blank line a
+paragraph end. The lexer now emits the control space and takes the next
+line's whitespace as a comment's end does (`wsTok true`); `\r\n` endings
+included. Two rows in `textSymChecks`, both failing at `fd6e1267`; the
+flashtex document it alone blocked moves 1 → 2 (159 at 2).

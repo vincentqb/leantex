@@ -47,6 +47,15 @@ def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (d2, ds2) := elabStr (body "\\lq q\\rq{} \\LaTeXe")
   t "the kernel quote words and the LaTeX2e logo"
     (ds2.isEmpty && soleParaText d2 == some "‘q’ LaTeX2ε")
+  -- A `\` ending a line is `\^^M`, the control space: `i.e.\` then the
+  -- next line's first word, one space between; a blank line after it is
+  -- a paragraph end.
+  let (d3, ds3) := elabStr (body "i.e.\\\n   the rest")
+  t "a line ending in a backslash is the control space"
+    (ds3.isEmpty && soleParaText d3 == some "i.e. the rest")
+  let (d4, ds4) := elabStr (body "one\\\n\ntwo")
+  t "a control space before a blank line still ends the paragraph"
+    (ds4.isEmpty && d4.body.size == 2)
   -- An accent pair with no precomposed scalar still falls through by name.
   t "an accent with no precomposed form over its base still warns"
     ((elabStr (body "\\b{a}")).2.map (·.code) == #["W0301"])
