@@ -844,10 +844,12 @@ def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
        .boundary s!"{c} + *" (listSpace (screenMilli size sk.below.width.sp))]
     | none => [.boundary s!"* + {c}" trivlistGap, .boundary s!"{c} + *" trivlistGap]
 
-/-- The resets: every block element's own vertical margins, first. -/
+/-- The resets: every block element's own vertical margins, first; a slide's
+frame title sets flush in its header band, which owns the title's space. -/
 private def gapResets : List GapRule :=
   [.reset "p, ul, ol, li, dl, dd, pre, blockquote" "0",
    .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
+   .reset "section.slide > header h2" "0",
    .reset "figure.float" "0 auto"]
 
 /-- The boundaries the list levels stand after: the peer elements', the
@@ -861,7 +863,8 @@ private def gapBeforeLists : List GapRule :=
    .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
 
 /-- The boundaries the list levels stand before: the headings', the float's
-and the display's pairs, and the heading's follower, last. A level-1
+and the display's pairs, the float's caption seam, and the heading's
+follower, last. A level-1
 heading opens its `<section>` (`sectionize`), so no sibling stands above
 it and `* + h2` never meets it; the heading owns the boundary above its
 section instead, its margin collapsing through the section's edge, which
@@ -875,6 +878,11 @@ private def gapAfterLists : List GapRule :=
    .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
    .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
    .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
+   -- The object under a caption above it: the skip facing it is the
+   -- caption's own `margin-bottom`, the float's one internal seam, so the
+   -- object's peer margin yields, as the page's float plan pays that skip
+   -- alone (`Ir.captionSides`).
+   .boundary "figure.float > figcaption:first-child + *" "0",
    .boundary ":is(h1, h2, h3, h4) + *" "0"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
@@ -3588,9 +3596,10 @@ private def slideCss (doc : Doc) : String :=
     s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
     s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
   -- The slide header's shared type rule, inside this split so the deck's
-  -- screen override below can stand after it and win the cascade.
+  -- screen override below can stand after it and win the cascade; the
+  -- title's margins are the gap sheet's (`gapResets`).
   let headerH2 :=
-    s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n"
+    s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "rem"}; }\n"
   if doc.docClass == .slides then
     let maxSteps := doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1
     -- The pre-reveal shade is spelled from the resolved design: the very
@@ -3982,12 +3991,11 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  text-align: center; text-wrap: balance; }\n" ++
   -- The text-side skip is padding: it stands inside the float, beside
   -- the float's own separation, and a margin there would collapse into it.
-  -- The object's own peer margin yields to the caption's skip facing it,
-  -- as the page's float plan pays that skip alone.
+  -- The object's own peer margin yields to the caption's skip facing it
+  -- (`blockGapCss`'s caption boundary).
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  "figure.float > figcaption:first-child + * { margin-top: 0; }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.

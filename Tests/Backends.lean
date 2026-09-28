@@ -401,6 +401,57 @@ def flowShapeList (acc : Array String) : List Html.Node → Array String
 
 end
 
+/-- A selector's top-level comma-separated parts, a comma inside a
+parenthesized argument (`:is(h1, h2)`) kept in its part. -/
+private def selParts (sel : String) : List String := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut depth := 0
+  for c in sel.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then depth := depth - 1
+    if c == ',' && depth == 0 then
+      parts := parts.push cur.trimAscii.toString
+      cur := ""
+    else cur := cur.push c
+  return (parts.push cur.trimAscii.toString).toList
+
+/-- The subject of one selector part: its rightmost compound, after the last
+top-level combinator, cut at its first pseudo-class, attribute or id —
+`figure.float > figcaption:first-child + *` is `*`, `li:not(.algorithm *)`
+is `li` — or `::` for a pseudo-element's compound, which spaces generated
+content, never the element. -/
+private def selSubject (part : String) : String := Id.run do
+  let mut cur := ""
+  let mut depth := 0
+  for c in part.trimAscii.toString.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then depth := depth - 1
+    if depth == 0 && (c == ' ' || c == '>' || c == '+' || c == '~') then cur := ""
+    else cur := cur.push c
+  if (cur.splitOn "::").length > 1 then return "::"
+  return (cur.takeWhile fun c => c != ':' && c != '[' && c != '#').toString
+
+/-- A compound's element and classes: `table.booktabs` is `table` and
+`[booktabs]`, `.display` no element and `[display]`. -/
+private def compoundParts (s : String) : String × List String :=
+  match s.splitOn "." with
+  | e :: cls => (e, cls.filter (!·.isEmpty))
+  | [] => ("", [])
+
+/-- Can a rule whose subject is compound `c` match an element whose subject
+is compound `e`? A universal compound matches everything; an element name
+every compound of that element, unless both name classes and share none
+(the sheet's classes name kinds of element: `figure.listing` is never a
+`figure.float`); a class alone every compound carrying it; a
+pseudo-element's compound none. -/
+private def compoundOverlaps (c e : String) : Bool :=
+  let (ce, cc) := compoundParts c
+  let (ee, ec) := compoundParts e
+  c != "::" && ((ce == "*" || (ce.isEmpty && cc.isEmpty)) ||
+    (!ce.isEmpty && ce == ee && (cc.isEmpty || ec.isEmpty || cc.any ec.contains)) ||
+    (ce.isEmpty && cc.any ec.contains))
+
 /-- The HTML rhythm realization, censused over emitted sheets: every default
 vertical gap is one emission — the below element's `margin-top`, computed
 from the declared table (`Ir.rhythmGapQuanta`) in the screen context's
@@ -443,20 +494,20 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the zero-specificity emitter declare a vertical margin on an element
   -- the emitter spaces. Such a rule outranks every boundary rule on it:
   -- `p { margin: 0 }` at (0,0,1) once kept every peer gap from rendering
-  -- while the sheet declared them. The subjects are read off the emitter's
-  -- own boundary rules, never a hand list: every lineage's, each subject's
-  -- element or class before any pseudo-class, so an exclusion the emitter
-  -- writes (`li:not(.algorithm *)`) still names the element it spaces.
-  let subjects : List String := [Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
+  -- while the sheet declared them. A selector reaches the elements its
+  -- rightmost compound matches, so both sides are read there
+  -- (`selSubject`): the emitter's subjects are its boundary rules', never a
+  -- hand list, and a base-sheet rule shadows a subject its compound can
+  -- match — a universal compound every one (`… + *`, review LP-5), a bare
+  -- element the classed subjects of that element, a class the subjects
+  -- carrying it.
+  let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
     (HtmlDoc.blockGapRules l Ir.baseFontSize).flatMap fun r => match r with
-    | .boundary sel _ => (sel.splitOn ",").filterMap fun part =>
-        match (part.splitOn "+").reverse with
-        | last :: _ :: _ =>
-          let s := ((last.trimAscii.toString).splitOn ":").headD ""
-          if s == "*" || s.isEmpty then none else some s
-        | _ => none
+    | .boundary sel _ => (selParts sel).filterMap fun part =>
+        let s := selSubject part
+        if s == "*" || s.isEmpty then none else some s
     | .reset _ _ => []
-    | .parskip _ _ => []
+    | .parskip _ _ => []).eraseDups
   let setsMargin (decls : String) : Bool := (decls.splitOn ";").any fun d =>
     match d.splitOn ":" with
     | p :: _ :: _ => ["margin", "margin-top"].contains p.trimAscii.toString
@@ -466,7 +517,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, _) ← elabFixture n (← IO.FS.readFile s!"tests/corpus/{n}.tex")
     for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
       if !sel.startsWith ":where(" && setsMargin decls &&
-          (sel.splitOn ",").any (subjects.contains ·.trimAscii.toString) then
+          (selParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
         shadows := shadows.push s!"{n}: {sel}"
   t "html gap subjects are read off the emitter"
     (["p", "ul", "ol", "li", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)
