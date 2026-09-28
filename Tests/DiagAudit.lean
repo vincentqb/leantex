@@ -3,6 +3,7 @@ import Tests.Layout
 import Tests.Themes
 import Tests.FontMath
 import Tests.Surface
+import Tests.Kernel
 import scripts.Rung
 
 /-!
@@ -122,7 +123,10 @@ def registry : List AuditRow :=
    ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩,
    -- A line the author ended that the measure split; the paragraph's own
    -- last line is prose and sets as many lines as it needs, unnamed.
-   ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩]
+   ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩,
+   -- A `\qedhere` on an alignment's row or under a number: set the row's
+   -- tag natively (amsthm's `\tag*{\qedsymbol}`) and the code leaves.
+   ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

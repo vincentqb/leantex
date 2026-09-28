@@ -512,6 +512,9 @@ note[W0391]: unknown command '\@venueprobe' in package code; any [...] options a
   help: \define \name(...) {body} declares it
 ── W0392 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
 warning[W0392]: a link's title is not carried: the link sets without it
+── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
+warning[W0435]: '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display
+  help: an unnumbered \[ ... \] sets it beside the formula
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

@@ -428,6 +428,10 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- raw tag, whose text this reader drops rather than passing through.
   | .E0390 => dvMd "a paragraph\n\n<div>raw</div>\n"
   | .W0392 => dvMd "[a link](https://example.org \"the title\")\n"
+  -- A proof whose `\qedhere` ends an alignment's row: amsthm sets the QED on
+  -- that row, where this engine sets no row tag yet.
+  | .W0435 => dvE (dvDoc "\\usepackage{amsthm}\n"
+      "\\begin{proof}\nx\n\\begin{align*}\na &= b \\qedhere\n\\end{align*}\n\\end{proof}")
   -- A title whose author declared two lines and whose first does not fit
   -- the measure: the breaker finds a legal break inside the declared line,
   -- so a third line ships and its remainder returns to the flush-left

@@ -21,5 +21,5 @@ body impl \begin{proof}x\end{proof}
 body impl \begin{proof}[Sketch]x\end{proof}
 body impl \renewcommand{\proofname}{Argument}\begin{proof}x\end{proof}
 body impl \renewcommand{\qedsymbol}{QED}\begin{proof}x\end{proof}
-body refuse:W0301 \begin{proof}x\qedhere\end{proof}
+body impl \begin{proof}x\[ y \qedhere \]\end{proof}
 body refuse:W0301 x\qed

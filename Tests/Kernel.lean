@@ -212,6 +212,64 @@ def kernelThmSpaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      hasStr page s!":where(* + .u-trivlist-proof) \{ margin-top: {space "0.966"}; }")
 
 
+/-- **`\qedhere` sets the proof's QED where it stands, and the proof's end
+sets none** (amsthm.sty:290–301): in text — a list's last item, the last
+paragraph — amsthm's `\qed` right there, flush with the measure's right
+edge; in an unnumbered display the equation number's slot, on the
+formula's own line; and where this engine sets no such slot (an
+alignment's row) the formula still sets, the QED stands on a line of its
+own after it, and W0435 names the move. Outside a proof amsthm's stack is
+empty and it sets nothing. Asserted over `Layout.Out` under the serif faces
+and Fira Math (math is face 4). On the base `\qedhere` was an unknown
+command in text and degraded a display to its source text (W0012), and the
+end mark stood on its own line. Invented words. -/
+def kernelQedHereChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fs ← serifFacesSet | t "qedhere checks: the serif faces load" false
+  let run (body : String) : Array Layout.LineOut × Array Diag × Layout.Geom :=
+    let (d, ds) := elabStr (dvDoc "\\usepackage{amsmath}\n\\usepackage{amsthm}\n" body)
+    (bodyLines (layoutOf fs d), ds, Layout.Geom.ofPage d.page)
+  let marks (ls : Array Layout.LineOut) : List Layout.LineOut :=
+    ls.toList.filter fun l => (lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "□"
+  let atRight (g : Layout.Geom) (l : Layout.LineOut) : Bool :=
+    (lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "□" &&
+      decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).natAbs ≤ (Dim.pt 1).natAbs)
+  let codes (ds : Array Diag) : List String := ds.toList.map (·.code)
+  let (ls, ds, g) := run
+    "\\begin{proof}\nAlder opens.\n\\begin{itemize}\n\\item Birch.\n\\item Cedar ends. \\qedhere\n\
+\\end{itemize}\n\\end{proof}"
+  t "qedhere in a list: one QED, at the right edge of the item's last line"
+    (match marks ls with
+     | [l] => atRight g l && hasStr (lineText l) "Cedar"
+     | _ => false)
+  t "qedhere in a list: no unknown command" (!(codes ds).contains "W0301")
+  let (ls, ds, g) := run "\\begin{proof}\nAlder ends. \\qedhere\n\\end{proof}"
+  t "qedhere at the last paragraph's end: one QED on its line, the command known"
+    (match marks ls with
+     | [l] => atRight g l && hasStr (lineText l) "Alder" && !(codes ds).contains "W0301"
+     | _ => false)
+  let (ls, ds, g) := run "\\begin{proof}\nAlder opens.\n\\[ x = y \\qedhere \\]\n\\end{proof}"
+  t "qedhere in a display: one QED in the number's slot, on the formula's line"
+    (match marks ls with
+     | [l] => atRight g l && (lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "="
+     | _ => false)
+  t "qedhere in a display: the formula sets, not its source"
+    (!(codes ds).contains "W0012")
+  let (ls, ds, g) := run
+    "\\begin{proof}\nAlder opens.\n\\begin{align*}\na &= b \\qedhere\n\\end{align*}\n\\end{proof}"
+  t "qedhere on an alignment's row: W0435 names the move, the formula sets"
+    ((ds.any fun d => d.code == "W0435" && d.subject == some "qedhere:align*") &&
+      !(codes ds).contains "W0012")
+  -- The page half, which the base's text fallback happened to share.
+  t "qedhere on an alignment's row: one QED, alone after the display"
+    (match marks ls with
+     | [l] => atRight g l && !(lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "="
+     | _ => false)
+  let (ls, ds, _) := run "Alder ends. \\qedhere\n\n\\[ x = y \\qedhere \\]"
+  t "qedhere outside a proof sets nothing, unnamed"
+    ((marks ls).isEmpty && !(codes ds).contains "W0301" && !(codes ds).contains "W0435")
+
+
 /-- **`verse` is a quotation of lines**: a block of its own between the
 paragraphs around it, both margins in by the list indent, each `\\` a new
 line one leading below the last (latex.ltx `verse`: `\list` with

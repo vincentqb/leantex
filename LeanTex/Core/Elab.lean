@@ -95,6 +95,12 @@ structure ThmDecls where
   counters : Array (String × Option Nat) := #[]
   style : ThmStyle := .kernel
   nums : Array (String × String × Nat) := #[]
+  /-- The proofs open around the walk: amsthm's QED stack holds a mark only
+  inside one, so a `\qedhere` outside sets nothing. -/
+  proofs : Nat := 0
+  /-- The innermost open proof's `\qedhere` has set its mark in a display's
+  number slot, so the proof's end sets none. -/
+  qedPlaced : Bool := false
   deriving Repr, BEq
 
 /-- amsthm is loaded: some `\theoremstyle` has been declared. -/
@@ -1501,6 +1507,23 @@ private def specWord? : Raw → Option String
 
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
+
+/-- TeX's `\unskip` at a point of an inline run: the pending text, else the
+run's last text, without the space it ends with. -/
+private def unskipText (acc : Array Inline) (sb : String) : Array Inline :=
+  if sb != "" then flushText acc sb.trimAsciiEnd.toString
+  else if let some (.text s) := acc.back? then flushText acc.pop s.trimAsciiEnd.toString
+  else acc
+
+/-- The key a text-mode `\qedhere` mark stands under until its proof sets it
+(`thmClose`): no document can spell a NUL, so no `\label` collides, and the
+proof replaces every one it holds before a backend sees it. -/
+def qedHereKey : String := "\u0000qedhere"
+
+/-- amsthm.sty's `\qed` in text, `\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}`,
+with the mark's place (`qedHereKey`) for the symbol. -/
+private def qedHereRun : Array Inline :=
+  #[.strut {}, .fill, .text "\u2003", .label qedHereKey]
 
 /-- Adjacent text runs join into one. Where both bring a space to the seam —
 an environment half's edge meeting its body's (`trimLead`), a macro body's
@@ -3809,6 +3832,13 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if name == "hfill" then
           let acc := flushText acc sb
           elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
+        else if name == "qedhere" then
+          -- amsthm's `\qedhere` in text (amsthm.sty:290): its `\qed` where it
+          -- stands, the space before taken back; the proof sets the mark
+          -- (`thmClose`). Outside a proof amsthm's stack is empty: nothing.
+          let acc := if (← get).ctr.thm.proofs == 0 then flushText acc sb
+            else unskipText acc sb ++ qedHereRun
+          elabInlinesFrom ctx raws (i + 1) acc ""
         else if name == "ensuremath" then
           -- `\ensuremath` enters math from text (amsldoc: the argument is
           -- typeset in math mode wherever the command lands); inside math
@@ -7347,13 +7377,63 @@ private def tagForm (t : Array Ir.Inline) : Array Ir.Inline :=
   | some (Ir.Inline.text s) => opened.pop.push (.text (s ++ ")"))
   | _ => opened.push (.text ")")
 
+/-- A caption word the document may redefine (`\proofname`, `\qedsymbol`):
+its definition where one stands, else `dflt`. -/
+private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array Inline)) :
+    EM (Array Inline) := do
+  if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
+
+/-- The `\qedsymbol` in force: the document's definition where one stands,
+else amsthm's box as the math face's □ (amsthm.sty's `\openbox` draws it in
+rules). -/
+private def qedMark (ctx : Ctx) (pos : Pos) : EM (Array Inline) :=
+  definedOr ctx "qedsymbol" pos (return #[← elabMathInline ctx false #[.ctrl "square" pos] pos])
+
+/-- A display's top-level `\qedhere`, taken out before the math parser reads
+the body, and where the first one stood. -/
+private def dropQedHere (body : Array Raw) : Array Raw × Option Pos :=
+  body.foldl (fun (out, at?) r => match r with
+    | .ctrl "qedhere" p => (out, at?.orElse fun _ => some p)
+    | r => (out.push r, at?)) (#[], none)
+
+/-- A `\qedhere` in a display whose QED this engine cannot stand where amsthm
+sets it — beside an alignment's row, under a number — is named, and the
+proof's end sets the QED on a line of its own after the display. -/
+private def qedHereLost (ctx : Ctx) (env : String) (p : Pos) : EM Unit := do
+  if (← get).ctr.thm.proofs == 0 then return
+  warnOnce ctx ("qedhere:" ++ env) .W0435
+    s!"'\\qedhere' in '\{{env}}' does not set its QED where amsthm sets it; the QED \
+stands on a line of its own after the display" p
+    (help := "an unnumbered \\[ ... \\] sets it beside the formula")
+
+/-- The QED a display's `\qedhere` sets in the number's slot (amsthm.sty
+`\displaymath@qed`: `\eqno\hbox{\qedsymbol}`), inside a proof — outside one
+amsthm's stack is empty and it sets nothing — and the proof told its end
+sets none. -/
+private def qedHereTag (ctx : Ctx) (p : Pos) : EM (Option (Array Inline)) := do
+  if (← get).ctr.thm.proofs == 0 then return none
+  let mark ← qedMark ctx p
+  modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with qedPlaced := true } } }
+  return some (Ir.wrapDecls (← get).blockDecls mark)
+
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
+  let (body, qedAt) := dropQedHere body
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
   let inl ← elabMathInline ctx true cleaned pos
-  if let some (raws, star) := tag then
+  let qed ← match qedAt with
+    | some p =>
+      if tag.isNone && (!numbered || nonum) then qedHereTag ctx p
+      else do qedHereLost ctx (if numbered then "equation" else "displaymath") p; pure none
+    | none => pure none
+  if let some q := qed then
+    for key in keys do
+      recordLabel ctx key (← get).refTarget pos
+    let content := keys.map (Ir.Inline.label ·) |>.push inl
+    blocks := blocks.push (.equation q content)
+  else if let some (raws, star) := tag then
     -- `\tag{t}` stands in the number's place, `(t)` unless starred, and
     -- steps no counter (amsldoc §3.4). Its argument is text set in an
     -- `\hbox` (amsmath's `\maketag@@@`), so it elaborates as inline content
@@ -7391,6 +7471,8 @@ number. -/
 private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Raw) (pos : Pos) (blocks : Array Block) :
     EM (Array Block) := do
+  let (body, qedAt) := dropQedHere body
+  if let some p := qedAt then qedHereLost ctx n p
   let (cleaned, keys, _, tag) ← stripMathMeta ctx body
   for key in keys do
     recordLabel ctx key none pos
@@ -7790,6 +7872,8 @@ structure ThmOpen where
   space : Ir.ThmSpace
   qed : Bool
   qedDef : Option (Array Raw)
+  /-- The enclosing proof's `qedPlaced`, restored at the `\end`. -/
+  outerPlaced : Bool
   target : Option Ir.RefBinding
   decls : List Ir.Decl
 
@@ -7832,12 +7916,6 @@ private def stepThmCounter (c : String) : EM String := do
     | some lvl => s!"{renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel lvl}.{v}"
     | none => toString v
 
-/-- A caption word the document may redefine (`\proofname`, `\qedsymbol`):
-its definition where one stands, else `dflt`. -/
-private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array Inline)) :
-    EM (Array Inline) := do
-  if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
-
 /-- Open a theorem-like scope: read the optional `[note]`, step the counter
 and make its number the label target, push the style's body font
 (`\itshape` for the kernel's and `plain`), and build the head. Returns the
@@ -7871,8 +7949,14 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
       pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true, .proof)
   if italic then
     modify fun s => { s with blockDecls := st.blockDecls ++ [.style .italic] }
+  -- A proof pushes its QED (amsthm.sty `\pushQED{\qed}`): a `\qedhere` in
+  -- it may set the mark.
+  if qed then
+    modify fun s => { s with ctr := { s.ctr with thm := { s.ctr.thm with
+      proofs := s.ctr.thm.proofs + 1, qedPlaced := false } } }
   return ({ head := Ir.wrapDecls st.blockDecls head, space, qed,
-            qedDef := if qed then bodyQedDef? body else none, target := st.refTarget,
+            qedDef := if qed then bodyQedDef? body else none,
+            outerPlaced := st.ctr.thm.qedPlaced, target := st.refTarget,
             decls := st.blockDecls }, k)
 
 /-- Close a theorem-like scope: restore what `thmOpen` changed, open the
@@ -7883,7 +7967,8 @@ own after a display or list, where the empty box keeps the fill that a line's
 start would otherwise drop), and set the whole as the trivlist it is
 (ltthm.dtx and amsthm.sty both open `\trivlist`), in the role that names
 the space its spelling opens (`Ir.thmSpaceRole`), under the environment's
-name. -/
+name. A `\qedhere` moves the mark (amsthm.sty `\setQED@elt` empties the
+stack): its text-mode run gets the mark here, and the end sets none. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
   modify fun st => { st with refTarget := o.target, blockDecls := o.decls }
@@ -7891,14 +7976,22 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
     | some (Block.para c) => inner.modify 0 fun _ => .para (o.head ++ c)
     | _ => #[Block.para o.head] ++ inner
   let inner ← if o.qed then do
-      let square : EM (Array Inline) := do
-        return #[← elabMathInline ctx false #[.ctrl "square" pos] pos]
       let mark ← match o.qedDef with
         | some b => elabInlines ctx b
-        | none => definedOr ctx "qedsymbol" pos square
-      -- `\renewcommand{\qedsymbol}{}` is the manual's way to omit it.
-      if mark.isEmpty then pure inner else
+        | none => qedMark ctx pos
       let shown := Ir.wrapDecls o.decls mark
+      let here := Ir.foldBlocks (fun a _ => a) (fun a x => a || x == .label qedHereKey) false inner
+      let placed := here || (← get).ctr.thm.qedPlaced
+      modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with
+        proofs := st.ctr.thm.proofs - 1, qedPlaced := o.outerPlaced } } }
+      let set : Inline := match shown with
+        | #[x] => x
+        | xs => .role "qedsymbol" xs
+      let inner := if here then
+          Ir.mapBlocks (fun x => if x == .label qedHereKey then set else x) inner
+        else inner
+      -- `\renewcommand{\qedsymbol}{}` is the manual's way to omit it.
+      if placed || mark.isEmpty then pure inner else
       let q : Array Inline := #[.strut {}, .fill, .text "\u2003"] ++ shown
       pure (match inner.back? with
         | some (.para c) => inner.pop.push (.para (c ++ q))
