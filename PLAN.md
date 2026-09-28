@@ -23708,3 +23708,79 @@ Two picture rows that had pinned the old page-top placement now declare
   owner.
 - *The class defaults.* `[twoside]` and `[twocolumn]` articles, books and
   reports are `\flushbottom` in LaTeX; the engine reads neither option.
+
+
+
+### 2026-09-28 — pictures, round 11: a node stands on its position, a picture starts at 0.4 pt, and the boundary's failures stay loud
+
+Review-f's warn-pic findings (PC-1 to PC-4 and the NITs), each fixed with a
+guard that fails on the code it reviewed, and one departure found while
+measuring them against a fresh lualatex build.
+
+- **A drawn node stands on its position** (PC-1). pgf's shape `center`
+  anchor is the middle of the text box (`.5\wd`, `.5\ht − .5\dp`), shifted
+  onto the node's coordinate. A drawn node outlined around its text centred
+  the outline on its letters and left them at the bare-label seat, so `g`
+  stood 2.16 bp above `A` at one height and each `right=of` step climbed
+  1.46 bp. `Picture.textSeat` is pgf's seat and `nodeOutline_seat_exact`
+  states that the outline around a seated box is centred on the node for
+  every height and depth. The node's own reach in a placement and its
+  bounding box are its outline's. Guard: `pictureNodeCentreChecks`.
+- **A picture starts at 0.4 pt** (new). `\pgfpicture` runs
+  `\pgfsetlinewidth{0.4pt}` before its contents (pgfcorescopes.code.tex), so
+  a width a `\tikzset` line sets outside every picture reaches none.
+  `documentOpts` leaves such widths out (`pictureResets`, `documentOpts_mem`);
+  the line's other keys still reach every picture. Guard: `pictureWidthChecks`,
+  whose tikzset row asserted the departure.
+- **A drawn node's anchors stand one outer sep out** (NIT). pgf adds
+  `outer xsep`/`outer ysep` (initially half the node's line width) to the
+  anchors and not to the drawn path. They are read, `auto` included. Guard:
+  `pictureOuterSepChecks`; nine rows that pinned anchors on the stroke line
+  now pin pgf's.
+- **An unfinished boundary attempt is no answer** (PC-3). A kill, a failed
+  spawn or a nonzero exit that left no log was withdrawn like the tool's own
+  no, so the artifact changed on a fact about the machine and the run
+  exited 0. `Cli.Boundary.Undrawn` tags an ending as answered or unfinished;
+  `withdrawStep_unfinished_exact` states that an unfinished one only joins
+  the refusals that stand, as E0382 (`DriverDiag.boundaryUnfinished`: the
+  tool did not finish, a rebuild asks again). Guard: `boundaryUnfinishedChecks`.
+- **The HTML face draws what it cannot convert** (PC-4). With no
+  `pdftocairo`, a routed picture's HTML was `<img src="leantex-pic:…">`.
+  `Boundary.htmlWithdraw` picks the fallbacks whose SVG did not convert, and
+  the driver elaborates the HTML face again with them withdrawn; the PDF
+  keeps the tool's drawing and W0378 names the loss once. Guard:
+  `pictureHtmlFaceChecks`.
+- **A picture in a line of text** (PC-2). The inline elaborator read a
+  `{tikzpicture}` as an unknown environment: a cell or a group drew nothing
+  under W0307's false "not implemented". `Elab.inlinePicture` sends it to
+  the boundary, whose image stands in the line as TeX's box does, or names
+  it (W0334, `picture:inline:<id>`) where the boundary is closed or withdrew
+  it. The block and in-line arms share `subsetPicture` and `routePicture`.
+  A command whose body is a picture, expanded as a block in a sentence, is
+  named as a picture written there is. Guard: `pictureInlineLineChecks`.
+- **NITs.** `labelGlyphBox_covers` and `alignRow_shipped_id` take registered
+  suffixes; `Support.attrValuesOf` replaces two copies of the attribute walk;
+  two comments that no longer held now say what the code does.
+
+**Measured.** The review's probes against lualatex (bp, `pdftocairo -svg`):
+frame centres equal and edges level (was 2.16 apart, a 1.84 bp slant); a
+`below=of` gap of 28.74 against lualatex's 28.74 (was 30.46); edge ends 0.20
+from each outline at 0.4 pt and 0.60 at 1.2 pt, as lualatex; an inline mark's
+bottom within 0.04 bp of lualatex's against its line. A lualatex that exits
+3 with no log: exit 0 before, exit 1 with E0382 now, nothing cached. The
+private reference corpus's deck strokes its pictures at 0.4 pt in lualatex
+and shipped 0.6 pt here; on its picture pages the raster difference to a
+fresh lualatex build falls on nine pages and holds on the tenth.
+
+**Correction to 2026-09-27 (round 7).** "The HTML's 78 strokes go from
+0.4 pt to 0.6 pt, the reference's width" was wrong: the reference strokes
+0.4 pt, because the width was set by a `\tikzset` line outside the pictures.
+
+**Owed, and decisions left.** An undrawn node's anchors still stand on its
+border, half a line width inside pgf's: adding the outer sep there moved a
+node of the private deck 0.40 bp away from lualatex, because the engine's
+point is the big point and its labels set 0.37% wider than TeX's; it waits
+on that unit. A node declaring both minimums and a bare label keep the
+engine's uniform seat (the user's decision since round 9). A picture in a
+sentence at a paragraph's top level is still set as a block, named; it could
+stand in its line as the boundary's image, as a cell's now does.
