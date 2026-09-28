@@ -1250,18 +1250,23 @@ in the HTML" (← since t)
         let t ← IO.monoMsNow
         -- Font programs and content streams deflate through the
         -- content-hash cache: a subset, or a page unchanged since the last
-        -- build, reads its stream back instead of compressing it.
-        let programs := Pdf.facePrograms fs out.pages
-        let fs := { fs with zdata := ← fontZdata fs (Pdf.keepFaces fs out.pages) programs }
+        -- build, reads its stream back instead of compressing it. The glyph
+        -- census is taken once, and the kept faces, their programs, the
+        -- page operators and the writer all read it.
+        let used := Pdf.usedAll fs out.pages
+        let keep := Pdf.keepOf used
+        let programs := Pdf.facePrograms fs used
+        let fs := { fs with zdata := ← fontZdata fs keep programs }
         -- The structure tree the pages' `leaf` indices name: the one the
         -- layout attributed against (`Layout.pdfView`), projected once.
         let tree := Struct.ofDoc (Layout.pdfView doc)
-        let ops := Pdf.pageOps geom fs out.pages imgs tree
+        let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let mut streams : Array (ByteArray × Option ByteArray) := #[]
         for o in ops do
           let data := (Pdf.render o).toUTF8
           streams := streams.push (data, some (← deflateCached data))
         let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams tree ops programs
+          used
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
         pdfBuilt := some pdf
       -- Phase 3: census, gate, publish. Assertions judge what shipped, so
