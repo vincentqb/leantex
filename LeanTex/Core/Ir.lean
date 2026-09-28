@@ -12518,17 +12518,19 @@ def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
         "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
       (spanOf src)
       (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
-        "or caption its figure: the caption becomes the alternative"))
+        "mark it decorative with [artifact], or caption its figure: the " ++
+        "caption becomes the alternative"))
+      (subject := some src)
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
 failed on ships a placeholder box, not an image, and E0382 has named that
 loss, so naming it here too would name one loss twice. The message speaks
 of a picture in the author's words — the source spelling is the engine's
-cache key (`picSrcPrefix`), never a word the author wrote — and the help
-names the one door that exists: a captioned figure
-(`\includegraphics[alt=...]` does not apply to a picture, and a bare
-picture has no alt declaration). -/
+cache key (`picSrcPrefix`), never a word the author wrote, though it is
+the subject a census keys the diagnostic by — and the help names the doors
+latex-lab-tikz and a figure open: `alt={...}` or `artifact` on the
+picture, or a caption. -/
 def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
   ((imagesSansAlt doc).filter fun src =>
@@ -12537,8 +12539,9 @@ def picAltDiags (doc : Doc) (spanOf : String → Option Span)
       ("this picture ships no text alternative; assistive technology " ++
         "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
       (spanOf src)
-      (help := some ("caption a figure around the picture: the caption " ++
-        "becomes the alternative; a bare picture has no alt key"))
+      (help := some ("describe the picture — \\begin{tikzpicture}[alt={...}] — " ++
+        "mark it decorative with [artifact], or caption a figure around it"))
+      (subject := some src)
 
 private theorem length_filter_partition (p : α → Bool) :
     ∀ l : List α, (l.filter p).length + (l.filter (fun a => !p a)).length = l.length

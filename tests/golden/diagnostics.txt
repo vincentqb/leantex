@@ -165,7 +165,7 @@ note[N0021]: header and footer gaps differ by 10pt as declared; equal gaps are t
 note[N0022]: 'alert' is realized lighter (#EE7C38) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
 note[N0023]: this picture is drawn by lualatex at the boundary; its text is not in the document's census
-  help: the box is measured and placed by the engine; \caption or alt text names it for assistive technology
+  help: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
@@ -248,7 +248,7 @@ warning[W0108]: '\centering' centres nothing inside an argument; content stays l
   help: move '\centering' to the start of the group or environment body
 ── W0110 (degraded) unsupported command option; ignored
 warning[W0110]: '\includegraphics' option 'angle=45' is not modelled; ignored
-  help: modelled keys: width, height, scale, keepaspectratio, alt
+  help: modelled keys: width, height, scale, keepaspectratio, alt, artifact
 ── W0111 (config) a styling declaration names no styleable element; ignored
 warning[W0111]: '\setkomafont{banana}' names no styleable element; ignored
   help: \style{element}{ font = {...} } styles the elements the engine draws
@@ -469,9 +469,9 @@ warning[W0374]: a footnote on this card is kept inline; a card face has no note 
   help: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
 ── W0376 (standard) an image ships no text alternative (WCAG 2.2)
 warning[W0376]: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
-  help: describe the image — \includegraphics[alt={...}] — or caption its figure: the caption becomes the alternative
+  help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
 warning[W0376]: this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
-  help: caption a figure around the picture: the caption becomes the alternative; a bare picture has no alt key
+  help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   help: give the link visible text — \href{...}{words} — or an image with alt inside it

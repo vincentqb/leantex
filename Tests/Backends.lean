@@ -3887,8 +3887,9 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
 /-! ## The structure tree, read back -/
 
 /-- One structure element as the reader sees it: its object number, type,
-parent reference, child element numbers in `/K` order, and the
-`(page object, mcid)` pairs of its marked-content references. -/
+parent reference, child element numbers in `/K` order, the
+`(page object, mcid)` pairs of its marked-content references, and its
+`/Alt` as the file spells it, delimiters included. -/
 structure ReadElem where
   num : Nat
   s : String
@@ -3896,6 +3897,7 @@ structure ReadElem where
   kids : Array Nat
   mcids : Array (Nat × Nat)
   ns : Option Nat
+  alt : Option String
   deriving Repr, Inhabited
 
 /-- The reader's view of a file's structure tree: the root's `/K` chain,
@@ -3936,7 +3938,11 @@ def readStructTree (es : Array PdfRead.Entry) (root : PdfRead.Obj) : Array ReadE
             | some (.ref pg _), some m => some (pg, m.toNat)
             | _, _ => none
           | _ => none
-        out := out.push { num := n, s, parent, kids := kids.toArray, mcids := mcids.toArray, ns }
+        let alt := match d.get? "Alt" with
+          | some (.str raw) => String.fromUTF8? raw
+          | _ => none
+        out := out.push { num := n, s, parent, kids := kids.toArray, mcids := mcids.toArray, ns,
+                          alt }
         stack := kids ++ stack
   return out
 
@@ -4004,6 +4010,30 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let esk := Pdf.skeleton (Struct.ofDoc (Layout.pdfView doc))
   t "struct: an elaborated section, footnote and list project to H2, P with FENote, L/LI/LBody/P"
     (esk.map (·.s) == #["Document", "H2", "P", "FENote", "L", "LI", "LBody", "P"])
+  -- A picture's and an image's alternative, written and read back: each
+  -- Figure carries the /Alt the IR resolves, and a decorative object is no
+  -- element at all.
+  let (altDoc, _) := elabStr (dvDoc "\\pictures{ tool = none }\n" (
+    "\\begin{tikzpicture}[alt={Two squares joined by a bar}]" ++
+      "\\fill (0,0) rectangle (1,1);\\end{tikzpicture}\n\n" ++
+    "\\begin{tikzpicture}[artifact]\\fill (0,0) rectangle (4,0.1);\\end{tikzpicture}\n\n" ++
+    "\\begin{tikzpicture}\\node at (0,0) {North};\\node at (2,0) {South};" ++
+      "\\end{tikzpicture}\n\n" ++
+    "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}\n\n" ++
+    "\\includegraphics[artifact]{rects.png}"))
+  let altOut := layoutOf oneFace altDoc
+  let altPdf := Pdf.write (Layout.Geom.ofPage altDoc.page) oneFace altOut.pages altDoc.info {}
+    altOut.outline (tree := Struct.ofDoc (Layout.pdfView altDoc))
+  match PdfRead.objects altPdf with
+  | .error e => t s!"struct alt: objects: {e}" false
+  | .ok es =>
+    let es := es.val
+    let trailer := (PdfRead.trailer altPdf).toOption.getD (.dict #[])
+    let root := PdfCensus.deref es
+      (((PdfCensus.catalogOf es trailer).get? "StructTreeRoot").getD .null)
+    t "struct alt: the written Figures carry the /Alt the IR resolves; decoration is no element"
+      (((readStructTree es root).filter (·.s == "Figure")).map (·.alt) ==
+        #[some "(Two squares joined by a bar)", some "(North, South)", none])
   -- Every corpus fixture, written and read back.
   let mut elems := 0
   let mut mcids := 0

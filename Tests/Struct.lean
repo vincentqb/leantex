@@ -234,3 +234,71 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (wordless, _) := elabStr (dvDoc native (pic "" square))
   t "a picture that says nothing: the svg takes the figure word, the Figure no /Alt"
     (svgNames wordless == #[some "Figure"] && figureAlts wordless == #[none])
+  -- latex-lab-tikz's keys, consumed before the subset or the boundary sees
+  -- the options: no W0334, no route the key alone would have forced.
+  let svgAttr (doc : Ir.Doc) (k : String) : Array (Option String) :=
+    (elemAttrsList (· == "svg") #[] (doc.body.map (HtmlDoc.blockNode {})).toList).map
+      (HtmlDoc.attrOf? ·.2 k)
+  let imgAttr (doc : Ir.Doc) (k : String) : Array (Option String) :=
+    (elemAttrsList (· == "img") #[] (doc.body.map (HtmlDoc.blockNode {})).toList).map
+      (HtmlDoc.attrOf? ·.2 k)
+  let named (ds : Array Diag) (code : String) : Bool := ds.any (·.code == code)
+  let (described, dDs) := elabStr (dvDoc native
+    (pic "[alt={A described diagram}, scale=0.5]" words))
+  t "alt={...} on a picture is read: no W0334, no W0376"
+    (!named dDs "W0334" && !named dDs "W0376")
+  t "a declared alternative outranks the picture's words, in both artifacts"
+    (svgNames described == #[some "A described diagram"] &&
+     figureAlts described == #[some "A described diagram"])
+  let (deco, decoDs) := elabStr (dvDoc native (pic "[artifact]" square))
+  t "[artifact] on a picture is read: no W0334, no W0376"
+    (!named decoDs "W0334" && !named decoDs "W0376")
+  let decoTree := Struct.ofDoc deco
+  let decoSk := Pdf.skeleton decoTree
+  t "a decorative picture: no Figure, and no element holds its leaf"
+    (figureAlts deco == #[] &&
+     (Pdf.leafTags decoSk decoTree.leaves.size).toList == [none])
+  t "a decorative picture's svg is out of the accessibility tree and claims no role"
+    (svgAttr deco "aria-hidden" == #[some "true"] && svgAttr deco "role" == #[none])
+  for opts in ["[alt=]", "[alt={ }]", "[alt=, scale=0.5]"] do
+    let (empty, eDs) := elabStr (dvDoc native (pic opts square))
+    t s!"{opts} says nothing: no W0334, and both artifacts ship the undeclared state"
+      (!named eDs "W0334" && svgNames empty == #[some "Figure"] && figureAlts empty == #[none])
+  -- At the boundary: the image carries the declared text, the standalone
+  -- never meets the key, and the request's hash is the picture's without it.
+  let circle := "\\draw (0,0) circle (1);"
+  let (bWith, _) := elabStr (dvDoc "" (pic "[alt={A disc}, scale=0.5]" circle))
+  let (bSans, _) := elabStr (dvDoc "" (pic "[scale=0.5]" circle))
+  t "a routed picture's image carries its declared alternative"
+    (imgAttr bWith "alt" == #[some "A disc"])
+  t "the boundary's standalone never meets the key"
+    (!bWith.pictureSrcs.isEmpty && bWith.pictureSrcs.all fun (_, src) => !hasStr src "alt=")
+  t "the boundary's request hash is invariant under the key"
+    (bWith.pictureSrcs.map (·.1) == bSans.pictureSrcs.map (·.1))
+  let (mWith, _) := elabStr (dvDoc ""
+    (pic "[\n  alt={A disc},\n  scale=0.5, transform shape\n]" circle))
+  let (mSans, _) := elabStr (dvDoc "" (pic "[\n  scale=0.5, transform shape\n]" circle))
+  t "the hash is invariant when the key stands on its own line"
+    (!mWith.pictureSrcs.isEmpty && mWith.pictureSrcs.map (·.1) == mSans.pictureSrcs.map (·.1))
+  -- latex-lab-graphic's `artifact` on an image.
+  let (imgDeco, imgDs) := elabStr (dvDoc "" "\\includegraphics[artifact]{chart.png}")
+  t "\\includegraphics[artifact] is read: no W0110, no W0376"
+    (!named imgDs "W0110" && !named imgDs "W0376")
+  t "a decorative image: no Figure; alt=\"\" with the declared decorative role"
+    (figureAlts imgDeco == #[] && imgAttr imgDeco "alt" == #[some ""] &&
+     imgAttr imgDeco "role" == #[some "presentation"])
+  let (capDeco, capDs) := elabStr (dvDoc "" ("\\begin{figure}\\includegraphics[artifact]" ++
+    "{chart.png}\\caption{A synthetic caption}\\end{figure}"))
+  t "a caption fills no declared alternative: [artifact] in a captioned figure stays decoration"
+    (!named capDs "W0376" && imgAttr capDeco "role" == #[some "presentation"])
+  t "markdown's two states for three: a decorative image reads as no text"
+    (hasStr (MarkdownDoc.emit imgDeco) "![](chart.png)")
+  -- LaTeX's tagging code warns of a graphic without an alternative
+  -- (latex-lab-graphic's alt-text-missing); so does the engine, keyed by the
+  -- image, and the image ships what it always shipped.
+  let (bare, bareDs) := elabStr (dvDoc "" "\\includegraphics{chart.png}")
+  t "an image without an alternative is W0376 keyed by its source"
+    (bareDs.any fun d => d.code == "W0376" && d.subject == some "chart.png")
+  t "an image without an alternative ships alt=\"\" and a Figure without /Alt"
+    (imgAttr bare "alt" == #[some ""] && imgAttr bare "role" == #[none] &&
+     figureAlts bare == #[none])

@@ -11,4 +11,4 @@ para
 para
   text "Text follows the requested picture."
 -- diagnostics
-note[N0023] 19:1 this picture is drawn by lualatex at the boundary; its text is not in the document's census | help: the box is measured and placed by the engine; \caption or alt text names it for assistive technology
+note[N0023] 19:1 this picture is drawn by lualatex at the boundary; its text is not in the document's census | help: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology

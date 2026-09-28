@@ -2669,7 +2669,7 @@ private def altValueText (v : String) : String :=
   else v
 
 /-- `\\includegraphics`' option run: the modelled keys — width, height,
-scale, keepaspectratio, alt — and a name for everything else. -/
+scale, keepaspectratio, alt, artifact — and a name for everything else. -/
 private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
     (pos : Pos) : EM (Image.SizeSpec × Ir.Alt) := do
   let mut spec : Image.SizeSpec := {}
@@ -2703,10 +2703,15 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
       | _ =>
         if e.trimAscii.toString == "keepaspectratio" then
           spec := { spec with keepAspect := true }
+        else if e.trimAscii.toString == "artifact" ||
+            (Decl.splitEntry e).any (·.1 == "artifact") then
+          -- latex-lab-graphic's key for decoration (its value is ignored):
+          -- no Figure in the PDF, its ink an artifact.
+          alt := .decorative
         else
           warnOnce ctx ("imgopt:" ++ e) .W0110
             s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
-            (help := "modelled keys: width, height, scale, keepaspectratio, alt")
+            (help := "modelled keys: width, height, scale, keepaspectratio, alt, artifact")
   return (spec, alt)
 
 /-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
@@ -3519,6 +3524,74 @@ seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
+/-- The leading `[...]` of a `tikzpicture` body split at its top-level
+commas — a `{...}` group is one raw, so a braced value never splits — each
+entry with the spaces around it, so the run can be rebuilt as written. A
+comma is not special to the lexer, so it rides inside a word: `alt=,` or
+`},` split at each one. -/
+private def pictureOptEntries (opts : Array Raw) : Array (Array Raw) := Id.run do
+  let mut out : Array (Array Raw) := #[]
+  let mut cur : Array Raw := #[]
+  for r in opts do
+    match r with
+    | .word s p =>
+      let pieces := s.splitOn ","
+      for piece in pieces, i in [0:pieces.length] do
+        if i > 0 then
+          out := out.push cur
+          cur := #[]
+        if !piece.isEmpty then cur := cur.push (.word piece p)
+    | r => cur := cur.push r
+  return out.push cur
+
+/-- latex-lab-tikz's per-picture keys, consumed from the leading option run
+before the rendered subset or the boundary sees it: `alt={...}` describes
+the picture, `artifact` makes it decoration, and an empty `alt=` says
+nothing. Every other entry stays as written, and the whitespace a removed
+entry opened with passes to the entry that takes its place, so a body
+without the keys is returned unchanged and one with them is exactly the
+body its author would have written without them — the boundary's
+standalone never meets a key plain TikZ does not define, and the
+picture's content hash (`Ir.picHash`, the boundary cache's key) is a fact
+about its ink, never its words. -/
+private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Raw := Id.run do
+  let j0 := Parse.skipSpaces body 0
+  let some opts := bracketRunSrc body j0 | return (.undeclared, body)
+  let some c := closeBracketFrom body (j0 + 1) | return (.undeclared, body)
+  let mut alt : Ir.Alt := .undeclared
+  let mut kept : Array (Array Raw) := #[]
+  let mut removed := false
+  let mut lead : Option (Array Raw) := none
+  let leadOf (e : Array Raw) : Array Raw := (e.toList.takeWhile (· matches .space)).toArray
+  let bodyOf (e : Array Raw) : Array Raw := (e.toList.dropWhile (· matches .space)).toArray
+  for e in pictureOptEntries opts do
+    let text := (rawSrc e).trimAscii.toString
+    let key := ((text.splitOn "=").headD "").trimAscii.toString
+    if key == "artifact" then
+      alt := .decorative
+    else if key == "alt" then
+      alt := match Decl.splitEntry text with
+        | some (_, v) => Ir.Alt.declare (altValueText v)
+        | none => .undeclared
+    if key == "artifact" || key == "alt" then
+      removed := true
+      if lead.isNone then lead := some (leadOf e)
+    else
+      match lead with
+      | some l => kept := kept.push (l ++ bodyOf e); lead := none
+      | none => kept := kept.push e
+  if !removed then return (alt, body)
+  let mut rebuilt : Array Raw := body.extract 0 j0
+  if kept.any (fun e => !(rawSrc e).isEmpty) then
+    rebuilt := rebuilt.push (.sym '[' pos0)
+    let mut first := true
+    for e in kept do
+      if first then first := false
+      else rebuilt := rebuilt.push (.sym ',' pos0)
+      rebuilt := rebuilt ++ e
+    rebuilt := rebuilt.push (.sym ']' pos0)
+  return (alt, rebuilt ++ body.extract (c + 1) body.size)
+
 /-- The rendered subset's drawing of one picture body, with what it names:
 the one elaboration both the block arm and the in-line arm read, so the
 two cannot disagree about what the subset draws. -/
@@ -3555,8 +3628,8 @@ private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (
   warnOnce ctx ("picture:boundary:" ++ id) .N0023
     s!"this picture is drawn by {tool} at the boundary; its text is not \
 in the document's census" pos
-    (help := "the box is measured and placed by the engine; \\caption or \
-alt text names it for assistive technology")
+    (help := "the box is measured and placed by the engine; alt={...} or \
+artifact on the picture, or a figure caption, names it for assistive technology")
   return .image img {} pic.alternative
 
 /-- **A picture in a line of text stands in its line, drawn by the
@@ -3570,13 +3643,14 @@ boundary is closed (or withdrew the request) the picture is named and not
 drawn — never the false "not implemented" of an unknown environment. -/
 private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
+  let (alt, body) := splitPictureAlt body pos
   let id := Ir.picHash (Parse.rawSrc body)
   -- premise: pictureInlineLineChecks — a picture in a line either ships the
   -- boundary's image there or names that it is not drawn, and a withdrawn
   -- request takes the second door.
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
     let (pic, _) := subsetPicture ctx body
-    return some (← routePicture ctx body pic pos)
+    return some (← routePicture ctx body { pic with alt := alt } pos)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
     "a picture inside a line of text is not drawn: the rendered subset sets a \
 picture only as a block" pos
@@ -3584,7 +3658,7 @@ picture only as a block" pos
 paragraph of its own, the rendered subset draws it")
   return none
 
-seal subsetPicture routePicture inlinePicture
+seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
@@ -4846,7 +4920,7 @@ unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
-unseal subsetPicture routePicture inlinePicture
+unseal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
@@ -7664,7 +7738,9 @@ model degrades to source text, named (W0012), as it would in a paragraph. -/
 private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
+  let (alt, body) := splitPictureAlt body pos
   let (pic, pdiags) := subsetPicture ctx body
+  let pic := { pic with alt := alt }
   -- **The boundary draws what the subset would draw with a loss.** A
   -- picture the subset draws whole stays native: the engine owns that ink.
   -- One it draws nothing of, or draws with a named loss
