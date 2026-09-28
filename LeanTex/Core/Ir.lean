@@ -5888,24 +5888,24 @@ structure ElementStyle where
   slots : Array TitleSlot := #[]
   deriving Repr, BEq, Inhabited
 
-/-- What of the `titlepage` style the title heading itself takes: its font
-and its interaction states. A heading rule fills the line a heading leaves,
-which takes a centred title off its centre; the title block reads `after`,
-`align`, its rules (`ruleAbove`, `ruleBelow`, `separator`) and the author
-keys (`Elab.titleBlocks`), and the other heading keys have no meaning on the
-title page (`titleUnreadKeys`). Both artifacts read the title through this
-one projection (`Layout.collectTitle`, the HTML `h1`), so neither styles the
-title with a key the other ignores: the HTML once drew a heading rule the
-page never drew, and the flex row that drew it set a centred title flush
-left. -/
+/-- What of the `titlepage` style the title heading itself takes: every key
+but the ones that place a heading's line — a heading rule fills the line a
+heading leaves, and an indent narrows it, and either takes a centred title
+off its centre — and the list keys, which a heading has no items for. The
+title page's own rules are `ruleAbove`, `ruleBelow` and `separator`
+(`Elab.titleBlocks`). Both artifacts read the title through this one
+projection (`Layout.collectTitle`, the HTML `h1`), so neither places the
+title by a key the other ignores: the HTML once drew a heading rule the page
+never drew, and the flex row that drew it set a centred title flush left.
+What no site then reads is `titleUnreadKeys`. -/
 def titleHeadingStyle (st : ElementStyle) : ElementStyle :=
-  { font := st.font, hover := st.hover, focus := st.focus, motion := st.motion }
+  { st with rule := none, rulePosition := none, ruleThickness := none, indent := none,
+            marker := none, gap := none, bodySize := none }
 
 /-- The `\style` keys no engine site reads on the title page, named where
-they are declared (W0104) rather than dropped in silence. `after` is read:
-the gap after the whole title block (`Elab.titleBlocks`). -/
+they are declared (W0104) rather than dropped in silence. -/
 def titleUnreadKeys : List String :=
-  ["before", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
+  ["rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
 `subsubsection`; lists are `itemize` and `enumerate` — those two style every
