@@ -45,6 +45,49 @@ def hasCmd (cmd : String) : IO Bool := do
   catch _ =>
     return false
 
+/-- An invented `.bib` of `n` entries: half share their authors and year, so
+the letters plainnat gives entries that share a label are in play. -/
+def bibOf (n : Nat) : String := Id.run do
+  let mut out := ""
+  for i in [0:n] do
+    let (au, yr) := if i % 2 == 0 then ("Alex Placeholder and Blair Example", 2019)
+      else (s!"Casey Invented{i} and Drew Sample{i}", 2000 + i % 20)
+    out := out ++ s!"@misc\{k{i}, author = \{{au}}, title = \{Invented entry number {i}},\n\
+      year = \{{yr}}}\n"
+  return out
+
+/-- The milliseconds `-v` reports for its `bib` phase: reading the `.bib`,
+ordering and lettering the list, formatting every entry, resolving every
+citation. -/
+def bibPhaseMs (log : String) : Option Nat :=
+  (log.splitOn "\n").findSome? fun l =>
+    if l.startsWith "bib: " then ((l.splitOn "(").getLast?.bind fun t =>
+      ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
+
+/-- The reference-list phase over `entries` invented entries, every one
+listed (`\nocite{*}` under plainnat, which sorts and letters them): the
+median of `n` runs' `bib` phase. -/
+def benchBib (n : Nat) (entries : Nat) : IO Nat := do
+  let dir ← IO.FS.createTempDir
+  IO.FS.writeFile (dir / "refs.bib") (bibOf entries)
+  IO.FS.writeFile (dir / "scale.tex")
+    "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
+    \\begin{document}\nAlpha words \\citep{k0}.\n\\nocite{*}\n\\bibliography{refs}\n\
+    \\end{document}\n"
+  let mut times : Array Nat := #[]
+  let src := (dir / "scale.tex").toString
+  let pdf := (dir / "scale.pdf").toString
+  for _ in [0:n] do
+    let out ← IO.Process.output { cmd := leantex, args := #["-v", "build", src, "-o", pdf] }
+    if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {entries} entries"
+    match bibPhaseMs (out.stdout ++ out.stderr) with
+    | some ms => times := times.push ms
+    | none => die "no bib phase in the -v report"
+  IO.FS.removeDirAll dir
+  let ms := median times
+  IO.println s!"{padRight s!"leantex  bib phase, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
+  return ms
+
 def main : IO UInt32 := do
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5
   let genLorem ← IO.Process.output
@@ -84,4 +127,14 @@ def main : IO UInt32 := do
   bench n "leantex  paper.tex -o html" leantex
     #["-q", "build", "bench/paper.tex", "-o", (outDir / "paper.html").toString]
   IO.FS.removeDirAll outDir
+  -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
+  -- thousands of entries, and a phase quadratic in them (75 s at 1600)
+  -- passed every row above. Four times the entries may cost at most eight
+  -- times the phase: linear is 4, n log n about 4.6, quadratic 16.
+  let small ← benchBib n 400
+  let big ← benchBib n 1600
+  let ratio := (big * 10 + max small 1 / 2) / max small 1
+  IO.println s!"{padRight "leantex  bib growth, 1600 / 400 entries" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+  if big > 8 * max small 1 then
+    die s!"the reference-list phase grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
   return 0

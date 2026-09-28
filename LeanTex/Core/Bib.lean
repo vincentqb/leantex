@@ -70,12 +70,14 @@ def monthMacros (months : Array String) : Array (String × String) :=
 private def isWs (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
-/-- Line and column of an index, counted on demand: positions are read only
-at entry starts and errors, both rare, so the parse never threads one. -/
-private def posOf (cs : Array Char) (i : Nat) : Pos := Id.run do
-  let mut line := 1
-  let mut col := 1
-  for j in [0:min i cs.size] do
+/-- Line and column of index `i`, counted forward from a position `p` already
+known at index `start ≤ i`: the parse asks for entry starts in increasing
+order and resumes from the last one, so it pays for each character once —
+counting from the file's start at every entry was quadratic in the file. -/
+private def posFrom (cs : Array Char) (start : Nat) (p : Pos) (i : Nat) : Pos := Id.run do
+  let mut line := p.line
+  let mut col := p.col
+  for j in [start:min i cs.size] do
     if h : j < cs.size then
       if cs[j] == '\n' then
         line := line + 1
@@ -83,6 +85,10 @@ private def posOf (cs : Array Char) (i : Nat) : Pos := Id.run do
       else
         col := col + 1
   return ⟨line, col⟩
+
+/-- Line and column of an index, counted from the file's start: what an
+error position reads, errors being rare. -/
+private def posOf (cs : Array Char) (i : Nat) : Pos := posFrom cs 0 ⟨1, 1⟩ i
 
 private def skipWs (cs : Array Char) (start : Nat) : Nat := Id.run do
   let mut j := start
@@ -262,15 +268,18 @@ def parse (src : String)
   let mut out : Parsed := {}
   let mut macros := macros0
   let mut i := 0
+  let mut mark : Nat × Pos := (0, ⟨1, 1⟩)
   for _ in [0:cs.size + 1] do
     i := nextAt cs i
     if i ≥ cs.size then break
     let atPos := i
+    let atLine := posFrom cs mark.1 mark.2 atPos
+    mark := (atPos, atLine)
     i := i + 1
     let (kind, j1) := readWhile cs i (·.isAlpha)
     let kind := kind.toLower
     if kind.isEmpty then
-      out := out.err (posOf cs atPos) "'@' opens no entry type"
+      out := out.err atLine "'@' opens no entry type"
       continue
     let j2 := skipWs cs j1
     if kind == "comment" then
@@ -279,7 +288,7 @@ def parse (src : String)
       continue
     let opener := if h : j2 < cs.size then cs[j2] else ' '
     if opener != '{' && opener != '(' then
-      out := out.err (posOf cs atPos) s!"'@{kind}' opens with no '\{' or '('"
+      out := out.err atLine s!"'@{kind}' opens with no '\{' or '('"
       i := j2
       continue
     let closer := if opener == '(' then ')' else '}'
@@ -287,7 +296,7 @@ def parse (src : String)
       match readBraced cs j2 with
       | some (_, j) => i := j
       | none =>
-        out := out.err (posOf cs atPos) "'@preamble' never closes"
+        out := out.err atLine "'@preamble' never closes"
         i := cs.size
       continue
     if kind == "string" then
@@ -314,7 +323,7 @@ def parse (src : String)
         { kind
           key
           fields := #[]
-          pos := posOf cs atPos }
+          pos := atLine }
       i := j5 + 1
       continue
     if sep != ',' then
@@ -327,7 +336,7 @@ def parse (src : String)
         { kind
           key
           fields
-          pos := posOf cs atPos }
+          pos := atLine }
       i := j
     | .error (j, msg) =>
       out := out.err (posOf cs j) s!"in '{key}': {msg}"

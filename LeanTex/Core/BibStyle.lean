@@ -1,6 +1,7 @@
 import LeanTex.Core.Bib
 import LeanTex.Core.Ir
 import LeanTex.Core.MathParse
+import Std.Data.HashSet
 
 /-! A bibliography style, decomposed the way biblatex decomposed `.bst`
 files: five independent pure choices — how a citation renders inline, how
@@ -835,6 +836,14 @@ hands its text here; everything after — parsing, ordering, numbering,
 formatting, the rewrite of every citation — is a function of the document
 and that text. -/
 
+/-- A key appended to an ordered set of keys: the array keeps first-appearance
+order and the set answers membership in constant time, so collecting `n`
+keys costs `n` steps, never `n²` — a `\nocite{*}` over a thesis-sized `.bib`
+makes `n` the whole database. -/
+def addKey (acc : Array String × Std.HashSet String) (k : String) :
+    Array String × Std.HashSet String :=
+  if acc.2.contains k then acc else (acc.1.push k, acc.2.insert k)
+
 /-- First-citation order: the keys the document cites, in order of first
 appearance, each once — the sequence citation-order lists are sorted by
 and numeric labels index into — among the citations `keep` admits (every
@@ -842,21 +851,27 @@ one by default; `\nocite`'s count, as they do for BibTeX). A leaf
 projection of `Ir.foldDoc`, the one collect traversal, over every region
 `resolveDoc` rewrites. -/
 def citedKeys (doc : Ir.Doc) (keep : Ir.CiteForm → Bool := fun _ => true) : Array String :=
-  Ir.foldDoc
-    (fun out x => match x with
-      | .cite f keys =>
-        if keep f then keys.foldl (fun out k => if out.contains k then out else out.push k) out
-        else out
-      | _ => out) #[] doc
+  (Ir.foldDoc
+    (fun acc x => match x with
+      | .cite f keys => if keep f then keys.foldl addKey acc else acc
+      | _ => acc) (#[], {}) doc).1
 
 /-- `\nocite{*}`'s key, BibTeX's `\citation{*}`: every entry of the `.bib`
 enters the list where it stands, in the database's order, after the keys
 cited before it — a key already in the sequence keeps its place. -/
 def expandStar (entries : Array Entry) (cited : Array String) : Array String :=
-  cited.foldl (fun out k =>
-    if k == "*" then
-      entries.foldl (fun out e => if out.contains e.key then out else out.push e.key) out
-    else if out.contains k then out else out.push k) #[]
+  (cited.foldl (fun acc k =>
+    if k == "*" then entries.foldl (fun acc e => addKey acc e.key) acc
+    else addKey acc k) (#[], {})).1
+
+/-- An entry's author-year sort key, computed once per entry: the label
+names lowercased, the year, and — the tiebreak totality forces — the key. -/
+def ayKey (r : Resolved) : String × String × String :=
+  ((citeAuthors r.entry).toLower, citeYear r.entry, r.key)
+
+/-- The order on author-year keys: the names, then the year, then the key. -/
+def ayCompare (a b : String × String × String) : Ordering :=
+  (Ord.compare a.1 b.1).then ((Ord.compare a.2.1 b.2.1).then (Ord.compare a.2.2 b.2.2))
 
 /-- The comparison a sort order names, over entries carrying their
 first-citation position. Citation order compares the positions, which are
@@ -866,24 +881,17 @@ same authors in the same year still have one order. -/
 def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
   match so with
   | .citation => Ord.compare a.position b.position
-  | .authorYear =>
-    (Ord.compare (citeAuthors a.entry).toLower (citeAuthors b.entry).toLower).then
-      ((Ord.compare (citeYear a.entry) (citeYear b.entry)).then
-        (Ord.compare a.key b.key))
+  | .authorYear => ayCompare (ayKey a) (ayKey b)
 
-/-- Insertion sort by the order's comparison: stable, and small enough to
-prove things about — the list is the cited entries, dozens at most. -/
+/-- The list sorted by the order's comparison, in `n log n` steps: a merge
+sort (stable), author-year over keys computed once per entry rather than
+once per comparison — a thesis-sized list is thousands of entries, and the
+insertion sort this replaces was quadratic in them. -/
 def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
-  match xs with
-  | [] => []
-  | x :: rest => insertResolved so x (sortResolved so rest)
-where
-  insertResolved (so : SortOrder) (x : Resolved) : List Resolved → List Resolved
-    | [] => [x]
-    | y :: rest =>
-      match so.compare x y with
-      | .gt => y :: insertResolved so x rest
-      | _ => x :: y :: rest
+  match so with
+  | .citation => xs.mergeSort fun a b => decide (a.position ≤ b.position)
+  | .authorYear =>
+    ((xs.map fun r => (ayKey r, r)).mergeSort fun a b => ayCompare a.1 b.1 != .gt).map (·.2)
 
 /-- What one key renders as, everywhere it is cited: its entry at its
 1-based position in the reference list. -/
@@ -902,12 +910,16 @@ def extraLetter (i : Nat) : String := String.singleton (Char.ofNat ('a'.toNat + 
 /-- The letters plainnat.bst's `forward.pass` and `reverse.pass` give a
 reference list, and unsrtnat.bst's the same: the entries sharing a label
 (`labelOf`) take `a`, `b`, … in list order, and an entry whose label is its
-own takes none. -/
+own takes none. Each label is computed once and grouped through a map, so
+the letters cost one pass over the list, never a comparison per pair. -/
 def extraLabels (rs : Array Resolved) : Array Resolved :=
-  rs.map fun r =>
-    let same := rs.filter fun s => labelOf s.entry == labelOf r.entry
+  let labels := rs.map (labelOf ·.entry)
+  let counts : Std.HashMap String Nat := labels.foldl (fun m l => m.insert l (m.getD l 0 + 1)) {}
+  let ranks := (labels.foldl (fun (acc : Std.HashMap String Nat × Array Nat) l =>
+    (acc.1.insert l (acc.1.getD l 0 + 1), acc.2.push (acc.1.getD l 0))) ({}, #[])).2
+  rs.mapIdx fun i r =>
     { r with extra :=
-        if same.size < 2 then "" else extraLetter ((same.findIdx? (·.key == r.key)).getD 0) }
+        if counts.getD (labels[i]?.getD "") 0 < 2 then "" else extraLetter (ranks[i]?.getD 0) }
 
 /-- The reference list a style builds from the cited entries: sorted by
 the style's order, positions assigned by list index — so the numeric
@@ -969,46 +981,21 @@ theorem positions_exact (style : Style) (cited : Array String)
     (resolveEntries style cited find)[i].position = i + 1 := by
   simp [resolveEntries, extraLabels] at hi ⊢
 
-/-- Insertion keeps every element: what goes in comes out, nothing else.
-The membership half of "the emitted list is a permutation of the cited
-set". -/
-theorem insertResolved_mem (so : SortOrder) (x : Resolved) (ys : List Resolved)
-    (z : Resolved) :
-    z ∈ sortResolved.insertResolved so x ys ↔ (z = x ∨ z ∈ ys) := by
-  induction ys with
-  | nil => simp [sortResolved.insertResolved]
-  | cons y rest ih =>
-    rw [sortResolved.insertResolved]
-    split
-    · simp only [List.mem_cons, ih, or_left_comm]
-    · simp only [List.mem_cons]
-
-/-- The sorted list holds exactly the input's elements. -/
+/-- The sorted list holds exactly the input's elements — the membership
+half of "the emitted list is a permutation of the cited set". -/
 theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
     z ∈ sortResolved so xs ↔ z ∈ xs := by
-  induction xs with
-  | nil => simp [sortResolved]
-  | cons x rest ih =>
-    rw [sortResolved, insertResolved_mem, ih, List.mem_cons]
+  cases so with
+  | citation => simp [sortResolved]
+  | authorYear => simp [sortResolved]
 
 /-- The sorted list is exactly as long as the input: with `sortResolved_mem`
 this is the counting half of the permutation claim. -/
 theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
     (sortResolved so xs).length = xs.length := by
-  induction xs with
-  | nil => rfl
-  | cons x rest ih =>
-    rw [sortResolved, insertResolved_length, ih, List.length_cons]
-where
-  insertResolved_length (so : SortOrder) (x : Resolved) (ys : List Resolved) :
-      (sortResolved.insertResolved so x ys).length = ys.length + 1 := by
-    induction ys with
-    | nil => rfl
-    | cons y rest ih =>
-      rw [sortResolved.insertResolved]
-      split
-      · simp [ih]
-      · rfl
+  cases so with
+  | citation => simp [sortResolved]
+  | authorYear => simp [sortResolved]
 
 /-- The comparison is total in the order-theoretic sense: two entries
 always compare, one way or the other — `gt` one way implies not-`gt` the
@@ -1027,44 +1014,12 @@ the recorded remainder beside `compare_citation_asymm`.) -/
 theorem sortResolved_sorted_citation (xs : List Resolved) :
     (sortResolved .citation xs).Pairwise
       (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
-  induction xs with
-  | nil => exact .nil
-  | cons x rest ih => exact insert_sorted x (sortResolved .citation rest) ih
-where
-  le_of_not_gt (a b : Resolved) (h : SortOrder.citation.compare a b ≠ .gt) :
-      a.position ≤ b.position := by
-    simp [SortOrder.compare, Nat.compare_eq_gt] at h
-    omega
-  not_gt_of_le (a b : Resolved) (h : a.position ≤ b.position) :
-      SortOrder.citation.compare a b ≠ .gt := by
-    simp [SortOrder.compare, Nat.compare_eq_gt]
-    omega
-  insert_sorted (x : Resolved) (ys : List Resolved)
-      (hs : ys.Pairwise (fun a b => SortOrder.citation.compare a b ≠ .gt)) :
-      (sortResolved.insertResolved .citation x ys).Pairwise
-        (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
-    induction ys with
-    | nil => exact .cons (by simp) .nil
-    | cons y rest ih =>
-      rw [sortResolved.insertResolved]
-      rcases hs with - | ⟨hy, hrest⟩
-      split
-      · rename_i hgt
-        refine .cons ?_ (ih hrest)
-        intro z hz
-        rw [insertResolved_mem] at hz
-        rcases hz with rfl | hz
-        · exact not_gt_of_le y z (Nat.le_of_lt (by
-            simp [SortOrder.compare, Nat.compare_eq_gt] at hgt
-            omega))
-        · exact hy z hz
-      · rename_i hng
-        refine .cons ?_ (.cons hy hrest)
-        intro z hz
-        rcases List.mem_cons.mp hz with rfl | hz
-        · exact hng
-        · exact not_gt_of_le x z (Nat.le_trans
-            (le_of_not_gt x y hng) (le_of_not_gt y z (hy z hz)))
+  have h := List.pairwise_mergeSort (le := fun (a b : Resolved) => decide (a.position ≤ b.position))
+    (fun a b c hab hbc => by simp at hab hbc ⊢; omega)
+    (fun a b => by simp; omega) xs
+  refine h.imp fun {a b} hab => ?_
+  simp [SortOrder.compare, Nat.compare_eq_gt] at hab ⊢
+  omega
 
 mutual
 
@@ -1395,6 +1350,7 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
   let requested := Ir.bibRefs doc
   let mut diags : Array Diag := #[]
   let mut entries : Array Entry := #[]
+  let mut seen : Std.HashSet String := {}
   for src in requested do
     match sources.find? (·.1 == src) with
     | none => pure ()  -- the driver's missing-file diagnostic already fired
@@ -1405,8 +1361,9 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
           the entry is skipped and the rest of '{src}' is kept"
           (some ⟨src, pos⟩))
       for e in parsed.entries do
-        unless entries.any (·.key == e.key) do
+        unless seen.contains e.key do
           entries := entries.push e
+          seen := seen.insert e.key
   let declared ← do
     match Ir.bibStyleName doc with
     | none => pure none
@@ -1421,15 +1378,17 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
   let style := declared.getD Style.unsrtnat
   let p := CitePunct.ofDoc doc.natbib declared
   let cited := expandStar entries (citedKeys doc)
-  let shown := citedKeys doc (·.cmd != .nocite)
-  let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id
+  let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
+  let byKey : Std.HashMap String Entry := entries.foldl (fun m e => m.insert e.key e) {}
+  let findEntry (k : String) : Option Entry := byKey.get? k
   let own := Ir.ownBibItemsBlocks doc.body
   let (p, resolved, items) :=
     if own.isEmpty then
       let resolved := resolveEntries style cited findEntry
       (p, resolved, bibItems p style resolved)
     else ownList p own
-  let find : Resolver := fun k => resolved.find? (·.key == k)
+  let byCite : Std.HashMap String Resolved := resolved.foldl (fun m r => m.insert r.key r) {}
+  let find : Resolver := byCite.get?
   unless requested.isEmpty && own.isEmpty do
     for k in cited do
       if (find k).isNone then
