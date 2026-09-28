@@ -108,3 +108,49 @@ def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"nocite {tag}: its entries enter the list, with no diagnostic"
       (hasStr (htmlVisibleText html) "Dee Delta. Placeholder Methods." &&
         !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
+
+
+/-- The styles the engine does not format, under a bare natbib: the lines
+lualatex set for four calls (TeX Live 2026, natbib 8.31b, bibtex 0.99e,
+through `pdftotext`). `apalike` has no natbib row, so natbib's own load
+punctuation stands; `chicago`'s row is those same values; `named`, `agsm`
+and `cospar` were measured over plainnat.bst copies of those names, so the
+lines differ from plainnat's by natbib's row alone; a `[square]` load shuts
+the door on any row. -/
+def natbibRowModes : List (String × String × List String) :=
+  let round := ["L1 (Alpha et al., 2019; Delta, 2021) end.", "L2 Alpha et al. (2019) end.",
+    "L3 (see Alpha et al., 2019, p. 5) end.", "L4 Delta (2021); Epsilon and Zeta (2020) end."]
+  [("\\usepackage{natbib}", "apalike", round),
+   ("\\usepackage{natbib}", "chicago", round),
+   ("\\usepackage{natbib}", "named",
+    ["L1 [Alpha et al., 2019; Delta, 2021] end.", "L2 Alpha et al. [2019] end.",
+     "L3 [see Alpha et al., 2019, p. 5] end.", "L4 Delta [2021]; Epsilon and Zeta [2020] end."]),
+   ("\\usepackage{natbib}", "agsm",
+    ["L1 (Alpha et al. 2019, Delta 2021) end.", "L2 Alpha et al. (2019) end.",
+     "L3 (see Alpha et al. 2019, p. 5) end.", "L4 Delta (2021), Epsilon and Zeta (2020) end."]),
+   ("\\usepackage{natbib}", "cospar",
+    ["L1 /1, 2/ end.", "L2 Alpha et al. /1/ end.", "L3 /see 1, p. 5/ end.",
+     "L4 Delta /2/, Epsilon and Zeta /3/ end."]),
+   ("\\usepackage[square]{natbib}", "apalike",
+    ["L1 [Alpha et al., 2019; Delta, 2021] end.", "L2 Alpha et al. [2019] end.",
+     "L3 [see Alpha et al., 2019, p. 5] end.", "L4 Delta [2021]; Epsilon and Zeta [2020] end."])]
+
+/-- **A style's citations take natbib's row for its name, or none**: natbib
+gives a style its `\bibstyle@<name>` row whatever formats the list, and a
+name it has no row for leaves its declared punctuation standing
+(natbib.sty:206–234). The engine formats an unknown style's list as
+unsrtnat's, which W0353 names once; its citations are natbib's, on the
+shipped page and in the HTML. -/
+def natbibRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}",
+    "\\citep[see][p.~5]{alpha2019}", "\\citet{delta2021,eps2020}"]
+  for (pre, style, want) in natbibRowModes do
+    let (page, _, html, ds) := natbibShip oneFace natbibBib pre style calls
+    let tag := s!"natbib row {pre} + {style}"
+    t s!"{tag}: W0353 names the list, and nothing else warns ({ds.map (·.code)})"
+      ((ds.filter fun d => d.code.startsWith "W" || d.code.startsWith "E").map (·.code) ==
+        #["W0353"])
+    for line in want do
+      t s!"{tag}: the page sets '{line}'" (page.contains line)
+      t s!"{tag}: the html reads '{line}'" (hasStr html line)

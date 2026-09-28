@@ -3892,23 +3892,27 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .link u _ => u == "#ref-k1"
       | _ => false)
   t "bibstyle: named styles pair the axes; unknown is none"
-    (((Bib.Style.named "unsrtnat").map (fun s => (s.punct, s.sort)))
-        == some (Bib.natPunct, .citation) &&
-      ((Bib.Style.named "plainnat").map (fun s => (s.punct, s.sort)))
-        == some (Bib.natPunct, .authorYear) &&
-      ((Bib.Style.named "plain").map (fun s => (s.punct, s.sort)))
-        == some (Bib.latexPunct, .authorYear) &&
-      ((Bib.Style.named "unsrt").map (fun s => (s.punct, s.sort)))
-        == some (Bib.latexPunct, .citation) &&
+    (((Bib.Style.named "unsrtnat").map (fun s => (s.labels, s.sort)))
+        == some (true, .citation) &&
+      ((Bib.Style.named "plainnat").map (fun s => (s.labels, s.sort)))
+        == some (true, .authorYear) &&
+      ((Bib.Style.named "plain").map (fun s => (s.labels, s.sort)))
+        == some (false, .authorYear) &&
+      ((Bib.Style.named "unsrt").map (fun s => (s.labels, s.sort)))
+        == some (false, .citation) &&
       (Bib.Style.named "mystery").isNone)
+  t "bibstyle: natbib's rows for the named styles are the plain pair's and the nat trio's"
+    (["plainnat", "unsrtnat", "abbrvnat"].all (Bib.natbibRows.lookup · == some Bib.natPunct) &&
+      ["plain", "unsrt", "abbrv", "alpha"].all (Bib.natbibRows.lookup · == some Bib.latexPunct) &&
+      (Bib.natbibRows.lookup "apalike").isNone)
   -- abbrvnat/abbrv: plainnat/plain with only the abbreviation axis set
   -- (abbrvnat.bst and abbrv.bst FUNCTION {format.names}: `{f.~}{vv~}{ll}{, jj}`
   -- where the plain pair has `{ff~}` — the one designator that differs).
   t "bibstyle: abbrv styles differ from the plain pair only in the name axis"
-    (((Bib.Style.named "abbrvnat").map (fun s => (s.punct, s.sort, s.names)))
-        == some (Bib.natPunct, .authorYear, { initials := true }) &&
-      ((Bib.Style.named "abbrv").map (fun s => (s.punct, s.sort, s.names)))
-        == some (Bib.latexPunct, .authorYear, { initials := true }))
+    (((Bib.Style.named "abbrvnat").map (fun s => (s.labels, s.sort, s.names)))
+        == some (true, .authorYear, { initials := true }) &&
+      ((Bib.Style.named "abbrv").map (fun s => (s.labels, s.sort, s.names)))
+        == some (false, .authorYear, { initials := true }))
   t "bibstyle: abbrv names are J. Smith, never Smith, J."
     (Bib.abbrvNames.render (Bib.parseName "Smith, Jane") == "J. Smith" &&
       Bib.abbrvNames.renderList "Smith, Jane and Doe, Alex B." ==

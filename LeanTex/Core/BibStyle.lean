@@ -221,10 +221,11 @@ structure NameFormat where
 `plainnat` are records of this type; so is the fallback an unknown
 `\bibliographystyle` gets (W0353) — a record, not a code path. -/
 structure Style where
-  /-- The punctuation natbib's `\bibstyle@<name>` row gives the style
-  (natbib.sty): a `\bibpunct` that sets every value, so an open door
-  replaces whatever was declared before it. -/
-  punct : CitePunct
+  /-- Whether the style's `\bibitem`s carry natbib's author-year labels
+  (plainnat's family does, plain's does not): a style that writes none puts
+  natbib in numbers mode whatever was declared. The punctuation is natbib's
+  row for the style's name (`natbibRows`), not the record's. -/
+  labels : Bool
   sort : SortOrder
   /-- The steps an entry's type writes, the entry at hand deciding the
   branches the style's own function takes (`plainnatSteps`). -/
@@ -743,17 +744,42 @@ def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
 
 /-- natbib's `\bibstyle@plain` row, which `abbrv` and `unsrt` share
 (`\bibpunct{[}{]}{,}{n}{}{,}`): numbers in square brackets, LaTeX's own
-`\cite` too (latex.ltx `\@cite`, `[1, 2]`). These styles write no
-author-year label into a `\bibitem`, so natbib reads them in numbers mode
-whatever was declared. -/
+`\cite` too (latex.ltx `\@cite`, `[1, 2]`). -/
 def latexPunct : CitePunct :=
   { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
 
+/-- natbib's `\bibstyle@<name>` rows (natbib.sty:206–234, and the `\let`
+aliases beside them): the punctuation natbib gives a style by its name
+while its `\bibstyle` door stays open, whether or not the engine formats
+that style's list. A name with no row leaves natbib's declared punctuation
+standing — natbib.sty reads an undefined `\bibstyle@<name>` as nothing —
+which is what an `apalike` document cites with: `(Doe, 2024; Roe, 2020)`.
+Each row is the six values its `\bibpunct` sets, the note separator at
+`\bibpunct`'s default `, `; agu's `,~` year separator is the `,` natbib
+sets (its `\unskip` takes the tie). natbib's `nature` row, superscript
+numbers, has no entry: the engine sets no superscript citation, as it
+refuses natbib's `super` option. -/
+def natbibRows : List (String × CitePunct) :=
+  let ay (o c sep aysep : String) : CitePunct :=
+    { «open» := o, close := c, sep, aysep, yysep := "," }
+  let num (o c : String) (yysep : String := ",") : CitePunct :=
+    { numbers := true, «open» := o, close := c, sep := ",", aysep := "", yysep }
+  [("chicago", ay "(" ")" ";" ","), ("named", ay "[" "]" ";" ","),
+   ("agu", ay "[" "]" ";" ","), ("copernicus", ay "(" ")" ";" ","),
+   ("egu", ay "(" ")" ";" ","), ("egs", ay "(" ")" ";" ","),
+   ("agsm", ay "(" ")" "," ""), ("kluwer", ay "(" ")" "," ""),
+   ("dcu", ay "(" ")" ";" ";"), ("aa", ay "(" ")" ";" ""),
+   ("pass", ay "(" ")" ";" ","), ("anngeo", ay "(" ")" ";" ","),
+   ("nlinproc", ay "(" ")" ";" ","),
+   ("cospar", num "/" "/" (yysep := "")), ("esa", num "(Ref.\u00a0" ")" (yysep := "")),
+   ("plain", latexPunct), ("alpha", latexPunct), ("abbrv", latexPunct), ("unsrt", latexPunct),
+   ("plainnat", natPunct), ("abbrvnat", natPunct), ("unsrtnat", natPunct)]
+
 /-- `unsrtnat`: the reference list in first-citation order (the "unsrt"),
-the standard field orders, full names, natbib's author-year row — what
-`unsrtnat.bst` is, as one record. -/
+the standard field orders, full names, author-year labels in its
+`\bibitem`s — what `unsrtnat.bst` is, as one record. -/
 def Style.unsrtnat : Style where
-  punct := natPunct
+  labels := true
   sort := .citation
   steps := plainnatSteps
   names := {}
@@ -761,7 +787,7 @@ def Style.unsrtnat : Style where
 /-- `plainnat`: the same fields and names, the list sorted by author then
 year (natbib manual §4: plainnat is the author-year companion of plain). -/
 def Style.plainnat : Style where
-  punct := natPunct
+  labels := true
   sort := .authorYear
   steps := plainnatSteps
   names := {}
@@ -769,7 +795,7 @@ def Style.plainnat : Style where
 /-- `plain`: what the record model buys — plain.bst is numbers over an
 author-sorted list, zero new code, only another pairing of the axes. -/
 def Style.plain : Style where
-  punct := latexPunct
+  labels := false
   sort := .authorYear
   steps := plainnatSteps
   names := {}
@@ -799,21 +825,20 @@ def Style.abbrv : Style :=
 /-- The punctuation a document's citations draw with — natbib's rule. No
 natbib is LaTeX's own `\cite` (`latexPunct`). With natbib, its
 declarations replay over its load values (`CitePunct.step`); then, while
-natbib's `\bibstyle` door stays open, the declared style's row replaces
-them all at `\begin{document}`, and a style that writes no author-year
-labels puts natbib in numbers mode whatever was declared (natbib.sty
-reading a `\bibitem` without one). A document that declares no style has
-no row to apply. -/
-def CitePunct.ofDoc (natbib : Option (Array String)) (style : Option Style) : CitePunct :=
+natbib's `\bibstyle` door stays open, the declared style's row
+(`natbibRows`, by name) replaces them all at `\begin{document}` — a style
+with no row leaves them standing — and a style whose `\bibitem`s carry no
+author-year label (`labels`) puts natbib in numbers mode whatever was
+declared (natbib.sty reading a `\bibitem` without one). A document that
+declares no style has no row to apply. -/
+def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
+    (labels : Bool) : CitePunct :=
   match natbib with
   | none => latexPunct
   | some decls =>
     let (p, door) := decls.foldl CitePunct.step ({}, true)
-    match style with
-    | none => p
-    | some s =>
-      let p := if door then s.punct else p
-      if s.punct.numbers then { p with numbers := true } else p
+    let p := if door then row.getD p else p
+    if labels then p else { p with numbers := true }
 
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
 the caller falls back to `unsrtnat` — a record, so the fallback loses the
@@ -1371,12 +1396,14 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
       match Style.named name with
       | some s => pure (some s)
       | none =>
+        let cites := if doc.natbib.isSome then ", and its citations as author-year ones" else ""
         diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
-          one the engine knows; the reference list is set as 'unsrtnat'"
+          one the engine knows; the reference list is set as 'unsrtnat'{cites}"
           (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv"))
         pure (some Style.unsrtnat)
   let style := declared.getD Style.unsrtnat
-  let p := CitePunct.ofDoc doc.natbib declared
+  let p := CitePunct.ofDoc doc.natbib ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
+    (declared.all (·.labels))
   let cited := expandStar entries (citedKeys doc)
   let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
   let byKey : Std.HashMap String Entry := entries.foldl (fun m e => m.insert e.key e) {}
