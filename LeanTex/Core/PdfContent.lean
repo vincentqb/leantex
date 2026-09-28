@@ -466,7 +466,7 @@ def glyphStarts : Sp → List (Nat × Char × Sp) → List Sp
 
 /-- The fold builds `placeSpec`'s string: its glyph ids, and beside them
 its numbers. -/
-theorem placeStep_foldl (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+theorem placeStep_fold_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (ga : Array Nat) (na : Array Int) (adv : Int) (P : Sp) :
     (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).gids.toList
         = ga.toList ++ (placeSpec wμ tgt adv P gs).map (·.1)
@@ -481,7 +481,7 @@ theorem placeStep_foldl (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat �
       (adv - 1000 * nudge (adv - tgt P) + wμ g) (P + a)
     exact ⟨by rw [h1]; simp, by rw [h2]; simp⟩
 
-theorem placeSpec_ids (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+theorem placeSpec_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (adv : Int) (P : Sp) : (placeSpec wμ tgt adv P gs).map (·.1) = gs.map (·.1) := by
   induction gs generalizing adv P with
   | nil => rfl
@@ -490,21 +490,21 @@ theorem placeSpec_ids (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × 
     simp [placeSpec, ih]
 
 /-- Placing a run keeps its glyphs, in order: only numbers are added. -/
-theorem place_ids (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
+theorem place_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
     (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).gids = glyphs.map (·.1) := by
   apply Array.toList_inj.mp
-  rw [Array.toList_map, ← Array.foldl_toList, (placeStep_foldl ..).1]
-  simpa using placeSpec_ids wμ tgt glyphs.toList adv 0
+  rw [Array.toList_map, ← Array.foldl_toList, (placeStep_fold_exact ..).1]
+  simpa using placeSpec_glyphs_id wμ tgt glyphs.toList adv 0
 
 /-- The numbers the fold writes are `placeSpec`'s, the ones `place_between`
 places by. -/
-theorem place_nums (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
+theorem place_nums_exact (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
     (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).nums.toList
       = (placeSpec wμ tgt adv 0 glyphs.toList).map (·.2) := by
-  rw [← Array.foldl_toList, (placeStep_foldl ..).2]
+  rw [← Array.foldl_toList, (placeStep_fold_exact ..).2]
   simp
 
-theorem placeSpec_length (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
+theorem placeSpec_length_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (adv : Int) (P : Sp) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
   induction gs generalizing adv P with
   | nil => rfl
@@ -512,7 +512,7 @@ theorem placeSpec_length (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat 
     obtain ⟨g, c, a⟩ := x
     simp [placeSpec, penStarts, ih]
 
-theorem glyphStarts_length (P : Sp) (gs : List (Nat × Char × Sp)) :
+theorem glyphStarts_length_exact (P : Sp) (gs : List (Nat × Char × Sp)) :
     (glyphStarts P gs).length = gs.length := by
   induction gs generalizing P with
   | nil => rfl
@@ -525,10 +525,11 @@ resolution of the file: by the viewer's own arithmetic over the numbers
 `placeStep` writes and the widths the file declares (`penStarts`), each
 glyph's pen stands within `[−500, 499]` millionths of the em — under half
 a thousandth — of its target, the layout's position for it (both lists
-hold one entry per glyph: `placeSpec_length`, `glyphStarts_length`). The
-written advances are the laid-out advances, pair kerns included; and since
-each number is chosen from where the file's arithmetic actually left the
-pen, the residue never accumulates along a line. -/
+hold one entry per glyph: `placeSpec_length_exact`,
+`glyphStarts_length_exact`). The written advances are the laid-out
+advances, pair kerns included; and since each number is chosen from where
+the file's arithmetic actually left the pen, the residue never accumulates
+along a line. -/
 theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) (P : Sp)
     (gs : List (Nat × Char × Sp)) :
     ∀ d ∈ List.zipWith (· - ·) (penStarts wμ adv (placeSpec wμ tgt adv P gs))
@@ -1211,7 +1212,7 @@ theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (
   unfold stepRun
   split
   · simp [TextSt.runs]
-  · simp only [pushRun_runs, runItem_runs, Array.mkEmpty_eq, place_ids]
+  · simp only [pushRun_runs, runItem_runs, Array.mkEmpty_eq, place_glyphs_id]
     congr 1
     simp only [apply_ite TextSt.runs, setFace_runs, toPen_runs, ite_self]
 

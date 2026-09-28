@@ -170,7 +170,11 @@ in this repo; refer to the private reference corpus abstractly.
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
   for. `_in_measure` is not a shape (`kern_measure_exact` once carried
-  it). A contract over shipped bundles quantifies over `Theme.builtin`,
+  it). A step lemma is not a property and takes no suffix from this list:
+  `<step>_<field>` says what one step of a walk does to one field of the
+  walk's state (`pushRun_runs`, `moveTo_plainOps`), and the statement the
+  walk's step lemmas assemble carries the shape (`contentOps_text`,
+  `mark_ink_exact`). A contract over shipped bundles quantifies over `Theme.builtin`,
   never per bundle — adding a bundle is entering the contract.
 
 - A new collector over the IR is a `foldBlocks`/`foldInlines` leaf
