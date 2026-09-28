@@ -1214,11 +1214,22 @@ theorem resolveInlines_id (p : CitePunct) (find : Resolver)
 
 end
 
+/-- A paragraph TeX never begins: nothing in it but `\nocite`s and the spaces
+between them. `\nocite` sets no ink and leaves vertical mode alone, and a
+space in vertical mode is dropped, so the page is the page of the document
+without it (lualatex: the same step between the paragraphs around it). -/
+def nociteOnly (content : Array Ir.Inline) : Bool :=
+  content.any (fun x => match x with | .cite f _ => f.cmd == .nocite | _ => false) &&
+    content.all fun x => match x with
+      | .cite f _ => f.cmd == .nocite
+      | .text s => s.all Char.isWhitespace
+      | _ => false
+
 mutual
 
 /-- The block half of the rewrite: citations resolve wherever inline
-content stands, and each `\bibliography` marker takes the items the style
-built. -/
+content stands, each `\bibliography` marker takes the items the style
+built, and a paragraph of `\nocite`s alone is dropped (`nociteOnly`). -/
 -- conserves: none — resolution rewrites citation marks and fills the
 -- reference list; `resolveInline_id` carries the off-citation identity.
 private def resolveBlock (p : CitePunct) (find : Resolver)
@@ -1226,7 +1237,8 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
     Array Ir.Block :=
   match b with
   | .bibliography src declared _ => out.push (.bibliography src declared items)
-  | .para content => out.push (.para (resolveArr p find content))
+  | .para content =>
+    if nociteOnly content then out else out.push (.para (resolveArr p find content))
   | .equation n content =>
     out.push (.equation (resolveArr p find n) (resolveArr p find content))
   | .section l st num title => out.push (.section l st num (resolveArr p find title))
@@ -1672,7 +1684,14 @@ theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir
         (resolveBlock p find items out b).toList →
       q ∈ Ir.foldBlockList (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
   match b with
-  | .para content | .framefoot content | .logo content =>
+  | .para content =>
+    intro out acc q h
+    simp only [resolveBlock] at h
+    split at h
+    · exact .inl h
+    · simp only [Ir.foldBlockList_push, Ir.foldBlock] at h
+      exact resolveInlines_pending p find content.toList _ q h
+  | .framefoot content | .logo content =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending p find content.toList _ q h

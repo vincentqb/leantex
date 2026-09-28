@@ -61,3 +61,50 @@ def citetextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     t s!"{tag}: the list holds every entry cited, in order ({entries.toList})"
       (entries.size == list.length &&
         (entries.toList.zip list).all fun (e, w) => e.startsWith w)
+
+
+/-- The body of each `\nocite` placement document and of its control, the
+same document without the `\nocite`: two paragraphs, or a paragraph and the
+list. -/
+def nocitePlacements : List (String × String × String) :=
+  let first := "First paragraph words, citing \\citet{alpha2019}.\n\n"
+  [("alone", first ++ "\\nocite{delta2021}\n\nSecond paragraph words.\n\n",
+     first ++ "Second paragraph words.\n\n"),
+   ("two", first ++ "\\nocite{delta2021} \\nocite{eps2020}\n\nSecond paragraph words.\n\n",
+     first ++ "Second paragraph words.\n\n"),
+   ("before the list", first ++ "\\nocite{*}\n", first)]
+
+/-- **A `\nocite` in vertical mode starts no paragraph**: LaTeX's `\nocite`
+sets no ink and a space in vertical mode is dropped, so a paragraph holding
+nothing else is never begun — the page is the page of the document without
+it (lualatex: 11.96 bp between the two paragraphs with and without, and the
+same gap above the list). Measured on the shipped page as the baseline step
+from the first paragraph to the line the next block sets (an empty
+paragraph ships a glyphless line of its own, so the next line is not the
+measure), and in the HTML as its paragraph count; the entries it names
+still enter the list. -/
+def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let build (body : String) : Array Layout.LineOut × String × Array Diag :=
+    let (doc, eds) := elabStr s!"\\documentclass\{article}\n\\usepackage\{natbib}\n\
+      \\bibliographystyle\{plainnat}\n\\begin\{document}\n{body}\\bibliography\{refs}\n\
+      \\end\{document}\n"
+    let (doc, ds) := Bib.apply #[("refs", natbibBib)] doc
+    (bodyLines (layoutOf oneFace doc), (HtmlDoc.emit {} doc).1, eds ++ ds)
+  let step (lines : Array Layout.LineOut) (next : String) : Option Dim.Sp :=
+    match lines.find? (lineInk · |>.startsWith "First paragraph"),
+        lines.find? (lineInk · |>.startsWith next) with
+    | some a, some b => some (b.y - a.y)
+    | _, _ => none
+  let paras (html : String) : Nat := (html.splitOn "<p>").length
+  for (tag, withNocite, control) in nocitePlacements do
+    let (lines, html, ds) := build withNocite
+    let (cLines, cHtml, _) := build control
+    let next := if tag == "before the list" then "References" else "Second paragraph"
+    t s!"nocite {tag}: the page steps as without it ({step lines next} vs {step cLines next})"
+      ((step lines next).isSome && step lines next == step cLines next)
+    t s!"nocite {tag}: the html has the control's paragraphs ({paras html} vs {paras cHtml})"
+      (paras html == paras cHtml)
+    t s!"nocite {tag}: its entries enter the list, with no diagnostic"
+      (hasStr (htmlVisibleText html) "Dee Delta. Placeholder Methods." &&
+        !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
