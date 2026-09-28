@@ -22987,3 +22987,27 @@ package it reads `1/4 … 4/4`.
 **Measured.** The private deck's 35 footline numbers now equal lualatex's
 (`pdftotext`, every page); only pages 30–35 change, and no diagnostic moves
 on the five private documents.
+
+
+### 2026-09-27 — a length the engine spends is never named as unread: `\partopsep`
+
+**The census finding.** Once the length door landed, a paper's style file
+printed W0104, "'\partopsep' is not honoured: it adds to a list's opening
+space after a blank line, which the engine does not record", while the page
+spent the declared value: the `.unmodelled` row still wrote the token, and
+`Ir.partopsepFor` (the vertical-space round's one resolving site) reads it.
+A synthetic article with `\setlength{\partopsep}{5pt}` sets a list after a
+blank line 25.0 bp below the line before it, as lualatex does (24.9 bp),
+under a warning that says the setting is ignored.
+
+**The invariant.** A row named as unread sets nothing: over one body every
+probe reads, a `\setlength` of each `.unmodelled` parameter ships the page
+the document ships without it (`paramSiteChecks`, quantified over
+`Compat.paramSites`). It fails at `ea1773b9` on `partopsep` alone; every
+other unread row holds it. The row is now `.token "partopsep"`, with its
+probe (`\setlength` and `\tokens` set one page, and it moves the page).
+
+**Measured** (the private reference corpus, main against the branch): the
+paper's two W0104 sites for `\partopsep` become one note naming the token;
+the paper, deck, card, résumé and site PDFs and the paper's HTML are
+byte-identical under `cmp`.

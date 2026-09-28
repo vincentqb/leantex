@@ -20,6 +20,8 @@ def settingsBodies : List (String × String) :=
       "\\bottomrule\n\\end{tabular}\n\nBravo words."),
    ("rules", "\\begin{tabular}{ll}\\toprule\\toprule\nAlpha & Bravo\\\\\n" ++
       "\\bottomrule\n\\end{tabular}"),
+   ("parlist", "Alpha words.\n\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n\n" ++
+      "Charlie words."),
    ("list1", "Alpha words.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n" ++
       "\\begin{enumerate}\n\\item Charlie item.\n\\end{enumerate}"),
    ("list2", "\\begin{itemize}\n\\item Alpha\n\\begin{itemize}\n\\item Bravo\n" ++
@@ -39,6 +41,7 @@ def paramProbes : List (String × String × String × String) :=
    ("abovecaptionskip", "\\setlength{\\abovecaptionskip}{23pt}",
      "\\tokens{ captionsep = 23pt }", "figure"),
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
+   ("partopsep", "\\setlength{\\partopsep}{9pt}", "\\tokens{ partopsep = 9pt }", "parlist"),
    ("footins", "\\setlength{\\skip\\footins}{61pt}", "\\tokens{ footins = 61pt }", "note"),
    ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
    ("heavyrulewidth", "\\setlength{\\heavyrulewidth}{3pt}",
@@ -132,6 +135,16 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"'{n}' is named where it is set"
         ((ds.filter fun d => d.code == "W0104" &&
           d.subject == some s!"ctrl:setlength:{n}").size == 1)
+  -- And sets nothing, which is what the warning says: over a body every
+  -- probe reads, the page is the document's without it. A row the engine
+  -- does read fails here, the shape that named `\partopsep` "not honoured"
+  -- while `Ir.partopsepFor` spent it.
+  let every := String.intercalate "\n\n" (settingsBodies.map (·.2))
+  for (n, site) in Compat.paramSites do
+    if let .unmodelled _ := site then
+      t s!"'{n}' named as unread sets nothing on the page"
+        (pagesOf oneFace (doc s!"\\setlength\{\\{n}}\{7pt}" every) ==
+          pagesOf oneFace (doc "" every))
   -- A zero indent is what the engine does: honoured, said so, never named.
   let flush := dvE (doc "\\setlength{\\parindent}{0pt}" "Alpha words.")
   t "a zero '\\parindent' is honoured, not named"

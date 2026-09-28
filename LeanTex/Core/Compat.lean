@@ -321,8 +321,10 @@ def paramSites : List (String × ParamSite) :=
    ("leftmargin", .listReset), ("itemsep", .listReset), ("parsep", .listReset),
    ("itemindent", .listReset), ("listparindent", .listReset), ("rightmargin", .listReset),
    ("parindent", .unmodelled "indents a paragraph's first line; paragraphs here are set flush"),
-   ("partopsep", .unmodelled
-      "adds to a list's opening space after a blank line, which the engine does not record"),
+   -- The class's `\partopsep`, which only a level whose `\@list` sets its
+   -- own leaves behind (size10.clo's `\@listiii`): the one resolving site
+   -- spends a declared value (`Ir.partopsepFor`).
+   ("partopsep", .token "partopsep"),
    ("labelsep", .unmodelled "separates a list label from its item; the gap here is half an em"),
    ("labelwidth", .unmodelled "boxes a list label; a label here sets at its own width"),
    ("footnotesep", .unmodelled "struts a footnote's first line; the strut here follows the type"),
