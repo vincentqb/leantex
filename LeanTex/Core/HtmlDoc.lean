@@ -827,6 +827,23 @@ def listRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
     | some sk => listLevelRules (String.join (List.replicate (n - 1) "li ")) (listLevelGaps size sk)
     | none => []
 
+/-- The rules a theorem-like block's space owes, on the element its role's
+class marks (`Ir.thmSkips` at the top level, the one resolving site the PDF
+walk spends, converted once through `screenMilli`): the space above, over
+the parskip in force where its spelling's `\@topsep` carries one, and the
+space below, over the next block's; the web's lineage keeps the trivlist's.
+The mode is read as inside a paragraph: this sheet carries no `\partopsep`
+reading of it, as its lists' does not. -/
+def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+  Ir.ThmSpace.all.flatMap fun k =>
+    let c := "." ++ roleClass (Ir.thmSpaceRole k)
+    match Ir.thmSkips l size 1 {} k false with
+    | some sk =>
+      let above := screenMilli size sk.above.width.sp
+      [.boundary s!"* + {c}" (if sk.parskipAbove then listSpace above else milliRem above),
+       .boundary s!"{c} + *" (listSpace (screenMilli size sk.below.width.sp))]
+    | none => [.boundary s!"* + {c}" trivlistGap, .boundary s!"{c} + *" trivlistGap]
+
 /-- The resets: every block element's own vertical margins, first. -/
 private def gapResets : List GapRule :=
   [.reset "p, ul, ol, li, dl, dd, pre, blockquote" "0",
@@ -868,17 +885,18 @@ every `:where(* + p)` and no peer gap rendered. Then one adjacent-sibling
 rule per block element (`blockGapKinds`), a pair rule standing later than
 the element rules it meets, so its value wins the boundary while the
 neighbour's own margin stays zero — the PDF walk's `addvspace` taking the
-larger: the trivlist's (`\topsep`); the page's list levels
-(`listRules`), after it, so a list's `\topsep` against a centred block is
-the larger, and before the headings, so a heading's space against a list
-is; the float's (`--floatsep`) and the display's
-(`Ir.displayAbove`/`displayBelow`); and last, the follower of a heading,
-whose band below is the heading's own (the reset's `margin-bottom`). Any
+larger: the trivlist's (`\topsep`); a theorem-like block's (`thmRules`);
+the page's list levels (`listRules`), after them, so a list's `\topsep`
+against a centred block is the larger, and before the headings, so a
+heading's space against a list is; the float's (`--floatsep`) and the
+display's (`Ir.displayAbove`/`displayBelow`); and last, the follower of a
+heading, whose band below is the heading's own (the reset's
+`margin-bottom`). Any
 consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 def blockGapRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ listRules l size ++ gapAfterLists
+  gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size ++ gapAfterLists
 
 def blockGapCss (l : Ir.ListLineage) (size : Int) : String :=
   String.join ((blockGapRules l size).map GapRule.render)
@@ -908,6 +926,12 @@ private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) :
     Bool.and_eq_true]
   refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _
 
+private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
+    (thmRules l size).all (fun r => !r.isReset) = true := by
+  simp only [thmRules, List.all_flatMap, List.all_eq_true]
+  intro k _
+  split <;> simp [GapRule.isReset]
+
 /-- **Each boundary's gap is its emitter's, and it renders** (`_contract`),
 for every class's list lineage and body size: every rule of the one
 emitter stands at zero specificity, so order alone ranks them, and no
@@ -919,9 +943,10 @@ margin on an element it spaces is the text's to show, and
 theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) :
     ((blockGapRules l size).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
     (blockGapRules l size).getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
-  have hall : (gapBeforeLists ++ listRules l size ++ gapAfterLists).all
+  have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size ++ gapAfterLists).all
       (fun r => !r.isReset) = true := by
-    simp only [List.all_append, listRules_noReset, Bool.and_true, Bool.and_eq_true]
+    simp only [List.all_append, thmRules_noReset, listRules_noReset, Bool.and_true,
+      Bool.and_eq_true]
     exact ⟨by decide, by decide⟩
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
@@ -5374,7 +5399,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
     let kids := blockNodesInto cfg.into #[] body.toList
-    match n == Ir.trivlistRole, kids.toList with
+    match n == Ir.trivlistRole || (Ir.thmSpaceOf? n).isSome, kids.toList with
     | true, [k] => withClass (roleClass n) k
     -- The in-paragraph role is the PDF's spacing fact (`\partopsep`): the
     -- page's element tree is the environment's own either way.

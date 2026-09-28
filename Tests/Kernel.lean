@@ -135,9 +135,81 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- HTML: the environment's name as its class, the head as strong text.
   let page := (HtmlDoc.emit {} (elabStr src).1).1
   t "html: a theorem is its own block under the environment's name"
-    (hasStr page "<div class=\"u-thm u-trivlist-env\">")
+    (hasStr page "<div class=\"u-thm u-trivlist-ams\">")
   t "html: the head is strong, the number upright"
     (hasStr page "<strong>Theorem <span class=\"up\">1.1</span></strong><strong>.</strong>")
+
+
+/-- **A theorem-like block opens and closes the space its spelling sets**
+(`Ir.thmSkips`), not the trivlist quantum a `{center}` takes: latex.ltx's
+theorem is `\trivlist` itself — `\topsep`, and `\partopsep` after a blank
+line — amsthm's plain and definition spend `\thm@preskip` and
+`\thm@postskip`, the `\topsep`, remark half of it, and the proof `6pt plus
+6pt` over `\partopsep` (size10/12.clo:215–218, amsthm.sty:74–76, 229–233,
+433). Asserted over `Layout.Out`, baseline to baseline, against those
+lengths; lualatex, article 10 pt, sets the kernel's theorem 22 pt from the
+text around it after a blank line and 20 pt without one, amsthm's plain and
+definition and the proof 20 pt, remark 16 pt (TeX Live 2026). On the base
+the blocks spent one quantum over the paragraph mark. Invented words. -/
+def kernelThmSpaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let steps (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    let v := words.filterMap (lineYOf c 0 ·)
+    (v.zip v.tail).map fun (a, b) => b - a
+  let leadOf (src : String) : Dim.Sp :=
+    let g := Layout.Geom.ofPage (elabStr src).1.page
+    Ir.leadingFor g.fontSize g.leading
+  let abc := ["Alpha.", "Bravo.", "Charlie."]
+  let ams := "\\usepackage{amsthm}\n\\newtheorem{thm}{Theorem}\n\\theoremstyle{definition}\n\
+\\newtheorem{defn}{Definition}\n\\theoremstyle{remark}\n\\newtheorem*{rem}{Remark}\n"
+  let kern := "\\newtheorem{thm}{Theorem}\n"
+  let proof := "\\usepackage{amsthm}\n"
+  let env (e : String) : String := "\\begin{" ++ e ++ "}\nBravo.\n\\end{" ++ e ++ "}"
+  let blank (cls pre e : String) : String := s!"\\documentclass{cls}\n" ++ pre ++
+    "\\begin{document}\nAlpha.\n\n" ++ env e ++ "\n\nCharlie.\n\\end{document}"
+  let inline (cls pre e : String) : String := s!"\\documentclass{cls}\n" ++ pre ++
+    "\\begin{document}\nAlpha.\n" ++ env e ++ "\nCharlie.\n\\end{document}"
+  let both (src : String) (g : Dim.Sp) : Bool := steps src abc == [leadOf src + g, leadOf src + g]
+  t "kernel theorem after a blank line: topsep and partopsep above and below"
+    (both (blank "{article}" kern "thm") (Dim.pt 10))
+  t "kernel theorem in an open paragraph: topsep alone"
+    (both (inline "{article}" kern "thm") (Dim.pt 8))
+  for e in ["thm", "defn"] do
+    t s!"amsthm {e}: thm@preskip and thm@postskip, the topsep, whatever the mode"
+      (both (blank "{article}" ams e) (Dim.pt 8) && both (inline "{article}" ams e) (Dim.pt 8))
+  t "amsthm remark: half the topsep" (both (blank "{article}" ams "rem") (Dim.pt 4))
+  t "proof: 6pt over partopsep, whatever the mode"
+    (both (blank "{article}" proof "proof") (Dim.pt 8) &&
+     both (inline "{article}" proof "proof") (Dim.pt 8))
+  t "12pt: size12's topsep and partopsep, and the proof's 6pt"
+    (both (blank "[12pt]{article}" kern "thm") (Dim.pt 13) &&
+     both (blank "[12pt]{article}" ams "thm") (Dim.pt 10) &&
+     both (blank "[12pt]{article}" ams "rem") (Dim.pt 5) &&
+     both (blank "[12pt]{article}" proof "proof") (Dim.pt 9))
+  let two := dvDoc ams
+    "Alpha.\n\n\\begin{thm}\nBravo.\n\\end{thm}\n\\begin{thm}\nCharlie.\n\\end{thm}\n\nDelta."
+  t "two theorems meeting pay the larger of their spaces once"
+    (steps two ["Alpha.", "Bravo.", "Charlie.", "Delta."] ==
+      [leadOf two + Dim.pt 8, leadOf two + Dim.pt 8, leadOf two + Dim.pt 8])
+  -- After a heading the head spends `\@nbitem`, as a list's first item:
+  -- it stands where a paragraph after the heading stands. Kept behaviour,
+  -- not a repair: this pair holds on the base too.
+  let hd (b : String) : String := dvDoc ams ("\\section*{Alpha}\n" ++ b ++ "\n\nCharlie.")
+  t "a theorem right after a heading stands where a paragraph after it stands"
+    ((steps (hd (env "thm")) ["Alpha", "Bravo."]) == (steps (hd "Bravo.") ["Alpha", "Bravo."]) &&
+      (steps (hd "Bravo.") ["Alpha", "Bravo."]).length == 1)
+  -- The HTML half reads the same resolving site, in the screen's quanta.
+  let page := (HtmlDoc.emit {} (elabStr (blank "{article}" ams "thm")).1).1
+  let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
+  t "html: a theorem's element carries its space's class, never a wrapper"
+    (hasStr page "<div class=\"u-thm u-trivlist-ams\">")
+  t "html: amsthm's theorem opens the topsep above, and over the parskip below"
+    (hasStr page ":where(* + .u-trivlist-ams) { margin-top: 0.966rem; }" &&
+     hasStr page s!":where(.u-trivlist-ams + *) \{ margin-top: {space "0.966"}; }")
+  t "html: remark opens half of it, the proof 6pt over partopsep"
+    (hasStr page ":where(* + .u-trivlist-remark) { margin-top: 0.483rem; }" &&
+     hasStr page s!":where(* + .u-trivlist-proof) \{ margin-top: {space "0.966"}; }")
 
 
 /-- **`verse` is a quotation of lines**: a block of its own between the

@@ -7619,6 +7619,21 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A list or quote opened inside an open paragraph: its arm reads the
     -- mode (`Rd.inPar`) and spends no `\partopsep`.
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
+    -- A theorem-like block (`Ir.thmSkips`): its spelling's space above, on
+    -- TeX's `\parskip` where its `\@topsep` carries one, and below, from the
+    -- `\topsep` in force where it stands; right after a heading its head
+    -- spends `\@nbitem`, as a list's first item does.
+    else if let some k := Ir.thmSpaceOf? n then
+      match Ir.thmSkips r.lists r.geom.fontSize (max 1 (a.itemDepth + a.enumDepth)) a.tokens k
+          (!r.inPar) with
+      | some sk =>
+        let above := r.resolve sk.above
+        let a := if a.afterHeading then a
+          else if sk.parskipAbove then a.listSpace above else a.addvspace above
+        (collectBlocks { r with inPar := false } a body indent).listSpace (r.resolve sk.below)
+      | none =>
+        let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+        (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     else
     let st := r.style n
     let a := match st.before with
@@ -7889,16 +7904,17 @@ takes that theorem's name rather than a fresh shape suffix because it is the
 same property over the other walk. Was an oracle over the shipped pages
 (roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
 whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
-cheap. The engine's own trivlist and in-paragraph roles are the names that
-are not transparent — an environment opens space, and one opened inside a
-paragraph opens less — and a document cannot spell either. -/
+cheap. The engine's own trivlist, in-paragraph and theorem roles are the
+names that are not transparent — an environment opens space, and one opened
+inside a paragraph opens less — and a document cannot spell any of them. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
-    (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole) :
+    (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
+    (hth : Ir.thmSpaceOf? n = none) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
-  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', Bool.false_eq_true, ite_false]
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, Bool.false_eq_true, ite_false]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open

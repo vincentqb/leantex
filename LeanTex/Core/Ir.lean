@@ -1004,6 +1004,99 @@ theorem listSkips_exact :
       (s.topsep.width.sp, s.itemsep.width.sp, s.parsep.width.sp)) = some (Dim.pt 3, Dim.pt 3, 0) := by
   decide
 
+/-- How a theorem-like block spends its space (`thmSkips`): the trivlist
+its spelling opens, and the lengths it sets before its `\item`. -/
+inductive ThmSpace where
+  /-- latex.ltx `\@begintheorem` is `\trivlist` itself: `\topsep`, with
+  `\partopsep` where it opens in vertical mode, and TeX's `\parskip` on
+  top, above and below. -/
+  | kernel
+  /-- amsthm.sty `\@thm` under plain and definition: `\@topsep` is
+  `\thm@preskip` and `\@topsepadd` is `\thm@postskip`, both `\topsep`
+  (`\thm@space@setup`), so no `\partopsep`; and above no `\parskip`, which
+  `\deferred@thm@head`'s `\addvspace{-\parskip}` takes back. -/
+  | ams
+  /-- amsthm's remark style: `\th@remark` halves both
+  (`\divide\thm@preskip\tw@`). -/
+  | amsHalf
+  /-- amsthm's `proof`: `\topsep6\p@\@plus6\p@` over `\partopsep`,
+  always, since its `\par` puts the `\trivlist` in vertical mode. -/
+  | proof
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def ThmSpace.all : List ThmSpace := [.kernel, .ams, .amsHalf, .proof]
+
+/-- The engine role a theorem-like block rides in, one per `ThmSpace`: a
+trivlist whose space is its spelling's. A name no document command can
+spell (it carries a hyphen), as `trivlistRole`'s is. -/
+def thmSpaceRole : ThmSpace → String
+  | .kernel => "trivlist-kernel"
+  | .ams => "trivlist-ams"
+  | .amsHalf => "trivlist-remark"
+  | .proof => "trivlist-proof"
+
+/-- The space a theorem role names. -/
+def thmSpaceOf? (n : String) : Option ThmSpace :=
+  ThmSpace.all.find? (thmSpaceRole · == n)
+
+/-- A theorem-like block's space above its head and below its last line,
+and whether TeX's `\parskip` stands on top of the space above. -/
+structure ThmSkips where
+  above : SymGlue
+  below : SymGlue
+  parskipAbove : Bool
+  deriving Repr, BEq
+
+/-- amsthm's proof: `\topsep6\p@\@plus6\p@` (amsthm.sty:433), whatever the
+body size. -/
+def proofTopsep : SymGlue := { width := { sp := Dim.pt 6 }, stretch := { sp := Dim.pt 6 } }
+
+/-- **The one resolving site for a theorem-like block's space**, read by
+both backends: the `\topsep` in force where it stands — `\@listi`'s at top
+level, which `\normalsize` sets, else the enclosing list level's
+(`listSkips`) — spent as its spelling spends it (`ThmSpace`), `\partopsep`
+through `partopsepFor`. `vertical` says whether the block opens in vertical
+mode, which only the kernel's reads. `none` for the web's lineage, whose
+theorems are the trivlist block (`trivlistSkip`). -/
+def thmSkips (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+    (k : ThmSpace) (vertical : Bool) : Option ThmSkips :=
+  (listSkips l size level).map fun sk =>
+    let pts := partopsepFor l size level tokens
+    match k with
+    | .kernel =>
+      let g := if vertical then sk.topsep.add pts else sk.topsep
+      ⟨g, g, true⟩
+    | .ams => ⟨sk.topsep, sk.topsep, false⟩
+    | .amsHalf =>
+      let g := sk.topsep.scale 1 2
+      ⟨g, g, false⟩
+    | .proof =>
+      let g := proofTopsep.add pts
+      ⟨g, g, true⟩
+
+/-- **A theorem-like block's space is LaTeX's** at the three standard bodies
+(`_exact`): the kernel's `\topsep` over `\partopsep` after a blank line —
+10, 12, 13 pt — and `\topsep` alone in a paragraph; amsthm's `\topsep`
+above and below plain and definition, no `\parskip` above, half of it for
+remark; the proof's 6 pt over `\partopsep`, 8, 9, 9 pt (size10/11/12.clo:
+215–218, amsthm.sty:74–76, 229–233, 433); none on the web's lineage. -/
+theorem thmSkips_exact :
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 10) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 12) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 13) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel false).map (·.below.width.sp)) = some (Dim.pt 8) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .ams true).map fun s =>
+      (s.above.width.sp, s.below.width.sp, s.parskipAbove)) = some (Dim.pt 8, Dim.pt 8, false) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .ams true).map (·.above.width.sp)) = some (Dim.pt 10) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .amsHalf true).map (·.above.width.sp)) = some (Dim.pt 4) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .amsHalf true).map (·.above.width.sp)) =
+      some (Dim.pt 9 / 2) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .proof false).map (·.above.width.sp)) = some (Dim.pt 8) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .proof false).map (·.below.width.sp)) = some (Dim.pt 9) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .proof false).map (·.above.width.sp)) = some (Dim.pt 9) ∧
+    thmSkips .web (Dim.pt 10) 1 {} .ams true = none := by
+  decide
+
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
 2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
@@ -4378,9 +4471,12 @@ def Inline.isDisplayFormula : Inline → Bool
   | _ => false
 
 /-- The environments `\@trivlist` spaces with `\partopsep` in vertical
-mode, as this engine sets them: a list and a quote. -/
+mode, as this engine sets them: a list, a quote, and the kernel's theorem,
+which is `\trivlist` itself (amsthm's spellings open with `\par`, so their
+mode is always vertical, and their space reads none of it: `thmSkips`). -/
 def Block.partopsepEnv : Block → Bool
   | .list .. | .quote _ => true
+  | .role n _ => n == thmSpaceRole .kernel
   | _ => false
 
 /-- A list or a quote marked as opened inside a paragraph

@@ -63,6 +63,13 @@ inductive ThmStyle where
   | remark
   deriving Repr, BEq, Inhabited
 
+/-- The space a style's theorems open (`Ir.thmSkips`): the kernel's
+trivlist, amsthm's `\thm@preskip` and `\thm@postskip`, remark's halves. -/
+def ThmStyle.space : ThmStyle → Ir.ThmSpace
+  | .kernel => .kernel
+  | .plain | .definition => .ams
+  | .remark => .amsHalf
+
 /-- One `\newtheorem`: the environment, its heading, the counter it steps
 (`none` is amsthm's unnumbered `\newtheorem*`) and the style in force where
 it was declared (amsthm.sty: `\newtheorem` captures `\thm@style`). -/
@@ -7773,12 +7780,14 @@ def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
       #[.styled font #[.text "."], .text labelSep]
 
 /-- A theorem-like scope's state at its `\begin`: the head its first
-paragraph opens with, whether a QED closes it (amsthm's `proof`) and the
-`\qedsymbol` its own body redefines, and the label target and block
-declarations to restore at its `\end` — `\refstepcounter` and the body font
-are local to the environment's group. -/
+paragraph opens with, the space its trivlist opens (`Ir.ThmSpace`), whether
+a QED closes it (amsthm's `proof`) and the `\qedsymbol` its own body
+redefines, and the label target and block declarations to restore at its
+`\end` — `\refstepcounter` and the body font are local to the environment's
+group. -/
 structure ThmOpen where
   head : Array Inline
+  space : Ir.ThmSpace
   qed : Bool
   qedDef : Option (Array Raw)
   target : Option Ir.RefBinding
@@ -7844,24 +7853,25 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
       pure (none, 0)
     | .content => pure (none, 0)
   let st ← get
-  let (head, italic, qed) ← match thmOf? st.ctr.thm n with
+  let (head, italic, qed, space) ← match thmOf? st.ctr.thm n with
     | some d =>
       let num ← match d.counter with
         | some c => pure (some (← stepThmCounter c))
         | none => pure none
       if let some nm := num then
         modify fun st => { st with refTarget := some { kind := none, num := nm } }
-      pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false)
+      pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false,
+        d.style.space)
     | none =>
       -- amsthm's proof: `\itshape #1\@addpunct{.}` over `\proofname`,
       -- `\labelsep`, the body `\normalfont` and a QED at its end.
       let name ← match note with
         | some nt => pure nt
         | none => definedOr ctx "proofname" pos (pure #[.text ctx.locale.proof])
-      pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true)
+      pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true, .proof)
   if italic then
     modify fun s => { s with blockDecls := st.blockDecls ++ [.style .italic] }
-  return ({ head := Ir.wrapDecls st.blockDecls head, qed,
+  return ({ head := Ir.wrapDecls st.blockDecls head, space, qed,
             qedDef := if qed then bodyQedDef? body else none, target := st.refTarget,
             decls := st.blockDecls }, k)
 
@@ -7871,7 +7881,8 @@ anything else — end a proof with its QED (amsthm.sty `\qed`:
 `\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}` on the last line, a line of its
 own after a display or list, where the empty box keeps the fill that a line's
 start would otherwise drop), and set the whole as the trivlist it is
-(ltthm.dtx and amsthm.sty both open `\trivlist`) under the environment's
+(ltthm.dtx and amsthm.sty both open `\trivlist`), in the role that names
+the space its spelling opens (`Ir.thmSpaceRole`), under the environment's
 name. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
@@ -7893,7 +7904,7 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
         | some (.para c) => inner.pop.push (.para (c ++ q))
         | _ => inner.push (.para q))
     else pure inner
-  return #[.role Ir.trivlistRole #[.role n inner]]
+  return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
 
 /-- The labels a description list's `\item`s carry, one per item in the
 order `itemSplitGo` splits them: the `[...]` run after each top-level
