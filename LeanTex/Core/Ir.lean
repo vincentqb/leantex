@@ -833,6 +833,25 @@ does (`partopsepFor`). A name no document command can spell (it carries a
 hyphen), as `trivlistRole`'s is. -/
 def inParagraphRole : String := "in-paragraph"
 
+/-- The role `\vspace*` rides in, an empty marker just before the space it
+keeps: LaTeX's `\@vspacer` sets a zero rule ahead of the space
+(latex.ltx:9374-9390), and a rule is where TeX's page builder stops
+discarding at a page's top, so the space after it stays there, with
+`\topskip` above the rule — the page's first item. A fact of the paged
+artifact alone: a continuous medium has no page top. A name no document
+command can spell (it carries a hyphen), as `trivlistRole`'s is. -/
+def pageAnchorRole : String := "page-anchor"
+
+/-- The role `\nointerlineskip` rides in, an empty marker: TeX's
+`\prevdepth` set to −1000 pt (latex.ltx `\def\nointerlineskip
+{\prevdepth-\@m\p@}`), so the next box on the vertical list takes no
+interline glue (TeXbook ch. 12). A fact of the paged artifact alone. -/
+def noInterlineRole : String := "no-interline"
+
+/-- The engine roles that mark a fact of the page model and carry no
+content: HTML, markdown and the structure tree read them as nothing. -/
+def pageMarkerRole (n : String) : Bool := n == pageAnchorRole || n == noInterlineRole
+
 /-- The inline role a description item's label rides in, first in the item's
 first paragraph and followed by `\labelsep` (latex.ltx `description`:
 `\list{}{\labelwidth\z@ \itemindent-\leftmargin
@@ -4531,6 +4550,12 @@ def Block.partopsepEnv : Block → Bool
 (`inParagraphRole`). Anything else stands as it is. -/
 def inParagraph (b : Block) : Block :=
   if b.partopsepEnv then .role inParagraphRole #[b] else b
+
+/-- A block that is a page-model mark: an empty block in a
+`pageMarkerRole`. -/
+def pageMarkerBlock : Block → Bool
+  | .role n body => body.isEmpty && pageMarkerRole n
+  | _ => false
 
 /-- Mark the block an environment arm pushed past `k` as opened inside a
 paragraph (`inParagraph`) when `inPar` says the paragraph flushed just

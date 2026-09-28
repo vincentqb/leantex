@@ -4004,6 +4004,24 @@ private structure B where
   on the page: a later column rewound to a fresh page's start must place
   its first line where the first column placed its. -/
   freshStart : Bool := false
+  /-- `\vspace*`'s zero rule stands on the page being built with no box
+  below it yet (`.anchorRule` on a page that held nothing): TeX's page
+  builder discards glue at a page's top only up to the first box or rule,
+  so the glue after the rule stays, and `\topskip` stands above the rule
+  (`B.topKept`, `B.firstRise`). A fil in the pending skip reads the same
+  way: `\vspace*{\fill}` is how a fil reaches a page's top. -/
+  anchored : Bool := false
+  /-- `\nointerlineskip` stands before the next box: TeX's `\prevdepth` is
+  −1000 pt, so the box takes no interline glue — its top stands on the
+  previous box's bottom plus the glue between, or on an anchor's glue
+  (`anchorRise`). -/
+  ignoreDepth : Bool := false
+  /-- The first box below an anchor is a row of columns — a minipage, boxes
+  side by side: TeX's box, taller than the leading as a column of lines is,
+  takes `\lineskip` below the anchor's glue, or nothing after
+  `\nointerlineskip`, and its lines stand from its top; this is that
+  extra space, for every column of the row (`colOpen` to `colClose`). -/
+  colAnchor : Option Sp := none
   /-- A float group is being replayed on the page that holds it whole
   (`runFloat`): a line that would not fit commits anyway instead of
   breaking, because the group's one legal position has already been
@@ -4387,7 +4405,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) : B :=
            cur := {}, curBand := none,
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-           pinnedLines := 0, pinnedFills := 0,
+           pinnedLines := 0, pinnedFills := 0, anchored := false,
            pendingNotes := #[], notesH := 0, opened := false,
            diags := diags }
 
@@ -4623,6 +4641,8 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
            needed := max b.needed overflow
            y := line.y
            freshStart := false
+           anchored := false
+           ignoreDepth := false
            prevDepth := depth
            prevBelow := below
            prevRuleOnly := ruleLine
@@ -4915,13 +4935,13 @@ private def B.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
 /-- The pending skip a fresh page keeps. TeX discards glue at the top of a
 page up to its first box or rule, and `\vspace*`'s zero rule is one
 (`\@vspacer`, latex.ltx:9374-9390): what follows it stays, the `\topsep`
-of a `{center}` or a list after `\vspace*{\fill}` included. The engine
-reads a fil in the pending skip as that anchor — `B.commit` counts it,
-since `\vspace*{\fill}` is how a fil reaches a page's top — so its natural
-width stays with it; with no fil the skip is discarded, as TeX discards
-it. A spill clears the skip (`finishPage`), so glue after a break is never
-kept. -/
-private def B.topKept (b : B) : Sp := if b.skip.fil then b.skip.width else 0
+of a `{center}` or a list after `\vspace*{\fill}` included. The rule
+reaches here as `.anchorRule` (`B.anchored`); a fil in the pending skip
+reads the same way — `B.commit` counts it, since `\vspace*{\fill}` is how
+a fil reaches a page's top — so its natural width stays with it; with
+neither the skip is discarded, as TeX discards it. A spill clears the skip
+(`finishPage`), so glue after a break is never kept. -/
+private def B.topKept (b : B) : Sp := if b.anchored || b.skip.fil then b.skip.width else 0
 
 /-- The fit-or-spill skeleton every committed band takes — the one
 spelling of `overflow ≤ shrink ∨ noBreak → commit | close and retry`:
@@ -4957,22 +4977,41 @@ private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B �
         ((b.commit (mk (retryY b)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (retryY b) inkBelow
 
+/-- TeX's interline rule for the first box below `\vspace*`'s zero rule,
+as the distance from the glue the rule keeps to the box's baseline:
+`\@vspacer` restores the `\prevdepth` it saved before the rule, so a box
+`h` tall takes `\baselineskip` less that depth and its own height as glue
+above it, or `\lineskip` where that falls below `\lineskiplimit` (plain's
+0 pt), and none after `\nointerlineskip`, which leaves `\prevdepth` at
+−1000 pt (TeXbook ch. 12; latex.ltx:9374-9390). At a document's start the
+saved depth is 0 pt: lualatex sets the first line after `\vspace*{20pt}`
+one `\baselineskip` below the space, not on its own box. -/
+def anchorRise (ignore : Bool) (lead depth h : Sp) : Sp :=
+  if ignore then h else if 0 ≤ lead - depth - h then lead - depth else h + inkClearance
+
 /-- How far the first line of a fresh page stands below the text area's
 top. Where the page is TeX's (`Geom.topskip`), TeX's rule: the page builder
 puts `\topskip` less the first box's height above the first box or rule
 (TeXbook ch. 15). On a page that opens on an anchor — `\vspace*`'s zero
-rule, which the engine reads as a fil standing in the pending skip
-(`B.topKept`) — that rule is the first item, so `\topskip` stands above it
-whole and the line stands on its own box below the glue the anchor keeps;
-otherwise the line is the first box, at `\topskip` or on its own box where
-that is taller. The box is read from its glyphs, as TeX's box is
-(`segsInk`, `ink`), so body text starts on one line of the page grid in
-every face and only display type or a tall box stands on its ink. On a
-frame page, the engine's metric rule: the body's ascent or the line's own
-leaded above. -/
-private def B.firstRise (b : B) (ink : Sp) (box : LineBox) : Sp :=
+rule (`B.anchored`), or a fil standing in the pending skip, which is how
+`\vspace*{\fill}` reaches a page's top (`B.topKept`) — that rule is the
+first item, so `\topskip` stands above it whole and the line stands below
+the glue the anchor keeps by TeX's interline rule (`anchorRise`, from the
+depth of the box before the rule and the line's `lead`), or, where the
+first box is a row of columns, `\lineskip` below that glue
+(`B.colAnchor`); otherwise the
+line is the first box, at `\topskip` or on its own box where that is
+taller. The box is read from its glyphs, as TeX's box is (`segsInk`,
+`ink`), so body text starts on one line of the page grid in every face and
+only display type or a tall box stands on its ink. On a frame page, the
+engine's metric rule: the body's ascent or the line's own leaded above. -/
+private def B.firstRise (b : B) (ink : Sp) (box : LineBox) (lead : Sp) : Sp :=
   match b.geom.topskip with
-  | some t => if b.skip.fil then t + ink else max t ink
+  | some t => if b.anchored || b.skip.fil then
+      t + (match b.colAnchor with
+        | some e => ink + e
+        | none => anchorRise b.ignoreDepth lead b.boxDepth ink)
+    else max t ink
   | none => max b.ascent box.above
 
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
@@ -5021,11 +5060,15 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
   -- and the pending skip an anchor keeps (`B.topKept`). The line's box
-  -- depth stays with it for the page's distribution (`B.boxDepth`).
+  -- depth stays with it for the page's distribution (`B.boxDepth`). After
+  -- `\nointerlineskip` the line takes no interline glue: its box stands on
+  -- the last box's (`B.ignoreDepth`).
+  let lead := Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading
   (b.fitCommit mk
-    (fun b => b.geom.bodyTop + b.firstRise ink.1 box + b.topKept)
+    (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
-      + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
+      + (if b.ignoreDepth then b.boxDepth + ink.1
+         else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
     (fun b => b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
@@ -5052,7 +5095,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
-    (hnn : b.notesH = 0)
+    (hnn : b.notesH = 0) (hid : b.ignoreDepth = false)
     (hfit : b.y + b.skip.width
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)
@@ -5071,7 +5114,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [keepInk_cur]
-  simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, interlineFor, hnn, noteFloor,
+  simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, interlineFor, hnn, noteFloor,
     Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
@@ -5082,15 +5125,18 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
 body top plus its rise (`B.firstRise`) — TeX's `\topskip` against the
 line's own glyph box where the page is TeX's, above an anchor or floored by
 the box, the metric rule on a frame page — and below whatever pending skip
-an anchor keeps (`B.topKept`: none unless a fil stands in it). Constant
-for a document unless a taller first line honestly needs more, or the page
-opens on a `\vspace*{\fill}`; what furniture symmetry measures to. -/
+an anchor keeps (`B.topKept`: none unless `\vspace*`'s rule or a fil
+stands there). Constant for a document unless a taller first line honestly
+needs more, or the page opens on an anchor; what furniture symmetry
+measures to. -/
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
       some (b.geom.bodyTop + b.firstRise (segsInk fs segs).1
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs) + b.topKept) := by
+          b.geom.leading size segs)
+        (Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading)
+        + b.topKept) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
@@ -5434,6 +5480,14 @@ private inductive Op where
   /-- The slot closes: the lines and fills it placed move as one box to the
   point of the page it is pinned to (`slotShift`), and stay pinned there. -/
   | slotClose (spec : SlotSpec)
+  /-- `\vspace*`'s zero rule (`Ir.pageAnchorRole`): on a page that holds
+  nothing yet it is the page's first item, so the glue after it stays
+  (`B.anchored`), TeX's own `\parskip` below it first
+  (`Acc.flushAnchored`). -/
+  | anchorRule (parskip : Glue)
+  /-- `\nointerlineskip` (`Ir.noInterlineRole`): the next box takes no
+  interline glue (`B.ignoreDepth`). -/
+  | noInterline
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -5568,6 +5622,10 @@ private structure Acc where
   (latex.ltx:16044-16047) — no `\topsep`, the item standing where a
   paragraph after the heading stands. Cleared by the next line's gap. -/
   afterHeading : Bool := false
+  /-- `\vspace*`'s rule stands in the owed glue, before `owed[k]`
+  (`Ir.pageAnchorRole`): the boundary ships around it
+  (`Acc.flushAnchored`). -/
+  anchorAt : Option Nat := none
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
@@ -5702,34 +5760,53 @@ private def Acc.gapGlue (a : Acc) (r : Rd) : Glue :=
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
   if a.wantDefault && a.declaredSkip then par.add declared else declared
 
+/-- The boundary around `\vspace*`'s rule, which stands before `owed[k]`
+(`Acc.anchorAt`): the peer mark and the glue owed before the rule ship
+first, where a page's top discards them as TeX's page builder does; then
+the rule, carrying TeX's own `\parskip` (`Geom.texParskip`), which the
+paragraph after it spends below the rule and a page's top therefore keeps;
+then the glue after the rule. Mid-page the rule holds nothing, so the
+boundary pays exactly what it pays without the star. -/
+private def Acc.flushAnchored (a : Acc) (r : Rd) (k : Nat) : Acc :=
+  let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
+  let lead := if a.wantDefault && a.declaredSkip then #[Op.skip par] else #[]
+  { a with ops := a.ops ++ lead ++
+      #[.skip ((a.owed.extract 0 k).foldl Glue.add {}),
+        .anchorRule (r.resolve r.geom.texParskip),
+        .skip ((a.owed.extract k a.owed.size).foldl Glue.add {})] }
+
 /-- Emit the gap owed, just before a line is placed. A stacked boundary
 ships as two items, the peer mark first and the declared glue after it,
 whose sum is the boundary's glue (`flushGap_items_exact`): on a page that
-holds nothing yet, glue is discarded until a fil anchors what follows it
+holds nothing yet, glue is discarded until an anchor keeps what follows it
 (`B.topKept`), and the peer mark — the engine's separator between two
 paragraphs, standing where TeX would indent — has nothing above it there
-to separate from. -/
+to separate from. Where `\vspace*`'s rule stands in the owed glue, the
+boundary ships around it (`flushAnchored`). -/
 private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
   let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
-  let a := if a.owed.isEmpty then
-      (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
-    else if a.wantDefault && a.declaredSkip then
-      { a with ops := (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) }
-    else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
+  let a := match a.anchorAt with
+    | some k => a.flushAnchored r k
+    | none =>
+      if a.owed.isEmpty then
+        (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
+      else if a.wantDefault && a.declaredSkip then
+        { a with ops := (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) }
+      else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
-           afterHeading := false }
+           afterHeading := false, anchorAt := none }
 
 /-- **A stacked boundary's two items are its glue** (`_exact`): the peer mark
 and the declared glue `flushGap` ships at a peer boundary with a document
 skip owed add up to `gapGlue`, which the placement sums (`Glue.add_assoc`),
 so splitting the boundary moves nothing a page does not open on. -/
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
-    (hs : (a.wantDefault && a.declaredSkip) = true) :
+    (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none) :
     let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
     (a.flushGap r).ops = (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) ∧
       par.add (a.owed.foldl Glue.add {}) = a.gapGlue r := by
   intro par
-  exact ⟨by simp [Acc.flushGap, ho, hs, par], by simp [Acc.gapGlue, hs, par]⟩
+  exact ⟨by simp [Acc.flushGap, ho, hs, hk, par], by simp [Acc.gapGlue, hs, par]⟩
 
 /-- Glue's width grows by a non-negative addend on the right. -/
 private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
@@ -5777,9 +5854,9 @@ default and only it: one `.skip` of the page's parskip — the resolved
 own — never two emissions on one boundary. With anything declared (`owed`
 non-empty) the default stands aside entirely. -/
 private theorem flushGap_default_exact (a : Acc) (r : Rd)
-    (howed : a.owed.isEmpty = true) (hw : a.wantDefault = true) :
+    (howed : a.owed.isEmpty = true) (hw : a.wantDefault = true) (hk : a.anchorAt = none) :
     (a.flushGap r).ops = a.ops.push (.skip r.parskip) := by
-  simp [Acc.flushGap, howed, hw]
+  simp [Acc.flushGap, howed, hw, hk]
 
 /-- The parskip-growth arm of the heading's undeclared space above
 (`parskip.add parskip`, taken when the declared parskip exceeds the
@@ -5803,7 +5880,7 @@ private def Acc.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.isEmpty then a
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false,
-           trivOwed := false, afterHeading := false }
+           trivOwed := false, afterHeading := false, anchorAt := none }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
@@ -6389,7 +6466,8 @@ private def collectTable (r : Rd) (a0 : Acc)
             measure := some (x + measureW)
             ops := #[]
             wantDefault := false
-            owed := #[] }
+            owed := #[]
+            anchorAt := none }
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
           let sub := match spec.align with
@@ -6727,7 +6805,7 @@ declaration opening a scope would make the first paragraph pay a parskip
 nothing else asked for. -/
 private def statefulBlock : Block → Bool
   | .setPalette _ | .setTokens _ => true
-  | _ => false
+  | b => Ir.pageMarkerBlock b
 
 /-- The display skips, resolved at the walk's governing size from the one
 resolving site (`Ir.displayAbove`/`Ir.displayBelow`): the document's
@@ -6772,9 +6850,9 @@ TeX contributes the parskip when the following paragraph starts — measured
 against LaTeX, a display after a paragraph break carries both
 (`skip_monotone`, `Acc.gapGlue`). -/
 private theorem display_skip_single_emitter (a : Acc) (r : Rd)
-    (howed : a.owed = #[]) (hpeer : a.wantDefault = false) :
+    (howed : a.owed = #[]) (hpeer : a.wantDefault = false) (hk : a.anchorAt = none) :
     ((a.openDisplay r).flushGap r).ops = a.ops.push (.skip (a.displaySkips r).1) := by
-  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, Acc.gapGlue, howed, hpeer, Glue.add,
+  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, Acc.gapGlue, howed, hpeer, hk, Glue.add,
     Acc.displaySkips, Rd.resolve, SymGlue.resolve]
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
@@ -7521,7 +7599,8 @@ private def collectColumns (r : Rd) (a : Acc)
       measure := some (x0 + wi)
       ops := #[]
       wantDefault := false
-      owed := #[] }
+      owed := #[]
+      anchorAt := none }
     let sub := collectBlocks r sub body x0
     let a := { a with
       ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
@@ -7656,6 +7735,10 @@ private def collectBlock (r : Rd) (a : Acc)
       | none =>
         let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
         (collectBlocks r (a.trivSpace g) body indent).trivSpace g
+    -- The page-model marks: `\vspace*`'s rule stands before the glue owed
+    -- next (`Acc.flushAnchored`), and `\nointerlineskip` is the next box's.
+    else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
+    else if n == Ir.noInterlineRole then { a with ops := a.ops.push .noInterline }
     else
     let st := r.style n
     let a := match st.before with
@@ -7932,15 +8015,22 @@ same property over the other walk. Was an oracle over the shipped pages
 whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
 cheap. The engine's own trivlist, in-paragraph and theorem roles are the
 names that are not transparent — an environment opens space, and one opened
-inside a paragraph opens less — and a document cannot spell any of them. -/
+inside a paragraph opens less — and so are the page-model marks
+(`Ir.pageMarkerRole`), which carry a fact of the page; a document can spell
+none of them. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
-    (hth : Ir.thmSpaceOf? n = none) :
+    (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
-  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, Bool.false_eq_true, ite_false]
+  have hpa : (n == Ir.pageAnchorRole) = false := by
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1
+  have hni : (n == Ir.noInterlineRole) = false := by
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.2
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, hpa, hni, Bool.false_eq_true,
+    ite_false]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open
@@ -8520,6 +8610,8 @@ private inductive StagedOp where
   | anchor (slug : String)
   | slotOpen
   | slotClose (spec : SlotSpec)
+  | anchorRule (parskip : Glue)
+  | noInterline
 
 /-- One column of a row as placed: where its ink starts in the page's
 arrays, its first baseline when a picture opened it (a label line is no
@@ -8854,10 +8946,16 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     logoSpans := logoSpans.push (b.pages.size, c)
   | .skip g =>
     -- Glue reaching a page that holds nothing yet is discarded, as TeX's
-    -- page builder discards it, until a fil anchors what follows
-    -- (`B.topKept`): only then does the page keep its pending skip.
-    unless b.fresh && !(b.skip.fil || g.fil) do
+    -- page builder discards it, until an anchor stands — `\vspace*`'s rule
+    -- or a fil (`B.topKept`): only then does the page keep its pending skip.
+    unless b.fresh && !(b.anchored || b.skip.fil || g.fil) do
       b := { b with skip := b.skip.add g }
+  | .anchorRule g =>
+    -- `\vspace*`'s zero rule: the first item of a page that holds nothing
+    -- yet, below `\topskip`, where the glue before it is gone and TeX's
+    -- `\parskip` stands after it; mid-page it is invisible and holds nothing.
+    if b.fresh then b := { b with anchored := true, skip := g }
+  | .noInterline => b := { b with ignoreDepth := true }
   | .bodyOpen g => b := b.openBody fs g
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
@@ -8893,6 +8991,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- at the body top, never at the last page's last line, which
     -- `B.contentEnd` would otherwise read as this page's content end.
     let fresh := b.fresh
+    -- Below an anchor the row is TeX's first box (`B.colAnchor`).
+    if fresh && (b.anchored || b.skip.fil) && b.colAnchor.isNone then
+      b := { b with colAnchor := some (if b.ignoreDepth then 0 else inkClearance) }
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       prevRule := b.prevRuleOnly, skip := b.skip
@@ -8916,6 +9017,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
+      if colSaves.isEmpty then b := { b with colAnchor := none }
       let save := { save with marks := save.marks.modify (save.marks.size - 1) (·.finish b) }
       if save.pos.any (· != .top) && save.marks.size == save.pos.size &&
           b.pages.size == save.page then
@@ -10396,6 +10498,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .anchor sl => .anchor sl
     | .slotOpen => .slotOpen
     | .slotClose spec => .slotClose spec
+    | .anchorRule g => .anchorRule g
+    | .noInterline => .noInterline
   -- A declared asymmetry that survives the reading is named: equal gaps
   -- are the default, and a difference is exactly what the document asked
   -- for — the hand-struck footskip patch made visible instead of doubled.

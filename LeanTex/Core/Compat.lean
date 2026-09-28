@@ -168,8 +168,7 @@ spellings write `\@unused`, the terminal and transcript both
 (latex.ltx:8773-8947, from lterror.dtx §"Error handling and tracing"), and
 this engine has that channel in its own diagnostics; `frenchspacing`/`nonfrenchspacing`
 toggle inter-sentence space
-the engine sets uniformly either way; `nointerlineskip` suppresses
-interline glue that is never accumulated here; lineno's `linenomath`
+the engine sets uniformly either way; lineno's `linenomath`
 pair wraps displays that are numbered like every galley line already
 (the recorded divergence in tests/compat-index/lineno.txt);
 `selectfont` commits NFSS declarations that apply where they stand here;
@@ -236,8 +235,6 @@ def meaningFree : List (String × Nat × Option String) :=
    ("GenericError", 4, none),
    ("@latex@error", 2, none),
    ("noindent", 0, some "no paragraph carries a first-line indent here"),
-   ("nointerlineskip", 0,
-    some "vertical space is declared per block, never accumulated interline glue"),
    ("frenchspacing", 0, some "inter-sentence space is uniform here either way"),
    ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
    ("selectfont", 0, some "font declarations apply where they stand"),
@@ -4537,6 +4534,12 @@ private def literalReplace : List (String × (Pos → Raw)) :=
    ("parencite", fun p => .ctrl "citep" p),
    ("textcite", fun p => .ctrl "citet" p)]
 
+/-- The mark the rewrite sets before `\vspace*`'s space: LaTeX's `\@vspacer`
+puts a zero rule there, which keeps the space at a page's top
+(`Ir.pageAnchorRole`, the block Elab makes of it). A space is in no control
+word, so no document spells the mark, as `frameRestartMark`'s is. -/
+def vspaceAnchorMark : String := "vspace anchor"
+
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
 `\vfill` is `\vspace{\fill}` (ltspace.dtx): fil glue between blocks. The
@@ -4786,10 +4789,16 @@ and patterns stand in" pos
     became s!"\\color\{{n}}" s!"\\{n}" pos
     return some (#[.ctrl ("@ink:" ++ n) pos], k)
   | "vspace" =>
+    -- The star is `\@vspacer`'s zero rule before the space: its mark goes
+    -- first, so the space stays at a page's top (`vspaceAnchorMark`).
+    let starred := skipStar raws start != start
     let start := skipStar raws start
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let native := s!"\\block[before = {lengthSrc (args.getD 0 #[])}]\{}"
+    if starred then
+      became "\\vspace*" s!"a page-top anchor, then {native}" pos
+      return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
   | "newpage" | "clearpage" =>

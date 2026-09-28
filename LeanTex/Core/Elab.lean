@@ -8910,6 +8910,17 @@ private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ES
     some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
   else none
 
+/-- The page-model marks a control word stands for between blocks: the
+declared boundary `\pagebreak` names, `\vspace*`'s anchor
+(`Compat.vspaceAnchorMark`, which no document spells) and
+`\nointerlineskip`. Outside the elaboration knot, as `flowDecl?` is: one
+arm inside reads the three. -/
+private def pageMark? (n : String) : Option Block :=
+  if n == "pagebreak" then some .pagebreak
+  else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
+  else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
+  else none
+
 mutual
 
 /-- Rule (b), judged once at the definition — the gate both registration
@@ -10105,7 +10116,9 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         n == "par" || n == "block" || n == "centering" || n == "pause"
           || (Ir.raggedSideOf? n).isSome
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
-          || n == Compat.frameRestartMark
+          || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
+          -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
+          || (n == "nointerlineskip" && cur.isEmpty)
           || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
           || (n == "note" && cur.isEmpty)
           -- A declaration met between blocks scopes the rest of the group,
@@ -10467,11 +10480,11 @@ a side channel, never slide content" cpos
         | _ =>
           diag ctx' .E0304 "'\\bibliography' needs a {file} group" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == "pagebreak" then
-        -- The declared page boundary; adjacent boundaries never make a
-        -- blank page (the page builder closes only pages that hold
-        -- something).
-        elabBlocksGo ctx' raws (i + 1) (blocks.push .pagebreak) #[] gen'
+      else if let some mark := pageMark? n then
+        -- A page-model mark: the declared boundary (adjacent boundaries
+        -- never make a blank page — the page builder closes only pages that
+        -- hold something), `\vspace*`'s anchor, `\nointerlineskip`.
+        elabBlocksGo ctx' raws (i + 1) (blocks.push mark) #[] gen'
       else if n == "block" then
         -- \block[before = <len>]{content}
         let j0 := skipSpaces raws (i + 1)

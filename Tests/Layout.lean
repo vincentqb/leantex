@@ -4282,6 +4282,73 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       (dO < dp && yo == yp)
   | _, _ => t "the frame depth fixtures lay out" false
 
+/-- **`\vspace*`'s space stays at a page's top, and the line below it takes
+TeX's interline glue** (`B.anchored`, `anchorRise`, `Acc.flushAnchored`).
+LaTeX's `\@vspacer` sets a zero rule before the space (latex.ltx:9374-9390):
+the rule is the page's first item, `\topskip` above it, the space kept
+below it, and the first line takes `\baselineskip` less the depth saved
+before the rule (0 pt at a document's start, the last line's after
+`\newpage`), `\lineskip` where its box is taller, none after
+`\nointerlineskip`. Mid-page the star changes nothing. Asserted over
+`Layout.Out` on one-construct synthetic pages; the same sources under
+lualatex (TeX Live 2026, article 10pt, Open Sans, 600 dpi ink) stand within
+0.24 bp of the engine after the fix, the residual TeX's pt against the
+engine's; at `2f81a8e1` the space was dropped at a page's top (24.2 to
+31.8 bp high) and the interline glue after a `\vspace*{\fill}` missing
+(2.16 bp high at a document's start, 0.96 after `\newpage`). Invented
+words. -/
+def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (pre body : String) : String :=
+    "\\documentclass{article}\\usepackage{geometry}" ++
+    "\\geometry{paperwidth=4in, paperheight=2.5in, margin=0.3in}\\pagestyle{empty}" ++ pre ++
+    "\\begin{document}" ++ body ++ "\n\\end{document}"
+  -- The first line holding `word` on page `pg`: its baseline below the text
+  -- area's top, and its glyph box.
+  let at? (s : String) (pg : Nat) (word : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp) := do
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    let p ← (layoutOf oneFace doc).pages[pg]?
+    let l ← p.lines.find? fun l => hasStr (lineText l) word
+    let (h, d) := Layout.segsInk oneFace l.segs
+    pure (l.y - g.bodyTop, h, d)
+  let lead := Ir.leadingFor Ir.baseFontSize 1000
+  for ts in [0, 10, 30] do
+    t s!"\\vspace* keeps its space at a page's top, below a {ts}pt \\topskip"
+      ((at? (src s!"\\setlength\{\\topskip}\{{ts}pt}" "\\vspace*{20pt}\nAlpha words") 0 "Alpha").map
+        (·.1 == Dim.pt (ts + 20) + lead) |>.getD false)
+  t "a first line taller than the leading takes \\lineskip below the kept space"
+    ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words}") 0 "Alpha").map
+      (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  -- After `\newpage` the depth `\@vspacer` saves is the last line's.
+  let p2 (pre : String) := src "" ("Alpha words\n\\newpage\n" ++ pre ++ "\\vspace*{20pt}\nBravo words")
+  t "after \\newpage the line takes \\baselineskip less the last line's depth"
+    (match at? (p2 "") 0 "Alpha", at? (p2 "") 1 "Bravo" with
+     | some (_, _, dPrev), some (y, _, _) => y == Dim.pt 30 + lead - dPrev
+     | _, _ => false)
+  t "after \\nointerlineskip the line stands on its own box below the kept space"
+    ((at? (p2 "\\nointerlineskip") 1 "Bravo").map
+      (fun (y, h, _) => y == Dim.pt 30 + h) |>.getD false)
+  -- Mid-page the rule holds nothing: the starred space places as `\vspace`.
+  let mid (v : String) := src "" ("Alpha words\n\n" ++ v ++ "\nBravo words\n\nCharlie words")
+  t "mid-page, \\vspace* and \\vspace place alike"
+    (pageLines oneFace (mid "\\vspace*{20pt}") == pageLines oneFace (mid "\\vspace{20pt}") &&
+     (at? (mid "\\vspace{20pt}") 0 "Bravo").isSome)
+  -- A `\vspace*{\fill}` sandwich: without `\nointerlineskip` the line sits
+  -- lower by half the interline glue TeX sets under the rule.
+  let sandwich (pre : String) :=
+    src "" (pre ++ "\\vspace*{\\fill}\n\\begin{center}\nAlpha words\n\\end{center}\n\\vspace*{\\fill}")
+  t "a fill-framed line takes the interline glue under the anchor, halved by the fils"
+    (match at? (sandwich "") 0 "Alpha", at? (sandwich "\\nointerlineskip\n") 0 "Alpha" with
+     | some (y, h, _), some (y0, _, _) => ((y - y0) - (lead - h) / 2).natAbs ≤ 1
+     | _, _ => false)
+  -- Kept: a continuous medium has no page top; the star ships what `\vspace`
+  -- ships.
+  let html (s : String) : String :=
+    Html.document "en" #[] (HtmlDoc.emitTree {} (elabStr s).1).2.1
+  t "kept: html ships \\vspace* as \\vspace"
+    (html (mid "\\vspace*{20pt}") == html (mid "\\vspace{20pt}"))
+
 /-- **A list or quote that opens a paragraph spends `\partopsep`**
 (`Ir.partopsepFor`, `Ir.inParagraphRole`). LaTeX's `\@trivlist` adds
 `\partopsep` to `\topsep` in vertical mode — after a blank line, at a scope's

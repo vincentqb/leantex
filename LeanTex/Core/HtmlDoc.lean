@@ -5475,6 +5475,9 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
     let kids := blockNodesInto cfg.into #[] body.toList
+    -- A page-model mark (`Ir.pageMarkerRole`) is a fact of the page alone:
+    -- a continuous medium has no page top and no interline glue.
+    if Ir.pageMarkerRole n then Html.text "" else
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
         kids.toList with
     | true, [k] => withClass (roleClass n) k
@@ -5739,8 +5742,11 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
   | .setTokens tk :: rest =>
     let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
     blockNodesInto { cfg with tokens := tk, epochStyle := style } acc rest
+  -- A page-model mark (`Ir.pageMarkerBlock`) ships no node: a continuous
+  -- medium has no page top and no interline glue.
   | b :: rest =>
-    blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle (blockNode cfg b))) rest
+    if Ir.pageMarkerBlock b then blockNodesInto cfg acc rest
+    else blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -5792,7 +5798,8 @@ def listItem (cfg : Config) : List Block → Array Node
     let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
     listItem { cfg with tokens := tk, epochStyle := style } rest
   | b :: rest =>
-    blockNodesInto cfg #[withEpoch cfg.epochStyle (blockNode cfg b)] rest
+    if Ir.pageMarkerBlock b then listItem cfg rest
+    else blockNodesInto cfg #[withEpoch cfg.epochStyle (blockNode cfg b)] rest
 
 end
 
@@ -5998,7 +6005,8 @@ retitle one section, or link to '#{id}'"))
       taken := taken.insert id text
       openId := some id
       cur := #[withEpoch cfg.epochStyle (blockNode cfg b)]
-    | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
+    | _ =>
+      unless Ir.pageMarkerBlock b do cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
   return (close out cur openId, diags)
 
 /-- Does an element take keyboard focus in sequential navigation — a tab
@@ -6453,7 +6461,8 @@ first; retitle one frame, or link to '#{id}'"))
           else
             acc := acc.push (withEpoch cfg.epochStyle
               (blockNode cfg (.section 1 starred num title)))
-        | _ => acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
+        | _ =>
+          unless Ir.pageMarkerBlock b do acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   -- The endnotes: one section before the article end (W3C DPUB-ARIA 1.1

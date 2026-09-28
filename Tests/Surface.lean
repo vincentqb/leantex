@@ -137,8 +137,9 @@ def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
      ds.any (fun d => d.code == "W0301" && (d.message.splitOn "vqb@bp").length > 1) &&
        doc.body == #[.para #[.text "x y"]])
   -- LaTeX's starred forms: the star means "no \par in the arguments"
-  -- (definers) or "survives a page break" (\vspace*) — neither modelled,
-  -- so the star is consumed with its command, never left as content.
+  -- (definers), not modelled, so that star is consumed with its command,
+  -- never left as content; on \vspace* it is the zero rule that keeps the
+  -- space at a page's top, the page-model mark before the same block.
   t "newcommand* defines like newcommand"
     ((elabStr "\\newcommand*{\\hi}{world}\\begin{document}\\hi\\end{document}").1.body
       == #[.para #[.text "world"]])
@@ -148,9 +149,12 @@ def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "DeclareRobustCommand* defines like newcommand"
     ((elabStr "\\DeclareRobustCommand*{\\x}{a}\\begin{document}\\x\\end{document}").1.body
       == #[.para #[.text "a"]])
-  t "vspace* becomes the same block as vspace"
-    ((elabStr "\\begin{document}a\\vspace*{4pt}\nb\\end{document}").1.body ==
-     (elabStr "\\begin{document}a\\vspace{4pt}\nb\\end{document}").1.body)
+  t "vspace* is vspace's block behind the page-top anchor"
+    (let starred := (elabStr "\\begin{document}a\\vspace*{4pt}\nb\\end{document}").1.body
+     let anchor : Ir.Block := .role Ir.pageAnchorRole #[]
+     (starred.filter (· != anchor)) ==
+       (elabStr "\\begin{document}a\\vspace{4pt}\nb\\end{document}").1.body &&
+     (starred.filter (· == anchor)).size == 1)
   -- The recovery invariant: best-effort recovery never turns a warning
   -- into an error. An unknown starred command in the preamble is one
   -- W0301; its star and arguments go with it, never surviving as content
@@ -747,8 +751,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       hookDs.all (·.severity != .error))
   let (nisDoc, nisDs) := elabStr
     "\\documentclass{article}\n\\begin{document}\n\\nointerlineskip x\n\\end{document}"
-  t "compat nointerlineskip is meaning-free: no warning, no content"
-    (onlyX nisDoc && nisDs.all (fun d => d.code != "W0301" && d.code != "W0104"))
+  t "compat nointerlineskip is the page model's mark: no warning, no content"
+    ((match nisDoc.body with
+      | #[.role n #[], .para xs] => n == Ir.noInterlineRole && Ir.plainText xs == "x"
+      | _ => false) &&
+     nisDs.all (fun d => d.code != "W0301" && d.code != "W0104"))
   -- Package/class diagnostics address TeX's log, never the page. A deferred
   -- style hook once recovered both groups as body text, so the package name's
   -- underscore became E0311 even though the command itself was only W0301.
