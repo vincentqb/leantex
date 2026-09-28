@@ -9,6 +9,11 @@
 # row while natbib's \bibstyle door stays open (Bib.CitePunct.ofDoc).
 # The options outside the punctuation vocabulary are named and dropped.
 # The lines lualatex sets for each row are natbibChecks' expectations.
+# \citestyle{name} applies natbib's row for the name with the door shut
+# (natbibCiteStyleChecks). The list's own spacing is \bibhang and \bibsep
+# (natbibListChecks). Its other hooks — \bibfont, \bibnumfmt, \bibsection,
+# \bibpreamble, \citenumfont — have no rows yet: a redefinition of one is
+# read as a macro nothing calls, a loss the definer does not name.
 body impl \citep{k}
 body impl \citet{k}
 body impl \cite{k}
@@ -44,6 +49,10 @@ pre refuse:W0101 \setcitestyle{super}
 body refuse:W0340 \setcitestyle{square}
 pre impl \bibpunct{(}{)}{;}{a}{,}{,}
 pre impl \bibpunct[; ]{[}{]}{,}{n}{}{,}
+pre impl \citestyle{chicago}
+pre impl \setlength{\bibhang}{2em}
+pre impl \setlength{\bibsep}{0pt}
+body impl \shortcites{k}
 pre impl \usepackage[numbers]{natbib}
 pre impl \usepackage[authoryear]{natbib}
 pre impl \usepackage[round]{natbib}

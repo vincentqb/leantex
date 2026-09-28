@@ -43,6 +43,44 @@ structure CitePunct where
   biblatex : Bool := false
   deriving Repr, BEq, Inhabited
 
+/-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
+share (natbib.sty: `\bibpunct{[}{]}{,}{a}{,}{,}`): author-year, square
+brackets, a comma between citations. -/
+def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
+
+/-- natbib's `\bibstyle@plain` row, which `abbrv` and `unsrt` share
+(`\bibpunct{[}{]}{,}{n}{}{,}`): numbers in square brackets, LaTeX's own
+`\cite` too (latex.ltx `\@cite`, `[1, 2]`). -/
+def latexPunct : CitePunct :=
+  { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
+
+/-- natbib's `\bibstyle@<name>` rows (natbib.sty:206–234, and the `\let`
+aliases beside them): the punctuation natbib gives a style by its name
+while its `\bibstyle` door stays open, whether or not the engine formats
+that style's list. A name with no row leaves natbib's declared punctuation
+standing — natbib.sty reads an undefined `\bibstyle@<name>` as nothing —
+which is what an `apalike` document cites with: `(Doe, 2024; Roe, 2020)`.
+Each row is the six values its `\bibpunct` sets, the note separator at
+`\bibpunct`'s default `, `; agu's `,~` year separator is the `,` natbib
+sets (its `\unskip` takes the tie). natbib's `nature` row, superscript
+numbers, has no entry: the engine sets no superscript citation, as it
+refuses natbib's `super` option. -/
+def natbibRows : List (String × CitePunct) :=
+  let ay (o c sep aysep : String) : CitePunct :=
+    { «open» := o, close := c, sep, aysep, yysep := "," }
+  let num (o c : String) (yysep : String := ",") : CitePunct :=
+    { numbers := true, «open» := o, close := c, sep := ",", aysep := "", yysep }
+  [("chicago", ay "(" ")" ";" ","), ("named", ay "[" "]" ";" ","),
+   ("agu", ay "[" "]" ";" ","), ("copernicus", ay "(" ")" ";" ","),
+   ("egu", ay "(" ")" ";" ","), ("egs", ay "(" ")" ";" ","),
+   ("agsm", ay "(" ")" "," ""), ("kluwer", ay "(" ")" "," ""),
+   ("dcu", ay "(" ")" ";" ";"), ("aa", ay "(" ")" ";" ""),
+   ("pass", ay "(" ")" ";" ","), ("anngeo", ay "(" ")" ";" ","),
+   ("nlinproc", ay "(" ")" ";" ","),
+   ("cospar", num "/" "/" (yysep := "")), ("esa", num "(Ref.\u00a0" ")" (yysep := "")),
+   ("plain", latexPunct), ("alpha", latexPunct), ("abbrv", latexPunct), ("unsrt", latexPunct),
+   ("plainnat", natPunct), ("abbrvnat", natPunct), ("unsrtnat", natPunct)]
+
 /-- `\setcitestyle`'s keywords (natbib.sty `\setcitestyle`, the package
 options by the same names): each a row, read in the order written. -/
 def citeKeywords : List (String × (CitePunct → CitePunct)) :=
@@ -106,6 +144,13 @@ def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
   else if d == "sort" then ({ st.1 with sort := true }, st.2)
   else if d == "compress" then ({ st.1 with compress := true }, st.2)
   else if d == "biblatex" then ({ st.1 with biblatex := true }, st.2)
+  else if let ["citestyle", name] := d.splitOn "=" then
+    -- `\citestyle{name}` (natbib.sty): the name's `\bibstyle@` row, or
+    -- nothing for a name with none; the load's options stand.
+    match natbibRows.lookup name with
+    | some r => ({ r with sort := st.1.sort, compress := st.1.compress,
+                          biblatex := st.1.biblatex }, st.2)
+    | none => st
   else match citeKeywords.lookup d, keyValue? d with
     | some f, _ => (f st.1, st.2)
     | none, some (k, v) =>
@@ -835,44 +880,6 @@ def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : Stri
     | .newBlockIf fs => if st != .beforeAll && fs.any e.has then st := .afterBlock
     | .newSentenceIf fs => if st == .mid && fs.any e.has then st := .afterSentence
   return addPeriod out
-
-/-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
-share (natbib.sty: `\bibpunct{[}{]}{,}{a}{,}{,}`): author-year, square
-brackets, a comma between citations. -/
-def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
-
-/-- natbib's `\bibstyle@plain` row, which `abbrv` and `unsrt` share
-(`\bibpunct{[}{]}{,}{n}{}{,}`): numbers in square brackets, LaTeX's own
-`\cite` too (latex.ltx `\@cite`, `[1, 2]`). -/
-def latexPunct : CitePunct :=
-  { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
-
-/-- natbib's `\bibstyle@<name>` rows (natbib.sty:206–234, and the `\let`
-aliases beside them): the punctuation natbib gives a style by its name
-while its `\bibstyle` door stays open, whether or not the engine formats
-that style's list. A name with no row leaves natbib's declared punctuation
-standing — natbib.sty reads an undefined `\bibstyle@<name>` as nothing —
-which is what an `apalike` document cites with: `(Doe, 2024; Roe, 2020)`.
-Each row is the six values its `\bibpunct` sets, the note separator at
-`\bibpunct`'s default `, `; agu's `,~` year separator is the `,` natbib
-sets (its `\unskip` takes the tie). natbib's `nature` row, superscript
-numbers, has no entry: the engine sets no superscript citation, as it
-refuses natbib's `super` option. -/
-def natbibRows : List (String × CitePunct) :=
-  let ay (o c sep aysep : String) : CitePunct :=
-    { «open» := o, close := c, sep, aysep, yysep := "," }
-  let num (o c : String) (yysep : String := ",") : CitePunct :=
-    { numbers := true, «open» := o, close := c, sep := ",", aysep := "", yysep }
-  [("chicago", ay "(" ")" ";" ","), ("named", ay "[" "]" ";" ","),
-   ("agu", ay "[" "]" ";" ","), ("copernicus", ay "(" ")" ";" ","),
-   ("egu", ay "(" ")" ";" ","), ("egs", ay "(" ")" ";" ","),
-   ("agsm", ay "(" ")" "," ""), ("kluwer", ay "(" ")" "," ""),
-   ("dcu", ay "(" ")" ";" ";"), ("aa", ay "(" ")" ";" ""),
-   ("pass", ay "(" ")" ";" ","), ("anngeo", ay "(" ")" ";" ","),
-   ("nlinproc", ay "(" ")" ";" ","),
-   ("cospar", num "/" "/" (yysep := "")), ("esa", num "(Ref.\u00a0" ")" (yysep := "")),
-   ("plain", latexPunct), ("alpha", latexPunct), ("abbrv", latexPunct), ("unsrt", latexPunct),
-   ("plainnat", natPunct), ("abbrvnat", natPunct), ("unsrtnat", natPunct)]
 
 /-- `unsrtnat`: the reference list in first-citation order (the "unsrt"),
 the standard field orders, full names, author-year labels in its

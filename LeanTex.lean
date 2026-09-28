@@ -20,6 +20,7 @@ import LeanTex.Core.ColorContract
 import LeanTex.Core.TextSymData
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
+import LeanTex.Core.BibContract
 import LeanTex.Core.Pending
 import LeanTex.Core.Struct
 import LeanTex.Core.Data

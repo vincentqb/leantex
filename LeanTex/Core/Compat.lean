@@ -242,6 +242,10 @@ def meaningFree : List (String × Nat × Option String) :=
    ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
    ("selectfont", 0, some "font declarations apply where they stand"),
    ("linenomath", 0, some "display math lines are numbered like every galley line"),
+   -- natbib's \shortcites{keys} exempts keys from longnamesfirst's full
+   -- first citations; the engine sets every citation short, which is what
+   -- it asks, and names the option itself (W0101).
+   ("shortcites", 1, some "citations are set short throughout, which is what it asks"),
    ("endlinenomath", 0, some "display math lines are numbered like every galley line")]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
@@ -1466,15 +1470,19 @@ is the same seven values by position — mode `n` numbers, `s` superscript
 numbers (set on the baseline here, named), anything else author-year. An
 item natbib does not read — natbib compares whole items, so a space after
 a comma makes a word it does not know — is named and dropped, as natbib
-drops it silently. In the body natbib applies them from where they stand;
-the engine reads natbib's punctuation for the whole document, so a body
-declaration is named (W0340) and its groups consumed. -/
+drops it silently. `\citestyle{name}` applies natbib's row for the name
+(`Bib.natbibRows`; none for a name without one) with the door closed, as
+natbib.sty's `\citestyle` does. In the body natbib applies them from where
+they stand; the engine reads natbib's punctuation for the whole document,
+so a body declaration is named (W0340) and its groups consumed. -/
 private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let punct := name == "bibpunct"
   let (opt, j) := if punct then takeOpt raws start else (none, start)
   let (args, k) := takeGroups raws j (if punct then 6 else 1)
   if args.size != (if punct then 6 else 1) then return none
+  -- premise: natbibChecks — a body declaration leaves no ink and no
+  -- punctuation, the page of the document without it
   if (← get).inDoc then
     sayOnce ("ctrl:" ++ name) .W0340
       s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
@@ -1496,8 +1504,10 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
         if (src 3).trimAscii.toString == "n" || (src 3).trimAscii.toString == "s" then
           "numbers" else "authoryear",
         "aysep=" ++ src 4, "yysep=" ++ src 5, "notesep=" ++ notesep]
+    else if name == "citestyle" then #["citestyle=" ++ (src 0).trimAscii.toString]
     else Bib.citeItems (src 0)
-  let dropped := decls.filter (!Bib.CitePunct.reads ·)
+  let reads (d : String) : Bool := name == "citestyle" || Bib.CitePunct.reads d
+  let dropped := decls.filter (!reads ·)
   unless dropped.isEmpty do
     say .W0101 s!"'\\{name}' keywords without a native equivalent were dropped: \
 {String.intercalate ", " (dropped.toList.map fun d => s!"'{d}'")}" pos
@@ -1507,7 +1517,7 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
     say .W0101 s!"'\\bibpunct' superscript citations are set on the baseline" pos
       (subject := some "ctrl:bibpunct")
   became s!"\\{name}" "natbib's citation punctuation, read at \\begin{document}" pos
-  natbibDefer (#["nobibstyle"] ++ decls.filter Bib.CitePunct.reads) pos
+  natbibDefer (#["nobibstyle"] ++ decls.filter reads) pos
   return some (#[], k)
 
 /-- lineno's switch and modulo commands (lineno.sty, the user-commands
@@ -4631,12 +4641,14 @@ engine reads one .bib per document, so it is skipped" pos
           (help := "merge the entries into the first .bib file")
       return some (#[], k)
     else return none
-  | "setcitestyle" | "bibpunct" => natbibStyleArm name pos raws start
+  | "setcitestyle" | "bibpunct" | "citestyle" => natbibStyleArm name pos raws start
   | "bibliographystyle" =>
     -- LaTeX reads the style anywhere before the `.aux` is written, and
     -- natbib reads it back at `\begin{document}`. The preamble elaborator
     -- does not take it, so a preamble declaration replays there, where the
     -- body arm carries it to the `\bibliography` marker.
+    -- premise: compatIndexChecks — the index's body \bibliographystyle rows
+    -- set their style through the body arm, with no unknown-command warning
     if (← get).inDoc || (← get).seam then return none
     let (args, k) := takeGroups raws start 1
     match args[0]? with

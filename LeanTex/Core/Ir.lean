@@ -811,18 +811,10 @@ def bibSepDefault (size : Sp) : SymGlue :=
 
 /-- The one resolving site for the gap between reference-list entries: the
 document's token where declared (`\setlength{\bibsep}`), else natbib's
-default at the governing size. -/
+default at the governing size; `bibList_default_exact` (BibContract.lean)
+holds the undeclared values. -/
 def bibSep (tokens : Tokens) (size : Sp) : SymGlue :=
   (tokens.find? bibSepName).getD (bibSepDefault size)
-
-/-- **An undeclared reference list reads natbib's own values** at the three
-standard bases — the sourced rows above, exactly, and a one-em hang. -/
-theorem bibList_default_exact :
-    bibHang {} = { width := { em := 1000 } } ∧
-    (bibSep {} (Dim.pt 10)).width.sp = Dim.pt 8 ∧
-    (bibSep {} (Dim.pt 11)).width.sp = Dim.pt 9 ∧
-    (bibSep {} (Dim.pt 12)).width.sp = Dim.pt 10 :=
-  ⟨rfl, by decide, by decide, by decide⟩
 
 /-- The role a trivlist environment's body rides in: the environment
 opens space (`\topsep` above and below), the `\centering` and `\raggedright`

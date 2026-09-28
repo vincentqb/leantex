@@ -278,3 +278,40 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       let line := s!"L{k} {w} end."
       t s!"{tag}: the page sets '{line}'" (page.contains line)
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
+
+
+/-- `\citestyle{name}` under a bare natbib and plainnat: the lines lualatex
+set for `natbibRowChecks`' four calls (TeX Live 2026, natbib 8.31b). A name
+natbib has no row for leaves its load values, the door shut all the same. -/
+def natbibCiteStyleModes : List (String × List String) :=
+  let round := ["L1 (Alpha et al., 2019; Delta, 2021) end.", "L2 Alpha et al. (2019) end.",
+    "L3 (see Alpha et al., 2019, p. 5) end.", "L4 Delta (2021); Epsilon and Zeta (2020) end."]
+  [("chicago", round), ("nosuchstyle", round),
+   ("named", ["L1 [Alpha et al., 2019; Delta, 2021] end.", "L2 Alpha et al. [2019] end.",
+     "L3 [see Alpha et al., 2019, p. 5] end.", "L4 Delta [2021]; Epsilon and Zeta [2020] end."]),
+   ("agsm", ["L1 (Alpha et al. 2019, Delta 2021) end.", "L2 Alpha et al. (2019) end.",
+     "L3 (see Alpha et al. 2019, p. 5) end.", "L4 Delta (2021), Epsilon and Zeta (2020) end."])]
+
+/-- **`\citestyle` sets natbib's row for its name, and `\shortcites` asks
+nothing the engine does not already do** (natbib.sty: `\citestyle` runs
+`\bibstyle@<name>` and shuts the door; `\shortcites` exempts keys from
+`longnamesfirst`, and every citation here is short). On the shipped page
+and in the HTML, against lualatex, with no diagnostic. -/
+def natbibCiteStyleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}",
+    "\\citep[see][p.~5]{alpha2019}", "\\citet{delta2021,eps2020}"]
+  for (name, want) in natbibCiteStyleModes do
+    let (page, _, html, ds) := natbibShip oneFace natbibBib
+      s!"\\usepackage\{natbib}\\citestyle\{{name}}" "plainnat" calls
+    let tag := s!"natbib \\citestyle\{{name}}"
+    t s!"{tag}: no diagnostic ({ds.map (·.code)})"
+      (!ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
+    for line in want do
+      t s!"{tag}: the page sets '{line}'" (page.contains line)
+      t s!"{tag}: the html reads '{line}'" (hasStr html line)
+  let (page, _, html, ds) := natbibShip oneFace natbibBib "\\usepackage{natbib}" "plainnat"
+    ["\\shortcites{alpha2019} \\citet{alpha2019}"]
+  t s!"natbib \\shortcites: no ink, no diagnostic ({ds.map (·.code)})"
+    (page.contains "L1 Alpha et al. [2019] end." && hasStr html "L1 Alpha et al. [2019] end." &&
+      !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
