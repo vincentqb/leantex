@@ -112,6 +112,8 @@ error[E0375]: '\dimexpr' division rounds to nearest; this engine's length arithm
 ── E0382 (dropped) the boundary tool ran and drew nothing for a picture; the page would carry an empty box
 error[E0382]: 'lualatex' drew nothing for this picture; the page would carry an empty box
   help: lualatex says: ! Undefined control sequence. · l.7 \nope
+error[E0382]: 'lualatex' did not finish this picture; the page would carry an empty box
+  help: exit code 3; nothing is remembered, so a rebuild asks lualatex again; \allow{E0382} accepts the empty box
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
 error[E0390]: raw HTML in markdown is refused: document content can never become markup here
   help: quote the text as a code span with `...`, or delete the tag

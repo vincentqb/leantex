@@ -463,11 +463,13 @@ about one request at most once per version (`PicCache.step_cold_exact`) and
 a replay carries the words the tool gave (`PicCache.replay_says_exact`),
 never a stand-in.
 An attempt the tool did not finish — a budget kill, a spawn that raised, or
-a nonzero exit that left no log at all — is not an answer and is not
+a nonzero exit that left no log at all — is not an answer: it is not
 remembered (`PicCache.remembers_verdict_exact`,
-`PicCache.unlogged_retried_exact`), so neither a busy machine nor one
-without the tool installed can make a picture that renders look like one
-that cannot. Refusals are returned keyed
+`PicCache.unlogged_retried_exact`) and not withdrawn to the rendered
+subset's drawing (`Boundary.withdrawStep_unfinished_exact`), so neither a
+busy machine nor one without the tool installed can make a picture that
+renders look like one that cannot, or change the artifact while the run
+reads as clean. Refusals are returned keyed
 by the picture's image source, for `Image.fulfil` to name (the subject is
 set there, so the gate's match cannot depend on the words chosen here).
 The inventory (`-v` and the porcelain phases) says per picture what came
@@ -475,9 +477,9 @@ through the boundary: tool, version, the picture's id and its request
 key, size. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
-    IO (Array PicResult × Array (String × Diag) × Array (String × String)) := do
+    IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
   let refs := Ir.pictureRefs doc
-  if refs.isEmpty then return (#[], #[], #[])
+  if refs.isEmpty then return (#[], #[])
   let spanFor (hash : String) : Option Span :=
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
@@ -492,10 +494,10 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
   let found ← ToolProbe.identify (picDir / PicCache.versionName (Ir.picHash tool))
     stamp (ToolProbe.probeVersion tool)
   let mut results : Array PicResult := #[]
-  let mut refused : Array (String × Diag) := #[]
-  -- The tool's own last words for each request it ran on and drew nothing
-  -- for: what a withdrawn picture's note carries (`Boundary.withdraw`).
-  let mut said : Array (String × String) := #[]
+  -- Each request no drawing came back for, with how its attempt ended —
+  -- an answer the withdrawal may act on, in the tool's own words where it
+  -- ran, or an attempt that never finished (`Boundary.withdraw`).
+  let mut undrawn : Array (String × Boundary.Undrawn) := #[]
   for (id, wrapped) in refs do
     let src := Ir.picSrcPrefix ++ id
     -- The cache key is the *request* — the body wrapped with the design it
@@ -516,7 +518,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
           (← since t0)
       | .error d =>
-        refused := refused.push (src, d)
+        undrawn := undrawn.push (src, .answered d none)
         ui.phase "boundary"
           s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
           (← since t0)
@@ -541,8 +543,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
         -- The tool already answered no for exactly these bytes under
         -- exactly this version: its own words, the same code, the same
         -- dropped loss — one attempt per request, not one per build.
-        refused := refused.push (src, DriverDiag.boundaryFailed tool says (spanFor id))
-        said := said.push (src, says)
+        if let some u := Boundary.undrawnOf tool (.refused says) (spanFor id) then
+          undrawn := undrawn.push (src, u)
         ui.phase "boundary"
           s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
           (← since t0)
@@ -561,7 +563,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
         let log ← if ← logPath.pathExists then
             pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
           else pure PicCache.Log.absent
-        match PicCache.outcome ran drew log with
+        let outcome := PicCache.outcome ran drew log
+        match outcome with
         | .drawn =>
           let bytes ← IO.FS.readBinFile produced
           IO.FS.writeBinFile cached bytes
@@ -571,18 +574,19 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
             (← since t0)
         | .refused words =>
           IO.FS.writeFile slot words
-          refused := refused.push (src, DriverDiag.boundaryFailed tool words (spanFor id))
-          said := said.push (src, words)
           ui.phase "boundary"
             s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing"
             (← since t0)
         | .inconclusive words =>
           -- Nothing the machine did is written: the next build retries.
-          refused := refused.push (src, DriverDiag.boundaryFailed tool words (spanFor id))
-          said := said.push (src, words)
+          ui.phase "boundary"
+            s!"{tool} ({version}), {id.take 16} as {key.take 16}, did not finish ({words})"
+            (← since t0)
+        if let some u := Boundary.undrawnOf tool outcome (spanFor id) then
+          undrawn := undrawn.push (src, u)
         -- The scratch directory is per-content and spent either way.
         try IO.FS.removeDirAll work catch _ => pure ()
-  return (results, refused, said)
+  return (results, undrawn)
 
 /-- Where the image cache files a plan: beside the font and boundary
 caches, keyed by the *content* (so a re-exported file under the same name
@@ -964,10 +968,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     -- subset could have filled. A document already failing asks nothing of
     -- the tool — its build stops at the first resolution either way.
     let failing := (Diag.resolveAll front.doc.allow allowAll front.diags).errors > 0
-    let (pics, refused, said) ← if failing then pure (#[], #[], #[])
+    let (pics, undrawn) ← if failing then pure (#[], #[])
       else resolvePictures ui front.doc front.spans.images
     let w := Boundary.withdraw (front.doc.pictureTool.getD "lualatex")
-      front.spans.fallbacks refused said front.spans.images
+      front.spans.fallbacks undrawn front.spans.images
     let front ← if w.ids.isEmpty then pure front else do
       let t ← IO.monoMsNow
       let (doc, diags, spans) ← elaborate ui file front.prepared front.earlier front.spliced

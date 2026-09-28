@@ -134,7 +134,7 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
       let src := Ir.picSrcPrefix ++ id
       match ← Boundary.coldPicture dir "lualatex" id with
-      | .error d => return (Boundary.withdraw "lualatex" #[id] #[(src, d)] #[] #[]).notes
+      | .error d => return (Boundary.withdraw "lualatex" #[id] #[(src, .answered d none)] #[]).notes
       | .ok _ => return #[]),
     (.W0011, fun _ => do
       let faces ← FontDb.scanRoots [testFonts]
@@ -510,9 +510,11 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- draws in part, withdraws the request.
   | .N0419 => probed .N0419
   -- E0382 is the driver's too: the tool ran and drew nothing, a dropped
-  -- loss, so the run fails unless the document declares acceptance.
+  -- loss, so the run fails unless the document declares acceptance — and
+  -- so does an attempt that never finished, which is no answer at all.
   | .E0382 => #[DriverDiag.boundaryFailed "lualatex"
-      "! Undefined control sequence. · l.7 \\nope"]
+      "! Undefined control sequence. · l.7 \\nope",
+    DriverDiag.boundaryUnfinished "lualatex" "exit code 3"]
   | .W0378 => #[DriverDiag.boundarySvgMissing "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"

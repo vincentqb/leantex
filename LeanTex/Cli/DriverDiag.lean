@@ -130,11 +130,12 @@ declared as *the reader sees "something stands here"* — a substituted face,
 source text, a box carrying its code — and that is the one thing a failed
 boundary picture does not do: the box it leaves is empty and unlabelled, so
 the page reads as intentional while a whole diagram is gone. A picture the
-rendered subset draws in part never reaches this code: its request is
-withdrawn and the subset's drawing ships (N0419, `Boundary.withdraw`). So
-E0382 is left for a picture the engine drew nothing of, where there is
-nothing to fall back to and nothing honest to put in the box that the
-engine did not invent. So the loss is loud where it can be loud without
+rendered subset draws in part never reaches this code on an answer: its
+request is withdrawn and the subset's drawing ships (N0419,
+`Boundary.withdraw`). So E0382 is left for a picture the engine drew nothing
+of, where there is nothing to fall back to and nothing honest to put in the
+box that the engine did not invent, and for an attempt that never finished
+(`boundaryUnfinished`). So the loss is loud where it can be loud without
 inventing ink — the run fails, and no artifact is written, which is the
 engine's standing contract for a dropped loss. `\allow{E0382}` is the
 declared door for a document that accepts the empty box. `logTail` is the
@@ -146,6 +147,21 @@ def boundaryFailed (tool : String) (logTail : String) (span : Option Span := non
     (help := if logTail.isEmpty then
         s!"{tool}'s log says nothing usable; \\allow\{E0382} accepts the empty box"
       else s!"{tool} says: {logTail}")
+
+/-- **E0382, for an attempt that never finished.** The tool was asked and
+reached no answer — a budget kill, a spawn that raised, a nonzero exit that
+left no log (`PicCache.outcome`) — which is a fact about the machine, not
+the request: nothing is remembered (`PicCache.remembers_verdict_exact`), and
+nothing is withdrawn to the rendered subset's drawing
+(`Boundary.withdrawStep_unfinished_exact`), so the artifact never changes on
+it. The run fails as a failed render does, and says so in the machine's
+terms: `why` is how the attempt ended, and a rebuild asks again. -/
+def boundaryUnfinished (tool why : String) (span : Option Span := none) : Diag :=
+  Diag.of .E0382
+    s!"'{tool}' did not finish this picture; the page would carry an empty box"
+    span
+    (help := s!"{why}; nothing is remembered, so a rebuild asks {tool} again; \
+\\allow\{E0382} accepts the empty box")
 
 /-- N0419: a boundary request no tool drew, for a picture the rendered
 subset draws in part. The request is withdrawn and the subset's drawing

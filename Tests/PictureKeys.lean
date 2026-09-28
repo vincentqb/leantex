@@ -479,3 +479,40 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
        | some (_, cy, _, ch), some (_, fy, _, _) => near (fy - (cy + ch)) (Dim.mm 10 + 2 * half)
        | _, _ => false
      | none => false)
+
+
+/-- **An attempt that never finished is no answer, so it changes nothing.**
+The cached-answer rule, carried through the withdrawal: a budget kill, a
+spawn that raised and a nonzero exit that left no log are facts about the
+machine (`PicCache.outcome`), so the request is neither remembered nor
+withdrawn to the rendered subset's drawing. It stands as E0382, an error,
+and the run fails as loudly as a failed render does. Only an answer
+withdraws: no tool at all (W0379), or the tool's own no. The defect
+withdrew every refusal alike, so a tool that crashed shipped the subset's
+drawing with exit 0, its cause a note printed only under `-v`. The driver's
+own chain, run as values: the outcome an ending reads as, the ending the
+withdrawal reads, and what stands. Invented content. -/
+def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
+  let src := Ir.picSrcPrefix ++ id
+  let run (o : PicCache.Outcome) : Boundary.Withdrawal :=
+    Boundary.withdraw "lualatex" #[id]
+      ((Boundary.undrawnOf "lualatex" o none).toArray.map (src, ·)) #[]
+  let loud (w : Boundary.Withdrawal) : Bool :=
+    w.ids.isEmpty && w.notes.isEmpty && w.standing.size == 1 &&
+      w.standing.all fun (s, d) => s == src && d.code == "E0382" && d.severity == .error
+  let endings : List (String × PicCache.Ran × PicCache.Log) :=
+    [("exits 3 and leaves no log", .exited 3, .absent),
+     ("overruns its budget", .overran 120, .says "! Emergency stop."),
+     ("never starts", .unstarted "no such file", .absent)]
+  for (what, ran, log) in endings do
+    t s!"a tool that {what} withdraws nothing: the picture's E0382 stands"
+      (loud (run (PicCache.outcome ran false log)))
+  let answered := run (PicCache.outcome (.exited 1) false (.says "! Package pgf Error: invented."))
+  t "the tool's own refusal withdraws a picture the subset draws in part"
+    (answered.ids == #[id] && answered.standing.isEmpty &&
+      answered.notes.all (·.code == "N0419") && answered.notes.size == 1)
+  let cold := DriverDiag.boundaryToolUnavailable "lualatex"
+  t "no tool at all withdraws it too"
+    ((Boundary.withdraw "lualatex" #[id] #[(src, .answered cold none)] #[]).ids == #[id])

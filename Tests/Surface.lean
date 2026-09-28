@@ -6052,13 +6052,14 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let span : Span := ⟨"t", ⟨3, 1⟩⟩
   let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
-  let w := Boundary.withdraw "lualatex" #["aa"] #[(a, cold), (b, cold)] #[] #[(a, span)]
+  let w := Boundary.withdraw "lualatex" #["aa"]
+    #[(a, .answered cold none), (b, .answered cold none)] #[(a, span)]
   t "a refusal of a picture the subset draws in part withdraws its request"
     (w.ids == #["aa"] && w.standing.map (·.1) == #[b] &&
      (w.notes.map fun d => (d.code, d.subject, d.span)) == #[("N0419", some a, some span)])
   let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure."
-  let w2 := Boundary.withdraw "lualatex" #["aa"] #[(a, failed)]
-    #[(a, "! Package pgf Error: an invented failure.")] #[]
+  let w2 := Boundary.withdraw "lualatex" #["aa"]
+    #[(a, .answered failed (some "! Package pgf Error: an invented failure."))] #[]
   t "a tool that ran and drew nothing is quoted in the withdrawal's note"
     (w2.standing.isEmpty && w2.notes.all fun d =>
       d.code == "N0419" && hasStr (d.help.getD "") "an invented failure")
