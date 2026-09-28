@@ -543,16 +543,17 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "html escapes quoted content like any other"
     ((((HtmlDoc.emit {} esc).1.splitOn "2 &lt; 3").length == 2))
   -- Both margins move in (classes.dtx: `\rightmargin\leftmargin`): the
-  -- quoted line starts one list indent past the left margin and its set
-  -- width never reaches past the narrowed right edge.
+  -- quoted line starts `\leftmargini` (classes.dtx: 2.5em) past the left
+  -- margin and its set width never reaches past the narrowed right edge.
   let geom : Layout.Geom := {}
+  let lm := geom.fontSize * 5 / 2
   let out := layoutOf oneFace doc geom
   let lines := out.pages.flatMap (·.lines)
-  let quoted := lines.filter fun l => l.x == geom.hmargin + geom.listIndent
+  let quoted := lines.filter fun l => l.x == geom.hmargin + lm
   t "pdf quotation indents from the left margin" (quoted.size ≥ 1)
   t "pdf quotation keeps inside the narrowed right margin"
     (quoted.all fun l =>
-      decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
+      decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - lm))
   t "pdf prose around the quotation keeps the full measure"
     (lines.any fun l => l.x == geom.hmargin)
 
@@ -4301,6 +4302,77 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "html: a list inside an open paragraph carries the role's class on its own element"
     (hasStr (Html.document "en" #[] (body inPar))
       s!"<ul class=\"{HtmlDoc.roleClass Ir.inParagraphRole}\">")
+
+/-- **A list level stands its class's `\leftmargin⟨n⟩` in** (`Ir.leftMargin`,
+review-e O-4). classes.dtx's one-column stack is 2.5, 2.2, 1.87 and 1.7 em
+(article.cls:323-336) and beamer's 2 em (beamerbaselocalstructure.sty:
+144-146): each level's text stands its margin right of the enclosing
+one's, a quotation's two edges their level's margin in, and a list inside
+a quotation one level down, as `\@listdepth` counts the quotation — its
+margin and its `\topsep` both. Asserted over `Layout.Out`, the left edge
+of the run that opens each item's text (protrusion off: its overhang is a
+glyph's, not the margin's), against lualatex (TeX Live 2026, Open Sans,
+a 300 pt measure): the four itemize levels at 24.90, 46.82, 65.45 and
+82.39 bp in at 10 pt, 29.89 bp at 12 pt, a list in a quote 46.82 bp in
+and 19.93 bp below the quote's line, where the engine at `2f81a8e1` stood
+at 15, 30, 45 and 60 pt, 18 pt, and 30 pt and 24 pt; and over the sheet,
+each level's padding in the class's em. A declared `\leftmargini` still
+wins. Invented words. -/
+def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let place (src : String) (w : String) : Option (Dim.Sp × Dim.Sp) := do
+    let (d, _) := elabStr src
+    let g := Layout.Geom.ofPage d.page
+    let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
+      hasStr (lineText l) w
+    let r ← (lineRuns l).find? fun r => r.2.1.startsWith w
+    pure (r.2.2.1 - g.hmargin, l.y)
+  let xs (src : String) (ws : List String) : List (Option Dim.Sp) :=
+    ws.map fun w => (place src w).map (·.1)
+  let doc (cls pre body : String) : String :=
+    "\\documentclass" ++ cls ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let nest := "Alpha words.\n\\begin{itemize}\n\\item Bravo words.\n\\begin{itemize}\n" ++
+    "\\item Charlie words.\n\\begin{itemize}\n\\item Delta words.\n\\begin{itemize}\n" ++
+    "\\item Echo words.\n\\end{itemize}\n\\end{itemize}\n\\end{itemize}\n\\end{itemize}\nFoxtrot."
+  let levels := ["Bravo", "Charlie", "Delta", "Echo"]
+  let l3 := Dim.pt 47 + Dim.pt 187 / 10
+  t "each list level stands its leftmargin in, at 10pt"
+    (xs (doc "{article}" "" nest) levels ==
+      [some (Dim.pt 25), some (Dim.pt 47), some l3, some (l3 + Dim.pt 17)])
+  t "the first list level follows the type, at 12pt"
+    (xs (doc "[12pt]{article}" "" nest) ["Bravo"] == [some (Dim.pt 30)])
+  t "a deck's list levels stand beamer's 2em in"
+    (xs (doc "{beamer}" "" ("\\begin{frame}[t]\n" ++ "Alpha words.\n\\begin{itemize}\n" ++
+      "\\item Bravo words.\n\\begin{itemize}\n\\item Charlie words.\n\\end{itemize}\n" ++
+      "\\end{itemize}\n\\end{frame}")) ["Bravo", "Charlie"] ==
+      [some (Dim.pt 22), some (Dim.pt 44)])
+  t "a quotation's text stands its level's leftmargin in"
+    (xs (doc "{article}" "" "Alpha words.\n\\begin{quote}\nBravo words.\n\\end{quote}\nCharlie.")
+      ["Bravo"] == [some (Dim.pt 25)])
+  let qlist := doc "{article}" "" ("Alpha words.\n\\begin{quote}\nBravo words.\n" ++
+    "\\begin{itemize}\n\\item Charlie words.\n\\end{itemize}\n\\end{quote}\nFoxtrot.")
+  t "a list inside a quotation reads the next level's margin and topsep"
+    (match place qlist "Bravo", place qlist "Charlie" with
+     | some (bx, by_), some (cx, cy) =>
+       bx == Dim.pt 25 && cx == Dim.pt 47 &&
+         cy - by_ == Ir.leadingFor (Dim.pt 10) 1000 + Dim.pt 4 + Dim.pt 4
+     | _, _ => false)
+  t "a declared leftmargini keeps its value"
+    (xs (doc "{article}" "\\setlength{\\leftmargini}{15pt}\n" nest) ["Bravo"] ==
+      [some (Dim.pt 15)])
+  let sheet (cls : String) : String :=
+    (HtmlDoc.emit {} (elabStr (doc cls "" "x")).1).1
+  let lv := ":is(li, dd, blockquote) "
+  let art := sheet "{article}"
+  t "html each list level's padding is its leftmargin in em"
+    (hasStr art "ul, ol, dd { padding-left: 2.5em; }\nblockquote { padding: 0 2.5em; }" &&
+     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: 2.2em; }" &&
+     hasStr art s!"{lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd \{ padding-left: 1.7em; }")
+  t "html a deck's lists stand beamer's 2em in at every level"
+    (hasStr (sheet "{beamer}") "ul, ol, dd { padding-left: 2em; }" &&
+     !hasStr (sheet "{beamer}") s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left")
+  t "html a webpage's lists keep the engine's one indent"
+    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: 1.35rem; }")
 
 /-- **A list right after a heading opens no `\topsep`** (`Acc.afterHeading`).
 `\@afterheading` sets `\@nobreak` until the next paragraph starts, and a

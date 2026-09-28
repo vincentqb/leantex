@@ -794,9 +794,9 @@ private def itemSubject : String :=
   "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
 
 /-- An enclosing list's item, as `\@listdepth` counts the levels: a list
-block's `<li>` or a description's `<dd>`, the element a nested list stands
-in. -/
-private def itemAncestor : String := ":is(li, dd) "
+block's `<li>`, a description's `<dd>` or a quotation (a `\list` itself),
+the element a nested list stands in. -/
+private def itemAncestor : String := ":is(li, dd, blockquote) "
 
 /-- A list's own space at a boundary: the level's length over the
 paragraph gap in force where the boundary stands, read on the lower
@@ -868,6 +868,26 @@ def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapR
     | some sk => listLevelRules (String.join (List.replicate (n - 1) itemAncestor))
         (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
     | none => []
+
+/-- A lineage's list indents as CSS, per level: a list's items, a
+description's `<dd>` and a quotation's two edges stand the level's
+`\leftmargin` in, from the one resolving site the page's margins read
+(`Ir.leftMarginMilli`), in the em the class spells it in (the page reads
+the same thousandths of the body size, `Ir.leftMargin`), each level
+reached through an item ancestor per enclosing list or quotation and
+written only where its value moves. A lineage with no stack, the web's,
+keeps its lists' one indent. -/
+def listIndentCss (l : Ir.ListLineage) : String :=
+  let rule (pre v : String) : String :=
+    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n"
+  match Ir.leftMarginMilli l 1 with
+  | none => rule "" "1.35rem"
+  | some _ => String.join ((List.range 6).filterMap fun k =>
+      match Ir.leftMarginMilli l (k + 1) with
+      | some m =>
+        if k != 0 && Ir.leftMarginMilli l k == some m then none
+        else some (rule (String.join (List.replicate k itemAncestor)) s!"{decMilli m}em")
+      | none => none)
 
 /-- The rules a theorem-like block's space owes, on the element its role's
 class marks (`Ir.thmSkips` at the top level, the one resolving site the PDF
@@ -3897,13 +3917,10 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- the same lang= tags the engine's patterns read — one declaration, two
   -- conforming hyphenators (the agreement is about tags, never breaks).
   "p { hyphens: auto; }\n" ++
-  "ul, ol { padding-left: 1.35rem; }\n" ++
-  -- A description's text stands one list indent in, under its label.
-  "dd { padding-left: 1.35rem; }\n" ++
-  -- A quotation moves both edges in, as the PDF sets it (classes.dtx:
-  -- `\rightmargin\leftmargin`); its vertical margins are the gap
-  -- emitter's, as every block element's are.
-  "blockquote { padding: 0 1.35rem; }\n" ++
+  -- A list's items, a description's text under its label and a
+  -- quotation's two edges stand their level's `\leftmargin` in, as the
+  -- page sets them (`listIndentCss`).
+  listIndentCss doc.docClass.record.lists ++
   "li::marker { color: var(--muted); }\n" ++
   -- The class-default list marking, per nesting level, matching the PDF
   -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered

@@ -901,16 +901,16 @@ def censusTable :
       hasStr (censusText c) "The second paragraph of the same quotation"),
     ("prose sits at the margin",
       lineXOf c 0 "A paragraph before the quotation" == some geom.hmargin),
-    ("the quotation indents from the margin by the list indent",
+    ("the quotation indents from the margin by \\leftmargini (classes.dtx: 2.5em)",
       lineXOf c 0 "A short invented epigraph"
-        == some (geom.hmargin + geom.listIndent))]),
+        == some (geom.hmargin + geom.fontSize * 5 / 2))]),
   ("quote-deck", fun geom c => [
     ("one frame, one page", c.size == 1),
     ("the quotation ships on the slide",
       pageHas c 0 "Typesetting is invisible until it fails"),
     ("the slide's quotation indents from the margin",
       (lineXOf c 0 "Typesetting is invisible").any fun x =>
-        decide (x == geom.hmargin + geom.listIndent))]),
+        decide (x == geom.hmargin + geom.fontSize * 2))]),
   ("outline", fun _ c => [
     ("one page", c.size == 1),
     ("the level-0 title ships as the title furniture",

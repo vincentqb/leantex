@@ -611,6 +611,21 @@ def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
     | .gap _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
+/-- A shipped line's runs, left to right: the face index, the glyphs, and the
+run's left edge and width on the page. -/
+def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) := Id.run do
+  let mut out := #[]
+  let mut x := l.x
+  for seg in l.segs do
+    match seg with
+    | .run idx _ _ w gs _ _ _ _ _ =>
+      out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
+      x := x + w
+    | .gap w _ => x := x + w
+    | .rule w _ _ _ => x := x + w
+    | .image _ w _ => x := x + w
+  return out
+
 /-- Whether a shipped line sets any glyph: a link's underline or a rule ships
 as a line of its own that sets none. -/
 def hasGlyphRun (l : Layout.LineOut) : Bool :=

@@ -4,21 +4,6 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 /-! The kernel's environments and amsthm's, read off the page they ship. -/
 
-/-- A shipped line's runs, left to right: the face index, the glyphs, and the
-run's left edge and width on the page. -/
-def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) := Id.run do
-  let mut out := #[]
-  let mut x := l.x
-  for seg in l.segs do
-    match seg with
-    | .run idx _ _ w gs _ _ _ _ _ =>
-      out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
-      x := x + w
-    | .gap w _ => x := x + w
-    | .rule w _ _ _ => x := x + w
-    | .image _ w _ => x := x + w
-  return out
-
 /-- The face index of the first run on `l` whose glyphs hold `word`. -/
 def faceOfWord (l : Layout.LineOut) (word : String) : Option Nat :=
   ((lineRuns l).find? fun r => hasStr r.2.1 word).map (·.1)
@@ -289,16 +274,16 @@ def kernelVerseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((lineWith "Birch").any fun l => (lineText l).startsWith "Birch")
   t "verse: both margins move in by the list indent"
     (["Birch", "Cedar"].all fun w => (lineWith w).any fun l =>
-      l.x == geom.hmargin + geom.listIndent &&
-        decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
+      l.x == geom.hmargin + (geom.fontSize * 5 / 2) &&
+        decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - (geom.fontSize * 5 / 2)))
   t "verse: each \\\\ opens the next indented line one leading below"
     (match lineWith "Birch", lineWith "Cedar" with
-     | some a, some b => a.x == geom.hmargin + geom.listIndent &&
+     | some a, some b => a.x == geom.hmargin + (geom.fontSize * 5 / 2) &&
          b.y - a.y == Ir.leadingFor geom.fontSize geom.leading
      | _, _ => false)
   t "verse: the text after it keeps the full measure, the verse does not"
     ((lineWith "Dogwood").any fun l => l.x == geom.hmargin &&
-      (lineWith "Cedar").any fun c => c.x == geom.hmargin + geom.listIndent)
+      (lineWith "Cedar").any fun c => c.x == geom.hmargin + (geom.fontSize * 5 / 2))
   t "html: verse is a blockquote"
     (hasStr (HtmlDoc.emit {} doc).1 "<blockquote")
 
@@ -336,7 +321,7 @@ def kernelDescChecks (ref : IO.Ref (List String)) : IO Unit := do
       | some a, some b => a.2.1 == "Cedar" && b.2.2.1 - (a.2.2.1 + a.2.2.2) == Dim.pt 5
       | _, _ => false)
   t "description: a wrapped line hangs at the item's indent"
-    (ls.any fun l => l.x == geom.hmargin + geom.listIndent && !hasStr (lineText l) "Birch" &&
+    (ls.any fun l => l.x == geom.hmargin + (geom.fontSize * 5 / 2) && !hasStr (lineText l) "Birch" &&
       (hasStr (lineText l) "line" || hasStr (lineText l) "list"))
   t "description: an unlabelled item opens \\labelsep from the outer margin"
     ((lineWith "plain").any fun l =>

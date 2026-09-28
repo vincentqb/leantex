@@ -48,12 +48,10 @@ structure Geom where
   paragraph mark, a skip standing in for the `\parindent` the engine does
   not set, and TeX spends no indent at a list's edge. -/
   texParskip : SymGlue := { stretch := Dim.Length.ofSp (pt 1) } -- classes.dtx: \parskip 0pt plus 1pt
-  /-- Per-level list indent. The default is the engine's own choice —
-  `listIndentFor`'s 1.5 em, shallower than classes.dtx's 2.5/2.2/1.87 em
-  stack, which reads deep at this engine's narrower default measure; no
-  external authority settles the ratio. A document owns the choice through
-  `\style{itemize}{ indent = ... }` (the declared override this default
-  yields to). -/
+  /-- The list indent of a lineage whose class declares no `\leftmargin`
+  stack — the web's (`Ir.leftMargin` answers the standard classes' and
+  beamer's, per level): `listIndentFor`'s 1.5 em, the engine's own choice,
+  which a document owns through `\style{itemize}{ indent = ... }`. -/
   listIndent : Sp := listIndentFor Ir.baseFontSize
   leading : Nat := 1000
   /-- Whether paragraphs may hyphenate; the class default resolved. Layout
@@ -5521,6 +5519,11 @@ private structure Acc where
   enumerate inside an itemize is itemize level 2. -/
   itemDepth : Nat := 0
   enumDepth : Nat := 0
+  /-- Quotations open around the walk (`quote`, `quotation`, `verse`, the
+  abstract's quotation): each is a `\list`, so LaTeX's `\@listdepth`, which
+  picks a list level's spaces and margin, counts it beside the lists,
+  though no marker reads it. -/
+  quoteDepth : Nat := 0
   /-- Diagnostics the block walk itself raises (list depth past the class's
   four levels); joined into the placement diagnostics by `run`. -/
   diags : Array Diag := #[]
@@ -5587,6 +5590,11 @@ private def Rd.resolve (r : Rd) (g : SymGlue) : Glue :=
   g.resolve r.geom.fontSize r.xHeight
 
 private def Rd.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
+
+/-- A list level's `\leftmargin` (`Ir.leftMargin`, at `\@listdepth` `lv`),
+or the engine's own indent where the lineage declares none. -/
+private def Rd.leftMargin (r : Rd) (lv : Nat) : Sp :=
+  (Ir.leftMargin r.lists r.geom.fontSize lv).getD r.geom.listIndent
 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/
@@ -7554,8 +7562,8 @@ private def collectBlock (r : Rd) (a : Acc)
     let st := if level == 1 then r.style element
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
     -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the
-    -- nesting depth over both kinds, as `\@listdepth` counts it.
-    let lv := a.itemDepth + a.enumDepth + 1
+    -- nesting depth over every list and quotation, as `\@listdepth` counts it.
+    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     let sk := Ir.listSkips r.lists r.geom.fontSize lv
     -- `\@trivlist`'s `\@topsepadd`: the level's `\topsep`, with `\partopsep`
     -- on top where the list opens a paragraph (`Ir.partopsepFor`) — anywhere
@@ -7572,7 +7580,9 @@ private def collectBlock (r : Rd) (a : Acc)
       | some g, _ => a.addvspace (r.resolve g)
       | none, some t => if a.afterHeading then a.flushGap r else (a.listSpace t).flushGap r
       | none, none => a
-    let step := (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
+    -- The level's `\leftmargin` (`Rd.leftMargin`), unless the list's style
+    -- declares its own indent.
+    let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
     let ri := match sk with
@@ -7644,35 +7654,37 @@ private def collectBlock (r : Rd) (a : Acc)
     | some g => a.addvspace (r.resolve g)
     | none => a
   | .quote body =>
-    -- A quotation is set off by indenting both margins by the list indent:
-    -- classes.dtx defines quote and quotation as `\list{}{\rightmargin
-    -- \leftmargin}`, and a top-level list's \leftmargin is \leftmargini —
-    -- the same indent the engine's lists take. The right edge moves in by
+    -- A quotation is set off by indenting both margins by its level's
+    -- `\leftmargin` (`Rd.leftMargin`): classes.dtx defines quote and
+    -- quotation as `\list{}{\rightmargin\leftmargin}`, and a list is one
+    -- level of `\@listdepth`, so what it holds reads the next level
+    -- (`Acc.quoteDepth`). The right edge moves in by
     -- narrowing the measure the body collects against; the outer measure
     -- is restored after, exactly as a column restores it. Being a list, it
     -- spends its level's `\topsep` (`Ir.listSkips`) above and below — so a
     -- declared `\topsep` does not reach it, as `\@listi` resets the length
     -- on entry — and sets its paragraphs `\parsep` apart.
     let saved := a.measure
-    let narrow := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent)
-    let lv := a.itemDepth + a.enumDepth + 1
+    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
+    let lm := r.leftMargin lv
+    let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
       let g := if r.inPar then r.resolve sk.topsep
         else (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
       let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
-      let sub := { top with measure := narrow }
+      let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { r with inPar := false,
                          geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-      let sub := collectBlocks ri sub body (indent + r.geom.listIndent)
-      { sub.listSpace g with measure := saved }
+      let sub := collectBlocks ri sub body (indent + lm)
+      { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       -- The web's lineage: the quote is the trivlist block the HTML sheet
       -- sets, its `\topsep` over the peer gap.
       let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
-      let sub := collectBlocks { r with inPar := false } { a.trivSpace g with measure := narrow }
-        body (indent + r.geom.listIndent)
-      { sub.trivSpace g with measure := saved }
+      let sub := collectBlocks { r with inPar := false }
+        { a.trivSpace g with measure := narrow, quoteDepth := a.quoteDepth + 1 } body (indent + lm)
+      { sub.trivSpace g with measure := saved, quoteDepth := a.quoteDepth }
   | .titled kind title body =>
     collectBlocks r (collectTitledTitle r a kind title indent) body indent
   | .abstract body =>
@@ -7680,16 +7692,18 @@ private def collectBlock (r : Rd) (a : Acc)
     -- heading (`collectAbstractHead`), then the body on quotation margins.
     -- The body takes the document's own step of the declared size
     -- (`Ir.abstractBodySize`, `\small` undeclared), the quotation margins
-    -- are the quote arm's, and the outer state is restored the way a quote
-    -- restores its measure.
+    -- are the quote arm's — its level's `\leftmargin`, fixed when the class
+    -- loaded, so `\small` does not narrow it — and the outer state is
+    -- restored the way a quote restores its measure.
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
     let saved := a.measure
+    let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1)
     let sub := { a with
-      measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
+      measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
     let sub := collectBlocks { r with geom := { r.geom with fontSize := small } }
-      sub body (indent + r.geom.listIndent)
-    { sub with measure := saved }
+      sub body (indent + lm)
+    { sub with measure := saved, quoteDepth := a.quoteDepth }
   | .columns cols =>
     -- Each declared width resolves against the measure the boxes stand in
     -- (`Ir.BoxWidth.resolve`, the one resolving site) — a fraction of it, or

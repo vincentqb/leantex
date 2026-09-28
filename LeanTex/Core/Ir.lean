@@ -1089,6 +1089,45 @@ theorem thmSkips_exact :
     thmSkips .web (Dim.pt 10) 1 {} .ams true = none := by
   decide
 
+/-- A list level's `\leftmargin⟨n⟩` in thousandths of an em of the class
+base: the standard classes' one-column stack, 2.5, 2.2, 1.87, 1.7, 1 and
+1 em (classes.dtx; article.cls:323-336, and scrartcl.cls:6752-6758 sets
+the same), and beamer's 2 em at its three levels
+(beamerbaselocalstructure.sty:144-146; beamer defines no fourth, so a
+deeper level keeps the third's). The web's lineage declares none: its
+lists hang the engine's own indent (`Layout.Geom.listIndent`). The em is
+the body size: lualatex's first level stands 25, 27.37 and 30 pt in at the
+10, 11 and 12 pt options. A two-column page's 2 em first level is not
+modelled. -/
+def leftMarginMilli : ListLineage → Nat → Option Nat
+  | .sizeFile, 1 => some 2500
+  | .sizeFile, 2 => some 2200
+  | .sizeFile, 3 => some 1870
+  | .sizeFile, 4 => some 1700
+  | .sizeFile, _ => some 1000
+  | .beamer, _ => some 2000
+  | .web, _ => none
+
+/-- **The one resolving site for a list level's `\leftmargin`**: the
+lineage's stack at the body size and nesting level — `\@listdepth`, over
+every list and quotation — where the lineage declares one. Both artifacts
+read it: the page's list, quotation and description margins, and the
+sheet's padding (`HtmlDoc.listIndentCss`), in the em it is spelled in. -/
+def leftMargin (l : ListLineage) (size : Sp) (level : Nat) : Option Sp :=
+  (leftMarginMilli l (max level 1)).map fun m => size * (m : Int) / 1000
+
+/-- At the 10 pt base a list level's margin is the class's own, exactly:
+25, 22, 18.7 and 17 pt at the standard classes' four levels, and beamer's
+20 pt at each of its three. -/
+theorem leftMargin_exact :
+    leftMargin .sizeFile (Dim.pt 10) 1 = some (Dim.pt 25) ∧
+    leftMargin .sizeFile (Dim.pt 10) 2 = some (Dim.pt 22) ∧
+    leftMargin .sizeFile (Dim.pt 10) 3 = some (Dim.pt 187 / 10) ∧
+    leftMargin .sizeFile (Dim.pt 10) 4 = some (Dim.pt 17) ∧
+    leftMargin .beamer (Dim.pt 10) 3 = some (Dim.pt 20) ∧
+    leftMargin .web (Dim.pt 10) 1 = none := by
+  decide
+
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
 2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
