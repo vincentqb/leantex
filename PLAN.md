@@ -23239,3 +23239,32 @@ settings-lengths (`paramSiteChecks`) and settings-pkgs
 named yet. R38: the site, owed by site-fix (`pictureSvg_overflow_contract`,
 `blockGap_owner_contract`). Landing any of these fails `reportChecks`
 until the row names its pins and the run that saw them fail: one edit.
+
+
+
+### 2026-09-28 — the report registry at landing: three reports close, two join, one stays owed
+
+`Tests/Reports.lean` landed after the branches its owed rows waited on, so
+on the rebased branch `reportChecks` failed as designed: an owed guard had
+landed unrecorded. Each row is promoted with pins that resolve and the
+witness its author recorded; none is re-run here.
+
+- R36, declared settings reported as ignored: `paramSiteChecks` and
+  `abstractRedefChecks`, which failed at `da9b049d` before their units (the
+  settings run: 49 failures across its five check blocks; the abstract run:
+  6).
+- R37, the card: `filChecks`, red at `da9b049d`; `drawnMarkChecks` and
+  `driverOptionChecks`, red with their fixes reverted; `pdfVersionChecks`,
+  whose witness is the card's own print recipe failing at base.
+- R38 keeps the wrapper element: `trivlistChecks` (four checks failing at
+  `da9b049d`) and the two HTML contracts that fix added, each broken once
+  through a mutant.
+- R39 is the declared-line-break warning the same report quoted, a false
+  loss on a held line before wrapping prose: `titleBreakChecks`' silence
+  rows, failing on `f66f9381`.
+- R40 is the card's vertical centring, asked about since: `faceCentreChecks`,
+  failing at `8d3df368` and `f16b1321`.
+
+`owedBaseline` falls from 4 to 1: R35, the unapproved pushes, stays owed to
+the user. Two theorems the fixes cite cannot be pins because they are
+private: `finishPage_fill_centre_exact` and `warnReflow_accounts`.

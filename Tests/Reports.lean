@@ -6,6 +6,8 @@ import Tests.BoxRow
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
+import Tests.Settings
+import Tests.Redefine
 import scripts.LandCore
 
 /-!
@@ -229,18 +231,30 @@ def reports : List Report := [
     state := .owed "the user: a pre-push hook that refuses an unapproved push" [] },
   { id := "R36", date := "2026-09-27"
     what := "declared settings were reported as ignored across documents rather than implemented"
-    pins := []
-    state := .owed "settings-lengths, settings-pkgs" ["paramSiteChecks", "abstractRedefChecks"] },
+    pins := [check% paramSiteChecks, check% abstractRedefChecks]
+    state := .guarded "da9b049d" .before .author },
   { id := "R37", date := "2026-09-27"
     what := "a business card rendered wrong: its page boxes, bleed, marks, lengths and faces"
-    pins := []
+    pins := [check% filChecks, check% driverOptionChecks, check% drawnMarkChecks,
+      check% pdfVersionChecks]
     accept := ["the card's own print check recipe — page boxes, cut marks, fonts, exact strings — against the engine's PDF"]
-    state := .owed "card-fix" [] },
+    state := .guarded "da9b049d" .before .author },
   { id := "R38", date := "2026-09-27"
-    what := "a website broke: every centred environment gained a wrapper element, and the build printed a declared-line-break warning"
-    pins := []
+    what := "a website broke: every centred environment gained a wrapper element"
+    pins := [check% trivlistChecks, thm% HtmlDoc.pictureSvg_overflow_contract,
+      thm% HtmlDoc.blockGap_owner_contract]
     accept := ["the site port's build script and its structural comparison at three widths"]
-    state := .owed "site-fix" ["pictureSvg_overflow_contract", "blockGap_owner_contract"] }
+    state := .guarded "da9b049d" .before .author },
+  { id := "R39", date := "2026-09-27"
+    what := "a website's build named a declared line break lost where the author's line held and only the prose after it wrapped"
+    pins := [check% titleBreakChecks]
+    accept := ["the site port's build, whose diagnostics name no declared-line-break loss"]
+    state := .guarded "f66f9381" .before .author },
+  { id := "R40", date := "2026-09-27"
+    what := "a business card's text did not stand vertically centred on its faces: the gaps above and below its block differed"
+    pins := [check% faceCentreChecks]
+    accept := ["the card's own print check recipe, against its lualatex build"]
+    state := .guarded "f16b1321" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
@@ -248,7 +262,7 @@ never rise, and falls only when this line does. -/
 def unwitnessedBaseline : Nat := 10
 
 /-- The reports not closed, the same way. -/
-def owedBaseline : Nat := 4
+def owedBaseline : Nat := 1
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
 
