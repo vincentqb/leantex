@@ -3654,12 +3654,42 @@ theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
 
 end Pic
 
-/-- Horizontal alignment of a table column's cells: `l`, `c`, `r`. -/
+/-- Horizontal alignment of a table column's cells: `l`, `c`, `r`; also the
+side a scope sets its boxes on (`slackHalves`). -/
 inductive HAlign where
   | left
   | center
   | right
   deriving Repr, BEq, Inhabited
+
+/-- The side as the `text-align` keyword the scope rules print. -/
+def HAlign.align : HAlign → String
+  | .left => "left"
+  | .center => "center"
+  | .right => "right"
+
+/-- How many halves of a line's slack stand before a box its scope sets —
+a tabular, a picture, a lone minipage: none flush left, one centred, both
+flush right. TeX sets such a box in a line like a word, so the scope's
+`\leftskip` and `\rightskip` place it (ltmiscen.dtx: `center` is
+`\trivlist\centering`, and `\centering` sets both skips to `\@flushglue`;
+`flushright` sets `\leftskip` alone). Both backends read the side through
+this one value: the page's offset (`boxOffset`) and the stylesheet's
+margins (`HtmlDoc.box_margins_agree`). -/
+def HAlign.slackHalves : HAlign → Nat
+  | .left => 0
+  | .center => 1
+  | .right => 2
+
+/-- A box's offset inside the measure it stands in: its side's share of the
+slack the box leaves. -/
+def HAlign.boxOffset (h : HAlign) (slack : Int) : Int := slack * h.slackHalves / 2
+
+/-- **A box its scope sets never leaves the measure** (`_between`): with the
+slack non-negative, the offset lies between flush left and flush right. -/
+theorem HAlign.boxOffset_between (h : HAlign) (s : Int) (hs : 0 ≤ s) :
+    0 ≤ h.boxOffset s ∧ h.boxOffset s ≤ s := by
+  cases h <;> simp only [boxOffset, slackHalves] <;> omega
 
 /-- Which edge of the measure a ragged scope's lines hang from: LaTeX's two
 ragged settings, named for what is *flush* rather than what is ragged —
@@ -3698,6 +3728,11 @@ value, stated on the IR because both artifacts must honour it. -/
 theorem ragged_sides_agree (s : FlushSide) :
     s.flushRight = true ↔ s.align = "right" := by
   cases s <;> simp [FlushSide.flushRight, FlushSide.align]
+
+/-- The declared side as the side its boxes stand on. -/
+def FlushSide.halign : FlushSide → HAlign
+  | .left => .left
+  | .right => .right
 
 /-- The dump spelling, and the only place a ragged side is named in a
 golden. -/

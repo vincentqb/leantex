@@ -5611,6 +5611,10 @@ private structure Rd where
   beamer's 4 pt (`Ir.footline.sep`) — the page builder's own (`B.footGap`),
   from one binding in `run`. -/
   footGap : Sp := Ir.footline.sep
+  /-- A centred scope is setting this block as one box of its line
+  (`collectCentered`): a lone box row takes the centre's share of its
+  slack (`Ir.HAlign.boxOffset`). Cleared for what the box contains. -/
+  centreBoxes : Bool := false
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -6414,7 +6418,8 @@ private def collectTable (r : Rd) (a0 : Acc)
     a := { a with diags := a.diags.push (Diag.of .W0338
       (s!"the table is {(tableW - total).toPtString}pt wider than the measure")
       (help := "narrow the p{...} column widths, or widen the text block")) }
-  let x0 : Sp := indent + (if center && tableW < total then (total - tableW) / 2 else 0)
+  let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
+  let x0 : Sp := indent + side.boxOffset (max 0 (total - tableW))
   -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
     let mut x := x0 + lead
@@ -6813,7 +6818,8 @@ the page")
 node centres, not the text they set")
         (help := "declare the extent ([minimum width = ...]) or widen the \
 separation ([node distance = ...])")) }
-  let x := if center then indent + max 0 ((avail - w) / 2) else indent
+  let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
+  let x := indent + side.boxOffset (max 0 (avail - w))
   let a := a.flushGap r
   -- The picture's one `.picture` leaf: its label lines name it.
   let (a, leaf) := a.leafRange 1
@@ -7716,6 +7722,8 @@ private def collectCentered (r : Rd) (a : Acc)
       -- as one box in the measure; its cells keep their own alignment.
       | .table cols pl pr rows rules spans =>
         collectTable r a cols pl pr rows rules spans indent true
+      -- A lone minipage or \parbox is one box in the centred line too.
+      | .columns _ => collectBlock { r with centreBoxes := true } a blk indent
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
@@ -7950,8 +7958,17 @@ private def collectBlock (r : Rd) (a : Acc)
     let rem := max 0 (total - declared)
     let shareW := if unspecified > 0 then rem / unspecified else 0
     let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
+    -- A lone declared box leaves its slack to its scope's side, as a
+    -- tabular or a picture does; a row of several spends it on gutters.
+    let side : Ir.HAlign := if r.centreBoxes then .center
+      else if r.geom.flushRight then .right else .left
+    let off := if cols.size == 1 && unspecified == 0 then side.boxOffset rem else 0
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
-    let a := collectColumns r a cols.toList indent shareW gutter total
+    -- The box's own content starts from no side: `\@parboxrestore`
+    -- (latex.ltx) zeroes `\leftskip` and `\rightskip` inside every
+    -- minipage and `\parbox`.
+    let inner := { r with centreBoxes := false, geom := { r.geom with flushRight := false } }
+    let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
   | .spaced before body =>

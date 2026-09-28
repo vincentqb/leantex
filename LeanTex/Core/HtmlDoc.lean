@@ -129,19 +129,51 @@ def raggedClass : Ir.FlushSide → String
   | .left => "ragged"
   | .right => "ragged-right"
 
+/-- The margins a block-level box — a table — takes on its scope's side:
+`auto` exactly where the page leaves the box slack
+(`box_margins_agree`), so HTML sets a tabular or a lone minipage where the
+PDF does (`Ir.HAlign.boxOffset`). -/
+def boxMargins : Ir.HAlign → String × String
+  | .left => ("0", "auto")
+  | .center => ("auto", "auto")
+  | .right => ("auto", "0")
+
+/-- The track placement a lone box's grid row takes on its scope's side. -/
+def boxJustify : Ir.HAlign → String
+  | .left => "start"
+  | .center => "center"
+  | .right => "end"
+
+/-- The two readings of a scope's side agree: the stylesheet leaves slack
+before a box exactly when the page's offset takes some, and after it
+exactly when the offset leaves some. -/
+theorem box_margins_agree (h : Ir.HAlign) :
+    ((boxMargins h).1 = "auto" ↔ 0 < h.slackHalves) ∧
+      ((boxMargins h).2 = "auto" ↔ h.slackHalves < 2) := by
+  cases h <;> decide
+
+/-- An alignment scope's rule: its class, the side's `text-align`, and the
+side's box placement as inherited properties — inherited exactly as
+`text-align` is, so a table or a lone minipage anywhere in the scope stands
+on its side, as TeX sets a box in a line wherever the scope's skips are in
+force. -/
+def alignScopeRule (cls : String) (h : Ir.HAlign) : String :=
+  "." ++ cls ++ " { text-align: " ++ h.align ++ "; --ltx-box-left: " ++ (boxMargins h).1 ++
+    "; --ltx-box-right: " ++ (boxMargins h).2 ++ "; --ltx-box-justify: " ++ boxJustify h ++
+    "; }\n"
+
 /-- One ragged side's stylesheet rule: its class, and the alignment the IR
 declares for it. Both halves come from the IR, so the sheet cannot declare
 an edge the page does not set (`ragged_sides_agree` ties the alignment this
 prints to the origin the page's walk reads). -/
-def raggedRule (s : Ir.FlushSide) : String :=
-  "." ++ raggedClass s ++ " { text-align: " ++ Ir.FlushSide.align s ++ "; }\n"
+def raggedRule (s : Ir.FlushSide) : String := alignScopeRule (raggedClass s) s.halign
 
 /-- The rule is the class and the IR's own alignment, nothing invented
 between them: the projection corollary of `ragged_sides_agree` on this
 backend's side. -/
 theorem raggedRule_projects (s : Ir.FlushSide) :
-    raggedRule s = "." ++ raggedClass s ++ " { text-align: " ++ s.align ++ "; }\n" :=
-  rfl
+    raggedRule s = alignScopeRule (raggedClass s) s.halign ∧ s.halign.align = s.align := by
+  cases s <;> exact ⟨rfl, rfl⟩
 
 /-- Every class value the engine itself puts on an element, as tokens (a
 multi-class value like `"slide standout"` is listed split). Maintained by
@@ -3970,8 +4002,14 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
     "  user-select: none; }\n"
    else "") ++
   (if docHasBibliography doc then bibCss doc else "") ++
-  ".centered { text-align: center; }\n" ++
+  alignScopeRule "centered" .center ++
   raggedRule .left ++ raggedRule .right ++
+  -- A minipage's or a \parbox's content starts from no side of its own
+  -- (`\@parboxrestore`, latex.ltx), whatever scope the box stands in.
+  alignScopeRule "column" .left ++
+  -- A table is a box in its scope's line (`alignScopeRule`); outside any
+  -- scope it stands flush left, as it always did.
+  "table { margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto); }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
@@ -5588,10 +5626,13 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.
+    -- A lone box takes its scope's side (`alignScopeRule`), as the page
+    -- gives it the side's share of its slack; a row spreads.
+    let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
     Html.elem "div" (columnNodesInto cfg.into #[] cols.toList)
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
-          "justify-content: space-between; column-gap: 0.75rem")]
+          s!"justify-content: {justify}; column-gap: 0.75rem")]
   | .step n last body =>
     -- The block form of the inline step arm: visible — the handout floor —
     -- with its `--step` index for the class-gated uncover, range as data,

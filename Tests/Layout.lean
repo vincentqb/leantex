@@ -687,8 +687,70 @@ def raggedSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (classOf (treeOf "\\raggedright ") == some (HtmlDoc.raggedClass .left) &&
       classOf (treeOf "\\raggedleft ") == some (HtmlDoc.raggedClass .right))
   t "the sheet declares each side's own edge"
-    (HtmlDoc.raggedRule .left == ".ragged { text-align: left; }\n" &&
-      HtmlDoc.raggedRule .right == ".ragged-right { text-align: right; }\n")
+    (HtmlDoc.raggedRule .left == ".ragged { text-align: left; --ltx-box-left: 0; " ++
+        "--ltx-box-right: auto; --ltx-box-justify: start; }\n" &&
+      HtmlDoc.raggedRule .right == ".ragged-right { text-align: right; --ltx-box-left: auto; " ++
+        "--ltx-box-right: 0; --ltx-box-justify: end; }\n")
+
+/-- **A box its scope sets takes the scope's side**, as TeX sets a box in a
+line: a tabular, a picture, a lone minipage or `\parbox` stands at none,
+half or all of its slack under `flushleft`, `center` and `flushright`
+(`Ir.HAlign.boxOffset`), so the centred origin lies midway between the two
+flush ones, whatever the box's width. It names two defects on the page: a
+table and a picture in a right-set scope stood at the left margin (the
+`.ragged` arm's comment claimed otherwise), and a lone minipage in a centred
+scope stood at the left margin — a title set in one was off-centre in both
+artifacts. -/
+def boxSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let marker := "Boxed Marker"
+  let boxes : List (String × String) :=
+    [("tabular", "\\begin{tabular}{l}" ++ marker ++ "\\end{tabular}"),
+     ("picture", "\\begin{tikzpicture}\\draw (0,0) rectangle (2,1);" ++
+        "\\node at (1,0.5) {" ++ marker ++ "};\\end{tikzpicture}"),
+     ("minipage", "\\begin{minipage}{0.4\\textwidth}" ++ marker ++ "\\end{minipage}"),
+     ("parbox", "\\parbox{0.4\\textwidth}{" ++ marker ++ "}")]
+  for (kind, box) in boxes do
+    let xOf (env : String) : Option Int :=
+      let src := "\\documentclass{article}\\begin{document}\\begin{" ++ env ++ "}" ++ box ++
+        "\\end{" ++ env ++ "}\\end{document}"
+      ((bodyLines (layoutOf oneFace (elabStr src).1)).find? (lineText · == marker)).map (·.x)
+    match xOf "flushleft", xOf "center", xOf "flushright" with
+    | some l, some c, some r =>
+      t s!"a {kind} centres midway between its two flush placements"
+        (l < c && c < r && (c - l - (r - c)).natAbs ≤ 1)
+    | _, _, _ => t s!"a {kind} sets its marker line under each side" false
+
+/-- The HTML twin of `boxSideChecks`, over the typed tree and the sheet it
+ships: each alignment scope's rule carries its side's box placement
+(`alignScopeRule`, from `boxMargins` and `boxJustify`), a table reads the
+margins and a lone box's row the track placement, so they inherit as
+`text-align` does. The defect it names: a tabular title in a centred block
+stood flush left in the browser — a table is block-level, so `text-align`
+never placed it — while the PDF centred it. The browser's own layout is the
+html-oracle's `box-side` row. -/
+def boxSideHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, _) := elabStr ("\\documentclass{article}\\begin{document}\\begin{center}" ++
+    "\\begin{tabular}{c}Title\\end{tabular}\\end{center}\\begin{center}" ++
+    "\\begin{minipage}{0.4\\textwidth}Box\\end{minipage}\\end{center}\\end{document}")
+  let (page, _) := HtmlDoc.emit {} doc
+  for (cls, h) in [("centered", Ir.HAlign.center), ("ragged", .left), ("ragged-right", .right),
+      ("column", .left)] do
+    let decls := (cssRuleOf page ("." ++ cls)).getD ""
+    t s!"the .{cls} scope declares its side's box placement"
+      (hasStr decls s!"text-align: {h.align};" &&
+        hasStr decls s!"--ltx-box-left: {(HtmlDoc.boxMargins h).1};" &&
+        hasStr decls s!"--ltx-box-right: {(HtmlDoc.boxMargins h).2};" &&
+        hasStr decls s!"--ltx-box-justify: {HtmlDoc.boxJustify h};")
+  t "a table reads its scope's box margins"
+    (((cssRuleOf page "table").getD "").trimAscii.toString ==
+      "margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto);")
+  let styles := (elemAttrsList (· == "div") #[] (HtmlDoc.emitTree {} doc).2.1.toList).filterMap
+    fun (_, attrs) => if HtmlDoc.classTokens attrs == ["columns"]
+      then (attrs.find? (·.1 == "style")).map (·.2) else none
+  t "a lone box's row reads its scope's track placement"
+    (styles.size == 1 && styles.all (hasStr · "justify-content: var(--ltx-box-justify, start)"))
 
 /-- `\centering` is a declaration: it centres the rest of its scope, the way
 `\bfseries` sets bold. Own function, same reason. -/
