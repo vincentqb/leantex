@@ -752,6 +752,55 @@ def boxSideHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a lone box's row reads its scope's track placement"
     (styles.size == 1 && styles.all (hasStr · "justify-content: var(--ltx-box-justify, start)"))
 
+/-- **A centred headline stands on its band's centre, whatever logo stands
+beside it**, wherever the band holds the matter between two reserves as
+wide as the wider logo — as the PDF sets the matter over the whole measure,
+and as the gemini headline reserves `\maxlogowidth` on both sides "to keep
+title centered" (beamerthemegemini.sty). The HTML band was a flex row whose
+matter took the space the logos left, so one corner logo pushed the title
+off the band's centre by half the logo (132.5 px at 1280 px with the
+corpus's right logo). Narrower than that, the matter keeps clear of both
+logos rather than run under one. Stated over the sheet and the tree: two
+equal flexible tracks around the matter, each logo pinned to its own
+corner — the left logo is the band's first child and the right one follows
+the matter, the premise the two selectors read. A declared side keeps the
+matter beside the logos, and a declared `right` sets it right (the band
+once centred it while the page set it right). The browser's own layout is
+the html-oracle's `box-side` row. -/
+def headlineSideChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let poster (pre : String) : Ir.Doc := (elabStr ("\\documentclass{poster}" ++ pre ++
+    "\\title{An Invented Band}\\begin{document}\\begin{frame}Body.\\end{frame}" ++
+    "\\end{document}")).1
+  let css (d : Ir.Doc) : String := (HtmlDoc.emit {} d).1
+  let right := poster "\\logoright{Right Mark}"
+  let page := css right
+  t "a centred band lays its matter between two equal flexible tracks"
+    (hasStr ((cssRuleOf page "body > header.headline").getD "")
+      "grid-template-columns: 1fr auto 1fr;" &&
+     hasStr ((cssRuleOf page "body > header.headline > .headline-matter").getD "")
+      "grid-area: 1 / 2;" &&
+     hasStr ((cssRuleOf page "body > header.headline > .headline-logo:first-child").getD "")
+      "grid-area: 1 / 1;" &&
+     hasStr ((cssRuleOf page "body > header.headline > .headline-matter ~ .headline-logo").getD "")
+      "grid-area: 1 / 3;")
+  let order (d : Ir.Doc) : List String :=
+    match (HtmlDoc.emitTree {} d).2.1.toList.find? fun n => match n with
+      | .elem "header" a _ => HtmlDoc.classTokens a == ["headline"]
+      | _ => false with
+    | some (.elem _ _ kids) => kids.toList.filterMap fun k => match k with
+      | .elem _ a _ => (HtmlDoc.classTokens a).head?
+      | _ => none
+    | _ => []
+  t "the band ships its left logo first and its right logo after the matter"
+    (order right == ["headline-matter", "headline-logo"] &&
+      order (poster "\\logoleft{Left Mark}") == ["headline-logo", "headline-matter"])
+  for (side, align) in [("left", "left"), ("right", "right")] do
+    let d := poster ("\\style{titlepage}{ align = " ++ side ++ " }\\logoright{Right Mark}")
+    t s!"a band declared {side} sets its matter {align} beside the logos"
+      (hasStr ((cssRuleOf (css d) "body > header.headline .headline-matter").getD "")
+        s!"flex: 1; text-align: {align};")
+
 /-- `\centering` is a declaration: it centres the rest of its scope, the way
 `\bfseries` sets bold. Own function, same reason. -/
 def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do

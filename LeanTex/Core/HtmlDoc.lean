@@ -1355,22 +1355,36 @@ def themeCss (doc : Doc) : String :=
       s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
       s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n"
      else "") else "") ++
-  -- The headline band: the poster page's <header>, a flex row of the two
-  -- corner-logo slots around the title matter. Colours are the same
-  -- frametitle tokens the PDF band resolves (one resolving site per
-  -- backend, one declared pair), gated on the pair as the slide bar's
-  -- rule is; the matter's alignment is the `titlepage` style's declared
-  -- token (undeclared centres, `\@maketitle`'s own rule).
+  -- The headline band: the poster page's <header> around the title matter
+  -- and the two corner-logo slots. Colours are the same frametitle tokens
+  -- the PDF band resolves (one resolving site per backend, one declared
+  -- pair), gated on the pair as the slide bar's rule is; the matter's side
+  -- is the `titlepage` style's declared token (undeclared centres,
+  -- `\@maketitle`'s own rule). A centred matter stands on the band's centre
+  -- whatever logo stands beside it, as the PDF sets it and as the gemini
+  -- headline reserves `\maxlogowidth` on both sides "to keep title
+  -- centered" (beamerthemegemini.sty): two equal flexible tracks around
+  -- it, each logo pinned to its own corner; on a band too narrow for equal
+  -- reserves the matter keeps clear of both logos. A declared side sets the
+  -- matter from the logo beside it.
   (match doc.headline with
    | some _ =>
-     let tpsAlign := ((doc.styles.find? "titlepage").bind (·.align)).getD "center"
-     s!"body > header.headline \{ display: flex; align-items: center;
-" ++
-     s!"  gap: {quantaRem 2}; padding: {quantaRem 2} {quantaRem 3}; }
-" ++
-     s!"body > header.headline .headline-matter \{ flex: 1; text-align: " ++
-     (if tpsAlign == "left" then "left" else "center") ++ "; }
-" ++
+     let side : Ir.HAlign := match (doc.styles.find? "titlepage").bind (·.align) with
+       | some "left" => .left
+       | some "right" => .right
+       | _ => .center
+     let pad := s!"gap: {quantaRem 2}; padding: {quantaRem 2} {quantaRem 3}; }\n"
+     (if side == .center then
+       "body > header.headline { display: grid; grid-template-columns: 1fr auto 1fr;\n" ++
+       "  align-items: center; " ++ pad ++
+       "body > header.headline > .headline-matter { grid-area: 1 / 2; text-align: center; }\n" ++
+       "body > header.headline > .headline-logo:first-child { grid-area: 1 / 1;\n" ++
+       "  justify-self: start; }\n" ++
+       "body > header.headline > .headline-matter ~ .headline-logo { grid-area: 1 / 3;\n" ++
+       "  justify-self: end; }\n"
+      else
+       "body > header.headline { display: flex; align-items: center;\n  " ++ pad ++
+       s!"body > header.headline .headline-matter \{ flex: 1; text-align: {side.align}; }\n") ++
      "body > header.headline h1 { margin: 0; }
 " ++
      (if d.frametitle.isSome then
@@ -6595,7 +6609,7 @@ first; retitle one frame, or link to '#{id}'"))
   -- The headline band: the page's own <header> before <main> (the banner
   -- landmark — the HTML poster is a page, and the band is its header),
   -- title as the one h1, authors and institute as their own lines, the
-  -- corner logos in the flex slots the stylesheet lays around the matter.
+  -- corner logos in the slots the stylesheet lays around the matter.
   let headerNode : Array Node := match doc.headline with
     | some hl =>
       let slot (c : Option (Array Ir.Inline)) : Array Html.Node :=
