@@ -790,6 +790,11 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (match low[0]?, mid[0]? with
      | some c, some b => c.y > b.y
      | _, _ => false)
+  -- TeX's output routine cancels the depth of a box that ends the page
+  -- (`\@make@normalcolbox`): lualatex's traced page sets the line's
+  -- baseline on the text area's floor, its 0.11 pt depth below it.
+  t "a line closing a bottom-flushed page stands on the floor, its depth below it"
+    ((low[0]?.map (·.y == geom.bodyBottom)).getD false)
   t "a trailing fill alone moves nothing"
     ((linesOf (doc "hello\n\\vspace*{\\fill}")).map (·.y) == top.map (·.y))
   -- A fill before an element's own space survives it: LaTeX's `\addvspace`

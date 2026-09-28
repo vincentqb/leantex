@@ -4284,14 +4284,39 @@ private def B.contentEnd (b : B) (owed : Sp) : Sp :=
   b.y + (if b.geom.topskip.isSome then b.boxDepth else b.prevDepth) + owed -
     (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
 
+/-- What the content keeps below its last box when the page closes at a
+boundary the document declared (`\newpage`, `\pagebreak`, its end): the
+glue pending there — or, on a TeX page with none, TeX's own
+`\vskip -\@outputbox@depth`. The output routine takes one final infinite
+skip off the page (`\@outputbox@removebskip`, latex.ltx:20688) and cancels
+the depth of the box then ending it (`\@make@normalcolbox`,
+latex.ltx:20658-20665), so a line closing a bottom-flushed page stands on
+the floor with its depth below it. -/
+private def B.closingOwed (b : B) : Sp :=
+  if b.geom.topskip.isSome && b.skip.width == 0 && b.skip.stretch == 0 && !b.skip.fil
+  then -b.boxDepth else b.skip.width
+
+/-- **A box that ends a TeX page leaves its baseline as the content's end**
+(`_exact`): with nothing pending at a declared boundary, the depth the
+distribution reads is cancelled whole, as the output routine cancels it. -/
+private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = true)
+    (hw : b.skip.width = 0) (hs : b.skip.stretch = 0) (hf : b.skip.fil = false) :
+    b.contentEnd b.closingOwed =
+      b.y - (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0) := by
+  simp only [B.contentEnd, B.closingOwed, ht, hw, hs, hf]
+  simp
+  omega
+
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
 above it, the glue set at one ratio like a justified line's. `owed` is the
 pending glue the content keeps: at a boundary the content declared (a
-frame's end, `\newpage`, the document's end) the caller passes the pending
-skip's width, since TeX keeps that glue inside the frame's box or before
-`\newpage`'s `\vfil`; at a break (a spill, a float moved on) nothing,
-since TeX discards glue at a page break. -/
+frame's end, `\newpage`, the document's end) the caller passes
+`B.closingOwed` — the pending skip's width, since TeX keeps that glue
+inside the frame's box or before `\newpage`'s `\vfil`, or the last box's
+cancelled depth where nothing is pending on a TeX page; at a break (a
+spill, a float moved on) nothing, since TeX discards glue at a page
+break. -/
 private def B.finishPage (b : B) (owed : Sp := 0) : B :=
   let lines := if b.needed > 0 && b.pageShrink > 0 then
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
@@ -8693,8 +8718,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- for a page that never got content dies with the boundary. Fills
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
-      b := { b.finishPage b.skip.width with chrome := none, frameBreak := none,
-                                            spillWarned := false }
+      b := { b.finishPage b.closingOwed with
+               chrome := none, frameBreak := none, spillWarned := false }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
@@ -9214,9 +9239,9 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | exact pagesExtend_of_eq (alignRow_keeps ..).1
-    | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.skip.width)); simp; done)
+    | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed)); simp; done)
     | (refine pagesExtend_congr ?_
-        (pagesExtend_trans (finishPage_extends _ (o := st.b.skip.width)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
+        (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
 
 /-- Under `noBreak`, a step that is not a page boundary ships nothing
 and keeps the flag: the whole group lands on the page being built. -/
@@ -9423,7 +9448,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
         (placeSlot_keeps ..).1
     | exact BgStep.of_eq (alignRow_keeps ..).2.1 (alignRow_keeps ..).2.2.1
         (alignRow_keeps ..).1
-    | (refine (bgStep_finishPage _ (o := st.b.skip.width)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+    | (refine (bgStep_finishPage _ (o := st.b.closingOwed)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
 private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
@@ -10242,7 +10267,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- document is never given an empty page for it.
   let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
       || st.b.pages.isEmpty then
-      st.b.finishPage st.b.skip.width
+      st.b.finishPage st.b.closingOwed
     else st.b
   -- The measure, checked against the readable band once the document has
   -- shown continuous text (a paragraph of four or more full-measure lines).
@@ -10342,7 +10367,7 @@ private theorem runCore_bg
   -- the final close, taken abstractly: splitting the giant term is the
   -- wall, so the ite is covered by a lemma over an opaque condition
   have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
-      BgStep b0 X → BgStep b0 (if c then X.finishPage X.skip.width else X) := by
+      BgStep b0 X → BgStep b0 (if c then X.finishPage X.closingOwed else X) := by
     intro c inst b0 X h
     split
     · exact h.trans (bgStep_finishPage _)
