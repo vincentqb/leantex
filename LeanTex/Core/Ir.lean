@@ -3028,7 +3028,7 @@ def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
 /-- The anchor is inside the glyphs' box, as it is inside the band
 (`labelInkSpan_covers_anchor`): widening a label from its anchor to its
 glyphs can only grow a hull. -/
-theorem labelGlyphBox_covers_anchor (x y : Sp) (align : LabelAlign) (m : LabelInk) :
+theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelInk) :
     Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
   have hx := labelInkSpan_covers_anchor x y align (max m.w 0) (max (m.height + m.depth) 0)
     (Int.le_max_right _ _) (Int.le_max_right _ _)
@@ -3546,7 +3546,7 @@ hull. Every containment `box_in_bbox` gave still holds of `inkBbox`. -/
 theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Box.le s.box (s.inkBox m) := by
   cases s with
   | label x y content color scale align =>
-    exact labelGlyphBox_covers_anchor x y align _
+    exact labelGlyphBox_covers x y align _
   | rect _ _ _ _ _ => exact Box.le_refl _
   | circle _ _ _ _ _ => exact Box.le_refl _
   | frame _ _ _ _ _ _ => exact Box.le_refl _

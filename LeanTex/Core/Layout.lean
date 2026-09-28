@@ -8987,7 +8987,7 @@ private def B.alignRow (b : B) (save : ColSave) : B :=
 /-- An aligned row moves ink inside the page being built and nothing else:
 the shipped pages, the geometry, the document's ground and the break flag
 stand — what the page-step facts read, as `placeSlot_keeps` says of a slot. -/
-private theorem alignRow_keeps (b : B) (save : ColSave) :
+private theorem alignRow_shipped_id (b : B) (save : ColSave) :
     (b.alignRow save).pages = b.pages ∧ (b.alignRow save).geom = b.geom ∧
     (b.alignRow save).docBg = b.docBg ∧ (b.alignRow save).noBreak = b.noBreak := by
   simp [B.alignRow]
@@ -9559,7 +9559,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact placePara_extends ..
     | exact placePicture_extends ..
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
-    | exact pagesExtend_of_eq (alignRow_keeps ..).1
+    | exact pagesExtend_of_eq (alignRow_shipped_id ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
     | (refine pagesExtend_congr ?_
         (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed) (f := false)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
@@ -9583,7 +9583,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | exact placePara_noBreak _ _ _ _ h
     | exact placePicture_noBreak _ _ _ _ _ _ h
     | exact ⟨(placeSlot_keeps ..).1, (placeSlot_keeps ..).2.2.2.trans h⟩
-    | exact ⟨(alignRow_keeps ..).1, (alignRow_keeps ..).2.2.2.trans h⟩
+    | exact ⟨(alignRow_shipped_id ..).1, (alignRow_shipped_id ..).2.2.2.trans h⟩
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
@@ -9768,8 +9768,8 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     | exact bgStep_placePicture ..
     | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1
         (placeSlot_keeps ..).1
-    | exact BgStep.of_eq (alignRow_keeps ..).2.1 (alignRow_keeps ..).2.2.1
-        (alignRow_keeps ..).1
+    | exact BgStep.of_eq (alignRow_shipped_id ..).2.1 (alignRow_shipped_id ..).2.2.1
+        (alignRow_shipped_id ..).1
     | (refine (bgStep_finishPage _ (o := st.b.closingOwed) (f := false)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 

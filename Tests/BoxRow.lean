@@ -73,25 +73,6 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (fout.pages.size == 1 && (fds ++ fout.diags).all (·.code != "W0384"))
 
 
-mutual
-
-/-- Every `style` of an element with the given tag, read off the typed tree. -/
-def tagStylesOne (tag : String) (acc : Array String) : Html.Node → Array String
-  | .elem t attrs kids =>
-    let acc := if t == tag then
-      match attrs.find? (·.1 == "style") with
-      | some (_, s) => acc.push s
-      | none => acc
-      else acc
-    tagStylesList tag acc kids.toList
-  | .text _ | .style _ | .script _ _ => acc
-
-def tagStylesList (tag : String) (acc : Array String) : List Html.Node → Array String
-  | [] => acc
-  | k :: rest => tagStylesList tag (tagStylesOne tag acc k) rest
-
-end
-
 /-- **A row stands its boxes on one baseline** (TeXbook ch. 12; latex.ltx
 `\@iiiparbox`: `[t]` puts a box's first baseline on the line, `[b]` its
 last, `[c]` its middle; `Ir.BoxPos`, `Layout.B.alignRow`). The defect set
@@ -162,11 +143,11 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- The HTML projections: the grid's own baseline alignment, and the
   -- declared baseline as the SVG's lift off the line.
   let (bDoc, _) := elabStr bRow
-  let bStyles := bDoc.body.foldl (fun acc b => tagStylesOne "div" acc (HtmlDoc.blockNode {} b)) #[]
+  let bStyles := bDoc.body.foldl (fun acc b => acc ++ attrValuesOf (· == "div") "style" (HtmlDoc.blockNode {} b)) #[]
   t "the HTML row stands [b] boxes on their last baselines"
     ((bStyles.filter (hasStr · "align-self: last baseline")).size == 2)
-  let svgStyles := pd.body.foldl (fun acc b => tagStylesOne "svg" acc (HtmlDoc.blockNode {} b)) #[]
-  let pStyles := pd.body.foldl (fun acc b => tagStylesOne "div" acc (HtmlDoc.blockNode {} b)) #[]
+  let svgStyles := pd.body.foldl (fun acc b => acc ++ attrValuesOf (· == "svg") "style" (HtmlDoc.blockNode {} b)) #[]
+  let pStyles := pd.body.foldl (fun acc b => acc ++ attrValuesOf (· == "div") "style" (HtmlDoc.blockNode {} b)) #[]
   t "the HTML picture stands on its declared baseline, beside its box"
     (svgStyles.any (hasStr · "vertical-align: -") &&
       (pStyles.filter (hasStr · "align-self: baseline")).size == 2)

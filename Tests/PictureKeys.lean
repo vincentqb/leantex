@@ -17,27 +17,9 @@ def shippedWidths (oneFace : Font.FontSet) (src : String) : Array Dim.Sp :=
 def picLoss (src : String) : Bool :=
   (elabStr src).2.any fun d => d.code == "W0334" || d.code == "E0333"
 
-mutual
-
-/-- Every value an emitted element declares for attribute `key`, in tree
-order. -/
-def attrValuesOne (key : String) (acc : Array String) : Html.Node → Array String
-  | .elem _ attrs kids =>
-    let acc := match attrs.find? (·.1 == key) with
-      | some (_, w) => acc.push w
-      | none => acc
-    attrValuesList key acc kids.toList
-  | .text _ | .style _ | .script _ _ => acc
-
-def attrValuesList (key : String) (acc : Array String) : List Html.Node → Array String
-  | [] => acc
-  | k :: rest => attrValuesList key (attrValuesOne key acc k) rest
-
-end
-
 /-- Every value the HTML of a document's body declares for `key`. -/
 def bodyAttrValues (doc : Ir.Doc) (key : String) : Array String :=
-  doc.body.foldl (fun acc b => attrValuesOne key acc (HtmlDoc.blockNode {} b)) #[]
+  doc.body.foldl (fun acc b => acc ++ attrValuesOf (fun _ => true) key (HtmlDoc.blockNode {} b)) #[]
 
 /-- **A declared line width is the width pgf strokes.** tikz.code.tex
 (lines 1575–1581) defines the seven named widths as `line width=<w>`
@@ -295,7 +277,7 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let (rd, _) := elabStr rect
   t "the SVG strokes the rectangle as one closed outline"
     ((bodyAttrValues rd "stroke-width").size == 1 &&
-      (rd.body.foldl (fun acc b => acc ++ attrValuesOne "height" #[] (HtmlDoc.blockNode {} b)) #[]).contains
+      (rd.body.foldl (fun acc b => acc ++ attrValuesOf (fun _ => true) "height" (HtmlDoc.blockNode {} b)) #[]).contains
         (Dim.mm 10).toPtString)
   let tri := picDoc "" "" "\\draw (0,0) -- (2,0) -- (1,1) -- cycle;"
   let triSegs : Array Ir.Pic.PathSeg := (paths tri).foldl (fun acc q => match q.path with

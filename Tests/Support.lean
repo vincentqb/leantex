@@ -1111,6 +1111,11 @@ def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String
 
 end
 
+/-- Every value the elements `want` accepts declare for attribute `key`, in
+document order: `elemAttrsOne`'s elements, read for one attribute. -/
+def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=
+  (elemAttrsOne want #[] n).filterMap fun (_, attrs) => (attrs.find? (·.1 == key)).map (·.2)
+
 
 /-- Every innermost declaration block a stylesheet carries, as its selector
 text paired with its declarations. Brace-depth scanned rather than split on
