@@ -12376,11 +12376,12 @@ does not keep; the number stands alone" pos
       modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := st } } }
       return s
     | none =>
+      -- amsthm.sty's `\theoremstyle`: an undefined `th@<name>` warns and
+      -- sets `\thm@style{plain}`, whatever style stood before.
       warnOnce s.ctx ("theoremstyle:" ++ name.getD "") .W0110
         s!"'\\theoremstyle' names '{name.getD ""}', not one of plain, definition, \
-remark; the style in force stands" pos
-      modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with
-        style := if e.ctr.thm.ams then e.ctr.thm.style else .plain } } }
+remark; plain applies, as amsthm sets it" pos
+      modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := .plain } } }
       return s
   | .unknownCmd name unclosed pos =>
     -- A tikz-family set line is not unknown: the engine reads `\tikzset`

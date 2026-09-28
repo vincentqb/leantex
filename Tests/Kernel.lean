@@ -126,6 +126,12 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "theoremstyle: a style the engine has not is named"
     ((elabStr (dvDoc "\\usepackage{amsthm}\n\\theoremstyle{fancy}\n" "x")).2.any fun d =>
       d.code == "W0110" && d.subject == some "theoremstyle:fancy")
+  -- amsthm.sty's `\theoremstyle`: an undefined style warns and sets plain,
+  -- whatever style stood before it.
+  let fancy := linesOf (dvDoc "\\usepackage{amsthm}\n\\theoremstyle{definition}\n\
+\\theoremstyle{fancy}\n\\newtheorem{thm}{Theorem}\n" "\\begin{thm}\nJuniper states.\n\\end{thm}")
+  t "theoremstyle: an unknown style sets plain, as amsthm does: an italic body"
+    ((lineWith fancy "Juniper").bind (faceOfWord · "Juniper") == some 2)
   -- HTML: the environment's name as its class, the head as strong text.
   let page := (HtmlDoc.emit {} (elabStr src).1).1
   t "html: a theorem is its own block under the environment's name"
