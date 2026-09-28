@@ -8580,8 +8580,9 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
 
 /-- **A heading never ends a page** (`ParaJob.keepNext`): when a heading's
 own lines and what it keeps — the next block's first box, as placement
-reads it (`keepExt`): two lines of text, a picture's whole box, a second
-heading and its own reserve — cannot stand on the page within its shrink,
+reads it (`keepExt`): a paragraph's first two lines as their boxes stand,
+a picture's whole box, a second heading and its own reserve — cannot
+stand on the page within its shrink,
 the page closes before the heading, as TeX's page builder finds no legal
 break between a heading and the box after it and breaks above it. Only in
 flow and outside a float replay: a frame or a float decides its own page.
@@ -9624,29 +9625,52 @@ private theorem matchingClose_ge (staged : Array StagedOp) (j depth : Nat) :
     try split
     all_goals omega
 
+/-- What a heading keeps of the paragraph after it (`keepExt`): its first
+two lines as placement sets them, or its one. `\@afterheading` sets
+`\clubpenalty` to 10000 (latex.ltx:17317-17322), so the page's first
+legal break inside the paragraph follows its second line. Each line's box
+is its own — `lineExtent` over the segs `paraLineGeom` sets, the pair
+`placeLine` reads — stacked by the interline rule (the upper line's below,
+the lower line's above) down to the last kept line's ink: a first line as
+tall as the image or the display it carries reserves that height, which
+two leadings did not. -/
+private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Sp :=
+  let box (first : Bool) (prev brk : Nat) : LineBox :=
+    lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading j.size
+      (paraLineGeom fs j b first prev brk).1
+  match breaks[0]?, breaks[1]? with
+  | some k0, some k1 =>
+    let l0 := box true 0 k0
+    let l1 := box false k0 k1
+    l0.above + l0.below + l1.above + l1.inkBelow
+  | some k0, none =>
+    let l0 := box true 0 k0
+    l0.above + l0.inkBelow
+  | none, _ => 0
+
 /-- **A heading keeps with the next block's first box** (`B.keepHeading`):
 TeX's `\nobreak` after a display heading (`\@xsect`, latex.ltx:17279-17285)
 leaves no legal break before the box that follows it, so a heading's
-reserve is that box and the glue before it — a picture's whole box, or a
-second heading's own lines and its reserve (`\@startsection` adds no break
-while `\@nobreak` stands, latex.ltx:17239-17243); before a paragraph it
-stays the two lines `\@afterheading`'s club penalty keeps, as the walk
-reserved (`ParaJob.keepNext`). `keepExt` reads the ops after the heading
-at `k` with the glue met so far; a run of headings keeps as one chain. -/
-private def keepExt (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
+reserve is that box and the glue before it — a picture's whole box, a
+paragraph's kept lines as their boxes stand (`keptHead`), or a second
+heading's own lines and its reserve (`\@startsection` adds no break while
+`\@nobreak` stands, latex.ltx:17239-17243). `keepExt` reads the ops after
+the heading at `k` with the glue met so far, in the builder `b` the heading
+stands in; a run of headings keeps as one chain. -/
+private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (k : Nat) (glue : Sp) : Sp :=
   if h : k < staged.size then
     match staged[k] with
-    | .skip g => keepExt geom fs imgs xHeight staged (k + 1) (glue + g.width)
-    | .anchor _ => keepExt geom fs imgs xHeight staged (k + 1) glue
+    | .skip g => keepExt b fs imgs staged (k + 1) (glue + g.width)
+    | .anchor _ => keepExt b fs imgs staged (k + 1) glue
     | .picture _ pic _ =>
-      let ((_, py0), (_, py1)) := pictureBox geom fs imgs xHeight pic
+      let ((_, py0), (_, py1)) := pictureBox b.geom fs imgs b.xHeight pic
       glue + inkClearance + (py1 - py0)
     | .para j t =>
       if 0 < j.keepNext then
-        glue + (t.get.size : Int) * Ir.leadingFor j.size geom.leading
-          + max j.keepNext (keepExt geom fs imgs xHeight staged (k + 1) 0)
-      else 0
+        glue + (t.get.size : Int) * Ir.leadingFor j.size b.geom.leading
+          + max j.keepNext (keepExt b fs imgs staged (k + 1) 0)
+      else glue + keptHead fs b j t.get
     | _ => 0
   else 0
 termination_by staged.size - k
@@ -9658,7 +9682,7 @@ private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array S
   match s with
   | .para j t =>
     if 0 < j.keepNext then
-      let reserve := max j.keepNext (keepExt b.geom fs imgs b.xHeight staged (si + 1) 0)
+      let reserve := max j.keepNext (keepExt b fs imgs staged (si + 1) 0)
       .para { j with keepNext := reserve } t
     else s
   | _ => s

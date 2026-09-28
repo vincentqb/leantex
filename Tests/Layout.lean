@@ -4329,31 +4329,46 @@ def afterHeadingListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
 follows it (`\@xsect`'s `\nobreak`, `\@afterheading`'s `\clubpenalty`), so
 a heading that would be a page's last line opens the next page — with the
 first two lines of its text, the whole box of a picture, or a second
-heading and what that one keeps. Asserted over `Layout.Out`: as the filler
-above it grows, the heading slides down one page's worth of positions, and
-at every one it shares a page with what follows it. The paper in the
-private corpus stranded a heading at a page foot this way, where the
-lualatex reference breaks above it; lualatex strands none of the three
-shapes at any position (TeX Live 2026). Invented words. -/
+heading and what that one keeps — a paragraph's first line as tall as its
+box, an image alone in its paragraph or a display, included. Asserted over
+`Layout.Out`: as the filler above it grows, the heading slides down one
+page's worth of positions, and at every one it shares a page with what
+follows it. The paper in the private corpus stranded a heading at a page
+foot this way, where the lualatex reference breaks above it; lualatex
+strands none of the five shapes at any position (TeX Live 2026, a 150 pt
+image alone in its paragraph and an eight-row array display included, over
+n ∈ [20, 70) filler paragraphs). Invented words. -/
 def headingKeepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
+  let mathSet ← mathSetOf oneFace
   let src (n : Nat) (after : String) : String :=
     "\\documentclass{article}\\pictures{ tool = none }\\begin{document}" ++
     String.join ((List.range n).map fun i => s!"Filler line {i}.\n\n") ++
     "\\section{Heading}\n" ++ after ++ "\n\\end{document}"
   let pageOf (c : Array CensusPage) (needle : String) : Option Nat :=
     (List.range c.size).find? fun i => (lineYOf c i needle).isSome
-  let shapes : List (String × String × String) :=
-    [("its text", "Body text after the heading, long enough to run onto a second line " ++
-        "of the page so that the club rule has two lines to keep together.", "Body text"),
-     ("a tall picture", "\\begin{tikzpicture}\\draw (0,0) -- (0,5);\\node at (0.5,4.5) {Kilo};" ++
-        "\\end{tikzpicture}\n\nMore text after the picture.", "Kilo"),
-     ("a second heading", "\\subsection{Second}\nBody text after both headings, long enough to " ++
-        "run onto a second line of the page so that the club rule has two lines.", "Second")]
-  for (what, after, needle) in shapes do
+  -- An image carries no text: its page is the one its box ships on.
+  let imagePage (c : Array CensusPage) : Option Nat :=
+    (List.range c.size).find? fun i => 0 < (c[i]?.map (·.images)).getD 0
+  let shapes : List (String × Font.FontSet × String × (Array CensusPage → Option Nat)) :=
+    [("its text", oneFace, "Body text after the heading, long enough to run onto a second " ++
+        "line of the page so that the club rule has two lines to keep together.",
+        (pageOf · "Body text")),
+     ("a tall picture", oneFace, "\\begin{tikzpicture}\\draw (0,0) -- (0,5);" ++
+        "\\node at (0.5,4.5) {Kilo};\\end{tikzpicture}\n\nMore text after the picture.",
+        (pageOf · "Kilo")),
+     ("a second heading", oneFace, "\\subsection{Second}\nBody text after both headings, " ++
+        "long enough to run onto a second line of the page so that the club rule has two lines.",
+        (pageOf · "Second")),
+     ("a tall image", oneFace, "\\noindent\\includegraphics[width=20pt,height=150pt]{tall.png}" ++
+        "\n\nMore text after the image.", imagePage),
+     ("a tall display", mathSet, "\\[\\begin{array}{c}\\text{Kilo}\\\\" ++
+        "\\\\".intercalate (List.replicate 8 "x") ++ "\\end{array}\\]\n\nMore text after it.",
+        (pageOf · "Kilo"))]
+  for (what, fonts, after, follower) in shapes do
     let placements := (List.range 40).map fun k =>
-      let c := censusOfSrc oneFace (src (20 + k) after)
-      (20 + k, pageOf c "Heading", pageOf c needle)
+      let c := censusOfSrc fonts (src (20 + k) after)
+      (20 + k, pageOf c "Heading", follower c)
     let strands := placements.filterMap fun (n, h, b) =>
       match h, b with
       | some h, some b => if h == b then none else some n
