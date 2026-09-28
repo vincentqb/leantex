@@ -95,8 +95,8 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds (Struct.ofBlocks #[.logo #[.text "l"], .framefoot #[.text "f"]])
       == #[.artifact, .artifact])
   let pic := Struct.ofBlocks #[.picture {}]
-  t "picture is a figure over a picture leaf"
-    (structKinds pic == #[.figure] && (Struct.leaves pic).map (·.2) == #[.picture])
+  t "picture is its own leaf carrying its alternative, as an image is"
+    (structKinds pic == #[] && (Struct.leaves pic).map (·.2) == #[.picture .undeclared])
   let tbl := Struct.ofBlocks #[.table #[] true true #[#[#[.text "a"], #[.text "b"]]] #[] #[]]
   t "table is table/row/cell"
     (structKinds tbl == #[.table] && structKinds (structKids tbl) == #[.row]
@@ -137,7 +137,8 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds (inl (.math false "x^2")) == #[.formula]
       && structTexts (inl (.math false "x^2")) == #["x2"])
   t "image is a leaf carrying source and alternative"
-    ((Struct.leaves (inl (.image "a.png" {} "alt"))).map (·.2) == #[.image "a.png" "alt"])
+    ((Struct.leaves (inl (.image "a.png" {} (.described "alt")))).map (·.2) ==
+      #[.image "a.png" (.described "alt")])
   t "icon is a text leaf worth its alternative"
     ((Struct.leaves (inl (.icon 'x' "arrow"))).map (·.2) == #[.text "arrow"])
   t "linebreak is a leaf worth a space"
@@ -150,7 +151,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   let nested := Struct.ofBlocks
     #[.section 1 false none #[.text "H"],
       .list false #[#[.para #[.text "a", .link "u" #[.text "b"]]], #[.para #[.text "c"]]],
-      .float .figure none false #[.para #[.image "i.png" {} "pic"]] #[.text "Cap"]]
+      .float .figure none false #[.para #[.image "i.png" {} (.described "pic")]] #[.text "Cap"]]
   t "ids run 0..n-1 in preorder across nesting"
     ((Struct.leaves nested).map (·.1) == #[0, 1, 2, 3, 4, 5]
       && structTexts nested == #["H", "a", "b", "c", "Cap", ""])
@@ -205,3 +206,31 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"ctx fold {n}: the context walk covers the leaf fold"
       (Ir.foldCtxBlocks (Ir.CtxFold.ofFold fb fi) () #[] doc.body
         == Ir.foldBlocks fb fi #[] doc.body)
+
+
+/-- A picture's text alternative is one IR value both artifacts project
+(`Ir.Pic.Picture.alternative`): with none declared, the words its own
+labels set name its svg in the HTML and its `Figure` in the PDF alike — the
+PDF once shipped that `Figure` with no `/Alt` while the HTML named it. A
+picture that says nothing keeps what each artifact shipped: the svg the
+figure word, the `Figure` no `/Alt`. -/
+def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let native := "\\pictures{ tool = none }\n"
+  let pic (opts body : String) : String :=
+    s!"\\begin\{tikzpicture}{opts}\n{body}\n\\end\{tikzpicture}"
+  let words := "\\node at (0,0) {Alpha};\\node at (2,0) {Beta};"
+  let square := "\\fill (0,0) rectangle (1,1);"
+  let figureAlts (doc : Ir.Doc) : Array (Option String) :=
+    ((Pdf.skeleton (Struct.ofDoc doc)).filter (·.s == "Figure")).map (·.alt)
+  let svgNames (doc : Ir.Doc) : Array (Option String) :=
+    (elemAttrsList (· == "svg") #[] (doc.body.map (HtmlDoc.blockNode {})).toList).map
+      (HtmlDoc.attrOf? ·.2 "aria-label")
+  let (worded, _) := elabStr (dvDoc native (pic "" words))
+  t "a picture's svg is named by the words its labels set"
+    (svgNames worded == #[some "Alpha, Beta"])
+  t "a picture's PDF Figure carries the words its svg is named by"
+    (figureAlts worded == svgNames worded)
+  let (wordless, _) := elabStr (dvDoc native (pic "" square))
+  t "a picture that says nothing: the svg takes the figure word, the Figure no /Alt"
+    (svgNames wordless == #[some "Figure"] && figureAlts wordless == #[none])

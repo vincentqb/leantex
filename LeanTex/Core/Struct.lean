@@ -87,10 +87,11 @@ inductive Kind where
 inductive Leaf where
   | text (s : String)
   /-- An image, its source and its text alternative. -/
-  | image (src : String) (alt : String)
-  /-- A diagram box: ink with no text alternative yet (`Pic.Picture` carries
-  none — a named gap, not a decision). -/
-  | picture
+  | image (src : String) (alt : Alt)
+  /-- A diagram, its one leaf, and the alternative a reader of either
+  artifact gets (`Pic.Picture.alternative`): its own element in the PDF, as
+  an image's is. -/
+  | picture (alt : Alt)
   /-- A declared line break, worth the space `plainText` reads it as. -/
   | linebreak
   deriving Repr, BEq, Inhabited
@@ -100,15 +101,24 @@ it came from. -/
 def Leaf.census : Leaf → String
   | .text s => s
   | .image _ _ => ""
-  | .picture => ""
+  | .picture _ => ""
   | .linebreak => " "
 
 /-- A leaf's image census: an image leaf its source and its text
 alternative, every other leaf nothing — `Leaf.census`'s shape for the image
 channel. -/
-def Leaf.imageCensus (out : Array (String × String)) : Leaf → Array (String × String)
+def Leaf.imageCensus (out : Array (String × Alt)) : Leaf → Array (String × Alt)
   | .image src alt => out.push (src, alt)
-  | .text _ | .picture | .linebreak => out
+  | .text _ | .picture _ | .linebreak => out
+
+/-- Does a structure element hold the leaf? Every leaf but decoration: an
+image or picture declared decorative is held by nothing, so its ink is an
+artifact (ISO 32000-2 §14.8.2.2) — the one resolving site the PDF's
+skeleton and its leaf census both read. -/
+def Leaf.held : Leaf → Bool
+  | .image _ .decorative | .picture .decorative => false
+  | .image _ .undeclared | .image _ (.described _) | .picture .undeclared
+  | .picture (.described _) | .text _ | .linebreak => true
 
 -- **The kind classification**: what a census does with a kind, as two
 -- functions on `Kind` rather than a match inside a walk. A prover reduces
@@ -276,7 +286,7 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .setPalette _ => out
   | .setTokens _ => out
   | .rule _ _ _ => out
-  | .picture _ => out.push (.node .figure #[.leaf 0 .picture])
+  | .picture pic => out.push (.leaf 0 (.picture pic.alternative))
   | .table _ _ _ rows _ _ => out.push (.node .table (rowsRaw #[] rows.toList))
   -- the caption stands first whatever `capAbove` says: census order is
   -- `blocksText`'s, and a caption's placement is the page's, not the tree's
@@ -327,6 +337,14 @@ The furniture regions (`Doc.head`, `foot`, `logo`, the headline band) are
 page artifacts the furniture pass writes and flags as such; they are not
 document structure and have no node here. -/
 def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
+
+/-- **A picture's leaf projects the one IR value** (`_projects`): its own
+leaf, carrying `Ir.Pic.Picture.alternative` — the value the HTML's svg
+reads too (`HtmlDoc.html_picture_name_projects`) — which the PDF turns into
+its `Figure` (`Pdf.altElem`). -/
+theorem picture_leaf_projects (out : Array Node) (pic : Pic.Picture) :
+    blockRaw out (.picture pic) = out.push (.leaf 0 (.picture pic.alternative)) := by
+  simp [blockRaw]
 
 -- **One walk over the tree.** The four censuses below differ in three
 -- answers and nothing else, so those three are the walk's fields. Read off
@@ -491,20 +509,20 @@ def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
 def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
 
 /-- Every image leaf's source and text alternative, in preorder. -/
-def imagesFold : NodeFold (Array (String × String)) where
+def imagesFold : NodeFold (Array (String × Alt)) where
   leaf := fun out _ l => l.imageCensus out
   enter := fun out _ => out
   descends := fun _ => true
 
-def imagesList (out : Array (String × String)) (ns : List Node) : Array (String × String) :=
+def imagesList (out : Array (String × Alt)) (ns : List Node) : Array (String × Alt) :=
   foldNodeList imagesFold out ns
 
-def imagesOne (out : Array (String × String)) (n : Node) : Array (String × String) :=
+def imagesOne (out : Array (String × Alt)) (n : Node) : Array (String × Alt) :=
   foldNode imagesFold out n
 
-def images (ns : Array Node) : Array (String × String) := imagesList #[] ns.toList
+def images (ns : Array Node) : Array (String × Alt) := imagesList #[] ns.toList
 
-def Tree.images (t : Tree) : Array (String × String) := Struct.images t.children
+def Tree.images (t : Tree) : Array (String × Alt) := Struct.images t.children
 
 theorem leavesAppends : Appends leavesFold where
   leaf := by intros; simp [leavesFold]
@@ -517,12 +535,12 @@ theorem headingsAppends : Appends headingsFold where
 /-- The IR's image census through the shared fold: every `.image`'s source
 and alternative, in the fold's document order — the descent `imageRefs`
 uses, declared once. -/
-def imageAltPush (out : Array (String × String)) (x : Inline) : Array (String × String) :=
+def imageAltPush (out : Array (String × Alt)) (x : Inline) : Array (String × Alt) :=
   match x with
   | .image src _ alt => out.push (src, alt)
   | _ => out
 
-def irImages (bs : Array Block) : Array (String × String) :=
+def irImages (bs : Array Block) : Array (String × Alt) :=
   foldBlocks (fun out _ => out) imageAltPush #[] bs
 
 -- **The censuses' interface**: the equations a prover may cite, stated. A
@@ -595,15 +613,15 @@ theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array 
 
 theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := rfl
 
-theorem imagesList_nil_exact (out : Array (String × String)) : imagesList out [] = out := rfl
+theorem imagesList_nil_exact (out : Array (String × Alt)) : imagesList out [] = out := rfl
 
-theorem imagesList_cons_exact (out : Array (String × String)) (n : Node) (rest : List Node) :
+theorem imagesList_cons_exact (out : Array (String × Alt)) (n : Node) (rest : List Node) :
     imagesList out (n :: rest) = imagesList (imagesOne out n) rest := rfl
 
-theorem imagesOne_leaf_exact (out : Array (String × String)) (id : Nat) (l : Leaf) :
+theorem imagesOne_leaf_exact (out : Array (String × Alt)) (id : Nat) (l : Leaf) :
     imagesOne out (.leaf id l) = l.imageCensus out := rfl
 
-theorem imagesOne_node_exact (out : Array (String × String)) (kind : Kind) (kids : Array Node) :
+theorem imagesOne_node_exact (out : Array (String × Alt)) (kind : Kind) (kids : Array Node) :
     imagesOne out (.node kind kids) = imagesList out kids.toList := rfl
 
 theorem images_eq_exact (ns : Array Node) : images ns = imagesList #[] ns.toList := rfl
@@ -651,15 +669,15 @@ theorem headingsOne_acc (out : Array Nat) (n : Node) :
     headingsOne out n = out ++ headingsOne #[] n :=
   foldNode_acc headingsAppends out n
 
-theorem imagesList_append (out : Array (String × String)) (a b : List Node) :
+theorem imagesList_append (out : Array (String × Alt)) (a b : List Node) :
     imagesList out (a ++ b) = imagesList (imagesList out a) b :=
   foldNodeList_append imagesFold out a b
 
-theorem imagesList_snoc (out : Array (String × String)) (l : List Node) (n : Node) :
+theorem imagesList_snoc (out : Array (String × Alt)) (l : List Node) (n : Node) :
     imagesList out (l ++ [n]) = imagesOne (imagesList out l) n :=
   foldNodeList_snoc imagesFold out l n
 
-theorem imagesList_push (out : Array (String × String)) (ns : Array Node) (n : Node) :
+theorem imagesList_push (out : Array (String × Alt)) (ns : Array Node) (n : Node) :
     imagesList out (ns.push n).toList = imagesOne (imagesList out ns.toList) n :=
   foldNodeList_push imagesFold out ns n
 
@@ -929,8 +947,7 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .setTokens tk => simp [blockRaw, blockTextOne]
   | .rule c n th => simp [blockRaw, blockTextOne]
   | .picture pic =>
-    simp [blockRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
-      leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, blockTextOne]
+    simp [blockRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census, blockTextOne]
   | .table cols pl pr rows rules spans =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [rowsRaw_text]
@@ -1254,9 +1271,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .setPalette pal => rfl
   | .setTokens tk => rfl
   | .rule c n th => rfl
-  | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne_leaf_exact,
-    headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
-    headingsList_cons_exact, headingLevelOne]
+  | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne_leaf_exact, headingLevelOne]
   | .table cols pl pr rows rules spans =>
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
@@ -1332,7 +1347,7 @@ theorem structTree_headings_covers (bs : Array Block) :
 
 mutual
 
-theorem inlinesRaw_images (is : Array (String × String)) (out : Array Node) (xs : List Inline) :
+theorem inlinesRaw_images (is : Array (String × Alt)) (out : Array Node) (xs : List Inline) :
     imagesList is (inlinesRaw out xs).toList
       = foldInlineList imageAltPush (imagesList is out.toList) xs := by
   match xs with
@@ -1341,7 +1356,7 @@ theorem inlinesRaw_images (is : Array (String × String)) (out : Array Node) (xs
     rw [inlinesRaw, inlinesRaw_images is (inlineRaw out x) rest, inlineRaw_images,
       foldInlineList]
 
-theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x : Inline) :
+theorem inlineRaw_images (is : Array (String × Alt)) (out : Array Node) (x : Inline) :
     imagesList is (inlineRaw out x).toList = foldInline imageAltPush (imagesList is out.toList) x := by
   match x with
   | .text s => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus, foldInline,
@@ -1405,12 +1420,12 @@ theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x :
 
 end
 
-theorem inlinesRaw_images_nil (is : Array (String × String)) (xs : Array Inline) :
+theorem inlinesRaw_images_nil (is : Array (String × Alt)) (xs : Array Inline) :
     imagesList is (inlinesRaw #[] xs.toList).toList = foldInlineList imageAltPush is xs.toList := by
   rw [inlinesRaw_images]
   rfl
 
-theorem titleRaw_images (is : Array (String × String)) (title : Array Inline) :
+theorem titleRaw_images (is : Array (String × Alt)) (title : Array Inline) :
     imagesList is (titleRaw title).toList = foldInlineList imageAltPush is title.toList := by
   unfold titleRaw
   split
@@ -1420,7 +1435,7 @@ theorem titleRaw_images (is : Array (String × String)) (title : Array Inline) :
   · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
     exact inlinesRaw_images_nil is title
 
-theorem captionRaw_images (is : Array (String × String)) (caption : Array Inline) :
+theorem captionRaw_images (is : Array (String × Alt)) (caption : Array Inline) :
     imagesList is (captionRaw caption).toList = foldInlineList imageAltPush is caption.toList := by
   unfold captionRaw
   split
@@ -1430,7 +1445,7 @@ theorem captionRaw_images (is : Array (String × String)) (caption : Array Inlin
   · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
     exact inlinesRaw_images_nil is caption
 
-theorem cellsRaw_images (is : Array (String × String)) (out : Array Node)
+theorem cellsRaw_images (is : Array (String × Alt)) (out : Array Node)
     (cells : List (Array Inline)) :
     imagesList is (cellsRaw out cells).toList
       = foldTableCells imageAltPush (imagesList is out.toList) cells := by
@@ -1441,7 +1456,7 @@ theorem cellsRaw_images (is : Array (String × String)) (out : Array Node)
     simp only [imagesOne_node_exact]
     rw [inlinesRaw_images_nil]
 
-theorem rowsRaw_images (is : Array (String × String)) (out : Array Node)
+theorem rowsRaw_images (is : Array (String × Alt)) (out : Array Node)
     (rows : List (Array (Array Inline))) :
     imagesList is (rowsRaw out rows).toList
       = foldTableRows imageAltPush (imagesList is out.toList) rows := by
@@ -1453,7 +1468,7 @@ theorem rowsRaw_images (is : Array (String × String)) (out : Array Node)
     rw [cellsRaw_images]
     rfl
 
-theorem bibRaw_images (is : Array (String × String)) (out : Array Node) (items : List BibItem) :
+theorem bibRaw_images (is : Array (String × Alt)) (out : Array Node) (items : List BibItem) :
     imagesList is (bibRaw out items).toList = imagesList is out.toList := by
   induction items generalizing out with
   | nil => rfl
@@ -1462,7 +1477,7 @@ theorem bibRaw_images (is : Array (String × String)) (out : Array Node) (items 
     simp [imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus, imagesList_nil_exact,
       imagesList_cons_exact]
 
-theorem algRaw_images (is : Array (String × String)) (out : Array Node) (lines : List AlgLine) :
+theorem algRaw_images (is : Array (String × Alt)) (out : Array Node) (lines : List AlgLine) :
     imagesList is (algRaw out lines).toList
       = foldAlgLines imageAltPush (imagesList is out.toList) lines := by
   induction lines generalizing out with
@@ -1475,7 +1490,7 @@ theorem algRaw_images (is : Array (String × String)) (out : Array Node) (lines 
 
 mutual
 
-theorem blocksRaw_images (is : Array (String × String)) (out : Array Node) (bs : List Block) :
+theorem blocksRaw_images (is : Array (String × Alt)) (out : Array Node) (bs : List Block) :
     imagesList is (blocksRaw out bs).toList
       = foldBlockList (fun out _ => out) imageAltPush (imagesList is out.toList) bs := by
   match bs with
@@ -1484,7 +1499,7 @@ theorem blocksRaw_images (is : Array (String × String)) (out : Array Node) (bs 
     rw [blocksRaw, blocksRaw_images is (blockRaw out b) rest, blockRaw_images is out b,
       foldBlockList]
 
-theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : Block) :
+theorem blockRaw_images (is : Array (String × Alt)) (out : Array Node) (b : Block) :
     imagesList is (blockRaw out b).toList
       = foldBlock (fun out _ => out) imageAltPush (imagesList is out.toList) b := by
   match b with
@@ -1570,8 +1585,8 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
   | .setPalette pal => rfl
   | .setTokens tk => rfl
   | .rule c n th => rfl
-  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact,
-    Leaf.imageCensus, imagesList_nil_exact, imagesList_cons_exact, foldBlock]
+  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
+    foldBlock]
   | .table cols pl pr rows rules spans =>
     simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
     rw [rowsRaw_images]
@@ -1583,7 +1598,7 @@ theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : 
     simp only [blockRaw, foldBlock]
     exact bibRaw_images is out items.toList
 
-theorem itemsRaw_images (is : Array (String × String)) (out : Array Node)
+theorem itemsRaw_images (is : Array (String × Alt)) (out : Array Node)
     (items : List (Array Block)) :
     imagesList is (itemsRaw out items).toList
       = foldBlockItems (fun out _ => out) imageAltPush (imagesList is out.toList) items := by
@@ -1595,7 +1610,7 @@ theorem itemsRaw_images (is : Array (String × String)) (out : Array Node)
     rw [blocksRaw_images]
     rfl
 
-theorem colsRaw_images (is : Array (String × String)) (out : Array Node)
+theorem colsRaw_images (is : Array (String × Alt)) (out : Array Node)
     (cols : List (BoxWidth × Array Block)) :
     imagesList is (colsRaw out cols).toList
       = foldBlockCols (fun out _ => out) imageAltPush (imagesList is out.toList) cols := by
@@ -1608,7 +1623,7 @@ end
 
 mutual
 
-theorem numberList_images (is : Array (String × String)) (k : Nat) (out : Array Node)
+theorem numberList_images (is : Array (String × Alt)) (k : Nat) (out : Array Node)
     (ns : List Node) :
     imagesList is (numberList k out ns).1.toList
       = imagesList (imagesList is out.toList) ns := by
@@ -1618,7 +1633,7 @@ theorem numberList_images (is : Array (String × String)) (k : Nat) (out : Array
     rw [numberList, imagesList_cons_exact, numberList_images is _ _ rest, imagesList_push,
       numberOne_images]
 
-theorem numberOne_images (is : Array (String × String)) (k : Nat) (n : Node) :
+theorem numberOne_images (is : Array (String × Alt)) (k : Nat) (n : Node) :
     imagesOne is (numberOne k n).1 = imagesOne is n := by
   match n with
   | .leaf id l => rfl

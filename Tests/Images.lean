@@ -340,7 +340,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        match inner.toList with
        | [.para xs] =>
          (xs.any fun x => match x with
-           | .image "rects.png" _ alt => alt == "A mark"
+           | .image "rects.png" _ alt => alt == .described "A mark"
            | _ => false) &&
          Ir.plainText cap == "A mark"
        | _ => false

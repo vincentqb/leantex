@@ -4215,6 +4215,16 @@ theorem figureWord_contract (loc : Locale) : nonBlank (figureWord loc) = true :=
 def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
   (attrs.find? (·.1 == k)).map (·.2)
 
+/-- An `<img>`'s alternative, a function of its one `Alt` by construction.
+Described, `alt` the text (WCAG 2.2 technique H37); decorative, `alt=""`
+with `role="presentation"`, the declared decorative role the page judge
+reads (`a11yElem`); undeclared, `alt=""` — what the engine has always
+shipped there, kept, and named by W0376 instead. -/
+def imgAltAttrs : Ir.Alt → Array (String × String)
+  | .described t => #[("alt", t)]
+  | .decorative => #[("alt", ""), ("role", "presentation")]
+  | .undeclared => #[("alt", "")]
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -4247,7 +4257,10 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- by what it is (`figureWord`); the loss's own code is the fulfilment's
     -- to carry, and `Image.Loaded` keeps none.
     let alt := if src.startsWith Ir.picSrcPrefix && info?.isNone then
-        firstNonBlank alt (figureWord cfg.locale) else alt
+        (match alt with
+          | .undeclared => .described (figureWord cfg.locale)
+          | .decorative => .decorative
+          | .described t => .described t) else alt
     -- The link names the copy published beside the page (`imageHref`) —
     -- or, for an entry that ships none, the file on disk: a bare graphicx
     -- name resolved to a file with an extension must name that file, not
@@ -4307,7 +4320,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
             else
               s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
         else none
-    let attrs := #[("src", href), ("alt", alt)] ++
+    let attrs := #[("src", href)] ++ imgAltAttrs alt ++
       (match info? with
        | some inf =>
          let (pw, ph) := intrinsicPx inf
@@ -5290,11 +5303,12 @@ reading (`Ir.Pic.Picture.said`), which the image of a picture drawn at the
 boundary carries as its text alternative too. -/
 def pictureSaid (pic : Ir.Pic.Picture) : String := pic.said
 
-/-- What a picture says in words: its labels (`pictureSaid`) — the text a
-sighted reader sees in the drawing. With none, the picture is named by what
-it is (`figureWord`), so the name is never blank (`pictureName_contract`). -/
+/-- What a picture says in words to a reader of the page: the alternative it
+resolves to (`Ir.Pic.Picture.alternative` — the author's words, else its
+labels'), and with none, what it is (`figureWord`), so the name is never
+blank (`pictureName_contract`). -/
 def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=
-  firstNonBlank (pictureSaid pic) (figureWord loc)
+  firstNonBlank pic.alternative.text (figureWord loc)
 
 theorem pictureName_contract (loc : Locale) (pic : Ir.Pic.Picture) :
     nonBlank (pictureName loc pic) = true :=
@@ -5364,14 +5378,32 @@ handout card that never scrolls, and carries neither. -/
 def stageAttrs (deck : Bool) (name : String) : Array (String × String) :=
   if deck then #[("tabindex", "0"), ("aria-label", name)] else #[]
 
-/-- The picture's role and name. `role="img"` makes the SVG one image to
-assistive technology — its children presentational (WAI-ARIA 1.2 §5.3), so
-the label `<text>` a sighted reader sees is not read out — and the name
-(`pictureName`) hands those words back. A refused picture's placeholder
+/-- **`html_picture_name_projects`** (the `_projects` statement, by
+construction): an inline `<svg>`'s role and name are a function of the
+picture's one alternative. Described, `role="img"` — its children
+presentational (WAI-ARIA 1.2 §5.3), so the label `<text>` a sighted reader
+sees is not read out twice — and `aria-label` the text; decorative,
+`aria-hidden="true"`, out of the accessibility tree; undeclared, `role="img"`
+named by what it is (`floor`, `figureWord`), the name the svg fact asks
+of every picture a reader is handed. A refused picture's placeholder
 carries the code of its loss as its one label (`Picture.placeholder`), so
-its name names the loss: a placeholder is never decorative. -/
+it resolves described by that code: a placeholder is never decorative. -/
+def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String)
+  | .described t => #[("role", "img"), ("aria-label", firstNonBlank t floor)]
+  | .decorative => #[("aria-hidden", "true")]
+  | .undeclared => #[("role", "img"), ("aria-label", floor)]
+
+/-- The picture's role and name (`pictureAltAttrs` over its resolved
+alternative) and its class hook. -/
 def pictureRole (loc : Locale) (pic : Ir.Pic.Picture) : Array (String × String) :=
-  #[("role", "img"), ("aria-label", pictureName loc pic), ("class", "picture")]
+  pictureAltAttrs (figureWord loc) pic.alternative ++ #[("class", "picture")]
+
+/-- **The svg's role and name project the one IR value** (`_projects`):
+`Ir.Pic.Picture.alternative`, the value the PDF's picture leaf carries too
+(`Struct.picture_leaf_projects`). -/
+theorem html_picture_name_projects (loc : Locale) (pic : Ir.Pic.Picture) :
+    pictureRole loc pic =
+      pictureAltAttrs (figureWord loc) pic.alternative ++ #[("class", "picture")] := rfl
 
 /-- The box a picture's SVG declares: the IR's one box under the driver's
 label measurement (`Ir.Pic.Picture.box`) — the declared box exactly, else
@@ -5401,8 +5433,10 @@ theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture) :
       | .elem _ attrs _ => attrOf? attrs "overflow"
       | _ => none) = some "visible" := by
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
-  simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, pictureRole, attrOf?]
-  split <;> (try split) <;> simp
+  rcases ha : pic.alternative with _ | _ | t <;>
+    simp [pictureSvg, pictureBoxOf, h, ha, Html.elem, pictureBox, pictureRole, pictureAltAttrs,
+      attrOf?] <;>
+    split <;> (try split) <;> simp
 
 /-- **The SVG's box is the IR's box** (`_projects`): the `viewBox` a
 picture's SVG declares spans `Ir.Pic.Picture.box` under the configured
@@ -6090,7 +6124,7 @@ def hidesTabStop : Node → Bool
 /-- A logo's content as decoration: every image's `alt` blank. -/
 private def logoDecoration (content : Array Inline) : Array Inline :=
   Ir.mapInlines (fun x => match x with
-    | .image src size _ => .image src size ""
+    | .image src size _ => .image src size .undeclared
     | x => x) content
 
 /-- A logo's box. A logo is decorative furniture by role
@@ -6814,19 +6848,25 @@ def schemeFailures (own : Bool) (imgs : Image.Store) (doc : Doc) : List (String 
       ((themePairs (schemeColors doc base)).filter fun p =>
           Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (scheme, p.1)
 
-/-- **Every picture the backend emits is named** (`_contract`): the
-`.picture` arm — the one site that builds an `<svg>` — ships an `svg`
-element whose own markup carries a non-empty accessible name, whatever the
-picture and configuration. A fact of the artifact, not the IR: the IR's
-picture carries no text alternative (`Struct.Leaf.picture`), and naming it
-by its own words is this backend's projection of what the drawing shows.
-`htmlA11yChecks` holds the whole-page form over the shipped corpus. -/
+/-- **Every picture the backend emits is named or hidden** (`_contract`):
+the `.picture` arm — the one site that builds an `<svg>` — ships an `svg`
+element that is out of the accessibility tree exactly when the picture is
+decoration, and otherwise carries a non-empty accessible name in its own
+markup, whatever the picture and configuration. `htmlA11yChecks` holds the
+whole-page form over the shipped corpus. -/
 theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) :
     (blockNode cfg (.picture pic)).tag? = some "svg" ∧
-      carriesName (blockNode cfg (.picture pic)) = true := by
+      (pic.alternative ≠ .decorative → carriesName (blockNode cfg (.picture pic)) = true) := by
   rcases h : pictureBoxOf cfg pic with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
-  simp [blockNode, pictureSvg, h, Html.elem, Node.tag?, carriesName, pictureRole,
-    pictureName_contract]
+  refine ⟨by simp [blockNode, pictureSvg, h, Html.elem, Node.tag?], fun hd => ?_⟩
+  cases ha : pic.alternative with
+  | decorative => exact absurd ha hd
+  | described t =>
+    simp [blockNode, pictureSvg, h, Html.elem, carriesName, pictureRole, pictureAltAttrs, ha,
+      firstNonBlank_contract _ _ (figureWord_contract cfg.locale)]
+  | undeclared =>
+    simp [blockNode, pictureSvg, h, Html.elem, carriesName, pictureRole, pictureAltAttrs, ha,
+      figureWord_contract]
 
 /-- **Every deck stage the backend emits is reachable** (`_contract`): on
 the paged deck the frame arm's `section` — a scroll container by

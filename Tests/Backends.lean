@@ -204,7 +204,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.markerCss? #[.styled .bold #[.text "»"]] ==
       some { text := "»", decls := #["font-weight: 600;"] })
   t "markerCss? refuses an image marker"
-    (HtmlDoc.markerCss? #[.image "rects.png" {} ""] == none)
+    (HtmlDoc.markerCss? #[.image "rects.png" {} .undeclared] == none)
   t "markerCss? refuses a link marker"
     (HtmlDoc.markerCss? #[.link "https://example.org" #[.text "x"]] == none)
   t "markerCss? refuses a wrapper beside text"
@@ -3963,11 +3963,11 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let tree : Struct.Tree := { children := #[
     .node (.heading 0) #[.leaf 0 (.text "Title")],
     .node .paragraph #[.leaf 1 (.text "Read "), .node (.link "https://example.org") #[.leaf 2 (.text "this")],
-      .leaf 3 (.image "a.png" "An image"), .node .formula #[.leaf 4 (.text "x")]],
+      .leaf 3 (.image "a.png" (.described "An image")), .node .formula #[.leaf 4 (.text "x")]],
     .node (.list false) #[.node .item #[.node .label #[], .node .body #[.node .paragraph #[.leaf 5 (.text "item")]]]],
     .node .aside #[.node .paragraph #[.leaf 6 (.text "speaker")]],
     .node .bibEntry #[.leaf 7 (.text "[1] A")], .node .bibEntry #[.leaf 8 (.text "[2] B")],
-    .node .figure #[.node .caption #[.leaf 9 (.text "Cap")], .node .paragraph #[.leaf 10 (.image "b.png" "")]],
+    .node .figure #[.node .caption #[.leaf 9 (.text "Cap")], .node .paragraph #[.leaf 10 (.image "b.png" .undeclared)]],
     .node .code #[.leaf 11 (.text "code")] ] }
   let sk := Pdf.skeleton tree
   let names := sk.map (·.s)

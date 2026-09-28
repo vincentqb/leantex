@@ -163,6 +163,21 @@ def bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat)
   let (es, lb) := pushElem es li { s := "LBody" }
   (es, l, lb)
 
+/-- The `Figure` an image or picture leaf's alternative projects to. -/
+def figureElem (k : Nat) (alt : Option String) : StructElem :=
+  { s := structTypeOf .figure, kids := #[.leaf k], alt := alt }
+
+/-- The one projection of a non-text leaf's alternative into the structure
+tree (ISO 32000-2 §14.8.4.8.5 Figure, §14.9.3 alternate descriptions,
+§14.8.2.2 artifacts): described, a `Figure` with `/Alt`; undeclared, a
+`Figure` without — the honest failure a checker names; decorative, no
+element, so no element holds the leaf and the content stream marks its ink
+`/Artifact` (`PdfContent.Origin.of`), latex-lab's `artifact`. -/
+def altElem (es : Array StructElem) (parent k : Nat) : Ir.Alt → Array StructElem
+  | .described t => (pushElem es parent (figureElem k (some t))).1
+  | .undeclared => (pushElem es parent (figureElem k none)).1
+  | .decorative => es
+
 mutual
 
 /-- The elements of a node list under `parent`, text leaves landing in
@@ -175,11 +190,10 @@ def skelList (es : Array StructElem) (parent holder : Nat) (inline : Bool)
     let r := skelStep es parent holder inline openList n
     skelList r.1 parent holder inline r.2 rest
 
-/-- One node, with the list the next reference entry may join. A text,
-break or picture leaf is a placeholder in its holder; an image leaf is its
-own `Figure`, with `/Alt` exactly when the document gave one (an empty
-alternative is no alternative — the figure fails honestly rather than
-hiding); a speaker note (`.aside`) is not page content and emits nothing;
+/-- One node, with the list the next reference entry may join. A text or
+break leaf is a placeholder in its holder; an image or picture leaf
+projects its one alternative (`altElem`); a speaker note (`.aside`) is not
+page content and emits nothing;
 a label (`.label`: a list marker, an equation number) is transparent while
 the page attributes at line granularity — its ink rides the line of the
 body it decorates, and an empty `Lbl` would demand a `ListNumbering` the
@@ -193,10 +207,8 @@ def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Bool)
     match l with
     | .text _ => (addKid es holder (.leaf k), none)
     | .linebreak => (addKid es holder (.leaf k), none)
-    | .picture => (addKid es holder (.leaf k), none)
-    | .image _ alt =>
-      ((pushElem es parent { s := structTypeOf .figure, kids := #[.leaf k],
-                             alt := if alt.isEmpty then none else some alt }).1, none)
+    | .picture alt => (altElem es parent k alt, none)
+    | .image _ alt => (altElem es parent k alt, none)
   | .node kind kids =>
     match kind with
     | .aside => (es, none)
@@ -368,6 +380,23 @@ theorem headingsOf_addKid (es : Array StructElem) (holder : Nat) (k : StructKid)
     headingsOf (addKid es holder k) = headingsOf es :=
   headingsOf_modify _ _ _ (fun _ => rfl)
 
+theorem headingsOf_altElem (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
+    headingsOf (altElem es parent k a) = headingsOf es := by
+  cases a <;> simp [altElem, headingsOf_pushElem, figureElem]
+
+/-- **`pdf_alt_projects`** (the `_projects` statement): the element a
+non-text leaf gets is a function of its one alternative — a described one
+the last element pushed, a `Figure` under `parent` holding the leaf with
+`/Alt` its text; an undeclared one the same `Figure` with no `/Alt`; a
+decorative one no element at all. -/
+theorem pdf_alt_projects (es : Array StructElem) (parent k : Nat) :
+    (∀ t, (altElem es parent k (.described t)).back? =
+        some { figureElem k (some t) with parent := some parent }) ∧
+    (altElem es parent k .undeclared).back? =
+        some { figureElem k none with parent := some parent } ∧
+    altElem es parent k .decorative = es := by
+  refine ⟨fun t => ?_, ?_, rfl⟩ <;> simp [altElem, pushElem]
+
 theorem headingsOf_bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
     headingsOf (bibEntryElems es parent openList).1 = headingsOf es := by
   unfold bibEntryElems
@@ -403,7 +432,7 @@ theorem skelStep_headings : ∀ (n : Struct.Node) (es : Array StructElem) (paren
     headingsOf (skelStep es parent holder inline openList n).1
       = headingsOf es ++ (Struct.headingsOne #[] n).toList
   | .leaf k l, es, parent, holder, inline, openList => by
-    cases l <;> simp [skelStep, headingsOf_addKid, headingsOf_pushElem,
+    cases l <;> simp [skelStep, headingsOf_addKid, headingsOf_altElem,
       Struct.headingsOne_leaf_exact]
   | .node kind kids, es, parent, holder, inline, openList => by
     cases kind
@@ -551,17 +580,18 @@ theorem leafKids_pushElem (es : Array StructElem) (parent : Nat) (e : StructElem
 
 /-! ### The leaf census of the skeleton -/
 
-/-- The leaf ids the skeleton walk reaches, in preorder: every leaf outside a
-speaker note. The descent is the engine's own classifier — `skelStep` emits
-nothing at all for `.aside`, which is exactly what `Kind.outlineDescends`
-says — so this is the walk's census and not a transcription of it. -/
+/-- The leaf ids the skeleton walk reaches, in preorder: every leaf an
+element holds (`Struct.Leaf.held`) outside a speaker note. The descent is
+the engine's own classifier — `skelStep` emits nothing at all for `.aside`,
+which is exactly what `Kind.outlineDescends` says — so this is the walk's
+census and not a transcription of it. -/
 def skelLeafFold : Struct.NodeFold (Array Nat) where
-  leaf := fun out id _ => out.push id
+  leaf := fun out id l => if l.held then out.push id else out
   enter := fun out _ => out
   descends := Struct.Kind.outlineDescends
 
 theorem skelLeafAppends : Struct.Appends skelLeafFold where
-  leaf := by intro out id l; simp [skelLeafFold]
+  leaf := by intro out id l; cases h : l.held <;> simp [skelLeafFold, h]
   enter := by intro out kind; simp [skelLeafFold]
 
 def skelLeafIds (l : List Struct.Node) : Array Nat := Struct.foldNodeList skelLeafFold #[] l
@@ -577,7 +607,8 @@ theorem skelLeafIds_cons (n : Struct.Node) (l : List Struct.Node) :
   rfl
 
 theorem skelLeafIdsOne_leaf (k : Nat) (l : Struct.Leaf) :
-    skelLeafIdsOne (.leaf k l) = #[k] := rfl
+    skelLeafIdsOne (.leaf k l) = if l.held then #[k] else #[] := by
+  cases h : l.held <;> simp [skelLeafIdsOne, Struct.foldNode_leaf_exact, skelLeafFold, h]
 
 theorem skelLeafIdsOne_node (kind : Struct.Kind) (kids : Array Struct.Node) :
     skelLeafIdsOne (.node kind kids)
@@ -592,6 +623,10 @@ theorem size_le_addKid (es : Array StructElem) (holder : Nat) (k : StructKid) :
 
 theorem size_le_pushElem (es : Array StructElem) (parent : Nat) (e : StructElem) :
     es.size < (pushElem es parent e).1.size := by simp [pushElem]
+
+theorem size_le_altElem (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
+    es.size ≤ (altElem es parent k a).size := by
+  cases a <;> simp [altElem, pushElem]
 
 theorem bibEntryElems_lb_lt (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
     (bibEntryElems es parent openList).2.2 < (bibEntryElems es parent openList).1.size := by
@@ -621,7 +656,7 @@ theorem size_le_skelStep : ∀ (n : Struct.Node) (es : Array StructElem)
     cases l <;> simp only [skelStep] <;>
       first
         | exact size_le_addKid es holder _
-        | exact Nat.le_of_lt (size_le_pushElem es parent _)
+        | exact size_le_altElem es parent k _
   | .node kind kids, es, parent, holder, inline, openList => by
     cases kind
     case aside => simp [skelStep]
@@ -649,6 +684,13 @@ theorem leafKids_bibEntryElems (es : Array StructElem) (parent : Nat) (openList 
 theorem leafKids_pushElem_empty (es : Array StructElem) (parent : Nat) (e : StructElem)
     (h : e.kids = #[]) : leafKids (pushElem es parent e).1 = leafKids es := by
   rw [leafKids_pushElem, leafIdsOf_of_kids_empty e h, List.append_nil]
+
+/-- A non-text leaf's element holds it exactly when the leaf is held
+(`Struct.Leaf.held`): a decorative one adds no element and no leaf. -/
+theorem leafKids_altElem (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
+    leafKids (altElem es parent k a) =
+      leafKids es ++ (if (Struct.Leaf.picture a).held then [k] else []) := by
+  cases a <;> simp [altElem, leafKids_pushElem, figureElem, leafIdsOf, Struct.Leaf.held]
 
 mutual
 
@@ -678,10 +720,19 @@ theorem skelStep_leafKids : ∀ (n : Struct.Node) (es : Array StructElem)
     (leafKids (skelStep es parent holder inline openList n).1).Perm
       (leafKids es ++ (skelLeafIdsOne n).toList)
   | .leaf k l, es, parent, holder, inline, openList, hh => by
-    cases l <;> simp only [skelStep, skelLeafIdsOne_leaf] <;>
-      first
-        | exact leafKids_addKid_leaf es holder k hh
-        | (rw [leafKids_pushElem]; simp [leafIdsOf])
+    cases l with
+    | text s =>
+      simpa [skelStep, skelLeafIdsOne_leaf, Struct.Leaf.held] using
+        leafKids_addKid_leaf es holder k hh
+    | linebreak =>
+      simpa [skelStep, skelLeafIdsOne_leaf, Struct.Leaf.held] using
+        leafKids_addKid_leaf es holder k hh
+    | image src a =>
+      simp only [skelStep, skelLeafIdsOne_leaf, leafKids_altElem]
+      cases a <;> simp [Struct.Leaf.held]
+    | picture a =>
+      simp only [skelStep, skelLeafIdsOne_leaf, leafKids_altElem]
+      cases a <;> simp [Struct.Leaf.held]
   | .node kind kids, es, parent, holder, inline, openList, hh => by
     cases kind
     case aside => simp [skelStep, skelLeafIdsOne_node, Struct.Kind.outlineDescends]
@@ -729,7 +780,9 @@ theorem skelLeafIds_sublist : ∀ (l : List Struct.Node),
 theorem skelLeafIdsOne_sublist : ∀ (n : Struct.Node),
     (skelLeafIdsOne n).toList.Sublist ((Struct.leavesOne #[] n).toList.map Prod.fst)
   | .leaf k l => by
-    simp [skelLeafIdsOne_leaf, Struct.leavesOne, Struct.foldNode_leaf_exact, Struct.leavesFold]
+    cases h : l.held <;>
+      simp [skelLeafIdsOne_leaf, h, Struct.leavesOne, Struct.foldNode_leaf_exact,
+        Struct.leavesFold]
   | .node kind kids => by
     rw [skelLeafIdsOne_node]
     have hleaves : Struct.leavesOne #[] (.node kind kids)

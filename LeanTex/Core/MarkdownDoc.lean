@@ -42,7 +42,7 @@ private def inlineInto (acc : String) : Inline → String
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
   -- the alt text rides as markdown's own image construct; the size
   -- request degrades like colour
-  | .image src _ alt => acc ++ s!"![{alt}]({src})"
+  | .image src _ alt => acc ++ s!"![{alt.text}]({src})"
   -- an icon's markdown spelling is its text alternative: prose keeps the
   -- meaning, the glyph is a web/print rendering
   | .icon _ label =>

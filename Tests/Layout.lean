@@ -5522,7 +5522,7 @@ def ownerOf (r : LeafRow) : Option Struct.Kind := (r.path.filter ownerKind).getL
 /-- A leaf the PDF path deliberately ships no text for, by kind. -/
 def unshippedKind (r : LeafRow) : Bool :=
   r.path.any (fun k => k matches .aside | .nav | .artifact | .formula)
-    || (r.leaf matches .picture | .image _ _ | .linebreak)
+    || (r.leaf matches .picture _ | .image _ _ | .linebreak)
 
 def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do

@@ -6030,7 +6030,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("\\node at (0,0) {Alpha};\\node at (2,0) {Beta};" ++
       "\\draw[rounded corners] (0,0) rectangle (3,1);"))
   let altOf (d : Ir.Doc) : Array String := d.body.filterMap fun b => match b with
-    | .para #[.image s _ alt] => if s.startsWith Ir.picSrcPrefix then some alt else none
+    | .para #[.image s _ alt] => if s.startsWith Ir.picSrcPrefix then some alt.text else none
     | _ => none
   let judged (d : Ir.Doc) : Nat := (Ir.picAltDiags d (fun _ => none) (fun _ => true)).size
   t "a routed picture's image is named by its labels"

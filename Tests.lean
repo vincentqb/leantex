@@ -415,6 +415,7 @@ def main (args : List String) : IO UInt32 := do
   monoSlotChecks ref
   structChecks ref
   ctxFoldChecks ref
+  pictureAltChecks ref
   pictureElabChecks ref
   diagVoiceChecks ref update
   allowChecks ref

@@ -275,6 +275,33 @@ theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Pict
     Layout.pictureBox geom fs {} (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
       HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic := rfl
 
+/-- **The two artifacts carry one text for a non-text object** (`_agree`):
+whatever text a `Figure` carries as `/Alt` (`altElem`, the PDF's projection
+of the object's `Ir.Alt`), the HTML names the object by that same text — an
+svg's `aria-label`, an img's `alt` — because both project the one value
+(for a picture, `Ir.Pic.Picture.alternative`: the author's words, else its
+labels'). -/
+theorem alt_text_agree (floor : String) (a : Ir.Alt) (t : String)
+    (ht : HtmlDoc.nonBlank t = true)
+    (h : (altElem #[rootElem] 0 0 a).back?.bind (·.alt) = some t) :
+    HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-label" = some t ∧
+      HtmlDoc.attrOf? (HtmlDoc.imgAltAttrs a) "alt" = some t := by
+  cases a with
+  | described s =>
+    simp [altElem, pushElem, figureElem] at h
+    subst h
+    simp [HtmlDoc.pictureAltAttrs, HtmlDoc.imgAltAttrs, HtmlDoc.attrOf?, HtmlDoc.firstNonBlank, ht]
+  | undeclared => simp [altElem, pushElem, figureElem] at h
+  | decorative => simp [altElem, rootElem] at h
+
+/-- **The two artifacts hide the same objects** (`_agree`): the PDF adds no
+element for a non-text object — its ink an artifact — exactly when the HTML
+takes its svg out of the accessibility tree. -/
+theorem alt_hidden_agree (floor : String) (a : Ir.Alt) :
+    (altElem #[rootElem] 0 0 a).size = 1 ↔
+      HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-hidden" = some "true" := by
+  cases a <;> simp [altElem, pushElem, HtmlDoc.pictureAltAttrs, HtmlDoc.attrOf?]
+
 /-- **Both artifacts' font decisions are projections of one policy value**
 (`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
 `shipFonts` is the spelling `doc.fontPolicy == .embedded`, and the HTML's

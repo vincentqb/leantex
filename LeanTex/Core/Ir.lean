@@ -2562,6 +2562,46 @@ def Style.weight? : Style → Option Weight
   | .normal => some .m
   | _ => none
 
+/-- The text alternative a non-text object declares (WCAG 2.2 SC 1.1.1;
+ISO 32000-2 §14.9.3; the LaTeX Tagging Project's `alt=`/`artifact` keys).
+Three states, never a string: an empty string cannot say whether nothing
+was said or the object is decoration. -/
+inductive Alt where
+  | undeclared
+  | decorative
+  | described (text : String)
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The one site that builds a described alternative from text: blank text
+is nothing said, so `alt=` and `alt={ }` stay `.undeclared`. -/
+def Alt.declare (s : String) : Alt :=
+  if s.trimAscii.toString.isEmpty then .undeclared else .described s.trimAscii.toString
+
+/-- The text a described alternative carries, `""` for the other two: what
+a reader with only a string to fill (a link's reading, markdown) takes. -/
+def Alt.text : Alt → String
+  | .described t => t
+  | .undeclared | .decorative => ""
+
+/-- An alternative as the IR dump spells it after its node: nothing when
+undeclared, so a document that declares none dumps as it always did. -/
+def Alt.dumpSuffix : Alt → String
+  | .undeclared => ""
+  | .decorative => " artifact"
+  | .described t => s!" alt {t.quote}"
+
+/-- No described alternative reads as nothing: `declare` refuses blank
+text. -/
+theorem Alt.declare_nonempty (s t : String) (h : Alt.declare s = .described t) :
+    ¬ t.isEmpty := by
+  unfold Alt.declare at h
+  split at h
+  · cases h
+  · rename_i hne
+    injection h with h
+    subst h
+    exact hne
+
 inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
@@ -2653,9 +2693,10 @@ inductive Inline where
   /-- An external image (`\includegraphics`, and what a `figure` or a deck
   logo reduces to): a box of raster content. `src` is the path as written —
   the file itself is the driver's effect, surfaced through `imageRefs` and
-  fulfilled as an `Image.Store` — and `alt` is the accessible text (a
-  figure's caption), for the HTML backend. -/
-  | image (src : String) (size : Image.SizeSpec) (alt : String)
+  fulfilled as an `Image.Store` — and `alt` is the text alternative the
+  author declared (`alt={...}`, `artifact`, or a figure's caption filled in
+  by `setAltBlocks`), the one value both backends project. -/
+  | image (src : String) (size : Image.SizeSpec) (alt : Alt)
   /-- An icon (`\faGithub`, `\faIcon{arrow-up}` — the spellings the
   fontawesome5 package defines): one glyph in an icon face, resolved like
   any other scalar through the per-scalar fallback chain, so a document
@@ -3167,6 +3208,10 @@ structure Picture where
   §12.2.1: a length, a coordinate or a node anchor; the bare key is 0pt).
   Otherwise the box's bottom edge stands on the baseline. -/
   baseline : Option Sp := none
+  /-- The alternative the author declared on the picture (`alt={...}` or
+  `artifact` in its option list, latex-lab-tikz's keys); the one a reader
+  gets is `alternative`, which falls back to the picture's own words. -/
+  alt : Alt := .undeclared
   deriving Repr, BEq, Inhabited
 
 def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
@@ -7163,6 +7208,27 @@ def Pic.Picture.said (pic : Pic.Picture) : String :=
     let s := plainText content
     if s.toList.any (!·.isWhitespace) then some s.trimAscii.toString else none)
 
+/-- The alternative a reader of either artifact gets for a picture, resolved
+once: what the author declared, else the words its own labels set
+(`said`) — latex-lab-tikz's default for a picture given no key hands a
+reader exactly its text — else nothing said. Both backends read this one
+value (`HtmlDoc.pictureRole`, `Struct`'s picture leaf). -/
+def Pic.Picture.alternative (pic : Pic.Picture) : Alt :=
+  match pic.alt with
+  | .undeclared => Alt.declare pic.said
+  | .decorative => .decorative
+  | .described t => .described t
+
+/-- A declaration outranks the picture's words: the resolution changes only
+what the author left undeclared. -/
+theorem Pic.Picture.alternative_fixed_point (pic : Pic.Picture) (h : pic.alt ≠ .undeclared) :
+    pic.alternative = pic.alt := by
+  unfold Pic.Picture.alternative
+  cases hp : pic.alt with
+  | undeclared => exact absurd hp h
+  | decorative => rfl
+  | described _ => rfl
+
 /-- A role is a name around content, never content: the census reads
 straight through it, so no annotation can add or hide a character. -/
 theorem role_plaintext (n : String) (body : Array Inline) :
@@ -8115,8 +8181,7 @@ def dumpInline (ind : String) (x : Inline) : String :=
       (match size.height with | some l => dim "height" l | none => "") ++
       (if size.scaleNum != 1 || size.scaleDen != 1 then
         s!" scale {size.scaleNum}/{size.scaleDen}" else "") ++
-      (if size.keepAspect then " keepaspect" else "") ++
-      (if alt.isEmpty then "" else s!" alt {alt.quote}")
+      (if size.keepAspect then " keepaspect" else "") ++ alt.dumpSuffix
     s!"{ind}image {src.quote}{parts}\n"
   | .icon c label =>
     s!"{ind}icon {(String.ofList [c]).quote} label {label.quote}\n"
@@ -8314,7 +8379,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     -- the picture declared, and each node border its natural box counts.
     let boxS := fun (b : Pic.Box) =>
       s!"{b.1.1.toPtString} {b.1.2.toPtString} {b.2.1.toPtString} {b.2.2.toPtString}"
-    s!"{ind}picture {pic.shapes.size} shapes\n" ++
+    s!"{ind}picture {pic.shapes.size} shapes{pic.alt.dumpSuffix}\n" ++
     (match pic.declared with
       | some b => s!"{ind}  declared {boxS b}\n"
       | none => "") ++
@@ -12406,14 +12471,16 @@ def logoImageSrcs (doc : Doc) : Array String :=
   match doc.logoRight with | some r => imageSrcsInlines out r | none => out
 
 /-- One image node's contribution to the no-alternative census: an
-`.image` whose `alt` is empty, its `src` collected once. A leaf
+`.image` whose `alt` is `.undeclared`, its `src` collected once — a
+`.decorative` image is the conforming state (WCAG 2.2 SC 1.1.1: pure
+decoration, implemented so assistive technology can ignore it). A leaf
 projection of the shared fold — the fold recurses, so this leaf reads
 only the node itself; `imageSrcPush`'s shape. -/
 private def sansAltStep (out : Array String)
     (x : Inline) : Array String :=
   match x with
   | .image src _ alt =>
-    if alt.isEmpty && !out.contains src then out.push src else out
+    if alt == .undeclared && !out.contains src then out.push src else out
   | _ => out
 
 /-- Every image the artifacts ship with no text alternative, deduplicated,
@@ -12508,7 +12575,7 @@ SC 2.4.4 takes a link's purpose from its link text, and technique H30
 names the `alt` of an image inside the link as that text. -/
 def linkReading (body : Array Inline) : String :=
   foldInlines
-    (fun s x => match x with | .image _ _ alt => s ++ alt | _ => s)
+    (fun s x => match x with | .image _ _ alt => s ++ alt.text | _ => s)
     (plainText body) body
 
 /-- One link node's contribution to the no-text census: a `.link` whose
@@ -13107,6 +13174,21 @@ theorem mapBlocks_text (f : Inline → Inline)
   rw [mapBlockList_text f hf xs.toList #[]]
   rfl
 
+/-- A caption fills only what was left undeclared: a described image keeps
+its own words, and `artifact` inside a captioned figure stays decoration. -/
+def setAltFill (alt : String) : Alt → Alt
+  | .undeclared => Alt.declare alt
+  | .decorative => .decorative
+  | .described t => .described t
+
+/-- A declared alternative survives any enclosing caption. -/
+theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .undeclared) :
+    setAltFill alt a = a := by
+  cases a with
+  | undeclared => exact absurd rfl h
+  | decorative => rfl
+  | described _ => rfl
+
 /-- Give every image that has no `alt` yet this text: how a `figure`'s
 caption becomes the accessible name of the image it captions. The walk is
 `mapBlocks`, whose descent is total, so the caption reaches an image
@@ -13117,7 +13199,7 @@ float's caption still wins over the outer's.) -/
 private def setAltLeaf (alt : String)
     (x : Inline) : Inline :=
   match x with
-  | .image src size old => .image src size (if old.isEmpty then alt else old)
+  | .image src size old => .image src size (setAltFill alt old)
   | _ => x
 
 def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=

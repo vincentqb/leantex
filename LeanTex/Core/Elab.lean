@@ -2659,12 +2659,21 @@ private def imageLenOf (ctx : Ctx) (v : String) : Option Image.Len :=
                else none
     | .error _ => none
 
+/-- The text of an `alt={...}` value: braced or quoted spellings both read
+as text — the one reading `\includegraphics` and `tikzpicture` share. -/
+private def altValueText (v : String) : String :=
+  if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
+    String.ofList (v.toList.drop 1).dropLast
+  else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+    String.ofList (v.toList.drop 1).dropLast
+  else v
+
 /-- `\\includegraphics`' option run: the modelled keys — width, height,
 scale, keepaspectratio, alt — and a name for everything else. -/
 private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
-    (pos : Pos) : EM (Image.SizeSpec × String) := do
+    (pos : Pos) : EM (Image.SizeSpec × Ir.Alt) := do
   let mut spec : Image.SizeSpec := {}
-  let mut altText := ""
+  let mut alt : Ir.Alt := .undeclared
   if let some src := optSrc then
     for e in Decl.splitEntries (rawSrc src) do
       match Decl.splitEntry e with
@@ -2689,13 +2698,8 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
       | some ("alt", v) =>
         -- graphicx's own alt key (LaTeX News 37, 2023): the text
         -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
-        -- image is. Braced or quoted spellings both read as text.
-        let v := if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
-            String.ofList (v.toList.drop 1).dropLast
-          else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-            String.ofList (v.toList.drop 1).dropLast
-          else v
-        altText := v.trimAscii.toString
+        -- image is.
+        alt := Ir.Alt.declare (altValueText v)
       | _ =>
         if e.trimAscii.toString == "keepaspectratio" then
           spec := { spec with keepAspect := true }
@@ -2703,7 +2707,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           warnOnce ctx ("imgopt:" ++ e) .W0110
             s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
             (help := "modelled keys: width, height, scale, keepaspectratio, alt")
-  return (spec, altText)
+  return (spec, alt)
 
 /-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
 icon's default text alternative. -/
@@ -3553,7 +3557,7 @@ private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (
 in the document's census" pos
     (help := "the box is measured and placed by the engine; \\caption or \
 alt text names it for assistive technology")
-  return .image img {} pic.said
+  return .image img {} pic.alternative
 
 /-- **A picture in a line of text stands in its line, drawn by the
 boundary.** TeX sets a `tikzpicture` as a box of its line, bottom on the
@@ -4322,7 +4326,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let optSrc := bracketRunSrc raws j0
     let j := skipBracketRun raws j0
     have hjb := skipBracketRun_ge raws j0
-    let (spec, altText) ← readImageOpts ctx optSrc pos
+    let (spec, alt) ← readImageOpts ctx optSrc pos
     match hj : raws[j]? with
     | some (.group pathRaw _) =>
       have hjlt := getElem?_lt hj
@@ -4331,7 +4335,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       elabInlinesFrom ctx raws (j + 1)
-        ((flushText acc sb).push (.image src spec altText)) ""
+        ((flushText acc sb).push (.image src spec alt)) ""
     | _ =>
       diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
