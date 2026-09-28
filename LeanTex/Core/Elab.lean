@@ -8853,17 +8853,18 @@ seal scanBracketArg Parse.inputEnvFile?
 -- orders spine (2) over dispatch arms (1) over loop members (0) where the
 -- sums tie, and `scan` is a loop member's own index.
 
-/-- `\begin{frame}[options]`, read. `fragile`, `fragile=true`, and
-`fragile=false` are consumed silently: they change how beamer collects a
-frame, while this lexer captures all supported verbatim-like forms before
-the parser collects environments. Other unmodelled options are ignored with
-a note (plain and friends say how beamer should cope, not what to say), except
-`standout`, which says what the frame IS, `allowframebreaks`, which declares
-that content taller than one page continues (beamer user guide §8.1; the
-layout's spill account reads it), and `t`/`c`/`b`, which say how the frame
-distributes its leftover vertical space (`c` is beamer's default). Outside
-the elaboration knot on purpose: its loop state is what pushed the knot's
-compile over the heartbeat wall. -/
+/-- `\begin{frame}[options]`, read. `fragile` and `fragile=true` are
+consumed silently over `fragileNoopChecks`: Beamer uses those spellings to
+select its external reader, while this lexer captures the supported raw forms
+before the parser collects environments. `fragile=false` is not in that class:
+Beamer's environment path differs, so it remains a registered unsupported
+option. Other unmodelled options are ignored with a note (plain and friends say
+how beamer should cope, not what to say), except `standout`, which says what the
+frame IS, `allowframebreaks`, which declares that content taller than one page
+continues (beamer user guide §8.1; the layout's spill account reads it), and
+`t`/`c`/`b`, which say how the frame distributes its leftover vertical space
+(`c` is beamer's default). Outside the elaboration knot on purpose: its loop
+state is what pushed the knot's compile over the heartbeat wall. -/
 structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
@@ -8880,9 +8881,9 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
       let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
       for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
         match opt with
-        -- premise: fragileNoopChecks — the supported raw-capture forms,
-        -- diagnostics, and both artifacts agree across exactly these spellings.
-        | "fragile" | "fragile=true" | "fragile=false" => pure ()
+        -- premise: fragileNoopChecks — over Beamer-accepted external-reader
+        -- inputs, diagnostics and both artifacts agree for exactly these spellings.
+        | "fragile" | "fragile=true" => pure ()
         | "standout" => o := { o with standout := true }
         | "allowframebreaks" => o := { o with breakable := true }
         | "t" => o := { o with valign := .top }

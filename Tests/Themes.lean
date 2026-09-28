@@ -1268,18 +1268,20 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let plainOut := layoutOf oneFace plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
 
-/-- **The three same-line Beamer tokenization spellings are artifact
-no-ops for the forms this lexer captures raw.** EARS: WHEN a supported frame
-body gains `fragile`, `fragile=true`, or `fragile=false` in the option list on
-its `\begin{frame}` line, THE SYSTEM SHALL retain `\verb`, `\verb*`,
+/-- **The two same-line Beamer external-reader switches are artifact
+no-ops over inputs that reader accepts.** EARS: WHEN a frame body in Beamer's
+accepted fragile-reader domain gains `fragile` or `fragile=true` in the option
+list on its `\begin{frame}` line, THE SYSTEM SHALL retain `\verb`, `\verb*`,
 `{verbatim}`, `{lstlisting}`, and `{minted}`, emit no unknown-option loss, and
 produce the same IR, HTML, and PDF bytes as the frame without that option.
 
-The boundary excludes next-line option lists, `fragile=singleslide`,
-`containsverbatim`, custom or semiverbatim-like environments, and every
-construct outside the lexer's closed raw-capture set. The two page-affecting
-options remain named losses below so this check cannot justify silencing frame
-options generally. -/
+The witness keeps the outer `\end{frame}` alone on its line and has no inner
+line the external reader can mistake for that closer. Leantex deliberately
+accepts a wider lexical domain, including a trailing comment on the outer
+closer; that extension is checked separately and is not a Beamer-equivalence
+claim. Next-line option lists, `fragile=false`, `fragile=singleslide`,
+`containsverbatim`, custom or semiverbatim-like environments, and constructs
+outside the lexer's closed raw-capture set remain outside the silent class. -/
 def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let body := "Inline \\verb|alpha_[beta]| and \\verb*|a b|.\n\n" ++
@@ -1289,7 +1291,7 @@ def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let source (opt : String) : String := deck169Body
     ("\\begin{frame}" ++ opt ++ "{Heading}\n" ++ body ++ "\n\\end{frame}")
   let (plain, plainDs) := elabStr (source "")
-  let variants := #["fragile", "fragile=true", "fragile=false"].map fun opt =>
+  let variants := #["fragile", "fragile=true"].map fun opt =>
     elabStr (source ("[" ++ opt ++ "]"))
   let docs := variants.map fun r => r.1
   let diagss := variants.map fun r => r.2
@@ -1309,23 +1311,33 @@ def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
          | .verbatim _ s _ => some s.trimAscii.toString
          | _ => none) == #["raw {value} % _", "def sample := 7", "def other := true"]
      | none => false)
-  t "fragile spellings change neither IR nor diagnostics"
+  t "supported fragile spellings change neither IR nor diagnostics"
     (plainDs.isEmpty && docs.all (· == plain) && diagss.all (· == plainDs))
   let plainHtml := (HtmlDoc.emit {} plain).1
-  t "fragile spellings change no HTML bytes"
+  t "supported fragile spellings change no HTML bytes"
     (docs.all fun doc => (HtmlDoc.emit {} doc).1 == plainHtml)
   let pdfOf (doc : Ir.Doc) : ByteArray :=
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom
     Pdf.write geom oneFace out.pages doc.info (outline := out.outline)
   let plainPdf := pdfOf plain
-  t "fragile spellings change no PDF bytes" (docs.all fun doc => pdfOf doc == plainPdf)
+  t "supported fragile spellings change no PDF bytes"
+    (docs.all fun doc => pdfOf doc == plainPdf)
   let unsupported (opt : String) : Bool :=
     let ds := (elabStr (source ("[" ++ opt ++ "]"))).2
     ds.map (·.code) == #["N0102"] && ds.any fun d =>
       d.severity == .note && hasStr d.message s!"frame option '{opt}'"
-  t "page-affecting fragile options remain named unsupported losses"
-    (unsupported "fragile=singleslide" && unsupported "containsverbatim")
+  t "fragile=false and page-affecting fragile options remain named unsupported losses"
+    (unsupported "fragile=false" && unsupported "fragile=singleslide" &&
+      unsupported "containsverbatim")
+  let extensionMarker := "Intentional reader superset marker"
+  let (extension, extensionDs) := elabStr (deck169Body
+    ("\\begin{frame}[fragile]{Heading}\n" ++ extensionMarker ++
+      "\n\\end{frame}% trailing comment"))
+  t "the intentional fragile-reader acceptance superset remains explicit"
+    (extensionDs.isEmpty && match extension.body with
+      | #[.frame _ _ _ _ #[.para xs]] => Ir.plainText xs == extensionMarker
+      | _ => false)
 
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own

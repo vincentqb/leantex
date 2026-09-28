@@ -23880,25 +23880,31 @@ the private reference corpus writes it).
 
 ### 2026-09-28 — fragile is a lexer premise, not frame state
 
-Beamer's `fragile`, `fragile=true`, and `fragile=false` spellings select how
-a frame body is tokenized; they do not declare page content or overlay
-semantics. Leantex has no non-fragile collection path: `Lex.lex` captures
-`verbatim`, `lstlisting`, `minted`, `\verb`, and `\verb*` raw before the
-parser collects a frame environment. Those three exact spellings, when they
-stand in the option list on the `\begin{frame}` line, are therefore consumed
-silently and carry no state.
+Beamer's bare `fragile` and `fragile=true` spellings select its external
+frame reader; they do not declare page content or overlay semantics.
+`fragile=false` is different in environment form: the option prescan sees the
+name, but the false key selects neither external-file nor single-slide
+processing, and a minimal Beamer 3.77 frame fails before producing a PDF.
+Leantex therefore consumes only bare/true silently and keeps `fragile=false`
+explicitly named by N0102 as unsupported.
 
-`fragileNoopChecks` is the premise pin at that gate. One composite supported
-body witnesses every raw-capture form; adding each spelling must leave the
-IR, diagnostics, HTML bytes, and PDF bytes equal to the optionless frame, with
-no unknown-option loss. The fail-first run, while only bare `fragile` was
-silent, failed this equality for the two valued spellings; the three-spelling
-arm makes it pass.
+Leantex has no non-fragile collection path: `Lex.lex` captures `verbatim`,
+`lstlisting`, `minted`, `\verb`, and `\verb*` raw before the parser collects a
+frame environment. `fragileNoopChecks` pins the silent gate over the part of
+Beamer's external-reader domain its synthetic witness occupies: the option is
+on the opening line, the outer `\end{frame}` is alone on its line, and no inner
+raw line equals that closer after leading whitespace is removed. Across that
+bounded domain, bare/true leave the IR, diagnostics, HTML bytes, and PDF bytes
+equal to the optionless frame. The fail-first guard found `fragile=false`
+still silent; removing it from the arm makes the named-unsupported check pass.
 
-The boundary stays loud. `fragile=singleslide` and `containsverbatim` affect
-overlay or page behavior, so the same check requires each to remain an N0102
-unsupported-option diagnostic rather than certifying ignored frame options in
-general. A next-line `[fragile]`, custom or semiverbatim-like environments,
-and every construct outside the lexer's closed raw-capture set remain separate
-gaps. This question established a compatibility decision rather than reporting
-a broken artifact, so it adds no `Reports.reports` row.
+Leantex intentionally accepts a source superset rather than imitating the
+external reader's line scan. In particular, lexical environment parsing accepts
+a trailing comment after the outer closer; the check records that extension
+separately and does not present it as Beamer equivalence. Next-line option lists,
+custom or semiverbatim-like environments, and every construct outside the
+closed raw-capture set remain separate gaps. `fragile=singleslide` and
+`containsverbatim` affect overlay or page behavior, so the same check requires
+each to remain an N0102 unsupported-option diagnostic. This question
+established a compatibility decision rather than reporting a broken artifact,
+so it adds no `Reports.reports` row.
