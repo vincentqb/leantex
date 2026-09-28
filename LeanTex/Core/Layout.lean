@@ -3215,7 +3215,9 @@ force is upright — `\fontdimen1`, the slant, zero: the face declares no
 forward-leaning angle — and through `\sw@slant`, which lifts a space with
 width the items end in, sets the kern before it, and puts the space back.
 The space then no longer touches the glyph, so it gives back the pair kern
-it took against it (`spaceKern`, the `.space` arm's own term). -/
+it took against it (`spaceKern`, the `.space` arm's own term), once: the
+glyph no longer ends the word (`wordEnd`), so a second edge at the same
+space, whose `\/` before a kern adds nothing, gives back nothing. -/
 private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
     (acc : ItemsAcc) : ItemsAcc :=
   if !maybe then italicKern acc
@@ -3226,7 +3228,7 @@ private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
       if g.width == 0 || acc.wordEnd != n || !glyphBox acc.items[n - 1]? then acc
       else
         let bare : Item := .glue { g with width := g.width - spaceKern fs true acc.items[n - 1]? }
-        { acc with items := acc.items.set! n bare }
+        { acc with items := acc.items.set! n bare, wordEnd := 0 }
     | _ => italicKern acc
 
 /-- One flatten token into the accumulator — the fold step of

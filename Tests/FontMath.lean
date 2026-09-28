@@ -732,9 +732,17 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => none
   let edgeU (n : Int) : Dim.Sp := n * ({} : Layout.Geom).fontSize / 1000
   let edgeSp := edgeU ssp.spaceAdvance
+  -- Two edges at one space give its pair back once: after the first
+  -- correction the glyph no longer ends the list, and TeX's `\/` before a
+  -- kern adds nothing (lualatex: `\textbf{T }a`, `\textbf{T }\textrm{a}`,
+  -- `\textrm{\textbf{T }}a` and `\textbf{T }\textbf{a}` all start their
+  -- second word 8.44 bp in, the bold space bare).
+  let boldSp := edgeU (sfs.get (sfs.lookup 0 700 false)).spaceAdvance
   for (src, want) in [("T a", edgeSp + edgeU (-19)), ("{\\rmfamily T} a", edgeSp + edgeU (-19)),
       ("\\textrm{T} a", edgeSp), ("T \\textrm{a}", edgeSp), ("\\textup{V} a", edgeSp),
       ("\\textbf{T} a", edgeSp), ("T \\textbf{a}", edgeSp),
+      ("\\textbf{T }a", boldSp), ("\\textbf{T }\\textrm{a}", boldSp),
+      ("\\textrm{\\textbf{T }}a", boldSp), ("\\textbf{T }\\textbf{a}", boldSp),
       ("V \\emph{V}", edgeSp + edgeU (-39)), ("\\emph{a} V", edgeSp + edgeU (-30))] do
     t s!"font edge: '{src}' ships the gap lualatex sets" (edgeGap src == #[want])
   t "no MATH face anywhere: the pick is none"
