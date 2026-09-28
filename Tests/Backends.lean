@@ -583,51 +583,59 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
   let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
   let art := page "{article}"
+  -- The emitter's selector lists, spelled here once: a list level's
+  -- elements, each level reached through an item ancestor per enclosing
+  -- list (`<li>` or a description's `<dd>`).
+  let elems := ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl"]
+  let lv (n : Nat) : String := String.join (List.replicate n ":is(li, dd) ")
+  let above (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}* + {e}")
+  let below (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}{e} + *")
+  let items (n : Nat) := s!"{lv n}li + {item}, {lv n}dd + dt"
+  let parsep (n : Nat) := s!"{lv n}{item}, {lv n}blockquote > *, {lv n}dl > *"
+  let lastList (n : Nat) (sel : String) :=
+    let has := s!":has(> :is({", ".intercalate elems}){sel}:last-child)"
+    s!"{lv n}li{has} + {item}, {lv n}dd{has} + dt"
   t "html a 10pt list's items stand itemsep over the item's parsep apart"
-    (hasStr art s!":where(li + {item}) \{ margin-top: {space "0.483"}; }" &&
-     hasStr art s!":where({item}, blockquote > *) \{ --parskip: 0.483rem; }")
+    (hasStr art s!":where({items 0}) \{ margin-top: {space "0.483"}; }" &&
+     hasStr art s!":where({parsep 0}) \{ --parskip: 0.483rem; }")
   -- `\@trivlist`'s `\@topsepadd` (latex.ltx:15871-15878): `\topsep`, with
   -- `\partopsep` on top in vertical mode — size10.clo:215's 2pt, one
   -- conversion of the summed length — the same above and below.
   t "html a 10pt list and quote that open a paragraph stand topsep and partopsep from their neighbours"
-    (hasStr art (":where(* + ul:not(.bibliography), * + ol:not(.algorithm):not(.algorithm *), " ++
-      s!"* + blockquote) \{ margin-top: {space "1.208"}; }") &&
-     hasStr art (":where(ul:not(.bibliography) + *, ol:not(.algorithm):not(.algorithm *) + *, " ++
-      s!"blockquote + *) \{ margin-top: {space "1.208"}; }"))
+    (hasStr art s!":where({above 0}) \{ margin-top: {space "1.208"}; }" &&
+     hasStr art s!":where({below 0}) \{ margin-top: {space "1.208"}; }")
   t "html a 10pt list and quote inside an open paragraph stand topsep alone"
     (hasStr art s!":where(* + .u-in-paragraph) \{ margin-top: {space "0.966"}; }" &&
      hasStr art s!":where(.u-in-paragraph + *) \{ margin-top: {space "0.966"}; }")
   t "html a nested 10pt list reads its own level"
-    (hasStr art s!":where(li {item}, li blockquote > *) \{ --parskip: 0.241rem; }" &&
-     hasStr art s!":where(li li + {item}) \{ margin-top: {space "0.241"}; }" &&
-     hasStr art s!"li * + blockquote) \{ margin-top: {space "0.725"}; }" &&
-     hasStr art s!":where(li * + .u-in-paragraph) \{ margin-top: {space "0.483"}; }")
+    (hasStr art s!":where({parsep 1}) \{ --parskip: 0.241rem; }" &&
+     hasStr art s!":where({items 1}) \{ margin-top: {space "0.241"}; }" &&
+     hasStr art s!":where({above 1}) \{ margin-top: {space "0.725"}; }" &&
+     hasStr art s!":where({lv 1}* + .u-in-paragraph) \{ margin-top: {space "0.483"}; }")
   -- The nested list's `\@topsepadd` meets the next item's `\itemsep`, and
   -- `\addvspace` keeps the larger: level two's 4pt + 2pt over level one's 4pt.
   t "html an item after a nested list that opened a paragraph stands the larger space"
-    (hasStr art (s!"li:has(> :is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), " ++
-      s!"blockquote):not(.u-in-paragraph):last-child) + {item}) \{ margin-top: {space "0.725"}; }"))
+    (hasStr art s!":where({lastList 0 ":not(.u-in-paragraph)"}) \{ margin-top: {space "0.725"}; }")
   -- size10.clo:233: level three sets its own 1pt, which a declared value does not reach.
   let declared := page "{article}\\setlength{\\partopsep}{5pt}"
   t "html a declared partopsep reaches the top level and not level three"
-    (hasStr declared s!"* + blockquote) \{ margin-top: {space "1.570"}; }" &&
-     hasStr declared s!"li li * + blockquote) \{ margin-top: {space "0.362"}; }")
+    (hasStr declared s!":where({above 0}) \{ margin-top: {space "1.570"}; }" &&
+     hasStr declared s!":where({above 2}) \{ margin-top: {space "0.362"}; }")
   let art12 := page "[12pt]{article}"
   t "html a 12pt list reads size12's spacing"
-    (hasStr art12 s!":where({item}, blockquote > *) \{ --parskip: 0.503rem; }" &&
-     hasStr art12 s!"* + blockquote) \{ margin-top: {space "1.309"}; }" &&
+    (hasStr art12 s!":where({parsep 0}) \{ --parskip: 0.503rem; }" &&
+     hasStr art12 s!":where({above 0}) \{ margin-top: {space "1.309"}; }" &&
      hasStr art12 s!":where(* + .u-in-paragraph) \{ margin-top: {space "1.006"}; }")
   let deck := page "{beamer}"
   t "html a deck's list reads beamer's spacing, its partopsep zero"
-    (hasStr deck s!":where({item}, blockquote > *) \{ --parskip: 0.000rem; }" &&
-     hasStr deck s!":where(li + {item}) \{ margin-top: {space "0.329"}; }" &&
-     hasStr deck s!"* + blockquote) \{ margin-top: {space "0.329"}; }" &&
+    (hasStr deck s!":where({parsep 0}) \{ --parskip: 0.000rem; }" &&
+     hasStr deck s!":where({items 0}) \{ margin-top: {space "0.329"}; }" &&
+     hasStr deck s!":where({above 0}) \{ margin-top: {space "0.329"}; }" &&
      !hasStr deck ".u-in-paragraph")
   -- beamerbaselocalstructure.sty:156-163: level two's `\itemsep` is zero and
   -- level three's `\topsep` 2pt, so the nested list's end is the larger.
   t "html a deck's level-two item after a nested list stands level three's topsep"
-    (hasStr deck (s!"li li:has(> :is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), " ++
-      s!"blockquote):last-child) + {item}) \{ margin-top: {space "0.219"}; }"))
+    (hasStr deck s!":where({lastList 1 ""}) \{ margin-top: {space "0.219"}; }")
   let web := page "{webpage}"
   t "html a webpage's lists keep the peer gap and its items a leading"
     (!hasStr web "li + li:" && !hasStr web "--parskip:" &&
@@ -638,6 +646,35 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- level's item scope.
   t "html a reference list's entries stand the page's peer gap apart"
     (hasStr art ":where(.bibliography > li + li) { margin-top: var(--parskip, 0.725rem); }")
+  -- A description is a `\list` (latex.ltx `description`), so each of its
+  -- boundaries resolves where the same boundary of an itemize resolves —
+  -- the last rule naming it wins, every rule standing at zero specificity
+  -- — at every level, and a list inside its item reads the next level
+  -- (review-e KE-5: the sheet at 2f81a8e1 spaced `dl` as a peer).
+  -- A selector list's members: its commas outside parentheses, since a
+  -- level's prefix (`:is(li, dd)`) holds one.
+  let topParts (sel : String) : List String :=
+    let (ps, cur, _) := sel.toList.foldl (fun (acc : List String × String × Nat) c =>
+      let (ps, cur, d) := acc
+      if c == ',' && d == 0 then (cur.trimAscii.toString :: ps, "", d)
+      else (ps, cur.push c, if c == '(' then d + 1 else if c == ')' then d - 1 else d))
+      ([], "", 0)
+    (cur.trimAscii.toString :: ps).reverse
+  let lastGap (rules : List HtmlDoc.GapRule) (subject : String) : Option String :=
+    rules.foldl (fun acc r => match r with
+      | .boundary sel v => if (topParts sel).contains subject then some v else acc
+      | .parskip sel v => if (topParts sel).contains subject then some ("parskip " ++ v) else acc
+      | .reset _ _ => acc) none
+  let descPairs : List (String × String) := [0, 1, 2].flatMap fun n =>
+    [(s!"{lv n}* + dl", s!"{lv n}* + ul:not(.bibliography)"),
+     (s!"{lv n}dl + *", s!"{lv n}ul:not(.bibliography) + *"),
+     (s!"{lv n}dd + dt", s!"{lv n}li + {item}"),
+     (s!"{lv n}dl > *", s!"{lv n}blockquote > *")]
+  for (cls, lineage, size) in [("article", Ir.ListLineage.sizeFile, Dim.pt 10),
+      ("beamer", .beamer, Dim.pt 11)] do
+    let rules := HtmlDoc.blockGapRules lineage size {}
+    t s!"html a {cls} description's boundaries are an itemize's at every level"
+      (descPairs.all fun (d, u) => (lastGap rules d).isSome && lastGap rules d == lastGap rules u)
 
 mutual
 

@@ -779,18 +779,24 @@ token the PDF walk reads (`Ir.trivlistSkip`). -/
 private def trivlistGap : String :=
   s!"calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + {peerGap})"
 
-/-- The elements a list level spaces: every list a list block emits and
-every quotation (classes.dtx: `quote` is a `\list`), and not the reference
-list, whose entries the PDF walk sets a peer gap apart
+/-- The elements a list level spaces: every list a list block emits — a
+description's `<dl>` among them (latex.ltx `description` is a `\list`) —
+and every quotation (classes.dtx: `quote` is a `\list`), and not the
+reference list, whose entries the PDF walk sets a peer gap apart
 (`Layout.collectBibliography`), nor an algorithm's line lists, whose lines
 stand a leading apart. -/
 private def listElems : List String :=
-  ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote"]
+  ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl"]
 
 /-- A list block's item, and not a reference-list entry, an algorithm's
 line or an endnote. -/
 private def itemSubject : String :=
   "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+
+/-- An enclosing list's item, as `\@listdepth` counts the levels: a list
+block's `<li>` or a description's `<dd>`, the element a nested list stands
+in. -/
+private def itemAncestor : String := ":is(li, dd) "
 
 /-- A list's own space at a boundary: the level's length over the
 paragraph gap in force where the boundary stands, read on the lower
@@ -814,10 +820,12 @@ def listOpenGap (size : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
   screenMilli size (sk.topsep.width.sp + partopsep.width.sp)
 
 /-- One list level's rules, `pre` reaching the level — an item ancestor
-per enclosing list, as `\@listdepth` counts them over both kinds: its
-items' and quotations' paragraphs stand `\parsep` apart, each list and
-quotation stands `\@topsepadd` (`opened`) from its neighbours above and
-below, and each item after the first opens `\itemsep`. A list or quotation
+(`itemAncestor`) per enclosing list, as `\@listdepth` counts them over
+every kind: its items', description items' and quotations' paragraphs
+stand `\parsep` apart, each list and quotation stands `\@topsepadd`
+(`opened`) from its neighbours above and below, and each item after the
+first — a description's `<dt>` after the `<dd>` before it — opens
+`\itemsep`. A list or quotation
 whose `\begin` stands inside an open paragraph carries the in-paragraph
 role's class (`Ir.inParagraphRole`), and `\@trivlist` gives it `\topsep`
 alone (latex.ltx:15871-15878): its pair stands after the level's own, and
@@ -833,12 +841,12 @@ private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
     (nested : Nat × Nat) : List GapRule :=
   let inPar := roleClass Ir.inParagraphRole
   let after (sel : String) (m : Nat) : GapRule :=
-    .boundary (s!"{pre}li:has(> :is({", ".intercalate listElems}){sel}:last-child) + " ++
-      itemSubject) (listSpace m)
-  [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *" (milliRem g.2.2),
+    let last := s!":has(> :is({", ".intercalate listElems}){sel}:last-child)"
+    .boundary s!"{pre}li{last} + {itemSubject}, {pre}dd{last} + dt" (listSpace m)
+  [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *, {pre}dl > *" (milliRem g.2.2),
    .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace opened),
    .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace opened),
-   .boundary s!"{pre}li + {itemSubject}" (listSpace g.2.1)] ++
+   .boundary s!"{pre}li + {itemSubject}, {pre}dd + dt" (listSpace g.2.1)] ++
   (if opened == g.1 then [] else
     [.boundary s!"{pre}* + .{inPar}" (listSpace g.1),
      .boundary s!"{pre}.{inPar} + *" (listSpace g.1)]) ++
@@ -857,7 +865,7 @@ def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapR
     | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
     | none => (0, 0)
   [1, 2, 3].flatMap fun n => match Ir.listSkips l size n with
-    | some sk => listLevelRules (String.join (List.replicate (n - 1) "li "))
+    | some sk => listLevelRules (String.join (List.replicate (n - 1) itemAncestor))
         (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
     | none => []
 
