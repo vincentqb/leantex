@@ -1,3 +1,4 @@
+import LeanTex.Version
 import LeanTex.Core.Loop
 import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
@@ -59,9 +60,3 @@ import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
-
-namespace LeanTex
-
-def version : String := "0.1.0"
-
-end LeanTex

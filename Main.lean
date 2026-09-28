@@ -1,4 +1,37 @@
-import LeanTex
+import LeanTex.Version
+import LeanTex.Core.Diag
+import LeanTex.Core.Utf8
+import LeanTex.Core.Flate
+import LeanTex.Core.PdfCensus
+import LeanTex.Core.PdfContract
+import LeanTex.Core.Image
+import LeanTex.Core.Lex
+import LeanTex.Core.Parse
+import LeanTex.Core.MdDesugar
+import LeanTex.Core.Ir
+import LeanTex.Core.Struct
+import LeanTex.Core.Theme
+import LeanTex.Core.Compat
+import LeanTex.Core.Elab
+import LeanTex.Core.Font
+import LeanTex.Core.FontDb
+import LeanTex.Core.Hyphen
+import LeanTex.Core.HtmlDoc
+import LeanTex.Core.MarkdownDoc
+import LeanTex.Core.Layout
+import LeanTex.Core.Check
+import LeanTex.Core.Pdf
+import LeanTex.Core.Ink
+import LeanTex.Cli.Args
+import LeanTex.Cli.Render
+import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.Input
+import LeanTex.Cli.FontEnv
+import LeanTex.Cli.FontFix
+import LeanTex.Cli.SlotLoss
+import LeanTex.Cli.Boundary
+import LeanTex.Cli.PicCache
+import LeanTex.Cli.ToolProbe
 
 open LeanTex.Core LeanTex.Cli
 

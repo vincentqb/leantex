@@ -1,5 +1,5 @@
 name = "leantex"
-defaultTargets = ["leantex"]
+defaultTargets = ["LeanTex", "leantex"]
 testDriver = "Tests"
 
 [leanOptions]
