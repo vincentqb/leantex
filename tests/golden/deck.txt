@@ -88,5 +88,4 @@ note[N0100] 11:1 '\newcommand{\dim}' → \define \dim(a1: content) {...}
 note[N0100] 12:1 '\newenvironment{banner}' → \defineenv{banner}(a1: content) {begin} {end}
 note[N0100] 35:19 '\alert' → \textbf
 warning[W0319] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain, daylight, gemini
-note[N0102] 41:5 frame option 'fragile' is not modelled; ignored
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }

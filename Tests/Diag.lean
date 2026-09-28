@@ -230,7 +230,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .E0502 => probed .E0502
   | .E0503 => probed .E0503
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
-  | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
+  | .N0102 => dvE (dvDeck "" "\\begin{frame}[plain]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
   | .N0104 => dvE (dvDeck ""
       "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")

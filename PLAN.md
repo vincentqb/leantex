@@ -23876,3 +23876,29 @@ the breaker's own first-line start in `kp`), where TeX keeps glue that no
 break precedes: on an invented probe its words stand at the left or the
 centre where lualatex sets them at the right margin (owed; no document of
 the private reference corpus writes it).
+
+
+### 2026-09-28 — fragile is a lexer premise, not frame state
+
+Beamer's `fragile`, `fragile=true`, and `fragile=false` spellings select how
+a frame body is tokenized; they do not declare page content or overlay
+semantics. Leantex has no non-fragile collection path: `Lex.lex` captures
+`verbatim`, `lstlisting`, `minted`, `\verb`, and `\verb*` raw before the
+parser collects a frame environment. Those three exact spellings, when they
+stand in the option list on the `\begin{frame}` line, are therefore consumed
+silently and carry no state.
+
+`fragileNoopChecks` is the premise pin at that gate. One composite supported
+body witnesses every raw-capture form; adding each spelling must leave the
+IR, diagnostics, HTML bytes, and PDF bytes equal to the optionless frame, with
+no unknown-option loss. The fail-first run, while only bare `fragile` was
+silent, failed this equality for the two valued spellings; the three-spelling
+arm makes it pass.
+
+The boundary stays loud. `fragile=singleslide` and `containsverbatim` affect
+overlay or page behavior, so the same check requires each to remain an N0102
+unsupported-option diagnostic rather than certifying ignored frame options in
+general. A next-line `[fragile]`, custom or semiverbatim-like environments,
+and every construct outside the lexer's closed raw-capture set remain separate
+gaps. This question established a compatibility decision rather than reporting
+a broken artifact, so it adds no `Reports.reports` row.

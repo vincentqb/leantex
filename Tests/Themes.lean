@@ -1268,6 +1268,65 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let plainOut := layoutOf oneFace plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
 
+/-- **The three same-line Beamer tokenization spellings are artifact
+no-ops for the forms this lexer captures raw.** EARS: WHEN a supported frame
+body gains `fragile`, `fragile=true`, or `fragile=false` in the option list on
+its `\begin{frame}` line, THE SYSTEM SHALL retain `\verb`, `\verb*`,
+`{verbatim}`, `{lstlisting}`, and `{minted}`, emit no unknown-option loss, and
+produce the same IR, HTML, and PDF bytes as the frame without that option.
+
+The boundary excludes next-line option lists, `fragile=singleslide`,
+`containsverbatim`, custom or semiverbatim-like environments, and every
+construct outside the lexer's closed raw-capture set. The two page-affecting
+options remain named losses below so this check cannot justify silencing frame
+options generally. -/
+def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let body := "Inline \\verb|alpha_[beta]| and \\verb*|a b|.\n\n" ++
+    "\\begin{verbatim}\nraw {value} % _\n\\end{verbatim}\n\n" ++
+    "\\begin{lstlisting}[language=Lean]\ndef sample := 7\n\\end{lstlisting}\n\n" ++
+    "\\begin{minted}{lean}\ndef other := true\n\\end{minted}"
+  let source (opt : String) : String := deck169Body
+    ("\\begin{frame}" ++ opt ++ "{Heading}\n" ++ body ++ "\n\\end{frame}")
+  let (plain, plainDs) := elabStr (source "")
+  let variants := #["fragile", "fragile=true", "fragile=false"].map fun opt =>
+    elabStr (source ("[" ++ opt ++ "]"))
+  let docs := variants.map fun r => r.1
+  let diagss := variants.map fun r => r.2
+  let content : Option (Array Ir.Block) := plain.body.findSome? fun
+    | .frame title _ _ _ blocks =>
+      if Ir.plainText title == "Heading" then some blocks else none
+    | _ => none
+  t "fragile no-op witness retains every supported raw-capture form"
+    (match content with
+     | some blocks =>
+       blocks.any (fun
+         | .para xs => Ir.plainText xs == "Inline alpha_[beta] and a␣b." &&
+             xs.any (fun | .styled .mono ys => Ir.plainText ys == "alpha_[beta]" | _ => false) &&
+             xs.any (fun | .styled .mono ys => Ir.plainText ys == "a␣b" | _ => false)
+         | _ => false) &&
+       blocks.filterMap (fun
+         | .verbatim _ s _ => some s.trimAscii.toString
+         | _ => none) == #["raw {value} % _", "def sample := 7", "def other := true"]
+     | none => false)
+  t "fragile spellings change neither IR nor diagnostics"
+    (plainDs.isEmpty && docs.all (· == plain) && diagss.all (· == plainDs))
+  let plainHtml := (HtmlDoc.emit {} plain).1
+  t "fragile spellings change no HTML bytes"
+    (docs.all fun doc => (HtmlDoc.emit {} doc).1 == plainHtml)
+  let pdfOf (doc : Ir.Doc) : ByteArray :=
+    let geom := Layout.Geom.ofPage doc.page
+    let out := layoutOf oneFace doc geom
+    Pdf.write geom oneFace out.pages doc.info (outline := out.outline)
+  let plainPdf := pdfOf plain
+  t "fragile spellings change no PDF bytes" (docs.all fun doc => pdfOf doc == plainPdf)
+  let unsupported (opt : String) : Bool :=
+    let ds := (elabStr (source ("[" ++ opt ++ "]"))).2
+    ds.map (·.code) == #["N0102"] && ds.any fun d =>
+      d.severity == .note && hasStr d.message s!"frame option '{opt}'"
+  t "page-affecting fragile options remain named unsupported losses"
+    (unsupported "fragile=singleslide" && unsupported "containsverbatim")
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -1282,10 +1341,10 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "frame title after a blank line is content"
     ((elabStr (deck169Body "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
       #[.frame #[] false .center false #[.para #[.text "scope group"]]])
-  -- Options that say how beamer should cope (fragile, plain) are ignored
-  -- with a registered note, never silently.
+  -- Other options that say how beamer should cope (`plain` here) are
+  -- ignored with a registered note, never silently.
   t "an unmodelled frame option is a note"
-    ((elabStr (deck169Body "\\begin{frame}[fragile]{T}\nbody\n\\end{frame}")).2.any
+    ((elabStr (deck169Body "\\begin{frame}[plain]{T}\nbody\n\\end{frame}")).2.any
       fun d => d.code == "N0102" && d.severity == .note)
   t "frametitle names the frame"
     ((elabStr (deck169Body "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==

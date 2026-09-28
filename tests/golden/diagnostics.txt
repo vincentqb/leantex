@@ -169,7 +169,7 @@ note[N0023]: this picture is drawn by lualatex at the boundary; its text is not 
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
-note[N0102]: frame option 'fragile' is not modelled; ignored
+note[N0102]: frame option 'plain' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
 note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
 ── N0104 (info) a frame declared for another mode ships no page in this one
