@@ -11,9 +11,8 @@ row; this tier commits the shape of the index, so a row cannot quietly
 leave it.
 
 Two items per package: `<p>.rows`, every documented command, and
-`<p>.impl`, those the engine implements. A `divergence:<code>` verdict is
-listed separately for audit but remains an unimplemented row in the
-coverage denominator; naming a difference deliberate cannot raise coverage.
+`<p>.impl`, those the engine implements. Refusals remain unimplemented rows
+in the coverage denominator.
 
 **Implemented** means the verdict is `impl` *or* `inert:…` — one definition,
 the same one `coverage` counts, because an `inert:` row is a recognised
@@ -45,15 +44,13 @@ structure Pkg where
   rows : Nat
   impl : Nat
   refuse : Nat
-  decided : Nat := 0
 deriving Inhabited
 
 /-- Count one index file's documented rows. `impl` and `inert:` form the
-numerator; refusals and deliberate divergences remain in the denominator,
-with divergences also counted for the audit. -/
+numerator; refusals remain in the denominator. -/
 def countRows (name : String) (rows : Array IndexRow) : Pkg :=
   { name, rows := rows.size, impl := (rows.filter (·.implemented)).size
-    refuse := (rows.filter (·.refused)).size, decided := (rows.filter (·.decided)).size }
+    refuse := (rows.filter (·.refused)).size }
 
 def readIndex (name text : String) : Pkg :=
   countRows name ((text.splitOn "\n").filterMap IndexRow.parse?).toArray
@@ -67,18 +64,16 @@ def measureTier : IO (Array String × Array Row) := do
   let mut totalRows := 0
   let mut totalImpl := 0
   let mut totalRefuse := 0
-  let mut totalDecided := 0
   for p in pkgs do
     rows := rows.push { item := s!"{p.name}.rows", value := Int.ofNat p.rows }
     rows := rows.push { item := s!"{p.name}.impl", value := Int.ofNat p.impl }
     totalRows := totalRows + p.rows
     totalImpl := totalImpl + p.impl
     totalRefuse := totalRefuse + p.refuse
-    totalDecided := totalDecided + p.decided
   return (#[s!"# packages: {pkgs.size}; rows: {totalRows}; impl: {totalImpl} \
 (verdict impl or inert:, the one definition the coverage tier shares); \
 refuse: {totalRefuse}; other verdicts: {totalRows - totalImpl - totalRefuse} \
-(including {totalDecided} decided divergences; all remain in rows)"], rows)
+(all remain in rows)"], rows)
 
 def selftest : IO UInt32 := tierSelftest "compat" fun no => do
   let text := "# source: an invented manual §1\n\
@@ -108,36 +103,25 @@ body inert:binds \\zzfour\n\
     (isImpl "inert:binds")
   no "definition: a refusal does not count" (!isImpl "refuse:W0301")
   no "definition: an unknown verdict does not count" (!isImpl "zz")
+  no "definition: a divergence verdict is not accepted"
+    ((IndexRow.mk "body" "divergence:W0301" "\\zz").refusalCode?.isNone)
   no "the index's inert row is inside the impl count"
     ((readIndex "zz" "body inert:binds \\zzone\n").impl == 1)
+  no "an empty refusal code is malformed"
+    (!(IndexRow.mk "body" "refuse:" "\\zz").refused)
   no "a refusal rejects an extra diagnostic-code suffix"
     (!(IndexRow.mk "body" "refuse:W0301:extra" "\\zz").refused)
-  no "a divergence rejects an extra diagnostic-code suffix"
-    (!(IndexRow.mk "body" "divergence:W0301:extra" "\\zz").decided)
   -- The correction this tier exists to encode: a refusal becoming an
   -- implementation must not read as a loss.
   let before := readIndex "zz" "body refuse:W0301 \\zzone\n"
   let after := readIndex "zz" "body impl \\zzone\n"
+  no "a refusal remains in the documented denominator" (before.rows == 1)
   no "a refusal becoming an implementation keeps the coverage claim"
     (before.rows == after.rows)
   no "a refusal becoming an implementation raises the depth claim"
     (after.impl > before.impl)
   no "a refusal becoming an implementation lowers the refusal count -- which \
 is why it is not an item" (after.refuse < before.refuse)
-  -- A deliberate divergence stays in documented-command coverage. It is
-  -- counted apart for audit, but changing the verdict cannot shrink `rows`.
-  let decided := readIndex "zz" "body refuse:W0389 \\zzone\nbody divergence:W0389 \\zztwo\n"
-  no s!"a divergence remains in rows: 2 expected, got {decided.rows}" (decided.rows == 2)
-  no s!"a divergence is counted apart: 1 expected, got {decided.decided}"
-    (decided.decided == 1)
-  no "a divergence is neither implemented nor refused"
-    (decided.impl == 0 && decided.refuse == 1)
-  let asTsv (p : Pkg) : Tsv :=
-    { provenance := #[], retired := #[], lowered := #[], encoding := some (.pairs "impl" "rows"),
-      rows := #[{ item := "zz.impl", value := p.impl }, { item := "zz.rows", value := p.rows }] }
-  no "a gap turned into a divergence keeps the documented denominator"
-    ((ratchet (asTsv before)
-      (asTsv (readIndex "zz" "body divergence:W0301 \\zzone\n"))).changes.isEmpty)
 
 def main (args : List String) : IO UInt32 :=
   tierMain "compat" (.pairs "impl" "rows") measureTier selftest args

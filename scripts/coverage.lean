@@ -507,19 +507,15 @@ def probe (name : String) : Rung := probeIn (measurePlaces places) name
 
 -- ## The package half, from the compat index
 
-/-- One package's documented rows, its implemented subset, and its
-deliberate divergences. Divergences are audited separately but remain
-unimplemented rows in the denominator. -/
+/-- One package's documented rows and its implemented subset. -/
 structure PRow where
   pkg : String
   documented : Nat
   impl : Nat
-  decided : Nat
 deriving Inhabited, BEq
 
 def packageRow (pkg : String) (rows : Array IndexRow) : PRow :=
-  { pkg, documented := rows.size, impl := (rows.filter (·.implemented)).size
-    decided := (rows.filter (·.decided)).size }
+  { pkg, documented := rows.size, impl := (rows.filter (·.implemented)).size }
 
 def readPackages : IO (Array PRow) := do
   return (← readCompatIndex).map fun (pkg, rows) => packageRow pkg rows
@@ -590,7 +586,6 @@ structure Totals where
   kExcluded : Nat
   pImpl : Nat
   pDoc : Nat
-  pDecided : Nat := 0
 deriving Inhabited
 
 def Totals.bucket (t : Totals) (r : Rung) : Nat :=
@@ -621,8 +616,7 @@ def totalsOf (kernel : Array (KRow × Rung)) (rows : Array KRow) (pkgs : Array P
   let mut t : Totals :=
     { buckets, kExcluded := (rows.filter (!·.counted)).size, pImpl := 0, pDoc := 0 }
   for p in pkgs do
-    t := { t with pImpl := t.pImpl + p.impl, pDoc := t.pDoc + p.documented
-                  pDecided := t.pDecided + p.decided }
+    t := { t with pImpl := t.pImpl + p.impl, pDoc := t.pDoc + p.documented }
   return t
 
 -- ## The corpus control
@@ -856,7 +850,7 @@ verified) of <item>.rows names in {denomPath}.",
 commands latex.ltx defines only as an error (not_base).",
     s!"# package half, gated here as packages.counted/packages.rows and per package by \
 the compat tier: {t.pImpl} implemented of {t.pDoc} documented (tests/compat-index; `impl` \
-or `inert:`), including {t.pDecided} decided divergences as unimplemented rows.",
+or `inert:`).",
     s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
 /-- One measurement for the tier: the denominator's header checked, every
@@ -885,7 +879,7 @@ def report : IO UInt32 := do
   IO.println s!"kernel  {t.kCounted} counted of {t.kRows} ({t.kExcluded} excluded)"
   for r in Rung.all do
     IO.println s!"  {t.bucket r}\t{r.word}"
-  IO.println s!"package {t.pImpl} implemented / {t.pDoc} documented ({t.pDecided} deliberate divergences included)"
+  IO.println s!"package {t.pImpl} implemented / {t.pDoc} documented"
   IO.println s!"total   {t.num}/{t.den} = {pct t.num t.den}"
   IO.println ""
   IO.println "-- items, most unknown first (unknown, unprobed, below-cut, counted)"
@@ -960,7 +954,7 @@ fragment spells them): {known.size}"
           -- read as disagreements and every one was this script's own
           -- vocabulary.
           let wantUnknown :=
-            match r.diagnosticCode? with
+            match r.refusalCode? with
             | some code => textUnknownCodes.contains code
             | none => false
           let gotUnknown := rung == .unknown
@@ -1282,7 +1276,7 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
       #[("kernel/Fonts.counted", 1), ("kernel/Fonts.rows", 2),
         ("kernel/registers.counted", 0), ("kernel/registers.rows", 1),
         ("packages.counted", 0), ("packages.rows", 0)])
-  let pkg : PRow := { pkg := "zz", documented := 2, impl := 1, decided := 0 }
+  let pkg : PRow := { pkg := "zz", documented := 2, impl := 1 }
   let combined := computeCoverageRows tiny #[pkg]
   expect "the package half is a scoreboard pair, not provenance only"
     (combined.any (fun r => r.item == "packages.counted" && r.value == 1) &&
@@ -1338,12 +1332,12 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
       && (IndexRow.mk "body" "inert:no ink by design" "\\zz").implemented
       && !(IndexRow.mk "body" "refuse:N0102" "\\zz").implemented
       && !(IndexRow.mk "body" "refuse:W0301" "\\zz").implemented)
-  let divergence := packageRow "zz" #[IndexRow.mk "body" "divergence:W0301" "\\zz"]
-  expect "a divergence remains in the documented denominator and is counted apart"
-    (divergence.documented == 1 && divergence.impl == 0 && divergence.decided == 1)
-  let divergenceTotals := totalsOf #[] #[] #[divergence]
-  expect "the audit's documented total includes every comparable divergence"
-    (divergenceTotals.pDoc == 1 && divergenceTotals.den == 1)
+  let refusal := packageRow "zz" #[IndexRow.mk "body" "refuse:W0301" "\\zz"]
+  expect "a refusal remains in the documented denominator"
+    (refusal.documented == 1 && refusal.impl == 0)
+  let refusalTotals := totalsOf #[] #[] #[refusal]
+  expect "the combined total includes every refusal"
+    (refusalTotals.pDoc == 1 && refusalTotals.den == 1)
   -- The texinfo escapes, and a chapter title a reader reads.
   expect "a texinfo escape is harvested"
     (namesOnLine "@findex \\@@" == #["@"] && namesOnLine "@findex \\@{" == #["{"]

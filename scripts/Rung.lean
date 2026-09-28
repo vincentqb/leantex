@@ -112,29 +112,13 @@ reason reviewed in the row itself. The `compat` tier counts with it and the
 def IndexRow.implemented (r : IndexRow) : Bool :=
   r.verdict == "impl" || r.verdict.startsWith "inert:"
 
-private def IndexRow.code? (r : IndexRow) (kind : String) : Option String :=
+/-- The exact, non-empty code of a `refuse:<code>` verdict. -/
+def IndexRow.refusalCode? (r : IndexRow) : Option String :=
   match r.verdict.splitOn ":" with
-  | [got, code] => if got == kind && !code.isEmpty then some code else none
+  | ["refuse", code] => if code.isEmpty then none else some code
   | _ => none
 
-/-- The exact, non-empty code of a `refuse:<code>` verdict. -/
-def IndexRow.refusalCode? (r : IndexRow) : Option String := r.code? "refuse"
-
-/-- The exact, non-empty code of a `divergence:<code>` verdict. -/
-def IndexRow.divergenceCode? (r : IndexRow) : Option String := r.code? "divergence"
-
-/-- The exact code of either diagnostic-bearing verdict. -/
-def IndexRow.diagnosticCode? (r : IndexRow) : Option String :=
-  match r.refusalCode? with
-  | some code => some code
-  | none => r.divergenceCode?
-
 def IndexRow.refused (r : IndexRow) : Bool := r.refusalCode?.isSome
-
-/-- A deliberate difference from LaTeX, still counted as a documented
-non-implementation. Its diagnostic is exact and non-empty, and `lake test`
-holds it to the refusal's rule so the difference is never silent. -/
-def IndexRow.decided (r : IndexRow) : Bool := r.divergenceCode?.isSome
 
 def compatIndexDir : System.FilePath := "tests/compat-index"
 
