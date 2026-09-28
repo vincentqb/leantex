@@ -11565,10 +11565,16 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             | none => break
           let k2 := skipSpaces preamble k
           -- environ's spelling (`\NewEnviron`, which Compat gives the
-          -- native head): one code body with `\BODY` at its top level is
-          -- the begin code before it and the end code after it, a
-          -- following `[final code]` joining the end.
-          match beginRaws.bind Compat.bodySlot? with
+          -- native head and marks): one code body with `\BODY` at its top
+          -- level is the begin code before it and the end code after it,
+          -- a following `[final code]` joining the end. Unmarked, the head
+          -- is the kernel's, and a `\BODY` in it the document's own macro.
+          let isMark (r : Raw) : Bool := match r with
+            | .ctrl n _ => n == Compat.environBodyMark
+            | _ => false
+          let environ := sigRaws.any isMark
+          sigRaws := sigRaws.filter (!isMark ·)
+          match if environ then beginRaws.bind Compat.bodySlot? else none with
           | some (bb, ee) =>
             let fb := skipSpaces preamble k
             let (final, kf) := match preamble[fb]? with

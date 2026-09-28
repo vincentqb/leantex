@@ -345,6 +345,16 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "a final code beside a code with no BODY is refused, and the refusal says so"
     ((dvE (doc "\\NewEnviron{placeholder}{}[Tail words]\n" use)).any fun d =>
       d.code == "W0104" && hasStr d.message "final code")
+  -- A document's own `\BODY` macro in a kernel definition is that macro:
+  -- only environ's definer places the collected body there (review LP-1).
+  -- Split at it, the kernel's begin code left its end group unconsumed in
+  -- the preamble, which failed the build (E0313).
+  let ownBody := "\\newcommand{\\BODY}{Inner words}\n" ++
+    "\\newenvironment{placeholder}{Lead \\BODY{} }{ Tail words}\n"
+  for src in [dvDoc ownBody use, doc ownBody use] do
+    t "a document's own BODY macro in a kernel definition is the macro"
+      (!((dvE src).any (·.severity == .error)) &&
+        sets src "Lead Inner words Middle words Tail words")
 
 
 /-- **Owed: a redefined abstract's vertical skips.** A venue's

@@ -4345,6 +4345,13 @@ def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
     if mentionsBody before.toList || mentionsBody after.toList then none
     else some (before, after)
 
+/-- The mark the rewrite sets after the native head of an environ definition
+whose code places `\BODY` once at its top level: the elaborator splits that
+code at `\BODY` (`bodySlot?`) where the mark stands, and only there — a
+`\BODY` in a kernel definition is the document's own macro. `:` is no letter
+(`Lex.nameChar`), so no document spells the name. -/
+def environBodyMark : String := "@environ:BODY"
+
 /-- The declarations standing in front of a float's kernel core when they
 are the whole begin body: each a `\setlength` of one of the two caption
 skips, then `\@float{kind}` (latex.ltx defines the float environments as
@@ -5064,7 +5071,11 @@ the definition is skipped" pos
         became s!"\\{name}\{{envName}}" (native ++ " {code before \\BODY} {code after it}") pos
         write fun st => { st with bodyNext := 1 }
         write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
-        return some (← synthAt native pos, j)
+        -- The elaborator splits the code at `\BODY` where this mark stands
+        -- beside the head, and nowhere else; the body has no definer to
+        -- read it (E0312), so it is set only before `\begin{document}`.
+        let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
+        return some ((← synthAt native pos) ++ mark, j)
       else if !mentionsBody code.toList && !final then
         -- A code that never places `\BODY` runs where the environment
         -- stands and the collected body goes nowhere, as environ.sty
