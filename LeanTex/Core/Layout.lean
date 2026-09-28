@@ -5591,10 +5591,14 @@ private def Rd.resolve (r : Rd) (g : SymGlue) : Glue :=
 
 private def Rd.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
 
-/-- A list level's `\leftmargin` (`Ir.leftMargin`, at `\@listdepth` `lv`),
-or the engine's own indent where the lineage declares none. -/
-private def Rd.leftMargin (r : Rd) (lv : Nat) : Sp :=
-  (Ir.leftMargin r.lists r.geom.fontSize lv).getD r.geom.listIndent
+/-- A list level's `\leftmargin` at `\@listdepth` `lv`: the document's own
+(`Ir.leftMarginName`, a token in `tokens`), else the class's
+(`Ir.leftMargin`), else the engine's own indent where the lineage declares
+none. -/
+private def Rd.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Sp :=
+  match tokens.find? (Ir.leftMarginName lv) with
+  | some g => (r.resolve g).width
+  | none => (Ir.leftMargin r.lists r.geom.fontSize lv).getD r.geom.listIndent
 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/
@@ -7582,7 +7586,7 @@ private def collectBlock (r : Rd) (a : Acc)
       | none, none => a
     -- The level's `\leftmargin` (`Rd.leftMargin`), unless the list's style
     -- declares its own indent.
-    let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv)
+    let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
     let ri := match sk with
@@ -7666,7 +7670,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- on entry — and sets its paragraphs `\parsep` apart.
     let saved := a.measure
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
-    let lm := r.leftMargin lv
+    let lm := r.leftMargin lv a.tokens
     let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
@@ -7698,7 +7702,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
     let saved := a.measure
-    let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1)
+    let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1) a.tokens
     let sub := { a with
       measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
     let sub := collectBlocks { r with geom := { r.geom with fontSize := small } }

@@ -1112,9 +1112,19 @@ def leftMarginMilli : ListLineage → Nat → Option Nat
 lineage's stack at the body size and nesting level — `\@listdepth`, over
 every list and quotation — where the lineage declares one. Both artifacts
 read it: the page's list, quotation and description margins, and the
-sheet's padding (`HtmlDoc.listIndentCss`), in the em it is spelled in. -/
+sheet's padding (`HtmlDoc.listIndentCss`), in the em it is spelled in. A
+document's own `\leftmargin⟨n⟩` rides in the token of that name
+(`leftMarginName`), which both read first, as every `\list` of that level
+reads the length in LaTeX. -/
 def leftMargin (l : ListLineage) (size : Sp) (level : Nat) : Option Sp :=
   (leftMarginMilli l (max level 1)).map fun m => size * (m : Int) / 1000
+
+/-- The length a document declares a level's margin in: `\leftmargini`
+to `\leftmarginvi`, the kernel's six (latex.ltx `\@listdepth` reads at
+most six), a deeper level reading the sixth. -/
+def leftMarginName (level : Nat) : String :=
+  "leftmargin" ++ (match min (max level 1) 6 with
+    | 1 => "i" | 2 => "ii" | 3 => "iii" | 4 => "iv" | 5 => "v" | _ => "vi")
 
 /-- At the 10 pt base a list level's margin is the class's own, exactly:
 25, 22, 18.7 and 17 pt at the standard classes' four levels, and beamer's

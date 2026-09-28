@@ -873,21 +873,18 @@ def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapR
 description's `<dd>` and a quotation's two edges stand the level's
 `\leftmargin` in, from the one resolving site the page's margins read
 (`Ir.leftMarginMilli`), in the em the class spells it in (the page reads
-the same thousandths of the body size, `Ir.leftMargin`), each level
-reached through an item ancestor per enclosing list or quotation and
-written only where its value moves. A lineage with no stack, the web's,
-keeps its lists' one indent. -/
+the same thousandths of the body size, `Ir.leftMargin`), under the
+custom property of the length a document declares it in
+(`Ir.leftMarginName`, which `tokenVars` writes), each level reached
+through an item ancestor per enclosing list or quotation, to the kernel's
+six. A lineage with no stack, the web's, keeps its lists' one indent. -/
 def listIndentCss (l : Ir.ListLineage) : String :=
-  let rule (pre v : String) : String :=
-    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n"
-  match Ir.leftMarginMilli l 1 with
-  | none => rule "" "1.35rem"
-  | some _ => String.join ((List.range 6).filterMap fun k =>
-      match Ir.leftMarginMilli l (k + 1) with
-      | some m =>
-        if k != 0 && Ir.leftMarginMilli l k == some m then none
-        else some (rule (String.join (List.replicate k itemAncestor)) s!"{decMilli m}em")
-      | none => none)
+  String.join ((List.range 6).map fun k =>
+    let pre := String.join (List.replicate k itemAncestor)
+    let v := s!"var(--{Ir.leftMarginName (k + 1)}, " ++ (match Ir.leftMarginMilli l (k + 1) with
+      | some m => s!"{decMilli m}em"
+      | none => "1.35rem") ++ ")"
+    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n")
 
 /-- The rules a theorem-like block's space owes, on the element its role's
 class marks (`Ir.thmSkips` at the top level, the one resolving site the PDF

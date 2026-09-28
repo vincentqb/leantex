@@ -4316,8 +4316,8 @@ a 300 pt measure): the four itemize levels at 24.90, 46.82, 65.45 and
 82.39 bp in at 10 pt, 29.89 bp at 12 pt, a list in a quote 46.82 bp in
 and 19.93 bp below the quote's line, where the engine at `2f81a8e1` stood
 at 15, 30, 45 and 60 pt, 18 pt, and 30 pt and 24 pt; and over the sheet,
-each level's padding in the class's em. A declared `\leftmargini` still
-wins. Invented words. -/
+each level's padding in the class's em. A declared `\leftmargin⟨n⟩` wins,
+at every `\list` of its level, a quotation included. Invented words. -/
 def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let place (src : String) (w : String) : Option (Dim.Sp × Dim.Sp) := do
@@ -4360,19 +4360,28 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "a declared leftmargini keeps its value"
     (xs (doc "{article}" "\\setlength{\\leftmargini}{15pt}\n" nest) ["Bravo"] ==
       [some (Dim.pt 15)])
+  -- Every `\list` of the level reads the length: a quotation, not only a list.
+  let declQuote := doc "{article}" "\\setlength{\\leftmargini}{30pt}\n"
+    "Alpha words.\n\\begin{quote}\nBravo words.\n\\end{quote}\nCharlie."
+  t "a declared leftmargini reaches a quotation, as every level-one list reads it"
+    (xs declQuote ["Bravo"] == [some (Dim.pt 30)])
   let sheet (cls : String) : String :=
     (HtmlDoc.emit {} (elabStr (doc cls "" "x")).1).1
   let lv := ":is(li, dd, blockquote) "
   let art := sheet "{article}"
-  t "html each list level's padding is its leftmargin in em"
-    (hasStr art "ul, ol, dd { padding-left: 2.5em; }\nblockquote { padding: 0 2.5em; }" &&
-     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: 2.2em; }" &&
-     hasStr art s!"{lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd \{ padding-left: 1.7em; }")
+  t "html each list level's padding is its leftmargin in em, under the length's property"
+    (hasStr art ("ul, ol, dd { padding-left: var(--leftmargini, 2.5em); }\n" ++
+        "blockquote { padding: 0 var(--leftmargini, 2.5em); }") &&
+     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2.2em); }" &&
+     hasStr art (s!"{lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd " ++
+       "{ padding-left: var(--leftmarginiv, 1.7em); }"))
+  t "html a declared leftmargini reaches the sheet as its property"
+    (hasStr (HtmlDoc.emit {} (elabStr declQuote).1).1 "--leftmargini: 30pt;")
   t "html a deck's lists stand beamer's 2em in at every level"
-    (hasStr (sheet "{beamer}") "ul, ol, dd { padding-left: 2em; }" &&
-     !hasStr (sheet "{beamer}") s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left")
+    (hasStr (sheet "{beamer}") "ul, ol, dd { padding-left: var(--leftmargini, 2em); }" &&
+     hasStr (sheet "{beamer}") s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2em); }")
   t "html a webpage's lists keep the engine's one indent"
-    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: 1.35rem; }")
+    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: var(--leftmargini, 1.35rem); }")
 
 /-- **A list right after a heading opens no `\topsep`** (`Acc.afterHeading`).
 `\@afterheading` sets `\@nobreak` until the next paragraph starts, and a
