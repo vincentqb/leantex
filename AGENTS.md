@@ -9,7 +9,7 @@ in this repo; refer to the private reference corpus abstractly.
 
 ## Setup
 
-- Toolchain: elan-managed, pinned by `lean-toolchain` (track stable; v4.34.0 today).
+- Toolchain: elan-managed, pinned by `lean-toolchain` (track stable; v4.34.1 today).
 - This host is AL2 (glibc 2.26): the toolchain's bundled clang cannot run.
   Export before any `lake` command (verified working):
 

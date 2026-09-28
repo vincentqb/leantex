@@ -14,7 +14,7 @@ lake build
 ./.lake/build/bin/leantex path/to/doc.tex
 ```
 
-elan reads `lean-toolchain` and fetches the pinned Lean (v4.34.0) by itself;
+elan reads `lean-toolchain` and fetches the pinned Lean (v4.34.1) by itself;
 `lake build` takes a few minutes cold. Two more invocations from
 `leantex --help`:
 

@@ -22722,3 +22722,38 @@ paper a word after a sentence end on its line starts 1.25 pt (median)
 earlier than lualatex's; before one, 0.20 pt. It needs Layout's
 interword glue, a declaration channel for `\frenchspacing` (babel and
 polyglossia set it per language), and Compat's two rows.
+
+
+
+### 2026-09-28 — stable Lean 4.34.1; the executable's import closure stays as it is
+
+**The pin.** `lean-toolchain` moves from Lean 4.34.0 to the latest stable
+patch, 4.34.1, alone in its own commit (elan's `stable` resolves to 4.34.1 on
+this host). The source does not change for it: at the landing sha the tree
+builds on 4.34.1 with no warning and passes `lake test`, and the land tool's
+gates rerun both there, from a cold build.
+
+**The closure experiment, and why it is not taken.** A side branch
+(`agent/lean4-runtime-minimal`, on `8d3df368`) asked whether the executable
+should import only the runtime modules `Main.lean` calls instead of the
+`LeanTex` umbrella, on the premise that the umbrella drags Lean's compiler
+and elaborator initializers into the binary. The premise was false: the
+production ELF holds no aggregate `lean_initialize`, `initialize_Lean`,
+`initialize_Lean_Compiler` or `initialize_Lean_Elab`, and the `-lLean` and
+`-lLake` in Lake's link line contribute no initializer and no Lake symbol.
+Direct imports removed only the umbrella object and four proof-only leaves
+(`Loop`, `Pending`, `ColorContract`, `ContrastContract`): 68 → 64 objects,
+17,356,680 → 17,352,080 bytes, 4,600 bytes in all. They bought no resolved
+speedup: under the host lock, 100 randomized pairs gave `--version` a
+candidate/base geometric-mean ratio of 1.0482 [0.9973, 1.1400] and `--help`
+1.0031 [0.9898, 1.0161], and the 20-run document benchmark stayed within
+noise.
+Those numbers are the branch's, measured on 4.34.1 at `8d3df368`; none is
+re-measured here.
+
+So the direct-import change (`50f0e826`) is not taken: it adds import lines
+to keep in step with the modules for no measured prize, while Lean's runtime
+initialization and section GC already do the work it aimed at. Converting
+`Main.lean` alone to the module system fails, since a `module` cannot import
+the legacy modules; converting the whole graph is an API migration with no
+measured prize either. `LeanTex` stays the executable's one import.
