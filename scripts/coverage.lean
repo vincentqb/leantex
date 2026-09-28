@@ -112,7 +112,6 @@ import scripts.Rung
 open LeanTex.Core
 
 def denomPath : String := "tests/coverage/latex2e-index.txt"
-def compatDir : System.FilePath := "tests/compat-index"
 def corpusDir : System.FilePath := "tests/corpus"
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
@@ -506,54 +505,22 @@ def probe (name : String) : Rung := probeIn (measurePlaces places) name
 
 -- ## The package half, from the compat index
 
-/-- One package's rows: its name, the number of commands it documents, and
-how many of them count as implemented. -/
+/-- One package's rows: its name, the number of commands it documents, how
+many of them count as implemented (`IndexRow.implemented`, the rule the
+`compat` tier counts with), and its decided divergences — documented and no
+gap, so counted apart and out of `documented`, as `compat` counts them. -/
 structure PRow where
   pkg : String
   documented : Nat
   impl : Nat
+  decided : Nat
 deriving Inhabited, BEq
 
-def annotationOf (line : String) : Option String :=
-  let place := ((line.splitOn " ").headD "")
-  let rest := (line.drop place.length).toString.trimAscii.toString
-  let ann := ((rest.splitOn " ").headD "")
-  if ann.isEmpty then none else some ann
-
-def callOf (line : String) : String :=
-  let place := ((line.splitOn " ").headD "")
-  let rest := (line.drop place.length).toString.trimAscii.toString
-  let ann := ((rest.splitOn " ").headD "")
-  (rest.drop ann.length).toString.trimAscii.toString
-
-/-- **One definition of "implemented" for a compat-index row**: `impl`, or
-`inert:` — a recognised command that legitimately moves no ink, with the
-reason reviewed in the row itself. This is the rule the `compat` scoreboard
-tier uses, and it is used here in both places a row is judged: the
-numerator and the `--report` audit. Those two disagreed in the first
-version of this script, on the four `refuse:N0102` rows, which is the kind
-of drift one shared predicate exists to stop. -/
-def annImplemented (ann : String) : Bool := ann == "impl" || ann.startsWith "inert:"
-
 def readPackages : IO (Array PRow) := do
-  let mut rows : Array PRow := #[]
-  let names := (← compatDir.readDir).map (·.fileName) |>.qsort (· < ·)
-  for entry in names do
-    unless entry.endsWith ".txt" do continue
-    let pkg := (entry.dropEnd ".txt".length).toString
-    let content ← IO.FS.readFile (compatDir / entry)
-    let mut documented := 0
-    let mut impl := 0
-    for line in content.splitOn "\n" do
-      let line := line.trimAscii.toString
-      if line.isEmpty || line.startsWith "#" then continue
-      match annotationOf line with
-      | none => pure ()
-      | some ann =>
-        documented := documented + 1
-        if annImplemented ann then impl := impl + 1
-    rows := rows.push { pkg, documented, impl }
-  return rows
+  return (← readCompatIndex).map fun (pkg, rows) =>
+    let scored := rows.filter (·.scored)
+    { pkg, documented := scored.size, impl := (scored.filter (·.implemented)).size
+      decided := rows.size - scored.size }
 
 -- ## The scoreboard file
 
@@ -608,6 +575,7 @@ structure Totals where
   kExcluded : Nat
   pImpl : Nat
   pDoc : Nat
+  pDecided : Nat := 0
 deriving Inhabited
 
 def Totals.bucket (t : Totals) (r : Rung) : Nat :=
@@ -638,7 +606,8 @@ def totalsOf (kernel : Array (KRow × Rung)) (rows : Array KRow) (pkgs : Array P
   let mut t : Totals :=
     { buckets, kExcluded := (rows.filter (!·.counted)).size, pImpl := 0, pDoc := 0 }
   for p in pkgs do
-    t := { t with pImpl := t.pImpl + p.impl, pDoc := t.pDoc + p.documented }
+    t := { t with pImpl := t.pImpl + p.impl, pDoc := t.pDoc + p.documented
+                  pDecided := t.pDecided + p.decided }
   return t
 
 -- ## The corpus control
@@ -872,7 +841,8 @@ verified) of <item>.rows names in {denomPath}.",
     s!"# kernel excluded: {mathN} math-mode symbol commands (math_given), {notBaseN} \
 commands latex.ltx defines only as an error (not_base).",
     s!"# package half, gated by the compat tier as <p>.impl/<p>.rows: {t.pImpl} implemented \
-of {t.pDoc} documented (tests/compat-index; `impl` or `inert:`).",
+of {t.pDoc} documented (tests/compat-index; `impl` or `inert:`), and {t.pDecided} decided \
+divergences listed apart, outside the denominator.",
     s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
 /-- One measurement for the tier: the denominator's header checked, every
@@ -953,17 +923,10 @@ fragment spells them): {known.size}"
   let mut disagree := 0
   let mut comparable := 0
   let mut counting : Array String := #[]
-  for entry in (← compatDir.readDir).map (·.fileName) |>.qsort (· < ·) do
-    unless entry.endsWith ".txt" do continue
-    let pkg := (entry.dropEnd ".txt".length).toString
-    let content ← IO.FS.readFile (compatDir / entry)
-    for line in content.splitOn "\n" do
-      let line := line.trimAscii.toString
-      if line.isEmpty || line.startsWith "#" then continue
-      match annotationOf line with
-      | none => pure ()
-      | some ann =>
-        let call := callOf line
+  for (pkg, idx) in ← readCompatIndex do
+    for r in idx do
+        let ann := r.verdict
+        let call := r.call
         -- Only a row that *is* one control word is comparable. A row naming
         -- a whole environment, several commands, a starred form or a
         -- delimited call has no single name to probe — and admitting
@@ -983,8 +946,8 @@ fragment spells them): {known.size}"
           -- read as disagreements and every one was this script's own
           -- vocabulary.
           let wantUnknown :=
-            ann.startsWith "refuse:"
-              && textUnknownCodes.contains (ann.drop "refuse:".length).toString
+            (r.refused || r.decided)
+              && textUnknownCodes.contains (((ann.splitOn ":").drop 1).headD "")
           let gotUnknown := rung == .unknown
           if rung == .unprobed then
             disagree := disagree + 1
@@ -993,7 +956,7 @@ cannot spell it"
           else if wantUnknown != gotUnknown then
             disagree := disagree + 1
             IO.println s!"  {pkg}\t{call}\tindex:{ann}\tmeasured:{rung.word}"
-          else if annImplemented ann && !rung.counted then
+          else if r.implemented && !rung.counted then
             -- Recognition agrees; the two halves count it differently. An
             -- `inert:` row and the `skipped` rung are the same judgement —
             -- recognised, no ink — made by a reviewer and by the engine, and
@@ -1343,8 +1306,10 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
     (!(checkDenom { provenance := #["# rows: 2"], rows := goodRows }).isEmpty)
   -- One rule for "implemented", shared with the compat tier.
   expect "impl and inert count, a refusal does not"
-    (annImplemented "impl" && annImplemented "inert:no ink by design"
-      && !annImplemented "refuse:N0102" && !annImplemented "refuse:W0301")
+    ((IndexRow.mk "body" "impl" "\\zz").implemented
+      && (IndexRow.mk "body" "inert:no ink by design" "\\zz").implemented
+      && !(IndexRow.mk "body" "refuse:N0102" "\\zz").implemented
+      && !(IndexRow.mk "body" "refuse:W0301" "\\zz").implemented)
   -- The texinfo escapes, and a chapter title a reader reads.
   expect "a texinfo escape is harvested"
     (namesOnLine "@findex \\@@" == #["@"] && namesOnLine "@findex \\@{" == #["{"]

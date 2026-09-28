@@ -11,7 +11,9 @@ row; this tier commits the shape of the index, so a row cannot quietly
 leave it.
 
 Two items per package: `<p>.rows`, the commands covered at all, and
-`<p>.impl`, those the engine implements.
+`<p>.impl`, those the engine implements. A decided divergence
+(`divergence:<code>`, `IndexRow.decided`) is not a gap the engine owes, so
+it is counted apart rather than in `rows`.
 
 **Implemented** means the verdict is `impl` *or* `inert:…` — one definition,
 the same one `coverage` counts, because an `inert:` row is a recognised
@@ -34,6 +36,7 @@ and `impl` the depth claim, both monotone the right way, and `refuse` stays
 a provenance line: data, never gated.
 -/
 import scripts.Board
+import scripts.Rung
 
 open Scoreboard
 
@@ -42,41 +45,24 @@ structure Pkg where
   rows : Nat
   impl : Nat
   refuse : Nat
+  decided : Nat := 0
 deriving Inhabited
 
-/-- Is this verdict an implementation? `impl`, or `inert:` — a recognised
-command that legitimately moves no ink. The one definition, shared with the
-`coverage` tier; changing it here changes a committed number, so the
-selftest pins both halves. -/
-def isImpl (verdict : String) : Bool :=
-  verdict == "impl" || verdict.startsWith "inert:"
+/-- Count one index file's rows. A `#` line is the header prose; every
+other non-blank line is `<where> <verdict> <body…>` (`IndexRow`), counted
+by the one definition of implemented the `coverage` tier shares
+(`IndexRow.implemented`). A decided divergence is no gap: it leaves `rows`
+and is counted apart (`IndexRow.decided`). -/
+def countRows (name : String) (rows : Array IndexRow) : Pkg :=
+  let scored := rows.filter (·.scored)
+  { name, rows := scored.size, impl := (scored.filter (·.implemented)).size
+    refuse := (scored.filter (·.refused)).size, decided := rows.size - scored.size }
 
-/-- Read one index file. A `#` line is the header prose; every other
-non-blank line is `<where> <verdict> <body…>`. -/
-def readIndex (name text : String) : Pkg := Id.run do
-  let mut rows := 0
-  let mut impl := 0
-  let mut refuse := 0
-  for raw in text.splitOn "\n" do
-    let l := raw.trimAscii.toString
-    if l.isEmpty || l.startsWith "#" then continue
-    rows := rows + 1
-    let toks := (l.splitOn " ").filter (!·.isEmpty)
-    let verdict := (toks[1]?).getD ""
-    if isImpl verdict then impl := impl + 1
-    else if verdict.startsWith "refuse:" then refuse := refuse + 1
-  return { name, rows, impl, refuse }
+def readIndex (name text : String) : Pkg :=
+  countRows name ((text.splitOn "\n").filterMap IndexRow.parse?).toArray
 
 def packages : IO (Array Pkg) := do
-  let dir : System.FilePath := "tests/compat-index"
-  let mut out : Array Pkg := #[]
-  if ← dir.isDir then
-    for e in ← dir.readDir do
-      let f := e.fileName
-      if f.endsWith ".txt" then
-        let name := (f.dropEnd ".txt".length).toString
-        out := out.push (readIndex name (← IO.FS.readFile (dir / f)))
-  return out.qsort (fun a b => a.name < b.name)
+  return (← readCompatIndex).map fun (name, rows) => countRows name rows
 
 def measureTier : IO (Array String × Array Row) := do
   let pkgs ← packages
@@ -84,15 +70,18 @@ def measureTier : IO (Array String × Array Row) := do
   let mut totalRows := 0
   let mut totalImpl := 0
   let mut totalRefuse := 0
+  let mut totalDecided := 0
   for p in pkgs do
     rows := rows.push { item := s!"{p.name}.rows", value := Int.ofNat p.rows }
     rows := rows.push { item := s!"{p.name}.impl", value := Int.ofNat p.impl }
     totalRows := totalRows + p.rows
     totalImpl := totalImpl + p.impl
     totalRefuse := totalRefuse + p.refuse
+    totalDecided := totalDecided + p.decided
   return (#[s!"# packages: {pkgs.size}; rows: {totalRows}; impl: {totalImpl} \
 (verdict impl or inert:, the one definition the coverage tier shares); \
-refuse: {totalRefuse}; other verdicts: {totalRows - totalImpl - totalRefuse}"], rows)
+refuse: {totalRefuse}; other verdicts: {totalRows - totalImpl - totalRefuse}; \
+decided divergences, outside rows: {totalDecided}"], rows)
 
 def selftest : IO UInt32 := tierSelftest "compat" fun no => do
   let text := "# source: an invented manual §1\n\
@@ -109,6 +98,7 @@ body inert:binds \\zzfour\n\
   -- The one definition of implemented, shared with the coverage tier: a
   -- recognised command that legitimately moves no ink counts. Two tiers
   -- counting the same index differently is what this pins shut.
+  let isImpl (v : String) : Bool := (IndexRow.mk "body" v "\\zz").implemented
   no "definition: impl counts" (isImpl "impl")
   no "definition: inert: counts -- a recognised command that moves no ink"
     (isImpl "inert:binds")
@@ -126,6 +116,20 @@ body inert:binds \\zzfour\n\
     (after.impl > before.impl)
   no "a refusal becoming an implementation lowers the refusal count -- which \
 is why it is not an item" (after.refuse < before.refuse)
+  -- A decided divergence stops scoring as a gap: it leaves `rows`, so a gap
+  -- turned into one is a fall only a human `# lowered:` line admits.
+  let decided := readIndex "zz" "body refuse:W0389 \\zzone\nbody divergence:W0389 \\zztwo\n"
+  no s!"a divergence leaves rows: 1 expected, got {decided.rows}" (decided.rows == 1)
+  no s!"a divergence is counted apart: 1 expected, got {decided.decided}"
+    (decided.decided == 1)
+  no "a divergence is neither implemented nor refused"
+    (decided.impl == 0 && decided.refuse == 1)
+  let asTsv (p : Pkg) : Tsv :=
+    { provenance := #[], retired := #[], lowered := #[], encoding := some (.pairs "impl" "rows"),
+      rows := #[{ item := "zz.impl", value := p.impl }, { item := "zz.rows", value := p.rows }] }
+  no "a gap turned into a divergence is a fall the ratchet reports"
+    ((ratchet (asTsv before) (asTsv (readIndex "zz" "body divergence:W0301 \\zzone\n"))).losses.any
+      (·.item == "zz.rows"))
 
 def main (args : List String) : IO UInt32 :=
   tierMain "compat" (.pairs "impl" "rows") measureTier selftest args

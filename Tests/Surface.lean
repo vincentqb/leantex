@@ -2014,12 +2014,16 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
 reviewable data — one line per command, `<place> <annotation> <call>`,
 place `pre` | `body` | `frame` (a `beamer` frame body, for the class's own
 surface — a class loads by `\documentclass`, never `\usepackage`),
-annotation `impl` | `inert:<why>` | `refuse:<code>`. An `impl` call
+annotation `impl` | `inert:<why>` | `refuse:<code>` | `divergence:<code>`.
+An `impl` call
 elaborates without W0301/W0302 — nor W0012, the math parser's answer to a
 name it does not know, under which a formula is its own source text and so
 differs from the renamed call by its spelling alone — *and* changes the
 document by being recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
-code, so a refusal that silently stops warning fails too. Adding a package
+code, so a refusal that silently stops warning fails too. A
+`divergence:<code>` row is a decided difference from LaTeX, a user
+decision rather than a gap, and it answers to the refusal's rule: named
+where it happens, never silent. Adding a package
 to the list without its index file fails: the claim and its evidence
 arrive together. Every file in the directory is probed, not only the
 native list's: a deliberately refused package (todonotes) records its
@@ -2069,8 +2073,8 @@ say why with inert:<why>, or probe the command where its effect lands"
         check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
 changes the document — promote it to impl"
           (!compatRowEffect pkg place call)
-      else if ann.startsWith "refuse:" then
-        let code := (ann.drop "refuse:".length).toString
+      else if ann.startsWith "refuse:" || ann.startsWith "divergence:" then
+        let code := ((ann.splitOn ":").drop 1).headD ""
         check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
           (codes.contains code)
       else
