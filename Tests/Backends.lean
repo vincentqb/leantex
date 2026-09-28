@@ -1789,8 +1789,9 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let plainPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages)
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
   -- The driver's cached spellings are transparent: pre-deflated content
-  -- streams and face files (the cache's shape), and the glyph census it
-  -- takes once, write the file the writer builds for itself, byte for byte.
+  -- streams and face files (the cache's shape), built from the glyph census
+  -- it takes once, write the file the writer builds for itself, byte for
+  -- byte, and the census keeps the faces the writer keeps.
   let bigPages := (layoutOf twoFace bigDoc geom).pages
   let cached := (Pdf.pageStreams geom twoFace bigPages).map fun d => (d, some (Flate.deflate d))
   let usedBig := Pdf.usedAll twoFace bigPages
@@ -1798,10 +1799,10 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let progs := Pdf.facePrograms twoFace usedBig
   let zFaces := (Array.range twoFace.fonts.size).map fun k =>
     ((keepBig.zip progs).find? (·.1 == k)).map fun (_, p, _) => Flate.deflate p
-  t "pdf with cached streams, programs, census and faces is the pdf without"
+  t "pdf with cached streams, programs and faces is the pdf without"
     (keepBig == Pdf.keepFaces twoFace bigPages &&
       Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached)
-        (programs := progs) (used := usedBig) ==
+        (programs := progs) ==
       Pdf.write geom twoFace bigPages)
   -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
   -- CapHeight is the cap height), never a stand-in: the fixture face

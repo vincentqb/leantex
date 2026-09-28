@@ -162,10 +162,11 @@ private def markUsed (fs : FontSet) (pages : Array PageOut) : Array (Array (Opti
             return marks
   return seen
 
-/-- Used glyphs per face, one char witness per gid, ascending gid: the one
-census a PDF build reads — the faces the file keeps (`keepFaces`), their
-subset programs (`facePrograms`) and the writer's own tables all derive
-from it, so the driver takes it once and hands it to each. -/
+/-- Used glyphs per face, one char witness per gid, ascending gid: the
+census a PDF build's embedding decisions read — the faces the file keeps
+(`keepFaces`, its `keepOf`), their subset programs (`facePrograms`), and
+the writer's own tables. The driver takes it once for the programs, their
+cache keys and the page operators; `write` takes its own. -/
 def usedAll (fs : FontSet) (pages : Array PageOut) : Array (Array (Nat × Char)) :=
   let seen := markUsed fs pages
   (Array.range fs.fonts.size).map fun k =>
@@ -1142,25 +1143,21 @@ placed, the structure tree projected from `tree`, and the document
 information the source declared (Info dictionary plus XMP). `streams`,
 `ops` and `programs` are the driver's cache path: the page operators it
 built through `pageOps` (one walk, not two), their rendered and deflated
-bytes, and the face programs it built through `facePrograms`; `used` is the
-glyph census of these pages (`usedAll`), which the driver takes once for
-all of them. -/
+bytes, and the face programs it built through `facePrograms`. -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
-    (programs : Array (ByteArray × Bool) := #[])
-    (used : Array (Array (Nat × Char)) := usedAll fs pages) : ByteArray := Id.run do
+    (programs : Array (ByteArray × Bool) := #[]) : ByteArray := Id.run do
   let np := pages.size
   let v17 := info.pdfVersion == some "1.7"
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
-  -- the very function `html_fonts_cover_pdf` quantifies over, read off the
-  -- census it is defined by, so the contract holds of the writer's own
-  -- decision, not a copy. `allUsed` stays for the per-face glyph census the
-  -- kept faces subset.
-  let allUsed : Array (Array (Nat × Char)) :=
-    if used.size == fs.fonts.size then used else usedAll fs pages
+  -- the very function `html_fonts_cover_pdf` quantifies over (`keepOf` of
+  -- this census is `keepFaces fs pages` by definition), so the contract
+  -- holds of the writer's own decision, not a copy. `allUsed` stays for the
+  -- per-face glyph census the kept faces subset.
+  let allUsed : Array (Array (Nat × Char)) := usedAll fs pages
   let keep : Array Nat := keepOf allUsed
   let remap := remapOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!

@@ -1251,8 +1251,8 @@ in the HTML" (← since t)
         -- Font programs and content streams deflate through the
         -- content-hash cache: a subset, or a page unchanged since the last
         -- build, reads its stream back instead of compressing it. The glyph
-        -- census is taken once, and the kept faces, their programs, the
-        -- page operators and the writer all read it.
+        -- census is taken once for the kept faces, their programs and the
+        -- page operators; the writer takes its own.
         let used := Pdf.usedAll fs out.pages
         let keep := Pdf.keepOf used
         let programs := Pdf.facePrograms fs used
@@ -1266,7 +1266,6 @@ in the HTML" (← since t)
           let data := (Pdf.render o).toUTF8
           streams := streams.push (data, some (← deflateCached data))
         let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams tree ops programs
-          used
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
         pdfBuilt := some pdf
       -- Phase 3: census, gate, publish. Assertions judge what shipped, so
