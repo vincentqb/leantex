@@ -185,7 +185,9 @@ def boundaryWithdrawn (tool : String) (said : Option String) (src : String)
     (subject := some src)
 
 /-- W0378: the PDF→SVG converter for the HTML artifact is not runnable;
-the page shows each picture's text alternative instead. -/
+the page shows the rendered subset's drawing of each picture the subset
+draws in part (`Boundary.htmlWithdraw`), and every other picture's text
+alternative. -/
 def boundarySvgMissing (err : String) : Diag :=
   Diag.of .W0378
     s!"cannot run 'pdftocairo' to convert boundary pictures for the HTML \

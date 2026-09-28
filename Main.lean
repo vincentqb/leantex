@@ -710,14 +710,17 @@ asset directory's *relative* name and never the page's location: no path
 under the output can be formed here, which is what keeps the conversion
 on the cache side of the assertion gate; `publish` copies each returned
 `Publication` into place after it. `pdftocairo` missing or failing is
-W0378 for this artifact only — the PDF is unaffected — and the page then
-shows the picture's text alternative. -/
+W0378 for this artifact only — the PDF is unaffected — and the sources it
+failed on are returned: a picture the rendered subset draws in part is
+drawn by the subset on the page (`Boundary.htmlWithdraw`), and any other
+shows its text alternative. -/
 def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store) :
-    IO (Image.Store × Array Publication × Array Diag) := do
-  if pics.isEmpty then return (imgs, #[], #[])
+    IO (Image.Store × Array Publication × Array Diag × Array String) := do
+  if pics.isEmpty then return (imgs, #[], #[], #[])
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
   let mut pubs : Array Publication := #[]
+  let mut unconverted : Array String := #[]
   for r in pics do
     let hash := (r.src.drop Ir.picSrcPrefix.length).toString
     let svgName := hash ++ ".svg"
@@ -742,7 +745,8 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
       entries := entries.map fun en =>
         if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
         else en
-  return ({ entries }, pubs, diags)
+    else unconverted := unconverted.push r.src
+  return ({ entries }, pubs, diags, unconverted)
 
 /-- The raster copies a page requests (`HtmlDoc.imageAssets`), each with the
 path its bytes are read from: the entry's resolved spelling against the
@@ -1160,12 +1164,24 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- The boundary pictures' HTML face: the cached PDFs convert to
         -- SVGs in the cache, and the store's hrefs point at the names
         -- they will publish under (`picsToSvg`; W0378 names a converter
-        -- this host lacks).
-        let (imgs, pubs, svgDiags) ← picsToSvg pics assetsDir imgs
+        -- this host lacks). A picture the conversion failed on, and that
+        -- the rendered subset draws in part, is drawn by the subset on
+        -- this face alone (`Boundary.htmlWithdraw`): the document is
+        -- elaborated again for the page with it withdrawn, and the PDF
+        -- keeps the boundary's drawing.
+        let (imgs, pubs, svgDiags, unconverted) ← picsToSvg pics assetsDir imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
         accepted := accepted ++ rS.accepted
         warnings := warnings + rS.warnings
+        let htmlOnly := Boundary.htmlWithdraw reqSpans.fallbacks unconverted
+        let htmlDoc ← if htmlOnly.isEmpty then pure doc else do
+          let t ← IO.monoMsNow
+          let (d, _, _) ← elaborate ui file front.prepared front.earlier front.spliced metric
+            (phases := false) (withdrawn := w.ids ++ htmlOnly)
+          ui.phase "withdraw" s!"{htmlOnly.size} pictures drawn by the rendered subset \
+in the HTML" (← since t)
+          pure d
         let hcfg : HtmlDoc.Config := {
           css := cssMode
           mathBoundary := ui.cfg.mathBoundary
@@ -1181,7 +1197,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
         }
-        let (html, hdiags) := HtmlDoc.emit hcfg doc
+        let (html, hdiags) := HtmlDoc.emit hcfg htmlDoc
         let r4 ← ui.resolve doc.allow allowAll hdiags
         fired := fired ++ r4.fired
         accepted := accepted ++ r4.accepted

@@ -516,3 +516,41 @@ def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
   t "no tool at all withdraws it too"
     ((Boundary.withdraw "lualatex" #[id] #[(src, .answered cold none)] #[]).ids == #[id])
+
+
+/-- **The HTML face shows a drawing wherever the engine has one.** A picture
+routed to the boundary ships the tool's PDF on the page and the SVG
+converted from that PDF in the HTML. Where no converter ran (W0378) the
+image has nothing to show but its request key, so a picture the rendered
+subset draws in part is withdrawn from the HTML face alone
+(`Boundary.htmlWithdraw`) and drawn there by the subset, the PDF keeping the
+tool's drawing. The defect shipped `<img src="leantex-pic:…">`, a request key
+as an image source: a broken image where the engine had drawn the picture
+itself one round before. Asserted over the HTML tree of the document the
+driver emits for that face. Invented content. -/
+def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "" ("\\begin{tikzpicture}\\draw[rounded corners] (0,0) rectangle (3,1);\n" ++
+    "\\node at (1.5,0.5) {Mark};\\end{tikzpicture}")
+  let (toks, lds) := Lex.lex "t" src
+  let (raws, pds) := Parse.parse "t" toks
+  let p := Elab.prepare "t" raws
+  let (routed, _, rs) := Elab.runPrepared "t" p (lds ++ pds)
+  let img := ((Ir.imageRefs routed).find? (·.startsWith Ir.picSrcPrefix)).getD ""
+  let elems (d : Ir.Doc) : Array (String × Array (String × String)) :=
+    d.body.foldl (fun acc b =>
+      elemAttrsOne (fun tag => tag == "img" || tag == "svg") acc (HtmlDoc.blockNode {} b)) #[]
+  let keyImages (d : Ir.Doc) : Nat :=
+    ((elems d).filter fun (tag, attrs) =>
+      tag == "img" && attrs.any fun (k, v) => k == "src" && v.startsWith Ir.picSrcPrefix).size
+  let drawings (d : Ir.Doc) : Nat := ((elems d).filter (·.1 == "svg")).size
+  t "a routed picture the subset draws in part is a fallback, its HTML the request's image"
+    (!rs.fallbacks.isEmpty && keyImages routed == 1 && drawings routed == 0)
+  let ids := Boundary.htmlWithdraw rs.fallbacks #[img]
+  t "a routed picture whose SVG did not convert is withdrawn from the HTML face"
+    (ids == rs.fallbacks)
+  t "one whose SVG converted is not"
+    (Boundary.htmlWithdraw rs.fallbacks #[]).isEmpty
+  let (face, _, _) := Elab.runPrepared "t" p (lds ++ pds) (fun _ _ => {}) ids
+  t "the HTML face then shows the subset's drawing, and no request key"
+    (keyImages face == 0 && drawings face == 1)

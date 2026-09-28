@@ -5958,7 +5958,8 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the failure carries the tool's own last words"
     (hasStr (failed.help.getD "") "Unknown arrow tip kind")
   -- The converter gap keeps W0378, and keeps it a warning: the PDF is
-  -- unaffected and the HTML page shows each picture's alternative.
+  -- unaffected, and the HTML page shows the subset's drawing where it has
+  -- one (`pictureHtmlFaceChecks`) and each other picture's alternative.
   t "the HTML converter gap is a different code, and still a warning"
     ((DriverDiag.boundarySvgMissing "not found").code == "W0378" &&
      DiagCode.W0378.loss == .degraded)

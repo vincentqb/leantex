@@ -113,4 +113,15 @@ def withdraw (tool : String) (fallbacks : Array String)
     (undrawn : Array (String × Undrawn)) (spans : Array (String × Span)) : Withdrawal :=
   undrawn.foldl (withdrawStep tool fallbacks spans) {}
 
+/-- **The HTML face withdraws a drawing it cannot show.** A boundary
+picture's page face is its PDF, and its HTML face the SVG converted from
+that PDF. Where the conversion is missing (W0378) the image has nothing to
+show but a request key, so a picture the rendered subset draws in part —
+`fallbacks`, the elaborator's record — is withdrawn from the HTML face
+alone, which the driver elaborates again with it drawn by the subset; the
+PDF keeps the boundary's drawing. The ids, by picture: those among the
+fallbacks whose image source converted to no SVG (`unconverted`). -/
+def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
+  fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
+
 end LeanTex.Cli.Boundary
