@@ -423,6 +423,8 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .underline _ :: _ => none
   | .fill :: _ => none
   | .strut _ :: _ => none
+  -- a text command's italic correction is a kern: no ::marker content
+  | .italicCorr _ :: rest => markerTextInto acc rest
   | .pageNumber :: _ => none
   | .pageCount :: _ => none
   | .linebreak _ :: _ => none
@@ -466,6 +468,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .underline _ => none
   | .fill => none
   | .strut _ => none
+  | .italicCorr _ => none
   | .pageNumber => none
   | .pageCount => none
   | .linebreak _ => none
@@ -481,6 +484,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
 def markerCssList (scale : List (String × Nat)) (decls : Array String) :
     List Inline → Option MarkerCss
   | [x] => markerCssOne scale decls x
+  | [x, .italicCorr _] => markerCssOne scale decls x
   | xs => (markerTextInto "" xs).map fun t => { text := t, decls := decls }
 
 end
@@ -498,9 +502,8 @@ private theorem markerTextInto_text (xs : List Inline) :
     simp [← h, Ir.plainTextList]
   | cons x rest ih =>
     intro acc t h
-    cases x <;> simp [markerTextInto] at h
-    rw [ih _ _ h]
-    simp [Ir.plainTextList, Ir.plainTextOne, String.append_assoc]
+    cases x <;> simp [markerTextInto] at h <;>
+      (rw [ih _ _ h]; simp [Ir.plainTextList, Ir.plainTextOne, String.append_assoc])
 
 mutual
 
@@ -530,7 +533,7 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
-  | .strut _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
+  | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
   | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ =>
     simp [markerCssOne] at h
   | .alt _ _ _ _ => simp [markerCssOne] at h
@@ -543,16 +546,24 @@ theorem markerCssList_text (scale : List (String × Nat)) (decls : Array String)
   | [x] =>
     rw [markerCssList] at h
     simp [Ir.plainTextList, markerCssOne_text scale decls x r h]
+  | [x, .italicCorr m] =>
+    rw [markerCssList] at h
+    simp [Ir.plainTextList, Ir.plainTextOne, markerCssOne_text scale decls x r h]
   | [] =>
     simp [markerCssList, markerTextInto] at h
     simp [← h, Ir.plainTextList]
   | x :: y :: rest =>
-    rw [markerCssList] at h
-    case x_1 => intro z hz; simp at hz
-    simp only [Option.map_eq_some_iff] at h
-    obtain ⟨t, ht, hr⟩ := h
-    rw [← hr]
-    simpa using markerTextInto_text _ _ _ ht
+    rw [markerCssList.eq_def] at h
+    split at h
+    · simp_all
+    · rename_i x' m heq
+      simp only [List.cons.injEq] at heq
+      obtain ⟨rfl, rfl, rfl⟩ := heq
+      simp [Ir.plainTextList, Ir.plainTextOne, markerCssOne_text scale decls x r h]
+    · simp only [Option.map_eq_some_iff] at h
+      obtain ⟨t, ht, hr⟩ := h
+      rw [← hr]
+      simpa using markerTextInto_text _ _ _ ht
 
 end
 
@@ -4494,6 +4505,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   -- A strut props its line open in print; a continuous page reads at its
   -- own line-height, so the carrier is empty and adds no box.
   | .strut _ => acc
+  -- An italic correction is TeX's kern; a browser sets its own italics.
+  | .italicCorr _ => acc
   -- An unresolved citation shows its marks; resolution would have replaced
   -- this node with the style's linked inlines, and the diagnostic that let
   -- it through already named the gap.
@@ -5243,6 +5256,7 @@ def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[paint])
   | .role n body =>
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
+  | .italicCorr _ => acc
   | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))

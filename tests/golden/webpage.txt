@@ -47,14 +47,18 @@ section* 1
   text "Experience"
 para
   styled bold
+    italicCorr maybe
     text "Example Scientist"
+  italicCorr maybe
   text " "
   fill
   text "2021 – Present"
 para
   color muted #71717A
     styled italic
+      italicCorr maybe
       text "Invented Laboratory"
+    italicCorr maybe
 role in-paragraph
   list unordered
     item
@@ -65,14 +69,18 @@ role in-paragraph
         text "Simplified a made-up pipeline until it fit on one page."
 para
   styled bold
+    italicCorr maybe
     text "Assistant Example"
+  italicCorr maybe
   text " "
   fill
   text "2017 – 2021"
 para
   color muted #71717A
     styled italic
+      italicCorr maybe
       text "Fictional Institute"
+    italicCorr maybe
 role in-paragraph
   list unordered
     item
@@ -82,14 +90,18 @@ section* 1
   text "Education"
 para
   styled bold
+    italicCorr maybe
     text "PhD Example Studies"
   text ", University of Examples"
 para
   color muted #71717A
     styled italic
+      italicCorr maybe
       text "Invented Fellowship, Fictional Scholarship"
+    italicCorr maybe
 para
   styled bold
+    italicCorr maybe
     text "BSc Examples"
   text ", Example College"
 section* 1

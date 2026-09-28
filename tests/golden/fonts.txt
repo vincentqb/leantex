@@ -12,17 +12,25 @@ section 1 number "1"
 para
   text "Body text is set in the serif family. "
   styled bold
+    italicCorr maybe
     text "This clause is bold"
+  italicCorr maybe
   text " and "
   styled italic
+    italicCorr maybe
     text "this clause is italic"
   text ", while "
   styled bold
+    italicCorr maybe
     styled italic
+      italicCorr maybe
       text "this one is both"
+    italicCorr maybe
   text ". Inline "
   styled mono
+    italicCorr maybe
     text "monospaced code"
+  italicCorr maybe
   text " switches family, and "
   styled sans
     text "a sans run"
@@ -31,17 +39,25 @@ list unordered
   item
     para
       styled bold
+        italicCorr maybe
         text "Bold label"
+      italicCorr maybe
       text " followed by ordinary text."
   item
     para
       styled emph
+        italicCorr maybe
         text "Emphasis"
+      italicCorr maybe
       text " toggles italic, so "
       styled emph
+        italicCorr maybe
         text "nested "
         styled emph
+          italicCorr maybe
           text "emphasis"
+        italicCorr maybe
+      italicCorr maybe
       text " returns upright."
 -- diagnostics
 (none)

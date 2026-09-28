@@ -82,8 +82,8 @@ def wrapperChecks (ref : IO.Ref (List String)) : IO Unit := do
     (doc.body.size == 1 && (doc.body[0]?.map fun b => match b with
       | .para content =>
         Ir.plainText content == "First: body (end)" &&
-        content.any (fun x => x == .styled .bold #[.text "First:"]) &&
-        content.any (fun x => x == .styled .emph #[.text "(end)"])
+        content.any (fun x => x == .styled .bold #[.italicCorr true, .text "First:"]) &&
+        content.any (fun x => x == .styled .emph #[.italicCorr true, .text "(end)"])
       | _ => false) == some true)  -- The optional-argument spelling binds like \newcommand's.
   let (opt, optDs) := elabStr (pre
     "\\newenvironment{tag}[2][?]{\\textbf{#1/#2}}{}"
@@ -1183,8 +1183,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (entry, _) := elabStr ("\\documentclass{article}\\define \\entry(a: content) {\\textbf{\\a}\\par}" ++
     "\\begin{document}\\entry{x}\\entry{y}\\end{document}")
   t "a body ending in par is a block" (entry.body ==
-    #[.role "entry" #[.para #[.styled .bold #[.text "x"]]],
-      .role "entry" #[.para #[.styled .bold #[.text "y"]]]])
+    #[.role "entry" #[.para #[.styled .bold #[.italicCorr true, .text "x"], .italicCorr true]],
+      .role "entry" #[.para #[.styled .bold #[.italicCorr true, .text "y"], .italicCorr true]]])
   t "a trailing forced break is dropped" ((elabStr "a\\\\ \n\nb").1.body ==
     #[.para #[.text "a"], .para #[.text "b"]])
   -- The document's definitions win over every built-in it may redefine;
@@ -1215,7 +1215,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\textbf{a}\\end{document}")
   t "a runnable redefinition of textbf wins"
     (bfDs.isEmpty && bfDoc.body ==
-      #[.para #[.role "textbf" #[.styled .emph #[.text "a"]]]])
+      #[.para #[.role "textbf" #[.styled .emph #[.italicCorr true, .text "a"], .italicCorr true]]])
   -- Rule (b): a rendered built-in yields only to a redefinition the engine
   -- can run. The venue shape — a \maketitle body of kernel internals — is
   -- refused with W0361 naming the first losing construct, and the built-in
@@ -1234,7 +1234,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\maketitle\\end{document}"
   t "a maketitle redefinition the engine can run wins"
     ((elabStr winner).2.all (·.severity == .note) &&
-     (elabStr winner).1.body == #[.para #[.styled .bold #[.text "T-wins"]]])
+     (elabStr winner).1.body ==
+       #[.para #[.styled .bold #[.italicCorr true, .text "T-wins"], .italicCorr true]])
   let emptied := "\\documentclass{article}\\title{Kept Probe}" ++
     "\\renewcommand{\\maketitle}{}" ++
     "\\begin{document}\\maketitle Body.\\end{document}"
@@ -1394,8 +1395,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
   t "compat xparse command clean" (ndcDs.all (·.severity == .note))
   t "compat xparse command expands with optional"
-    (ndc.body == #[.para #[.role "role" #[.styled .bold #[.text "A"], .text " (B)"],
-      .text " ", .role "role" #[.styled .bold #[.text "C"]]]])
+    (ndc.body == #[.para #[.role "role"
+        #[.styled .bold #[.italicCorr true, .text "A"], .italicCorr true, .text " (B)"],
+      .text " ", .role "role" #[.styled .bold #[.italicCorr true, .text "C"], .italicCorr true]]])
   let (nc, _) := elabStr ("\\documentclass{article}\\newcommand{\\two}[2]{#1+#2}" ++
     "\\begin{document}\\two{a}{b}\\end{document}")
   t "compat newcommand expands" (nc.body == #[.para #[.role "two" #[.text "a+b"]]])
@@ -2118,8 +2120,11 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       -- survive into the Doc, so the conservation statement itself is
       -- unaffected.
       wrap "\\define \\hi(w: content) {H \\w}" "\\hi{x}"),
+    -- url.sty's `\\UrlFont` is a declaration, so the spelling it conserves
+    -- is `{\\ttfamily …}`: `\\texttt` would add a text command's italic
+    -- corrections.
     ("url", wrap "" "\\url{https://example.org}",
-      wrap "" "\\href{https://example.org}{\\texttt{https://example.org}}"),
+      wrap "" "\\href{https://example.org}{{\\ttfamily https://example.org}}"),
     ("enquote", wrap "" "\\enquote{x}", wrap "" "“x”"),
     ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
       wrap "\\style{itemize}{ indent = 2em }" "x"),
@@ -2738,7 +2743,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       .text " world"]])
   let (doc2, d2) := elabStr "\\textbf{a} {\\itshape b c} d"
   t "elab styles" (d2.isEmpty && doc2.body ==
-    #[.para #[.styled .bold #[.text "a"], .text " ", .styled .italic #[.text "b c"], .text " d"]])
+    #[.para #[.styled .bold #[.italicCorr true, .text "a"], .italicCorr true, .text " ",
+      .styled .italic #[.text "b c"], .text " d"]])
   let (doc3, d3) := elabStr "a\n\nb"
   t "elab paragraphs split" (d3.isEmpty && doc3.body ==
     #[.para #[.text "a"], .para #[.text "b"]])
@@ -2837,10 +2843,11 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\n"
   let (doc7, d7) := elabStr (defRole ++ "\\role{Ada}[Compute]\n\\end{document}")
   t "elab define call optional given" (d7.isEmpty && doc7.body ==
-    #[.para #[.role "role" #[.styled .bold #[.text "Ada"], .text " (Compute)"]]])
+    #[.para #[.role "role"
+      #[.styled .bold #[.italicCorr true, .text "Ada"], .italicCorr true, .text " (Compute)"]]])
   let (doc8, d8) := elabStr (defRole ++ "\\role{Ada}\n\\end{document}")
   t "elab define call optional omitted" (d8.isEmpty && doc8.body ==
-    #[.para #[.role "role" #[.styled .bold #[.text "Ada"]]]])
+    #[.para #[.role "role" #[.styled .bold #[.italicCorr true, .text "Ada"], .italicCorr true]]])
   t "elab define text param rejects math" (errCodes (defRole ++ "\\role{$x$}\n\\end{document}") ==
     ["E0305"])
   t "elab self reference is unknown" (warnCodes
@@ -3386,7 +3393,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{PhD}\\end{document}"
   t "elab user definition shadows a symbol"
     (degDs.isEmpty && degDoc.body ==
-      #[.para #[.role "degree" #[.styled .bold #[.text "PhD"]]]])
+      #[.para #[.role "degree" #[.styled .bold #[.italicCorr true, .text "PhD"], .italicCorr true]]])
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 
@@ -3532,7 +3539,7 @@ def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "say \"hi\" and don't").1.body == #[.para #[.text "say “hi” and don’t"]])
   t "mono keeps punctuation literal"
     ((elabStr "\\texttt{a--b}").1.body ==
-      #[.para #[.styled .mono #[.text "a--b"]]])
+      #[.para #[.styled .mono #[.italicCorr true, .text "a--b"], .italicCorr true]])
   -- TeX's quote ligatures: `` '' ` and the Spanish !` ?` pairs are what a
   -- LaTeX author types for curly quotes (TeXbook ch. 2 and Appendix F).
   t "tex double quotes" ((elabStr "``x''").1.body == #[.para #[.text "“x”"]])
@@ -3545,7 +3552,7 @@ def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "spanish open question" ((elabStr "?`ay?").1.body == #[.para #[.text "¿ay?"]])
   t "mono keeps backticks literal"
     ((elabStr "\\texttt{``x''}").1.body ==
-      #[.para #[.styled .mono #[.text "``x''"]]])
+      #[.para #[.styled .mono #[.italicCorr true, .text "``x''"], .italicCorr true]])
   -- smartPunct is idempotent: every rewritable spelling is consumed on the
   -- first pass, so the curly output is a fixed point. Property test over an
   -- adversarial corpus; the theorem needs a multi-invariant induction over

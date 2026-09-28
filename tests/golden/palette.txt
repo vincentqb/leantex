@@ -24,6 +24,7 @@ para
   color muted #71717A
     text "A declaration colours the rest of its group, including "
     styled bold
+      italicCorr maybe
       text "bold inside the group"
     text "."
 list unordered

@@ -684,6 +684,30 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
      let u (n : Int) : Dim.Sp := n * fsz / 1000
      let sp := u ssp.spaceAdvance
      skGaps == #[sp + u (-19), sp + u (-30), sp + u (-39) + u (-30), sp + u (-39), sp])
+  -- A text-font command's edge stops a space kern; its declaration does
+  -- not. `\DeclareTextFontCommand` sets TeX's `\/` at each edge where the
+  -- font in force is upright (ltfntcmd's `\check@icl` inside, before the
+  -- argument, lifting the space before it; `\check@icr` after the group),
+  -- and luaotfload kerns a glue only against a glyph beside it — lualatex's
+  -- own lists, `\showbox`: `T a` is T, glue 2.14; `\textrm{T} a` is T,
+  -- kern 0.0 (italic), glue 2.33; `T \textrm{a}` T, kern, glue 2.33. Inside
+  -- a slanted face there is no check (`V \emph{V}` keeps (V, space)), and
+  -- the kern stands on one side of the glue only (`\emph{a} V` keeps
+  -- (space, V)). Source Serif Pro bold kerns (T, space) −6.
+  let some sfs ← serifFacesSet | t "font edge: the serif faces load" false
+  let edgeGap (src : String) : Array Dim.Sp :=
+    let (d, _) := Elab.run "t" src
+    ((layoutOf sfs d ({} : Layout.Geom)).pages.flatMap (·.lines)).flatMap (·.segs)
+      |>.filterMap fun s => match s with
+        | .gap w true => some w
+        | _ => none
+  let edgeU (n : Int) : Dim.Sp := n * ({} : Layout.Geom).fontSize / 1000
+  let edgeSp := edgeU ssp.spaceAdvance
+  for (src, want) in [("T a", edgeSp + edgeU (-19)), ("{\\rmfamily T} a", edgeSp + edgeU (-19)),
+      ("\\textrm{T} a", edgeSp), ("T \\textrm{a}", edgeSp), ("\\textup{V} a", edgeSp),
+      ("\\textbf{T} a", edgeSp), ("T \\textbf{a}", edgeSp),
+      ("V \\emph{V}", edgeSp + edgeU (-39)), ("\\emph{a} V", edgeSp + edgeU (-30))] do
+    t s!"font edge: '{src}' ships the gap lualatex sets" (edgeGap src == #[want])
   t "no MATH face anywhere: the pick is none"
     ((← FontDb.pickMathFace
         (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))

@@ -17,16 +17,22 @@ section* 1
   text "Experience"
 para
   styled bold
+    italicCorr maybe
     text "Example Corp"
+  italicCorr maybe
   text " | "
   styled bold
+    italicCorr maybe
     text "Staff Engineer"
+  italicCorr maybe
   text " "
   fill
   text "2021–present"
 para
   styled italic
+    italicCorr maybe
     text "Platform"
+  italicCorr maybe
 role in-paragraph
   list unordered
     item
@@ -37,10 +43,14 @@ role in-paragraph
         text "Deleted more code than was added, on purpose."
 para
   styled bold
+    italicCorr maybe
     text "Widgets Ltd"
+  italicCorr maybe
   text " | "
   styled bold
+    italicCorr maybe
     text "Engineer"
+  italicCorr maybe
   text " "
   fill
   text "2017–2021"
@@ -51,10 +61,14 @@ role in-paragraph
         text "Measured the widgets; shipped better widgets."
 para
   styled bold
+    italicCorr maybe
     text "Example University"
+  italicCorr maybe
   text " | "
   styled bold
+    italicCorr maybe
     text "Research Assistant"
+  italicCorr maybe
   text " "
   fill
   text "2013–2017"
@@ -64,6 +78,7 @@ role in-paragraph
       para
         text "Proved a small thing "
         styled emph
+          italicCorr maybe
           text "carefully"
         text "."
 -- diagnostics

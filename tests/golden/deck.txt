@@ -63,10 +63,14 @@ frame
     row
       cell
         styled bold
+          italicCorr maybe
           text "Pages"
+        italicCorr maybe
       cell
         styled bold
+          italicCorr maybe
           text "Frames"
+        italicCorr maybe
     row
       cell
         text "one"
@@ -86,6 +90,6 @@ note[N0100] 9:1 '\usetheme' → \theme{example}
 note[N0100] 10:1 '\setbeamercovered' → \palette{ covered = 15\% }
 note[N0100] 11:1 '\newcommand{\dim}' → \define \dim(a1: content) {...}
 note[N0100] 12:1 '\newenvironment{banner}' → \defineenv{banner}(a1: content) {begin} {end}
-note[N0100] 35:19 '\alert' → \textbf
+note[N0100] 35:19 '\alert' → {\bfseries ...}
 warning[W0319] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain, daylight, gemini
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }

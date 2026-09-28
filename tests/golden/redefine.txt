@@ -11,7 +11,9 @@ para
   text "Body text follows the standing built-in title."
 para
   styled bold
+    italicCorr maybe
     text "The runnable body wins."
+  italicCorr maybe
 -- diagnostics
 note[N0100] 8:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
 note[N0100] 9:1 '\renewcommand{\titlepage}' → \define \titlepage() {...}

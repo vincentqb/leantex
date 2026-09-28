@@ -25,10 +25,14 @@ frame
       para
         text "The deck reads the same "
         styled mono
+          italicCorr maybe
           text "palette"
+        italicCorr maybe
         text " and "
         styled mono
+          italicCorr maybe
           text "tokens"
+        italicCorr maybe
         text " declarations as the page and the card."
     item
       para
@@ -43,9 +47,12 @@ frame
   para
     text "Editions of "
     styled mono
+      italicCorr maybe
       text "64"
+    italicCorr maybe
     text " or fewer, numbered by hand. Enquiries: "
     styled mono
+      italicCorr maybe
       text "press@example.org"
     text "."
 -- diagnostics

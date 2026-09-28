@@ -15,12 +15,14 @@ block before 1500/1000ex plus 375/1000ex minus 187/1000ex
   para
     text "Separated from the paragraph above by one "
     styled mono
+      italicCorr maybe
       text "sep"
     text ", which is three quarters of the base rhythm and therefore font-relative."
 block before 800/1000ex plus 200/1000ex minus 100/1000ex
   para
     text "Bound more tightly using "
     styled mono
+      italicCorr maybe
       text "bind"
     text ", a smaller multiple of the same rhythm. Text symbols work too: a · b – c …"
 block before 18pt

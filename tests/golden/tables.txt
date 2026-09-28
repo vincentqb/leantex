@@ -11,7 +11,9 @@ float table 1
   caption
     text "A booktabs table with "
     styled bold
+      italicCorr maybe
       text "declared"
+    italicCorr maybe
     text " spacing."
   table @{}l:290/1000,l:550/1000,l:60/1000@{}
     rule 0 top
@@ -20,19 +22,27 @@ float table 1
     row
       cell
         styled bold
+          italicCorr maybe
           text "Construct"
+        italicCorr maybe
       cell
         styled bold
+          italicCorr maybe
           text "Meaning"
+        italicCorr maybe
       cell
         styled bold
+          italicCorr maybe
           text "Ok"
+        italicCorr maybe
     row
       cell
         text "invented row"
       cell
         styled mono
+          italicCorr maybe
           text "alpha"
+        italicCorr maybe
       cell
         text "yes"
     row
@@ -41,7 +51,9 @@ float table 1
           ord:𝑥 rel:≤ ord:𝑦
       cell
         styled mono
+          italicCorr maybe
           text "beta"
+        italicCorr maybe
       cell
         text "yes"
 float table 2 caption-above

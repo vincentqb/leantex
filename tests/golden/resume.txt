@@ -39,10 +39,14 @@ role role
   block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     para
       styled bold
+        italicCorr maybe
         text "Example Corp"
+      italicCorr maybe
       text " | "
       styled bold
+        italicCorr maybe
         text "Staff Engineer"
+      italicCorr maybe
       text " "
       fill
       color muted #71717A
@@ -50,7 +54,9 @@ role role
       linebreak
       color muted #71717A
         styled italic
+          italicCorr maybe
           text "Platform"
+        italicCorr maybe
 list unordered
   item
     para
@@ -62,10 +68,14 @@ role role
   block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     para
       styled bold
+        italicCorr maybe
         text "Widgets Ltd"
+      italicCorr maybe
       text " | "
       styled bold
+        italicCorr maybe
         text "Engineer"
+      italicCorr maybe
       text " "
       fill
       color muted #71717A
@@ -80,10 +90,14 @@ role role
   block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     para
       styled bold
+        italicCorr maybe
         text "Example University"
+      italicCorr maybe
       text " | "
       styled bold
+        italicCorr maybe
         text "PhD, Applied Mathematics"
+      italicCorr maybe
       text " "
       fill
       color muted #71717A

@@ -22,7 +22,9 @@ float algorithm 1 caption-above
         ord:𝑖 rel:← ord:1
       text " "
       styled bold
+        italicCorr maybe
         text "to"
+      italicCorr maybe
       text " "
       formula inline "n"
         ord:𝑛
@@ -34,7 +36,9 @@ float algorithm 1 caption-above
         ord:𝑗 rel:← ord:1
       text " "
       styled bold
+        italicCorr maybe
         text "to"
+      italicCorr maybe
       text " "
       formula inline "n - i"
         ord:𝑛 bin:− ord:𝑖

@@ -26,7 +26,7 @@ inline `.styled` bar `.lang`, `.colored`, `.role`, `.underline`, `.step`)
 splices its body and invents no node — layout scope is not document
 structure. A *decorative* arm (`.rule`) and a *state-only* arm
 (`.setPalette`, `.setTokens`, `.pagebreak`; inline `.label`, `.fill`,
-`.strut`, `.pageNumber`, `.pageCount`) produces nothing: no text, no
+`.strut`, `.italicCorr`, `.pageNumber`, `.pageCount`) produces nothing: no text, no
 structure. Generated furniture the census still counts (`.logo`,
 `.framefoot`) sits under `.artifact`, so a tagger marks it as such. -/
 
@@ -195,6 +195,7 @@ def inlineRaw (out : Array Node) : Inline → Array Node
   | .pageCount => out
   | .linebreak _ => out.push (.leaf 0 .linebreak)
   | .strut _ => out
+  | .italicCorr _ => out
   | .step _ _ body => inlinesRaw out body.toList
   | .alt _ _ active otherwise =>
     inlinesRaw (inlinesRaw out active.toList) otherwise.toList
@@ -769,6 +770,7 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
   | .linebreak extra => simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census,
     plainTextOne]
   | .strut h => simp [inlineRaw, plainTextOne]
+  | .italicCorr m => simp [inlineRaw, plainTextOne]
   | .step n l body =>
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
@@ -1093,6 +1095,7 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
   | .pageCount => rfl
   | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
   | .strut h => rfl
+  | .italicCorr m => rfl
   | .step n l body =>
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
@@ -1408,6 +1411,7 @@ theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x
   | .linebreak extra => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
     foldInline, altPush]
   | .strut h => simp [inlineRaw, foldInline, altPush]
+  | .italicCorr m => simp [inlineRaw, foldInline, altPush]
   | .step n l body =>
     simp only [inlineRaw, foldInline, altPush]
     exact inlinesRaw_alts is out body.toList
@@ -1797,6 +1801,7 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
   | .pageCount => simp [inlineRaw]
   | .linebreak extra => simp [inlineRaw]
   | .strut h => simp [inlineRaw]
+  | .italicCorr m => simp [inlineRaw]
   | .step n l body =>
     simp only [inlineRaw]
     exact inlinesRaw_acc out body.toList

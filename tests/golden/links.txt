@@ -33,14 +33,18 @@ para
     text "https://example.org/two"
   text ". Links inherit style, so "
   styled bold
+    italicCorr maybe
     link "https://example.org/three"
       text "a bold link"
+  italicCorr maybe
   text " works, and a link may wrap across a line break because its rectangle is emitted per line rather than per word."
 role entry
   block before 1600/1000ex plus 400/1000ex
     para
       styled bold
+        italicCorr maybe
         text "Example Corp"
+      italicCorr maybe
       text "  |  Staff Engineer"
       fill
       color muted #71717A
@@ -49,7 +53,9 @@ role entry
   block before 1600/1000ex plus 400/1000ex
     para
       styled bold
+        italicCorr maybe
         text "Widgets Ltd"
+      italicCorr maybe
       text "  |  Engineer"
       fill
       color muted #71717A

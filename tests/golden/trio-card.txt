@@ -36,7 +36,9 @@ frame
   block before 1200/1000ex plus 300/1000ex
     para
       styled mono
+        italicCorr maybe
         text "press@example.org"
+      italicCorr maybe
       linebreak
       color quiet #6B7280
         text "Editions of 64 or fewer, numbered by hand."

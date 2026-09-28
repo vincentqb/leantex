@@ -29,12 +29,15 @@ list unordered
     para
       text "Editions of "
       styled mono
+        italicCorr maybe
         text "64"
+      italicCorr maybe
       text " or fewer, numbered by hand."
   item
     para
       text "Enquiries: "
       styled mono
+        italicCorr maybe
         text "press@example.org"
       text "."
 -- diagnostics

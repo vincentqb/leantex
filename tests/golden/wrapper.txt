@@ -2,10 +2,14 @@ class article
 page 612x792 vmargin 72 hmargin 150
 para
   styled bold
+    italicCorr maybe
     text "First:"
+  italicCorr maybe
   text " body one "
   styled emph
+    italicCorr maybe
     text "(end First)"
+  italicCorr maybe
 para
   text "Aside. body two"
 -- diagnostics

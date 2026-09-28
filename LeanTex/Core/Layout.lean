@@ -1116,6 +1116,9 @@ private inductive Tk where
   mark stands, since `Struct` numbers the note's leaves there — or `none`
   when the context owns no leaf. -/
   | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
+  /-- TeX's italic correction (`Ir.Inline.italicCorr`), under the style in
+  force where it stands. -/
+  | corr (maybe : Bool) (style : TextStyle)
   deriving Repr
 
 /-- The attribution a token's ink carries, `none` for a token that ships no
@@ -1125,7 +1128,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .space _ | .fill | .strut _ | .brk _ | .img _ _ => none
+  | .space _ | .fill | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
 
 /-- The Layout-private marker a decorating site wraps its declared content
 in: `.role leafRole content`. A role is transparent to layout
@@ -1395,6 +1398,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
   | .strut h => { st with toks := st.toks.push (.strut h) }
+  | .italicCorr maybe => { st with toks := st.toks.push (.corr maybe sty) }
   -- Math the engine cannot model (the constructs M6 still owes): the
   -- elaborator warned by name, and here the floor sets as plain text — the
   -- formula's content, never its markup. Setting the source instead put
@@ -1647,6 +1651,12 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
     · exact Or.inl hm
     · subst hm; exact Or.inr rfl
   | .strut hg =>
+    refine ⟨h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
+  | .italicCorr maybe =>
     refine ⟨h, fun tk hm => ?_⟩
     simp only [flattenOne, Array.mem_push] at hm
     rcases hm with hm | hm
@@ -2297,7 +2307,7 @@ private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle
   | .footnote _ body => weightKeysInlineList acc {} body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => acc
+  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => acc
 
 private def weightKeysInlineList (acc : Array (Nat × Nat × Bool))
     (sty : TextStyle) : List Ir.Inline → Array (Nat × Nat × Bool)
@@ -3145,7 +3155,9 @@ private structure ItemsAcc where
   cache : Std.HashMap String (Array Nat) := {}
   /-- The item count just after the last word's items: a space kerns
   against the glyph before it only while nothing has been set since, so a
-  formula's, an icon's or a mark's box never counts as a word's glyph. -/
+  formula's, an icon's or a mark's box never counts as a word's glyph. An
+  italic correction's kern is set since, even at no width: it writes 0,
+  which ends no word (`italicKern`). -/
   wordEnd : Nat := 0
 
 /-- The pair kern a set glyph declares with its own face's space glyph —
@@ -3168,6 +3180,40 @@ private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
       else pairKern Ir.features.kern size font sp g
     | _, _ => 0
   | _ => 0
+
+/-- TeX's `\/` at the end of the items: a kern after a word's last glyph,
+as wide as that glyph's italic correction, and nothing when the items end
+in anything else — a formula, a mark, a space, the list's head — since `\/`
+corrects only a character. Either way the glyph no longer ends the items,
+so a space that follows pairs with nothing on that side (`spaceKern`): a
+kern of no width is set as that fact alone (`wordEnd` names no item). -/
+private def italicKern (acc : ItemsAcc) : ItemsAcc :=
+  if acc.wordEnd != acc.items.size then acc else
+  match acc.items.back? with
+  | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
+    if glyphs.isEmpty then acc else { acc with wordEnd := 0 }
+  | _ => acc
+
+/-- An italic correction under the style in force (`Tk.corr`). TeX's `\/`
+is `italicKern`. ltfntcmd's `\maybe@ic` makes it only where the face in
+force is upright — `\fontdimen1`, the slant, zero: the face declares no
+forward-leaning angle — and through `\sw@slant`, which lifts a space the
+items end in, sets the kern, and puts the space back. The space then no
+longer touches the glyph, so it gives back the pair kern it took against
+it (`spaceKern`, the `.space` arm's own term). -/
+private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
+    (acc : ItemsAcc) : ItemsAcc :=
+  if !maybe then italicKern acc
+  else if (fs.get (fs.lookup sty.slot sty.weight.css sty.italic)).italicAngle < 0 then acc
+  else match acc.items.back? with
+    | some (.glue g) =>
+      if g.width == 0 then acc else
+      let body := acc.items.pop
+      let bare := if acc.wordEnd == body.size then g.width - spaceKern fs true body.back?
+        else g.width
+      let acc := italicKern { acc with items := body }
+      { acc with items := acc.items.push (.glue { g with width := bare }) }
+    | _ => italicKern acc
 
 /-- One flatten token into the accumulator — the fold step of
 `itemsOfInlines`, named so a conservation statement can induct over it:
@@ -3279,6 +3325,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
     { acc with items := acc.items.push (.glue { fil := true }) }
+  | .corr maybe sty => correctItalic fs maybe sty acc
   | .strut g =>
     -- Zero width, declared height: raises the line box, ships no ink.
     let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0

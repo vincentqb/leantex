@@ -142,6 +142,6 @@ frame standout
 -- diagnostics
 note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
-note[N0100] 36:11 '\alert' → \textcolor{alert}{\textbf ...}
-note[N0100] 43:6 '\alert' → \textcolor{alert}{\textbf ...}
+note[N0100] 36:11 '\alert' → \textcolor{alert}{\bfseries ...}
+note[N0100] 43:6 '\alert' → \textcolor{alert}{\bfseries ...}
 warning[W0315] 36:44 text coloured 'fg!50!bg' (#8F999B) reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: 'fg!68!bg' (#687578) meets it, ΔEOK 0.122 from the declared colour, past the 0.080 a repair may move it: write that weight, or keep it low: \palette[decorative]{ <name> = #8F999B }

@@ -1123,12 +1123,14 @@ def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw ×
 themed, the theme's alert colour AND bold — colour alone would be the only
 signal distinguishing the run, which WCAG 2.2 SC 1.4.1 forbids (metropolis
 itself colours only; the divergence is deliberate); unthemed there is no
-alert colour and bold stands in. -/
+alert colour and bold stands in. The bold is a declaration, as beamer's
+`alerted text` font is: `\textbf` would also set a text command's italic
+corrections at the run's edges, which beamer's `\alert` does not. -/
 def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
   if themed then
     #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos,
-      .group #[.ctrl "textbf" pos, .group body pos] pos]
-  else #[.ctrl "textbf" pos, .group body pos]
+      .group (#[.ctrl "bfseries" pos] ++ body) pos]
+  else #[.group (#[.ctrl "bfseries" pos] ++ body) pos]
 
 /-- `\alert<spec>{body}` is beamer's own equation,
 `\alt<spec>{\alert{body}}{body}`: the alert style on the spec's steps, the
@@ -4567,24 +4569,25 @@ private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
 
-/-- `\alert{body}` without an overlay spec: the plain rewrite, byte for
-byte what it was before the spec form existed — themed, `\textcolor{alert}`
-around bold; unthemed, `\textbf` with the body left in the stream. -/
+/-- `\alert{body}` without an overlay spec: `alertStyled` around the body —
+themed, `\textcolor{alert}` around bold; unthemed, bold. With no body group
+the command stays `\textbf`, which names the missing argument. -/
 private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
-  if (← get).themed then
-    let (args, k) := takeGroups raws start 1
-    match args[0]? with
-    | some body =>
-      became "\\alert" "\\textcolor{alert}{\\textbf ...}" pos
-      return some ((← synthAt "\\textcolor{alert}" pos).push
-        (.group #[.ctrl "textbf" pos, .group body pos] pos), k)
-    | none =>
+  let themed := (← get).themed
+  let (args, k) := takeGroups raws start 1
+  match args[0]? with
+  | some body =>
+    became "\\alert"
+      (if themed then "\\textcolor{alert}{\\bfseries ...}" else "{\\bfseries ...}") pos
+    return some (alertStyled themed body pos, k)
+  | none =>
+    if themed then
       became "\\alert" "\\textcolor{alert}" pos
       return some (← synthAt "\\textcolor{alert}" pos, start)
-  else
-    became "\\alert" "\\textbf" pos
-    return some (#[.ctrl "textbf" pos], start)
+    else
+      became "\\alert" "\\textbf" pos
+      return some (#[.ctrl "textbf" pos], start)
 
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one

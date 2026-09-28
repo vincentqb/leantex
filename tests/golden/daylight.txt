@@ -49,4 +49,4 @@ frame standout
     text "Azure room."
 -- diagnostics
 note[N0100] 4:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 22:6 '\alert' → \textbf
+note[N0100] 22:6 '\alert' → {\bfseries ...}

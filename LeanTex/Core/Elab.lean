@@ -889,6 +889,33 @@ def declStyles : List (String × Style) :=
   (["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large",
     "Large", "LARGE", "huge", "Huge"].map fun n => (n, Style.size n))
 
+/-- Which edges of a text-font command's argument get ltfntcmd's
+`\maybe@ic`, as `(before, after)`. `\DeclareTextFontCommand` sets
+`\check@icl` before the argument and `\check@icr` after the group; there is
+neither for an empty or a lone-space argument (`\text@command`), none
+before when the argument opens with `\nocorr`, none after when a `\nocorr`
+follows its first token (`\check@nocorr@`), and none where the token
+`\maybe@ic` reads next — the argument's first, or the one after the
+group — is `,` or `.` (`\nocorrlist`). -/
+def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
+  let reads : Option Raw → Bool
+    | some (.word s _) => !(s.startsWith "," || s.startsWith ".")
+    | _ => true
+  let nocorr : Raw → Bool
+    | .ctrl "nocorr" _ => true
+    | _ => false
+  match body.dropWhile (· == .space) with
+  | [] => (false, false)
+  | first :: rest => (!nocorr first && reads body.head?, !rest.any nocorr && reads next?)
+
+/-- A text-font command's run: the styled argument, with the italic
+corrections `fontCmdEdges` asks for inside it before the argument, under
+the face the command selects, and after it, under the face around it. -/
+def fontCmdPush (acc : Array Inline) (style : Style) (edges : Bool × Bool)
+    (inner : Array Inline) : Array Inline :=
+  let run : Inline := .styled style (if edges.1 then #[.italicCorr true] ++ inner else inner)
+  if edges.2 then (acc.push run).push (.italicCorr true) else acc.push run
+
 def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
    ("_", "_"), ("~", "~"), (" ", " "),
@@ -4130,13 +4157,15 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let inner ← elabInlines argCtx body
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1) (acc.push (.styled style inner)) ""
-          | some (.word s _) =>
+            elabInlinesFrom ctx raws (j + 1)
+              (fontCmdPush acc style (fontCmdEdges body.toList raws[j + 1]?) inner) ""
+          | some (.word s p) =>
             have hjlt := getElem?_lt hj
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.styled style #[.text s])) ""
+              (fontCmdPush (flushText acc sb) style (fontCmdEdges [.word s p] raws[j + 1]?)
+                #[.text s]) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb

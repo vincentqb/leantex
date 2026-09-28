@@ -5,10 +5,14 @@ font body "Source Serif Pro"
 assert pages == 1
 para
   styled bold
+    italicCorr maybe
     text "Example Corp"
+  italicCorr maybe
   text "  |  "
   styled bold
+    italicCorr maybe
     text "Staff Engineer"
+  italicCorr maybe
   text " "
   fill
   text "2021–present"

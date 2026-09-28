@@ -83,6 +83,8 @@ private def inlineInto (acc : String) : Inline → String
   | .pageCount => acc
   -- a strut is metric, and text has no line box to prop open
   | .strut _ => acc
+  -- an italic correction is a kern, and text has no glyph to correct
+  | .italicCorr _ => acc
   -- an unresolved citation is worth its marks; the diagnostic that let it
   -- through already named the missing entry
   | .cite _ keys =>

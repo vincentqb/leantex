@@ -162,11 +162,13 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- The font-axis table (fntguide §2.2) generates both spellings: for every
   -- axis value the one-argument command and the declaration elaborate to
-  -- the same styled inline. The two lists once disagreed as hand lists —
+  -- the same styled inline, the command's with ltfntcmd's italic
+  -- corrections at its edges. The two lists once disagreed as hand lists —
   -- \scshape was in, \textsc unknown (W0301).
   for (decl, arg, st) in Elab.fontAxes do
     t s!"font axis \\{arg} and \\{decl} agree"
-      ((elabStr s!"\\{arg}\{x}").1.body == #[.para #[.styled st #[.text "x"]]] &&
+      ((elabStr s!"\\{arg}\{x}").1.body ==
+          #[.para #[.styled st #[.italicCorr true, .text "x"], .italicCorr true]] &&
        (elabStr s!"\{\\{decl} x}").1.body == #[.para #[.styled st #[.text "x"]]] &&
        (elabStr s!"\\{arg}\{x}").2.all (·.severity != .warning))
   -- \style: every visual constant a backend applies to an element is a token

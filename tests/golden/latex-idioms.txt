@@ -42,10 +42,14 @@ section* 1
 role role
   para
     styled bold
+      italicCorr maybe
       text "Example Corp"
+    italicCorr maybe
     text " | "
     styled bold
+      italicCorr maybe
       text "Staff Engineer"
+    italicCorr maybe
     text " "
     fill
     color muted #72727F
@@ -53,7 +57,9 @@ role role
   para
     color muted #72727F
       styled italic
+        italicCorr maybe
         text "Platform"
+      italicCorr maybe
 list unordered
   item
     para
@@ -62,10 +68,14 @@ block before 1800/1000ex plus 800/1000ex minus 400/1000ex
 role role
   para
     styled bold
+      italicCorr maybe
       text "Widgets Ltd"
+    italicCorr maybe
     text " | "
     styled bold
+      italicCorr maybe
       text "Engineer"
+    italicCorr maybe
     text " "
     fill
     color muted #72727F
@@ -75,14 +85,19 @@ section* 1
 role degree
   para
     styled bold
+      italicCorr maybe
       text "PhD Applied Mathematics"
     text ", Example University"
 para
   styled bold
+    italicCorr maybe
     text "Awards"
+  italicCorr maybe
   text " | "
   styled bold
+    italicCorr maybe
     text "Judged"
+  italicCorr maybe
   text " "
   fill
   color muted #72727F
