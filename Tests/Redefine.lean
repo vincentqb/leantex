@@ -10,10 +10,21 @@ number). The redefinition's declarations still take effect, where LaTeX
 puts them, and the claims here are read off the shipped page and the HTML
 tree. Every source is synthetic. -/
 
-/-- The page lines of a source as comparable values. -/
-private def shippedLines (fonts : Font.FontSet) (src : String) :
-    Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
-  (censusOfSrc fonts src).flatMap fun p => p.lines.map fun l => (l.x, l.y, l.size, l.text)
+/-- **Owed: a redefined abstract's vertical skips.** A venue's
+`\renewenvironment{abstract}` declares its own skips — a `\vskip` above
+the heading, a `\vspace` between the heading and the `quote` its body sets
+in, a `\vskip` below — and LaTeX adds each, the `\vspace` surviving the
+quote's `\addvspace` (latex.ltx `\@vspace` appends `\vskip\z@`). The
+engine places the abstract by its own rhythm (Layout's `.abstract` arm),
+so two redefinitions differing in one declared skip ship one page. This
+row is that fact parked, read in both directions: it holds `true` while
+the pages agree, and the engine honouring the skip turns the check red
+until the row flips — the W0303 clause naming the skips retiring with it,
+and the metamorphic check of `abstractRedefChecks` with it.
+Measured against lualatex on a synthetic probe, baselines in bp: heading
+to body 24.16 there, 18.40 here; last body line to the next paragraph
+26.40 there, 18.00 here. -/
+def abstractSkipsOwed : Bool := true
 
 /-- **A redefined abstract's body sets at the size its begin body leaves in
 force.** article.cls declares `\small` over the whole environment; a venue's
@@ -51,11 +62,16 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   t "a size switched inside the environment the begin body leaves open holds over the body"
     (inQuote == plain)
   -- Metamorphic: the venue's redefinition and the same appearance spelled
-  -- natively ship the same page, line for line.
+  -- natively ship the same page, line for line — while the venue's skips
+  -- are owed (`abstractSkipsOwed`): the native spelling declares none of
+  -- them, so the pages agree only because the engine drops the venue's.
+  -- Read both ways, so honouring the skips turns it red until the native
+  -- spelling carries them too (review NIT; lesson 9).
   let native := "\\documentclass{article}" ++
     "\\style{abstract}{ font = {\\large\\bf}, body-size = normalsize }" ++ body
-  t "the redefinition ships the page its native spelling ships"
-    (shippedLines fonts (venue (heading ++ "\\begin{quote}")) == shippedLines fonts native)
+  t "the redefinition ships its native spelling's page exactly while its skips are owed"
+    ((shippedLines fonts (venue (heading ++ "\\begin{quote}")) == shippedLines fonts native) ==
+      abstractSkipsOwed)
   -- Both artifacts read the one resolving site: the HTML region carries
   -- the size the page sets.
   let html (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
@@ -94,6 +110,23 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   t "a heading writing the built-in's own word names no replacement"
     (match same with
      | some m => hasStr m "style it" && !hasStr m "not '"
+     | none => false)
+  -- A skip's glue and an inkless command's arguments are no heading words
+  -- (review NIT): the refusal read "not 'plus Abstract toc section
+  -- Abstract'" off `\vskip 2ex plus 1ex` and `\addcontentsline`.
+  let (inkless, _) := refusal ("\\vskip 2ex plus 1ex\\centerline{\\large\\bf Abstract}" ++
+    "\\addcontentsline{toc}{section}{Abstract}\\begin{quote}")
+  t "a skip's glue and an inkless command's arguments are not read as the heading"
+    (match inkless with
+     | some m => hasStr m "style it" && !hasStr m "not '"
+     | none => false)
+  -- Where the heading is read, the refusal still names what stands: the
+  -- built-in's margins and body font (review NIT: an italic body set
+  -- upright between quote margins under a message naming only the skips).
+  let (italic, _) := refusal (heading ++ "\\itshape")
+  t "a read heading's refusal names the margins and body font the built-in keeps"
+    (match italic with
+     | some m => hasStr m "style it" && hasStr m "margins, body font"
      | none => false)
 
 
@@ -386,22 +419,8 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         sets src "Lead Inner words Middle words Tail words")
 
 
-/-- **Owed: a redefined abstract's vertical skips.** A venue's
-`\renewenvironment{abstract}` declares its own skips — a `\vskip` above
-the heading, a `\vspace` between the heading and the `quote` its body sets
-in, a `\vskip` below — and LaTeX adds each, the `\vspace` surviving the
-quote's `\addvspace` (latex.ltx `\@vspace` appends `\vskip\z@`). The
-engine places the abstract by its own rhythm (Layout's `.abstract` arm),
-so two redefinitions differing in one declared skip ship one page. This
-row is that fact parked, read in both directions: it holds `true` while
-the pages agree, and the engine honouring the skip turns the check red
-until the row flips — the W0303 clause naming the skips retiring with it.
-Measured against lualatex on a synthetic probe, baselines in bp: heading
-to body 24.16 there, 18.40 here; last body line to the next paragraph
-26.40 there, 18.00 here. -/
-def abstractSkipsOwed : Bool := true
-
-/-- The parked row's judge: the page under two declared heading gaps. -/
+/-- The parked row's judge: the page under two declared heading gaps. The
+row itself stands above its first reader (`abstractSkipsOwed`). -/
 def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let venue (gap : String) : String :=
     "\\documentclass{article}\\renewenvironment{abstract}{\\centerline{\\large\\bf Abstract}" ++

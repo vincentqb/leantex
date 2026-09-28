@@ -987,6 +987,12 @@ spellings set one page reads. -/
 def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
   (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
 
+/-- Every shipped line of a source, position, size and text: what a claim
+that two spellings ship one page reads, horizontal placement included. -/
+def shippedLines (fonts : Font.FontSet) (src : String) :
+    Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+  (censusOfSrc fonts src).flatMap fun p => p.lines.map fun l => (l.x, l.y, l.size, l.text)
+
 /-- A source elaborated as the driver elaborates it: against the label
 measurement layout sets with (`Layout.labelMetric`), so a node's extent is
 measured from its letters rather than taken as nothing. -/

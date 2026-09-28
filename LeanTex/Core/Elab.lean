@@ -6247,22 +6247,40 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- The kernel's commands that take argument groups and set no ink where they
+stand, with how many (latex.ltx: `\addcontentsline{file}{type}{text}`,
+`\addtocontents{file}{text}`, `\markboth{left}{right}`, `\markright{right}`,
+`\label{key}`, `\index{entry}`, `\vspace{skip}`, `\hspace{skip}`,
+`\thispagestyle{style}`): what a heading reader leaves unread. -/
+private def inklessArgs : List (String × Nat) :=
+  [("addcontentsline", 3), ("addtocontents", 2), ("markboth", 2), ("markright", 1),
+   ("label", 1), ("index", 1), ("vspace", 1), ("hspace", 1), ("thispagestyle", 1)]
+
 /-- The words a redefined environment's begin body sets ahead of the body —
 the heading a venue writes (`\centerline{\large\bf Summary}`) — with the
 body's own container left out: the begin body's last environment, which
 the definer's split idiom leaves open for the body. A word that reads as a
-length is a skip's argument (`\vskip 2ex`), and one inside `[…]` an
-option's (`\vspace` arrives as `\block[before = …]`), never heading text. -/
-private def envHeadWords (acc : Array String) (opt : Bool) : List Raw → Array String
+length, or a glue keyword beside one, is a skip's argument (`\vskip 2ex
+plus 1ex`), one inside `[…]` an option's (`\vspace` arrives as
+`\block[before = …]`), and the groups of a command that sets no ink
+(`\addcontentsline{toc}{section}{…}`, `\label`) its arguments — never
+heading text. `skip` counts the groups still owed such a command. -/
+private def envHeadWords (acc : Array String) (opt : Bool) (skip : Nat) :
+    List Raw → Array String
   | [] => acc
   | [.env _ _ _] => acc
-  | .sym '[' _ :: rest => envHeadWords acc true rest
-  | .sym ']' _ :: rest => envHeadWords acc false rest
+  | .sym '[' _ :: rest => envHeadWords acc true skip rest
+  | .sym ']' _ :: rest => envHeadWords acc false skip rest
+  | .space :: rest => envHeadWords acc opt skip rest
   | .word w _ :: rest =>
-    envHeadWords (if opt || (Decl.parseLength w).isSome then acc else acc.push w) opt rest
-  | .group body _ :: rest => envHeadWords (envHeadWords acc opt body.toList) opt rest
-  | .env _ body _ :: rest => envHeadWords (envHeadWords acc opt body.toList) opt rest
-  | _ :: rest => envHeadWords acc opt rest
+    let skipped := opt || (Decl.parseLength w).isSome || ["plus", "minus", "*"].contains w
+    envHeadWords (if skipped then acc else acc.push w) opt (if w == "*" then skip else 0) rest
+  | .group body _ :: rest =>
+    if skip > 0 then envHeadWords acc opt (skip - 1) rest
+    else envHeadWords (envHeadWords acc opt 0 body.toList) opt 0 rest
+  | .env _ body _ :: rest => envHeadWords (envHeadWords acc opt 0 body.toList) opt 0 rest
+  | .ctrl n _ :: rest => envHeadWords acc opt ((inklessArgs.lookup n).getD 0) rest
+  | _ :: rest => envHeadWords acc opt 0 rest
 termination_by l => sizeOf l
 decreasing_by
   all_goals simp_wf
@@ -12059,14 +12077,14 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
           else none
         let word := s.info.locale.abstract
         let written := String.intercalate " "
-          ((beginB.map fun b => envHeadWords #[] false b.toList).getD #[]).toList
+          ((beginB.map fun b => envHeadWords #[] false 0 b.toList).getD #[]).toList
         let replaced := if written.isEmpty || written == word then ""
           else s!"; its heading reads '{word}', not '{written}'"
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
           (match est, heading with
            | some _, some _ =>
              s!"'\{{envName}}' is built in; this definition's heading and body size style it, \
-its vertical skips the engine's own{replaced}"
+the built-in's margins, body font and vertical skips stand{replaced}"
            | some _, none =>
              s!"'\{{envName}}' is built in; of this definition only its body size is read, \
 the built-in's heading and margins stand{replaced}"
