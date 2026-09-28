@@ -322,6 +322,16 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
       match defDoc.body with
       | #[.table _ _ _ rows _ _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
       | _ => false)
+  -- A definition whose body wraps the span in a group opens no cell with
+  -- it (LaTeX: "Misplaced \omit"): its text is kept and the loss named once,
+  -- never an unknown command with its count and spec as text.
+  let (grpDoc, grpDs) := elabStr (dvDoc "\\newcommand{\\zzg}[1]{{\\multicolumn{2}{c}{#1}}}\n"
+    "\\begin{tabular}{lll}\n\\zzg{Grp} & d & e \\\\\n\\end{tabular}")
+  let grpText := Ir.blocksText grpDoc.body
+  t "a span a definition wraps in a group keeps its text and is named, never unknown (fails on base)"
+    (!grpDs.any (·.code == "W0301") &&
+      grpDs.any (·.subject == some "ctrl:multicolumn:misplaced") &&
+      (grpText.splitOn "Grp").length == 2 && (grpText.splitOn "2 c").length == 1)
   -- A span at each shape: its text fills its head cell, and the cells it
   -- covers stay, empty, in place, so a cell written after it keeps its
   -- column (the leading shape moved `d` left before spans were set).

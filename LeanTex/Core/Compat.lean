@@ -643,6 +643,11 @@ private structure St where
   span, so the walk keeps the construct whole. A group or another
   environment inside the body hides it again. -/
   tableTop : Bool := false
+  /-- At the top level of a definition body, the group a definition
+  announced (`bodyNext`): a `\multicolumn` opening it opens the cell a use
+  at a cell's head stands in. A group or an environment inside the body
+  hides it again. -/
+  defTop : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -5254,7 +5259,7 @@ its value is skipped" pos
     -- definition's parameter.
     -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps,
     -- at a cell's head or by name where it does not open one
-    if (← get).tableTop || ((← get).inDef && skipSpaces raws 0 + 1 == start) then
+    if (← get).tableTop || ((← get).defTop && skipSpaces raws 0 + 1 == start) then
       return none
     -- Anywhere else — mid-cell, inside a group, outside a tabular body —
     -- no span is set (LaTeX refuses the first two, "Misplaced \omit"). The
@@ -7147,13 +7152,14 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedGroup := (← get).inGroup
     let savedLens := (← get).lens
     let savedTop := (← get).tableTop
+    let savedDefTop := (← get).defTop
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
-                              tableTop := false }
+                              tableTop := false, defTop := saved > 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
     -- A group's assignments end with it (TeXbook ch. 24: an assignment is
     -- local to the group it stands in).
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
-                              lens := savedLens, tableTop := savedTop }
+                              lens := savedLens, tableTop := savedTop, defTop := savedDefTop }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
@@ -7170,9 +7176,10 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
         -- attribute; the starred form differs only in date handling the
         -- engine does not model. The first group is the language.
         let savedTop := (← get).tableTop
-        write fun st => { st with tableTop := false }
+        let savedDefTop := (← get).defTop
+        write fun st => { st with tableTop := false, defTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        write fun st => { st with tableTop := savedTop }
+        write fun st => { st with tableTop := savedTop, defTop := savedDefTop }
         let (langArg, j) := takeGroups body' 0 1
         let lname := rawSrc (langArg.getD 0 #[])
         let tag := Locale.babelTagOf lname
@@ -7231,10 +7238,10 @@ steps come from its body" p
         -- parameter set there is that list's own.
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
-                                  tableTop := n == "tabular" || n == "tabular*" }
+                                  tableTop := n == "tabular" || n == "tabular*", defTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with lens := st0.lens, inList := st0.inList,
-                                  tableTop := st0.tableTop }
+                                  tableTop := st0.tableTop, defTop := st0.defTop }
         return .env n body' p
   | r => pure r
 
