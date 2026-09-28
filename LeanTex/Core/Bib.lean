@@ -1,5 +1,7 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.LocaleData
+import LeanTex.Core.Nfc
+import LeanTex.Core.TextSymData
 
 /-! BibTeX bibliography files, parsed in the pure core. The grammar is the
 one btxdoc.tex and "Tame the BeaST" §2 document: `@type{key, field = value,
@@ -337,35 +339,26 @@ def parse (src : String)
 A stored value is TeX-flavoured: brace groups, `\'{e}` accents, `~` ties,
 `--` dashes. `text` renders it as the plain scalars the IR carries. -/
 
-/-- Accent commands over a base letter, precomposed (the NFC forms the
-UTF-8 layer already accepts): TeX's `\'e`, `\"{o}`, `\c{c}` spellings.
-The closed set covers the Latin-1 letters; a pair outside it keeps its
-base letter, so a name never loses a character to an accent the table
-does not know. -/
-def accentTable : Array (Char × Char × Char) :=
-  #[('\'', 'a', 'á'), ('\'', 'e', 'é'), ('\'', 'i', 'í'), ('\'', 'o', 'ó'),
-    ('\'', 'u', 'ú'), ('\'', 'y', 'ý'), ('\'', 'c', 'ć'), ('\'', 'n', 'ń'),
-    ('\'', 'A', 'Á'), ('\'', 'E', 'É'), ('\'', 'I', 'Í'), ('\'', 'O', 'Ó'),
-    ('\'', 'U', 'Ú'),
-    ('`', 'a', 'à'), ('`', 'e', 'è'), ('`', 'i', 'ì'), ('`', 'o', 'ò'),
-    ('`', 'u', 'ù'),
-    ('`', 'A', 'À'), ('`', 'E', 'È'), ('`', 'O', 'Ò'), ('`', 'U', 'Ù'),
-    ('"', 'a', 'ä'), ('"', 'e', 'ë'), ('"', 'i', 'ï'), ('"', 'o', 'ö'),
-    ('"', 'u', 'ü'), ('"', 'y', 'ÿ'),
-    ('"', 'A', 'Ä'), ('"', 'O', 'Ö'), ('"', 'U', 'Ü'),
-    ('^', 'a', 'â'), ('^', 'e', 'ê'), ('^', 'i', 'î'), ('^', 'o', 'ô'),
-    ('^', 'u', 'û'),
-    ('~', 'a', 'ã'), ('~', 'n', 'ñ'), ('~', 'o', 'õ'),
-    ('~', 'A', 'Ã'), ('~', 'N', 'Ñ'), ('~', 'O', 'Õ'),
-    ('c', 'c', 'ç'), ('c', 'C', 'Ç')]
-
 /-- Word commands that are one character. -/
 def charCommands : Array (String × String) :=
   #[("ss", "ß"), ("o", "ø"), ("O", "Ø"), ("ae", "æ"), ("AE", "Æ"),
     ("aa", "å"), ("AA", "Å"), ("l", "ł"), ("L", "Ł"), ("i", "ı")]
 
+/-- An accent's combining mark over a base letter, as the one scalar NFC
+composes the pair to: the scalar lualatex sets under TU, whose composites
+are each such a canonical composition (`textSymChecks` holds all of them).
+A pair with no precomposed form has none. -/
+def composeAccent (mark base : Char) : Option Char :=
+  match (Nfc.normalize (String.ofList [base, mark])).toList with
+  | [c] => if c != base then some c else none
+  | _ => none
+
+/-- TeX's accent `\<mark>` over a base letter (`\'e`, `\"{o}`, `\c{c}`,
+`\v{c}`), through TU's accent table and NFC, so a name renders identically
+in text and in a bibliography entry. A pair with no precomposed form keeps
+its base letter: a name never loses a character to an accent. -/
 def accentOf (mark base : Char) : Char :=
-  ((accentTable.find? fun (m, b, _) => m == mark && b == base).map (·.2.2)).getD base
+  ((TextSymData.accents.lookup (String.ofList [mark])).bind (composeAccent · base)).getD base
 
 private def isAccentMark (c : Char) : Bool :=
   c == '\'' || c == '`' || c == '"' || c == '^' || c == '~'

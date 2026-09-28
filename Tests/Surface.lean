@@ -2570,7 +2570,7 @@ def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
 def accentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- TeX accent commands compose to NFC in text elaboration, the same
-  -- table .bib values read (Bib.accentTable via Elab.accentCompose):
+  -- route .bib values read (Bib.accentOf via Elab.accentCompose):
   -- B\'elair renders "Bélair", not "Belair" + W0301.
   let para? (p : Ir.Doc × Array Diag) : Option (Array Ir.Inline) :=
     match p.1.body with

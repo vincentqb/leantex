@@ -23011,3 +23011,68 @@ probe (`\setlength` and `\tokens` set one page, and it moves the page).
 paper's two W0104 sites for `\partopsep` become one note naming the token;
 the paper, deck, card, résumé and site PDFs and the paper's HTML are
 byte-identical under `cmp`.
+
+
+### 2026-09-28 — the TU encoding's text symbols and accents, read from the file lualatex reads
+
+**Why this first.** The coverage tier's largest kernel gap was *Special
+insertions*: 103 of its 134 documented names were unknown at `b176ed66`,
+and nearly all of them are one scalar each — `\S`, `\dag`, `\pounds`,
+`\OE`, `\textbullet`, `\textregistered`, the guillemets, the accents
+`\v \u \H \k \r \d \. \=`. Four hand tables already answered a few of
+them (`Elab.escapes`, `Bib.charCommands`, `Lex.textSymbols`, `Compat`'s
+literal rewrites) and `Bib.accentTable` composed six marks over the
+Latin-1 letters by hand. The fifth instance becomes its table.
+
+**The table is lualatex's own.** `scripts/gen-textsym-data.lean` reads
+tuenc.def (the TU encoding fontspec selects) and latex.ltx through
+kpsewhich, never vendoring them, and writes `LeanTex/Core/TextSymData.lean`,
+data only: 145 symbols (`\DeclareUnicodeSymbol`, the `\iffontchar`
+commands' scalar, and the kernel names defined as one in text — `\S` is
+`\ifmmode\mathsection\else\textsection\fi`), 28 accents (the 15
+`\DeclareUnicodeAccent` marks and the 13 capital accents latex.ltx makes
+them), the two empty-base composites (`\^{}`, `\~{}`), and tuenc.def's 241
+composites. `Elab.escapeOf` reads the symbols after the hand tables;
+`Bib.accentOf` and `Elab.accentCompose` compose an accent as NFC composes
+its base and mark (`Bib.composeAccent`), which replaces the 44-row hand
+table. `\i` and `\j` compose as the dotted letters, and a one-character
+command is its character (`\'\AE` is Ǽ), as tuenc.def's composites say.
+`\lq`, `\rq` and `\LaTeXe` are hand rows with their latex.ltx source.
+
+**Checked, over every row.** `textSymChecks`: each symbol spelled
+`x\name{}y` elaborates to its scalar between the letters with no
+diagnostic, whichever table answers it first; each of the 241 composites
+is the NFC composition of its pair and elaborates to it; the page (Source
+Serif) ships `§2 ¶3 † £5 Œuvre Dvořák Erdős Żółw ‘q’`. Broken once each
+through the path that ships: the symbol lookup removed, 136 failures;
+the accent table narrowed to the old six marks, 135.
+
+**Measured (coverage `--report`, committed rule).** Kernel 227 → 311 of
+679 (Special insertions 30 → 113, Environments 14 → 15 for `\=`);
+textcomp 4 → 10 of 10; the headline 821/1583 = 51.9% → 911/1583 = 57.5%
+(the committed provenance at `b176ed66` said 813/1570, stale by the
+round-9 package rows). A lualatex build of the same source sets the same
+scalars, with two differences that are one
+rule of the engine's: where the face lacks the scalar, lualatex falls back
+inside the face (`\SS` to "SS" in Latin Modern, `\textfiguredash` to an en
+dash) and the engine keeps the scalar and takes it from the next face that
+carries it, or names the gap — its per-scalar fallback, one rule for every
+scalar.
+
+**Not rows, and why.** `\textquotesingle`, `\textquotedbl` and
+`\textasciigrave` (tuenc.def keeps them from the TeX ligatures; the
+engine's quote ligatures would reach them); `\textcompwordmark` (U+200C,
+whose one meaning is a ligature break the engine never forms);
+`\textcommabelow` (an overlay, not an accent; its four composites wait on
+it); `\t`, `\newtie`, `\textcircled`, `\underbar`, `\symbol` (constructions,
+not scalars); `\b` composes no precomposed scalar, so it still falls
+through by name. A document palette role a symbol spells is now refused
+(E0303) instead of silently shadowed.
+
+**Owed.** `.bib` values compose only the six marks `Bib.text` reads
+(`\c` and the control-symbol accents): its control-word branch should read
+`TextSymData.accents` as `\c` does, so a name renders identically in text
+and in an entry — `Bib.text` is natbib's region until it lands. TU names
+are not in `renderedBuiltins`, so `\providecommand{\S}` defines where
+LaTeX keeps `\S`, as `Bib.charCommands`' names already did. The kernel
+probe cannot witness `\c` (no probe token composes a cedilla).

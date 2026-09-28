@@ -867,8 +867,11 @@ def escapes : List (String × String) :=
    -- The logos set as their plain words (the kerned lowering is a
    -- rendering nicety, the name is the content), and textcomp's symbol
    -- commands beside their bare-symbol siblings in `Lex.textSymbols`.
-   ("LaTeX", "LaTeX"), ("TeX", "TeX"),
-   ("textdegree", "°"), ("texteuro", "€")]
+   ("LaTeX", "LaTeX"), ("TeX", "TeX"), ("LaTeXe", "LaTeX2ε"),
+   ("textdegree", "°"), ("texteuro", "€"),
+   -- latex.ltx's `\def\lq{`}` and `\def\rq{'}`, as the TeX quote ligatures
+   -- set them (lualatex sets U+2018 and U+2019 for the two).
+   ("lq", "‘"), ("rq", "’")]
 
 def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
@@ -1016,46 +1019,60 @@ theorem phantom_axes_set_eq :
       (phantomAxes.all fun e => e.2.width || e.2.extent)) = true := by
   decide +kernel
 
-/-- TeX's accent commands the engine composes to NFC: the control-symbol
-marks and the cedilla word, one table with .bib values (`Bib.accentTable`),
-so a name renders identically in text and in a bibliography entry. -/
+/-- TeX's accent commands the engine composes to NFC: the combining mark
+each adds to its base, from TU's accent table (`TextSymData.accents`) —
+one table with .bib values (`Bib.accentOf`), so a name renders identically
+in text and in a bibliography entry. -/
 def accentMarkOf (name : String) : Option Char :=
-  if name == "'" || name == "`" || name == "\"" || name == "^" || name == "~" then
-    some name.front
-  else if name == "c" then some 'c'
-  else none
-
-/-- The composed text of an accent command applied to what follows: the
-first letter of an adjacent word (`\'elair` → "élair") or a one-letter
-group (`\'{e}`). `none` — a shape or a pair the table does not know —
-falls through to the ordinary dispatch, so nothing new is dropped and an
-unknown pair still warns by name. -/
-def accentCompose (mark : Char) (r : Parse.Raw) : Option String :=
-  match r with
-  | .word s _ =>
-    match s.toList with
-    | b :: rest =>
-      let c := Bib.accentOf mark b
-      if c == b then none else some (String.ofList (c :: rest))
-    | [] => none
-  | .group body _ =>
-    match body.toList with
-    | [.word s _] =>
-      match s.toList with
-      | [b] =>
-        let c := Bib.accentOf mark b
-        if c == b then none else some (String.ofList [c])
-      | _ => none
-    | _ => none
-  | _ => none
+  TextSymData.accents.lookup name
 
 /-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
-`.bib` values read (`Bib.charCommands`), folded into one lookup with the
-escape table: both splice literal text. -/
+`.bib` values read (`Bib.charCommands`), and TU's text symbols
+(`TextSymData.symbols`: `\S`, `\dag`, `\textbullet`, `\OE`…), folded into
+one lookup with the escape table: all splice literal text. -/
 def escapeOf (name : String) : Option String :=
   match escapes.lookup name with
   | some lit => some lit
-  | none => (Bib.charCommands.find? (·.1 == name)).map (·.2)
+  | none =>
+    match (Bib.charCommands.find? (·.1 == name)).map (·.2) with
+    | some lit => some lit
+    | none => (TextSymData.symbols.lookup name).map (String.ofList [·])
+
+/-- The letter a command stands for as an accent's base: `\i` and `\j` are
+the dotted letters (tuenc.def composes `\'\i` as í: the dotless letter
+exists only to carry an accent), and a one-character command is its
+character (`\'\AE` is Ǽ). -/
+def accentBase (d : String) : Option Char :=
+  if d == "i" then some 'i' else if d == "j" then some 'j'
+  else match (escapeOf d).map (·.toList) with
+    | some [c] => some c
+    | _ => none
+
+/-- The composed text of an accent command applied to what follows: the
+first letter of an adjacent word (`\'elair` → "élair"), a one-letter group
+(`\'{e}`), a command base (`\'{\i}`, `\'\AE`), or an empty group (`\^{}` →
+"^", TU's empty-base composite). `none` — a shape or a pair with no
+precomposed scalar — falls through to the ordinary dispatch, so nothing new
+is dropped and an unknown pair still warns by name. -/
+def accentCompose (name : String) (r : Parse.Raw) : Option String := do
+  let mark ← accentMarkOf name
+  let one (b : Char) : Option String := (Bib.composeAccent mark b).map (String.ofList [·])
+  match r with
+  | .word s _ =>
+    match s.toList with
+    | b :: rest => (Bib.composeAccent mark b).map fun c => String.ofList (c :: rest)
+    | [] => none
+  | .ctrl d _ => accentBase d >>= one
+  | .group body _ =>
+    match body.toList with
+    | [] => (TextSymData.emptyBase.lookup name).map (String.ofList [·])
+    | [.word s _] =>
+      match s.toList with
+      | [b] => one b
+      | _ => none
+    | [.ctrl d _] => accentBase d >>= one
+    | _ => none
+  | _ => none
 
 mutual
 
@@ -3762,8 +3779,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hadv : sliceWeight raws j < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws j acc ""
-        else if let some composed := (accentMarkOf name).bind
-            (fun mk => raws[i + 1]?.bind (accentCompose mk)) then
+        else if let some composed := raws[i + 1]?.bind (accentCompose name) then
           -- `\'e` and family: composed to NFC at elaboration, one table
           -- with Bib — the accent is content, never a droppable mark.
           have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
@@ -5690,7 +5706,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
       if !key.toList.all Decl.isIdentChar then
         diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
           (help := "entries look like: name = #RRGGBB")
-      else if builtinNames.contains key then
+      else if builtinNames.contains key || (escapeOf key).isSome then
         diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
       else if key == "covered" && (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
         -- `covered = 38\%`: cover each colour to 38% of itself over the
