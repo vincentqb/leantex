@@ -282,8 +282,9 @@ structure AlgSt where
 /-- The spans the reporting layer reads back out of elaboration — the
 `AlgSt` shape: one field on `ESt`, so the elaboration knot's state stays
 narrow. `bib` is where each `\bibliography` marker stands (E0503's `-->`);
-`images` each image source's first span, file images and boundary pictures
-alike (the alt judge's `-->`, the driver's per-picture diagnostics);
+`images` each non-text object's first reporting span: file and boundary
+image sources, and positional native-picture keys (the alt judge's `-->`,
+the driver's per-picture diagnostics);
 `cites` each citation key's first `\cite` (the no-bibliography judge:
 with no `\bibliography` anywhere, `Bib.apply` never runs and nothing else
 explains the '?' the mark ships). -/
@@ -720,13 +721,19 @@ private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Un
     if sp.cites.any (·.1 == k) then sp
     else { sp with cites := sp.cites.push (k, ⟨ctx.file, pos⟩) }) st.spans }
 
-/-- Record an image source's span, first occurrence per source: the alt
-judge's `-->` and the driver's per-picture diagnostics read it. -/
+/-- Record a non-text object's census key and span. File and boundary
+images use their source; every native picture uses a positional
+`picture#k` key, including described and decorative pictures so a caption
+cannot renumber a later missing alternative. -/
 private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st =>
     if st.spans.images.any (·.1 == src) then st
     else { st with spans :=
       { st.spans with images := st.spans.images.push (src, ⟨ctx.file, pos⟩) } }
+
+private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
+  let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
+  recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
 /-- Record a colour expression's span and value, first occurrence per
 expression: the contrast judge's `-->` and the name it reports. -/
@@ -7783,6 +7790,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   -- no door warning: the declaration is the acceptance. W0379 is the
   -- driver's, for a stated request no available tool can fulfil.
   unless pic.shapes.isEmpty do
+    recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture pic)
   -- An all-refused picture still owes the reader its place: the
   -- float around it would otherwise collapse to orphan captions.
@@ -7793,6 +7801,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
 placeholder box marks its place" pos
       (help := "the box holds the diagram's place; \\allow{W0362} \
 accepts the loss")
+    recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
   return blocks
 

@@ -20,7 +20,7 @@ def structTexts (ns : Array Struct.Node) : Array String :=
 
 /-- The structure tree: one backend-neutral projection of the IR, held to
 the IR's own censuses. The theorems (`structTree_text`, `_headings_covers`,
-`_images_covers`, `_leaves_id`) close in Struct.lean; the rows here are
+`_alts_covers`, `_leaves_id`) close in Struct.lean; the rows here are
 their executable witnesses over every golden fixture, and one break-once
 check per major arm — the tree a backend will read must classify each IR
 constructor the way this file says, and a reclassified arm fails here by
@@ -35,7 +35,8 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     let tree := Struct.ofDoc doc
     t s!"struct {n}: leaf text is blocksText" (tree.text == Ir.blocksText doc.body)
     t s!"struct {n}: headings are headingLevels" (tree.headings == Ir.headingLevels doc.body)
-    t s!"struct {n}: images are the fold's census" (tree.images == Struct.irImages doc.body)
+    t s!"struct {n}: alternatives are the fold's census"
+      (tree.alts == Struct.irAlts doc.body)
     let ids := tree.leaves.map (·.1)
     t s!"struct {n}: leaf ids are the preorder index" (ids == Array.range ids.size)
     -- a fixture that ships text has a tree with leaves to attribute it to
@@ -213,7 +214,8 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
 labels set name its svg in the HTML and its `Figure` in the PDF alike — the
 PDF once shipped that `Figure` with no `/Alt` while the HTML named it. A
 picture that says nothing keeps what each artifact shipped: the svg the
-figure word, the `Figure` no `/Alt`. -/
+figure word, the `Figure` no `/Alt`; its missing alternative is still
+accounted for, whichever route drew it. -/
 def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let native := "\\pictures{ tool = none }\n"
@@ -226,14 +228,37 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let svgNames (doc : Ir.Doc) : Array (Option String) :=
     (elemAttrsList (· == "svg") #[] (doc.body.map (HtmlDoc.blockNode {})).toList).map
       (HtmlDoc.attrOf? ·.2 "aria-label")
+  let pictureAlts (doc : Ir.Doc) : Array Ir.Alt :=
+    Ir.foldBlocks (fun out b => match b with
+      | .picture p => out.push p.alt
+      | _ => out) (fun out _ => out) #[] doc.body
   let (worded, _) := elabStr (dvDoc native (pic "" words))
   t "a picture's svg is named by the words its labels set"
     (svgNames worded == #[some "Alpha, Beta"])
   t "a picture's PDF Figure carries the words its svg is named by"
     (figureAlts worded == svgNames worded)
-  let (wordless, _) := elabStr (dvDoc native (pic "" square))
+  let (wordless, wordlessDs) := elabStr (dvDoc native (pic "" square))
   t "a picture that says nothing: the svg takes the figure word, the Figure no /Alt"
     (svgNames wordless == #[some "Figure"] && figureAlts wordless == #[none])
+  t "a bare native picture is in the missing-alternative census"
+    (Ir.imagesSansAlt wordless == #["picture#0"])
+  t "a bare native picture fires W0376 on its own line"
+    (wordlessDs.any fun d => d.code == "W0376" && d.subject == some "picture#0" &&
+      d.span == some ⟨"t", ⟨4, 1⟩⟩)
+  let caption := "A synthetic diagram"
+  let (capNative, capNativeDs) := elabStr (dvDoc native
+    ("\\begin{figure}" ++ pic "" square ++ s!"\\caption\{{caption}}\\end\{figure}"))
+  t "a caption fills an undeclared native picture and silences W0376"
+    (pictureAlts capNative == #[.described caption] &&
+      (figureAlts capNative).contains (some caption) && svgNames capNative == #[some caption] &&
+      capNativeDs.all (·.code != "W0376"))
+  let (captionThenBare, captionThenBareDs) := elabStr (dvDoc native
+    ("\\begin{figure}" ++ pic "" square ++ s!"\\caption\{{caption}}\\end\{figure}\n\n" ++
+      pic "" square))
+  t "caption fill cannot renumber a later native picture's census key"
+    (Ir.imagesSansAlt captionThenBare == #[Ir.picKeyPrefix ++ "1"] &&
+      captionThenBareDs.any fun d =>
+        d.code == "W0376" && d.subject == some (Ir.picKeyPrefix ++ "1") && d.span.isSome)
   -- latex-lab-tikz's keys, consumed before the subset or the boundary sees
   -- the options: no W0334, no route the key alone would have forced.
   let svgAttr (doc : Ir.Doc) (k : String) : Array (Option String) :=
@@ -280,6 +305,21 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (mSans, _) := elabStr (dvDoc "" (pic "[\n  scale=0.5, transform shape\n]" circle))
   t "the hash is invariant when the key stands on its own line"
     (!mWith.pictureSrcs.isEmpty && mWith.pictureSrcs.map (·.1) == mSans.pictureSrcs.map (·.1))
+  let (three, _) := elabStr (dvDoc ""
+    ("\\includegraphics{chart.png}\n\n" ++ pic "" square ++ "\n\n" ++ pic "" circle))
+  let allSans := Ir.imagesSansAlt three
+  let fileNative := Ir.altDiags three
+  let boundary := Ir.picAltDiags three (fun _ => none) (fun _ => true)
+  let treeAlts := (Struct.ofDoc three).alts
+  t "the complete route partition is non-vacuous: census 3 = file+native 2 + boundary 1"
+    (allSans.size == 3 && allSans.contains "chart.png" &&
+      allSans.any (·.startsWith Ir.picKeyPrefix) &&
+      allSans.any (·.startsWith Ir.picSrcPrefix) &&
+      fileNative.size == 2 && boundary.size == 1 &&
+      fileNative.any (·.subject == some (Ir.picKeyPrefix ++ "0")))
+  t "the whole-document structure alternative census is non-vacuous"
+    (treeAlts == Struct.irAlts three.body && treeAlts.size == 3 &&
+      treeAlts.any (·.1.isNone))
   -- latex-lab-graphic's `artifact` on an image.
   let (imgDeco, imgDs) := elabStr (dvDoc "" "\\includegraphics[artifact]{chart.png}")
   t "\\includegraphics[artifact] is read: no W0110, no W0376"

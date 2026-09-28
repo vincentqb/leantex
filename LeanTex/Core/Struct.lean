@@ -14,10 +14,10 @@ its marked content by.
 
 Three census facts hold the tree to the IR: its leaf text is exactly
 `blocksText` (`structTree_text`), its outline headings are exactly
-`headingLevels` (`structTree_headings_covers`), and its images are exactly
-the generic fold's image census (`structTree_images_covers`) — so the walk
-here descends everywhere the one shared fold does, footnote bodies and
-role wrappers included. `structTree_leaves_id` pins the ids: the k-th leaf
+`headingLevels` (`structTree_headings_covers`), and every image and native
+picture alternative is exactly the generic fold's alternative census
+(`structTree_alts_covers`) — so the walk here descends everywhere the one
+shared fold does, footnote bodies and role wrappers included. `structTree_leaves_id` pins the ids: the k-th leaf
 in preorder carries `k`.
 
 Every IR arm is classified here, explicitly. A *transparent* wrapper
@@ -104,12 +104,14 @@ def Leaf.census : Leaf → String
   | .picture _ => ""
   | .linebreak => " "
 
-/-- A leaf's image census: an image leaf its source and its text
-alternative, every other leaf nothing — `Leaf.census`'s shape for the image
-channel. -/
-def Leaf.imageCensus (out : Array (String × Alt)) : Leaf → Array (String × Alt)
-  | .image src alt => out.push (src, alt)
-  | .text _ | .picture _ | .linebreak => out
+/-- A leaf's alternative census: every non-text leaf's source (an
+image's source, `none` for a native picture) and the alternative the
+artifacts project. -/
+def Leaf.altCensus (out : Array (Option String × Alt)) :
+    Leaf → Array (Option String × Alt)
+  | .image src alt => out.push (some src, alt)
+  | .picture alt => out.push (none, alt)
+  | .text _ | .linebreak => out
 
 /-- Does a structure element hold the leaf? Every leaf but decoration: an
 image or picture declared decorative is held by nothing, so its ink is an
@@ -508,21 +510,21 @@ def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
 
 def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
 
-/-- Every image leaf's source and text alternative, in preorder. -/
-def imagesFold : NodeFold (Array (String × Alt)) where
-  leaf := fun out _ l => l.imageCensus out
+/-- Every non-text leaf's source and text alternative, in preorder. -/
+def altsFold : NodeFold (Array (Option String × Alt)) where
+  leaf := fun out _ l => l.altCensus out
   enter := fun out _ => out
   descends := fun _ => true
 
-def imagesList (out : Array (String × Alt)) (ns : List Node) : Array (String × Alt) :=
-  foldNodeList imagesFold out ns
+def altsList (out : Array (Option String × Alt)) (ns : List Node) : Array (Option String × Alt) :=
+  foldNodeList altsFold out ns
 
-def imagesOne (out : Array (String × Alt)) (n : Node) : Array (String × Alt) :=
-  foldNode imagesFold out n
+def altsOne (out : Array (Option String × Alt)) (n : Node) : Array (Option String × Alt) :=
+  foldNode altsFold out n
 
-def images (ns : Array Node) : Array (String × Alt) := imagesList #[] ns.toList
+def alts (ns : Array Node) : Array (Option String × Alt) := altsList #[] ns.toList
 
-def Tree.images (t : Tree) : Array (String × Alt) := Struct.images t.children
+def Tree.alts (t : Tree) : Array (Option String × Alt) := Struct.alts t.children
 
 theorem leavesAppends : Appends leavesFold where
   leaf := by intros; simp [leavesFold]
@@ -532,16 +534,22 @@ theorem headingsAppends : Appends headingsFold where
   leaf := by intros; simp [headingsFold]
   enter := fun out kind => Kind.outlineEmit_acc out kind
 
-/-- The IR's image census through the shared fold: every `.image`'s source
-and alternative, in the fold's document order — the descent `imageRefs`
-uses, declared once. -/
-def imageAltPush (out : Array (String × Alt)) (x : Inline) : Array (String × Alt) :=
+/-- The IR's alternative census through the shared fold: every image's
+source and alternative and every native picture's resolved alternative, in
+document order. -/
+def altPush (out : Array (Option String × Alt)) (x : Inline) : Array (Option String × Alt) :=
   match x with
-  | .image src _ alt => out.push (src, alt)
+  | .image src _ alt => out.push (some src, alt)
   | _ => out
 
-def irImages (bs : Array Block) : Array (String × Alt) :=
-  foldBlocks (fun out _ => out) imageAltPush #[] bs
+def altPicPush (out : Array (Option String × Alt)) (b : Block) :
+    Array (Option String × Alt) :=
+  match b with
+  | .picture pic => out.push (none, pic.alternative)
+  | _ => out
+
+def irAlts (bs : Array Block) : Array (Option String × Alt) :=
+  foldBlocks altPicPush altPush #[] bs
 
 -- **The censuses' interface**: the equations a prover may cite, stated. A
 -- definition is not an interface — it becomes one the moment a downstream
@@ -613,18 +621,18 @@ theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array 
 
 theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := rfl
 
-theorem imagesList_nil_exact (out : Array (String × Alt)) : imagesList out [] = out := rfl
+theorem altsList_nil_exact (out : Array (Option String × Alt)) : altsList out [] = out := rfl
 
-theorem imagesList_cons_exact (out : Array (String × Alt)) (n : Node) (rest : List Node) :
-    imagesList out (n :: rest) = imagesList (imagesOne out n) rest := rfl
+theorem altsList_cons_exact (out : Array (Option String × Alt)) (n : Node) (rest : List Node) :
+    altsList out (n :: rest) = altsList (altsOne out n) rest := rfl
 
-theorem imagesOne_leaf_exact (out : Array (String × Alt)) (id : Nat) (l : Leaf) :
-    imagesOne out (.leaf id l) = l.imageCensus out := rfl
+theorem altsOne_leaf_exact (out : Array (Option String × Alt)) (id : Nat) (l : Leaf) :
+    altsOne out (.leaf id l) = l.altCensus out := rfl
 
-theorem imagesOne_node_exact (out : Array (String × Alt)) (kind : Kind) (kids : Array Node) :
-    imagesOne out (.node kind kids) = imagesList out kids.toList := rfl
+theorem altsOne_node_exact (out : Array (Option String × Alt)) (kind : Kind) (kids : Array Node) :
+    altsOne out (.node kind kids) = altsList out kids.toList := rfl
 
-theorem images_eq_exact (ns : Array Node) : images ns = imagesList #[] ns.toList := rfl
+theorem alts_eq_exact (ns : Array Node) : alts ns = altsList #[] ns.toList := rfl
 
 -- The census lemmas the projection theorems stand on: each census over an
 -- appended list folds the halves in turn, so a pushed node is the census
@@ -669,17 +677,17 @@ theorem headingsOne_acc (out : Array Nat) (n : Node) :
     headingsOne out n = out ++ headingsOne #[] n :=
   foldNode_acc headingsAppends out n
 
-theorem imagesList_append (out : Array (String × Alt)) (a b : List Node) :
-    imagesList out (a ++ b) = imagesList (imagesList out a) b :=
-  foldNodeList_append imagesFold out a b
+theorem altsList_append (out : Array (Option String × Alt)) (a b : List Node) :
+    altsList out (a ++ b) = altsList (altsList out a) b :=
+  foldNodeList_append altsFold out a b
 
-theorem imagesList_snoc (out : Array (String × Alt)) (l : List Node) (n : Node) :
-    imagesList out (l ++ [n]) = imagesOne (imagesList out l) n :=
-  foldNodeList_snoc imagesFold out l n
+theorem altsList_snoc (out : Array (Option String × Alt)) (l : List Node) (n : Node) :
+    altsList out (l ++ [n]) = altsOne (altsList out l) n :=
+  foldNodeList_snoc altsFold out l n
 
-theorem imagesList_push (out : Array (String × Alt)) (ns : Array Node) (n : Node) :
-    imagesList out (ns.push n).toList = imagesOne (imagesList out ns.toList) n :=
-  foldNodeList_push imagesFold out ns n
+theorem altsList_push (out : Array (Option String × Alt)) (ns : Array Node) (n : Node) :
+    altsList out (ns.push n).toList = altsOne (altsList out ns.toList) n :=
+  foldNodeList_push altsFold out ns n
 
 theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
     leavesList out (a ++ b) = leavesList (leavesList out a) b :=
@@ -1339,318 +1347,317 @@ theorem structTree_headings_covers (bs : Array Block) :
   rw [headings_eq_exact, number, numberList_headings, blocksRaw_headings]
   rfl
 
--- **The images are the IR's** (`structTree_images_covers`): the tree's
--- image leaves are the shared fold's image census, source and alternative,
--- in the fold's order — so the hand-rolled walk here descends exactly where
--- the fold does (footnote bodies, roles, columns, cells), and no image is
--- attributed nowhere.
+-- **The alternatives are the IR's** (`structTree_alts_covers`): the
+-- structure leaves and shared fold carry the same image sources and native
+-- picture alternatives, in document order. The projection walk therefore
+-- descends everywhere the fold does (footnotes, roles, columns, cells), and
+-- no alternative-bearing leaf is attributed nowhere.
 
 mutual
 
-theorem inlinesRaw_images (is : Array (String × Alt)) (out : Array Node) (xs : List Inline) :
-    imagesList is (inlinesRaw out xs).toList
-      = foldInlineList imageAltPush (imagesList is out.toList) xs := by
+theorem inlinesRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (xs : List Inline) :
+    altsList is (inlinesRaw out xs).toList
+      = foldInlineList altPush (altsList is out.toList) xs := by
   match xs with
   | [] => rfl
   | x :: rest =>
-    rw [inlinesRaw, inlinesRaw_images is (inlineRaw out x) rest, inlineRaw_images,
+    rw [inlinesRaw, inlinesRaw_alts is (inlineRaw out x) rest, inlineRaw_alts,
       foldInlineList]
 
-theorem inlineRaw_images (is : Array (String × Alt)) (out : Array Node) (x : Inline) :
-    imagesList is (inlineRaw out x).toList = foldInline imageAltPush (imagesList is out.toList) x := by
+theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x : Inline) :
+    altsList is (inlineRaw out x).toList = foldInline altPush (altsList is out.toList) x := by
   match x with
-  | .text s => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus, foldInline,
-    imageAltPush]
+  | .text s => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus, foldInline,
+    altPush]
   | .math d src =>
-    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
-      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
+    simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
+      altsList_nil_exact, altsList_cons_exact, foldInline, altPush]
   | .formula d src body =>
-    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
-      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
+    simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
+      altsList_nil_exact, altsList_cons_exact, foldInline, altPush]
   | .styled style body =>
     match style with
     | .lang tag =>
-      simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
-      rw [inlinesRaw_images]
+      simp only [inlineRaw, altsList_push, altsOne_node_exact, foldInline, altPush]
+      rw [inlinesRaw_alts]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
     | .medium | .series _ | .upright | .size _ =>
-      simp only [inlineRaw, foldInline, imageAltPush]
-      exact inlinesRaw_images is out body.toList
+      simp only [inlineRaw, foldInline, altPush]
+      exact inlinesRaw_alts is out body.toList
   | .colored c n body =>
-    simp only [inlineRaw, foldInline, imageAltPush]
-    exact inlinesRaw_images is out body.toList
+    simp only [inlineRaw, foldInline, altPush]
+    exact inlinesRaw_alts is out body.toList
   | .role n body =>
-    simp only [inlineRaw, foldInline, imageAltPush]
-    exact inlinesRaw_images is out body.toList
+    simp only [inlineRaw, foldInline, altPush]
+    exact inlinesRaw_alts is out body.toList
   | .link url body =>
-    simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
-    rw [inlinesRaw_images]
+    simp only [inlineRaw, altsList_push, altsOne_node_exact, foldInline, altPush]
+    rw [inlinesRaw_alts]
     rfl
-  | .label key => simp [inlineRaw, foldInline, imageAltPush]
+  | .label key => simp [inlineRaw, foldInline, altPush]
   | .ref key form text target =>
-    simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
-      imagesList_nil_exact, imagesList_cons_exact, foldInline, imageAltPush]
+    simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
+      altsList_nil_exact, altsList_cons_exact, foldInline, altPush]
   | .underline body =>
-    simp only [inlineRaw, foldInline, imageAltPush]
-    exact inlinesRaw_images is out body.toList
-  | .fill => simp [inlineRaw, foldInline, imageAltPush]
-  | .pageNumber => simp [inlineRaw, foldInline, imageAltPush]
-  | .pageCount => simp [inlineRaw, foldInline, imageAltPush]
-  | .linebreak extra => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
-    foldInline, imageAltPush]
-  | .strut h => simp [inlineRaw, foldInline, imageAltPush]
+    simp only [inlineRaw, foldInline, altPush]
+    exact inlinesRaw_alts is out body.toList
+  | .fill => simp [inlineRaw, foldInline, altPush]
+  | .pageNumber => simp [inlineRaw, foldInline, altPush]
+  | .pageCount => simp [inlineRaw, foldInline, altPush]
+  | .linebreak extra => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
+    foldInline, altPush]
+  | .strut h => simp [inlineRaw, foldInline, altPush]
   | .step n l body =>
-    simp only [inlineRaw, foldInline, imageAltPush]
-    exact inlinesRaw_images is out body.toList
+    simp only [inlineRaw, foldInline, altPush]
+    exact inlinesRaw_alts is out body.toList
   | .alt n l active otherwise =>
-    simp only [inlineRaw, foldInline, imageAltPush]
-    rw [inlinesRaw_images is (inlinesRaw out active.toList) otherwise.toList,
-      inlinesRaw_images is out active.toList]
-  | .image src size alt => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
-    foldInline, imageAltPush]
-  | .icon sc label => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
-    foldInline, imageAltPush]
-  | .cite tx keys => simp [inlineRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
-    foldInline, imageAltPush]
+    simp only [inlineRaw, foldInline, altPush]
+    rw [inlinesRaw_alts is (inlinesRaw out active.toList) otherwise.toList,
+      inlinesRaw_alts is out active.toList]
+  | .image src size alt => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
+    foldInline, altPush]
+  | .icon sc label => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
+    foldInline, altPush]
+  | .cite tx keys => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
+    foldInline, altPush]
   | .footnote num body =>
-    simp only [inlineRaw, imagesList_push, imagesOne_node_exact, foldInline, imageAltPush]
-    rw [inlinesRaw_images]
+    simp only [inlineRaw, altsList_push, altsOne_node_exact, foldInline, altPush]
+    rw [inlinesRaw_alts]
     rfl
 
 end
 
-theorem inlinesRaw_images_nil (is : Array (String × Alt)) (xs : Array Inline) :
-    imagesList is (inlinesRaw #[] xs.toList).toList = foldInlineList imageAltPush is xs.toList := by
-  rw [inlinesRaw_images]
+theorem inlinesRaw_alts_nil (is : Array (Option String × Alt)) (xs : Array Inline) :
+    altsList is (inlinesRaw #[] xs.toList).toList = foldInlineList altPush is xs.toList := by
+  rw [inlinesRaw_alts]
   rfl
 
-theorem titleRaw_images (is : Array (String × Alt)) (title : Array Inline) :
-    imagesList is (titleRaw title).toList = foldInlineList imageAltPush is title.toList := by
+theorem titleRaw_alts (is : Array (Option String × Alt)) (title : Array Inline) :
+    altsList is (titleRaw title).toList = foldInlineList altPush is title.toList := by
   unfold titleRaw
   split
   · rename_i h
     rw [toList_of_isEmpty title h]
     rfl
-  · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
-    exact inlinesRaw_images_nil is title
+  · simp only [altsList_nil_exact, altsList_cons_exact, altsOne_node_exact]
+    exact inlinesRaw_alts_nil is title
 
-theorem captionRaw_images (is : Array (String × Alt)) (caption : Array Inline) :
-    imagesList is (captionRaw caption).toList = foldInlineList imageAltPush is caption.toList := by
+theorem captionRaw_alts (is : Array (Option String × Alt)) (caption : Array Inline) :
+    altsList is (captionRaw caption).toList = foldInlineList altPush is caption.toList := by
   unfold captionRaw
   split
   · rename_i h
     rw [toList_of_isEmpty caption h]
     rfl
-  · simp only [imagesList_nil_exact, imagesList_cons_exact, imagesOne_node_exact]
-    exact inlinesRaw_images_nil is caption
+  · simp only [altsList_nil_exact, altsList_cons_exact, altsOne_node_exact]
+    exact inlinesRaw_alts_nil is caption
 
-theorem cellsRaw_images (is : Array (String × Alt)) (out : Array Node)
+theorem cellsRaw_alts (is : Array (Option String × Alt)) (out : Array Node)
     (cells : List (Array Inline)) :
-    imagesList is (cellsRaw out cells).toList
-      = foldTableCells imageAltPush (imagesList is out.toList) cells := by
+    altsList is (cellsRaw out cells).toList
+      = foldTableCells altPush (altsList is out.toList) cells := by
   induction cells generalizing out with
   | nil => rfl
   | cons cell rest ih =>
-    rw [cellsRaw, ih, imagesList_push, foldTableCells]
-    simp only [imagesOne_node_exact]
-    rw [inlinesRaw_images_nil]
+    rw [cellsRaw, ih, altsList_push, foldTableCells]
+    simp only [altsOne_node_exact]
+    rw [inlinesRaw_alts_nil]
 
-theorem rowsRaw_images (is : Array (String × Alt)) (out : Array Node)
+theorem rowsRaw_alts (is : Array (Option String × Alt)) (out : Array Node)
     (rows : List (Array (Array Inline))) :
-    imagesList is (rowsRaw out rows).toList
-      = foldTableRows imageAltPush (imagesList is out.toList) rows := by
+    altsList is (rowsRaw out rows).toList
+      = foldTableRows altPush (altsList is out.toList) rows := by
   induction rows generalizing out with
   | nil => rfl
   | cons row rest ih =>
-    rw [rowsRaw, ih, imagesList_push, foldTableRows]
-    simp only [imagesOne_node_exact]
-    rw [cellsRaw_images]
+    rw [rowsRaw, ih, altsList_push, foldTableRows]
+    simp only [altsOne_node_exact]
+    rw [cellsRaw_alts]
     rfl
 
-theorem bibRaw_images (is : Array (String × Alt)) (out : Array Node) (items : List BibItem) :
-    imagesList is (bibRaw out items).toList = imagesList is out.toList := by
+theorem bibRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (items : List BibItem) :
+    altsList is (bibRaw out items).toList = altsList is out.toList := by
   induction items generalizing out with
   | nil => rfl
   | cons item rest ih =>
-    rw [bibRaw, ih, imagesList_push]
-    simp [imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus, imagesList_nil_exact,
-      imagesList_cons_exact]
+    rw [bibRaw, ih, altsList_push]
+    simp [altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus, altsList_nil_exact,
+      altsList_cons_exact]
 
-theorem algRaw_images (is : Array (String × Alt)) (out : Array Node) (lines : List AlgLine) :
-    imagesList is (algRaw out lines).toList
-      = foldAlgLines imageAltPush (imagesList is out.toList) lines := by
+theorem algRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (lines : List AlgLine) :
+    altsList is (algRaw out lines).toList
+      = foldAlgLines altPush (altsList is out.toList) lines := by
   induction lines generalizing out with
   | nil => rfl
   | cons l rest ih =>
     rw [algRaw, ih, foldAlgLines]
     cases l.comment with
-    | none => simp only [inlinesRaw_images]
-    | some c => simp only [inlinesRaw_images]
+    | none => simp only [inlinesRaw_alts]
+    | some c => simp only [inlinesRaw_alts]
 
 mutual
 
-theorem blocksRaw_images (is : Array (String × Alt)) (out : Array Node) (bs : List Block) :
-    imagesList is (blocksRaw out bs).toList
-      = foldBlockList (fun out _ => out) imageAltPush (imagesList is out.toList) bs := by
+theorem blocksRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (bs : List Block) :
+    altsList is (blocksRaw out bs).toList
+      = foldBlockList altPicPush altPush (altsList is out.toList) bs := by
   match bs with
   | [] => rfl
   | b :: rest =>
-    rw [blocksRaw, blocksRaw_images is (blockRaw out b) rest, blockRaw_images is out b,
+    rw [blocksRaw, blocksRaw_alts is (blockRaw out b) rest, blockRaw_alts is out b,
       foldBlockList]
 
-theorem blockRaw_images (is : Array (String × Alt)) (out : Array Node) (b : Block) :
-    imagesList is (blockRaw out b).toList
-      = foldBlock (fun out _ => out) imageAltPush (imagesList is out.toList) b := by
+theorem blockRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (b : Block) :
+    altsList is (blockRaw out b).toList
+      = foldBlock altPicPush altPush (altsList is out.toList) b := by
   match b with
   | .para content =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    exact inlinesRaw_images_nil _ content
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    exact inlinesRaw_alts_nil _ content
   | .section level st num title =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    exact inlinesRaw_images_nil _ title
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    exact inlinesRaw_alts_nil _ title
   | .list ordered items =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [itemsRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [itemsRaw_alts]
     rfl
   | .center body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .ragged _ body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .spaced g body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .role n body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .quote body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts]
     rfl
   | .abstract body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts]
     rfl
   | .titled kind title body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images, titleRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts, titleRaw_alts]
   | .equation number content =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [inlinesRaw_images_nil]
-    simp [inlinesRaw_images_nil]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [inlinesRaw_alts_nil]
+    simp [inlinesRaw_alts_nil]
   | .verbatim covered content spec =>
-    simp only [blockRaw, foldBlock]
+    simp only [blockRaw, foldBlock, altPicPush]
     split
-    · simp [imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
-      imagesList_nil_exact, imagesList_cons_exact]
-    · simp [imagesList_snoc, imagesOne_leaf_exact, imagesOne_node_exact, Leaf.imageCensus,
-      imagesList_nil_exact, imagesList_cons_exact]
+    · simp [altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
+      altsList_nil_exact, altsList_cons_exact]
+    · simp [altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
+      altsList_nil_exact, altsList_cons_exact]
   | .algorithm n sm lines =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [algRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [algRaw_alts]
     rfl
   | .columns cols =>
-    simp only [blockRaw, foldBlock]
-    exact colsRaw_images is out cols.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact colsRaw_alts is out cols.toList
   | .step n l body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .alt n l active otherwise =>
-    simp only [blockRaw, foldBlock]
-    rw [blocksRaw_images is (blocksRaw out active.toList) otherwise.toList,
-      blocksRaw_images is out active.toList]
+    simp only [blockRaw, foldBlock, altPicPush]
+    rw [blocksRaw_alts is (blocksRaw out active.toList) otherwise.toList,
+      blocksRaw_alts is out active.toList]
   | .note body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts]
     rfl
   | .only targets body =>
-    simp only [blockRaw, foldBlock]
-    exact blocksRaw_images is out body.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact blocksRaw_alts is out body.toList
   | .nav spec body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts]
     rfl
   | .logo content =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    exact inlinesRaw_images_nil _ content
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    exact inlinesRaw_alts_nil _ content
   | .pagebreak => rfl
   | .frame title st v _ body =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images, titleRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts, titleRaw_alts]
   | .framefoot content =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    exact inlinesRaw_images_nil _ content
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    exact inlinesRaw_alts_nil _ content
   | .setPalette pal => rfl
   | .setTokens tk => rfl
   | .rule c n th => rfl
-  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne_leaf_exact, Leaf.imageCensus,
-    foldBlock]
+  | .picture pic => simp [blockRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
+    foldBlock, altPicPush]
   | .table cols pl pr rows rules spans =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [rowsRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [rowsRaw_alts]
     rfl
   | .float k n ca body caption =>
-    simp only [blockRaw, imagesList_push, imagesOne_node_exact, foldBlock]
-    rw [blocksRaw_images, captionRaw_images]
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts, captionRaw_alts]
   | .bibliography src style items =>
-    simp only [blockRaw, foldBlock]
-    exact bibRaw_images is out items.toList
+    simp only [blockRaw, foldBlock, altPicPush]
+    exact bibRaw_alts is out items.toList
 
-theorem itemsRaw_images (is : Array (String × Alt)) (out : Array Node)
+theorem itemsRaw_alts (is : Array (Option String × Alt)) (out : Array Node)
     (items : List (Array Block)) :
-    imagesList is (itemsRaw out items).toList
-      = foldBlockItems (fun out _ => out) imageAltPush (imagesList is out.toList) items := by
+    altsList is (itemsRaw out items).toList
+      = foldBlockItems altPicPush altPush (altsList is out.toList) items := by
   match items with
   | [] => rfl
   | item :: rest =>
-    rw [itemsRaw, itemsRaw_images is _ rest, imagesList_push, foldBlockItems]
-    simp only [imagesOne_node_exact, imagesList_nil_exact, imagesList_cons_exact]
-    rw [blocksRaw_images]
+    rw [itemsRaw, itemsRaw_alts is _ rest, altsList_push, foldBlockItems]
+    simp only [altsOne_node_exact, altsList_nil_exact, altsList_cons_exact]
+    rw [blocksRaw_alts]
     rfl
 
-theorem colsRaw_images (is : Array (String × Alt)) (out : Array Node)
+theorem colsRaw_alts (is : Array (Option String × Alt)) (out : Array Node)
     (cols : List (BoxWidth × Array Block)) :
-    imagesList is (colsRaw out cols).toList
-      = foldBlockCols (fun out _ => out) imageAltPush (imagesList is out.toList) cols := by
+    altsList is (colsRaw out cols).toList
+      = foldBlockCols altPicPush altPush (altsList is out.toList) cols := by
   match cols with
   | [] => rfl
   | (w, body) :: rest =>
-    rw [colsRaw, colsRaw_images is _ rest, blocksRaw_images, foldBlockCols]
+    rw [colsRaw, colsRaw_alts is _ rest, blocksRaw_alts, foldBlockCols]
 
 end
 
 mutual
 
-theorem numberList_images (is : Array (String × Alt)) (k : Nat) (out : Array Node)
+theorem numberList_alts (is : Array (Option String × Alt)) (k : Nat) (out : Array Node)
     (ns : List Node) :
-    imagesList is (numberList k out ns).1.toList
-      = imagesList (imagesList is out.toList) ns := by
+    altsList is (numberList k out ns).1.toList
+      = altsList (altsList is out.toList) ns := by
   match ns with
   | [] => rfl
   | n :: rest =>
-    rw [numberList, imagesList_cons_exact, numberList_images is _ _ rest, imagesList_push,
-      numberOne_images]
+    rw [numberList, altsList_cons_exact, numberList_alts is _ _ rest, altsList_push,
+      numberOne_alts]
 
-theorem numberOne_images (is : Array (String × Alt)) (k : Nat) (n : Node) :
-    imagesOne is (numberOne k n).1 = imagesOne is n := by
+theorem numberOne_alts (is : Array (Option String × Alt)) (k : Nat) (n : Node) :
+    altsOne is (numberOne k n).1 = altsOne is n := by
   match n with
   | .leaf id l => rfl
   | .node kind kids =>
-    simp only [numberOne, imagesOne_node_exact]
-    rw [numberList_images]
+    simp only [numberOne, altsOne_node_exact]
+    rw [numberList_alts]
     rfl
 
 end
 
-/-- **The images are the IR's.** Every image leaf of the tree, source and
-text alternative, in preorder, is the shared fold's image census over the
-blocks — the descent `imageRefs` uses, so an image the driver fetches is
-an image the tree attributes, wherever the body put it. -/
-theorem structTree_images_covers (bs : Array Block) : images (ofBlocks bs) = irImages bs := by
-  unfold ofBlocks irImages foldBlocks
-  rw [images_eq_exact, number, numberList_images, blocksRaw_images]
+/-- **The alternatives are the IR's.** Every image and native-picture
+leaf of the structure tree, source where one exists and resolved
+alternative, is exactly the shared fold's whole-document census. -/
+theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts bs := by
+  unfold ofBlocks irAlts foldBlocks
+  rw [alts_eq_exact, number, numberList_alts, blocksRaw_alts]
   rfl
 
 -- **Ids are the preorder index** (`structTree_leaves_id`): the k-th leaf

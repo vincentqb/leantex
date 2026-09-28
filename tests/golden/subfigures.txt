@@ -12,7 +12,7 @@ float figure 1
       float sub 1
         caption
           text "The first invented panel."
-        picture 2 shapes
+        picture 2 shapes alt "The first invented panel."
           border 25.013 10.84 31.679 17.506
           rect 0 0 56.693 28.346 #CCCCCC
           label 28.346 14.173 #000000 1000
@@ -21,7 +21,7 @@ float figure 1
       float sub 2
         caption
           text "The second invented panel."
-        picture 2 shapes
+        picture 2 shapes alt "The second invented panel."
           border 25.013 10.84 31.679 17.506
           rect 0 0 56.693 28.346 #999999
           label 28.346 14.173 #000000 1000

@@ -1448,7 +1448,7 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\includegraphics[height=0.4\\textheight, alt={A synthetic box}]{a.png}\n\n" ++
     "\\includegraphics[width=5cm, alt={A synthetic box}]{a.png}\n\n" ++
     "\\includegraphics[scale=0.5, alt={A synthetic box}]{a.png}\n\n" ++
-    "\\begin{tikzpicture}\n\\fill (0,0) rectangle (2,1);\n\\end{tikzpicture}"
+    "\\begin{tikzpicture}[artifact]\n\\fill (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   -- 144 px at the default density is 144 pt intrinsic width.
   let info : Image.Plan := { pxW := 144
                              pxH := 72 }

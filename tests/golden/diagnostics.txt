@@ -471,7 +471,7 @@ warning[W0374]: a footnote on this card is kept inline; a card face has no note 
 warning[W0376]: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
 warning[W0376]: this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
-  help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it
+  help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   help: give the link visible text — \href{...}{words} — or an image with alt inside it

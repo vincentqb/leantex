@@ -23956,13 +23956,24 @@ What branch-audit judged valuable in `wt/picture-alt-policy` (`9ad1e81d`,
   description, so it is not copied. The cost stands named: HTML-AAM reads
   `alt=""` as decoration while the PDF's `Figure` fails a checker, one value
   read two ways.
-- **Not ported.** The old branch's undeclared arm (no `alt` attribute, an svg
-  with no role) is obsolete: the svg fact holds every picture named. Owed: a
-  native picture that says nothing and declares nothing ships the figure
-  word and a `Figure` without `/Alt` with no warning, while the same picture
-  drawn at the boundary is W0376 — the route decides what a reader is told.
-  Closing it needs a picture leaf in the caption walk first (`mapBlocks` has
-  none), or a captioned figure's picture would warn falsely.
+- **The old branch is superseded.** Its undeclared HTML arm (no `alt`
+  attribute, an svg with no role) remains obsolete: the svg fact keeps every
+  picture named. The still-desired accounting is now checked on the current
+  design. `mapBlocksPic` gives the exhaustive leaf rewrite one native-picture
+  function and `mapBlocksPic_text` proves the rewrite conserves document text;
+  `setAltBlocks` therefore fills an undeclared native picture from its caption
+  without overwriting a described or decorative one. `imagesSansAlt` judges
+  each native picture's resolved `alternative` beside file and boundary
+  images; `alt_judged_complete` partitions the complete census between the
+  file/native and fulfilled-boundary faces. Native `picture#k` keys count every
+  native picture, not only current offenders, so a caption filled later cannot
+  renumber a following diagnostic's span. `structTree_alts_covers` proves that
+  the structure tree and the shared IR fold carry the same image and native-
+  picture alternatives over the whole document. No owed row remains.
 
-Guards: `pictureAltChecks` and the written-and-read `/Alt` check in
-`structTreeChecks`, 18 of which fail at `fed62cd2`.
+Guards: `pictureAltChecks` distinguishes bare native, caption-filled native,
+and the non-vacuous 3 = 2 + 1 file/native/boundary partition;
+`structChecks` witnesses `structTree_alts_covers` over every golden fixture,
+and the partition carries a three-object structure census witness. The
+written-and-read `/Alt` check remains in `structTreeChecks`; 18 of the original
+port checks fail at `fed62cd2`.

@@ -12470,78 +12470,102 @@ def logoImageSrcs (doc : Doc) : Array String :=
   let out := match doc.logoLeft with | some l => imageSrcsInlines out l | none => out
   match doc.logoRight with | some r => imageSrcsInlines out r | none => out
 
+private structure SansAltCensus where
+  missing : Array String := #[]
+  pictures : Nat := 0
+
 /-- One image node's contribution to the no-alternative census: an
 `.image` whose `alt` is `.undeclared`, its `src` collected once — a
 `.decorative` image is the conforming state (WCAG 2.2 SC 1.1.1: pure
 decoration, implemented so assistive technology can ignore it). A leaf
 projection of the shared fold — the fold recurses, so this leaf reads
 only the node itself; `imageSrcPush`'s shape. -/
-private def sansAltStep (out : Array String)
-    (x : Inline) : Array String :=
+private def sansAltStep (out : SansAltCensus) (x : Inline) : SansAltCensus :=
   match x with
   | .image src _ alt =>
-    if alt == .undeclared && !out.contains src then out.push src else out
+    if alt == .undeclared && !out.missing.contains src then
+      { out with missing := out.missing.push src }
+    else out
   | _ => out
 
-/-- Every image the artifacts ship with no text alternative, deduplicated,
-in document order: the backends read the body and the running head and
-foot, so the census reads the same regions (`imageRefs`' scope for shipped
-ink). A figure's caption has already become its image's `alt` by
-elaboration (`setAltBlocks`), so a captioned figure is not counted — and a
-logo's images are not counted either: a logo is decorative furniture by
-role (`logoImageSrcs`), so its missing alternative is the conforming state,
-never a defect. A boundary picture (`picSrcPrefix`) *is* counted — the
-route being the engine's default changes who drew the box, not what a
-reader of the accessibility tree gets — but judged by its own face after
-fulfilment (`picAltDiags`, the driver's), never here (`altDiags` leaves
-it): the two faces partition this census (`alt_judged_complete`).
-N0023 is the picture's trust note and names no loss. -/
+/-- The census key of a native picture: `picture#k`, where `k` is its
+index among all native pictures in document order. Counting every native
+picture keeps the key stable when a later caption fills its alternative. -/
+def picKeyPrefix : String := "picture#"
+
+/-- One native picture's contribution to the no-alternative census. The
+artifact-facing `alternative` is judged, so label words and a caption both
+satisfy the same value the HTML and PDF project. -/
+private def sansAltPicStep (out : SansAltCensus) (b : Block) : SansAltCensus :=
+  match b with
+  | .picture pic =>
+    let key := picKeyPrefix ++ toString out.pictures
+    { missing := if pic.alternative == .undeclared then out.missing.push key else out.missing
+      pictures := out.pictures + 1 }
+  | _ => out
+
+/-- Every non-text object the artifacts ship with no text alternative,
+deduplicated by source for images and keyed by native-picture position, in
+document order. The backends read the body and the running head and foot,
+so the census reads the same regions (`imageRefs`' scope for shipped ink).
+A figure's caption has already become its object's `alt` by elaboration
+(`setAltBlocks`), so a captioned figure is not counted — and a logo's
+images are not counted either: a logo is decorative furniture by role
+(`logoImageSrcs`), so its missing alternative is the conforming state,
+never a defect. A native picture (`picKeyPrefix`) is judged with file
+images (`altDiags`). A boundary picture (`picSrcPrefix`) is counted too —
+the route changes who drew the box, not what an accessibility reader gets —
+but judged after fulfilment by `picAltDiags`. The two faces partition this
+census (`alt_judged_complete`); N0023 names trust, not loss. -/
 def imagesSansAlt (doc : Doc) : Array String :=
-  let out := foldBlocks (fun out _ => out) sansAltStep #[] doc.body
+  let out := foldBlocks sansAltPicStep sansAltStep {} doc.body
   let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
-  out.filter (fun src => !(logoImageSrcs doc).contains src)
+  out.missing.filter (fun src => !(logoImageSrcs doc).contains src)
 
-/-- The text-alternative judge's file-image face (WCAG 2.2 SC 1.1.1,
-Non-text Content: non-text content has a text alternative that serves the
-equivalent purpose; sufficient technique G94/H37 — the `alt` attribute).
-One diagnostic per distinct source: an image a reader of the page sees and
-a reader of the accessibility tree does not is a per-image fact, and the
-source names which — with its span (`spanOf`, the elaborator's record), so
-the reader goes to the line. Boundary pictures are judged by
-`picAltDiags`, after the driver has fulfilled them. -/
+/-- The picture faces' one message and help, native and boundary alike.
+The key is an internal census identity, so the message stays in the
+author's words and names every available declaration. -/
+def pictureSansAltMessage : String :=
+  "this picture ships no text alternative; assistive technology " ++
+    "reads nothing in its place (WCAG 2.2 SC 1.1.1)"
+
+def pictureSansAltHelp : String :=
+  "describe the picture — \\begin{tikzpicture}[alt={...}] — mark it " ++
+    "decorative with [artifact], or caption a figure around it; an empty " ++
+    "alt= says nothing"
+
+/-- The text-alternative judge's file-image and native-picture face (WCAG
+2.2 SC 1.1.1, Non-text Content). One diagnostic per distinct object; a
+file source or native-picture key provides the structured subject and its
+recorded span. Boundary pictures are judged by `picAltDiags` after the
+driver has fulfilled them. -/
 def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
     Array Diag :=
   ((imagesSansAlt doc).filter fun src => !src.startsWith picSrcPrefix).map fun src =>
-    Diag.of .W0376
-      (s!"image '{src}' ships no text alternative; assistive technology " ++
-        "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
-      (spanOf src)
-      (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
-        "mark it decorative with [artifact], or caption its figure: the " ++
-        "caption becomes the alternative"))
-      (subject := some src)
+    if src.startsWith picKeyPrefix then
+      Diag.of .W0376 pictureSansAltMessage (spanOf src)
+        (help := some pictureSansAltHelp) (subject := some src)
+    else
+      Diag.of .W0376
+        (s!"image '{src}' ships no text alternative; assistive technology " ++
+          "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
+        (spanOf src)
+        (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
+          "mark it decorative with [artifact], or caption its figure: the " ++
+          "caption becomes the alternative"))
+        (subject := some src)
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
 failed on ships a placeholder box, not an image, and E0382 has named that
-loss, so naming it here too would name one loss twice. The message speaks
-of a picture in the author's words — the source spelling is the engine's
-cache key (`picSrcPrefix`), never a word the author wrote, though it is
-the subject a census keys the diagnostic by — and the help names the doors
-latex-lab-tikz and a figure open: `alt={...}` or `artifact` on the
-picture, or a caption. -/
+loss, so naming it here too would name one loss twice. -/
 def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
   ((imagesSansAlt doc).filter fun src =>
       src.startsWith picSrcPrefix && shipped src).map fun src =>
-    Diag.of .W0376
-      ("this picture ships no text alternative; assistive technology " ++
-        "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
-      (spanOf src)
-      (help := some ("describe the picture — \\begin{tikzpicture}[alt={...}] — " ++
-        "mark it decorative with [artifact], or caption a figure around it"))
-      (subject := some src)
+    Diag.of .W0376 pictureSansAltMessage (spanOf src)
+      (help := some pictureSansAltHelp) (subject := some src)
 
 private theorem length_filter_partition (p : α → Bool) :
     ∀ l : List α, (l.filter p).length + (l.filter (fun a => !p a)).length = l.length
@@ -12702,39 +12726,47 @@ def mapAlgLines (f : Inline → Inline) (out : Array AlgLine) :
         content := mapInlines f l.content
         comment := l.comment.map (mapInlines f) }) rest
 
+/-- The block face of the leaf-parameterised map: `gp` rewrites each
+native picture, and `f` each childless inline. Existing inline-only callers
+use `mapBlocks`, whose picture function is identity. -/
+def mapBlocksPic (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (xs : Array Block) : Array Block :=
+  mapBlockList gp f #[] xs.toList
+
 def mapBlocks (f : Inline → Inline) (xs : Array Block) : Array Block :=
-  mapBlockList f #[] xs.toList
+  mapBlocksPic id f xs
 
-def mapBlockList (f : Inline → Inline) (out : Array Block) :
-    List Block → Array Block
+def mapBlockList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (out : Array Block) : List Block → Array Block
   | [] => out
-  | b :: rest => mapBlockList f (out.push (mapBlock f b)) rest
+  | b :: rest => mapBlockList gp f (out.push (mapBlock gp f b)) rest
 
-def mapBlock (f : Inline → Inline) : Block → Block
+def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) : Block → Block
   | .para content => .para (mapInlines f content)
   | .equation n content => .equation (mapInlines f n) (mapInlines f content)
   | .section l st n title => .section l st n (mapInlines f title)
-  | .list o items => .list o (mapBlockItems f #[] items.toList)
-  | .center body => .center (mapBlockList f #[] body.toList)
-  | .ragged s body => .ragged s (mapBlockList f #[] body.toList)
-  | .quote body => .quote (mapBlockList f #[] body.toList)
-  | .abstract body => .abstract (mapBlockList f #[] body.toList)
+  | .list o items => .list o (mapBlockItems gp f #[] items.toList)
+  | .center body => .center (mapBlockList gp f #[] body.toList)
+  | .ragged s body => .ragged s (mapBlockList gp f #[] body.toList)
+  | .quote body => .quote (mapBlockList gp f #[] body.toList)
+  | .abstract body => .abstract (mapBlockList gp f #[] body.toList)
   | .titled kind title body =>
-    .titled kind (mapInlines f title) (mapBlockList f #[] body.toList)
-  | .role n body => .role n (mapBlockList f #[] body.toList)
-  | .spaced g body => .spaced g (mapBlockList f #[] body.toList)
-  | .columns cols => .columns (mapBlockCols f #[] cols.toList)
-  | .step n l body => .step n l (mapBlockList f #[] body.toList)
+    .titled kind (mapInlines f title) (mapBlockList gp f #[] body.toList)
+  | .role n body => .role n (mapBlockList gp f #[] body.toList)
+  | .spaced g body => .spaced g (mapBlockList gp f #[] body.toList)
+  | .columns cols => .columns (mapBlockCols gp f #[] cols.toList)
+  | .step n l body => .step n l (mapBlockList gp f #[] body.toList)
   | .alt n l firstPage otherPage =>
-    .alt n l (mapBlockList f #[] firstPage.toList) (mapBlockList f #[] otherPage.toList)
-  | .only targets body => .only targets (mapBlockList f #[] body.toList)
-  | .nav spec body => .nav spec (mapBlockList f #[] body.toList)
-  | .note body => .note (mapBlockList f #[] body.toList)
+    .alt n l (mapBlockList gp f #[] firstPage.toList)
+      (mapBlockList gp f #[] otherPage.toList)
+  | .only targets body => .only targets (mapBlockList gp f #[] body.toList)
+  | .nav spec body => .nav spec (mapBlockList gp f #[] body.toList)
+  | .note body => .note (mapBlockList gp f #[] body.toList)
   | .frame title st v br body =>
-    .frame (mapInlines f title) st v br (mapBlockList f #[] body.toList)
+    .frame (mapInlines f title) st v br (mapBlockList gp f #[] body.toList)
   | .framefoot content => .framefoot (mapInlines f content)
   | .float k num ca body caption =>
-    .float k num ca (mapBlockList f #[] body.toList) (mapInlines f caption)
+    .float k num ca (mapBlockList gp f #[] body.toList) (mapInlines f caption)
   | .table c pl pr rows rules spans =>
     .table c pl pr (mapTableRows f #[] rows.toList) rules spans
   | .algorithm n sm lines => .algorithm n sm (mapAlgLines f #[] lines.toList)
@@ -12748,18 +12780,20 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
   | .rule c n th => .rule c n th
-  | .picture pic => .picture pic
+  | .picture pic => .picture (gp pic)
 
-def mapBlockItems (f : Inline → Inline) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block)
+def mapBlockItems (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (out : Array (Array Block)) : List (Array Block) → Array (Array Block)
   | [] => out
-  | item :: rest => mapBlockItems f (out.push (mapBlockList f #[] item.toList)) rest
+  | item :: rest =>
+    mapBlockItems gp f (out.push (mapBlockList gp f #[] item.toList)) rest
 
-def mapBlockCols (f : Inline → Inline) (out : Array (BoxWidth × Array Block)) :
+def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (out : Array (BoxWidth × Array Block)) :
     List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
   | [] => out
   | (w, body) :: rest =>
-    mapBlockCols f (out.push (w, mapBlockList f #[] body.toList)) rest
+    mapBlockCols gp f (out.push (w, mapBlockList gp f #[] body.toList)) rest
 
 end
 
@@ -13024,9 +13058,9 @@ private theorem mapBibItems_text (f : Inline → Inline)
 
 mutual
 
-theorem mapBlock_text (f : Inline → Inline)
+theorem mapBlock_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (acc : String) (b : Block) :
-    blockTextOne acc (mapBlock f b) = blockTextOne acc b := by
+    blockTextOne acc (mapBlock gp f b) = blockTextOne acc b := by
   match b with
   | .para content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
   | .equation n content =>
@@ -13034,75 +13068,76 @@ theorem mapBlock_text (f : Inline → Inline)
   | .section l st n title =>
     simp [mapBlock, blockTextOne, mapInlines_text f hf title]
   | .list o items =>
-    show blockTextItems acc (mapBlockItems f #[] items.toList).toList = _
-    rw [mapBlockItems_text f hf items.toList #[]]
+    show blockTextItems acc (mapBlockItems gp f #[] items.toList).toList = _
+    rw [mapBlockItems_text gp f hf items.toList #[]]
     rfl
   | .center body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .ragged _ body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .quote body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .abstract body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .titled kind title body =>
     show blockTextList (acc ++ plainText (mapInlines f title))
-      (mapBlockList f #[] body.toList).toList = _
-    rw [mapInlines_text f hf title, mapBlockList_text f hf body.toList #[]]
+      (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapInlines_text f hf title, mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .role n body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .spaced g body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .columns cols =>
-    show blockTextColumns acc (mapBlockCols f #[] cols.toList).toList = _
-    rw [mapBlockCols_text f hf cols.toList #[]]
+    show blockTextColumns acc (mapBlockCols gp f #[] cols.toList).toList = _
+    rw [mapBlockCols_text gp f hf cols.toList #[]]
     rfl
   | .step n l body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .alt n l firstPage otherPage =>
-    show blockTextList (blockTextList acc (mapBlockList f #[] firstPage.toList).toList)
-        (mapBlockList f #[] otherPage.toList).toList = _
-    rw [mapBlockList_text f hf firstPage.toList #[],
-      mapBlockList_text f hf otherPage.toList #[]]
+    show blockTextList (blockTextList acc
+        (mapBlockList gp f #[] firstPage.toList).toList)
+        (mapBlockList gp f #[] otherPage.toList).toList = _
+    rw [mapBlockList_text gp f hf firstPage.toList #[],
+      mapBlockList_text gp f hf otherPage.toList #[]]
     rfl
   | .only targets body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .nav spec body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .note body =>
-    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
-    rw [mapBlockList_text f hf body.toList #[]]
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .frame title st v _ body =>
     show blockTextList (acc ++ plainText (mapInlines f title))
-      (mapBlockList f #[] body.toList).toList = _
-    rw [mapInlines_text f hf title, mapBlockList_text f hf body.toList #[]]
+      (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapInlines_text f hf title, mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .framefoot content =>
     simp [mapBlock, blockTextOne, mapInlines_text f hf content]
   | .float k num ca body caption =>
     show blockTextList (acc ++ plainText (mapInlines f caption))
-      (mapBlockList f #[] body.toList).toList = _
-    rw [mapInlines_text f hf caption, mapBlockList_text f hf body.toList #[]]
+      (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapInlines_text f hf caption, mapBlockList_text gp f hf body.toList #[]]
     rfl
   | .table c pl pr rows rules spans =>
     show blockTextTableRows acc (mapTableRows f #[] rows.toList).toList = _
@@ -13117,8 +13152,6 @@ theorem mapBlock_text (f : Inline → Inline)
     show blockTextBibItems acc (mapBibItems f #[] items.toList).toList = _
     rw [mapBibItems_text f hf items.toList #[]]
     rfl
-  -- The listing caption maps as a float's does, and the leaf rewrite
-  -- conserves its text; the body is one opaque string.
   | .verbatim _ _ spec =>
     cases hc : spec.caption with
     | none => simp [mapBlock, blockTextOne, ListingSpec.capText, hc]
@@ -13128,54 +13161,61 @@ theorem mapBlock_text (f : Inline → Inline)
   | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ => rfl
 
-theorem mapBlockList_text (f : Inline → Inline)
+theorem mapBlockList_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (bs : List Block)
     (out : Array Block) (acc : String) :
-    blockTextList acc (mapBlockList f out bs).toList
+    blockTextList acc (mapBlockList gp f out bs).toList
       = blockTextList (blockTextList acc out.toList) bs := by
   match bs with
   | [] => simp [mapBlockList, blockTextList]
   | b :: rest =>
-    rw [mapBlockList, mapBlockList_text f hf rest]
+    rw [mapBlockList, mapBlockList_text gp f hf rest]
     rw [Array.toList_push, blockTextList_chain]
-    simp [blockTextList, mapBlock_text f hf]
+    simp [blockTextList, mapBlock_text gp f hf]
 
-theorem mapBlockItems_text (f : Inline → Inline)
+theorem mapBlockItems_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (mapBlockItems f out items).toList
+    blockTextItems acc (mapBlockItems gp f out items).toList
       = blockTextItems (blockTextItems acc out.toList) items := by
   match items with
   | [] => simp [mapBlockItems, blockTextItems]
   | item :: rest =>
-    rw [mapBlockItems, mapBlockItems_text f hf rest]
+    rw [mapBlockItems, mapBlockItems_text gp f hf rest]
     rw [Array.toList_push, blockTextItems_chain]
-    simp [blockTextItems, blockTextList, mapBlockList_text f hf item.toList #[]]
+    simp [blockTextItems, blockTextList,
+      mapBlockList_text gp f hf item.toList #[]]
 
-theorem mapBlockCols_text (f : Inline → Inline)
+theorem mapBlockCols_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
     (cols : List (BoxWidth × Array Block))
     (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (mapBlockCols f out cols).toList
+    blockTextColumns acc (mapBlockCols gp f out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
   | [] => simp [mapBlockCols, blockTextColumns]
   | (w, body) :: rest =>
-    rw [mapBlockCols, mapBlockCols_text f hf rest]
+    rw [mapBlockCols, mapBlockCols_text gp f hf rest]
     rw [Array.toList_push, blockTextColumns_chain]
-    simp [blockTextColumns, blockTextList, mapBlockList_text f hf body.toList #[]]
+    simp [blockTextColumns, blockTextList,
+      mapBlockList_text gp f hf body.toList #[]]
 
 end
 
-/-- The `Conserves` schema over the generic map, block face:
-`setAltBlocks_text` is its one-line instance, and the next leaf-rewrite's
-census fact costs the same one line. -/
+/-- The `Conserves` schema over the picture- and inline-parameterised map.
+A picture rewrite cannot change text, so only the inline leaf hypothesis is
+needed. -/
+theorem mapBlocksPic_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
+    Conserves blocksText (mapBlocksPic gp f) := fun xs => by
+  show blockTextList "" (mapBlockList gp f #[] xs.toList).toList = _
+  rw [mapBlockList_text gp f hf xs.toList #[]]
+  rfl
+
 theorem mapBlocks_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
-    Conserves blocksText (mapBlocks f) := fun xs => by
-  show blockTextList "" (mapBlockList f #[] xs.toList).toList = _
-  rw [mapBlockList_text f hf xs.toList #[]]
-  rfl
+    Conserves blocksText (mapBlocks f) :=
+  mapBlocksPic_text id f hf
 
 /-- A caption fills only what was left undeclared: a described image keeps
 its own words, and `artifact` inside a captioned figure stays decoration. -/
@@ -13192,28 +13232,29 @@ theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .undeclared) 
   | decorative => rfl
   | described _ => rfl
 
-/-- Give every image that has no `alt` yet this text: how a `figure`'s
-caption becomes the accessible name of the image it captions. The walk is
-`mapBlocks`, whose descent is total, so the caption reaches an image
-wherever the body put it — in a list, under a wrapper, in a table cell.
-(The hand-rolled walk this replaced skipped those bodies through a
-wildcard arm; an image already carrying an alt keeps its own, so an inner
-float's caption still wins over the outer's.) -/
-private def setAltLeaf (alt : String)
-    (x : Inline) : Inline :=
+/-- Give every non-text object that has no alternative yet this text:
+how a `figure` caption becomes the accessible name of the object it
+captions. `mapBlocksPic` is the shared exhaustive leaf rewrite, so the
+caption reaches nested images and native pictures without a parallel walk.
+An inner caption still wins because `setAltFill` changes only undeclared
+values. -/
+private def setAltLeaf (alt : String) (x : Inline) : Inline :=
   match x with
   | .image src size old => .image src size (setAltFill alt old)
   | _ => x
 
-def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
-  mapBlocks (setAltLeaf alt) xs
+private def setAltPic (alt : String) (pic : Pic.Picture) : Pic.Picture :=
+  { pic with alt := setAltFill alt pic.alt }
 
-/-- Caption-to-alt is markup, never content: the census does not read an
-image's text alternative, so the walk ships exactly the text census the
-body had — the schema's first one-line instance. -/
+def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
+  mapBlocksPic (setAltPic alt) (setAltLeaf alt) xs
+
+/-- Caption-to-alt is markup, never content: the census does not read a
+non-text object's alternative, so the shared rewrite ships exactly the
+text census the body had. -/
 theorem setAltBlocks_text (alt : String) :
     Conserves blocksText (setAltBlocks alt) :=
-  mapBlocks_text _ (fun x => by cases x <;> rfl)
+  mapBlocksPic_text _ _ (fun x => by cases x <;> rfl)
 
 /-- A declaration met between blocks: `\footnotesize`, `\bfseries`, or a
 bare palette name standing where a block could, with no argument. It

@@ -2908,7 +2908,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- it E0333, exactly as the statement walk already has it.
   t "elab picture option outside the subset is named under the refusal"
     (warnCodes (dvDoc "\\pictures{ tool = none }\n"
-      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      "\\begin{tikzpicture}[artifact, banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["W0334"])
   t "elab picture scale that cannot hold is named under the refusal"
     (errCodes (dvDoc "\\pictures{ tool = none }\n"
@@ -3067,7 +3067,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- every spelling, so nothing became silently acceptable.
   t "elab picture-level key naming no style is still named"
     (warnCodes (dvDoc "\\pictures{ tool = none }\n"
-      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      "\\begin{tikzpicture}[artifact, banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["W0334"])
   -- **An inherited key nothing read is named, never dropped in silence.**
   -- `\fill`'s bracket is a colour spelling, not a key list, so a picture
@@ -3075,10 +3075,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- refusal path would not have named them either.
   t "elab inherited key no path or node read is named at the picture"
     (warnCodes (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
-      "\\begin{tikzpicture}[odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      "\\begin{tikzpicture}[artifact, odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["W0334"] &&
      ((elabStr (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
-      "\\begin{tikzpicture}[odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.map
+      "\\begin{tikzpicture}[artifact, odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.map
       (·.message)).any (fun m => hasStr m "'ellipse'"))
   -- The hostile input at the picture level too: a self-referential style
   -- applied to the picture expands one level, keeps its own name as a
@@ -3206,13 +3206,13 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- places the level cannot reach say nothing either.
   t "elab an empty every-path style claims no loss"
     ((elabStr (dvDoc "\\tikzset{every path/.style={}}\n"
-      "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.isEmpty)
+      "\\begin{tikzpicture}[artifact]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.isEmpty)
   -- The two places this level cannot reach are named, not dropped in
   -- silence: `\fill`'s bracket is a colour spelling, and an edge label
   -- reads its own bracket alone.
   t "elab every-path keys a fill cannot read are named"
     (warnCodes (dvDoc "\\tikzset{every path/.style={thick}}\n"
-      "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      "\\begin{tikzpicture}[artifact]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["W0334"])
   t "elab every-node keys an edge label cannot read are named"
     (((elabStr (dvDoc "\\tikzset{every node/.style={draw}}\n"
@@ -3292,10 +3292,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- and a dropped option natively.
   t "elab a declared tip draws the subset's arrow head"
     ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty &&
      (elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
@@ -3304,7 +3304,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false))
   t "elab a declared tip in braces draws the same head"
     ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-{scm}] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
@@ -3314,13 +3314,13 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A tip nothing declared is still named by its own spelling, and the
   -- edge still ships: a picture draws what it can and says what it lost.
   t "elab an undeclared tip is named and the edge still draws"
-    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.code)).toList == ["W0334"] &&
-     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.message)).any (fun m => hasStr m "'scm'") &&
-     (elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+     (elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
@@ -3331,26 +3331,26 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- declared tip, named for one nothing declared.
   t "elab a declared tip named by '>=' is accepted"
     ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab an undeclared tip named by '>=' is named"
-    ((((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+    ((((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.code)).toList == ["W0334"]) &&
-     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}\n" ++
+     ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.message)).any (fun m => hasStr m "'scm'"))
   -- The braced spelling of a tip name is the same name: pgf writes it that
   -- way as soon as the tip carries options.
   t "elab a declared tip named by '>=' in braces is accepted"
     ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[>={scm}, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `/.tip` declaration is read, so it is not an unread key at its line;
   -- an `every X` with no loop behind it still is (`readableKey`).
   t "elab a tip declaration is not named as an unread key"
     ((elabStr ("\\pictures{ tool = none }\\tikzset{scm/.tip={Latex[round]}}\n" ++
-      "\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
@@ -3565,6 +3565,9 @@ ships. -/
 def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let wrap (body : String) : String :=
+    let body := if body.startsWith "[" then
+      "[alt={A synthetic diagram}, " ++ (body.drop 1).toString
+    else "[alt={A synthetic diagram}]" ++ body
     "\\pictures{ tool = none }\\palette{ grid = #2A6F4E }" ++
     "\\begin{document}\\begin{tikzpicture}" ++
     body ++ "\\end{tikzpicture}\\end{document}"
@@ -6118,7 +6121,7 @@ def pictureEveryLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\\node at (0,0) {A};\n" ++
     "\\node[minimum size=5mm] at (3,0) {C};\n" ++
     "\\end{tikzpicture}\n" ++
-    "\\begin{tikzpicture}[wire]\n" ++
+    "\\begin{tikzpicture}[alt={A synthetic pair of edges}, wire]\n" ++
     "\\draw (0,0) -- (3,0);\n" ++
     "\\draw[draw=red] (0,0.6) -- (3,0.6);\n" ++
     "\\end{tikzpicture}\n" ++
@@ -6828,7 +6831,7 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let pic (body : String) : String :=
-    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++
+    "\\begin{document}\n\\begin{tikzpicture}[alt={A synthetic path diagram}]\n" ++ body ++
     "\\end{tikzpicture}\n\\end{document}"
   let run (body : String) : Array CensusPage × Array Diag :=
     let (doc, ds) := elabStr (pic body)
