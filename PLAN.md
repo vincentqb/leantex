@@ -23474,3 +23474,51 @@ sets one there (`\@esphack`) and two here; `\index` without makeidx is an
 unknown command here; a sub-caption sets at subcaption's smaller size
 there. The environment halves' outer edges are still trimmed inline, where
 TeX keeps them.
+
+
+### 2026-09-28 — natbib and biblatex citations as their packages set them; a linear reference list
+
+Round 10's review of natbib (six findings) measured every one against
+lualatex with bibtex or biber; each fix has a guard that fails on its
+parent commit, over the shipped page and the HTML.
+
+- **`\citetext` is `\NAT@open#1\NAT@close`** (natbib.sty:739). Its body
+  was flattened to plain text before resolution, so a nested `\citealp`
+  shipped `?` with no diagnostic and its entry left the list. The body is
+  now body text between two bracket marks (`Ir.CiteCmd.bracket`), which
+  resolution draws under the document's punctuation (`citetextChecks`).
+- **A `\nocite` in vertical mode begins no paragraph**: resolution drops a
+  paragraph of `\nocite`s alone (`Bib.nociteOnly`), where it shipped a
+  glyphless line and its gap (`nocitePlaceChecks`).
+- **The reference-list phase is linear**: letters grouped through a map,
+  a merge sort over keys computed once, sets and maps for every lookup, and
+  the `.bib` parse counting line and column from the previous entry. 400
+  and 1600 entries: 4,470 and 75,195 ms before, 24 and 97 ms after.
+  `scripts/bench.lean` times both and fails past 8× growth for 4× the
+  entries; it failed on `fd6e1267` (16.8×) and passes here (4.0×).
+- **A style's citations take natbib's row for its name, or none**
+  (natbib.sty:206–234, `Bib.natbibRows`), whatever formats its list: an
+  unknown `apalike` cites with natbib's load values, `(Doe, 2024; Roe,
+  2020)`. The record keeps one fact, whether its `\bibitem`s carry
+  author-year labels (`Style.labels`). `\citestyle{name}` reads the same
+  rows (`natbibRowChecks`, `natbibCiteStyleChecks`).
+- **`sort`, `compress` and `sort&compress` are implemented**, as
+  natbib.sty's `\NAT@sort@cites` and `\NAT@citexnum` do them: list order in
+  either mode; runs of three or more joined by an en dash where a numbered
+  citation wraps its keys, never in a textual one (`natbibSortChecks`).
+  Declared divergence: an unresolved key ends a run and prints `?` where it
+  stands, where natbib sets `[1? –3]`; W0351 names it.
+- **biblatex's citations are biblatex's** (`CitePunct.biblatex`): three
+  label names, no von part, a textual list's last key after `and`, keys
+  printed whole, `\citeyear` without its letter, the list in biblatex's
+  `nty`/`nyt` order, authoryear's space between name and year and its bare
+  `\cite` (`biblatexChecks`: 53 lines over four configurations, each
+  lualatex+biber's).
+
+**Owed.** biblatex's entries keep the record's formatting (plainnat's or
+plain's), not standard.bbx's. natbib's list hooks `\bibfont`,
+`\bibnumfmt`, `\bibsection`, `\bibpreamble` and `\citenumfont` are read
+as macros nothing calls, silently. A citation or `\ref` inside a
+citation's note is still flattened to text (the note is a string in
+`Ir.CiteForm`); `\citetext` is natbib's documented way to nest, and it
+holds.
