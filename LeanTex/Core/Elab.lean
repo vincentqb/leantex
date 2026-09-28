@@ -6412,15 +6412,21 @@ private theorem lex6_of {a₁ a₂ b₁ b₂ c₁ c₂ d₁ d₂ e₁ e₂ f₁ 
   · exact .right _ (.right _ (.right _ (.right _ (.left _ _ h))))
   · exact .right _ (.right _ (.right _ (.right _ (.right _ h))))
 
-/-- Discharges the block knot's termination goals: reduce the measure
-tuple, then let `omega` combine the `have` facts standing beside each
-recursive call into the lexicographic fall. -/
+/-- Discharges the block knot's termination goals: the lexicographic fall
+first (`lex6_of`, then `omega` over the `have` facts standing beside each
+recursive call), on the goal as the elaborator's own cleanup left it; only
+a goal that needs more normal form (a list's length under a cons) takes a
+second simp pass before the same two steps. Running that pass on every
+goal cost the knot more than 10,000 of its 200,000 heartbeats (judged by
+deletion and rebuild). -/
 macro "blocks_dec" : tactic =>
   `(tactic| (
-    simp_wf
-    <;> (first
-      | omega
-      | (apply lex6_of; omega))))
+    first
+      | (apply lex6_of; omega)
+      | (simp_wf
+         <;> (first
+           | omega
+           | (apply lex6_of; omega)))))
 
 private theorem rawWeightList_push (a : Array Raw) (r : Raw) :
     rawWeightList (a.push r).toList = rawWeightList a.toList + rawWeight r := by
