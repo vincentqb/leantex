@@ -2579,14 +2579,16 @@ resolution renders it. A star asks for the full author list; one `[...]`
 note is the note after the citation, two are the notes before and after
 (natbib.sty `\NAT@@citetp`), and a noted `\cite` is the parenthetical form
 in either mode (natbib.sty `\NAT@cites`). The keys are read raw — a key is
-a name, not text; `\nocite`'s keys only enter the list. Returns the node —
-none when the group is missing, named E0304 — and the index past what was
-read. Outside the knot, which stands at its heartbeat budget: the arm there
-only dispatches. -/
+a name, not text; `\nocite`'s keys only enter the list. `\citetext` is
+natbib's `\NAT@open#1\NAT@close` (natbib.sty:739): its body is body text
+between two bracket marks, so a citation inside it is one like any other.
+Returns the nodes — none when the group is missing, named E0304 — and the
+index past what was read. Outside the knot, which stands at its heartbeat
+budget: the arm there only dispatches. -/
 private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     (base : Ir.CiteForm) (pos : Pos)
     (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
-    EM (Option Inline × { j : Nat // i < j }) := do
+    EM (Array Inline × { j : Nat // i < j }) := do
   let j0 := skipSpaces raws (i + 1)
   have hj0 := skipSpaces_ge raws (i + 1)
   let j1 := skipStar raws j0
@@ -2604,9 +2606,9 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
   | some (.group body _) =>
     have hklt := getElem?_lt hk
     if base.cmd == .text then
-      -- `\citetext{…}`: its text between the citation brackets.
       let text ← el body (body_lt_slice hk (by simp only [rawWeight]; omega) (by omega))
-      return (some (.cite { base with pre := Ir.plainText text } #[]), ⟨j3 + 1, by omega⟩)
+      let mark (o : Bool) : Inline := .cite { cmd := .bracket o } #[]
+      return (#[mark true] ++ text ++ #[mark false], ⟨j3 + 1, by omega⟩)
     else
       let keys := (((argText ctx body).splitOn ",").map (·.trimAscii.toString)).filter
         (!·.isEmpty)
@@ -2615,15 +2617,15 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
         -- swallows the spaces after it (latex.ltx `\@bsphack`/`\@esphack`).
         let j4 := skipSpaces raws (j3 + 1)
         have hj4 := skipSpaces_ge raws (j3 + 1)
-        return (some (.cite form keys.toArray),
+        return (#[.cite form keys.toArray],
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
       -- Recorded for the no-bibliography judge (elabDoc): a citation cannot
       -- be judged where it stands, because its `\bibliography` may follow it.
       recordCiteSites ctx keys pos
-      return (some (.cite form keys.toArray), ⟨j3 + 1, by omega⟩)
+      return (#[.cite form keys.toArray], ⟨j3 + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
-    return (none, ⟨j3, by omega⟩)
+    return (#[], ⟨j3, by omega⟩)
 
 /-- Applied to a level's own text only; nested bodies were processed by
 their own call, with their own literal-text setting. -/
@@ -4220,13 +4222,11 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{url} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if let some base := Ir.natbibCites.lookup name then
-          let (node, ⟨j, hj⟩) ← citeArm ctx raws i name base pos
+          let (nodes, ⟨j, hj⟩) ← citeArm ctx raws i name base pos
             fun sub _hsub => elabInlines ctx sub
           have hadv : sliceWeight raws j < sliceWeight raws i :=
             sliceWeight_lt raws h hj
-          elabInlinesFrom ctx raws j (match node with
-            | some x => (flushText acc sb).push x
-            | none => flushText acc sb) ""
+          elabInlinesFrom ctx raws j (flushText acc sb ++ nodes) ""
         else
           elabInlinesCtrl ctx raws i acc sb name pos h hadv1
   else

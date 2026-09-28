@@ -2424,9 +2424,11 @@ which parts print and whether brackets wrap them: `\citet` (textual),
 parenthetical in numbers mode, natbib.sty `\NAT@cites`), `\citealt` and
 `\citealp` (the two without brackets), `\citeauthor`, `\citeyear`,
 `\citeyearpar`, `\citenum` (the list position alone), `\citetext`
-(its note in the citation brackets, no key), and the kernel's `\nocite`
-(its keys enter the list, and nothing prints). Which punctuation draws them
-is the bibliography's to decide (`Bib.renderCite`). -/
+(natbib.sty's `\NAT@open#1\NAT@close`: the elaborator sets its body as body
+text between two `bracket` marks, so a citation inside it is a citation like
+any other), and the kernel's `\nocite` (its keys enter the list, and nothing
+prints). Which punctuation draws them is the bibliography's to decide
+(`Bib.renderCite`). -/
 inductive CiteCmd where
   | textual
   | paren
@@ -2439,6 +2441,9 @@ inductive CiteCmd where
   | num
   | text
   | nocite
+  /-- One citation bracket, natbib's `\NAT@open` when `opening` and its
+  `\NAT@close` otherwise: the marks `\citetext` sets around its body. -/
+  | bracket (opening : Bool)
   deriving Repr, BEq, Inhabited
 
 /-- What a citation declares beside its keys: the command, the starred
@@ -2473,9 +2478,11 @@ def natbibCites : List (String × CiteForm) :=
    ("Citealt", { cmd := .alt, up := true }), ("Citealp", { cmd := .alp, up := true }),
    ("Citeauthor", { cmd := .author, up := true })]
 
-/-- The command a form spells back as. -/
+/-- The command a form spells back as; a bracket mark as the natbib macro it
+is. -/
 def CiteForm.command (f : CiteForm) : String :=
-  ((natbibCites.find? fun (_, g) => g.cmd == f.cmd && g.up == f.up).map (·.1)).getD "cite"
+  if let .bracket o := f.cmd then (if o then "NAT@open" else "NAT@close")
+  else ((natbibCites.find? fun (_, g) => g.cmd == f.cmd && g.up == f.up).map (·.1)).getD "cite"
 
 /-- The weight a style selects, when it touches the axis: the one map
 `.bold`, `.medium`, `.series`, and `.normal`'s reset project through.

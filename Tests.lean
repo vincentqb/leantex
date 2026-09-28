@@ -32,6 +32,7 @@ import Tests.InlineVerb
 import Tests.OwnBib
 import Tests.Regress
 import Tests.Reports
+import Tests.Natbib
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -284,6 +285,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   plainnatChecks ref oneFace
   natbibLabelChecks ref oneFace
   nociteChecks ref oneFace
+  citetextChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and

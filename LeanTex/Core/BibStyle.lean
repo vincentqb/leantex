@@ -349,16 +349,16 @@ private structure Switches where
 private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
   let brackets := match f.cmd with
     | .textual | .paren | .auto | .yearPar | .text => true
-    | .alt | .alp | .author | .year | .num | .nocite => false
+    | .alt | .alp | .author | .year | .num | .nocite | .bracket _ => false
   { numeric := p.numbers || f.cmd == .num
     wrap := match f.cmd with
       | .paren | .alp | .yearPar | .num | .text => true
       | .auto => p.numbers
-      | .textual | .alt | .author | .year | .nocite => false
+      | .textual | .alt | .author | .year | .nocite | .bracket _ => false
     part := match f.cmd with
       | .author => .names
       | .year | .yearPar => .year
-      | .textual | .paren | .auto | .alt | .alp | .num | .text | .nocite => .both
+      | .textual | .paren | .auto | .alt | .alp | .num | .text | .nocite | .bracket _ => .both
     op := if brackets then p.open else ""
     cl := if brackets then p.close else "" }
 
@@ -421,13 +421,15 @@ command table): `\citep` wraps its keys in the brackets with `sep` between
 them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
 (`Doe [2024]`), the `alt`/`alp` forms drop the brackets, `\citeauthor` and
 `\citeyear` print one part, `\citenum` the list position in either mode,
-`\citetext` its note between the brackets, and `\nocite` nothing: its keys
+a bracket mark the one bracket it names (the halves of `\citetext`, whose
+body stands between them), and `\nocite` nothing: its keys
 only enter the list (`citedKeys`). The output is text and links over text
 only — no `.cite`, no `.ref` — which is `renderCite_plain`, the leaf fact
 `apply_no_cite` rests on. -/
 def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
-  if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
+  if let .bracket o := f.cmd then emit #[] (if o then p.open else p.close)
+  else if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
   else if f.cmd == .nocite then #[]
   else finish p f (switches p f) (parts.foldl (citeStep p f (switches p f)) {})
 
@@ -1521,6 +1523,8 @@ theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) :
     (renderCite p f parts).all plainCite = true := by
   unfold renderCite
+  split
+  · exact emit_plain _ _ (by simp)
   split
   · exact emit_plain _ _ (by simp)
   split
