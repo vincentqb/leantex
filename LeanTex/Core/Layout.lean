@@ -3834,6 +3834,21 @@ theorem expandFactor_bounded (delta boxW : Int) :
   unfold expandFactor expandLimit
   split <;> omega
 
+/-- Does a paragraph line set to its measure? Justified text does. So does
+any line carrying an author's fill, however the paragraph is set: TeX's
+glue orders give a line's slack to its highest-order stretch, and
+`\hfill` is 0pt plus 1fill, an order above the 0pt plus 1fil that
+`\centering`, `\raggedright` and `\raggedleft` put in `\leftskip` and
+`\rightskip` (`\@flushglue`, latex.ltx) — so the fill takes all of it and
+the line spans the measure (TeXbook ch. 12). The paragraph's closing
+parfill is no author's fill. -/
+private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bool := Id.run do
+  if justify then return true
+  for k in [a:j] do
+    if let some (.glue g) := items[k]? then
+      if g.fil && !g.parfill then return true
+  return false
+
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     (justify : Bool) (protrude : Bool := false) (expand : Bool := false) :
     Array Seg × Sp × Bool × Sp × Int := Id.run do
@@ -6057,7 +6072,7 @@ private def collectPara (r : Rd) (a : Acc)
       for brk in breaks do
         let s := if first then lineStart nitems 0 else lineStart nitems (prev + 1)
         let (lsegs, lw, overfull, _, _) :=
-          setLine nitems s brk target r.geom.justify false false
+          setLine nitems s brk target (setsToMeasure r.geom.justify nitems s brk) false false
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break")
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
@@ -8367,12 +8382,15 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   let a := if first then lineStart j.items (if j.hangIndent == 0 then 0 else 1)
     else lineStart j.items (prev + 1)
   let (segs0, w0, overfull, hang, exf) :=
-    setLine j.items a brk width (!j.center && !j.flushRight && j.justify)
+    setLine j.items a brk width
+      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk)
       j.protrude j.expand
   -- Three horizontal origins, and the right one is the line's own natural
   -- width measured back from the far edge — the same arithmetic centring
   -- halves. It cannot be a justified line: filling the measure would put the
-  -- line back at the left, which is why `setLine` is told ragged here too.
+  -- line back at the left, which is why `setLine` is told ragged here too —
+  -- unless an author's fill takes the slack (`setsToMeasure`), which in TeX
+  -- too spans the measure, whatever the alignment.
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
     else if j.flushRight then b.geom.hmargin + j.indent + (width - w0)
     else b.geom.hmargin + j.indent - lead - hang

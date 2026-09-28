@@ -947,3 +947,51 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "driver: the profiled PNG and the oriented JPEG embed pass-through"
       (containsBytes text (bytes idat2) && containsBytes text jpgExif6 &&
        bytesContain text "/DeviceRGB")
+
+
+/-- Images set in a row, spaced as TeX sets them: a user's frame of two
+centred rows, each two images parted by `\hfill`, shipped its images
+clumped at the middle of the measure. Over `Layout.Out`, on an invented
+frame of the same shape: every image box with its left edge (the line's
+origin plus what the line set before it). -/
+def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pngInfo := Image.decode (← IO.FS.readBinFile "tests/corpus/rects.png")
+  let store : Image.Store := { entries := #[{ src := "rects.png", info := pngInfo.toOption }] }
+  let boxes (out : Layout.Out) : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+    let mut acc : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    for h : i in [0:out.pages.size] do
+      for l in out.pages[i].lines do
+        let mut x := l.x
+        for s in l.segs do
+          match s with
+          | .image _ w hh =>
+            acc := acc.push (i, x, l.y, w, hh)
+            x := x + w
+          | .run _ _ _ w _ _ _ _ _ _ => x := x + w
+          | .gap w _ => x := x + w
+          | .rule w _ _ _ => x := x + w
+    return acc
+  let img := "\\includegraphics[keepaspectratio,totalheight=.28\\textheight,\
+width=.4\\textwidth]{rects.png}%\n"
+  let row := "\\begin{center}%\n" ++ img ++ "\\hfill\n" ++ img ++ "\\end{center}\n\n"
+  let (doc, _) := Elab.run "t" ("\\documentclass[10pt,aspectratio=169]{beamer}\n\
+\\begin{document}\n\\begin{frame}{An invented frame}\n" ++ row ++ row ++
+    "A closing line of invented text.\n\\end{frame}\n\\end{document}\n")
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf oneFace doc geom none store
+  let bs := boxes out
+  let left := geom.hmargin
+  let right := geom.pageW - geom.hmargin
+  -- `\centering` puts 0pt plus 1fil in `\leftskip` and `\rightskip`
+  -- (`\@flushglue`, latex.ltx) and `\hfill` is 0pt plus 1fill, an order
+  -- above them, so the fill takes all of the row's slack: the first image
+  -- stands at the measure's left edge, the second ends at its right edge.
+  t s!"image rows: one page, four images: {bs.size} on {out.pages.size}"
+    (out.pages.size == 1 && bs.size == 4)
+  t s!"image rows: each row spans the measure, the fill taking the slack: {bs}"
+    (bs.size == 4 && [0, 2].all fun k =>
+      match bs[k]?, bs[k + 1]? with
+      | some (_, x0, y0, _, _), some (_, x1, y1, w1, _) =>
+        x0 == left && x1 + w1 == right && y0 == y1
+      | _, _ => false)
