@@ -5179,14 +5179,13 @@ is skipped" pos
         -- A datum beside literal text has no slot to stand in, and a
         -- datum is never dropped: the template is not read, the built-in
         -- title page sets every datum, and that is the one named loss.
-        let (sfx, msg, help) := TitleTemplate.mixedLoss datum
+        let (sfx, msg, help) := TitleTemplate.mixedLoss datum rd.ground.isSome
         sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
         -- The full-page fill is independent of the unread node arrangement:
         -- keep its ground while the built-in title layout stands.
         match rd.ground with
         | some ground =>
           let native := s!"\\palette\{ titlepagebg = {ground} }"
-          became "\\setbeamertemplate{title page}" native pos
           return some (← synthAt native pos, k)
         | none => return some (#[], k)
       | some rd =>

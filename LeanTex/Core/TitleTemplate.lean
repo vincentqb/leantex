@@ -512,12 +512,18 @@ def skippedLoss (construct datum : String) : String × String :=
 sets without it")
 
 /-- A datum beside literal text (`W0363`): no slot holds the two, so the
-template is not read and the built-in title page — the default place of
-every datum — stands. The key's suffix, the message, the help. -/
-def mixedLoss (datum : String) : String × String × Option String :=
-  (datum,
-   s!"the title-page template sets the {datum} beside literal text, which no slot holds; \
-the built-in title page stands",
+custom node arrangement falls back. When its full-page ground was read,
+the same diagnostic accounts for keeping it. The key's suffix, the
+message, the help. -/
+def mixedLoss (datum : String) (groundKept : Bool) : String × String × Option String :=
+  let msg :=
+    if groundKept then
+      s!"the {datum} shares a node with literal text; its custom arrangement falls back while \
+the readable full-page ground stays"
+    else
+      s!"the title-page template sets the {datum} beside literal text, which no slot holds; \
+the built-in title page stands"
+  (datum, msg,
    some s!"set the text in a node of its own, and \\insert{datum} alone in another")
 
 /-- **Read a `title page` template of the overlay shape.** `none` when the

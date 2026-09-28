@@ -675,7 +675,12 @@ def siteAccountingProbes : List (String × String) :=
    (dvDoc "" "Golf \\footnotemark[3] hotel.", "an option run on a known pending construct"),
    (dvDoc "" "India \\zzplain{Juliett} kilo.", "an unknown command with no option run"),
    (dvDoc "" "Lima \\zztrack[1][2]{Mike} november.", "two option runs, one command"),
-   (dvDoc "" "Oscar \\zzwrap[x]{Papa}{Quebec} romeo.", "an option run and two groups")]
+   (dvDoc "" "Oscar \\zzwrap[x]{Papa}{Quebec} romeo.", "an option run and two groups"),
+   (dvDeck ("\\setbeamertemplate{title page}{\\begin{tikzpicture}" ++
+      "[remember picture,overlay]\\fill[black] (current page.south west) rectangle " ++
+      "(current page.north east);\\node[anchor=west] at (current page.west) " ++
+      "{Label: \\inserttitle};\\end{tikzpicture}}\\title{Probe}\n") "\\titlepage",
+    "a mixed title-page node beside a readable full-page ground")]
 
 /-- Site collisions that stand today, each with the file that owes the
 change and what the pair is. Read in both directions by

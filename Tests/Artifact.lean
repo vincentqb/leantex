@@ -1861,8 +1861,11 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (mixedHead, mixedBody, _) := HtmlDoc.emitTree {} mixedDoc
   let mixedCss := artTreeCssList (artTreeCssList "" mixedHead.toList) mixedBody.toList
   let mixedOffences := artGroundOffences mixedPainted mixedDeclared mixedCss mixedBody
-  t "a mixed title node keeps its named layout loss"
-    (mixedDs.any (·.code == "W0363"))
+  let mixedLayoutDs := mixedDs.filter (·.code == "W0363")
+  t "a mixed title node is one accounting for its fallback and retained ground"
+    (mixedLayoutDs.size == 1 && mixedLayoutDs.any fun d =>
+      hasStr d.message "custom arrangement falls back" &&
+      hasStr d.message "readable full-page ground stays")
   t s!"a readable full-page fill survives title-layout fallback in both artifacts: \
 {mixedOffences.toList}"
     (mixedPainted && hasStr mixedCss "--titlepagebg: #202833;" && mixedOffences.isEmpty)
