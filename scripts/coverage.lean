@@ -793,6 +793,9 @@ probe token is a glue value" },
     why := "a TikZ coordinate name, not the ogonek accent" },
   { name := "left", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,
     why := "a delimiter operand: no probe token is a delimiter" },
+  { name := "multicolumn", side := .probe,
+    usage := ⟨false, "\\begin{tabular}{ll}\n\\multicolumn{2}{c}{x} \\\\\n\\end{tabular}"⟩,
+    why := "set as a span only at the start of a tabular cell, where no probe shape reaches" },
   { name := "newenvironment", side := .probe, usage := ⟨true, "\\newenvironment{zzbox}{[}{]}"⟩,
     why := "a preamble definer of three arguments; no probe shape has three, and its one \
 counting witness was the dimension-operand place, whose own complaint it stood beside" },
@@ -816,12 +819,7 @@ counting witness was the dimension-operand place, whose own complaint it stood b
 the construct: found by spot checks in natural usage. Each row fails in both
 directions like the table above — the usage must stay answered and the probe
 must still read the name below the cut. -/
-def falseQueue : Array Explanation := #[
-  { name := "multicolumn", side := .probe,
-    usage := ⟨false, "\\begin{tabular}{ll}\n\\multicolumn{2}{c}{x} \\\\\n\\end{tabular}"⟩,
-    why := "recognised with three arguments at the start of a cell, where no probe shape \
-reaches; its text is kept and its span and column spec are dropped with no code naming \
-the loss, so it is recognised and not supported" }]
+def falseQueue : Array Explanation := #[]
 
 def explained (name : String) : Option Explanation :=
   witnessExplained.find? (·.name == name)
