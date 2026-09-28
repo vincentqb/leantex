@@ -2,7 +2,7 @@
 # encoding: raw
 # corpus: tests/external/flashtex/documents.txt, 216 documents, each built by lualatex under -halt-on-error when it was imported (tests/external/flashtex/PROVENANCE.txt)
 # value: elaboration alone, through the driver's input splice — 2 no error and no unknown construct (W0301/W0302), 1 no error, 0 an error
-# counts: 147 at 2, 23 at 1, 46 at 0
+# counts: 151 at 2, 19 at 1, 46 at 0
 crates/compiler/tests/amsmath_corpus/fixtures/01-align.tex	2
 crates/compiler/tests/amsmath_corpus/fixtures/02-align-star.tex	2
 crates/compiler/tests/amsmath_corpus/fixtures/03-align-two-pairs.tex	2
@@ -131,7 +131,7 @@ crates/render-pipeline/fixtures/tikz/27-clip.tex	0
 crates/render-pipeline/fixtures/tikz/28-flow-diagram.tex	0
 crates/render-pipeline/fixtures/tikz/29-axes.tex	0
 crates/render-pipeline/fixtures/tikz/30-minimum-size.tex	0
-fixtures/divergence-probes/min-abstract/main.tex	1
+fixtures/divergence-probes/min-abstract/main.tex	2
 fixtures/divergence-probes/min-bigdelim-12pt/main.tex	2
 fixtures/divergence-probes/min-chapter/main.tex	1
 fixtures/divergence-probes/min-curly-quote/main.tex	2
@@ -163,7 +163,7 @@ fixtures/divergence-probes/min2-headings/main.tex	2
 fixtures/divergence-probes/min2-itemize/main.tex	2
 fixtures/divergence-probes/min2-nested-dfrac-bare/main.tex	2
 fixtures/divergence-probes/min2-nested-lists/main.tex	2
-fixtures/divergence-probes/min2-pagestyle/main.tex	1
+fixtures/divergence-probes/min2-pagestyle/main.tex	2
 fixtures/divergence-probes/min2-pmatrix-3row/main.tex	2
 fixtures/divergence-probes/min2-preamble-switches/main.tex	2
 fixtures/divergence-probes/min3-baselinestretch/main.tex	2
@@ -172,7 +172,7 @@ fixtures/divergence-probes/min3-enumerate-only/main.tex	2
 fixtures/divergence-probes/min3-itemize-multipar/main.tex	2
 fixtures/divergence-probes/min3-itemize-only/main.tex	2
 fixtures/divergence-probes/min3-setlength/main.tex	2
-fixtures/divergence-probes/min3-subsubsection/main.tex	1
+fixtures/divergence-probes/min3-subsubsection/main.tex	2
 fixtures/divergence-probes/min3-verse-flushright/main.tex	2
 fixtures/divergence-probes/min4-bib-sfcode/main.tex	0
 fixtures/divergence-probes/min4-itemize-wrap/main.tex	2
@@ -217,5 +217,5 @@ fixtures/real-world/plain-article/main.tex	0
 fixtures/real-world/ps-calculus/main.tex	1
 fixtures/real-world/siunitx-tables/main.tex	2
 fixtures/real-world/thesis-chapter/main.tex	0
-fixtures/real-world/twelvept-plain/main.tex	1
+fixtures/real-world/twelvept-plain/main.tex	2
 fixtures/real-world/unicode-accents/main.tex	0
