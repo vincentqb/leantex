@@ -345,8 +345,14 @@ structure Counters where
   secNums : Nat × Nat × Nat := (0, 0, 0)
   /-- LaTeX's `secnumdepth` counter: the deepest level a heading numbers
   at, and above which it neither numbers nor steps (ltsect.dtx `\@sect`).
-  3 is article's (classes.dtx), and the three counters stop there. -/
+  3 is article's (classes.dtx); the run-in levels four and five number
+  where a document raises it (`runNums`). -/
   secDepth : Int := 3
+  /-- The run-in levels' counters, `paragraph` and `subparagraph`
+  (classes.dtx: levels four and five), stepped only where `secDepth`
+  reaches them and zeroed whenever a level above them steps
+  (`\@addtoreset`, whose resets cascade). -/
+  runNums : Nat × Nat := (0, 0)
   /-- Declared heading-number formats, one per level, last wins — the
   flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
   it stands, as LaTeX's redefinition applies from its own position. Empty
@@ -2826,7 +2832,8 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
     | 1 => if step then (v, 0, 0) else (v, s2, s3)
     | 2 => if step then (s1, v, 0) else (s1, v, s3)
     | _ => (s1, s2, v)
-  modify fun st => { st with ctr := { st.ctr with secNums := nums } }
+  modify fun st => { st with ctr := { st.ctr with secNums := nums,
+                                                  runNums := if step then (0, 0) else st.ctr.runNums } }
   if name == "refstepcounter" then
     let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel lvl
     -- A bare counter step numbers no node: what a label here names has no
@@ -2855,24 +2862,56 @@ private def applyFlowCounter (name : String)
       | "addtocounter" => rw.1 st.ctr + n
       | _ => rw.1 st.ctr + 1) }
 
-/-- A counter command's integer argument: a literal, or `\value{c}` — the
-counter's register (ltcounts.dtx) — read where it stands. `.error c` for
-the value of a counter `c` the flow does not keep; `none` for no integer. -/
-private def counterValue (st : ESt) (nRaw : Array Raw) : Option (Except String Int) :=
+/-- A counter command's integer argument, as read where it stands: a
+literal, `\value{c}` — the counter's register (ltcounts.dtx) — or one of the
+kernel's integer constants (`kernelInt`); the value of a counter `c` the
+flow does not keep; or a value no reading here reaches, as written. -/
+private inductive CounterArg where
+  | int (v : Int)
+  | unkept (c : String)
+  | unread (shown : String)
+
+/-- The kernel's integer constants a counter value names (plain.tex: `\z@`
+is a dimen register at 0pt, read as TeX coerces one to a number; the rest
+are `\chardef`, `\mathchardef` and `\countdef` constants). -/
+private def kernelInt : String → Option Int
+  | "z@" => some 0
+  | "m@ne" => some (-1)
+  | "@ne" => some 1
+  | "tw@" => some 2
+  | "thr@@" => some 3
+  | "sixt@@n" => some 16
+  | "@cclv" => some 255
+  | "@cclvi" => some 256
+  | "@m" => some 1000
+  | "@M" => some 10000
+  | "@MM" => some 20000
+  | _ => none
+
+/-- Read a counter command's value group (`CounterArg`). -/
+private def counterValue (st : ESt) (nRaw : Array Raw) : CounterArg :=
+  let shown := (rawSrc nRaw).trimAscii.toString
+  let named (r : String) (sign : Int) : CounterArg :=
+    ((kernelInt r).map fun v => .int (sign * v)).getD (.unread shown)
   match nRaw.toList.filter (!· matches .space) with
   | [.ctrl "value" _, .group c _] =>
     let c := (rawSrc c).trimAscii.toString
-    some <| match sectionLevel c with
-      | some lvl => .ok (Int.ofNat (counterAt st.ctr.secNums lvl))
+    match sectionLevel c with
+      | some lvl => .int (Int.ofNat (counterAt st.ctr.secNums lvl))
       | none => match flowCounter? c with
-        | some rw => .ok (rw.1 st.ctr)
-        | none => .error c
-  | _ => (rawSrc nRaw).trimAscii.toString.toInt?.map .ok
+        | some rw => .int (rw.1 st.ctr)
+        | none => .unkept c
+  | [.ctrl r _] => named r 1
+  | [.sym '-' _, .ctrl r _] => named r (-1)
+  | [.word "-" _, .ctrl r _] => named r (-1)
+  | _ => (shown.toInt?.map .int).getD (.unread shown)
 
 /-- One counter command with its arguments starting at `i` (just past
 the control word): scan, apply over the section counters, name any
 other counter (W0104) with its arguments consumed — configuration,
-never content. Out of the block knot so the fixpoint never unfolds
+never content — and a value it cannot read (W0104, keyed on the
+counter's value), the counter keeping what it held. A missing group is
+the one error. Out of the block knot so the fixpoint never unfolds
 it; the returned index carries the progress fact the knot's measure
 reads. -/
 private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
@@ -2883,34 +2922,62 @@ private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   | some (.group ctrRaw _) =>
     let ctr := (rawSrc ctrRaw).trimAscii.toString
     let st ← get
-    let ⟨(amt, j2), hj2⟩ : { t : Option (Except String Int) × Nat // j + 1 ≤ t.2 } ←
+    let ⟨(amt, j2), hj2⟩ : { t : Option CounterArg × Nat // j + 1 ≤ t.2 } ←
       if n == "addtocounter" || n == "setcounter" then
         let ja := skipSpaces raws (j + 1)
         have hja : j + 1 ≤ ja := skipSpaces_ge raws (j + 1)
         match raws[ja]? with
         | some (.group nRaw _) =>
-          pure ⟨(counterValue st nRaw, ja + 1), by omega⟩
+          pure ⟨(some (counterValue st nRaw), ja + 1), by omega⟩
         | _ => pure ⟨(none, j + 1), Nat.le_refl _⟩
       else
-        pure ⟨(some (.ok 1), j + 1), Nat.le_refl _⟩
+        pure ⟨(some (.int 1), j + 1), Nat.le_refl _⟩
     let unmodelled (c : String) : EM Unit :=
       warnOnce ctx ("ctrl:" ++ n ++ ":" ++ c) .W0104
         s!"counter '{c}' is not modelled; '\\{n}' changes nothing" pos
+    let unread (shown : String) : EM Unit :=
+      warnOnce ctx ("ctrl:" ++ n ++ ":" ++ ctr ++ ":value") .W0104
+        s!"'\\{n}\{{ctr}}' names '{shown}', a value this engine cannot read: skipped, and \
+the counter keeps its value" pos
     match sectionLevel ctr, amt with
-    | some lvl, some (.ok v) => applyCounter n lvl v
-    | some _, some (.error c) => unmodelled c
+    | some lvl, some (.int v) => applyCounter n lvl v
+    | some _, some (.unkept c) => unmodelled c
+    | some _, some (.unread s) => unread s
     | some _, none =>
       diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
     | none, _ =>
       match flowCounter? ctr, amt with
-      | some rw, some (.ok v) => applyFlowCounter n rw v
-      | some _, some (.error c) => unmodelled c
+      | some rw, some (.int v) => applyFlowCounter n rw v
+      | some _, some (.unkept c) => unmodelled c
+      | some _, some (.unread s) => unread s
       | some _, none => diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
       | none, _ => unmodelled ctr
     return ⟨j2, by omega⟩
   | _ =>
     diag ctx .E0304 s!"'\\{n}' needs a \{counter} group" pos
     return ⟨i, Nat.le_refl _⟩
+
+/-- A run-in heading's title as it sets: bold, after its number where
+`secnumdepth` reaches its level (classes.dtx: `\paragraph` is level four,
+`\subparagraph` five; `\@startsection` steps and numbers only there). The
+number is its parent's and its own (`\theparagraph` is
+`\thesubsubsection.\arabic{paragraph}`), followed by `\@seccntformat`'s
+`\quad`, and it is the `\ref` target from here on. Out of the inline knot. -/
+private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Array Inline) :
+    EM Inline := do
+  let st ← get
+  let level : Int := if name == "paragraph" then 4 else 5
+  -- premise: counterChecks — a run-in level past secnumdepth ships no
+  -- number, and one it reaches ships its parent's and its own
+  if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
+    return .styled .bold title
+  let (n4, n5) := st.ctr.runNums
+  let runs := if level == 4 then (n4 + 1, 0) else (n4, n5 + 1)
+  let parent := renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel 3
+  let num := if level == 4 then s!"{parent}.{runs.1}" else s!"{parent}.{runs.1}.{runs.2}"
+  modify fun st => { st with ctr := { st.ctr with runNums := runs }
+                             refTarget := some { kind := some .heading, num := num } }
+  return .styled .bold (#[.text (num ++ "\u2003")] ++ title)
 
 -- The well-founded translation whnf-reduces through the knot's body when it
 -- assembles the fixpoint and its equations; the string machinery in the
@@ -3365,7 +3432,7 @@ seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
-seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
 mutual
@@ -3947,7 +4014,8 @@ no extent is reserved for it" pos
           -- the text's own line, an em quad between title and text —
           -- never display type, so `heading_hierarchy`'s display levels
           -- are untouched and no new level joins that statement. Both are
-          -- below article's secnumdepth of 3, so neither numbers.
+          -- below article's secnumdepth of 3, so neither numbers unless a
+          -- document raises it (`runInHead`).
           let j0 := skipSpaces raws (i + 1)
           have hj0 := skipSpaces_ge raws (i + 1)
           let j1 := skipStar raws j0
@@ -3964,7 +4032,7 @@ no extent is reserved for it" pos
               body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
             let inner ← elabInlines ctx body
-            let acc := acc.push (.styled .bold inner)
+            let acc := acc.push (← runInHead ctx name (j1 != j0) inner)
             -- The run-in gap: classes.dtx's 1 em, as the em quad U+2003
             -- (a fixed-width space, kerned in layout like the \, family).
             -- Whitespace after the title collapses into the quad: the gap
@@ -4615,7 +4683,7 @@ unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
-unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
@@ -4975,7 +5043,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
   -- The heading is the numbered thing in force from here on: a \label in
   -- the flow after it binds to this number, as a heading (`\cref` says
   -- "section").
-  modify fun st => { st with ctr := { st.ctr with secNums := nums }
+  modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
   return some num
 

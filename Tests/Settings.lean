@@ -255,6 +255,32 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a preamble counter the engine does not keep is named as it is in the body"
     ((dvE (doc "\\setcounter{tocdepth}{2}" heads)).any fun d =>
       d.code == "W0104" && d.subject == some "ctrl:setcounter:tocdepth")
+  -- A value held in a register: the kernel's constants read as the
+  -- integers they are (plain.tex), any other register is named once and
+  -- the counter keeps its value — never an error.
+  let zero := doc "\\makeatletter\\setcounter{secnumdepth}{\\z@}\\makeatother" heads
+  t "a counter set to '\\z@' builds and reads zero"
+    (!(dvE zero).any (·.severity == .error) &&
+      pagesOf oneFace zero == pagesOf oneFace (doc "\\setcounter{secnumdepth}{0}" heads))
+  t "a counter set to '\\z@' moves the page" (pagesOf oneFace zero != pagesOf oneFace (doc "" heads))
+  let reg := doc "\\makeatletter\\setcounter{secnumdepth}{\\@tempcnta}\\makeatother" heads
+  t "a counter set to a register it cannot read builds, named once on its value"
+    (!(dvE reg).any (·.severity == .error) &&
+      ((dvE reg).filter (·.code == "W0104")).map (·.subject) ==
+        #[some "ctrl:setcounter:secnumdepth:value"])
+  t "a counter set to a register it cannot read keeps its value"
+    (pagesOf oneFace reg == pagesOf oneFace (doc "" heads))
+  -- `secnumdepth` past three numbers the run-in levels (classes.dtx:
+  -- `\paragraph` is level four, `\subparagraph` five), each after its parent.
+  let runIn := "\\section{Alpha}\\subsection{Bravo}\\subsubsection{Charlie}\n" ++
+    "\\paragraph{Delta} Echo words.\n\n\\subparagraph{Foxtrot} Golf words."
+  let four := censusOfSrc oneFace (doc "\\setcounter{secnumdepth}{4}" runIn)
+  t "secnumdepth 4 numbers a paragraph after its parent" (pageHas four 0 "1.1.1.1")
+  t "secnumdepth 4 leaves a subparagraph unnumbered" (!pageHas four 0 "1.1.1.1.1")
+  let five := censusOfSrc oneFace (doc "\\setcounter{secnumdepth}{5}" runIn)
+  t "secnumdepth 5 numbers a subparagraph after its parent" (pageHas five 0 "1.1.1.1.1")
+  t "the class's secnumdepth numbers no paragraph"
+    (!pageHas (censusOfSrc oneFace (doc "" runIn)) 0 "1.1.1.1")
 
 
 /-- **A list level's parameters are its class macro's, run where a list of
