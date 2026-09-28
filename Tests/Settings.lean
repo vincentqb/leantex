@@ -505,3 +505,45 @@ def operandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     t s!"'{pre}' reads the parameter and assigns nothing" (pagesOf oneFace (doc pre) == plain)
   t "the operand rows measure the parameter: 12pt is not the 0pt they compare with"
     (plain != pagesOf oneFace (doc "\\setlength{\\parskip}{0pt}"))
+
+
+
+/-- **A list parameter set in a list's body is that list's, as `\list`
+reads it.** `\list` spends `Compat.listSpent` where the list opens and its
+items read `Compat.listPerItem` (ltlists.dtx), so a setting before the first
+`\item` builds and ships the page the list ships without it: said in a note
+where LaTeX discards it too, named once where only that list would follow
+it, never content before the first item. pandoc's `\tightlist` is two such
+settings behind one macro, read where it is used. Quantified over both
+tables, on the shipped page and the structured diagnostics. -/
+def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre lead : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\nAlpha words.\n" ++
+      "\\begin{itemize}" ++ lead ++ "\\item One.\\item Two.\\end{itemize}\nBravo words.\n" ++
+      "\\end{document}"
+  let bare := pagesOf oneFace (doc "" "")
+  let fails (ds : Array Diag) : Bool := ds.any (·.severity == .error)
+  for n in Compat.listSpent do
+    let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
+    let ds := dvE src
+    t s!"'\\{n}' in a list's body builds, said in a note alone"
+      (!fails ds && !ds.any (·.code == "W0104") &&
+        ds.any (·.subject == some s!"ctrl:nothing:setlength:{n}"))
+    t s!"'\\{n}' in a list's body ships the page the list ships without it"
+      (pagesOf oneFace src == bare)
+  for n in Compat.listPerItem do
+    let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
+    let ds := dvE src
+    t s!"'\\{n}' in a list's body builds, named once"
+      (!fails ds && (ds.filter (·.code == "W0104")).map (·.subject) ==
+        #[some s!"ctrl:setlength:{n}"])
+    t s!"the naming gate's premise: no list here reads '\\{n}' set in its body"
+      (pagesOf oneFace src == bare)
+  let tight := doc "\\providecommand{\\tightlist}{\\setlength{\\itemsep}{0pt}\\setlength{\\parskip}{0pt}}"
+    "\\tightlist"
+  let tds := dvE tight
+  t "pandoc's \\tightlist in a list builds" (!fails tds)
+  t "pandoc's \\tightlist names its two settings once each"
+    ((tds.filter (·.code == "W0104")).map (·.subject) ==
+      #[some "ctrl:setlength:itemsep", some "ctrl:setlength:parskip"])

@@ -3267,6 +3267,20 @@ private def readsAsLength (s : String) : Bool :=
 `\topsep` its opening space, `\itemsep` and `\parsep` its gap between items. -/
 private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "parsep"]
 
+/-- What `\list` spends where a list opens (ltlists.dtx: `\@trivlist`'s
+`\@topsepadd` from `\topsep` and `\partopsep`, `\parskip\parsep`,
+`\leftmargin` and `\rightmargin` into the measure, `\listparindent` into
+`\parindent`): set in the list's body, it reaches nothing of the list, and
+its group ends it. -/
+def listSpent : List String :=
+  ["leftmargin", "rightmargin", "listparindent", "parsep", "topsep", "partopsep"]
+
+/-- What a list's items read as they set (ltlists.dtx: `\@item`'s
+`\itemsep` and label box, `\itemindent`, `\labelsep`, `\labelwidth`; and
+`\parskip` between paragraphs): set in the list's body, it spaces that one
+list. -/
+def listPerItem : List String := ["itemsep", "itemindent", "labelsep", "labelwidth", "parskip"]
+
 /-- Does a body assignment of `n` reach the lists after it in LaTeX? Only
 where the document's `\@listi` stands (`listiKept`) and leaves `n` be: a
 class's own sets every carried parameter again at every list (size10.clo),
@@ -3302,6 +3316,17 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     synthAt own pos
   let list (level : Nat) (kind : String) : String :=
     if level == 1 then kind else s!"{kind}{level}"
+  -- premise: listBodyChecks — a list parameter set in a list's body ships
+  -- the page the list ships without it, noted where LaTeX discards it too
+  if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
+    if listSpent.contains n then
+      return ← nothing "the list spent it where it opened, and it ends with the list"
+        (tokens := false)
+    let why := match paramSites.lookup n with
+      | some (.unmodelled w) => w
+      | _ => "spaces this one list; a list here is spaced per level, in the preamble"
+    nameParam n why pos
+    return #[]
   match (paramSites.lookup n).getD (.token n), st.inDef with
   | .page key, _ => emit s!"\\page\{ {key} = {src} }"
   | .token t, _ =>
@@ -3333,11 +3358,6 @@ with the space its level sets in the preamble, and only the trivlists after it r
     if preamble then
       write fun st => { st with listResets := st.listResets.push (n, what, st.file, pos) }
       synthAt own pos
-    else if st.inList then
-      -- premise: unreadableLengthChecks — the setting builds inside its list,
-      -- named once, and the list keeps its level's spacing
-      nameParam n "spaces this one list; a list here is spaced per level, in the preamble" pos
-      return #[]
     else if reachesLists st n then
       -- premise: listLevelChecks — a named body setting under a kept \@listi
       -- ships the page the document ships without it: no list reads it here
@@ -3372,6 +3392,24 @@ private def assignLength (n : String) (value : Array Raw) (what : String) (pos :
   if let some src := lenValue st.lens value st.inDef then
     if readsAsLength src then return ← setLength n src what pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
+
+/-- A document macro used in a list's body whose definition is length
+settings and nothing else — pandoc's `\tightlist`,
+`\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}` — as the settings it
+stands for: TeX expands it where it stands, so they are the list's own
+(`setLength`'s list arm). The definition is the one the conditional pass
+recorded; `none` for any other body, which the elaborator expands. -/
+private def listSettings? (st : St) (name : String) : Option (Array (String × Array Raw)) :=
+  if !st.inList || st.inDef then none
+  else match st.binds[name]? with
+    | some (some v) => go (v.raws.filter (!· matches .space)).toList #[]
+    | _ => none
+where
+  go : List Raw → Array (String × Array Raw) → Option (Array (String × Array Raw))
+    | [], acc => if acc.isEmpty then none else some acc
+    | .ctrl "setlength" _ :: .group t _ :: .group v _ :: rest, acc =>
+      (paramName t).bind fun n => go rest (acc.push (n, v))
+    | _, _ => none
 
 /-- A length operand the rewrite evaluates: a literal (`2pt`, `-2pt`), or a
 length whose value it set, negated or not. -/
@@ -5543,6 +5581,11 @@ where
     return some (#[], start)
   if let some (value, e) := plainAssign? name raws start then
     return some (← assignLength name value s!"\\{name}" pos, e)
+  if let some settings := listSettings? (← get) name then
+    let mut out : Array Raw := #[]
+    for (n, v) in settings do
+      out := out ++ (← assignLength n v s!"\\setlength\{\\{n}}" pos)
+    return some (out, start)
   match name with
   | "usepackage" | "RequirePackage" =>
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
