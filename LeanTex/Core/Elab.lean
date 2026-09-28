@@ -1297,8 +1297,8 @@ private def trimRaws (raws : Array Raw) : Array Raw :=
 /-- An environment's halves lose only their outer edges — the begin code's
 lead and the end code's tail. The edges facing the body are content, as TeX
 reads them: `{Lead words }` ends in a space before the body, so the body's
-first word is set apart from the code's last; a body bringing its own space
-there sets one, not two (`mergeText`). -/
+first word is set apart from the code's last, and a body bringing its own
+space there sets a second one, as TeX does (`mergeText`). -/
 private def trimLead (raws : Array Raw) : Array Raw :=
   raws.extract (spanRaws raws 0 isSpaceOrPar) raws.size
 
@@ -1525,17 +1525,15 @@ with the mark's place (`qedHereKey`) for the symbol. -/
 private def qedHereRun : Array Inline :=
   #[.strut {}, .fill, .text "\u2003", .label qedHereKey]
 
-/-- Adjacent text runs join into one. Where both bring a space to the seam —
-an environment half's edge meeting its body's (`trimLead`), a macro body's
-tail meeting the text after it — the seam sets one space, where TeX sets
-two interword glues: at most one space's width, never a doubled gap. -/
+/-- Adjacent text runs join into one, every space kept: where both bring a
+space to the seam — an environment half's edge meeting its body's, a macro
+body's tail meeting the text after it — TeX sets two interword glues, and
+so does the joined run. -/
 private def mergeText (xs : Array Inline) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for x in xs do
     match x, out.back? with
-    | .text s, some (.text t) =>
-      let s := if t.endsWith " " && s.startsWith " " then (s.drop 1).toString else s
-      out := out.pop.push (.text (t ++ s))
+    | .text s, some (.text t) => out := out.pop.push (.text (t ++ s))
     | _, _ => out := out.push x
   return out
 
@@ -2143,15 +2141,24 @@ private def argText (ctx : Ctx) (raws : Array Raw) : String :=
     | _ => one r
   (String.join (raws.toList.map flat)).trimAscii.toString
 
-/-- Whether a whitespace token separates here: yes, unless the space is
-already there. A group body keeps a deliberate leading space (`{ (x)}`);
-a paragraph's own edges are trimmed by `mkPara`, not here. -/
+/-- Whether a paragraph break inside inline content separates here: yes,
+unless a space is already there. A group body keeps a deliberate leading
+space (`{ (x)}`); a paragraph's own edges are trimmed by `mkPara`, not here. -/
 private def needsSep (acc : Array Inline) (sb : String) : Bool :=
   if sb.isEmpty then
     match acc.back? with
     | some (.text t) => !t.endsWith " "
     | _ => true
   else !sb.endsWith " "
+
+/-- Whether a space token separates here. TeX's input reader makes one
+token of a run of blanks and skips the blanks after a control space
+(TeXbook ch. 8, state S), so a space against one this scan already holds
+adds nothing — the one collapse, a splice's two runs included. A space
+after anything else is the second glue TeX sets there too: after the text
+a group, a macro or an environment half brought (`{word } next` sets two).
+A paragraph's own edges are trimmed by `mkPara`, not here. -/
+private def spaceSeps (sb : String) : Bool := !sb.endsWith " "
 
 /-- The one writer of the label store: the flow-ordered table and its key
 set move together, so no caller can leave them disagreeing. -/
@@ -3638,11 +3645,11 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .word s _ =>
       elabInlinesFrom ctx raws (i + 1) acc (sb ++ s)
     | .space =>
-      -- Whitespace is one separator however many tokens a splice put side
-      -- by side (a run was a single token at the lexer), and a paragraph
-      -- never opens with one: a leading space glue would indent the line.
+      -- A run of blanks was one token at the lexer; a splice that puts two
+      -- runs side by side sets one separator, and a paragraph never opens
+      -- with one: a leading space glue would indent the line (`spaceSeps`).
       elabInlinesFrom ctx raws (i + 1) acc
-        (if needsSep acc sb then sb.push ' ' else sb)
+        (if spaceSeps sb then sb.push ' ' else sb)
     | .par _ =>
       elabInlinesFrom ctx raws (i + 1) acc
         (if needsSep acc sb then sb.push ' ' else sb)

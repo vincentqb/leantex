@@ -35,7 +35,7 @@ frame
   para
     styled bold
       text "Note:"
-    text " wrappers keep their argument."
+    text "  wrappers keep their argument."
   center
     para
       text "This line is centred."

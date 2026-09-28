@@ -317,11 +317,11 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
      sets renew "Middle wordsTail words")
   let spaced := "\\begin{placeholder} Middle words \\end{placeholder}\n\n" ++
     "Inline \\begin{placeholder} Middle words \\end{placeholder} after."
-  t "a body bringing its own spaces to the halves' spaced edges sets one space at each seam"
+  t "a body bringing its own spaces to the halves' spaced edges sets two at each seam, as TeX does"
     (sets (doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" spaced)
-        "Lead words Middle words Tail words" &&
+        "Lead words  Middle words  Tail words" &&
      sets (doc "\\newenvironment{placeholder}{Lead words }{ Tail words}\n" spaced)
-        "Inline Lead words Middle words Tail words after.")
+        "Inline Lead words  Middle words  Tail words after.")
   let boxed := doc "\\NewEnviron{placeholder}{\\fbox{\\BODY}}\n" use
   t "a body placed inside a group is refused where it stands, and nothing of it leaks"
     ((dvE boxed).any (fun d => d.code == "W0104" && hasStr d.message "inside a group") &&
@@ -385,3 +385,34 @@ def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   check ref "the refusal names the skips it leaves to the engine exactly while they are owed"
     (((dvE (venue "1ex")).any fun d =>
       d.code == "W0303" && hasStr d.message "vertical skips") == abstractSkipsOwed)
+
+
+/-- **A seam sets the spaces TeX sets there** (review LP-4). TeX drops a
+space only by its own rules: its input reader makes one token of a run of
+blanks and skips the blanks after a control word or a control space
+(TeXbook ch. 8). Two space tokens from two sources — a macro body's tail and
+the text after its use, an environment half's edge and its body's — set two
+interword glues, and the engine's seam collapse set one, a whole space
+narrower than lualatex (`A\gap\gap B`: 95.19 bp there, 93.05 here). Each
+source ships the line its spaces spelled out as control spaces ship, read off
+the shipped line's width. -/
+def seamChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let width (pre body : String) : Option Dim.Sp :=
+    ((censusOfSrc fonts (dvDoc pre body))[0]?.bind (·.lines.find? (!·.furniture))).map (·.width)
+  let same (pre body spelled : String) : Bool :=
+    (width pre body).isSome && width pre body == width "" spelled
+  t "two control spaces a macro brings set two spaces"
+    (same "\\newcommand{\\gap}{\\ }\n" "Alpha\\gap\\gap Bravo words." "Alpha\\ \\ Bravo words." &&
+      width "" "Alpha\\ \\ Bravo words." != width "" "Alpha Bravo words.")
+  t "a macro body's closing control space and the one after its use set two"
+    (same "\\newcommand{\\probeword}{word\\ }\n" "Lead \\probeword\\ next words."
+      "Lead word\\ \\ next words.")
+  t "a group's closing space and the space after the group set two"
+    (same "" "Lead {word } next words." "Lead word\\ \\ next words.")
+  t "an environment half's spaced edge and its body's set two at each seam"
+    (same "\\newenvironment{placeholder}{Lead words }{ Tail words}\n"
+      "Inline \\begin{placeholder} Middle words \\end{placeholder} after."
+      "Inline Lead words\\ \\ Middle words\\ \\ Tail words after.")
+  t "the blanks after a control space are skipped, as TeX's reader skips them"
+    (same "" "Alpha\\  Bravo words." "Alpha\\ Bravo words.")

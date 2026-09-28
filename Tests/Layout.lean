@@ -5390,6 +5390,12 @@ def isWordGap : Layout.Seg → Bool
   | .gap _ word => word
   | _ => false
 
+/-- The longest run of spaces a text holds: how many word gaps in a row a
+line setting it may carry. -/
+def longestSpaceRun (s : String) : Nat :=
+  (s.toList.foldl (fun (best, cur) c => if c == ' ' then (max best (cur + 1), cur + 1)
+    else (best, 0)) (0, 0)).1
+
 /-- Ink for the exact census: whitespace, the no-break space and the fixed
 spaces (glyphless boxes) and the soft hyphen dropped, case folded. The
 hyphen stays: the breaker's own is named `.hyphen` and dropped by the
@@ -5502,18 +5508,25 @@ got {(String.ofList actual.toList).quote}"
 ({exactLeaves} leaves; {exactFail.getD ""})" exactFail.isNone
     -- 4. a word gap stands inside its line's ink — a run or an image on
     -- each side of it (a fill's gap may sit between: `a \hfill b` sets
-    -- space, fill, space) — and two word gaps never meet: a space is one
-    -- glue
+    -- space, fill, space) — and word gaps meet only as often as the
+    -- document's own text sets spaces in a row: two space tokens are two
+    -- glues, as TeX sets them, and a line never sets more than its text
+    let spaceRun : Nat := rows.foldl (fun m r => match r.leaf with
+      | .text s => max m (longestSpaceRun s)
+      | _ => m) 0
     let mut badGap : Option String := none
     for l in lines do
+      let mut run := 0
       for i in [0:l.segs.size] do
         if isWordGap l.segs[i]! then
+          run := run + 1
           let before := (l.segs.extract 0 i).any isInkSeg
           let after := (l.segs.extract (i + 1) l.segs.size).any isInkSeg
-          let lone := i + 1 == l.segs.size || !isWordGap l.segs[i + 1]!
-          unless before && after && lone do
+          unless before && after && run ≤ max 1 spaceRun do
             if badGap.isNone then badGap := some (lineText l)
-    t s!"attr {n}: a word gap stands inside its line's ink, alone ({badGap.getD ""})"
+        else run := 0
+    t s!"attr {n}: a word gap stands inside its line's ink, no more of them in a row than \
+the text sets ({badGap.getD ""})"
       badGap.isNone
     -- 5. note marks are exactly the document's footnotes
     let marks := (body.flatMap fun l => l.segs.filterMap fun seg =>
