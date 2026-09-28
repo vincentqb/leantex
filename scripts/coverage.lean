@@ -789,8 +789,6 @@ def witnessExplained : Array Explanation := #[
 probe token is a glue value" },
   { name := "hsize", side := .corpus, usage := ⟨false, "\\hsize=10pt x"⟩,
     why := "inside a \\renewcommand{\\@maketitle} body elaboration never reaches" },
-  { name := "k", side := .corpus, usage := ⟨false, "\\k{a}"⟩,
-    why := "a TikZ coordinate name, not the ogonek accent" },
   { name := "left", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,
     why := "a delimiter operand: no probe token is a delimiter" },
   { name := "multicolumn", side := .probe,
