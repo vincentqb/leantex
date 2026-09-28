@@ -3515,6 +3515,72 @@ seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
+/-- The rendered subset's drawing of one picture body, with what it names:
+the one elaboration both the block arm and the in-line arm read, so the
+two cannot disagree about what the subset draws. -/
+private def subsetPicture (ctx : Ctx) (body : Array Raw) :
+    Ir.Pic.Picture × Array Picture.PDiag :=
+  let mathOf (d : Bool) (raws : Array Parse.Raw) :
+      Ir.Inline × Array Picture.PDiag :=
+    let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
+    match MathParse.parseMath d expanded with
+    | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
+    | .error what => (.math d (Parse.rawSrc raws),
+        #[(.W0012, s!"math with {what} is not rendered yet; the \
+formula {floorWording (Parse.rawSrc raws)}")])
+  Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
+    ctx.pic.macros argStyles ctx.page.scale declStyles
+
+/-- One picture sent to the boundary: its request stated once, a picture
+the subset draws in part recorded as a fallback the driver may withdraw
+(`ReqSpans.fallbacks`), its span, the N0023 note, and the image that stands
+where the picture does — named by the words its own labels set
+(`Ir.Pic.Picture.said`), as the subset's drawing would have been named. -/
+private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos) :
+    EM Ir.Inline := do
+  let src := Parse.rawSrc body
+  let id := Ir.picHash src
+  let tool := ctx.pic.tool.getD "lualatex"
+  let img := Ir.picSrcPrefix ++ id
+  modify fun st =>
+    let st := if st.pictures.any (fun p => p.1 == id) then st
+      else { st with pictures := st.pictures.push (id, src) }
+    if pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
+    else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
+  recordImageSpan ctx img pos
+  warnOnce ctx ("picture:boundary:" ++ id) .N0023
+    s!"this picture is drawn by {tool} at the boundary; its text is not \
+in the document's census" pos
+    (help := "the box is measured and placed by the engine; \\caption or \
+alt text names it for assistive technology")
+  return .image img {} pic.said
+
+/-- **A picture in a line of text stands in its line, drawn by the
+boundary.** TeX sets a `tikzpicture` as a box of its line, bottom on the
+baseline (pgfmanual §12.2.1), and the boundary's image is exactly such a
+box, so a picture met inside inline content — a table cell, a group's text,
+a command's argument — is the image the boundary draws for it, wherever the
+boundary is open and the request was not withdrawn. The rendered subset
+sets a picture only as a block, which a line cannot hold, so where the
+boundary is closed (or withdrew the request) the picture is named and not
+drawn — never the false "not implemented" of an unknown environment. -/
+private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Option Ir.Inline) := do
+  let id := Ir.picHash (Parse.rawSrc body)
+  -- premise: pictureInlineLineChecks — a picture in a line either ships the
+  -- boundary's image there or names that it is not drawn, and a withdrawn
+  -- request takes the second door.
+  if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
+    let (pic, _) := subsetPicture ctx body
+    return some (← routePicture ctx body pic pos)
+  warnOnce ctx ("picture:inline:" ++ id) .W0334
+    "a picture inside a line of text is not drawn: the rendered subset sets a \
+picture only as a block" pos
+    (help := "a boundary tool (lualatex) draws it in its line; standing in a \
+paragraph of its own, the rendered subset draws it")
+  return none
+
+seal subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
@@ -3760,6 +3826,10 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           acc := acc.push (.label key)
         let x ← elabMathEnv ctx name kind (numbered || tag.isSome) cleaned pos
         elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
+      else if name == "tikzpicture" then
+        let acc := flushText acc sb
+        let x? ← inlinePicture ctx body pos
+        elabInlinesFrom ctx raws (i + 1) (acc ++ x?.toArray) ""
       else
         match he : lookupUserEnv ctx name with
         | some (k, env) =>
@@ -4772,6 +4842,7 @@ unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
+unseal subsetPicture routePicture inlinePicture
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
@@ -7569,6 +7640,16 @@ private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i
       "a picture inside a paragraph is set as its own block: the paragraph's text breaks \
 at it instead of running on beside it" pos
 
+/-- The in-sentence naming for a command whose body is a picture: expanded
+at the block level (`bodyIsBlock`), the picture is set as its own block and
+the sentence around the command breaks at it, exactly as a picture written
+there does, so it is named the same way (`pictureInSentence`). -/
+private def macroPictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
+    (pos : Pos) : EM Unit := do
+  if let some (_, cmd) := lookupUser ctx n then
+    if cmd.body.any (· matches .env "tikzpicture" _ _) then
+      pictureInSentence ctx "tikzpicture" cur raws i pos
+
 /-- The `{tikzpicture}` arm, outside the knot: the rendered subset —
 shapes evaluate here, loops unrolled, expressions reduced, colours
 resolved against the palette — and everything the subset cannot render is
@@ -7579,17 +7660,7 @@ model degrades to source text, named (W0012), as it would in a paragraph. -/
 private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
-  let mathOf (d : Bool) (raws : Array Parse.Raw) :
-      Ir.Inline × Array Picture.PDiag :=
-    let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
-    match MathParse.parseMath d expanded with
-    | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
-    | .error what => (.math d (Parse.rawSrc raws),
-        #[(.W0012, s!"math with {what} is not rendered yet; the \
-formula {floorWording (Parse.rawSrc raws)}")])
-  let (pic, pdiags) :=
-    Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
-      ctx.pic.macros argStyles ctx.page.scale declStyles
+  let (pic, pdiags) := subsetPicture ctx body
   -- **The boundary draws what the subset would draw with a loss.** A
   -- picture the subset draws whole stays native: the engine owns that ink.
   -- One it draws nothing of, or draws with a named loss
@@ -7619,22 +7690,7 @@ formula {floorWording (Parse.rawSrc raws)}")])
   if ctx.pic.tool.isSome && !body.isEmpty &&
       (pic.shapes.isEmpty ||
         (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
-    let tool := ctx.pic.tool.getD "lualatex"
-    let img := Ir.picSrcPrefix ++ id
-    modify fun st =>
-      let st := if st.pictures.any (fun p => p.1 == id) then st
-        else { st with pictures := st.pictures.push (id, src) }
-      if pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
-      else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
-    recordImageSpan ctx img pos
-    warnOnce ctx ("picture:boundary:" ++ id) .N0023
-      s!"this picture is drawn by {tool} at the boundary; its text is not \
-in the document's census" pos
-      (help := "the box is measured and placed by the engine; \\caption or \
-alt text names it for assistive technology")
-    -- The image carries the name the picture's own labels give it
-    -- (`Ir.Pic.Picture.said`), as the subset's drawing would have been named.
-    return blocks.push (.para #[.image img {} pic.said])
+    return blocks.push (.para #[← routePicture ctx body pic pos])
   for (code, msg) in pdiags do
     -- A note names a decision, not a construct outside the subset, so the
     -- subset's reach is no help to it.
@@ -10144,6 +10200,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       if !isB then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
+      macroPictureInSentence ctx' n cur raws i cpos
       let blocks ← flushPara ctx' blocks cur
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'

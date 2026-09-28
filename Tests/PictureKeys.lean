@@ -554,3 +554,59 @@ def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (face, _, _) := Elab.runPrepared "t" p (lds ++ pds) (fun _ _ => {}) ids
   t "the HTML face then shows the subset's drawing, and no request key"
     (keyImages face == 0 && drawings face == 1)
+
+
+/-- **A picture inside a line of text stands in that line, or is named.**
+TeX sets `\tikz` as a box of its line, bottom on the baseline (pgfmanual
+§12.2.1), in a table cell, in a group's text and in a command's expansion
+alike. The boundary's image is such a box, so where the boundary is open a
+picture in a line ships as the image the boundary draws there, and the
+sentence around it stays one line; where the boundary is closed, or the
+request was withdrawn, the picture is named and not drawn. A command whose
+body is a picture, expanded as a block, breaks its sentence as a picture
+written there does, and is named the same way. The defect drew nothing in a
+cell or a group, under W0307's false "not implemented", and split a sentence
+around a command with no diagnostic. Read off the shipped lines and the
+structured diagnostics. Invented content. -/
+def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let mark := "\\tikz\\fill (0,0) rectangle (0.15,0.15);"
+  let firstPass (src : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
+    let (toks, lds) := Lex.lex "t" src
+    let (raws, pds) := Parse.parse "t" toks
+    Elab.runRawsSpanned "t" raws (lds ++ pds)
+  let cell := dvDoc "" ("\\begin{tabular}{ll} Alpha & " ++ mark ++ " \\\\ Beta & words \\end{tabular}")
+  let group := dvDoc "" ("\\textbf{Gamma " ++ mark ++ " delta.}")
+  let cellImages (d : Ir.Doc) : Array String := d.body.foldl (fun acc b => match b with
+    | .table _ _ _ rows _ _ => rows.foldl (fun acc r => r.foldl (fun acc c => c.foldl
+        (fun acc i => match i with
+          | .image s _ _ => if s.startsWith Ir.picSrcPrefix then acc.push s else acc
+          | _ => acc) acc) acc) acc
+    | _ => acc) #[]
+  let noW0307 (ds : Array Diag) : Bool := ds.all (·.code != "W0307")
+  let (cd, cds, _) := firstPass cell
+  t "a picture in a table cell ships the boundary's image in its cell, and no W0307"
+    ((cellImages cd).size == 1 && (Ir.pictureRefs cd).size == 1 && noW0307 cds)
+  let (gd, gds, _) := firstPass group
+  let gc := censusOf (coveredColorsOf gd) (layoutOf oneFace gd)
+  t "a picture in a group's text stands in its sentence's line, and no W0307"
+    ((Ir.pictureRefs gd).size == 1 && noW0307 gds &&
+      gc.any fun p => p.lines.any fun l => hasStr l.text "Gamma" && hasStr l.text "delta")
+  -- Where the boundary is closed, or the request was withdrawn, the picture
+  -- is named where it stands and not drawn.
+  let named (ds : Array Diag) : Bool :=
+    ds.any fun d => d.code == "W0334" &&
+      (d.subject.map (·.startsWith "picture:inline:")).getD false
+  let closed := cell.replace "\\begin{document}" "\\pictures{ tool = none }\\begin{document}"
+  let (xd, xds) := elabStr closed
+  t "with the boundary closed, a picture in a cell is named and not drawn"
+    (named xds && noW0307 xds && (Ir.pictureRefs xd).isEmpty && (cellImages xd).size == 0)
+  let (_, wds) := elabStr cell
+  t "a withdrawn request in a cell takes the same door"
+    (named wds && noW0307 wds)
+  -- A command whose body is a picture, expanded as a block in a sentence.
+  let cmd := dvDoc "\\newcommand{\\dotmark}{\\tikz\\fill (0,0) rectangle (0.15,0.15);}\n"
+    "Gamma \\dotmark{} delta."
+  t "a command whose body is a picture names the sentence it breaks"
+    ((elabStr cmd).2.any fun d => d.code == "W0334" && d.subject == some "picture:inline")
