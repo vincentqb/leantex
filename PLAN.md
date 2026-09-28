@@ -23350,3 +23350,77 @@ a declared margin equal to the default (`hmKnown` compares values). Another
 length before a list's first `\item` still lands there (E0310), a scoped
 assignment still outlives its group, and `\vspace{\baselineskip}` still
 wants an engine token.
+
+
+
+### 2026-09-28 — theorem-like blocks spaced as their spellings are, and `\qedhere`
+
+Round 10's review of the kernel environments found four departures from
+amsthm and the kernel. Each now has a guard over `Layout.Out` that fails on
+the base, and the fix reproduces LaTeX. The probes are synthetic sources
+under Open Sans at a 300 pt measure, built by lualatex and the engine; the
+QED symbol is redefined as a word so `pdftotext -bbox` can read its place.
+
+- **The QED after a display or a list stands at the right edge.** amsthm's
+  `\qed` is `\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}`. The empty box is
+  what keeps the fill where the QED opens a line; the engine dropped the
+  fill there and set the mark one em in. The QED opens with a zero strut
+  now: its right edge measures +1.12 bp from lualatex's, the same as a QED
+  on a text line (the engine's 300 pt measure is 300 bp). Guard: two
+  `kernelThmChecks` rows.
+- **A theorem-like block opens its spelling's space**, not the trivlist
+  quantum a `{center}` takes. `Ir.thmSkips` is the one resolving site both
+  backends read, through the role each block rides in (`Ir.thmSpaceRole`,
+  four kinds). The kernel's theorem is `\trivlist` itself: `\topsep`, plus
+  `\partopsep` after a blank line (the in-paragraph role marks it as it
+  marks a list). amsthm's plain and definition spend `\thm@preskip` and
+  `\thm@postskip`, the `\topsep`, with no `\parskip` above. Remark halves
+  them. The proof sets `6pt plus 6pt` and always adds `\partopsep`, since
+  its `\par` opens vertical mode. `thmSkips_exact` holds the lengths at 10,
+  11 and 12 pt. Measured against lualatex, each space now stands within
+  +0.08 bp at 10 and 12 pt (lualatex's 11.955 bp leading against the
+  engine's 12). At 11 pt the gap is −0.32 bp, the engine's own 11 pt
+  leading. The one exception is the space below a proof, which the QED
+  mark's depth widens (owed, below). On the base the gap was +2.1 to +8.4
+  bp. Guard:
+  `kernelThmSpaceChecks`, 12 rows failing on the base. The rhythm tier
+  moves from 38 to 40 boundaries within 0.5 bp and from 54 to 57 within 3
+  bp. In HTML the sheet's `thmRules` read the same site, and `rhythm
+  --html` puts the theorem boundaries at 3.33 q on both artifacts.
+- **An unknown `\theoremstyle` sets plain**, as amsthm.sty does, and W0110
+  says so. Guard: one `kernelThmChecks` row, the body's face.
+- **`\qedhere`** puts the proof's mark where amsthm puts it, and then the
+  proof's end sets none. In text (a list's last item, a paragraph's end) it
+  is `\qed` right there, with the space before it taken back. In an
+  unnumbered display it sits in the number's slot, on the formula's line.
+  Outside a proof it sets nothing. Where the engine has no such slot yet
+  (an alignment's row, the place under an equation number) the formula
+  still sets, the QED stands on a line of its own after the display, and
+  **W0435** names the move. Its registry row aims at native row tags. The
+  list, description and paragraph QEDs measure within +0.23 bp of
+  lualatex's line. Guard: `kernelQedHereChecks`, 6 rows failing on the
+  base. External tier: 159 → 161 documents at 2.
+- **The kernel's environments have an index.** `tests/compat-index/latex.txt`
+  holds one row per environment in the LaTeX2e reference manual's
+  Environments chapter: 20 implemented and 8 refused, each refusal with its
+  code. The compat tier records `latex.rows` 28 and `latex.impl` 20.
+
+The kernel-envs entry of 2026-09-27 owed `\qedhere` and remark's half
+space. Both are done here.
+
+**Owed, with their sites:**
+- The QED □ is a math-face glyph standing in for amsthm's rule-drawn
+  `\openbox`. Its box is deeper than the strut, and Layout's leaded-halves
+  stacking pushes the next line down by the difference. TeX's interline
+  glue absorbs it. The rhythm tier's proof→paragraph boundary stays +1.00
+  bp from lualatex. Fixing it needs an inline box node, or TeX's interline
+  rule in Layout's line stacking.
+- The display skips are the engine's own. A text line after `\[ x = y \]`
+  stands about 21 bp below lualatex's, whose short skips apply. A QED on or
+  after a display inherits that offset (`collectEquation`, `Acc.openDisplay`).
+- Row tags for alignments (W0015's family) would place `\qedhere` on its
+  row, and W0435 would leave.
+- HTML reads a kernel theorem in the in-paragraph mode, as it reads a list:
+  the sheet carries no `\partopsep` yet (HR-1, `thmRules`).
+- A body `\newtheorem` (W0301), and `\newtheoremstyle`, `\swapnumbers`,
+  `\qed` outside a proof (W0301, amsthm's index).
