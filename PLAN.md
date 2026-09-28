@@ -23424,3 +23424,53 @@ space. Both are done here.
   the sheet carries no `\partopsep` yet (HR-1, `thmRules`).
 - A body `\newtheorem` (W0301), and `\newtheoremstyle`, `\swapnumbers`,
   `\qed` outside a proof (W0301, amsthm's index).
+
+
+
+### 2026-09-28 — settings-pkgs' review findings: the length door, environ, the seams, `[sub]`, the gap sheet
+
+Review-f's settings-pkgs findings (LP-1 … LP-5 and the NITs), each fixed
+to LaTeX's behaviour with a guard that failed on the tree before it.
+
+- **The float-core idiom reads its values at the length door** (LP-1).
+  `\renewenvironment{table}{\setlength{\abovecaptionskip}{v}\@float{table}}
+  {\end@float}` handed `v` to `\tokens` unread, so `\smallskipamount`,
+  `0.5\baselineskip` and a copy of `\belowcaptionskip` failed the build.
+  Each value now passes `doorValue?`, the door `assignLength` reads through,
+  in the code's order: a copy of the other caption skip reads what the code
+  assigned it, and a value the door cannot read is one keyed W0104.
+- **Only environ's definer splits at `\BODY`** (LP-1). Compat marks the head
+  it gives `\NewEnviron` (`environBodyMark`); a `\BODY` in a kernel
+  definition is the document's own macro.
+- **environ is environ** (LP-2): the body's edge spaces are trimmed
+  (`\trim@spaces`), the final code — `\ignorespacesafterend` unless given —
+  ends the environment, and a code with no `\BODY` beside a final code runs
+  both and hides the body. TeX's own seam commands are spent where a
+  definition states them: `\ignorespaces` closing a begin code,
+  `\ignorespacesafterend` in an end code (`envOfHalves`, three `UserEnv`
+  flags the inline arm reads).
+- **A seam sets the spaces TeX sets** (LP-4). This reverses the round-9
+  decision that two spaces meeting at a seam set one: TeX sets two
+  interword glues there, and the engine now does. The one collapse left is
+  TeX's input reader's — a run of blanks is one token, and the blanks after
+  a control space are skipped (TeXbook ch. 8, state S) — which is all
+  `spaceSeps` reads. The attribution census allows as many word gaps in a
+  row as the text holds spaces. In HTML the two spaces render as one (CSS
+  white space), which the page reader accepts.
+- **`\captionsetup[sub]`** is subcaption's scope for every sub-caption
+  (LP-3).
+- **Every block margin lives in the gap sheet** (LP-5). The caption seam
+  (`figure.float > figcaption:first-child + *`) is a `:where()` boundary,
+  and the shadow scan reads each selector part's rightmost compound; the
+  reading found a second rule the whole-part reading had missed
+  (`section.slide > header h2 { margin: 0 }`), now a reset.
+- W0303 reads only a heading's words and names what the built-in keeps.
+
+**Owed, measured on synthetic probes against lualatex (gaps in bp):** a
+`\newcommand` body keeps its edge spaces in TeX, and the native `\define`
+rule trims them (`\newcommand{\x}{word }`, `\x next`: "word next" there,
+"wordnext" here; `{ }` bodies set nothing); `\label` between two spaces
+sets one there (`\@esphack`) and two here; `\index` without makeidx is an
+unknown command here; a sub-caption sets at subcaption's smaller size
+there. The environment halves' outer edges are still trimmed inline, where
+TeX keeps them.
