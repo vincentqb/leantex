@@ -3247,6 +3247,8 @@ there, by its name. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (deferred : Bool := false) (preamble : Bool := false) (measureKnown : Bool := true)
     (flowPage : Bool := false) : Option String :=
+  -- premise: unreadableLengthChecks — a definition's body names nothing where
+  -- it is defined: a kernel parameter there stands by its name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
@@ -3675,6 +3677,8 @@ style, for both list kinds, and each preamble assignment to a parameter a
 level sets again is said to reach the lists it reaches, or none. -/
 private def flushListLevels : M (Array Raw) := do
   let st ← get
+  -- premise: listLevelChecks — a class's \normalsize resets \@listi, so the
+  -- document's redefinition ships the page the document ships without it
   let defOf (level : Nat) : Option (Pos × Array TexAssign) :=
     if level == 1 && !st.listiKept then none
     else (st.listDefs.find? (·.1 == level)).map fun (_, p, a) => (p, a)
@@ -6023,6 +6027,8 @@ face serves every language, so the binding is dropped" pos
     -- set holds where the body starts (ltcounts.dtx): at a document's
     -- preamble top level the command moves there, to the one arm that
     -- reads counters in flow order. Anywhere else it stands.
+    -- premise: counterChecks — a preamble counter numbers the body as the
+    -- same command at the body's start does
     if !(← docPreamble) then return none
     let n := if name == "setcounter" || name == "addtocounter" then 2 else 1
     let (args, k) := takeGroups raws start n

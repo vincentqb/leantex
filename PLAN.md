@@ -23268,3 +23268,85 @@ witness its author recorded; none is re-run here.
 `owedBaseline` falls from 4 to 1: R35, the unapproved pushes, stays owed to
 the user. Two theorems the fixes cite cannot be pins because they are
 private: `finishPage_fill_centre_exact` and `warnReflow_accounts`.
+
+
+
+### 2026-09-28 — the length door, again: an unreadable value is one W0104, a readable one reads as LaTeX reads it
+
+Review-f found the settings door's invariant broken by its own new doors
+(LS-1, LS-2) and four settings still translated onto tokens nothing reads,
+named where LaTeX discards them, or failing the build (LS-3 … LS-6).
+
+**Readings that changed the page silently (LS-2).** A skip amount the
+document set is its register (`lenValue`): `\setlength{\parskip}
+{\medskipamount}` after `\medskipamount` 20pt read the kernel's 6pt; only
+an unset amount is ltspace.dtx's fixed value, and `\smallskip`,
+`\medskip`, `\bigskip` skip the amount set (`\vspace\medskipamount`). A
+register after a command or keyword that reads a dimension, after a factor,
+sign or relation (`readsOperand`: `\ifdim\parskip=0pt`) is that command's
+operand, never TeX's plain assignment.
+
+**Build failures from the door (LS-1).** The list-level flush judges the
+preamble's styles on the lengths as the preamble left them (`St.preLens`),
+never the document's end. A body setting of a list parameter reaches the
+lists after it exactly where the document's `\@listi` leaves it be
+(`reachesLists`); the engine's lists are spaced per level, so that reach is
+named once. A redefined `\normalsize`'s display skips are read in order
+through the door (`sizeSkips`): a copy of one the class set is named once
+and skipped. A counter value reads a literal, `\value{c}` or a kernel
+integer constant (`kernelInt`); any other register is one W0104 on the
+counter's value, and a missing group is the one error.
+
+**Where LaTeX's list code puts a setting (LS-3, LS-5).** In a list's body
+`Compat.listSpent` (what `\list` spends where the list opens) is a note and
+`Compat.listPerItem` (what its items read) is named once; nothing lands
+before the first `\item`. pandoc's `\tightlist`, a macro whose definition is
+length settings only, is read as those settings where a list uses it
+(`listSettings?`).
+
+**secnumdepth past three (LS-4).** `\paragraph` and `\subparagraph` number
+where it reaches them, `\thesubsubsection.\arabic{paragraph}` and on
+(`Counters.runNums`, `runInHead`, outside the inline knot and sealed there).
+
+**Kernel lengths (LS-6).** `\textwidth`, `\headsep`, `\footskip` are `\page`
+keys and `\floatsep` a token row; a body `\textwidth` moves no line, as in
+LaTeX, and says so. A value naming the measure reads it where the elaborator
+can and is one W0104 where it cannot: an undeclared flow page settles
+`\textwidth` after the preamble (`St.measureKnown`), and `\linewidth`,
+`\columnwidth` hold the class's `\textwidth` in a preamble, which is the
+engine's only where the class fixes its block at load (`St.flowPage`).
+`kernelLengthNames` closes the table against the kernel's lengths; the
+undecided ones are `openKernelLengths`, held in both directions.
+
+**Guards**, each failing at the commit before its fix: `operandChecks`, rows
+of `unreadableLengthChecks` (7 FAIL at `fd6e1267`); `sizeCommandChecks` and
+`listLevelChecks` rows (6 at `f733c36e`); `counterChecks` rows (5 at
+`bc4fb60e`); `listBodyChecks` (11 at `378a4ec5`); `kernelLengthChecks`, four
+`paramProbes` rows and `posterCompatChecks`' flow-class row, which pinned
+E0321 and now asks for one W0104 (21 at `d0f206c0`). Each new gate's
+premise is a check (two builds for the measure and the kept `\@listi`).
+
+**Measured** against lualatex on the reviewer's synthetic probes
+(`pdftotext -bbox-layout`, bp): paragraph baselines 32.00 apart under a set
+`\medskipamount` (lualatex 31.88; main 18.00) and 24.00 under the `\ifdim`
+(23.91; main 12.00); `\textwidth` 4in sets lines 288.15 long (288.00; main
+312.09); a 20pt `\medskipamount` grows `\medskip`'s gap 14.00 (13.95; main
+0); run-in numbers "1.1.1.1", "1.1.1.1.1" as lualatex's. Of the reviewer's
+29 probes, 10 fail to build on main and 1 here: `\vspace{\baselineskip}`
+with no setting, which wants an engine token (below); of its 60, the same
+one as on main (`{\small}` in a preamble group, not a length). The private
+reference corpus, all five documents, is raster-identical at 110 dpi, HTML
+byte-identical and its diagnostic census unchanged (main against tip).
+
+**Owed.** A list's own spacing (`\itemsep`, `\parskip`, `\tightlist`:
+items 20.00 bp apart where lualatex sets 11.96) wants a per-list gap on
+`Ir.Block.list`, and a body setting under a kept `\@listi` wants the level
+to read the running value, `partopsepFor`'s shape. `\textheight` as a page
+key forfeits a flow page's margins (the measure widens 312 → 468 bp) and
+centres the block where LaTeX keeps its top, and `\textwidth` centres it
+where LaTeX keeps the class's left edge (161.66 against 133.77 bp): the page
+model's one margin per axis. `engineLengthTokens` withholds `textwidth` for
+a declared margin equal to the default (`hmKnown` compares values). Another
+length before a list's first `\item` still lands there (E0310), a scoped
+assignment still outlives its group, and `\vspace{\baselineskip}` still
+wants an engine token.
