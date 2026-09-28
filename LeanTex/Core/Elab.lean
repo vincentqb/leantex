@@ -7868,9 +7868,11 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
 /-- Close a theorem-like scope: restore what `thmOpen` changed, open the
 first paragraph with the head — or stand it alone when the body opens with
 anything else — end a proof with its QED (amsthm.sty `\qed`:
-`\hfill\quad\hbox{\qedsymbol}` on the last line, a line of its own after a
-display or list), and set the whole as the trivlist it is (ltthm.dtx and
-amsthm.sty both open `\trivlist`) under the environment's name. -/
+`\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}` on the last line, a line of its
+own after a display or list, where the empty box keeps the fill that a line's
+start would otherwise drop), and set the whole as the trivlist it is
+(ltthm.dtx and amsthm.sty both open `\trivlist`) under the environment's
+name. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
   modify fun st => { st with refTarget := o.target, blockDecls := o.decls }
@@ -7886,7 +7888,7 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       -- `\renewcommand{\qedsymbol}{}` is the manual's way to omit it.
       if mark.isEmpty then pure inner else
       let shown := Ir.wrapDecls o.decls mark
-      let q : Array Inline := #[.fill, .text "\u2003"] ++ shown
+      let q : Array Inline := #[.strut {}, .fill, .text "\u2003"] ++ shown
       pure (match inner.back? with
         | some (.para c) => inner.pop.push (.para (c ++ q))
         | _ => inner.push (.para q))

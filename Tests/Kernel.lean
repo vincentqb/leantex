@@ -100,6 +100,21 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((lineWith pls "Larch").any fun l => (lineRuns l).any fun r =>
       r.1 == 4 && hasStr r.2.1 "□" &&
         decide (((r.2.2.1 + r.2.2.2) - (geom.hmargin + geom.textWidth)).natAbs ≤ (Dim.pt 1).natAbs))
+  -- After a display or a list the QED opens a line of its own, and stands at
+  -- the measure's right edge there too (amsthm.sty `\qed`: the empty
+  -- `\hbox{}` before `\hfill` is what keeps the fill at a line's start).
+  let qedLine (body : String) : Option Layout.LineOut :=
+    let d := (elabStr (dvDoc "\\usepackage{amsthm}\n" body)).1
+    let g := Layout.Geom.ofPage d.page
+    (bodyLines (layoutOf fs d)).find? fun l => (lineRuns l).any fun r =>
+      r.1 == 4 && hasStr r.2.1 "□" &&
+        decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).natAbs ≤ (Dim.pt 1).natAbs)
+  let alone (l : Layout.LineOut) : Bool :=
+    !hasStr (lineText l) "Larch" && !hasStr (lineText l) "Maple"
+  t "proof: after a display the QED stands alone at the measure's right edge"
+    ((qedLine "\\begin{proof}\nLarch opens.\n\\[ x = y \\]\n\\end{proof}").any alone)
+  t "proof: after a list the QED stands alone at the measure's right edge"
+    ((qedLine "\\begin{proof}\nLarch opens.\n\\begin{itemize}\n\\item Maple.\n\\end{itemize}\n\\end{proof}").any alone)
   let noQed := linesOf (dvDoc "\\usepackage{amsthm}\n"
     "\\begin{proof}\n\\renewcommand{\\qedsymbol}{}Maple ends bare.\n\\end{proof}")
   t "proof: an emptied \\qedsymbol omits the mark, the head stays"
