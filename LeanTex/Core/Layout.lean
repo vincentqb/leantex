@@ -1748,6 +1748,14 @@ kerning is off, and 0 for every pair of a face with no kern data. -/
 def pairKern (kern : Bool) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
   (if kern then font.kernAdv g1 g2 else 0) * size / (font.unitsPerEm : Int)
 
+/-- A glyph's pair kern with its own face's space glyph, scaled to `size`:
+`(g, space)` when `after` (the space follows `g`), `(space, g)` otherwise —
+`pairKern`'s value for that pair, read from the face's per-glyph memo
+(`Font.spaceKernAdv`), so a space beside a word asks the kern data once
+per glyph and face, never once per space; 0 when kerning is off. -/
+def spacePairKern (kern : Bool) (size : Sp) (font : Font) (after : Bool) (g : Nat) : Sp :=
+  (if kern then font.spaceKernAdv after g else 0) * size / (font.unitsPerEm : Int)
+
 /-- The scaled pair kern the next glyph owes against the box's last: 0
 at a box head, and 0 for every pair of a face with no kern data (Open
 Sans ships none). Both backends read one `Ir.Features` value for whether
@@ -3173,12 +3181,9 @@ sides kern and their scales differ, and it is the face's own pair at the
 face's own size. -/
 private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
   | some (.box _ fontIdx _ _ glyphs size _ _ _ _) =>
-    let font := fs.get fontIdx
-    match font.gid ' ', (if after then glyphs.back? else glyphs[0]?) with
-    | some sp, some (g, _, _) =>
-      if after then pairKern Ir.features.kern size font g sp
-      else pairKern Ir.features.kern size font sp g
-    | _, _ => 0
+    match (if after then glyphs.back? else glyphs[0]?) with
+    | some (g, _, _) => spacePairKern Ir.features.kern size (fs.get fontIdx) after g
+    | none => 0
   | _ => 0
 
 /-- Whether an item is a box of glyphs: the character TeX's `\/` corrects. -/

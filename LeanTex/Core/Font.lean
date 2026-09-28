@@ -487,6 +487,38 @@ private def parseLegacyKern (b : ByteArray) : Array (Nat × Int) := Id.run do
   return (sortByKey out (·.1)).foldl
     (fun acc p => if acc.back?.map (·.1) == some p.1 then acc else acc.push p) #[]
 
+/-- The pair kern between glyphs `g1` and `g2` over a face's bytes and its
+parsed kern data (`Font.kernAdv` reads it; `parse` fills each glyph's
+space pairs from it). -/
+private def pairAdv (b : ByteArray) (kd : Array KernSub × Array (Nat × Int)) (g1 g2 : Nat) :
+    Int := Id.run do
+  let (subs, pairs) := kd
+  for sub in subs do
+    match covIndex sub.cov g1 with
+    | none => pure ()
+    | some ci =>
+      if sub.fmt == 1 then
+        if ci < u16 b (sub.off + 8) then
+          let ps := sub.off + u16 b (sub.off + 10 + 2 * ci)
+          let n := u16 b ps
+          let rec2 := 2 + sub.size1 + sub.size2
+          for k in [0:n] do
+            let r := ps + 2 + rec2 * k
+            if u16 b r == g2 then
+              return i16 b (r + 2 + sub.xAdv)
+      else
+        let c1 := (sortedFind sub.cd1 g1).getD 0
+        let c2 := (sortedFind sub.cd2 g2).getD 0
+        if c1 < sub.c1Count && c2 < sub.c2Count then
+          let r := sub.off + 16 + (sub.size1 + sub.size2) * (c1 * sub.c2Count + c2)
+          let v := i16 b (r + sub.xAdv)
+          if v != 0 then
+            return v
+  -- legacy pairs
+  match bsearch pairs (·.1) (g1 * 0x10000 + g2) with
+  | some (_, _, v) => return v
+  | none => return 0
+
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
 driver's job. -/
@@ -581,6 +613,12 @@ structure Font where
   fallback rule (F_GLOBAL_HAS_FALLBACK). Both empty for a face with
   neither: Open Sans, and every monospace done right (Source Code Pro). -/
   kernData : Thunk (Array KernSub × Array (Nat × Int))
+  /-- Each glyph's pair kerns with the face's space glyph, lazily per glyph:
+  `(kern (g, space), kern (space, g))` in font units, from the same pairs
+  `Font.kernAdv` reads — luaotfload's `spacekerns` table, which its space
+  kerning reads beside every interword glue. `(0, 0)` throughout for a
+  face with no space glyph. Read through `Font.spaceKernAdv`. -/
+  spaceKerns : Thunk (Array (Thunk (Int × Int)))
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -917,6 +955,16 @@ def parse (data : ByteArray) : Except String Font := do
       ext := ext.push (Thunk.mk fun _ => src.get.yExtentAt g)
     return ext
   let sc := parseGsubSmallCaps data
+  let kernData : Thunk (Array KernSub × Array (Nat × Int)) := Thunk.mk fun _ =>
+    let subs := parseKernSubs data
+    (subs, if subs.isEmpty then parseLegacyKern data else #[])
+  let spaceKerns : Thunk (Array (Thunk (Int × Int))) := Thunk.mk fun _ => Id.run do
+    let some sp := gidIn cmap ' ' | return Array.replicate numGlyphs (Thunk.pure (0, 0))
+    let mut out : Array (Thunk (Int × Int)) := Array.mkEmpty numGlyphs
+    for g in [0:numGlyphs] do
+      out := out.push (Thunk.mk fun _ =>
+        (pairAdv data kernData.get g sp, pairAdv data kernData.get sp g))
+    return out
   return {
     data := data
     isCff := isCff
@@ -952,9 +1000,8 @@ def parse (data : ByteArray) : Except String Font := do
     hasSmcp := sc.1
     hasC2sc := sc.2.1
     smallCaps := sc.2.2
-    kernData := Thunk.mk fun _ =>
-      let subs := parseKernSubs data
-      (subs, if subs.isEmpty then parseLegacyKern data else #[])
+    kernData := kernData
+    spaceKerns := spaceKerns
   }
 
 /-- A face's ink above the baseline, in font units: its cap height, or its
@@ -980,34 +1027,20 @@ def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
 coverage holds `g1` answers (format 1 by pair-set scan, format 2 by class
 matrix), else the legacy pairs, else 0 — including for every pair of a
 face with no kern data at all. -/
-def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int := Id.run do
-  let b := f.data
-  let (subs, pairs) := f.kernData.get
-  for sub in subs do
-    match covIndex sub.cov g1 with
-    | none => pure ()
-    | some ci =>
-      if sub.fmt == 1 then
-        if ci < u16 b (sub.off + 8) then
-          let ps := sub.off + u16 b (sub.off + 10 + 2 * ci)
-          let n := u16 b ps
-          let rec2 := 2 + sub.size1 + sub.size2
-          for k in [0:n] do
-            let r := ps + 2 + rec2 * k
-            if u16 b r == g2 then
-              return i16 b (r + 2 + sub.xAdv)
-      else
-        let c1 := (sortedFind sub.cd1 g1).getD 0
-        let c2 := (sortedFind sub.cd2 g2).getD 0
-        if c1 < sub.c1Count && c2 < sub.c2Count then
-          let r := sub.off + 16 + (sub.size1 + sub.size2) * (c1 * sub.c2Count + c2)
-          let v := i16 b (r + sub.xAdv)
-          if v != 0 then
-            return v
-  -- legacy pairs
-  match bsearch pairs (·.1) (g1 * 0x10000 + g2) with
-  | some (_, _, v) => return v
-  | none => return 0
+def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int :=
+  pairAdv f.data f.kernData.get g1 g2
+
+/-- Glyph `g`'s pair kern with the face's space glyph, in font units: the
+pair `(g, space)` when `after` (the space follows `g`), `(space, g)`
+otherwise — `Font.kernAdv`'s answer, read from the per-glyph memo
+`spaceKerns` fills on first use (a gid past it is asked directly). -/
+def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
+  match f.spaceKerns.get[g]? with
+  | some t => if after then t.get.1 else t.get.2
+  | none =>
+    match f.gid ' ' with
+    | some sp => if after then f.kernAdv g sp else f.kernAdv sp g
+    | none => 0
 
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only

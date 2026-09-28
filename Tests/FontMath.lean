@@ -636,6 +636,20 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: pairs behind an extension lookup answer hb-shape's values"
     (fk 'T' 'e' == -55 && fk 'A' 'V' == -14 && fk 'L' 'T' == -83 && fk 'a' 'a' == -5 &&
       fk 'H' 'H' == 0)
+  -- The space pairs a parsed face memoizes per glyph (`Font.spaceKernAdv`,
+  -- what a space beside a word reads) are `kernAdv`'s own answers against
+  -- the face's space glyph, on both sides, for every glyph and two gids
+  -- past the last: Source Serif Pro kerns with its space, Fira Sans keeps
+  -- its pairs behind an extension, Open Sans has none.
+  let spaceMemoExact (f : Font.Font) : Bool :=
+    match f.gid ' ' with
+    | some sp => (List.range (f.numGlyphs + 2)).all fun g =>
+        f.spaceKernAdv true g == f.kernAdv g sp && f.spaceKernAdv false g == f.kernAdv sp g
+    | none => false
+  t "kern: each glyph's memoized space pairs are its pairs with the space"
+    (spaceMemoExact ssp && spaceMemoExact firaSans && spaceMemoExact osans &&
+      (List.range ssp.numGlyphs).any (ssp.spaceKernAdv true · != 0) &&
+      (List.range ssp.numGlyphs).any (ssp.spaceKernAdv false · != 0))
   -- The applied value reaches the box: a "Ta" word's width is the two
   -- advances plus the (negative) kern, exactly
   -- (kern_measure_exact holds the general fact).
