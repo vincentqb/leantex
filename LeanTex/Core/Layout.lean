@@ -4806,7 +4806,9 @@ congruence: no arm reads the payload. Everything placed against a line
 measures from these metric lines at the run's own size; ink is read only
 to interrupt (the underline band), to clear (math minimum gaps, furniture
 bands), or where a page stands on TeX's box (`segsInk`: its first line and
-its content's end), never to space one line from the next. The accepted
+its content's end), never to space one line from the next — but where the
+document declared `\nointerlineskip`, which asks TeX to stand a box on the
+last one with no interline glue (`B.ignoreDepth`). The accepted
 cost is stated here once: a descender-less title keeps its full metric
 depth, so its optical gap to the next line is larger than its ink suggests
 — furniture that moved with the letters would make the artifact
@@ -4839,10 +4841,11 @@ rule spans its extent, and a glyph whose outline does not decode answers
 its face's metric ascent and descent. The line-box convention spaces no
 line against its neighbour from ink (`line_box_glyph_free`); this is read
 where TeX's box is what the page places or clears — the first line of a
-TeX page (`B.firstRise`), the content's end a TeX page's distribution
-measures (`placeLine_boxDepth_exact`), and the footline band a frame's
-text area stops above, as beamer's `\footheight` is the band's `\ht` plus
-`\dp`. -/
+TeX page and the one below an anchor (`B.firstRise`, `anchorRise`), a line
+after `\nointerlineskip` (`B.ignoreDepth`), the content's end a TeX page's
+distribution measures (`placeLine_boxDepth_exact`), and the footline band a
+frame's text area stops above, as beamer's `\footheight` is the band's
+`\ht` plus `\dp`. -/
 def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun (acc : Sp × Sp) s => match s with
     | .run idx _ _ _ glyphs sz _ raise _ _ =>

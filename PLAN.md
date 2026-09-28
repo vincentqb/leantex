@@ -23589,3 +23589,122 @@ two levels: −3.54 and −5.47 bp at levels three and four). With the resolving
 site reading the token, the two `\style` lines are redundant and can go.
 beamer's description is a 2 cm label column (beamerbaselocalstructure.sty,
 `\beamer@descdefault`), which the kernel's run-in label does not model.
+
+
+### 2026-09-28 — the page model: page-model's decisions, and five LaTeX rules the page still missed
+
+**What page-model decided** (round 9, landed as `f16b1321`; its record,
+owed since review-e's PM-3):
+
+- *A frame's text area ends at beamer's `\footheight`.* moloch's footline
+  template is values (`Ir.footline`: the tiny step, the 4 pt and 5 pt side
+  insets, the closing `\vskip4pt`, beamer's 4 pt sep), and every chrome
+  footer is set by it. The band's box is its glyphs' own (`segsInk`,
+  `bandBox`), and the page's floor (`B.bottom`, `footFloor`) and the band's
+  baseline (`footBaseline`) read that one box, so they move together
+  (`footFloor_exact`). A slot's box is inset from the paper's edge whatever
+  its neighbour holds (`bandSlotX_right_pinned`), and an untitled frame on a
+  footline page opens on beamer's `\vbox{}` at the paper's top
+  (`B.openBody`).
+- *A TeX page's first line stands `\topskip` down, or on its own glyph box
+  where that is taller* (`B.firstRise`; TeXbook ch. 15; size10/11/12.clo:97).
+  A frame is one box in beamer, so its first line keeps the metric rule:
+  `Geom.topskip` is `none` on the frame model, the one exception.
+- *A trim is inferred from drawn cut marks only where page boxes are
+  declared*, as `\page{ trim = marks }` (`Ir.PageSpec.trimMarked`). A
+  shipout hook that assigns a page attribute sets it, and the hook's values
+  stay unread and named (W0104). Marks drawn with no box declared declare
+  none, as in lualatex's file.
+- *A drawn rule's colour* resolves through `Ir.Palette.resolve`. A name that
+  resolves to nothing paints black and is named once, by W0304, keyed as a
+  text colour's miss is (`palette:<name>`): one miss, one code.
+- *A page's ground covers its medium*, the bleed strip included
+  (`Geom.ground`).
+- *The deck's residual.* The brief asked for every `[c]` page within 3 px of
+  lualatex. At `f16b1321`, 18 of 35 pages stand farther by their first ink
+  row, and 6 of 29 content pages by their axis (110 dpi, the author's
+  `axis.py`). The rest is the content's height (pictures, images), a frame's
+  last-line depth (card-centre's owed frame row) and the section pages
+  (+15 px), which the round did not move.
+
+**What this round adds.** Each rule is measured against lualatex (TeX Live
+2026, Open Sans, 600 dpi ink bands, bp) on one-construct synthetic pages.
+
+1. *A declared `\footskip` runs baseline to baseline* (`latexFootY`). The
+   foot stands `\footskip` below the text area's floor (`\@outputpage`, with
+   the output box's depth cancelled by `\@makecol`), and the text area is
+   the declared one. The symmetric ink reading stays with the native
+   `furnituregap` and the undeclared page. `\setlength{\footskip}` and
+   `\setlength{\headsep}` are now read; they had been noted as applied and
+   read by nothing. Rule 2 has no bound for the 7.8 bp the old reading cost,
+   so this reproduces LaTeX: 7.80 → 0.12 at 12 pt and 30 pt, 0.24 at 60 pt.
+   The residual is TeX's pt against the engine's pt, which is a bp. N0021
+   still names the declared difference.
+2. *`\vspace*`'s space stays at a page's top* (`Ir.pageAnchorRole`,
+   `Compat.vspaceAnchorMark`, `Acc.flushAnchored`, `B.anchored`).
+   `\@vspacer`'s zero rule is the page's first item, with `\topskip` above
+   it and the space kept below it. The star had been dropped, which left the
+   page 24.2 to 31.8 bp high. Mid-page the star changes nothing, and the
+   HTML ships what `\vspace` ships.
+3. *The line below the rule takes TeX's interline glue* (`anchorRise`):
+   `\baselineskip` less the depth `\@vspacer` saved, `\lineskip` where the
+   box is taller, none after `\nointerlineskip` (`Ir.noInterlineRole`,
+   `B.ignoreDepth`), which is now read. The saved depth is 0 pt at a
+   document's start (measured) and the last line's after `\newpage`. A row
+   of columns below the rule takes `\lineskip` (`B.colAnchor`), as a
+   minipage's box does. A `\vspace*{\fill}` line moves from 2.16 bp high to
+   0.00 at a document's start, and from 0.96 to 0.12 after `\newpage`.
+4. *A picture that opens a page is TeX's first box* (`placePicture`). It
+   stands by `B.firstRise`, counts the fil it consumes, and its labels ride
+   its share. A picture framed by fills had stood at the page's top, 54 to
+   60 bp high; it now stands at 0.00. Its labels had taken no fil entry, so
+   every later line on such a page read its neighbour's share.
+   `pushSibling` now keeps one entry per line.
+5. *`\flushbottom` is read* (`\page{ bottom = flush }`, `Geom.flushBottom`).
+   A page the builder breaks spends its finite stretch until its last
+   baseline stands on the floor (`B.finishPage`'s `flush`, `stretchAbove`),
+   as `\@make@normalcolbox` sets it with `\@textbottom` empty. A page that
+   `\newpage` or the document's end closes keeps its `\vfil`.
+
+Each guard failed at its unit's base, in a scratch clone with the tests
+copied in:
+
+- `footskipChecks` and the corrected declared-sep rows of
+  `furnitureSymmetryChecks`: 8 rows fail at `2f81a8e1`;
+- `vspaceStarChecks` and the two Surface rows that had asserted the star
+  and `\nointerlineskip` away: 9 fail at `fdbc9acb`;
+- the picture rows of `fillCentreChecks`: 2 fail at `2fb24f40`;
+- `flushBottomChecks`: 3 fail at `8586578b`.
+
+Two picture rows that had pinned the old page-top placement now declare
+`\topskip` 0 pt, so each still tests its own claim.
+
+**The private corpus**, compared before and after each unit (`pagediff` at
+110 dpi, `SOURCE_DATE_EPOCH=0`):
+
+- the paper's page numbers move up 7.74 bp on pages 2–8;
+- its pages 4 and 5 move their last lines to the floor, 0.00 bp from
+  lualatex's where they had stood 41.76 and 10.56 bp high;
+- the deck, the résumé and the site are byte-identical, PDF and HTML,
+  throughout;
+- the card passes its fourteen print checks, and its faces do not move.
+
+**Owed, and routed.**
+- *TeX's `\maxdepth`.* The fit test holds a page's last line's ink above
+  the floor, where TeX's page builder lets the depth hang below by up to
+  `\maxdepth` (5 pt in article). So a full page carries one line fewer than
+  lualatex's (17 against 18 on a probe), and a page that closes shrunk
+  stands 3–4 bp high: the paper's pages 2, 3, 6 and 7.
+- *`\pagebreak` under `\flushbottom`.* TeX flushes a page `\pagebreak`
+  ends (no `\vfil`) but not one `\newpage` ends; the engine reads both as
+  one boundary.
+- *A `\vspace*` met mid-page just before a break* keeps its space on the
+  next page in TeX. The engine drops it at the break, as it drops all glue
+  there.
+- *A labelless picture framed by fills* has no line for the distribution
+  to move.
+- *PM-4.* Under `\usepackage[cmyk]{xcolor}` a drawn rule's `red` is RGB,
+  where xcolor writes CMYK 0,1,1,0. That belongs to the colour model's
+  owner.
+- *The class defaults.* `[twoside]` and `[twocolumn]` articles, books and
+  reports are `\flushbottom` in LaTeX; the engine reads neither option.
