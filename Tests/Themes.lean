@@ -1,4 +1,4 @@
-import Tests.Support
+import Tests.Artifact
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -1273,7 +1273,8 @@ no-ops over inputs that reader accepts.** EARS: WHEN a frame body in Beamer's
 accepted fragile-reader domain gains `fragile` or `fragile=true` in the option
 list on its `\begin{frame}` line, THE SYSTEM SHALL retain `\verb`, `\verb*`,
 `{verbatim}`, `{lstlisting}`, and `{minted}`, emit no unknown-option loss, and
-produce the same IR, HTML, and PDF bytes as the frame without that option.
+produce the same IR, HTML, and shipped PDF bytes as the frame without that
+option.
 
 The witness keeps the outer `\end{frame}` alone on its line and has no inner
 line the external reader can mistake for that closer. Leantex deliberately
@@ -1284,10 +1285,12 @@ claim. Next-line option lists, `fragile=false`, `fragile=singleslide`,
 outside the lexer's closed raw-capture set remain outside the silent class. -/
 def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let body := "Inline \\verb|alpha_[beta]| and \\verb*|a b|.\n\n" ++
-    "\\begin{verbatim}\nraw {value} % _\n\\end{verbatim}\n\n" ++
-    "\\begin{lstlisting}[language=Lean]\ndef sample := 7\n\\end{lstlisting}\n\n" ++
-    "\\begin{minted}{lean}\ndef other := true\n\\end{minted}"
+  let body := "Inline \\verb|QuartzInline17| and \\verb*|OpalStar19 gap|.\n\n" ++
+    "\\begin{verbatim}\nCedarRaw23 {value} % _\n\\end{verbatim}\n\n" ++
+    "\\begin{lstlisting}[language=Lean]\ndef AmberListing29 := 31\n\\end{lstlisting}\n\n" ++
+    "\\begin{minted}{lean}\ndef VioletMinted37 := true\n\\end{minted}"
+  let markers := #["QuartzInline17", "OpalStar19", "CedarRaw23",
+    "AmberListing29", "VioletMinted37"]
   let source (opt : String) : String := deck169Body
     ("\\begin{frame}" ++ opt ++ "{Heading}\n" ++ body ++ "\n\\end{frame}")
   let (plain, plainDs) := elabStr (source "")
@@ -1303,25 +1306,33 @@ def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (match content with
      | some blocks =>
        blocks.any (fun
-         | .para xs => Ir.plainText xs == "Inline alpha_[beta] and a␣b." &&
-             xs.any (fun | .styled .mono ys => Ir.plainText ys == "alpha_[beta]" | _ => false) &&
-             xs.any (fun | .styled .mono ys => Ir.plainText ys == "a␣b" | _ => false)
+         | .para xs => Ir.plainText xs == "Inline QuartzInline17 and OpalStar19␣gap." &&
+             xs.any (fun | .styled .mono ys => Ir.plainText ys == "QuartzInline17" | _ => false) &&
+             xs.any (fun | .styled .mono ys => Ir.plainText ys == "OpalStar19␣gap" | _ => false)
          | _ => false) &&
        blocks.filterMap (fun
          | .verbatim _ s _ => some s.trimAscii.toString
-         | _ => none) == #["raw {value} % _", "def sample := 7", "def other := true"]
+         | _ => none) == #["CedarRaw23 {value} % _", "def AmberListing29 := 31",
+           "def VioletMinted37 := true"]
      | none => false)
   t "supported fragile spellings change neither IR nor diagnostics"
     (plainDs.isEmpty && docs.all (· == plain) && diagss.all (· == plainDs))
+  let plainOut : Layout.Out := layoutOf oneFace plain
+  let layoutText := String.intercalate "\n" ((allLines plainOut).toList.map lineText)
+  t "Layout.Out retains each distinctive fragile raw marker"
+    (markers.all fun marker => hasStr layoutText marker)
+  let (_, htmlTree, htmlDs) := HtmlDoc.emitTree {} plain
+  t "the typed HTML tree retains each distinctive fragile raw marker once"
+    (htmlDs.isEmpty && markers.all fun marker => treeOccurs htmlTree marker == 1)
   let plainHtml := (HtmlDoc.emit {} plain).1
   t "supported fragile spellings change no HTML bytes"
     (docs.all fun doc => (HtmlDoc.emit {} doc).1 == plainHtml)
   let pdfOf (doc : Ir.Doc) : ByteArray :=
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom
-    Pdf.write geom oneFace out.pages doc.info (outline := out.outline)
+    driverPdf oneFace geom doc out
   let plainPdf := pdfOf plain
-  t "supported fragile spellings change no PDF bytes"
+  t "supported fragile spellings change no shipped PDF bytes"
     (docs.all fun doc => pdfOf doc == plainPdf)
   let unsupported (opt : String) : Bool :=
     let ds := (elabStr (source ("[" ++ opt ++ "]"))).2

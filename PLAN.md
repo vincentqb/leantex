@@ -23893,10 +23893,15 @@ Leantex has no non-fragile collection path: `Lex.lex` captures `verbatim`,
 frame environment. `fragileNoopChecks` pins the silent gate over the part of
 Beamer's external-reader domain its synthetic witness occupies: the option is
 on the opening line, the outer `\end{frame}` is alone on its line, and no inner
-raw line equals that closer after leading whitespace is removed. Across that
-bounded domain, bare/true leave the IR, diagnostics, HTML bytes, and PDF bytes
-equal to the optionless frame. The fail-first guard found `fragile=false`
-still silent; removing it from the arm makes the named-unsupported check pass.
+raw line equals that closer after leading whitespace is removed. The
+optionless control gives each raw form a distinctive invented marker and
+requires every marker to appear in `Layout.Out` and the typed HTML tree; backend
+equality therefore cannot pass by dropping the content from every variant.
+Across that bounded domain, bare/true leave the IR, diagnostics, serialized HTML,
+and PDF bytes equal to the optionless frame. The PDF comparison uses
+`driverPdf`, including the structure tree and typed page operators the shipped
+driver supplies. The fail-first guard found `fragile=false` still silent;
+removing it from the arm makes the named-unsupported check pass.
 
 Leantex intentionally accepts a source superset rather than imitating the
 external reader's line scan. In particular, lexical environment parsing accepts
