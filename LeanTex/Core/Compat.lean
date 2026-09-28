@@ -3792,7 +3792,8 @@ private def driverOptions : List String :=
 of the same names (geometry manual §5.2: they size the body; the engine
 centres it — geometry's own oneside `hmarginratio` 1:1). `headsep` and
 `footskip` pass through too, carrying their LaTeX baseline semantics to
-the one correction site (`Layout.furnGapOfSep`); `headheight` is satisfied
+the page model (`Layout.furnGapOfSep` for the head, `Layout.latexFootY`
+for the foot); `headheight` is satisfied
 by construction — the head's band reserves its line's whole ink
 (`Layout.bodyTop_clears_head`), which is what a declared `headheight`
 exists to guarantee. The one-sided margins `top`/`bottom` and

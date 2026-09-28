@@ -203,10 +203,10 @@ structure PageSpec where
   header's *baseline* against the body. `Layout` reads it into the ink gap
   with the baseline-to-ink correction applied once (`furnGapOfSep`). -/
   headsep : Option Sp := none
-  /-- LaTeX's `\footskip`, as declared: baseline to baseline. Read through
-  the same correction as `headsep` — the symmetric reading — so equal
-  declared values mean equal visual gaps; a surviving difference is
-  N0021. -/
+  /-- LaTeX's `\footskip`, as declared: baseline to baseline, from the text
+  area's floor to the foot's baseline, as LaTeX reads it
+  (`Layout.latexFootY`); its declared difference from `headsep` is
+  N0021's. -/
   footskip : Option Sp := none
   /-- The rules the document draws on every page (`DrawnRule`), in the
   order drawn. Eight that are exactly the cut marks of one trim declare

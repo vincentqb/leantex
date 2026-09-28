@@ -138,13 +138,14 @@ the page edge to the furniture's nearest ink — the head's ink top, the
 foot's ink *bottom* — and `band` is what the furniture's ink and its
 body-side gap need beyond the margin. Both sides resolve through the one
 `furnitureBand`, so the two edges are equal by definition
-(`furniture_symmetric`): LaTeX's `\headsep` runs from the header's baseline
-to the body while `\footskip` runs baseline to baseline (ltpage.dtx,
-`\@outputpage`; the geometry manual §5.3 diagram), so equal declared values
-leave the gap above the body larger than the gap below by the footer's
-strut height — the correction every user of symmetric furniture rediscovers
-(tex.sx/375264). Here the two distances are between ink edges by
-definition, so the patch is unrepresentable. -/
+(`furniture_symmetric`): that is the native model, of the `furnituregap`
+key and of an undeclared page. LaTeX's own spellings keep LaTeX's reading:
+`\headsep` runs from the header's baseline to the body, `\footskip`
+baseline to baseline (ltpage.dtx, `\@outputpage`; the geometry manual §5.3
+diagram), so equal declared values leave the gap above the body larger
+than the gap below by the footer's strut height — the correction users of
+symmetric furniture strike by hand (tex.sx/375264), and which then means
+here what it means in LaTeX (`furnGapOfSep`, `latexFootY`). -/
 structure FurnBand where
   edge : Sp
   band : Sp
@@ -175,10 +176,19 @@ page's top edge. -/
 def furnHeadY (b : FurnBand) (ascent : Sp) : Sp := b.edge + ascent
 
 /-- The foot line's baseline: its ink *bottom* stands exactly `edge` above
-the page's bottom edge. Anchoring the ink rather than the baseline is the
-whole difference from LaTeX's `\footskip`, and what makes the two edge
-gaps one number. -/
+the page's bottom edge. Anchoring the ink rather than the baseline is what
+makes the two edge gaps one number in the native model; a declared
+`\footskip` is LaTeX's instead (`latexFootY`). -/
 def furnFootY (b : FurnBand) (pageH descent : Sp) : Sp := pageH - b.edge - descent
+
+/-- The foot line's baseline under a declared `\footskip`, as LaTeX reads
+it: `\footskip` below the text area's floor, baseline to baseline —
+`\@outputpage` appends the foot under `\box\@outputbox` with
+`\baselineskip\footskip`, and `\@makecol` cancels the box's depth
+(`\vskip -\dimen@`), so the floor is a full page's last baseline and the
+foot's place is a function of the geometry alone, whatever its face
+(ltpage.dtx, ltoutput.dtx). -/
+def latexFootY (g : Geom) (footskip : Sp) : Sp := g.bodyBottom + footskip
 
 /-- The band arithmetic's one core inequality: the reservation always holds
 the edge gap, the ink, and the required body-side gap, and it needs no sign
@@ -269,13 +279,11 @@ theorem furniture_gap_exact (vmargin ink gap : Sp) :
 /-- The baseline-to-ink correction, applied exactly once, where the LaTeX
 spellings are read: `\headsep` positions the header's *baseline* against
 the body while the visual gap runs from the ink, and the difference is
-what the line hangs below its baseline — the face's descent. `\footskip`
-reads through the same correction — the symmetric reading — so equal
-declared values mean equal ink gaps: the engine without the strut patch
-equals LaTeX with it (tex.sx/375264's `\advance\footskip by \ht\strutbox`
-is this correction applied by hand, on the one side LaTeX measures
-baseline-to-baseline; a difference that survives the reading is declared
-asymmetry, and N0021 names it). -/
+what the line hangs below its baseline — the face's descent — so the head
+read through it stands its baseline `\headsep` above the text area, as in
+LaTeX. `\footskip` is not read through it: it runs baseline to baseline
+(`latexFootY`). The two declared values read through it differ by exactly
+their declared difference, which N0021 names. -/
 def furnGapOfSep (sep descent : Sp) : Sp := sep - descent
 
 /-- The inverse reading, for `geometry_roundtrip`: what a gap would be
@@ -10243,23 +10251,35 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- The running line's ink extents: the body face at the page size for a
   -- declared head or foot and the plain number. One `furnitureBand` per
   -- side from the same ink and gap is what makes the two edges one number
-  -- (`furniture_symmetric`); the declared gap is read here — the native
-  -- ink key directly, the LaTeX spellings through the one baseline-to-ink
-  -- correction (`furnGapOfSep`). The chrome footer is moloch's footline
-  -- instead (`Ir.footline`): its box sets each page's floor where the page
-  -- is built (`B.bottom`), so it reserves no band here.
+  -- (`furniture_symmetric`) where the native ink key or nothing is declared.
+  -- A LaTeX spelling is read as LaTeX reads it: `\headsep` through the one
+  -- baseline-to-ink correction (`furnGapOfSep`), which lands the head's
+  -- baseline `\headsep` above the text area exactly, and `\footskip`
+  -- baseline to baseline from the text area's floor (`latexFootY`). A
+  -- `\setlength` reaches here as the token of its name, as `\topskip`'s
+  -- does below. The chrome footer is moloch's footline instead
+  -- (`Ir.footline`): its box sets each page's floor where the page is built
+  -- (`B.bottom`), so it reserves no band here.
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
-  let gapTop := doc.page.furnitureGap <|> doc.page.headsep.map (furnGapOfSep · corr)
-  let gapBot := doc.page.furnitureGap <|> doc.page.footskip.map (furnGapOfSep · corr)
+  let xHeight := scale font.xHeight
+  let tokenLen (n : String) : Option Sp :=
+    (doc.tokens.find? n).map fun g => (g.resolve geom.fontSize xHeight).width
+  let headsep := doc.page.headsep <|> tokenLen "headsep"
+  let footskip := doc.page.footskip <|> tokenLen "footskip"
+  let gapTop := doc.page.furnitureGap <|> headsep.map (furnGapOfSep · corr)
+  let gapBot := doc.page.furnitureGap <|> footskip.map (furnGapOfSep · corr)
+  let latexFoot := if doc.page.furnitureGap.isSome then none else footskip
   let headFurn := furnitureBand geom.vmargin runInk gapTop
   let footFurn := furnitureBand geom.vmargin runInk gapBot
   -- A footer reserves its band before anything is placed, so no body line
   -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
   -- With the default margins the half margin holds the foot line whole and
-  -- the band is zero: an undeclared page is unchanged.
+  -- the band is zero: an undeclared page is unchanged. Under a declared
+  -- `\footskip` the text area is the declared one, as in LaTeX, whose foot
+  -- stands in the margin below it.
   let geom := if doc.foot.isSome || plainFoot then
-      { geom with footBand := footFurn.band }
+      { geom with footBand := if latexFoot.isSome then 0 else footFurn.band }
     else geom
   -- The running head reserves its band the same way, before anything is
   -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
@@ -10272,10 +10292,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- (`\setlength{\topskip}` reaches here as the token of that name), else
   -- the standard classes' body size (size10/11/12.clo:97); a frame is one
   -- box, and its first line keeps the engine's metric rule (`B.firstRise`).
-  let xHeight := scale font.xHeight
   let geom := if doc.docClass.record.model == .frame then geom
-    else { geom with topskip := some (((doc.tokens.find? "topskip").map
-      fun g => (g.resolve geom.fontSize xHeight).width).getD geom.fontSize) }
+    else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
   -- The resolved design is the one resolving site for the document-level
   -- colours (`Design.ofDoc`): the ink here is the ink `Contrast.docDiags`
   -- judges (`judged_pair_is_shipped`), never a second `getD` chain.
@@ -10480,7 +10498,9 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     plainFoot := plainFoot
     footSize := footSize
     headY := furnHeadY headFurn (scale font.ascent)
-    footY := furnFootY footFurn geom.pageH (scale (-font.descent))
+    footY := match latexFoot with
+      | some fs => latexFootY geom fs
+      | none => furnFootY footFurn geom.pageH (scale (-font.descent))
     muted := design.muted }
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by

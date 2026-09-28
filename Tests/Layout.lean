@@ -2402,9 +2402,11 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       p.lines.any (fun l => l.furniture && l.y == footY) &&
       p.lines.all (fun l => l.furniture || l.y + d + Ir.leadingFor geom.fontSize ≤ bodyBottom))
       |>.getD false)
-  -- Declared gaps: the LaTeX spellings read through the one correction
-  -- (`furnGapOfSep`), so equal declared values mean equal gaps — without
-  -- the strut patch (`geometry_roundtrip` holds the reading invertible).
+  -- Declared seps: the LaTeX spellings read as LaTeX reads them — the
+  -- head's baseline `\headsep` above the text area, through the one
+  -- baseline-to-ink correction (`furnGapOfSep`, `geometry_roundtrip`), and
+  -- the foot's `\footskip` below the text area's floor, baseline to
+  -- baseline (`latexFootY`).
   let declPre (page : String) : String := "\\documentclass{article}" ++ page ++
     "\\runninghead{Invented Notes}\\runningfoot{p. \\pagenumber}" ++
     s!"\\begin\{document}\n{para}\n\\end\{document}"
@@ -2415,14 +2417,21 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let dOut := layoutOf oneFace dDoc dGeom
   let dGap := Layout.furnGapOfSep (Dim.pt 20) d
   let dBand := Layout.furnitureBand dGeom.vmargin (a + d) (some dGap)
-  let (dHeadY, dFootY) := furnYs font dGeom (some dGap)
-  t "equal declared seps place head and foot from one band"
+  let dHeadY := (furnYs font dGeom (some dGap)).1
+  let dFootY := dGeom.pageH - dGeom.vmargin + Dim.pt 20
+  t "declared seps place the head and the foot as LaTeX reads them"
     (dOut.pages.all fun p =>
       p.lines.any (fun l => l.furniture && l.y == dHeadY) &&
       p.lines.any (fun l => l.furniture && l.y == dFootY))
-  t "the declared gap is honoured exactly on the page"
-    ((dGeom.vmargin + dBand.band) - (dHeadY + d) == dGap &&
-     (dFootY - a) - (dGeom.pageH - dGeom.vmargin - dBand.band) == dGap)
+  -- The same over the shipped lines alone: the first page's highest and
+  -- lowest furniture baselines against the text area's edges.
+  let dFurn := ((dOut.pages[0]?.map fun p => (p.lines.filter (·.furniture)).map (·.y)).getD #[])
+  t "the declared seps are honoured exactly on the page, baseline to text area"
+    (match dFurn[0]? with
+     | some y0 =>
+       (dGeom.vmargin + dBand.band) - dFurn.foldl min y0 == Dim.pt 20 &&
+         dFurn.foldl max y0 - (dGeom.pageH - dGeom.vmargin) == Dim.pt 20
+     | none => false)
   t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
   let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
   let nOut := layoutOf oneFace nDoc
@@ -2500,6 +2509,56 @@ def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (footTexts emptyOut emptyGeom 0 == #[])
   t "and every page after the first keeps exactly its own number"
     (footTexts emptyOut emptyGeom 1 == #["2"] && footTexts emptyOut emptyGeom 2 == #["3"])
+
+/-- **A declared `\footskip` runs baseline to baseline** (`Layout.latexFootY`):
+LaTeX's output routine sets the foot `\footskip` below the text area's
+floor, the baseline of a full page's last line (ltpage.dtx `\@outputpage`:
+`\box\@outputbox \baselineskip\footskip`, the box's depth cancelled by
+`\@makecol`), whatever the foot's face. Asserted over `Layout.Out`: the plain
+page number's baseline less the text area's floor, for the geometry key,
+the native `\page` key and `\setlength`. lualatex (TeX Live 2026, article
+10pt, Open Sans) sets the number's ink 7.8 bp above where `2f81a8e1` set
+it, for 12, 30 and 60 pt alike: the foot's ink bottom was anchored
+instead, which stands the baseline its ascent less its descent low; and a
+`\setlength` was noted as applied and read by nothing (11.76 bp off at
+45 pt). Invented words. -/
+def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (pre : String) : String :=
+    "\\documentclass{article}\\usepackage{geometry}" ++ pre ++
+    "\\begin{document}Alpha words.\n\nBravo words.\n\\end{document}"
+  -- The number's baseline less the text area's floor, on page 1.
+  let drop (s : String) : Option Dim.Sp := do
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
+    pure (foot.y - (g.pageH - g.vmargin))
+  for fs in [12, 30, 60] do
+    t s!"a declared footskip of {fs}pt sets the foot's baseline that far below the text area"
+      (drop (src s!"\\geometry\{letterpaper, textheight=9in, footskip={fs}pt}") ==
+        some (Dim.pt fs))
+  t "the native \\page key reads footskip as the geometry key does"
+    (drop (src "\\page{ footskip = 20pt }") == some (Dim.pt 20))
+  t "\\setlength{\\footskip} is read, not only noted"
+    (drop (src "\\geometry{letterpaper, textheight=9in}\\setlength{\\footskip}{45pt}") ==
+      some (Dim.pt 45))
+  -- `\headsep`'s `\setlength` too: the head's baseline that far above the text area.
+  let headAt (s : String) : Option Dim.Sp := do
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    let p ← (layoutOf oneFace doc).pages[0]?
+    let ys := (p.lines.filter (·.furniture)).map (·.y)
+    let top ← ys[0]?
+    pure (g.vmargin - ys.foldl min top)
+  t "\\setlength{\\headsep} is read, not only noted"
+    (headAt ("\\documentclass{article}\\runninghead{Invented Notes}\\setlength{\\headsep}{30pt}" ++
+      "\\begin{document}Alpha words.\n\\end{document}") == some (Dim.pt 30))
+  -- Kept: an undeclared footskip keeps the engine's furniture convention.
+  let (bare, _) := elabStr (src "\\geometry{letterpaper, textheight=9in}")
+  let bg := Layout.Geom.ofPage bare.page
+  t "kept: an undeclared footskip hangs the foot from half the margin"
+    (drop (src "\\geometry{letterpaper, textheight=9in}") ==
+      some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.vmargin)))
 
 /-- The F5 correction, executably: a slot's box is a function of the
 declared layout and the geometry alone (`Layout.bandSlotX` — the other
