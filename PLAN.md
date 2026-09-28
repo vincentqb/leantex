@@ -23977,3 +23977,98 @@ and the non-vacuous 3 = 2 + 1 file/native/boundary partition;
 and the partition carries a three-object structure census witness. The
 written-and-read `/Alt` check remains in `structTreeChecks`; 18 of the original
 port checks fail at `fed62cd2`.
+
+### 2026-09-28 — a space kerns only against the glyph beside it, and kern-fix's glyph loop gives back most of its cost
+
+**A text-font command's edge stops the space kern** (review-f's KF-1).
+`\DeclareTextFontCommand` sets `\check@icl` before a command's argument and
+`\check@icr` after its group; each is `\maybe@ic`, TeX's `\/` where the
+face in force is upright, through `\sw@slant`, which lifts a space the list
+ends in. The kern it sets parts the glyph from the space, and luaotfload
+kerns a glue only against a glyph beside it, so lualatex ships `\textrm{T}
+a` unkerned where `T a` and `{\rmfamily T} a` are kerned (`\showbox`: `T`,
+a kern of 0.0 marked italic, then the 2.33 pt glue). The IR gains
+`Inline.italicCorr (maybe)`: the text-command arm sets one inside the
+styled run before the argument and one after it, under ltfntcmd's
+conditions (no empty or lone-space argument, no `\nocorr` at that end, no
+`,` or `.` read next); a declaration sets none, and so neither does
+beamer's `\alert` (bold by declaration) nor url.sty's `\UrlFont`. Layout
+reads it under the face in force: a slanted face makes none; otherwise the
+space before it is lifted and gives back the pair kern it took, once — a
+second edge at the same space finds a kern at the list's tail, where `\/`
+adds nothing. Measured on synthetic probes, Source Serif Pro in both
+engines, where the second word starts (bp; lualatex / kern-fix / now):
+`\textrm{T} a` 8.33 / 8.18 / 8.37, `\textup{V} a` 9.03 / 8.68 / 9.07,
+`\textbf{T} a` 8.63 / 8.61 / 8.67, `T \textbf{a}` 8.33 / 8.18 / 8.37,
+`\textrm{\nocorr T} a` 8.33 / 8.18 / 8.37, `\textrm{T\nocorr} a` 8.14 /
+8.18 / 8.18, and with two edges at one space `\textbf{T }\textrm{a}`,
+`\textrm{\textbf{T }}a` and `\textbf{T }\textbf{a}` 8.44 / 8.48 (the
+in-place item writes had given the pair back twice there, 8.54, until
+review caught it); the 0.04 left is the engine's 1 pt = 1 bp scale. Guard:
+FontMath's font-edge rows over `Layout.Out`: five fail at `5ea632f6` and at
+`2f81a8e1`, the three two-edge rows fail on the in-place writes before
+their fix, and the controls pass throughout.
+
+**Owed: the italic correction's width.** The kern stands at no width here.
+luaotfload's `itlc` is `xMax − advance + uwidth/2` where that is positive,
+on italic faces only (fontloader-font-con.lua), and the rows it decides
+still stand tight (bp, lualatex / now): `\emph{a} V` 7.51 / 7.25,
+`\textit{V} V` 9.33 / 8.08, `\textit{T} a` 8.83 / 8.02, `\emph{f} x` 7.32 /
+5.27.
+
+**The glyph loop's cost.** Correction to the 2026-09-27 kern entry: its
+bench line was taken against `0bc7e4cf`, not the branch's base, and by an
+A/B script. By `scripts/bench.lean` (N = 11 a run; nine rounds interleaved
+in rotated order on four pinned cores; the median of the rounds' medians,
+ms), kern-fix alone against its base, both on v4.34.1 (`302e69dc`, and
+`fd6e1267` with the toolchain bump, which alone moves nothing): paragraphs
+81 / 77, lorem 478 / 437, underline 675 / 625, paper 195 / 177, paper as
+HTML 176 / 166 — 5–10%; the themed deck is level. Profiled with perf on one
+core, the cost came from five places: a space asked its face twice, per
+space, for the space glyph and the pair (4% of bench/paper.tex's samples);
+a CFF subset parsed the face a second time and decoded every kept glyph
+again (2.7%); a PDF build took the glyph census five times; a word after a
+space copied the paragraph's items so far; and a run's placement arrays
+grew by doubling, the halves they freed leaving the page renderer to fresh
+allocator pages. Each is fixed where it arises: the face memoizes each
+glyph's space pairs (`Font.spaceKerns`, luaotfload's `spacekerns`) and
+keeps its prepared outline source for the subset (`Font.inkSrc`); the
+driver takes the census once for the programs and the page operators and
+the writer its own (two walks); the item fold writes in place; the arrays
+are sized once. Every step leaves the artifacts byte-identical (the corpus
+and bench documents, PDF and HTML: 589 files). Kern-fix with these ported
+onto it (`302e69dc` plus the cost commits, its artifacts byte-identical to
+kern-fix's) against its base: paragraphs 78 / 77, lorem 449 / 437,
+underline 637 / 625, paper 178 / 177, paper as HTML 165 / 166 — the paper
+is back at its base, and lorem and underline stand 2–3% above theirs, about
+a quarter of what kern-fix added. This branch on main (`1d812c97`) against
+main: paragraphs 79 / 81, lorem 449 / 486, underline 657 / 692, paper 180 /
+192, paper as HTML 165 / 171. What stays is the price of kern-fix's two
+features — the pen's number before each glyph, and each subset's rebuilt
+tables — and a third cost not yet explained: since kern-fix, the line's ink
+box (`segsInk`, the first line's rise) reads `Font.yExtent` at several
+times its base's cost (123 against 30 of bench/lorem.tex's samples, 48 of
+them in `lean_dec_ref_cold`), and a copy of each run's glyph array in the
+line builder takes it back to 18, though the compiled walks read glyph data
+borrowed either way; the copy was measured, not explained, so it is not
+taken (routed).
+
+**Theorem names.** The placement statements take registered shapes
+(`placeStep_fold_exact`, `placeSpec_glyphs_id`, `place_glyphs_id`,
+`place_nums_exact`, `placeSpec_length_exact`, `glyphStarts_length_exact`).
+`moveTo_runs`, `runItem_runs`, `pushRun_runs` and `moveTo_plainOps` join
+the content walk's step-lemma families, which predate kern-fix; AGENTS.md
+now says how a step lemma is named: by its step and the field or invariant
+it speaks of, never a registered suffix unless it has that shape itself.
+
+**Set aside.** A gate that skipped the space lookup for a face none of
+whose pairs name its space (`Font.spacePairs`, saved uncommitted in round
+11): the per-glyph memo subsumes it, and on Source Serif Pro, whose pairs
+do name its space, it saved nothing.
+
+**Routed.** The `segsInk` cost above, with its profiles; `\quad` and a tie
+are not kerned against their neighbours (review-f, as at base); the
+`.kerned` `TJ` spelling has no render or injectivity statement beside
+`glyphs_render_exact` (review-f); the space factor after a sentence end
+(the kern entry's routing, still open); a face's space-pair memo is built
+for all its glyphs at a space's first use, a large fallback face included.
