@@ -154,3 +154,57 @@ def natbibRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     for line in want do
       t s!"{tag}: the page sets '{line}'" (page.contains line)
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
+
+
+/-- The calls the `sort`/`compress` rows set: the four entries cited once in
+order (so their numbers are 1–4), then runs, gaps, a repeat, a textual
+citation and the forms that wrap their keys without brackets. -/
+def natbibSortCalls : List String :=
+  ["\\citep{alpha2019} \\citep{delta2021} \\citep{eps2020} \\citep{pome2018}",
+   "\\citep{eps2020,alpha2019,delta2021}", "\\citep{pome2018,alpha2019,eps2020,delta2021}",
+   "\\citep{delta2021,alpha2019}", "\\citet{eps2020,alpha2019}",
+   "\\citep[see][p.~5]{eps2020,alpha2019,delta2021}", "\\citep{alpha2019,delta2021,pome2018}",
+   "\\citealp{alpha2019,delta2021,eps2020}", "\\citep{alpha2019,delta2021,delta2021,eps2020}",
+   "\\citenum{alpha2019,delta2021,eps2020}"]
+
+/-- One configuration per row: the preamble, the style, the calls, and the
+lines lualatex set for them (TeX Live 2026, natbib 8.31b, bibtex 0.99e,
+through `pdftotext`). -/
+def natbibSortModes : List (String × String × List String × List String) :=
+  [("\\usepackage[numbers,sort&compress]{natbib}", "unsrtnat", natbibSortCalls,
+    ["[1] [2] [3] [4]", "[1–3]", "[1–4]", "[1, 2]", "Alpha et al. [1], Epsilon and Zeta [3]",
+     "[see 1–3, p. 5]", "[1, 2, 4]", "1–3", "[1, 2, 2, 3]", "1–3"]),
+   ("\\usepackage[numbers,sort]{natbib}", "unsrtnat", natbibSortCalls,
+    ["[1] [2] [3] [4]", "[1, 2, 3]", "[1, 2, 3, 4]", "[1, 2]",
+     "Alpha et al. [1], Epsilon and Zeta [3]", "[see 1, 2, 3, p. 5]", "[1, 2, 4]", "1, 2, 3",
+     "[1, 2, 2, 3]", "1, 2, 3"]),
+   ("\\usepackage[numbers,compress]{natbib}", "unsrtnat", natbibSortCalls,
+    ["[1] [2] [3] [4]", "[3, 1, 2]", "[4, 1, 3, 2]", "[2, 1]",
+     "Epsilon and Zeta [3], Alpha et al. [1]", "[see 3, 1, 2, p. 5]", "[1, 2, 4]", "1–3",
+     "[1, 2, 2, 3]", "1–3"]),
+   ("\\usepackage[sort]{natbib}", "plainnat",
+    ["\\citep{eps2020,delta2021,alpha2019}", "\\citet{eps2020,alpha2019}"],
+    ["[Alpha et al., 2019, Delta, 2021, Epsilon and Zeta, 2020]",
+     "Alpha et al. [2019], Epsilon and Zeta [2020]"]),
+   ("\\usepackage[sort]{natbib}", "unsrtnat",
+    ["\\citep{eps2020}", "\\citep{delta2021,eps2020,alpha2019}"],
+    ["[Epsilon and Zeta, 2020]", "[Epsilon and Zeta, 2020, Delta, 2021, Alpha et al., 2019]"])]
+
+/-- **natbib's `sort` and `compress` are implemented, not named**: `sort`
+sets a citation's keys in reference-list order in either mode, and
+`compress` joins a numbered citation's runs of three or more — `[1–3, 5]`
+— where it wraps its keys (`\citep`, `\citealp`, `\citenum`), never in a
+textual one, a repeated number breaking the run (natbib.sty `\NAT@sort@cites`,
+`\NAT@citexnum`). On the shipped page and in the HTML, against lualatex,
+with no option named as dropped. -/
+def natbibSortChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for (pre, style, calls, want) in natbibSortModes do
+    let (page, _, html, ds) := natbibShip oneFace natbibBib pre style calls
+    let tag := s!"natbib {pre} + {style}"
+    t s!"{tag}: no diagnostic ({ds.map (·.code)})"
+      (!ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
+    for w in want, k in [1:want.length + 1] do
+      let line := s!"L{k} {w} end."
+      t s!"{tag}: the page sets '{line}'" (page.contains line)
+      t s!"{tag}: the html reads '{line}'" (hasStr html line)

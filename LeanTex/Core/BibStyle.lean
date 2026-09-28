@@ -22,7 +22,9 @@ open LeanTex.Core
 /-- natbib's citation punctuation: the seven values `\bibpunct` sets
 (natbib.sty `\NAT@open`, `\NAT@close`, `\NAT@sep`, the mode letter,
 `\NAT@aysep`, `\NAT@yrsep`, `\NAT@cmt`), each at natbib's own load
-value. -/
+value, and the load's `sort` and `compress` (`\NAT@sort`, `\NAT@cmprs`),
+which order a citation's keys and join its runs of numbers — options no
+`\bibpunct` or style row touches. -/
 structure CitePunct where
   numbers : Bool := false
   «open» : String := "("
@@ -31,6 +33,8 @@ structure CitePunct where
   aysep : String := ","
   yysep : String := ","
   notesep : String := ", "
+  sort : Bool := false
+  compress : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- `\setcitestyle`'s keywords (natbib.sty `\setcitestyle`, the package
@@ -86,12 +90,15 @@ def CitePunct.reads (d : String) : Bool :=
 /-- One declaration over the punctuation and natbib's `\bibstyle` door, the
 door a bibliography style's own punctuation comes through at
 `\begin{document}`: `nobibstyle` closes it and `bibstyle` reopens it
-(natbib's option names), a keyword or a `key=value` updates the
-punctuation, and anything else leaves both as they were — natbib reads an
-unknown item as nothing. -/
+(natbib's option names), `sort` and `compress` set the load's two
+citation options, a keyword or a `key=value` updates the punctuation, and
+anything else leaves both as they were — natbib reads an unknown item as
+nothing. -/
 def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
   if d == "nobibstyle" then (st.1, false)
   else if d == "bibstyle" then (st.1, true)
+  else if d == "sort" then ({ st.1 with sort := true }, st.2)
+  else if d == "compress" then ({ st.1 with compress := true }, st.2)
   else match citeKeywords.lookup d, keyValue? d with
     | some f, _ => (f st.1, st.2)
     | none, some (k, v) =>
@@ -120,7 +127,8 @@ def citeItems (src : String) : Array String := Id.run do
 `\DeclareOption`s — `\ProcessOptions` runs them in this order, whatever
 order a load lists them in), each as the declarations it executes in
 `\setcitestyle`'s vocabulary: `numbers` is `numbers` with `square`, `comma`
-and `nobibstyle` there. -/
+and `nobibstyle` there. `sort`, `compress` and `sort&compress` set the two
+citation options only a load declares (`CitePunct.step`). -/
 def natbibOptions : List (String × List String) :=
   [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
    ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
@@ -128,7 +136,8 @@ def natbibOptions : List (String × List String) :=
    ("angle", ["angle", "nobibstyle"]), ("curly", ["curly", "nobibstyle"]),
    ("comma", ["comma", "nobibstyle"]), ("semicolon", ["semicolon", "nobibstyle"]),
    ("colon", ["semicolon", "nobibstyle"]),
-   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"])]
+   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"]),
+   ("sort", ["sort"]), ("compress", ["compress"]), ("sort&compress", ["sort", "compress"])]
 
 /-- How the reference list is ordered: `citation` keeps first-citation
 order (the "unsrt" in `unsrtnat`); `authorYear` sorts by the label names,
@@ -418,6 +427,59 @@ private def finish (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (acc : CiteA
       (if acc.dated then s.cl else ""))
   emit (emit #[] lead ++ acc.out) trail
 
+/-- natbib's `sort` (natbib.sty `\NAT@sort@cites`): a citation's keys in
+reference-list order, in either mode; a key whose mark is not a number —
+unresolved, or a `thebibliography` item's own label — goes after them in
+the order written, natbib's non-sort list. -/
+private def sortParts (parts : Array (Option Resolved)) : Array (Option Resolved) :=
+  let numbered (o : Option Resolved) : Bool := o.any (·.label.isNone)
+  let known := (parts.filterMap fun o => if numbered o then o else none).toList.mergeSort
+    fun a b => decide (a.position ≤ b.position)
+  let unknown := parts.filter (!numbered ·)
+  (known.map some).toArray ++ unknown
+
+/-- `compress`'s state between keys (natbib.sty `\NAT@citexnum`): the output
+so far, the last position printed or held, and the key held back — the last
+number of a run waits until the run ends (`\NAT@last@yr`), with what
+precedes it: the separator after the run's first number, an en dash after
+its second. -/
+private structure RunAcc where
+  acc : CiteAcc := {}
+  last : Option Nat := none
+  held : Option (String × Resolved) := none
+
+/-- The held number, printed. -/
+private def flushHeld (out : Array Ir.Inline) : Option (String × Resolved) → Array Ir.Inline
+  | some (pre, r) => emitLink (emit out pre) (anchorOf r.key) (toString r.position)
+  | none => out
+
+/-- One key under `compress`: a number one past the last extends the run
+and is held back; any other — a gap, a repeat, a mark that is no number (a
+`thebibliography` label) — prints what was held, then itself. An unresolved
+key ends the run and prints `?` where it stands. -/
+private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
+  | none =>
+    { acc := { st.acc with out := emit (flushHeld st.acc.out st.held) (st.acc.citea ++ "?"),
+                           citea := p.sep ++ " " } }
+  | some r =>
+    if r.label.isNone && st.last.map (· + 1) == some r.position then
+      { acc := { st.acc with citea := p.sep ++ " ", dated := true }, last := some r.position,
+        held := some (if st.held.isSome then "–" else st.acc.citea, r) }
+    else
+      { acc := { st.acc with
+          out := emitLink (emit (flushHeld st.acc.out st.held) st.acc.citea) (anchorOf r.key)
+            (r.label.getD (toString r.position))
+          citea := p.sep ++ " ", dated := true }
+        last := if r.label.isNone then some r.position else none }
+
+/-- natbib's `compress` over a numbered citation (natbib.sty `\NAT@cmprs`):
+a run of three or more consecutive list positions sets as its ends joined
+by an en dash (`[1–3, 5]`), a run of two keeps both numbers, and a repeated
+number breaks a run and prints again. -/
+private def compressRuns (p : CitePunct) (parts : Array (Option Resolved)) : CiteAcc :=
+  let st := parts.foldl (runStep p) {}
+  { st.acc with out := flushHeld st.acc.out st.held }
+
 /-- A whole citation under natbib's punctuation, per its command (natbib.sty's
 command table): `\citep` wraps its keys in the brackets with `sep` between
 them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
@@ -425,15 +487,22 @@ them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
 `\citeyear` print one part, `\citenum` the list position in either mode,
 a bracket mark the one bracket it names (the halves of `\citetext`, whose
 body stands between them), and `\nocite` nothing: its keys
-only enter the list (`citedKeys`). The output is text and links over text
-only — no `.cite`, no `.ref` — which is `renderCite_plain`, the leaf fact
-`apply_no_cite` rests on. -/
+only enter the list (`citedKeys`). Under the load's `sort` the keys stand in
+list order; under `compress` a numbered citation that wraps its keys
+(`\citep`, `\citealp`, `\citenum`) joins its runs (`compressRuns`), where a
+textual one keeps every number, as natbib's textual branch does. The output
+is text and links over text only — no `.cite`, no `.ref` — which is
+`renderCite_plain`, the leaf fact `apply_no_cite` rests on. -/
 def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
   if let .bracket o := f.cmd then emit #[] (if o then p.open else p.close)
   else if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
   else if f.cmd == .nocite then #[]
-  else finish p f (switches p f) (parts.foldl (citeStep p f (switches p f)) {})
+  else
+    let parts := if p.sort then sortParts parts else parts
+    let s := switches p f
+    finish p f s (if p.compress && s.numeric && s.wrap && s.part == .both then compressRuns p parts
+      else parts.foldl (citeStep p f s) {})
 
 /-- An en dash between page numbers: `45--67` and `45-67` both print
 `45–67`, the range dash `.bib` files spell both ways. `text` already
@@ -837,8 +906,9 @@ def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
   | none => latexPunct
   | some decls =>
     let (p, door) := decls.foldl CitePunct.step ({}, true)
-    let p := if door then row.getD p else p
-    if labels then p else { p with numbers := true }
+    let q := if door then row.getD p else p
+    let q := { q with sort := p.sort, compress := p.compress }
+    if labels then q else { q with numbers := true }
 
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
 the caller falls back to `unsrtnat` — a record, so the fallback loses the
@@ -1516,6 +1586,29 @@ private theorem finish_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
   refine emit_plain _ _ ?_
   rw [Array.all_append, emit_plain _ _ (by simp), h]; rfl
 
+private theorem flushHeld_plain (out : Array Ir.Inline) (h : Option (String × Resolved))
+    (hout : out.all plainCite = true) : (flushHeld out h).all plainCite = true := by
+  cases h with
+  | none => exact hout
+  | some ph => exact emitLink_plain _ _ _ (emit_plain _ _ hout)
+
+private theorem runStep_plain (p : CitePunct) (st : RunAcc) (o : Option Resolved)
+    (h : st.acc.out.all plainCite = true) : (runStep p st o).acc.out.all plainCite = true := by
+  cases o with
+  | none => exact emit_plain _ _ (flushHeld_plain _ _ h)
+  | some r =>
+    simp only [runStep]
+    split
+    · exact h
+    · exact emitLink_plain _ _ _ (emit_plain _ _ (flushHeld_plain _ _ h))
+
+private theorem compressRuns_plain (p : CitePunct) (parts : Array (Option Resolved)) :
+    (compressRuns p parts).out.all plainCite = true := by
+  unfold compressRuns
+  refine flushHeld_plain _ _ ?_
+  exact Array.foldl_induction (motive := fun _ (a : RunAcc) => a.acc.out.all plainCite = true)
+    (by simp) (fun _ b hb => runStep_plain p b _ hb)
+
 /-- The renderer emits text and links over text only. -/
 theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) :
@@ -1528,8 +1621,10 @@ theorem renderCite_plain (p : CitePunct) (f : Ir.CiteForm)
   split
   · simp
   · refine finish_plain _ _ _ _ ?_
-    exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => a.out.all plainCite = true)
-      (by simp) (fun _ b hb => citeStep_plain p f _ b _ hb)
+    split
+    · exact compressRuns_plain p _
+    · exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => a.out.all plainCite = true)
+        (by simp) (fun _ b hb => citeStep_plain p f _ b _ hb)
 
 /-- A rendered citation adds nothing to the pending census. -/
 private theorem renderCite_pending (p : CitePunct) (f : Ir.CiteForm)

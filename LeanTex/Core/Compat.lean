@@ -1507,7 +1507,7 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
     say .W0101 s!"'\\bibpunct' superscript citations are set on the baseline" pos
       (subject := some "ctrl:bibpunct")
   became s!"\\{name}" "natbib's citation punctuation, read at \\begin{document}" pos
-  natbibDefer (#["nobibstyle"] ++ decls) pos
+  natbibDefer (#["nobibstyle"] ++ decls.filter Bib.CitePunct.reads) pos
   return some (#[], k)
 
 /-- lineno's switch and modulo commands (lineno.sty, the user-commands

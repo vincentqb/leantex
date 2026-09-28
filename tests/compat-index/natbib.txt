@@ -56,9 +56,9 @@ pre impl \usepackage[colon]{natbib}
 pre impl \usepackage[nobibstyle]{natbib}
 pre impl \usepackage[bibstyle]{natbib}
 pre refuse:W0101 \usepackage[super]{natbib}
-pre refuse:W0101 \usepackage[sort]{natbib}
-pre refuse:W0101 \usepackage[compress]{natbib}
-pre refuse:W0101 \usepackage[sort&compress]{natbib}
+pre impl \usepackage[sort]{natbib}
+pre impl \usepackage[compress]{natbib}
+pre impl \usepackage[sort&compress]{natbib}
 pre refuse:W0101 \usepackage[longnamesfirst]{natbib}
 pre refuse:W0101 \usepackage[sectionbib]{natbib}
 pre refuse:W0101 \usepackage[nonamebreak]{natbib}
