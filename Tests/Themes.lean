@@ -2409,7 +2409,7 @@ def inkBoundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let covInk := (layoutOf oneFace covDoc).pages[0]?.bind fun p =>
     p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
       | .run _ c _ _ glyphs .. =>
-        if hasStr (String.ofList (glyphs.toList.map (·.2))) "Pending" then some c else none
+        if hasStr (String.ofList (glyphs.toList.map (·.2.1))) "Pending" then some c else none
       | _ => none
   let covD := Ir.Design.ofDoc covDoc
   t "a transparent covering is beamer's fifteen per cent, and nothing warns"

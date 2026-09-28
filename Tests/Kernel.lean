@@ -12,7 +12,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
   for seg in l.segs do
     match seg with
     | .run idx _ _ w gs _ _ _ _ _ =>
-      out := out.push (idx, String.ofList (gs.map (·.2)).toList, x, w)
+      out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
       x := x + w
     | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w

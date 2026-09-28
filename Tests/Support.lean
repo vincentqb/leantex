@@ -607,7 +607,7 @@ tie, which ships as a box a space wide (Layout's no-break-space arm) —
 reads as the space the page shows. -/
 def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
   | .run _ _ _ _ glyphs _ _ _ _ _ =>
-    if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c) => s.push c) s
+    if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c, _) => s.push c) s
   | .gap _ _ => s.push ' '
   | _ => s) ""
 

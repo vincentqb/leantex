@@ -6591,7 +6591,7 @@ def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let pdfInk (word : String) : Option Ir.Color := out.pages.findSome? fun p =>
     p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
       | .run _ c _ _ glyphs .. =>
-        if hasStr (String.ofList (glyphs.toList.map (·.2))) word then some c else none
+        if hasStr (String.ofList (glyphs.toList.map (·.2.1))) word then some c else none
       | _ => none
   let mixDeclared : Ir.Color := ({ r := 0x23, g := 0x37, b := 0x3B } : Ir.Color).mix 60
     { r := 0xFA, g := 0xFA, b := 0xFA }
