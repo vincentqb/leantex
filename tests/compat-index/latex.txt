@@ -1,0 +1,39 @@
+# source: LaTeX2e unofficial reference manual (June 2026 edition), chapter
+# Environments: one row per environment it documents, in its order. The
+# kernel's commands are the coverage tier's denominator
+# (tests/coverage/latex2e-index.txt); its environments are this index's.
+# Two are not rows: document, which every row's scaffold is, and letter,
+# the letter class's own environment rather than the kernel's. A theorem
+# is the environment \newtheorem declares; the declaration binds and moves
+# no ink where it stands (inert:binds), and what the declared environment
+# sets is witnessed on the page by the kernel theorem checks. The scaffold
+# names this file's package, latex, which the engine skips as a package
+# (W0103, which no verdict reads).
+body impl \begin{abstract}x\end{abstract}
+body impl \[\begin{array}{c}x\end{array}\]
+body impl \begin{center}x\end{center}
+body impl \begin{description}\item[a] x\end{description}
+body impl \begin{displaymath}x\end{displaymath}
+body impl \begin{enumerate}\item x\end{enumerate}
+body refuse:W0302 \begin{eqnarray}x\end{eqnarray}
+body impl \begin{equation}x\end{equation}
+body impl \begin{figure}x\end{figure}
+pre refuse:E0313 \begin{filecontents}{f.tex}x\end{filecontents}
+body impl \begin{flushleft}x\end{flushleft}
+body impl \begin{flushright}x\end{flushright}
+body impl \begin{itemize}\item x\end{itemize}
+body refuse:W0302 \begin{list}{}{}\item x\end{list}
+body refuse:W0302 \begin{math}x\end{math}
+body impl \begin{minipage}{2cm}x\end{minipage}
+body refuse:W0302 \begin{picture}(10,10)\put(0,0){x}\end{picture}
+body impl \begin{quotation}x\end{quotation}
+body impl \begin{quote}x\end{quote}
+body refuse:W0302 \begin{tabbing}a\=b\\c\>d\end{tabbing}
+body impl \begin{table}x\end{table}
+body impl \begin{tabular}{l}x\end{tabular}
+body impl \begin{thebibliography}{9}\bibitem{k} x\end{thebibliography}
+pre inert:binds \newtheorem{thm}{Theorem}
+body refuse:W0301 \newtheorem{thm}{Theorem}\begin{thm}x\end{thm}
+body refuse:W0302 \begin{titlepage}x\end{titlepage}
+body impl \begin{verbatim}x\end{verbatim}
+body impl \begin{verse}x\end{verse}
