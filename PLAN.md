@@ -23784,3 +23784,32 @@ on that unit. A node declaring both minimums and a bare label keep the
 engine's uniform seat (the user's decision since round 9). A picture in a
 sentence at a paragraph's top level is still set as a block, named; it could
 stand in its line as the boundary's image, as a cell's now does.
+
+
+
+
+### 2026-09-28 — the executable imports what it calls: the closure change, taken
+
+A correction to the entry "stable Lean 4.34.1; the executable's import closure
+stays as it is", whose last paragraph kept `LeanTex` as the executable's one
+import. The user has since asked for every branch to be merged, so the
+direct-import change of `agent/lean4-runtime-minimal` (`50f0e826`) is taken,
+rebased onto main. `Main.lean` imports the modules it calls instead of the
+umbrella. The branch's list still holds: each module on it holds a name
+`Main.lean` calls, and the umbrella modules it leaves out hold none (a
+qualified-name count over `Main.lean`; the two modules added since the
+branch's base, `TextSymData` and `BibContract`, are among them).
+`LeanTex.Version` holds the version constant, which the umbrella and
+`Main.lean` both import, and `defaultTargets` names the `LeanTex` umbrella
+beside the executable, so every proof stays in the default `lake build`. A
+module `Main.lean` comes to call is now imported there by name.
+
+The prize is the one that entry measured and no more: 4,720 bytes here
+(19,201,416 → 19,196,696, the executable built at this commit's parent and at
+this commit), and no speedup, which is neither re-measured nor claimed. What
+was measured is that nothing else moves: the two executables wrote
+byte-identical files — every PDF, HTML and other output, with the same exit
+codes and the same diagnostics by code — for all 84 corpus documents and for
+the private reference corpus's five documents, each pair built from one
+pristine copy at one path. The same comparison against the engine of
+`2f81a8e1` flags 88 of the 89, so it can see a difference.

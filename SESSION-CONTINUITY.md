@@ -2,35 +2,52 @@
 
 ## Status
 
-The package/class diagnostic recovery defect is fixed and verified. No leantex implementation work remains in flight.
+Two side sessions handed work over through this file. Both are complete and
+landed on `main`; neither has work in flight.
 
-## Goal and invariant
+## The Lean 4.34.1 runtime-closure experiment
 
-LaTeX package/class warning and info controls write TeX's log, not document ink. Their exact argument groups must be consumed before inline elaboration, with N0100 accounting. Ordinary unknown body commands must continue preserving their argument content.
+Branch `agent/lean4-runtime-minimal`, first based on `8d3df368`.
 
-## Completed work
+- `c3dceec2`, the toolchain pin to v4.34.1, landed alone as `302e69dc`.
+- `c9deaff3`'s setup notes and PLAN finding landed rewritten as `2d895d64`.
+- `50f0e826`, the direct imports, landed rebased onto today's modules as
+  `3527244e`: `Main.lean` imports the modules it calls, `LeanTex.Version`
+  holds the version, and `defaultTargets` keeps the `LeanTex` umbrella, so
+  every proof stays in the default build. The PLAN entry "the executable
+  imports what it calls" corrects the earlier one that kept the umbrella.
+- This file replaces the branch's own handoff (`effc6a23`), written before
+  anything landed.
 
-- Root cause: a diagnostic command deferred through `\AtBeginDocument` reached ordinary body unknown-command recovery; its two groups became text, so a reserved character in a log-only group produced E0311.
-- `LeanTex/Core/Compat.lean`: added two-group `Compat.meaningFree` rows for `PackageWarning`, `PackageWarningNoLine`, `PackageInfo`, `ClassWarning`, `ClassWarningNoLine`, and `ClassInfo`.
-- `Tests/Surface.lean`: added synthetic deferred-hook coverage for all six names. The test requires the elaborated body to contain only surrounding text, N0100 accounting to exist, and no W0301, W0387, or error.
-- `PLAN.md`: recorded the invariant, red test, fix, and acceptance result without private document content.
-- Implementation commit: `9315dcfc777561518f5e731ef076eb452a619d01` (`Keep package diagnostics out of body text`).
+Findings, unchanged: the executable initializes only the Lean runtime, and its
+ELF carries no compiler or elaborator initializer. The direct imports save a
+few kilobytes and buy no resolved speedup; claim none. At the landing the
+executables built with and without them wrote byte-identical artifacts on the
+test corpus and the private reference corpus. Converting `Main.lean` alone to
+the module system fails, since a module cannot import the legacy modules, and
+a whole-graph migration has no measured prize.
 
-## Evidence
+A module `Main.lean` comes to call is imported there by name: the umbrella no
+longer brings it.
 
-- Before the table change: `lake test` failed all six new rows.
-- After the change: `lake build` passed; `lake test` passed.
-- The triggering private reference-corpus document compiled successfully after the fix. Its source, topic, identifiers, and local path are intentionally absent here.
+The Lean-runtime-versus-Rust investigation is a separate workstream. Do not
+move its code, private evidence, or product-specific identifiers into this
+repository.
 
-Host build environment:
+## Package and class diagnostics
 
-```bash
-export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang
-export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
-lake build
-lake test
-```
+The package/class diagnostic recovery defect is fixed (`9315dcfc`, "Keep
+package diagnostics out of body text"). LaTeX package and class warning and
+info controls write TeX's log, not document ink: their exact argument groups
+are consumed before inline elaboration (`Compat.meaningFree`, two-group rows
+for `PackageWarning`, `PackageWarningNoLine`, `PackageInfo`, `ClassWarning`,
+`ClassWarningNoLine` and `ClassInfo`), with N0100 accounting, while ordinary
+unknown body commands keep their argument content. `Tests/Surface.lean` holds
+the synthetic deferred-hook rows for all six names. If another log-only
+control reproduces the failure, verify its public LaTeX arity, add one exact
+compatibility row, and extend the deferred-hook table; do not special-case
+characters in private style files.
 
 ## Next action
 
-None for this defect. If another TeX log-only control reproduces the same boundary failure, verify its public LaTeX arity, add one exact compatibility row, and extend the synthetic deferred-hook table. Do not special-case or escape characters in private style files, and do not weaken ordinary unknown-command content recovery.
+None. Start new work from `main` in a fresh worktree.
