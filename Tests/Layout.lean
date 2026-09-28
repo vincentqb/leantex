@@ -4211,6 +4211,30 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     face "normalsize" "Delta words" "Echo words")) 1 "Delta"
   t "a second face stands where the same face stands on a page of its own"
     (alone.isSome && second == alone)
+  -- A picture framed by fills (O-1): the page's first box, by the rule a
+  -- first line takes (`placePicture`'s `firstTop`), its fil counted and its
+  -- label riding its share. lualatex (TeX Live 2026) centres the frame's ink
+  -- exactly under `\topskip` 0 pt and `\nointerlineskip`, and 5.48 bp low
+  -- under the class's 10 pt with the `\lineskip` a box taller than the
+  -- leading takes; `2f81a8e1` set the frame at the page's top, 54–60 bp high.
+  let pic := "\\begin{center}\n\\begin{tikzpicture}\\draw (0,0) rectangle (2,1);" ++
+    "\\node at (1,0.5) {Alpha};\\end{tikzpicture}\n\\end{center}"
+  let skew (pre body : String) : Option (Dim.Sp × Bool) := do
+    let (d, _) := elabStr (doc (card ++ "\\usepackage{tikz}\\pagestyle{empty}" ++ pre) body)
+    let g := Layout.Geom.ofPage d.page
+    let p ← (layoutOf oneFace d).pages[0]?
+    let (top, h) ← p.paths.findSome? fun q => match q.path with
+      | .rect _ y _ h => some (y, h)
+      | _ => none
+    let label ← p.lines.find? fun l => hasStr (lineText l) "Alpha"
+    pure ((top - g.bodyTop) - (g.bodyBottom - (top + h)), top < label.y && label.y < top + h)
+  let within (v : Option (Dim.Sp × Bool)) (want : Dim.Sp) : Bool :=
+    (v.map fun (s, inside) => inside && want - 1 ≤ s && s ≤ want + 1).getD false
+  t "a fill-framed picture stands centred, its label inside it"
+    (within (skew "\\setlength{\\topskip}{0pt}"
+      ("\\nointerlineskip\n" ++ sandwich pic)) 0)
+  t "a fill-framed picture stands the class's \\topskip and \\lineskip low, as in lualatex"
+    (within (skew "" (sandwich pic)) (Dim.pt 10 + Layout.inkClearance))
 
 /-- **A block framed by two fills stands centred on its TeX box**
 (`finishPage_fill_centre_exact`, `placeLine_boxDepth_exact`,
@@ -4887,8 +4911,11 @@ still visible as a named debt rather than a silent crop. -/
 def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
+  -- `\topskip` 0 pt: a picture opening a page stands `\topskip` less its
+  -- height below the text area's top (`placePicture`, TeX's first box), so
+  -- under none its top is the text area's, the one fact these rows add to.
   let run (body : Array Ir.Block) : Layout.Out :=
-    layoutOf oneFace { body := body } geom
+    layoutOf oneFace { body := body, tokens := ({} : Ir.Tokens).declare "topskip" {} } geom
   -- Constraint one: correct the wobble. Two labels at one anchor height,
   -- one word with a descender and one without.
   let pair (a b : String) : Ir.Pic.Picture := { shapes := #[

@@ -4587,10 +4587,10 @@ only seeds the next page's `cur`, so every pages-extension fact about
 /-- The rider door: content that joins the open page with no vertical
 negotiation — no skip, no depth, no page close. A sibling `line` shares
 its baseline with the last committed one (an underline row, a picture's
-label) and rides with it when the page is set short: its share of the
-page's shrink is the last line's unless the rider declares its own
-(`shrink` — a picture's label rides the picture's), and a
-declared-shrink rider, like the picture it rides, holds no fil entry.
+label) and rides with it when the page is set short: its shares of the
+page's shrink and fils are the last line's unless the rider declares its
+own (`shrink`, `fils` — a picture's label rides the picture's), so every
+line holds one entry of each, which is how `finishPage` reads them.
 `fills` and `paths` paint behind what already stands (a title or block
 bar, a progress track, a picture's shapes). With `commit` and
 `finishPage` this is the third and last writer of the page being built:
@@ -4599,7 +4599,7 @@ bar, a progress track, a picture's shapes). With `commit` and
 to nothing). -/
 private def B.pushSibling (b : B) (line : Option LineOut := none)
     (fills : Array Fill := #[]) (paths : Array PathOut := #[])
-    (shrink : Option Sp := none) : B :=
+    (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
   let b := match line with
     | some l =>
       -- A rider joins the band at `y` unmeasured: the band answers its
@@ -4607,8 +4607,7 @@ private def B.pushSibling (b : B) (line : Option LineOut := none)
       { b with cur := { b.cur with lines := b.cur.lines.push l },
                shrinkAbove := b.shrinkAbove.push
                  (shrink.getD (b.shrinkAbove.back?.getD 0))
-               filsAbove := if shrink.isSome then b.filsAbove
-                 else b.filsAbove.push (b.filsAbove.back?.getD 0)
+               filsAbove := b.filsAbove.push (fils.getD (b.filsAbove.back?.getD 0))
                lastInk := none }
     | none => b
   if fills.isEmpty && paths.isEmpty then b
@@ -4616,9 +4615,9 @@ private def B.pushSibling (b : B) (line : Option LineOut := none)
                                     paths := b.cur.paths ++ paths } }
 
 /-- Push a picture's label lines: each a rider on the picture's own
-shrink, through the one rider door. -/
-private def B.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) : B :=
-  ls.foldl (fun b l => b.pushSibling (some l) (shrink := some shrink)) b
+shrink and fil count, through the one rider door. -/
+private def B.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (fils : Nat) : B :=
+  ls.foldl (fun b l => b.pushSibling (some l) (shrink := some shrink) (fils := some fils)) b
 
 private def B.commit (b : B) (line : LineOut) (depth below : Sp)
     (ruleLine : Bool) (consume : Bool) (overflow : Sp) : B :=
@@ -8733,10 +8732,28 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- cannot absorb the overflow.
   let ((px0, py0), (_px1, py1)) := pictureBox b.geom fs imgs b.xHeight pic
   let h := py1 - py0
+  -- A declared baseline (`Ir.Pic.Picture.rise`) is where the line stands:
+  -- the part of the picture below it is the line's depth, as a box's is.
+  let rise := pic.rise (picMetric fs imgs b.geom b.xHeight)
   let bottom := b.bottom
-  let mut yTop := b.geom.vmargin
+  -- On a fresh page the picture is the page's first box. Where the page is
+  -- TeX's, it stands by the rule a first line stands by (`B.firstRise`):
+  -- `\topskip` less its height above the baseline, or below an anchor the
+  -- glue the anchor keeps (`B.topKept`) and TeX's interline rule; on a
+  -- frame page, at the text area's top.
+  let lead := Ir.leadingFor b.geom.fontSize b.geom.leading
+  let firstTop (b : B) : Sp :=
+    match b.geom.topskip with
+    | some _ =>
+      b.geom.bodyTop + b.firstRise (h - rise) ⟨h - rise, rise, h - rise, rise⟩ lead
+        + b.topKept - (h - rise)
+    | none => b.geom.vmargin
+  let mut yTop := firstTop b
   let mut above : Sp := 0
   let mut overflow : Sp := 0
+  -- The fil the box consumes with the pending skip, counted as `B.commit`
+  -- counts a line's: the page's distribution moves the picture by it.
+  let mut fils := b.pageFils + (if b.skip.fil then 1 else 0)
   if !b.fresh then
     let y := b.y + b.prevDepth + b.skip.width + inkClearance
     overflow := y + h - bottom
@@ -8746,8 +8763,8 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       overflow := min overflow above
     else
       b := b.spillPage (overflow - above)
-      if !b.cur.lines.isEmpty then
-        yTop := b.y + b.prevDepth + inkClearance
+      yTop := if !b.cur.lines.isEmpty then b.y + b.prevDepth + inkClearance else firstTop b
+      fils := b.pageFils
       overflow := 0
       above := 0
   -- One transform for everything the picture ships: `Pic.Place` is the
@@ -8806,19 +8823,19 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         -- (pushed below through `pushLabels`, the rider door).
         lines := lines.push { x := x, y := top + ink.height,
                               size := size, segs := segs, setWidth := ink.w, leaf := leaf }
-  b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
-  -- A declared baseline (`Ir.Pic.Picture.rise`) is where the line stands:
-  -- the part of the picture below it is the line's depth, as a box's is.
-  let rise := pic.rise (picMetric fs imgs b.geom b.xHeight)
+  b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above fils
   b := { b with
     pageShrink := above
+    pageFils := fils
     needed := max b.needed overflow
     y := yTop + h - rise
     prevDepth := rise
     prevBelow := max strut rise
     prevRuleOnly := false
     skip := {}
-    freshStart := false }
+    freshStart := false
+    anchored := false
+    ignoreDepth := false }
   return b
 
 /-- Close a title slot: the lines and fills it placed since `save` move by
@@ -9207,20 +9224,22 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem warnOverfull_noBreak (b : B) :
     b.warnOverfull.noBreak = b.noBreak := rfl
 @[simp] private theorem pushSibling_pages (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
-    (b.pushSibling l? fills paths shrink).pages = b.pages := by
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fl : Option Nat) :
+    (b.pushSibling l? fills paths shrink fl).pages = b.pages := by
   cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushSibling_noBreak (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
-    (b.pushSibling l? fills paths shrink).noBreak = b.noBreak := by
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fl : Option Nat) :
+    (b.pushSibling l? fills paths shrink fl).noBreak = b.noBreak := by
   cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushLabels_pages (b : B) (ls : Array LineOut) (sh : Sp) :
-    (b.pushLabels ls sh).pages = b.pages := by
+@[simp] private theorem pushLabels_pages (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
+    (b.pushLabels ls sh fl).pages = b.pages := by
   unfold B.pushLabels
   exact Array.foldl_induction (motive := fun _ (acc : B) => acc.pages = b.pages)
     rfl (fun _ acc h => by rw [pushSibling_pages]; exact h)
-@[simp] private theorem pushLabels_noBreak (b : B) (ls : Array LineOut) (sh : Sp) :
-    (b.pushLabels ls sh).noBreak = b.noBreak := by
+@[simp] private theorem pushLabels_noBreak (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
+    (b.pushLabels ls sh fl).noBreak = b.noBreak := by
   unfold B.pushLabels
   exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
     rfl (fun _ acc h => by rw [pushSibling_noBreak]; exact h)
@@ -9230,20 +9249,22 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem commit_docBg (b : B) (l : LineOut) (d bl : Sp)
     (r c : Bool) (o : Sp) : (b.commit l d bl r c o).docBg = b.docBg := rfl
 @[simp] private theorem pushSibling_geom (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
-    (b.pushSibling l? fills paths shrink).geom = b.geom := by
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fl : Option Nat) :
+    (b.pushSibling l? fills paths shrink fl).geom = b.geom := by
   cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushSibling_docBg (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
-    (b.pushSibling l? fills paths shrink).docBg = b.docBg := by
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fl : Option Nat) :
+    (b.pushSibling l? fills paths shrink fl).docBg = b.docBg := by
   cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushLabels_geom (b : B) (ls : Array LineOut) (sh : Sp) :
-    (b.pushLabels ls sh).geom = b.geom := by
+@[simp] private theorem pushLabels_geom (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
+    (b.pushLabels ls sh fl).geom = b.geom := by
   unfold B.pushLabels
   exact Array.foldl_induction (motive := fun _ (acc : B) => acc.geom = b.geom)
     rfl (fun _ acc h => by rw [pushSibling_geom]; exact h)
-@[simp] private theorem pushLabels_docBg (b : B) (ls : Array LineOut) (sh : Sp) :
-    (b.pushLabels ls sh).docBg = b.docBg := by
+@[simp] private theorem pushLabels_docBg (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
+    (b.pushLabels ls sh fl).docBg = b.docBg := by
   unfold B.pushLabels
   exact Array.foldl_induction (motive := fun _ (acc : B) => acc.docBg = b.docBg)
     rfl (fun _ acc h => by rw [pushSibling_docBg]; exact h)

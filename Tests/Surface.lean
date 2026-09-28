@@ -6886,10 +6886,16 @@ def pictureSubpathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- picture beside a box, so it is no loss — and on the picture itself it
   -- moves no ink. Stated as an equality between the shipped pages of the
   -- same picture with and without the option, since only the page can say
-  -- the reading moved nothing of the picture.
+  -- the reading moved nothing of the picture. `\topskip` 0 pt: a picture
+  -- opening a page stands `\topskip` less its height above its baseline
+  -- below the text area's top, as TeX's first box does, and that height is
+  -- what the option names, so the page-top rule is set aside here.
   let bl := "\\node (c) {P};\\node (d) [right =of c] {Q};\\path (c) edge (d);\n"
-  let (withOpt, dsb) := run ("[baseline={(c.base)}]\n" ++ bl)
-  let (without, _) := run bl
+  let run0 (body : String) : Array CensusPage × Array Diag :=
+    let (doc, ds) := elabStr ("\\setlength{\\topskip}{0pt}\n" ++ pic body)
+    (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
+  let (withOpt, dsb) := run0 ("[baseline={(c.base)}]\n" ++ bl)
+  let (without, _) := run0 bl
   t "a picture's baseline option is read, not named as a loss"
     (!(dsb.any fun d => d.code == "W0334"))
   t "reading the baseline option moves none of the picture's own ink"
