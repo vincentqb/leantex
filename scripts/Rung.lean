@@ -112,30 +112,50 @@ reason reviewed in the row itself. The `compat` tier counts with it and the
 def IndexRow.implemented (r : IndexRow) : Bool :=
   r.verdict == "impl" || r.verdict.startsWith "inert:"
 
-def IndexRow.refused (r : IndexRow) : Bool := r.verdict.startsWith "refuse:"
+private def IndexRow.code? (r : IndexRow) (kind : String) : Option String :=
+  match r.verdict.splitOn ":" with
+  | [got, code] => if got == kind && !code.isEmpty then some code else none
+  | _ => none
 
-/-- A **decided divergence**: `divergence:<code>`, a row where the engine
-differs from LaTeX by a decision, not by a gap it owes — the user's
-decision (PLAN, the human gates: a new deliberate divergence from LaTeX).
-`lake test` holds it to the refusal's rule, so `<code>` fires wherever the
-divergence happens and it is never silent. It leaves every tier's
-denominator and is listed instead: a gap that becomes a divergence is a
-`<p>.rows` fall, which the ratchet takes only from a human-written
-`# lowered:` line. -/
-def IndexRow.decided (r : IndexRow) : Bool := r.verdict.startsWith "divergence:"
+/-- The exact, non-empty code of a `refuse:<code>` verdict. -/
+def IndexRow.refusalCode? (r : IndexRow) : Option String := r.code? "refuse"
 
-/-- A row still open or implemented: what a tier's denominator counts. -/
-def IndexRow.scored (r : IndexRow) : Bool := !r.decided
+/-- The exact, non-empty code of a `divergence:<code>` verdict. -/
+def IndexRow.divergenceCode? (r : IndexRow) : Option String := r.code? "divergence"
+
+/-- The exact code of either diagnostic-bearing verdict. -/
+def IndexRow.diagnosticCode? (r : IndexRow) : Option String :=
+  match r.refusalCode? with
+  | some code => some code
+  | none => r.divergenceCode?
+
+def IndexRow.refused (r : IndexRow) : Bool := r.refusalCode?.isSome
+
+/-- A deliberate difference from LaTeX, still counted as a documented
+non-implementation. Its diagnostic is exact and non-empty, and `lake test`
+holds it to the refusal's rule so the difference is never silent. -/
+def IndexRow.decided (r : IndexRow) : Bool := r.divergenceCode?.isSome
 
 def compatIndexDir : System.FilePath := "tests/compat-index"
 
-/-- Every package's rows, in file-name order. -/
-def readCompatIndex : IO (Array (String × Array IndexRow)) := do
+/-- Every package index under `dir`, in file-name order. Missing input,
+no index files, or no rows across all files is a measurement fault, not an
+empty package surface. A package may legitimately document zero commands. -/
+def readCompatIndexAt (dir : System.FilePath) : IO (Array (String × Array IndexRow)) := do
+  unless ← dir.isDir do
+    throw <| IO.userError s!"compat index: {dir} is missing"
   let mut out : Array (String × Array IndexRow) := #[]
-  if !(← compatIndexDir.isDir) then return out
-  for entry in (← compatIndexDir.readDir).map (·.fileName) |>.qsort (· < ·) do
+  for entry in (← dir.readDir).map (·.fileName) |>.qsort (· < ·) do
     unless entry.endsWith ".txt" do continue
-    let text ← IO.FS.readFile (compatIndexDir / entry)
+    let text ← IO.FS.readFile (dir / entry)
     out := out.push ((entry.dropEnd ".txt".length).toString,
       ((text.splitOn "\n").filterMap IndexRow.parse?).toArray)
+  if out.isEmpty then
+    throw <| IO.userError s!"compat index: {dir} contains no .txt files"
+  if out.all (fun p => p.2.isEmpty) then
+    throw <| IO.userError s!"compat index: {dir} contains no rows"
   return out
+
+/-- Every package's rows, in file-name order. -/
+def readCompatIndex : IO (Array (String × Array IndexRow)) :=
+  readCompatIndexAt compatIndexDir

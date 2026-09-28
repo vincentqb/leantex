@@ -1,4 +1,5 @@
 import Tests.Support
+import scripts.Rung
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -2021,9 +2022,9 @@ name it does not know, under which a formula is its own source text and so
 differs from the renamed call by its spelling alone — *and* changes the
 document by being recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
 code, so a refusal that silently stops warning fails too. A
-`divergence:<code>` row is a decided difference from LaTeX, a user
-decision rather than a gap, and it answers to the refusal's rule: named
-where it happens, never silent. Adding a package
+`divergence:<code>` row records a deliberate difference from LaTeX and
+must fire its exact code; it remains an unimplemented documented row in
+the coverage denominator. Adding a package
 to the list without its index file fails: the claim and its evidence
 arrive together. Every file in the directory is probed, not only the
 native list's: a deliberately refused package (todonotes) records its
@@ -2047,38 +2048,39 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
     let pkg := (entry.dropEnd ".txt".length).toString
     let content ← IO.FS.readFile (dir / entry)
     for line in content.splitOn "\n" do
-      let line := line.trimAscii.toString
-      if line.isEmpty || line.startsWith "#" then continue
-      let place := ((line.splitOn " ").headD "")
-      let rest := (line.drop place.length).toString.trimAscii.toString
-      let ann := ((rest.splitOn " ").headD "")
-      let call := (rest.drop ann.length).toString.trimAscii.toString
-      let src := compatRowSrc pkg place call
-      let codes := (elabStr src).2.map (·.code)
-      if place != "pre" && place != "body" && place != "frame" then
-        failures ref s!"compat index {pkg}: unreadable place in: {line}"
-      else if ann == "impl" then
-        check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
-          (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
-        check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
+      match IndexRow.parse? line with
+      | none => pure ()
+      | some row =>
+        let place := row.place
+        let ann := row.verdict
+        let call := row.call
+        let line := line.trimAscii.toString
+        let src := compatRowSrc pkg place call
+        let codes := (elabStr src).2.map (·.code)
+        if place != "pre" && place != "body" && place != "frame" then
+          failures ref s!"compat index {pkg}: unreadable place in: {line}"
+        else if ann == "impl" then
+          check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
+            (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
+          check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
 is the same one the engine elaborates when it knows none of these commands — \
 say why with inert:<why>, or probe the command where its effect lands"
-          (compatRowEffect pkg place call)
-      else if ann.startsWith "inert:" then
-        let why := (ann.drop "inert:".length).toString
-        check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
-          (!why.isEmpty)
-        check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
-          (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
-        check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
+            (compatRowEffect pkg place call)
+        else if ann.startsWith "inert:" then
+          let why := (ann.drop "inert:".length).toString
+          check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
+            (!why.isEmpty)
+          check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
+            (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
+          check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
 changes the document — promote it to impl"
-          (!compatRowEffect pkg place call)
-      else if ann.startsWith "refuse:" || ann.startsWith "divergence:" then
-        let code := ((ann.splitOn ":").drop 1).headD ""
-        check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
-          (codes.contains code)
-      else
-        failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
+            (!compatRowEffect pkg place call)
+        else
+          match row.diagnosticCode? with
+          | some code =>
+            check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
+              (codes.contains code)
+          | none => failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
 
 /-- The note is the rewrite: each arm's replacement elaborates to exactly
 the document its N0100 note names — whole-`Doc` equality between the LaTeX

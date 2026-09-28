@@ -66,11 +66,12 @@ scoreboard, whose `<item>.rows` values may not fall without a human-written
 
 *Packages.* `tests/compat-index/<pkg>.txt`, unchanged: each file is already
 one package's documented command list sourced to a manual section, one row
-per command with its verdict. The rows are the denominator and the rows
-that count as implemented — `impl` and `inert:` — are the numerator, one
-rule shared with the `compat` scoreboard tier. That tier ratchets both
-numbers per package (`<p>.rows`, `<p>.impl`), so this one states the
-package half in its provenance and does not carry the same numbers twice.
+per command with its verdict. Every row is in the denominator, including a
+`divergence:<code>` row; only `impl` and `inert:` enter the numerator. The
+rule is shared with the `compat` scoreboard tier. That tier ratchets both
+numbers per package (`<p>.rows`, `<p>.impl`), while this tier ratchets their
+aggregate as `packages.rows` and `packages.counted`, so the combined
+headline cannot stale as provenance.
 
 Exclusions, all stated and all derived:
 
@@ -100,10 +101,11 @@ The scoreboard is `tests/scoreboard/coverage.tsv`, written and checked by
 `Scoreboard.tierMain` like every other tier, under the `pairs counted/rows`
 encoding: per kernel item (a manual chapter, or the register file),
 `<item>.counted` is the count of names at `rewritten` or above and
-`<item>.rows` the count of names in its denominator. Both are higher-better
-under the one ratchet, so a construct falling below the cut and a
-denominator row deleted are both regressions, and the queue ranks each
-item by the names it still owes.
+`<item>.rows` the count of names in its denominator; `packages.counted` and
+`packages.rows` hold the package aggregate. Both are higher-better under
+the one ratchet, so a construct falling below the cut and a denominator row
+deleted are both regressions, and the queue ranks each item by the names it
+still owes.
 -/
 import LeanTex
 import scripts.Board
@@ -505,10 +507,9 @@ def probe (name : String) : Rung := probeIn (measurePlaces places) name
 
 -- ## The package half, from the compat index
 
-/-- One package's rows: its name, the number of commands it documents, how
-many of them count as implemented (`IndexRow.implemented`, the rule the
-`compat` tier counts with), and its decided divergences — documented and no
-gap, so counted apart and out of `documented`, as `compat` counts them. -/
+/-- One package's documented rows, its implemented subset, and its
+deliberate divergences. Divergences are audited separately but remain
+unimplemented rows in the denominator. -/
 structure PRow where
   pkg : String
   documented : Nat
@@ -516,11 +517,12 @@ structure PRow where
   decided : Nat
 deriving Inhabited, BEq
 
+def packageRow (pkg : String) (rows : Array IndexRow) : PRow :=
+  { pkg, documented := rows.size, impl := (rows.filter (·.implemented)).size
+    decided := (rows.filter (·.decided)).size }
+
 def readPackages : IO (Array PRow) := do
-  return (← readCompatIndex).map fun (pkg, rows) =>
-    let scored := rows.filter (·.scored)
-    { pkg, documented := scored.size, impl := (scored.filter (·.implemented)).size
-      decided := rows.size - scored.size }
+  return (← readCompatIndex).map fun (pkg, rows) => packageRow pkg rows
 
 -- ## The scoreboard file
 
@@ -569,6 +571,19 @@ def computeRows (kernel : Array (KRow × Rung)) : Array Scoreboard.Row := Id.run
     out := out.push { item := key ++ ".counted", value := Int.ofNat c }
     out := out.push { item := key ++ ".rows", value := Int.ofNat n }
   return out.qsort (fun a b => a.item < b.item)
+
+/-- The complete coverage measurement. Kernel items stay per chapter; the
+package half is one aggregate pair, while `compat` holds every package's
+pair independently. Keeping this aggregate in rows makes the combined
+headline part of `--check`, not ungated provenance. -/
+def computeCoverageRows (kernel : Array (KRow × Rung)) (pkgs : Array PRow) :
+    Array Scoreboard.Row :=
+  let pImpl := pkgs.foldl (fun n p => n + p.impl) 0
+  let pDoc := pkgs.foldl (fun n p => n + p.documented) 0
+  let packageRows : Array Scoreboard.Row :=
+    #[{ item := "packages.counted", value := Int.ofNat pImpl },
+      { item := "packages.rows", value := Int.ofNat pDoc }]
+  (computeRows kernel ++ packageRows).qsort (fun a b => a.item < b.item)
 
 structure Totals where
   buckets : Array (Rung × Nat)
@@ -824,9 +839,8 @@ def checkDenom (d : Denom) : Array String := Id.run do
   return bad.map (fun m => s!"{denomPath}: {m} — never hand-edit it; rebuild it from the \
 manual with --denominator <latex2e.texi>")
 
-/-- The tier's provenance: data, never gated. The package half is stated
-here and ratcheted by the compat tier, so the headline can be read in one
-place without either tier carrying the other's numbers. -/
+/-- The tier's provenance. The package aggregate is also a scoreboard pair,
+so these readable totals cannot stale independently of `--check`. -/
 def provenanceLines (d : Denom) (t : Totals) : Array String :=
   let bucketLine := String.intercalate ", " (Rung.all.map fun r =>
     let n := t.bucket r
@@ -840,9 +854,9 @@ verified) of <item>.rows names in {denomPath}.",
     s!"# kernel: {bucketLine}.",
     s!"# kernel excluded: {mathN} math-mode symbol commands (math_given), {notBaseN} \
 commands latex.ltx defines only as an error (not_base).",
-    s!"# package half, gated by the compat tier as <p>.impl/<p>.rows: {t.pImpl} implemented \
-of {t.pDoc} documented (tests/compat-index; `impl` or `inert:`), and {t.pDecided} decided \
-divergences listed apart, outside the denominator.",
+    s!"# package half, gated here as packages.counted/packages.rows and per package by \
+the compat tier: {t.pImpl} implemented of {t.pDoc} documented (tests/compat-index; `impl` \
+or `inert:`), including {t.pDecided} decided divergences as unimplemented rows.",
     s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
 /-- One measurement for the tier: the denominator's header checked, every
@@ -858,7 +872,7 @@ def measureTier : IO (Array String × Array Scoreboard.Row) := do
   let pkgs ← readPackages
   let kernel := measureKernel d.rows
   let t := totalsOf kernel d.rows pkgs
-  return (provenanceLines d t, computeRows kernel)
+  return (provenanceLines d t, computeCoverageRows kernel pkgs)
 
 /-- The per-item detail, and the audit the number cannot show: where the
 measured rung and the compat-index's reviewed verdict disagree. -/
@@ -871,7 +885,7 @@ def report : IO UInt32 := do
   IO.println s!"kernel  {t.kCounted} counted of {t.kRows} ({t.kExcluded} excluded)"
   for r in Rung.all do
     IO.println s!"  {t.bucket r}\t{r.word}"
-  IO.println s!"package {t.pImpl} implemented / {t.pDoc} documented"
+  IO.println s!"package {t.pImpl} implemented / {t.pDoc} documented ({t.pDecided} deliberate divergences included)"
   IO.println s!"total   {t.num}/{t.den} = {pct t.num t.den}"
   IO.println ""
   IO.println "-- items, most unknown first (unknown, unprobed, below-cut, counted)"
@@ -946,8 +960,9 @@ fragment spells them): {known.size}"
           -- read as disagreements and every one was this script's own
           -- vocabulary.
           let wantUnknown :=
-            (r.refused || r.decided)
-              && textUnknownCodes.contains (((ann.splitOn ":").drop 1).headD "")
+            match r.diagnosticCode? with
+            | some code => textUnknownCodes.contains code
+            | none => false
           let gotUnknown := rung == .unknown
           if rung == .unprobed then
             disagree := disagree + 1
@@ -1261,18 +1276,31 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
     #[({ name := "textbf", chapter := "Fonts", cls := "call" }, .native),
       ({ name := "zz", chapter := "Fonts", cls := "call" }, .unknown),
       ({ name := "parindent", chapter := "Lengths", cls := "assign_dimen" }, .skipped)]
-  let rows := computeRows tiny
+  let rows := computeCoverageRows tiny #[]
   expect "every item carries its counted and its rows"
     (rows.map (fun r => (r.item, r.value)) ==
       #[("kernel/Fonts.counted", 1), ("kernel/Fonts.rows", 2),
-        ("kernel/registers.counted", 0), ("kernel/registers.rows", 1)])
+        ("kernel/registers.counted", 0), ("kernel/registers.rows", 1),
+        ("packages.counted", 0), ("packages.rows", 0)])
+  let pkg : PRow := { pkg := "zz", documented := 2, impl := 1, decided := 0 }
+  let combined := computeCoverageRows tiny #[pkg]
+  expect "the package half is a scoreboard pair, not provenance only"
+    (combined.any (fun r => r.item == "packages.counted" && r.value == 1) &&
+      combined.any (fun r => r.item == "packages.rows" && r.value == 2))
+  let changed := computeCoverageRows tiny #[{ pkg with documented := 3 }]
+  expect "a stale combined package total changes a scoreboard row"
+    (!(Scoreboard.ratchet
+      { provenance := #[], rows := combined, retired := #[], lowered := #[],
+        encoding := some (.pairs "counted" "rows") }
+      { provenance := #[], rows := changed, retired := #[], lowered := #[],
+        encoding := some (.pairs "counted" "rows") }).changes.isEmpty)
   let asTsv (rs : Array Scoreboard.Row) : Scoreboard.Tsv :=
     { provenance := #[], rows := rs, retired := #[], lowered := #[],
       encoding := some (.pairs "counted" "rows") }
   expect "the rows are a valid baseline" ((Scoreboard.validate (asTsv rows)).isEmpty)
   -- A pruned denominator is a fall under the one ratchet — a human act, not
   -- a rewrite of the header.
-  let pruned := computeRows (tiny.filter (·.1.name != "zz"))
+  let pruned := computeCoverageRows (tiny.filter (·.1.name != "zz")) #[]
   let d := Scoreboard.ratchet (asTsv rows) (asTsv pruned)
   expect "a smaller denominator is a fall the ratchet reports"
     (d.losses.any fun c => c.item == "kernel/Fonts.rows")
@@ -1310,6 +1338,12 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
       && (IndexRow.mk "body" "inert:no ink by design" "\\zz").implemented
       && !(IndexRow.mk "body" "refuse:N0102" "\\zz").implemented
       && !(IndexRow.mk "body" "refuse:W0301" "\\zz").implemented)
+  let divergence := packageRow "zz" #[IndexRow.mk "body" "divergence:W0301" "\\zz"]
+  expect "a divergence remains in the documented denominator and is counted apart"
+    (divergence.documented == 1 && divergence.impl == 0 && divergence.decided == 1)
+  let divergenceTotals := totalsOf #[] #[] #[divergence]
+  expect "the audit's documented total includes every comparable divergence"
+    (divergenceTotals.pDoc == 1 && divergenceTotals.den == 1)
   -- The texinfo escapes, and a chapter title a reader reads.
   expect "a texinfo escape is harvested"
     (namesOnLine "@findex \\@@" == #["@"] && namesOnLine "@findex \\@{" == #["{"]
