@@ -42,11 +42,12 @@ def bodyAttrValues (doc : Ir.Doc) (key : String) : Array String :=
 /-- **A declared line width is the width pgf strokes.** tikz.code.tex
 (lines 1575–1581) defines the seven named widths as `line width=<w>`
 styles, so a name and the key it abbreviates stroke one width, at every
-level a key is read: a path's bracket, a node's, the picture's, an `every
-path` style and a `\tikzset` line — the inner setting winning, as in pgf.
-The defect named `semithick` a dropped key and stroked it at 0.4 pt; every
-claim here is over the shipped page (`Layout.Out`) or the SVG the same IR
-emits. Invented content. -/
+level a picture reads a key: a path's bracket, a node's, the picture's and
+an `every path` style — the inner setting winning, as in pgf. A `\tikzset`
+line outside every picture sets none: `\pgfpicture` resets the width to
+0.4 pt before its contents run. The defect named `semithick` a dropped key
+and stroked it at 0.4 pt; every claim here is over the shipped page
+(`Layout.Out`) or the SVG the same IR emits. Invented content. -/
 def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let named : List (String × Dim.Sp) :=
@@ -65,8 +66,14 @@ def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let pic := picDoc "" "[semithick]" "\\draw (0,0) -- (2,0);"
   let set := picDoc "\\tikzset{semithick}" "" "\\draw (0,0) -- (2,0);"
   let every := picDoc "" "[every path/.style={semithick}]" "\\draw (0,0) -- (2,0);"
-  t "a width the picture, a tikzset line or every path sets reaches the path"
-    ([pic, set, every].all fun s => shippedWidths oneFace s == #[Dim.pt 3 / 5] && !picLoss s)
+  t "a width the picture or every path sets reaches the path"
+    ([pic, every].all fun s => shippedWidths oneFace s == #[Dim.pt 3 / 5] && !picLoss s)
+  -- `\pgfpicture` sets the line width to 0.4 pt before anything the picture
+  -- declares (pgfcorescopes.code.tex, `\pgf@picture`), so a `\tikzset` line
+  -- outside every picture sets no picture's width, and lualatex strokes
+  -- such a document at 0.4 pt.
+  t "a tikzset line outside every picture sets no width: the picture starts at 0.4 pt"
+    (shippedWidths oneFace set == #[Ir.Pic.thinWidth] && !picLoss set)
   let inner := picDoc "" "[ultra thick]" "\\draw[thin] (0,0) -- (2,0);"
   let inner2 := picDoc "" "[thin]" "\\draw[ultra thick] (0,0) -- (2,0);"
   t "the path's own width beats the picture's, either way round"

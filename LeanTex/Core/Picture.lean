@@ -2899,38 +2899,73 @@ def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) 
     Array (Array Tok) × Array (Array Tok) :=
   (global.filter reads, picture.filter reads)
 
+/-- **A picture starts at pgf's line width.** `\pgfpicture` runs
+`\pgfsetlinewidth{0.4pt}` before anything the picture declares
+(pgfcorescopes.code.tex, `\pgf@picture`), so a width a `\tikzset` line sets
+outside every picture reaches none: lualatex strokes such a picture at
+0.4 pt. The line's other keys do reach it. -/
+def pictureResets (o : Array Tok) : Bool := (readLineWidth o.toList).isSome
+
 /-- One `\tikzset` line folded into what the document has set so far: its
 definitions into the bundles, and the entries the subset reads into the
 outermost bracket — a later line's value replacing an earlier one's rather
 than standing beside it, the rule `inheritOpts` holds within a bracket and
-for the same reason. The fold's body as its own function, so
+for the same reason — except a width, which every picture resets
+(`pictureResets`). The fold's body as its own function, so
 `documentOptsStep_covers` can state what one line contributes without
 reducing the fold. -/
 def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
     (keys : Array Tok) : List (String × Array Tok) × Array (Array Tok) :=
   let (after, unread) := readStyleList sa.1 keys
-  (after, inheritOpts sa.2 (unread.filter (readsOpt after)))
+  (after, inheritOpts sa.2 (unread.filter fun o => readsOpt after o && !pictureResets o))
 
 /-- What a document's `\tikzset` lines set for every picture in it: the
-entries that are not definitions and that the subset reads, folded in
-source order. The definitions those lines carry are `documentStyles`; what
-neither reads is `unreadKeys`. -/
+entries that are not definitions, that the subset reads, and that no
+picture resets, folded in source order. The definitions those lines carry
+are `documentStyles`; what neither reads is `unreadKeys`. -/
 def documentOpts (sets : Array (Array Tok)) : Array (Array Tok) :=
   (sets.foldl documentOptsStep ([], #[])).2
 
 /-- **A line's read entry is one the document has set.** An entry of a
-`\tikzset` line that is no definition and that the subset reads enters the
-outermost bracket, whatever the lines before it set — so a tip declared
-once in the preamble is a key of the document and not a dropped one. With
-`outerRead_covers` and `merge_global_covers` this is the chain from the line
-that wrote the key to the bracket a statement reads. -/
+`\tikzset` line that is no definition, that the subset reads and that no
+picture resets enters the outermost bracket, whatever the lines before it
+set — so a tip declared once in the preamble is a key of the document and
+not a dropped one. With `outerRead_covers` and `merge_global_covers` this is
+the chain from the line that wrote the key to the bracket a statement
+reads. -/
 theorem documentOptsStep_covers {styles : List (String × Array Tok)}
     {acc : Array (Array Tok)} {keys o : Array Tok}
     (h : o ∈ (readStyleList styles keys).2)
-    (hr : readsOpt (readStyleList styles keys).1 o = true) :
+    (hr : readsOpt (readStyleList styles keys).1 o = true)
+    (hw : pictureResets o = false) :
     o ∈ (documentOptsStep (styles, acc) keys).2 := by
   simp only [documentOptsStep, inheritOpts, Array.mem_append, Array.mem_filter]
-  exact Or.inr ⟨h, hr⟩
+  exact Or.inr ⟨h, by simp [hr, hw]⟩
+
+/-- **No document-level line sets a picture's width** (`_mem`): every entry
+the document's `\tikzset` lines hand the pictures is drawn from those no
+picture resets. The defect handed them the line's width, so a document
+whose preamble said `semithick` stroked every picture at 0.6 pt where
+lualatex strokes 0.4 pt — and the private reference corpus's pictures with
+it, on every page. -/
+theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
+    (h : o ∈ documentOpts sets) : pictureResets o = false := by
+  unfold documentOpts at h
+  have step : ∀ (sa : List (String × Array Tok) × Array (Array Tok)) (keys : Array Tok),
+      (∀ e ∈ sa.2, pictureResets e = false) →
+        ∀ e ∈ (documentOptsStep sa keys).2, pictureResets e = false := by
+    intro sa keys hsa e he
+    simp only [documentOptsStep, inheritOpts, Array.mem_append, Array.mem_filter] at he
+    rcases he with ⟨he, _⟩ | ⟨_, hk⟩
+    · exact hsa e he
+    · simp only [Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true] at hk
+      exact hk.2
+  have := Array.foldl_induction (as := sets)
+    (motive := fun _ sa => ∀ e ∈ sa.2, pictureResets e = false)
+    (init := (([] : List (String × Array Tok)), (#[] : Array (Array Tok))))
+    (f := documentOptsStep) (by intro e he; simp at he)
+    (fun i sa hsa => step sa sets[i] hsa)
+  exact this o h
 
 /-- The shape filter keeps what this shape reads: an entry a statement's own
 loop would read is not dropped on its way in from an outer bracket. -/
