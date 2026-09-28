@@ -22803,7 +22803,8 @@ survivor is the rider reset in `pushSibling`: no check reaches an
 underlined last line on a fill page. `filChecks`' sandwich had asserted
 the old split (lesson 9), and now asserts TeX's under
 `\nointerlineskip`. The paper, deck, résumé and site PDF and HTML are
-byte-identical before and after this change.
+byte-identical before and after these changes (`f16b1321` against the
+branch, SOURCE_DATE_EPOCH=0).
 
 **A correction to the round-9 entry.** `\@vspacer` restores `\prevdepth`,
 but that sets no interline glue only after `\nointerlineskip`. At a
@@ -22824,10 +22825,17 @@ cmr10).
 - *`\nointerlineskip`* is read as nothing (`Compat`), so an anchor without
   it cannot take TeX's interline glue. This needs an IR marker from
   `Compat` to the first line after the anchor.
-- *A bare line closing a fill page.* The output routine cancels the output
-  box's depth when a line is its last item (`\@make@normalcolbox`, after
-  `\@outputbox@removebskip`), so a bottom-flush line's baseline lands on
-  the floor. The engine lands its glyph there.
+
+**A line closing a bottom-flushed page stands on the floor.** The output
+routine takes one final infinite skip off the page
+(`\@outputbox@removebskip`) and cancels the depth of the box then ending
+it (`\@make@normalcolbox`, `\vskip -\@outputbox@depth`), so a
+bottom-flushed line's baseline lands on the text area's floor, where the
+engine had landed its glyphs. At a declared boundary, a TeX page with
+nothing pending now keeps minus that depth (`B.closingOwed`,
+`closingOwed_cancel_exact`). A pending skip, as below a `{center}` or a
+`\vspace*{\fill}`, keeps what TeX keeps, so the card does not move.
+`filChecks` holds it.
 
 **The user's.** No change here departs from LaTeX. The size ladder's
 leading stays open: on the corpus's card the engine's line pitch differs
