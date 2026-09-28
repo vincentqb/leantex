@@ -3208,8 +3208,9 @@ private def kernelSkip : String → Option String
 /-- A length value as the door reads it where it stands: a kernel parameter
 the document set is the value it holds (TeX copies a register's value; the
 parameter's own token may not exist, or carry an engine name), a kernel
-skip amount is its fixed value, and any other name is a token of the
-document's, read where the declaration reads it. `none` for what the door
+skip amount is the value the document last set it to, or its fixed value
+where it never did (ltspace.dtx sets each once), and any other name is a
+token of the document's, read where the declaration reads it. `none` for what the door
 cannot evaluate: a kernel parameter whose value it was never told (the
 class sets it), a box's dimension, and a command that computes a length
 (`\stretch`, calc's `\widthof`). In a definition's body (`deferred`) the
@@ -3218,9 +3219,14 @@ there, by its name. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (deferred : Bool := false) : Option String :=
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
+  let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let held (n : String) : Option String :=
-    (if kernel n then (lens.find? (·.1 == n)).map (·.2) else none).orElse
-      fun _ => kernelSkip n
+    if kernel n then set n
+    else if (kernelSkip n).isSome then
+      match set n with
+      | some v => if deferred then none else some v
+      | none => kernelSkip n
+    else none
   let unknown (n : String) : Bool := kernel n || n == "ht" || n == "wd" || n == "dp"
   let ref (n : String) (arg : Bool) : Option String :=
     if arg then none
@@ -3442,19 +3448,30 @@ private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
     | r => return r
   return none
 
+/-- Does the raw standing before a register read it as an operand, so no
+assignment opens there (TeXbook ch. 20 and 24)? A command that reads a
+dimension or a number next (`\hskip`, `\ifdim`, `\the`), a keyword that
+does (`by`, `plus`, `to`), a factor (`2`, `.5`), a sign, or a relation. -/
+private def readsOperand : Option Raw → Bool
+  | some (.ctrl c _) => ["hskip", "vskip", "kern", "mskip", "mkern", "the", "showthe",
+      "advance", "multiply", "divide", "ifdim", "ifnum", "ifodd", "ifcase", "dimexpr",
+      "glueexpr", "numexpr", "muexpr", "raise", "lower", "moveleft", "moveright"].contains c
+  | some (.word w _) =>
+    ["by", "plus", "minus", "to", "spread", "width", "height", "depth", "=", "<", ">"].contains w ||
+      (!w.isEmpty && w.toList.all fun ch => ch.isDigit || ch == '.' || ch == '-' || ch == '+')
+  | some (.sym c _) => "=<>+-*/(".toList.contains c
+  | _ => false
+
 /-- TeX's own assignment to a kernel parameter, when the control word
 `name`, read up to `start`, opens one (TeXbook ch. 24:
 ⟨variable⟩[=]⟨value⟩, as `\parskip 6pt plus 1pt`, `\parskip=0pt` and
 `\parindent\z@` spell it): the value's raws and where it ends. The value
-starts with `=`, a number or a register; a parameter read as an operand —
-after `\hskip`, or before words — opens none. -/
+starts with `=`, a number or a register; a parameter read as an operand
+(`readsOperand`: after `\hskip` or `\ifdim`, after a factor) opens none. -/
 private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
     Option (Array Raw × Nat) :=
   if (paramSites.lookup name).isNone then none
-  else if (match rawBefore raws (start - 1) with
-      | some (.ctrl c _) => ["hskip", "vskip", "kern", "the", "showthe", "advance",
-          "multiply", "divide"].contains c
-      | _ => false) then none
+  else if readsOperand (rawBefore raws (start - 1)) then none
   else
     let j := skipSpaces raws start
     -- The lexer keeps an `=` against the word it opens (`=6pt`).

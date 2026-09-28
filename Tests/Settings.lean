@@ -323,6 +323,10 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
        "\\setlength{\\parskip}{-7pt}"),
      ("\\setlength{\\parskip}{\\medskipamount}",
        "\\setlength{\\parskip}{6pt plus 2pt minus 2pt}"),
+     ("\\setlength{\\medskipamount}{20pt}\\setlength{\\parskip}{\\medskipamount}",
+       "\\setlength{\\medskipamount}{20pt}\\setlength{\\parskip}{20pt}"),
+     ("\\setlength{\\bigskipamount}{3pt}\\setlength{\\parskip}{2\\bigskipamount}",
+       "\\setlength{\\bigskipamount}{3pt}\\setlength{\\parskip}{6pt}"),
      ("\\setlength{\\leftmargini}{\\dimexpr 1em+2pt\\relax}",
        "\\setlength{\\leftmargini}{1em + 2pt}"),
      ("\\parskip 6pt plus 1pt", "\\setlength{\\parskip}{6pt plus 1pt}"),
@@ -421,3 +425,23 @@ def registerScopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
           "\\setlength{\\probegap}{11pt}")))
   t "the scope rows measure the value: 11pt is not the 10pt the document starts from"
     (eleven != pagesOf oneFace (doc "" ""))
+
+
+/-- **A parameter a command reads as its operand is not assigned.** TeX's
+own `⟨variable⟩[=]⟨value⟩` opens a statement, and a register standing
+where a command reads a dimension — after `\ifdim`, after a factor —
+is that command's operand (TeXbook ch. 20 and 24), so the page is the one
+the document ships without the construct. The shape `\ifdim\parskip=0pt`
+once set the paragraph gap to zero under a note claiming the assignment. -/
+def operandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre : String) : String :=
+    "\\documentclass{article}\n\\setlength{\\parskip}{12pt}\n" ++ pre ++
+      "\n\\begin{document}\n" ++ ((settingsBodies.lookup "paras").getD "") ++ "\n\\end{document}"
+  let plain := pagesOf oneFace (doc "")
+  for pre in ["\\ifdim\\parskip=0pt\\relax\\fi",
+      "\\makeatletter\\ifdim\\parskip=\\z@\\relax\\fi\\makeatother",
+      "\\ifdim 2\\parskip=0pt\\relax\\fi"] do
+    t s!"'{pre}' reads the parameter and assigns nothing" (pagesOf oneFace (doc pre) == plain)
+  t "the operand rows measure the parameter: 12pt is not the 0pt they compare with"
+    (plain != pagesOf oneFace (doc "\\setlength{\\parskip}{0pt}"))
