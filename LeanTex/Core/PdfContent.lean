@@ -573,7 +573,10 @@ def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
   let sm := st.size.toPtMilli
   let t0 := penTarget sm st.tz p.xm st.x
   let wf := st.widths.getD idx #[]
-  let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => t0 + runOffset sm P)) ⟨#[], #[], p.adv, 0⟩
+  -- Sized once: grown by doubling, these arrays' freed halves left the page
+  -- renderer to fresh allocator pages, and rendering took twice as long.
+  let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => t0 + runOffset sm P))
+    ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, p.adv, 0⟩
   st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }
 
 def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
@@ -1208,7 +1211,7 @@ theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (
   unfold stepRun
   split
   · simp [TextSt.runs]
-  · simp only [pushRun_runs, runItem_runs, place_ids]
+  · simp only [pushRun_runs, runItem_runs, Array.mkEmpty_eq, place_ids]
     congr 1
     simp only [apply_ite TextSt.runs, setFace_runs, toPen_runs, ite_self]
 
