@@ -10256,6 +10256,10 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     -- scope's first real block stays first.
     acc := if firstBlk || statefulBlock blk then acc else acc.wantGap
     firstBlk := firstBlk && statefulBlock blk
+    -- The part this block stands in: its denominator, and — where the
+    -- numbering starts over — no frame of the new part elapsed yet.
+    acc := { acc with frameCount := doc.frameCountAt i
+                      framesDone := if doc.frameRestart == some i then 0 else acc.framesDone }
     match blk with
     | .frame title standout valign breakable body =>
       let num := nums[i]?.getD none

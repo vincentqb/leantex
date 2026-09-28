@@ -1,5 +1,6 @@
-# source: appendixnumberbeamer README — no commands of its own: it patches
-# \appendix, which the cross-reference slice numbers from A. The row carries
-# the section the patch renumbers: \appendix alone declares a state and
-# draws nothing, so it cannot witness the numbering it exists to change.
+# source: appendixnumberbeamer.sty — no commands of its own: it patches
+# \appendix to keep the main part's last frame number as that part's total and
+# set framenumber to 0, so a deck's appendix numbers its frames from 1. The row
+# proves the spelling reads; the numbering is witnessed over the shipped
+# footers of both backends by numberingChecks.
 body impl \appendix\section{A}x

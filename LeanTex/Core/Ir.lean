@@ -6374,16 +6374,57 @@ structure Doc where
   wants a wrapper node, which costs an arm in every walk and both backends,
   and is worth paying when a claim needs it and not before. -/
   salvage : Array Recovered := #[]
+  /-- Where the frame numbering starts over: the body index of the first
+  block after `\appendix` in a deck that loads appendixnumberbeamer, whose
+  `\appendix` keeps the main part's last number as its total and sets
+  `framenumber` to 0 (`appendixnumberbeamer.sty`). `none` numbers the body
+  whole. -/
+  frameRestart : Option Nat := none
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
-/-- The document's one frame numbering (T2–T4 hold over it). -/
+/-- The document's one frame numbering: the body numbered whole, or — where
+`frameRestart` splits it — each part numbered from 1 on its own, as
+appendixnumberbeamer leaves beamer's counter. T2–T4 hold over each part. -/
 def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
-  Ir.frameNumbers doc.body
+  match doc.frameRestart with
+  | none => Ir.frameNumbers doc.body
+  | some p =>
+    Ir.frameNumbers (doc.body.extract 0 p) ++ Ir.frameNumbers (doc.body.extract p doc.body.size)
 
-/-- The numbering's denominator for the document. -/
+/-- The numbering's denominator at body index `i`: the count of the part `i`
+stands in — appendixnumberbeamer's `\inserttotalframenumber`, the main
+part's count before the restart and the appendix's after it. -/
+def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
+  match doc.frameRestart with
+  | none => Ir.frameCount doc.body
+  | some p =>
+    if i < p then Ir.frameCount (doc.body.extract 0 p)
+    else Ir.frameCount (doc.body.extract p doc.body.size)
+
+/-- The numbering's denominator where the document starts. -/
 def Doc.frameCount (doc : Doc) : Nat :=
-  Ir.frameCount doc.body
+  doc.frameCountAt 0
+
+/-- appendixnumberbeamer's numbering, exactly: split at the restart, the
+main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
+(`frameNumbers_gapless`) over each part. -/
+theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
+    (h : doc.frameRestart = some p) :
+    doc.frameNumbers.toList.filterMap id =
+      List.range' 1 (Ir.frameCount (doc.body.extract 0 p)) ++
+        List.range' 1 (Ir.frameCount (doc.body.extract p doc.body.size)) := by
+  simp only [Doc.frameNumbers, h, Array.toList_append, List.filterMap_append,
+    frameNumbers_gapless]
+
+/-- The numbering indexes the body whole, restart or none: every consumer
+reads position `i` for block `i`. -/
+theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.body.size := by
+  unfold Doc.frameNumbers
+  split
+  · exact Ir.frameNumbers_size doc.body
+  · simp only [Array.size_append, Ir.frameNumbers_size, Array.size_extract]
+    omega
 
 /-- Whether the artifacts carry the document's faces — the one resolving
 site the HTML's font shipment and the PDF's embedding read. A declared

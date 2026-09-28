@@ -22952,3 +22952,38 @@ once. DiagAudit: W0386 `keep`, rung `degraded`, pinned to that block.
 against the branch, each built from one scratch copy with
 `SOURCE_DATE_EPOCH=0`, PDF and HTML): the site's W0386 is gone and no other
 diagnostic moves; all eleven artifacts are byte-identical under `cmp`.
+
+
+### 2026-09-27 — appendixnumberbeamer's appendix numbers its frames from 1
+
+**The census finding.** A deck loading appendixnumberbeamer printed a note,
+"`\usepackage{appendixnumberbeamer}` → nothing: the engine does this
+itself", and numbered its appendix frames on from the main part: in the
+private reference corpus's deck, pages 30–35 read 20–25 where lualatex
+reads 1–6. No warning named it; the note's claim was false, and the
+package's compat-index row claimed the patch renumbers sections, which is
+the kernel's `\appendix`, not the package's.
+
+**LaTeX's behaviour** (`appendixnumberbeamer.sty`): its `\appendix` keeps
+the main part's last frame number as that part's `\inserttotalframenumber`
+and sets `framenumber` to 0, so the appendix numbers `1, …, A` over its own
+total. Without the package, beamer's `\appendix` numbers on.
+
+**The one resolving site.** `Doc.frameRestart` records where the count
+starts over; `Doc.frameNumbers` numbers each part on its own and
+`Doc.frameCountAt` gives a block its part's denominator, so the PDF
+footline, the progress bar and the HTML deck read one numbering as before.
+Compat's rewrite sets `Compat.frameRestartMark` (a name with a space, which
+no control word holds) before `\appendix` when the package is loaded, and
+the elaborator records the next block's index. Theorems:
+`Doc.frameNumbers_restart_exact` (the parts number `1..M` and `1..A`, each
+gapless: T3 per part) and `Doc.frameNumbers_size`.
+
+**Guard** (`numberingChecks`; the two package rows fail at `b176ed66`): a
+synthetic deck with the package numbers `1, 2, 1, 2` and its footers read
+`1/2, 2/2, 1/2, 2/2` in the PDF and the same text in the HTML; without the
+package it reads `1/4 … 4/4`.
+
+**Measured.** The private deck's 35 footline numbers now equal lualatex's
+(`pdftotext`, every page); only pages 30–35 change, and no diagnostic moves
+on the five private documents.

@@ -6192,7 +6192,7 @@ def emitTree (cfg : Config) (doc : Doc) :
       -- (`Ir.frameNumbers`, T2–T4). This walk indexes it and counts
       -- nothing, so the two backends cannot disagree.
       let nums := doc.frameNumbers
-      let total := doc.frameCount
+      let mut total := doc.frameCount
       let mut done := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
@@ -6214,6 +6214,9 @@ def emitTree (cfg : Config) (doc : Doc) :
       let mut cfg := cfg
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
+        -- The part this block stands in, as the PDF walk reads it.
+        total := doc.frameCountAt i
+        if doc.frameRestart == some i then done := 0
         match b with
         | .setPalette p =>
           let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)

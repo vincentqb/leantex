@@ -1072,6 +1072,31 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        !(p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)))
   t "html draws no progress bar with no countable frame"
     (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
+  -- appendixnumberbeamer's `\appendix` starts the count over
+  -- (`appendixnumberbeamer.sty`: the main part's last number is its total,
+  -- `framenumber` is set to 0): main frames read n/M, appendix frames
+  -- n/A, on both backends. Without the package `\appendix` numbers on, as
+  -- beamer's own does. The regression this pins: a deck loading the
+  -- package numbered its appendix 20–25 where lualatex numbers 1–6, under a
+  -- note saying the engine did the package's work itself.
+  let appendixDeck (pkg : Bool) : Ir.Doc × Array Diag :=
+    elabStr (deck169
+      ((if pkg then "\\usepackage{appendixnumberbeamer}\n" else "") ++
+        "\\chrome{ footer = { right = \\framefraction } }")
+      ("\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}\n" ++
+       "\\appendix\n\\begin{frame}{C}\nc\n\\end{frame}\n\\begin{frame}{D}\nd\n\\end{frame}"))
+  let (aDoc, _) := appendixDeck true
+  t "appendixnumberbeamer numbers its appendix from 1"
+    (aDoc.frameNumbers.toList.filterMap id == [1, 2, 1, 2])
+  let aOut := layoutOf oneFace aDoc
+  t "appendixnumberbeamer: each part's frames read n over the part's own count"
+    (pdfFoots aOut == ["1/2", "2/2", "1/2", "2/2"])
+  t "appendixnumberbeamer: pdf and html footers are the same text"
+    (pdfFoots aOut == htmlFoots (HtmlDoc.emit {} aDoc).1)
+  let (nDoc, _) := appendixDeck false
+  t "without appendixnumberbeamer the appendix numbers on"
+    (nDoc.frameNumbers.toList.filterMap id == [1, 2, 3, 4] &&
+      pdfFoots (layoutOf oneFace nDoc) == ["1/4", "2/4", "3/4", "4/4"])
   -- The fraction slot: moloch's numbering=fraction, reachable as
   -- \framefraction, rendered by the one Ir.ChromeSlot.render site on both
   -- backends — the denominator is the same frameCount everywhere.

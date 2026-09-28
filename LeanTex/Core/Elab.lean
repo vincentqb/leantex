@@ -427,6 +427,10 @@ structure ESt where
   elaborator — it is the attribution the census needs, not a decision the
   front end makes. -/
   salvage : Array Ir.Recovered := #[]
+  /-- Where the deck's frame count starts over (`Compat.frameRestartMark`):
+  the index of the next top-level block when the mark was read. Assembled
+  onto `Doc.frameRestart`. -/
+  frameRestart : Option Nat := none
   /-- `\bibliographystyle`, wherever it appears — LaTeX reads it anywhere
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
@@ -9756,6 +9760,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         n == "par" || n == "block" || n == "centering" || n == "pause"
           || (Ir.raggedSideOf? n).isSome
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
+          || n == Compat.frameRestartMark
           || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
           || (n == "note" && cur.isEmpty)
           -- A declaration met between blocks scopes the rest of the group,
@@ -9824,6 +9829,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- The language switch, block form: from here forward in flow
         -- order (the `\appendix` scope model).
         modify (flowLangUpdate ctx' n)
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == Compat.frameRestartMark then
+        -- appendixnumberbeamer's restart: the next block starts the count
+        -- over, as its `\appendix` sets `framenumber` to 0.
+        modify fun st => { st with frameRestart := st.frameRestart <|> some blocks.size }
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "appendix" then
         -- Not a heading: a declaration affecting every heading after it,
@@ -13158,6 +13168,7 @@ declare \\assert\{ pages <= N } to take control" }
     -- the definer family's whole point is that it moves no ink by itself.
     pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
     salvage := (← get).salvage
+    frameRestart := (← get).frameRestart
     body := blocks
   }
   -- Cross-references resolve here, once, against the whole document's

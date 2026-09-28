@@ -5440,6 +5440,12 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
         (help := "\\allow{W0387} accepts the skip")
         (subject := some ("ctrl:" ++ name))) })
 
+/-- The mark the rewrite sets before a deck's `\appendix` when appendixnumberbeamer is
+loaded: the frame count starts over there (`appendixnumberbeamer.sty`: its `\appendix`
+keeps the main part's last number as the total and sets `framenumber` to 0). A space is
+in no control word, so no document spells the mark. -/
+def frameRestartMark : String := "appendix restart"
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. An empty replacement passes the silence guard
@@ -5457,6 +5463,10 @@ where
       M (Option (Array Raw × Nat)) := do
   if let some tok := literalReplace.lookup name then
     return some (#[tok pos], start)
+  -- premise: numberingChecks — two decks differing by the package alone: the
+  -- appendix numbers from 1 with it and numbers on without it
+  if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
+    return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
   if let some native := simpleNative.lookup name then
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
