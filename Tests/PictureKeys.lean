@@ -131,6 +131,14 @@ def wordDepth (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
     | some (lo, _) => max d (-lo * size / (font.unitsPerEm : Int))
     | none => d) 0
 
+/-- The highest reach above the baseline of a word's glyphs, set in `font`
+at `size`: the height of the TeX box the word makes. -/
+def wordHeight (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+  word.toList.foldl (fun d c =>
+    match (font.gid c).bind font.yExtent with
+    | some (_, hi) => max d (hi * size / (font.unitsPerEm : Int))
+    | none => d) 0
+
 /-- The height of an SVG's viewBox in the emitted page, in sp (to the
 thousandth of a point the emitter writes). -/
 def viewBoxHeight (page : String) : Option Dim.Sp := do
@@ -346,3 +354,60 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
        decide (ex - (ax + aw) ≤ 2 ∧ (ax + aw) - ex ≤ 2 ∧
          (ex + ew) - bx ≤ 2 ∧ bx - (ex + ew) ≤ 2)
      | _, _, _ => false)
+
+
+/-- **A drawn node stands its outline on the node's position, and its text
+inside it** (pgfmoduleshapes.code.tex: the `rectangle` shape's `center`
+anchor is the middle of its text box, `.5\wd` across and `.5\ht − .5\dp` up,
+and `\pgfmultipartnode` shifts the shape so that anchor lands on the node's
+coordinate). So two drawn nodes at one height stand their outlines on one
+centre line whatever letters they hold, an edge between them is level, a
+`right=of` chain keeps the line, and each outline holds its letters one
+inner sep in on every side. The defect centred each outline on its own
+letters and left the letters where a bare label stands them, so a node
+holding `g` stood 2 bp above one holding `A`, the edge between them slanted,
+and every `right=of` step climbed by the difference. Asserted over the
+shipped page, in the suite's own face. Invented content. -/
+def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let pageOf (body : String) : Option Layout.PageOut :=
+    (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
+  let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    p.paths.filterMap fun q => match q.path with
+      | .rect x y w h => some (x, y, w, h)
+      | _ => none
+  let mid (b : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) : Dim.Sp := b.2.1 + b.2.2.2 / 2
+  let level (bs : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)) : Bool :=
+    match bs[0]? with
+    | some b0 => bs.size ≥ 2 && bs.all fun b => near (mid b) (mid b0)
+    | none => false
+  let pair := pageOf ("\\node[draw] (a) at (0,0) {A};\\node[draw] (b) at (3,0) {g};\n" ++
+    "\\draw (a) -- (b);")
+  t "two drawn nodes at one height stand their outlines on one centre line, whatever their letters"
+    ((pair.map fun p => level (frames p)).getD false)
+  t "the edge between them is level"
+    ((pair.map fun p => p.paths.any fun q => match q.path with
+      | .segs ss => !ss.isEmpty && ss.all fun s => match s with
+        | .line _ y1 _ y2 => y1 == y2
+        | .cubic .. => false
+      | _ => false).getD false)
+  let chain := pageOf ("\\node[draw] (c) at (0,0) {A};\\node[draw, right=of c] (d) {g};\n" ++
+    "\\node[draw, right=of d] (e) {A};")
+  t "a right=of chain of drawn nodes keeps one centre line"
+    ((chain.map fun p => (frames p).size == 3 && level (frames p)).getD false)
+  -- The letters inside: one inner sep from the outline to the glyphs' own
+  -- top, and one from their bottom to the outline, as pgf seats a text box.
+  let size := (Layout.Geom.ofPage (elabStr (picDoc "" "" "")).1.page).fontSize
+  let sep := Picture.innerSep size
+  let font := oneFace.body
+  let holds (p : Layout.PageOut) (k : Nat) (word : String) : Bool :=
+    match p.lines.find? (fun l => lineText l == word), (frames p)[k]? with
+    | some l, some (_, y, _, h) =>
+      near (l.y - wordHeight font size word - y) sep &&
+        near (y + h - (l.y + wordDepth font size word)) sep
+    | _, _ => false
+  t "each drawn outline holds its letters one inner sep in, above and below"
+    ((pair.map fun p => holds p 0 "A" && holds p 1 "g").getD false &&
+      decide (0 < wordDepth font size "g"))

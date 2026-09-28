@@ -1768,6 +1768,31 @@ theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
     intros; omega
   exact step minW minH (textHalfW + sepX) ((hi - lo) / 2 + sepY)
 
+/-- **Where pgf seats a node's text box**: centred on the node
+(pgfmoduleshapes.code.tex, the `rectangle` and `circle` shapes' `center`
+anchor, `.5\wd` across and `.5\ht − .5\dp` up from the box's origin, which
+`\pgfmultipartnode` shifts onto the node's coordinate). A box of height `ht`
+and depth `dp` stands with its baseline `(ht − dp)/2` below the node, so it
+spans `dp` below that baseline and `ht` above it. Returns the baseline and
+the box's lower and upper edges, relative to the node's position. -/
+def textSeat (ht dp : Sp) : Sp × Sp × Sp :=
+  let b := -((ht - dp) / 2)
+  (b, b - dp, b + ht)
+
+/-- **A drawn outline stands on its node, whatever its letters** (`_exact`):
+the outline of a text box pgf seats is centred on the node's own position,
+to the scaled point, for every height and depth the box can have. A node's
+frame, the anchors on it and the edges from them therefore follow the node
+and never its glyphs. The defect centred each outline on its letters' box
+instead, so `g` stood 2 bp above `A` at one declared height and a
+`right=of` chain climbed by the difference at every step. -/
+theorem nodeOutline_seat_exact (circle : Bool) (minW minH sy textHalfW ht dp sepX sepY : Int) :
+    (nodeOutline circle minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
+      sepX sepY).1 = sy := by
+  have step : ∀ s h d : Int, s + ((-((h - d) / 2) - d) + (-((h - d) / 2) + h)) / 2 = s := by
+    intro s h d; omega
+  cases circle <;> exact step sy ht dp
+
 /-- **A node's border half-extent: its text, plus one inner sep, or the
 declared minimum where that is larger.** pgf manual §17.2.2 — a node's
 border is its text *plus* `inner sep`, and §17.5.2's anchors sit on the
@@ -3162,9 +3187,9 @@ is dropped")
 is dropped")
     -- `inner sep` moves the node's *border*: pgf manual §17.2.2 has it
     -- padding the text on every side, and §17.5.2's anchors sit on the
-    -- border. The outline below is still the declared minimum (see the
-    -- emission note), so what this key moves is where an anchor stands and
-    -- how far a relative placement parts two nodes.
+    -- border. So it moves where an anchor stands, how far a relative
+    -- placement parts two nodes, and a drawn outline around its text; a
+    -- declared minimum, where larger, is the outline instead.
     | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => xsep := some d; ysep := some d
@@ -3262,12 +3287,16 @@ outside the rendered picture subset; the label is not drawn")
   -- (tikz.code.tex, `\tikz@fig@continue`, which sets the box's `\ht` and
   -- `\dp`). A declared box is TikZ's to the letter: the node centres it, so
   -- its baseline stands half the height less the depth below the centre
-  -- and every anchor is one inner sep beyond it. An undeclared one keeps the
-  -- engine's placement — the face's band centred on the node, the same seat
-  -- for every label whatever its letters (`Ir.Pic.labelBaseline`), and the
-  -- anchors on that band's border — and the room the picture reserves is
-  -- the glyphs' own box, so a label with no descender keeps one inner sep
-  -- below it and not the face's descent as well.
+  -- and every anchor is one inner sep beyond it. So is the glyphs' own box
+  -- of a drawn node outlined around its text (`nodeOutline`): its outline,
+  -- the anchors on it and the edges from them follow the node's position
+  -- and never its letters (`nodeOutline_seat_exact`), and the letters sit
+  -- one inner sep inside it on every side. Any other undeclared box keeps
+  -- the engine's placement — the face's band centred on the node, the same
+  -- seat for every label whatever its letters (`Ir.Pic.labelBaseline`), and
+  -- the anchors on that band's border — and the room the picture reserves
+  -- is the glyphs' own box, so a label with no descender keeps one inner
+  -- sep below it and not the face's descent as well.
   let glyphs : Sp × Sp := lineInks.foldl (fun (lo, hi) (b, m) =>
     (min lo (b - m.boxDepth), max hi (b + m.boxHeight))) (baseOff, baseOff)
   let dimOf (ts : Option (List Tok)) : Option Sp :=
@@ -3278,21 +3307,37 @@ outside the rendered picture subset; the label is not drawn")
     if let some ts := ts then
       if let .error e := readNodeDim em ex ts then
         ev := ev.diag (.W0334, s!"in '{key}', {e}; the option is dropped")
+  -- A node declaring both minimums (a circle, its size) keeps the declared
+  -- outline and the anchors it always had; any other drawn one is outlined.
+  let declaredExtent : Bool := if isCircle then max minW minH > 0 else minW > 0 && minH > 0
+  let outlined : Bool := (draw.isSome || fillCol.isSome) && !declaredExtent
   let (base, boxLo, boxHi, halfB) : Sp × Sp × Sp × Sp :=
-    if declHt.isNone && declDp.isNone then (baseOff, glyphs.1, glyphs.2, inkHalf.2)
+    if declHt.isNone && declDp.isNone && !outlined then (baseOff, glyphs.1, glyphs.2, inkHalf.2)
     else
       let ht := declHt.getD (glyphs.2 - baseOff)
       let dp := declDp.getD (baseOff - glyphs.1)
-      let b0 := -((ht - dp) / 2)
-      (b0, b0 - dp, b0 + ht, (ht + dp) / 2)
+      let (b0, lo, hi) := textSeat ht dp
+      (b0, lo, hi, (ht + dp) / 2)
+  -- The drawn outline's width and height (`nodeOutline`, centred on the
+  -- node by `nodeOutline_seat_exact`), where the node has one.
+  let outline? : Option (Sp × Sp) :=
+    if outlined then
+      let (_, w, h) := nodeOutline isCircle (dimF minW) (dimF minH) 0 inkHalf.1 boxLo boxHi sepX sepY
+      some (w, h)
+    else none
   -- The placed node's own half-extents, its side of the border-to-border
-  -- gap a relative placement leaves: the declared minimum, or the label's
-  -- own reach where the text stands proud of it (`Ir.Pic.nodeExtent`, whose
-  -- `nodeExtent_covers` is why a placement parts text and not centres).
+  -- gap a relative placement leaves: its drawn outline's where it has one,
+  -- else the declared minimum, or the label's own reach where the text
+  -- stands proud of it (`Ir.Pic.nodeExtent`, whose `nodeExtent_covers` is
+  -- why a placement parts text and not centres).
   let declA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
   let declB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
-  let ownA : Sp := borderHalf declA inkHalf.1 sepX
-  let ownB : Sp := borderHalf declB halfB sepY
+  let ownA : Sp := match outline? with
+    | some (w, _) => w / 2
+    | none => borderHalf declA inkHalf.1 sepX
+  let ownB : Sp := match outline? with
+    | some (_, h) => h / 2
+    | none => borderHalf declB halfB sepY
   let pos : Except PDiag (Sp × Sp) :=
     match atCoord with
     | some (xs, ys) =>
@@ -3308,9 +3353,8 @@ outside the rendered picture subset; the label is not drawn")
         | some g =>
           -- pgf's `positioning` leaves `node distance` between the two
           -- *borders*, so the centres stand that much plus a half-extent
-          -- from each node apart. The declared minimums are what this
-          -- subset knows of an extent; a body wider than its minimum is
-          -- unmeasured here, as it is everywhere else in this walk.
+          -- from each node apart: the target's registered geometry, and this
+          -- node's own half-extents above.
           let (ox, oy) := dir.offset (sep.1 + g.b + ownB, sep.2 + g.a + ownA)
           .ok (g.x + ox, g.y + oy)
         | none =>
@@ -3337,29 +3381,22 @@ this one against; the node is not drawn")
   | .ok (sx, sy) =>
         -- pgf's natural bounding box includes the node's shape — its text
         -- box plus `inner sep`, or the declared minimum where larger —
-        -- whether or not a path paints it (§17.2.2).
+        -- whether or not a path paints it (§17.2.2); a drawn outline is
+        -- that shape.
         let border : Ir.Pic.Box :=
-          ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
-           (sx + ownA, sy + max (boxHi + sepY) declB))
+          if outline?.isSome then ((sx - ownA, sy - ownB), (sx + ownA, sy + ownB))
+          else
+            ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
+             (sx + ownA, sy + max (boxHi + sepY) declB))
         ev := { ev with borders := ev.borders.push border }
-        -- A drawn node that does not declare its whole extent is outlined as
-        -- pgf outlines it, around its measured text (`nodeOutline`), and its
-        -- anchors stand on that outline, where an edge meets what is drawn.
-        -- A node declaring both minimums (a circle, its size) keeps the
-        -- declared outline and the anchors it always had.
-        let declaredExtent : Bool := if isCircle then max minW minH > 0 else minW > 0 && minH > 0
-        let outline? : Option (Sp × Sp × Sp) :=
-          if (draw.isSome || fillCol.isSome) && !declaredExtent then
-            some (nodeOutline isCircle (dimF minW) (dimF minH) sy inkHalf.1 boxLo boxHi sepX sepY)
-          else none
         -- A named node registers its anchoring geometry whether or not
         -- its border draws: pgf anchors edges on the shape's border even
         -- when the path itself is never painted.
         if let some nm := nodeName then
           let geom : NodeGeom :=
             match outline? with
-            | some (cy, w, h) =>
-              { x := sx, y := cy, a := w / 2, b := h / 2, circle := isCircle, base := sy + base }
+            | some (w, h) =>
+              { x := sx, y := sy, a := w / 2, b := h / 2, circle := isCircle, base := sy + base }
             | none =>
               if isCircle then
                 { x := sx, y := sy, a := ownA, b := ownB, circle := true
@@ -3372,20 +3409,20 @@ this one against; the node is not drawn")
         -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
         -- axis, and the minimum is the whole answer when it dominates the
         -- body — a body wider than both declared minimums stands proud of
-        -- the border); an undeclared one is `nodeOutline`'s. pgf draws a
-        -- node's path only when `draw` or `fill` asks it to. Minimums scale
-        -- with the picture only under `transform shape` (§25.4); the line
-        -- width is graphic state and never scales.
+        -- the border); an undeclared one is `nodeOutline`'s, centred on the
+        -- node. pgf draws a node's path only when `draw` or `fill` asks it
+        -- to. Minimums scale with the picture only under `transform shape`
+        -- (§25.4); the line width is graphic state and never scales.
         if draw.isSome || fillCol.isSome then
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
             { color := c.getD Ir.Color.black
               width := width
               dash := dash }
           match outline? with
-          | some (cy, w, h) =>
+          | some (w, h) =>
             let shape : Ir.Pic.Shape :=
-              if isCircle then .circle sx cy (w / 2) stroke fillCol
-              else .frame (sx - w / 2) (cy - h / 2) w h stroke fillCol
+              if isCircle then .circle sx sy (w / 2) stroke fillCol
+              else .frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
             ev := { ev with shapes := ev.shapes.push shape }
           | none =>
             let shape : Ir.Pic.Shape :=
