@@ -294,8 +294,12 @@ def listEnvs : List String := ["itemize", "enumerate", "description"]
 not here is a length of the document's own: a token of its name. -/
 def paramSites : List (String × ParamSite) :=
   [("parskip", .page "parskip"),
+   ("textwidth", .page "textwidth"),
+   ("headsep", .page "headsep"),
+   ("footskip", .page "footskip"),
    ("abovecaptionskip", .token "captionsep"),
    ("topsep", .token "topsep"),
+   ("floatsep", .token "floatsep"),
    ("footins", .token "footins"),
    ("tabcolsep", .token "tabcolsep"),
    ("heavyrulewidth", .token "heavyrulewidth"),
@@ -654,6 +658,16 @@ private structure St where
   environment opens: what the list levels' styles, declarations of the
   preamble, are judged against. -/
   preLens : Option (Array (String × String)) := none
+  /-- The text block's measure is one the elaborator can read in the
+  preamble: false under a flow class (the default class included) until
+  the page declares a measure (`margin`, `hmargin`, `textwidth`), since
+  that class settles its text block after the preamble. -/
+  measureKnown : Bool := false
+  /-- The declared class's page model is the flow model (the default
+  class's): its text block is the engine's, never the one LaTeX's class
+  computed at load, so a preamble value naming the class's line width has
+  no reading here. -/
+  flowPage : Bool := true
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -3203,7 +3217,7 @@ private def nameParam (n why : String) (pos : Pos) : M Unit := do
 
 /-- The kernel's three vertical skip amounts, the same in every class
 (ltspace.dtx, as plain.tex sets them). -/
-private def kernelSkip : String → Option String
+def kernelSkip : String → Option String
   | "smallskipamount" => some "3pt plus 1pt minus 1pt"
   | "medskipamount" => some "6pt plus 2pt minus 2pt"
   | "bigskipamount" => some "12pt plus 4pt minus 4pt"
@@ -3214,16 +3228,28 @@ the document set is the value it holds (TeX copies a register's value; the
 parameter's own token may not exist, or carry an engine name), a kernel
 skip amount is the value the document last set it to, or its fixed value
 where it never did (ltspace.dtx sets each once), and any other name is a
-token of the document's, read where the declaration reads it. `none` for what the door
+token of the document's, read where the declaration reads it. The text
+block's measures stand as the engine's own tokens (`\textwidth`,
+`\textheight`), read where the class fixes them — so not in a preamble
+whose page `measureKnown` denies: a flow class whose page declares no
+measure settles its text block after the preamble. `\linewidth` and
+`\columnwidth` hold the class's `\textwidth` in a preamble (measured under
+lualatex: `0.1\linewidth` is a tenth of it on a one-column page), which is
+the engine's where the class fixes its text block at load and never on a
+flow page (`flowPage`), whose block is the engine's own; in the body a
+line's width is its scope's. Neither has a reading where it is not the
+engine's. `none` for what the door
 cannot evaluate: a kernel parameter whose value it was never told (the
 class sets it), a box's dimension, and a command that computes a length
 (`\stretch`, calc's `\widthof`). In a definition's body (`deferred`) the
 assignment runs where the command is used, so a kernel parameter is read
 there, by its name. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
-    (deferred : Bool := false) : Option String :=
+    (deferred : Bool := false) (preamble : Bool := false) (measureKnown : Bool := true)
+    (flowPage : Bool := false) : Option String :=
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
+  let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
   let held (n : String) : Option String :=
     if kernel n then set n
     else if (kernelSkip n).isSome then
@@ -3231,12 +3257,18 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
       | some v => if deferred then none else some v
       | none => kernelSkip n
     else none
-  let unknown (n : String) : Bool := kernel n || n == "ht" || n == "wd" || n == "dp"
+  -- premise: kernelLengthChecks — under a flow class whose page declares
+  -- no measure the elaborator withholds `textwidth` (E0321 on the native
+  -- token), and a declared margin offers it
+  let unknown (n : String) : Bool :=
+    (kernel n && n != "textwidth") || n == "ht" || n == "wd" || n == "dp" ||
+      (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
+        (preamble && !measureKnown && n == "textwidth")))
   let ref (n : String) (arg : Bool) : Option String :=
     if arg then none
     else match held n with
       | some v => some s!"({v})"
-      | none => if unknown n then none else some n
+      | none => if unknown n then none else some (if line n && !deferred then "textwidth" else n)
   match raws.filter (!· matches .space) with
   | #[.ctrl n _] =>
     -- One name alone copies its value whole, glue included.
@@ -3328,7 +3360,12 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     nameParam n why pos
     return #[]
   match (paramSites.lookup n).getD (.token n), st.inDef with
-  | .page key, _ => emit s!"\\page\{ {key} = {src} }"
+  | .page key, _ =>
+    if preamble && key == "textwidth" then write fun st => { st with measureKnown := true }
+    if st.inDoc && !st.inDef && key == "textwidth" then
+      return ← nothing "'\\begin{document}' set the lines' measure from it, and no later value \
+moves a line" (tokens := false)
+    emit s!"\\page\{ {key} = {src} }"
   | .token t, _ =>
     -- premise: listLevelChecks — a named body setting under a kept \@listi
     -- ships the page the document ships without it: no list reads it here
@@ -3389,7 +3426,8 @@ skipped (`unreadableLength`). -/
 private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
     M (Array Raw) := do
   let st ← get
-  if let some src := lenValue st.lens value st.inDef then
+  if let some src := lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
+      st.flowPage then
     if readsAsLength src then return ← setLength n src what pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
@@ -3510,10 +3548,13 @@ a skip the class set — is named once and skipped (`unreadableLength`).
 Only the long skips a display reads are taken (`Ir.displaySkipDefault`). -/
 private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array String) := do
   let mut lens := (← get).lens
+  let known := (← get).measureKnown
+  let flow := (← get).flowPage
   let mut out : Array String := #[]
   for a in (readAssigns body start).1 do
     if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _)) then
-      if let some src := (lenValue lens a.value).filter readsAsLength then
+      if let some src := (lenValue lens a.value (preamble := true) (measureKnown := known)
+          (flowPage := flow)).filter readsAsLength then
         out := out.push s!"{a.name} = {src}"
         lens := (lens.filter (·.1 != a.name)).push (a.name, src)
       else
@@ -3798,6 +3839,8 @@ private def geometry (opts : String) (pos : Pos)
     | none, some _ => dropped := dropped.push b
     | none, none => pure ()
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
+  if keys.any fun k => ["margin =", "hmargin =", "textwidth ="].any (k.startsWith ·) then
+    write fun st => { st with measureKnown := true }
   became spelling native pos
   unless dropped.isEmpty do
     say .W0101 s!"geometry keys without a native equivalent were dropped: \
@@ -5566,6 +5609,13 @@ where
   -- appendix numbers from 1 with it and numbers on without it
   if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
     return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
+  -- premise: kernelLengthChecks — a skip amount the document set ships, at
+  -- its command, the page a skip of that value ships
+  if let some (_, v) := (← get).lens.find? (·.1 == name ++ "amount") then
+    if (kernelSkip (name ++ "amount")).isSome then
+      let native := s!"\\block[before = {v}]\{}"
+      became s!"\\{name}" native pos
+      return some (← synthAt native pos, start)
   if let some native := simpleNative.lookup name then
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
@@ -5758,6 +5808,11 @@ and \\tokens declare the design directly")
     let cls := rawSrc (args.getD 0 #[])
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
+    let native := if articleClasses.contains cls then "article"
+      else if resumeClasses.contains cls then "resume"
+      else if cls == "beamer" then "slides" else cls
+    let flow := ((Ir.DocClass.ofString? native).map (·.record.model == .flow)).getD true
+    write fun st => { st with measureKnown := !flow, flowPage := flow }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""

@@ -38,6 +38,11 @@ LaTeX spelling, the native spelling of the same value, and the body that
 reads it. -/
 def paramProbes : List (String × String × String × String) :=
   [("parskip", "\\setlength{\\parskip}{19pt}", "\\page{ parskip = 19pt }", "paras"),
+   ("textwidth", "\\setlength{\\textwidth}{4in}", "\\page{ textwidth = 4in }", "paras"),
+   ("headsep", "\\runninghead{Alpha head}\\setlength{\\headsep}{40pt}",
+     "\\runninghead{Alpha head}\\page{ headsep = 40pt }", "paras"),
+   ("footskip", "\\setlength{\\footskip}{50pt}", "\\page{ footskip = 50pt }", "paras"),
+   ("floatsep", "\\setlength{\\floatsep}{30pt}", "\\tokens{ floatsep = 30pt }", "figure"),
    ("abovecaptionskip", "\\setlength{\\abovecaptionskip}{23pt}",
      "\\tokens{ captionsep = 23pt }", "figure"),
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
@@ -547,3 +552,102 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "pandoc's \\tightlist names its two settings once each"
     ((tds.filter (·.code == "W0104")).map (·.subject) ==
       #[some "ctrl:setlength:itemsep", some "ctrl:setlength:parskip"])
+
+
+
+/-- The lengths LaTeX's kernel and standard classes declare for a document
+to set (latex.ltx, classes.dtx, size10.clo; usrguide's lengths), each
+decided in `Compat.paramSites`, a kernel skip amount the door reads
+(`Compat.kernelSkip`), handled by its own arm, or owed. -/
+def kernelLengthNames : List String :=
+  ["paperwidth", "paperheight", "textwidth", "textheight", "oddsidemargin", "evensidemargin",
+   "topmargin", "headheight", "headsep", "footskip", "marginparwidth", "marginparsep",
+   "marginparpush", "columnsep", "columnseprule", "columnwidth", "linewidth", "topskip",
+   "footnotesep", "footins", "floatsep", "textfloatsep", "intextsep", "dblfloatsep",
+   "dbltextfloatsep", "abovecaptionskip", "belowcaptionskip", "parindent", "parskip",
+   "baselineskip", "lineskip", "lineskiplimit", "parfillskip", "leftmargin", "leftmargini",
+   "leftmarginii", "leftmarginiii", "leftmarginiv", "leftmarginv", "leftmarginvi",
+   "rightmargin", "labelwidth", "labelsep", "itemindent", "listparindent", "itemsep", "parsep",
+   "topsep", "partopsep", "abovedisplayskip", "belowdisplayskip", "abovedisplayshortskip",
+   "belowdisplayshortskip", "jot", "mathindent", "arraycolsep", "tabcolsep", "arrayrulewidth",
+   "doublerulesep", "fboxsep", "fboxrule", "unitlength", "smallskipamount", "medskipamount",
+   "bigskipamount"]
+
+/-- The kernel lengths no row decides yet: each still lands as a token of
+its own name, which no engine site reads. Owed, and held in both
+directions — a row that decides one fails here until it leaves this list.
+`\textheight` waits on the page model: as a `\page` key it forfeits a flow
+page's own margins (the measure widens) and centres the block, where
+LaTeX keeps its top edge. -/
+def openKernelLengths : List String :=
+  ["paperwidth", "paperheight", "textheight", "oddsidemargin", "evensidemargin", "topmargin",
+   "headheight", "marginparwidth", "marginparsep", "marginparpush", "columnseprule",
+   "columnwidth", "linewidth", "topskip", "textfloatsep", "intextsep", "dblfloatsep",
+   "dbltextfloatsep", "lineskip", "lineskiplimit", "parfillskip", "mathindent"]
+
+/-- **A kernel length is decided where it is set, and read where it is a
+value.** The table closes over the kernel's lengths, less the owed list, in
+both directions. The text block's measure is the page's (`\textwidth`,
+`\headsep`, `\footskip` are `\page` keys). A value naming the measure reads
+it where the elaborator can, and is named once, never an error, where it
+cannot: a flow class whose page declares no measure settles its text block
+after the preamble — the premise the door's gate rests on, held here as two
+builds — and `\linewidth`, which holds the class's `\textwidth` in the
+preamble (measured under lualatex), is that only where the class fixes its
+text block at load. A skip amount the document set is what its command
+skips (`\medskip` is `\vspace\medskipamount`, ltspace.dtx). -/
+def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let decided (n : String) : Bool :=
+    (Compat.paramSites.lookup n).isSome || (Compat.kernelSkip n).isSome ||
+      n == "belowcaptionskip"
+  t "every kernel length is decided, or owed by name"
+    (kernelLengthNames.filter (!decided ·) == openKernelLengths)
+  let doc (cls pre body : String) : String :=
+    "\\documentclass{" ++ cls ++ "}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+  let list := "Alpha words.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}"
+  let fails (ds : Array Diag) : Bool := ds.any (·.severity == .error)
+  let line := doc "article" "\\setlength{\\leftmargini}{0.1\\linewidth}" list
+  t "a measure the page settles later builds, named once on its value"
+    (!fails (dvE line) && ((dvE line).filter (·.code == "W0104")).map (·.subject) ==
+      #[some "ctrl:setlength:leftmargini:value"])
+  t "a measure the page settles later ships the page without the setting"
+    (pagesOf oneFace line == pagesOf oneFace (doc "article" "" list))
+  let par := doc "article" "\\setlength{\\parindent}{0.05\\textwidth}" list
+  t "a paragraph indent of the unsettled measure builds, named once"
+    (!fails (dvE par) && ((dvE par).filter (·.code == "W0104")).size == 1)
+  let margin := "\\usepackage[margin=2cm]{geometry}"
+  let geo := doc "article" (margin ++ "\\setlength{\\leftmargini}{0.1\\linewidth}") list
+  t "a flow page's '\\linewidth' is the class's, not the engine's: named once on its value"
+    (!fails (dvE geo) && ((dvE geo).filter (·.code == "W0104")).map (·.subject) ==
+      #[some "ctrl:setlength:leftmargini:value"])
+  let frame (pre : String) : String :=
+    doc "beamer" pre ("\\begin{frame}{Alpha}\n" ++ list ++ "\n\\end{frame}")
+  let fixed := frame "\\setlength{\\leftmargini}{0.1\\linewidth}"
+  t "a class that fixes its text block reads '\\linewidth' as its '\\textwidth'"
+    (!fails (dvE fixed) && !(dvE fixed).any (·.code == "W0104") &&
+      pagesOf oneFace fixed == pagesOf oneFace (frame "\\setlength{\\leftmargini}{0.1\\textwidth}"))
+  t "a class that fixes its text block: '\\linewidth' moves the page"
+    (pagesOf oneFace fixed != pagesOf oneFace (frame ""))
+  t "the gate's premise: an undeclared flow page withholds 'textwidth', a declared one offers it"
+    (fails (dvE (doc "article" "\\tokens{ probe = 0.1 * textwidth }" list)) &&
+      !fails (dvE (doc "article" "\\page{ hmargin = 2cm }\\tokens{ probe = 0.1 * textwidth }" list)))
+  let body := doc "article" "" ("\\newlength{\\probew}\\setlength{\\probew}{0.1\\linewidth}\n" ++ list)
+  t "a body '\\linewidth', its scope's width, builds, named once on its value"
+    (!fails (dvE body) && ((dvE body).filter (·.code == "W0104")).map (·.subject) ==
+      #[some "ctrl:setlength:probew:value"])
+  let head (pre : String) : String :=
+    doc "article" ("\\runninghead{Alpha head}" ++ pre) "Alpha words.\n\nBravo words."
+  t "'\\headsep' moves a running head's page"
+    (pagesOf oneFace (head "\\setlength{\\headsep}{40pt}") != pagesOf oneFace (head ""))
+  let skip (pre body : String) : String := doc "article" pre ("Alpha words.\n\n" ++ body ++ "\nBravo words.")
+  let medium := pagesOf oneFace (skip "\\setlength{\\medskipamount}{20pt}" "\\medskip")
+  t "'\\medskip' skips the amount the document set"
+    (medium == pagesOf oneFace (skip "" "\\block[before = 20pt]{}"))
+  t "'\\medskip' of a set amount moves the page" (medium != pagesOf oneFace (skip "" "\\medskip"))
+  let late := doc "article" "" ("\\setlength{\\textwidth}{4in}\n" ++ list)
+  t "a body '\\textwidth' moves no line, as LaTeX's does not, and says so in a note"
+    (pagesOf oneFace late == pagesOf oneFace (doc "article" "" list) &&
+      !(dvE late).any (fun d => d.code == "W0340" || d.code == "W0104") &&
+      (dvE late).any (·.subject == some "ctrl:nothing:setlength:textwidth"))

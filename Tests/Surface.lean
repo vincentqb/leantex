@@ -513,8 +513,9 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!dps.any (·.code == "E0321") && !dps.any (·.code == "W0314"))
   let (_, da) := elabStr ("\\documentclass{article}\n\\newlength{\\x}\n" ++
     "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
-  t "a flow class's preamble textwidth stays a named error: the text block is set after the fold"
-    (da.any (·.code == "E0321"))
+  t "a flow class's preamble textwidth is named once, never an error: the text block is set after the fold"
+    (!da.any (·.severity == .error) &&
+      (da.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:x:value"])
   let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
     "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
   t "a body \\setlength resolves textwidth from the finished page"
