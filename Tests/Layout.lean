@@ -752,6 +752,42 @@ def boxSideHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a lone box's row reads its scope's track placement"
     (styles.size == 1 && styles.all (hasStr · "justify-content: var(--ltx-box-justify, start)"))
 
+/-- **The title heading takes what the page's title door reads, and a key it
+cannot read is named where it stands.** `Ir.titleHeadingStyle` is the one
+projection both artifacts style the title through; every other heading key
+has no meaning on the title page (`Ir.titleUnreadKeys`), so a document that
+declares one ships, in both artifacts, exactly the page of the document
+without it — two builds apart — and the declaration is named by its own key
+(W0104). The defect it names: `\style{titlepage}{ rule = … }` drew a heading
+rule in the HTML alone, and the flex row that drew it set the centred title
+flush left (130 px at 360 px), while the page drew no rule and centred it;
+`indent` and the vertical keys moved the HTML title alone the same way. -/
+def titleHeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (decl : String) : String :=
+    "\\documentclass{article}\\palette{ quiet = #6B7280 }" ++ decl ++
+    "\\title{An Invented Title}\\author{Pat Placeholder}\\begin{document}\\maketitle " ++
+    "Body text.\\end{document}"
+  let (plain, _) := elabStr (src "")
+  let linesOf (d : Ir.Doc) : Array (Int × Int × String) :=
+    (bodyLines (layoutOf oneFace d)).map fun l => (l.x, l.y, lineText l)
+  let values : List (String × String) :=
+    [("before", "1em"), ("rule", "quiet"), ("rule-position", "baseline"),
+     ("rule-thickness", "1pt"), ("marker", "{x}"), ("indent", "2em"), ("gap", "1em"),
+     ("body-size", "small")]
+  t "every unread title key is exercised" (values.map (·.1) == Ir.titleUnreadKeys)
+  for (key, v) in values do
+    let (d, ds) := elabStr (src ("\\style{titlepage}{ " ++ key ++ " = " ++ v ++ " }"))
+    t s!"a title page's '{key}' is named by its own key"
+      (ds.any fun g => g.code == DiagCode.W0104.code && g.subject == some ("style:titlepage:" ++ key))
+    t s!"a title page's '{key}' ships the page of the document without it"
+      (linesOf d == linesOf plain && (HtmlDoc.emit {} d).1 == (HtmlDoc.emit {} plain).1)
+  -- `after` is the title block's gap, read once: the HTML heading no longer
+  -- takes it as a margin of its own on top of the block's gap.
+  let (gapDoc, _) := elabStr (src "\\style{titlepage}{ after = 30pt }")
+  t "a title page's 'after' gaps the block and is no heading margin"
+    (!hasStr (HtmlDoc.emit {} gapDoc).1 "h1 { margin-bottom")
+
 /-- **A centred headline stands on its band's centre, whatever logo stands
 beside it**, wherever the band holds the matter between two reserves as
 wide as the wider logo — as the PDF sets the matter over the whole measure,

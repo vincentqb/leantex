@@ -5888,6 +5888,25 @@ structure ElementStyle where
   slots : Array TitleSlot := #[]
   deriving Repr, BEq, Inhabited
 
+/-- What of the `titlepage` style the title heading itself takes: its font
+and its interaction states. A heading rule fills the line a heading leaves,
+which takes a centred title off its centre; the title block reads `after`,
+`align`, its rules (`ruleAbove`, `ruleBelow`, `separator`) and the author
+keys (`Elab.titleBlocks`), and the other heading keys have no meaning on the
+title page (`titleUnreadKeys`). Both artifacts read the title through this
+one projection (`Layout.collectTitle`, the HTML `h1`), so neither styles the
+title with a key the other ignores: the HTML once drew a heading rule the
+page never drew, and the flex row that drew it set a centred title flush
+left. -/
+def titleHeadingStyle (st : ElementStyle) : ElementStyle :=
+  { font := st.font, hover := st.hover, focus := st.focus, motion := st.motion }
+
+/-- The `\style` keys no engine site reads on the title page, named where
+they are declared (W0104) rather than dropped in silence. `after` is read:
+the gap after the whole title block (`Elab.titleBlocks`). -/
+def titleUnreadKeys : List String :=
+  ["before", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
+
 /-- Elements a document may style. Section levels are `section`, `subsection`,
 `subsubsection`; lists are `itemize` and `enumerate` — those two style every
 nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`

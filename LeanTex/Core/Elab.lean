@@ -11194,6 +11194,11 @@ list levels: itemize2..4, enumerate2..4")
       diag ctx .E0320 s!"invalid entry in '\\style': {entry.quote}" pos
         (help := "entries look like: key = value")
     | some (key, valueSrc) =>
+      -- premise: titleHeadingChecks — no site reads these keys on the title page: both artifacts ship the same page with and without each
+      if element == "titlepage" && Ir.titleUnreadKeys.contains key then
+        warnOnce ctx ("style:titlepage:" ++ key) .W0104
+          s!"'{key}' has no meaning on the title page; the title is set without it" pos
+          (help := "draw rules around the title with rule-above, rule-below or separator")
       let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       -- A colour key resolves through the palette (mixes included), then

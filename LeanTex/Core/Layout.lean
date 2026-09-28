@@ -6276,7 +6276,7 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     collectDisplay r a title indent center r.geom.fontSize
       (leaf := leaf) (span := leafCount title)
   else
-  match (r.style "titlepage").font with
+  match (Ir.titleHeadingStyle (r.style "titlepage")).font with
   | some tpl =>
     collectDisplay r a (Ir.fillTemplate tpl title) indent center r.geom.fontSize
       (leaf := leaf) (span := leafCount title)

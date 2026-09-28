@@ -603,6 +603,8 @@ def styleRules (doc : Doc) : String × Array Diag :=
   let mut diags : Array Diag := #[]
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
+    -- The title heading takes what the page's title door reads, nothing more.
+    let st := if element == "titlepage" then Ir.titleHeadingStyle st else st
     let decls :=
       (st.before.map fun g => s!"margin-top: {cssLength g.width};").toList ++
       (st.after.map fun g => s!"margin-bottom: {cssLength g.width};").toList ++
@@ -5539,6 +5541,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | _ => "subsubsection"
     let tag := headingTag level
     let st := (cfg.styles.find? element).getD {}
+    let st := if level == 0 then Ir.titleHeadingStyle st else st
     let title := match st.font, cfg.slotTitle && level == 0 with
       | some tpl, false => fillTemplate tpl title
       | _, _ => title
