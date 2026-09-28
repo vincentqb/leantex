@@ -141,25 +141,37 @@ private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := 
     | .ref l => out := out ++ (s!"{base + l} 0 R").toUTF8
   return out
 
-/-- Used glyphs for one font: one char witness per gid, ascending gid. Mark
-array — the glyph stream is large (every glyph on every page), so no sorting. -/
-private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
-    Array (Nat × Char) := Id.run do
-  let mut seen : Array (Option Char) := Array.replicate numGlyphs none
+/-- Every face's used glyphs in one walk over the pages: per face, a mark
+per glyph id holding the first char witness — the glyph stream is large
+(every glyph on every page), so marks, never a sort, and one walk for all
+the faces, never one walk a face. -/
+private def markUsed (fs : FontSet) (pages : Array PageOut) : Array (Array (Option Char)) :=
+  Id.run do
+  let mut seen : Array (Array (Option Char)) :=
+    fs.fonts.map fun f => Array.replicate f.numGlyphs none
   for p in pages do
     for l in p.lines do
       for s in l.segs do
         if let .run idx _ _ _ glyphs _ _ _ _ _ := s then
-          if idx == fontIdx then
+          seen := seen.modify idx fun marks => Id.run do
+            let mut marks := marks
             for (g, c, _) in glyphs do
-              if h : g < seen.size then
-                if seen[g].isNone then
-                  seen := seen.set! g (some c)
-  let mut out : Array (Nat × Char) := #[]
-  for (c?, g) in seen.zipIdx do
-    if let some c := c? then
-      out := out.push (g, c)
-  return out
+              if h : g < marks.size then
+                if marks[g].isNone then
+                  marks := marks.set g (some c)
+            return marks
+  return seen
+
+/-- Used glyphs per face, one char witness per gid, ascending gid: the
+census `write` embeds from, by face index. -/
+private def usedAll (fs : FontSet) (pages : Array PageOut) : Array (Array (Nat × Char)) :=
+  let seen := markUsed fs pages
+  (Array.range fs.fonts.size).map fun k =>
+    ((seen[k]?.getD #[]).zipIdx.filterMap fun (c?, g) => c?.map (g, ·))
+
+private theorem usedAll_size (fs : FontSet) (pages : Array PageOut) :
+    (usedAll fs pages).size = fs.fonts.size := by
+  simp [usedAll]
 
 /-- The keep set over a per-face used-glyph census: the faces the file
 embeds. Only faces that actually contribute glyphs are kept — a declared
@@ -172,8 +184,7 @@ def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
 /-- The faces `write` embeds for these pages, named so the cross-backend
 contract below can quantify over the writer's own decision, not a copy. -/
 def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
-  keepOf ((Array.range fs.fonts.size).map fun k =>
-    usedGlyphs k (fs.get k).numGlyphs pages)
+  keepOf (usedAll fs pages)
 
 /-- The font program `write` embeds for each face it keeps on these pages,
 in `keepFaces` order: the face's own file minus every glyph they do not
@@ -181,9 +192,10 @@ paint (`FontSubset.program`), and whether it is a subset. The driver builds
 it once, deflates it through its cache (`FontSet.zdata`), and hands it to
 `write`. -/
 def facePrograms (fs : FontSet) (pages : Array PageOut) : Array (ByteArray × Bool) :=
-  (keepFaces fs pages).map fun k =>
+  let used := usedAll fs pages
+  (keepOf used).map fun k =>
     let f := fs.get k
-    FontSubset.program f.data f.isCff ((usedGlyphs k f.numGlyphs pages).map (·.1))
+    FontSubset.program f.data f.isCff ((used[k]?.getD #[]).map (·.1))
 
 /-- A subset's tag (ISO 32000-2 §9.6.4): six capitals, the first two the
 face's slot in the file, so no two subsets in one file share a tag, and the
@@ -199,7 +211,7 @@ theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
   intro k hk
   unfold keepFaces keepOf at hk
   dsimp only at hk
-  rw [Array.size_map, Array.size_range] at hk
+  rw [usedAll_size] at hk
   split at hk
   · simp only [Array.mem_singleton] at hk
     omega
@@ -1139,7 +1151,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- contract holds of the writer's own decision, not a copy. `allUsed`
   -- stays for the per-face glyph census the kept faces subset.
   let allUsed : Array (Array (Nat × Char)) :=
-    (Array.range fs.fonts.size).map fun k => usedGlyphs k (fs.get k).numGlyphs pages
+    usedAll fs pages
   let keep : Array Nat := keepFaces fs pages
   let remap := remapOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!

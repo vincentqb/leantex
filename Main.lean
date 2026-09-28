@@ -226,7 +226,7 @@ inductive Purpose where
 
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
-document never uses are still loaded but not embedded — `usedGlyphs` decides
+document never uses are still loaded but not embedded — `Pdf.keepFaces` decides
 what reaches the file. A document with no `\fonts` is served by the same
 mechanism: `FontDb.defaultFamily` picks a family from the scan and it fills
 the body slot, so the default exists wherever any font does, by construction.
