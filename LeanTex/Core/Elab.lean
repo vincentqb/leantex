@@ -3664,8 +3664,13 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       -- Verbatim inside inline content: kept as mono text, spaces held as
       -- no-break spaces, lines separated by forced breaks. A listing's
       -- option head is a declaration a paragraph cannot carry — stripped
-      -- and named, never set as code text.
+      -- and named, never set as code text. `\verb`'s one line has no head.
       let acc := flushText acc sb
+      if env == "verb" then
+        let kept := s.map fun c => if c == ' ' then '\u00a0' else c
+        elabInlinesFrom ctx raws (i + 1)
+          (if kept.isEmpty then acc else acc.push (.styled .mono #[.text kept])) ""
+      else
       let start := listingContentStart env s
       if start > 0 then
         warnOnce ctx ("verb-inline:" ++ env) .W0346
@@ -4900,7 +4905,7 @@ def bodyIsBlockOne : Raw → Bool
       || n == "define" || counterCtrl n
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
-  | .verb _ _ _ => true
+  | .verb env _ _ => env != "verb"
   | .math display _ _ => display
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
@@ -9745,6 +9750,9 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let blocks ← flushPara ctx' blocks cur
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb env s vpos =>
+      if env == "verb" then
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+      else
       let blocks ← flushPara ctx' blocks cur
       let b ← listingBlock ctx' env s vpos
       elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'

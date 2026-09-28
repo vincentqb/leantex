@@ -28,6 +28,7 @@ import Tests.Kernel
 import Tests.PicturePaths
 import Tests.PictureKeys
 import Tests.TextSym
+import Tests.InlineVerb
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -292,6 +293,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathChecks ref
   mathSymChecks ref
   textSymChecks ref
+  inlineVerbChecks ref
   amsmathChecks ref
   bibChecks ref
   bibStyleChecks ref

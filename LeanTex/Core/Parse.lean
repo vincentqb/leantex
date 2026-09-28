@@ -408,7 +408,11 @@ def rawSrcOne (r : Raw) : String :=
     let inner := rawSrc body
     if d then s!"\\[{inner}\\]" else s!"${inner}$"
   | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
-  | .verb env s _ => s!"\\begin\{{env}}{s}\\end\{{env}}"
+  | .verb env s _ =>
+    if env == "verb" then
+      let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
+      s!"\\verb{d}{s}{d}"
+    else s!"\\begin\{{env}}{s}\\end\{{env}}"
 
 end
 

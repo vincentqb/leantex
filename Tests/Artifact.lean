@@ -1291,13 +1291,13 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   judge "overlays untouched" .pageBytes og (driverPdf of_ og od oo os) false
   -- Markup as ink: the check judges the character, not its provenance
   -- (as `inkMarkupChecks` does, exemption table and all), so an authored
-  -- backslash is its witness. The corpus ships none; the recovery paths
-  -- that could leak one (`\verb`, an unmodelled command's argument) are
-  -- checked silent beside it.
+  -- backslash is its witness — a `\verb` run's code is one. The corpus
+  -- ships none; the recovery path that could leak one (an unmodelled
+  -- command's argument) is checked silent beside it.
   for (label, src, want) in [
       ("an authored backslash", dvDoc "" "a \\textbackslash{} b", true),
       ("authored braces", dvDoc "" "a \\{x\\} b", true),
-      ("a verbatim run's own markup", dvDoc "" "\\verb|\\foo{bar}|", false),
+      ("a verbatim run's own code", dvDoc "" "\\verb|\\foo{bar}|", true),
       ("an unmodelled command's argument", dvDoc "" "\\parbox{.25\\textwidth}{x}", false)] do
     let (d, _) := elabStr src
     let g := Layout.Geom.ofPage d.page

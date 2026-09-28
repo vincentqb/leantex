@@ -181,6 +181,27 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
                 toks := toks.push ⟨.verb env (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
+            else if name == "verb" then
+              -- `\verb<d>…<d>`: the text up to the delimiter's next copy on
+              -- the same line is code, read raw (latex.ltx's `\verb`, whose
+              -- `\@ifstar` skips spaces before the delimiter); `\verb*`
+              -- shows each space as the visible space, U+2423.
+              let star := cs[j]? == some '*'
+              let k := scanWhile cs (if star then j + 1 else j) (fun c => c == ' ' || c == '\t')
+              let d := (cs[k]?).getD '\n'
+              let e := if d == '\n' || d == '\r' then k
+                else scanWhile cs (k + 1) (fun c => c != d && c != '\n' && c != '\r')
+              let closed := d != '\n' && d != '\r' && cs[e]? == some d
+              let body := if d == '\n' || d == '\r' then "" else strFrom cs (k + 1) e
+              let shown := if star then body.map (fun c => if c == ' ' then '␣' else c) else body
+              unless closed do
+                diags := diags.push (Diag.of .E0102
+                  "unclosed \\verb: its delimiter's second copy must end the code on the same line"
+                  (some ⟨file, here⟩))
+              toks := toks.push ⟨.verb "verb" shown, here⟩
+              let stop := if closed then e + 1 else e
+              pos := posOver cs i stop pos
+              i := stop
             else
               toks := toks.push ⟨.ctrl name, here⟩
               pos := posOver cs i j pos

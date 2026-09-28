@@ -23076,3 +23076,34 @@ and in an entry — `Bib.text` is natbib's region until it lands. TU names
 are not in `renderedBuiltins`, so `\providecommand{\S}` defines where
 LaTeX keeps `\S`, as `Bib.charCommands`' names already did. The kernel
 probe cannot witness `\c` (no probe token composes a cedilla).
+
+
+### 2026-09-28 — `\verb` is code, read raw, inside its paragraph
+
+`\verb` was an unknown command, and the text after it was not code: the
+lexer tokenized `\verb!\small!`, so `\small` ran. Four of the flashtex
+corpus's documents failed on it alone, their only unknown constructs being
+the commands inside `\verb`. The lexer now reads `\verb<d>…<d>` as
+latex.ltx does: spaces before the delimiter are skipped (`\@ifstar`), the
+code runs to the delimiter's next copy on the same line, `\verb*` shows each
+space as U+2423, and a delimiter with no second copy is E0102 (LaTeX's
+"\verb ended by end of line"), the code kept. It is a `.verb "verb"` raw —
+no environment spells that tag, since only the lexer makes a `.verb` — which
+the inline arm sets as mono text with its spaces held (no-break spaces, as
+inline verbatim already was), the block walk keeps inside the paragraph,
+and `rawSrc` spells back with a delimiter the code does not contain.
+
+`inlineVerbChecks` (six rows, each failing at `b176ed66`): the IR of a
+control word inside `\verb`, three delimiters, the star, a paragraph that
+opens with `\verb`, E0102, and the shipped page carrying the code. The
+artifact mutant that held `\verb|\foo{bar}|` to shipping no markup
+character encoded the recovery path this replaces: its code is authored
+markup, so the row now expects the markup judge to fire, as it does for an
+authored backslash. External tier: 140 → 144 at 2. On the one of the four
+with prose to compare, the lines that quote `\frac`, `\sqrt` and the
+`\bigl` family read the same in `pdftotext` of both engines' PDFs.
+
+The kernel probe cannot witness `\verb`: every probe shape either leaves the
+delimiter unmatched or consumes an argument's opening brace, which lualatex
+also rejects. Owed: `\verb` resets the series and shape (`\verbatim@font` is
+`\normalfont\ttfamily`); the mono style here keeps a surrounding bold.
