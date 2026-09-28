@@ -23813,3 +23813,60 @@ codes and the same diagnostics by code — for all 84 corpus documents and for
 the private reference corpus's five documents, each pair built from one
 pristine copy at one path. The same comparison against the engine of
 `2f81a8e1` flags 88 of the 89, so it can see a difference.
+
+
+### 2026-09-28 — image rows set as TeX sets them: a fill's slack, beamer's `\textheight`, the HTML row
+
+**Report (R41).** A slide's rows of images, two to a row parted by
+`\hfill` inside `{center}`, stood clumped at the middle of the measure and
+small, where lualatex sets each row from margin to margin. Three causes,
+each measured against a fresh lualatex build of the private reference
+corpus's deck and on an invented frame of the same shape
+(`imageRowChecks`, which fails at `95ce05dd` on every check below).
+
+- **A fill in a centred or ragged line took none of its slack.** TeX gives
+  a line's slack to its highest-order stretch; `\centering`, `\raggedright`
+  and `\raggedleft` put 0pt plus 1fil in `\leftskip`/`\rightskip`
+  (`\@flushglue`, latex.ltx) and `\hfill` is 0pt plus 1fill, an order above,
+  so a line carrying one spans the measure whatever its alignment. The
+  engine set such lines at natural width, fill included, then centred them.
+  `Layout.setsToMeasure` is the rule: justified text, or a line with an
+  author's fill (never the parfill), is set to its measure through
+  `setLine`'s justified arm, read by the paragraph and footnote setters.
+  Natural-width boxes — band slots, logo and label lines, markers — keep
+  their natural width, as TeX's `\hbox` with no `to` gives a fill nothing.
+- **`\textheight` in a frame was the engine's margins, not beamer's.**
+  beamer's is `\paperheight − \footheight − \headheight`
+  (beamerbaseframecomponents.sty:178-180), recomputed per frame; a frame
+  carrying moloch's footline now sizes its `\textheight` fractions against
+  the text area the page builder stands its body on (`footFloor` of the
+  band's box, `B.bottom`), through `Geom.frameTextHeight` from the frame's
+  reader (`frameReader`, outside the knot), and a logo against the page's
+  own. A keepaspectratio fit that bound on the short height grows to
+  lualatex's size; the deck's other image frames and its logo were the
+  same cause.
+- **The HTML row.** Each image's percentage resolved against its own group
+  span and `object-fit: contain` letterboxed it, so a row's two images
+  shipped unequal and off the margin (Chromium). A text-width fraction in a
+  fill row is now the row's (`cqi`, the row an inline-size container, after
+  a percentage floor); keepaspectratio is graphicx's fit, `width: min(W, H ·
+  iW / iH); height: auto`; a fill row's first group starts at the left.
+
+**Measured.** On the deck's row frame the images now stand at lualatex's
+positions and size to within 0.03 bp, and its other image pages within
+0.1 bp of lualatex's size; every page that moved moved toward lualatex, and
+the paper, card, résumé and site PDFs are byte-identical (their HTML
+differs by the one stylesheet line and renders pixel-identical at 360, 768
+and 1280 px; the card's 14 print checks hold). In Chromium the row's two
+images are equal and meet both text margins at three 16:9 sizes.
+
+**What stands, declared.** The row gap stays below lualatex's by the
+trivlist `\topsep` quantum (`Ir.trivlistSkipDefault`: 6 pt against size10's
+8pt plus2 minus4) and the metric interline rule's missing `\lineskip`
+between two tall lines (`B.placeLine`) — both existing declared rules, the
+rhythm owner's. The HTML deck sizes a `\textheight` fraction against the
+stage less the slides margins: the PDF's frame value is the band's glyph
+box, which the emission cannot read (routed: the driver could hand it one,
+as it hands `labelMetric`). The elaboration token `textheight` (a
+`\setlength` expression) still reads the margins on a frame, while
+`\includegraphics`' fraction reads beamer's (owed, `Elab.engineLengthTokensOfPage`).

@@ -8,6 +8,7 @@ import Tests.Artifact
 import Tests.HtmlTokens
 import Tests.Settings
 import Tests.Redefine
+import Tests.Images
 import scripts.LandCore
 
 /-!
@@ -254,7 +255,12 @@ def reports : List Report := [
     what := "a business card's text did not stand vertically centred on its faces: the gaps above and below its block differed"
     pins := [check% faceCentreChecks]
     accept := ["the card's own print check recipe, against its lualatex build"]
-    state := .guarded "f16b1321" .before .author }
+    state := .guarded "f16b1321" .before .author },
+  { id := "R41", date := "2026-09-28"
+    what := "a slide's rows of images, two to a row parted by a fill, stood clumped at the middle and too small where TeX sets them at the measure's two edges: a centred line gave its fill no share of the slack, and a text-height fraction sized against the engine's own margins rather than the frame's text area"
+    pins := [check% imageRowChecks]
+    accept := ["the deck's image pages measured against its lualatex build, and its slides in Chromium"]
+    state := .guarded "95ce05dd" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
