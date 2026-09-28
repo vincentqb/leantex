@@ -34,7 +34,9 @@ frame
     text "Wrapped and centred"
   para
     styled bold
+      italicCorr maybe
       text "Note:"
+    italicCorr maybe
     text "  wrappers keep their argument."
   center
     para
