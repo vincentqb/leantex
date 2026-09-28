@@ -260,7 +260,13 @@ def reports : List Report := [
     what := "a slide's rows of images, two to a row parted by a fill, stood clumped at the middle and too small where TeX sets them at the measure's two edges: a centred line gave its fill no share of the slack, and a text-height fraction sized against the engine's own margins rather than the frame's text area"
     pins := [check% imageRowChecks]
     accept := ["the deck's image pages measured against its lualatex build, and its slides in Chromium"]
-    state := .guarded "95ce05dd" .before .author }
+    state := .guarded "95ce05dd" .before .author },
+  { id := "R42", date := "2026-09-28"
+    what := "a custom title-page template declared a full-page dark ground, but mixed node content made both artifacts fall back to the document ground"
+    pins := [check% artGroundParityChecks, check% titleGroundChecks,
+      thm% Ir.Design.titleGround_exact]
+    accept := ["the private presentation's first page measured against its lualatex build"]
+    state := .guarded "fed62cd2" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -5175,13 +5175,20 @@ is skipped" pos
       -- does not model is one named loss, never a fallback.
       let (bodyArgs, k) := takeGroups raws j 1
       match TitleTemplate.read (← get).beamerFonts.toList (bodyArgs.getD 0 #[]) with
-      | some { mixed := some datum, .. } =>
+      | some rd@{ mixed := some datum, .. } =>
         -- A datum beside literal text has no slot to stand in, and a
         -- datum is never dropped: the template is not read, the built-in
         -- title page sets every datum, and that is the one named loss.
         let (sfx, msg, help) := TitleTemplate.mixedLoss datum
         sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
-        return some (#[], k)
+        -- The full-page fill is independent of the unread node arrangement:
+        -- keep its ground while the built-in title layout stands.
+        match rd.ground with
+        | some ground =>
+          let native := s!"\\palette\{ titlepagebg = {ground} }"
+          became "\\setbeamertemplate{title page}" native pos
+          return some (← synthAt native pos, k)
+        | none => return some (#[], k)
       | some rd =>
         let native := TitleTemplate.native rd
         -- The theme's own fonts the template selects are honoured here:

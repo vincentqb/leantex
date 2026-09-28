@@ -1839,6 +1839,33 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t s!"ground parity: painted grounds are reached ({paintedSeen})" (0 < paintedSeen)
   t s!"ground parity: declared grounds are reached ({declaredSeen})" (0 < declaredSeen)
   t s!"ground parity: carried grounds are reached ({carriedSeen})" (0 < carriedSeen)
+  -- A title template may lose a node's custom arrangement without losing an
+  -- independently readable full-page fill. This deliberately mixes literal
+  -- text with the title datum so the built-in title layout stands.
+  let mixedSrc :=
+    "\\documentclass[aspectratio=169]{beamer}\n" ++
+    "\\definecolor{probeNight}{HTML}{202833}\n" ++
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\fill[probeNight] (current page.south west) rectangle (current page.north east);" ++
+    "\\node[anchor=west,text=white] at (current page.west) {Label: \\inserttitle};" ++
+    "\\end{tikzpicture}\\null}\n" ++
+    "\\title{Invented Heading}\\begin{document}\\titlepage\\end{document}\n"
+  let (mixedDoc, mixedDs) := elabStr mixedSrc
+  let mixedGeom := Layout.Geom.ofPage mixedDoc.page
+  let mixedOut := layoutOf oneFace mixedDoc mixedGeom
+  let mixedGround : Ir.Color := { r := 0x20, g := 0x28, b := 0x33 }
+  let mixedPainted := (mixedOut.pages[0]?.bind (·.fills[0]?)).any fun f =>
+    f.x == 0 && f.y == 0 && f.w == mixedGeom.pageW && f.h == mixedGeom.pageH &&
+      f.color == mixedGround
+  let mixedDeclared := (Ir.Design.ofDoc mixedDoc).titlepage.map (·.bg) == some mixedGround
+  let (mixedHead, mixedBody, _) := HtmlDoc.emitTree {} mixedDoc
+  let mixedCss := artTreeCssList (artTreeCssList "" mixedHead.toList) mixedBody.toList
+  let mixedOffences := artGroundOffences mixedPainted mixedDeclared mixedCss mixedBody
+  t "a mixed title node keeps its named layout loss"
+    (mixedDs.any (·.code == "W0363"))
+  t s!"a readable full-page fill survives title-layout fallback in both artifacts: \
+{mixedOffences.toList}"
+    (mixedPainted && hasStr mixedCss "--titlepagebg: #202833;" && mixedOffences.isEmpty)
 
 /-! ## A frame's own ground: the palette in force, and both artifacts paint it
 
