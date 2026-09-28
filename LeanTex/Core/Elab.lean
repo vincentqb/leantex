@@ -6760,7 +6760,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             -- as LaTeX allows there (ltlists.dtx: the list's own settings
             -- follow `\list`'s): a declaration, never content.
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
-            return ← itemSplitGo ctx body pos k items steps itemPauses pauses curItem
+            return ← itemSplitGo ctx body pos desc k items steps itemPauses pauses curItem
               curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
               (by
                 have hwj := sliceWeight_here body h
