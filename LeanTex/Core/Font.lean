@@ -595,7 +595,7 @@ structure Font where
   the source `underlineInk` and `inkExtent` decode from, and the one a
   subset reads its CFF structure from (`FontSubset.program`), so a face
   whose layout decoded its glyphs is never parsed a second time to embed
-  them. -/
+  them. Prepared from the bytes `parse` read, like the thunks beside it. -/
   inkSrc : Thunk Ink.Src
   /-- Lazily: the measured ink top of this face's own 'x' in font units,
   from its outline. `none` when the face has no 'x' or the outline does not
@@ -623,7 +623,9 @@ structure Font where
   `(kern (g, space), kern (space, g))` in font units, from the same pairs
   `Font.kernAdv` reads — luaotfload's `spacekerns` table, which its space
   kerning reads beside every interword glue. `(0, 0)` throughout for a
-  face with no space glyph. Read through `Font.spaceKernAdv`. -/
+  face with no space glyph. Read through `Font.spaceKernAdv`. Filled from
+  what `parse` read: a copy that edits `cmap` or `data` keeps its source's
+  pairs, and the engine edits neither. -/
   spaceKerns : Thunk (Array (Thunk (Int × Int)))
   deriving Inhabited
 
