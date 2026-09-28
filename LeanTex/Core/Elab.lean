@@ -8570,6 +8570,23 @@ private def columnPosOf (cbody : Array Raw) (cpos : Pos) : Ir.BoxPos × Nat :=
   | .took k' => ((boxPosOf (bracketSrc cbody 0 k')).getD .top, skipSpaces cbody k')
   | _ => (.top, skipSpaces cbody 0)
 
+/-- The flow-state declarations a block list reads between blocks: each
+changes the state from here forward and places nothing (the `\appendix`
+scope model). The language switch, block form; appendixnumberbeamer's
+restart (`Compat.frameRestartMark`), which records the index the next block
+takes, where the frame count starts over as its `\appendix` sets
+`framenumber` to 0; and `\appendix` itself, not a heading but a declaration
+affecting every heading after it — the counter restarts and level-1 numbers
+letter. Outside the elaboration knot on purpose, as `FrameOpts` is: the knot
+asks once and recurses once, and its compile budget is spent. -/
+private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ESt) :=
+  if n.startsWith "@lang:" then some (flowLangUpdate ctx n)
+  else if n == Compat.frameRestartMark then
+    some fun st => { st with frameRestart := st.frameRestart <|> some next }
+  else if n == "appendix" then
+    some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+  else none
+
 mutual
 
 /-- Rule (b), judged once at the definition — the gate both registration
@@ -9825,22 +9842,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hendp : slicePars raws raws.size = 0 :=
           slicePars_end raws (Nat.le_refl _)
         elabBlocksGo ctx' raws raws.size blocks #[] gen'
-      else if n.startsWith "@lang:" then
-        -- The language switch, block form: from here forward in flow
-        -- order (the `\appendix` scope model).
-        modify (flowLangUpdate ctx' n)
-        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == Compat.frameRestartMark then
-        -- appendixnumberbeamer's restart: the next block starts the count
-        -- over, as its `\appendix` sets `framenumber` to 0.
-        modify fun st => { st with frameRestart := st.frameRestart <|> some blocks.size }
-        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == "appendix" then
-        -- Not a heading: a declaration affecting every heading after it,
-        -- from here forward in flow order (the scope model body \palette
-        -- landed) — the counter restarts and level-1 numbers letter.
-        modify fun st =>
-          { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+      else if let some f := flowDecl? ctx' n blocks.size then
+        modify f
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "pause" then
         -- The rest of this scope reveals one step later. Numbering is
