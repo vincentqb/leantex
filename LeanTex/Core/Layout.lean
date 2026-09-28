@@ -116,6 +116,12 @@ structure Geom where
   they are the engine's design, not the document's declarations, and the
   HTML backend keeps the same split. -/
   scale : List (String × Nat) := Ir.sizeScale
+  /-- beamer's `\textheight` on the frame being walked, where its pages
+  carry the footline: the paper less `\footheight` and `\headheight`
+  (beamerbaseframecomponents.sty:178-180; moloch's headline is empty) —
+  `footFloor` of the band's box, the floor the page builder stands the
+  frame's body on (`B.bottom`). `none` elsewhere. -/
+  frameTextHeight : Option Sp := none
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
@@ -312,8 +318,10 @@ theorem geometry_roundtrip (sep descent vmargin ink : Sp)
   simp only [furnGapOfSep, furnSepOfGap, furnitureBand, furnEdge] at h ⊢
   exact furn_roundtrip sep descent vmargin ink h
 
-/-- The height between the margins: what `0.3\textheight` sizes against. -/
-def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
+/-- The height a `\textheight` fraction sizes against: on a frame whose
+pages carry the footline, beamer's own (`Geom.frameTextHeight`); elsewhere
+the height between the margins. -/
+def Geom.textHeight (g : Geom) : Sp := g.frameTextHeight.getD (g.pageH - 2 * g.vmargin)
 
 /-- A band slot's horizontal position: the declared side and the paper's
 edge, inset as moloch's footline insets its slots (`Ir.footline`), plus the
@@ -5599,6 +5607,10 @@ private structure Rd where
   the body size and nothing else — a template node sets its text in the
   font its options name and in no other (TikZ manual §17.4.2, `font=`). -/
   slotTitle : Bool := false
+  /-- The gap above the footline band: the document's furniture gap, else
+  beamer's 4 pt (`Ir.footline.sep`) — the page builder's own (`B.footGap`),
+  from one binding in `run`. -/
+  footGap : Sp := Ir.footline.sep
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -7458,6 +7470,60 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
     { a with wantDefault := true }
 
+/-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
+become literal text. Running content is laid out after the body, so both
+numbers are known by then — no second pass over the document and no aux
+file. -/
+private def substPageLeaf (n total : Nat)
+    (x : Ir.Inline) : Ir.Inline :=
+  match x with
+  | .pageNumber => .text (toString n)
+  | .pageCount => .text (toString total)
+  | _ => x
+
+/-- Replace `\pagenumber` / `\pagecount` with literal text, over the
+generic map — the descent is `Ir.mapInline`'s, declared once.
+`substPage_id` below is its census statement. -/
+def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
+  Ir.mapInlines (substPageLeaf n total) xs
+
+/-- A chrome band slot set as one line at its natural width, at the
+footline's step (`Ir.footline`): the one setting both the page's text-area
+floor (`bandBox`, where the page is built) and the furniture pass
+(`runPost`, where the slot ships) read, so the box the floor clears is the
+ink the pass paints. The band holds one line; the flag says the content
+wrapped, which the pass names (W0328). -/
+private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (imgs : Image.Store) (geom : Geom) (xHeight : Sp) (style : TextStyle)
+    (content : Array Inline) (cache : Std.HashMap String (Array Nat)) :
+    Option (Array Seg × Sp) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
+  -- The step is the band's own scale over the body size, so a named size
+  -- inside a slot (`\scriptsize` in a frame footer) is the body's step, as
+  -- TeX's size commands are absolute, never a step of the band's.
+  let (items, ds, cache, _) :=
+    itemsOfInlines pats geom.fontSize xHeight fs
+      { style with scale := (Ir.scaleStep 1000 Ir.footline.step).toNat }
+      content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
+      (ladder := geom.scale)
+  let breaks := kp items geom.textWidth
+  match breaks[0]? with
+  | none => (none, breaks.size > 1, ds, cache)
+  | some brk =>
+    let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+    (some (segs, w), breaks.size > 1, ds, cache)
+
+/-- The footline band's box on page `n`: the tallest and deepest ink of its
+slots (`segsInk`), each set as the furniture pass will set it — beamer's
+`\ht` and `\dp` of the footline, which its `\footheight` sums. -/
+private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+    (n : Nat) (band : Array Ir.BandSlot) : Sp × Sp :=
+  band.foldl (fun (acc : Sp × Sp) slot =>
+    match (setBandSlot none fs imgs geom xHeight {} (substPage n 0 slot.content) {}).1 with
+    | some (segs, _) =>
+      let (h, d) := segsInk fs segs
+      (max acc.1 h, max acc.2 d)
+    | none => acc) (0, 0)
+
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the
 footer that belongs to the frame — its pages, spill pages included, carry
 the frame's own number. A frame the numbering skips — the title page, a
@@ -7471,6 +7537,18 @@ private def collectFrameOpen (a : Acc) (breakable : Bool) : Acc :=
     let foot := Op.foot (if a.frameNum.isNone then none else a.chromeFoot) a.frameNum
     { a with ops := a.ops.push foot }
   else a
+
+/-- The reader a frame's body is walked with. Where the frame's pages carry
+the footline — the band `collectFrameOpen` opens — `\textheight` is
+beamer's there: the paper less `\footheight`, `footFloor` of the band's
+box, the floor the page builder stands the body on (`B.bottom`). -/
+private def frameReader (r : Rd) (a : Acc) : Rd :=
+  match (if a.footAllowed && a.frameNum.isSome then a.chromeFoot else none) with
+  | some band =>
+    let (h, d) := bandBox r.fs r.imgs r.geom r.xHeight 1 band
+    { r with geom := { r.geom with
+        frameTextHeight := some (footFloor r.geom.pageH r.footGap h d) } }
+  | none => r
 
 mutual
 
@@ -7988,6 +8066,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- frame's pages share it. The boundary, the marker and the frame's own
     -- footer travel together through `frameOpen`.
     let a := collectFrameOpen a breakable
+    let r := frameReader r a
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
     -- the builder's top-flush default.
@@ -8610,23 +8689,6 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
     (({ b with diags := b.diags ++ j.diags }).warnReflow
       (declaredLines j.items) breaks.size (declaredReflow j.items breaks), 0, true)).1
 
-/-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
-become literal text. Running content is laid out after the body, so both
-numbers are known by then — no second pass over the document and no aux
-file. -/
-private def substPageLeaf (n total : Nat)
-    (x : Ir.Inline) : Ir.Inline :=
-  match x with
-  | .pageNumber => .text (toString n)
-  | .pageCount => .text (toString total)
-  | _ => x
-
-/-- Replace `\pagenumber` / `\pagecount` with literal text, over the
-generic map — the descent is `Ir.mapInline`'s, declared once.
-`substPage_id` below is its census statement. -/
-def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
-  Ir.mapInlines (substPageLeaf n total) xs
-
 /-- Content with no physical placeholder survives the physical pass whole:
 the substitution half of "the two sequences stay distinct" —
 `Ir.frame_sequence_carries_no_physical` is the rendering half. One
@@ -8719,43 +8781,6 @@ private structure StepSt where
   slotSaves : Array (ColSave × Nat × Nat) := #[]
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
-
-/-- A chrome band slot set as one line at its natural width, at the
-footline's step (`Ir.footline`): the one setting both the page's text-area
-floor (`bandBox`, where the page is built) and the furniture pass
-(`runPost`, where the slot ships) read, so the box the floor clears is the
-ink the pass paints. The band holds one line; the flag says the content
-wrapped, which the pass names (W0328). -/
-private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (imgs : Image.Store) (geom : Geom) (xHeight : Sp) (style : TextStyle)
-    (content : Array Inline) (cache : Std.HashMap String (Array Nat)) :
-    Option (Array Seg × Sp) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
-  -- The step is the band's own scale over the body size, so a named size
-  -- inside a slot (`\scriptsize` in a frame footer) is the body's step, as
-  -- TeX's size commands are absolute, never a step of the band's.
-  let (items, ds, cache, _) :=
-    itemsOfInlines pats geom.fontSize xHeight fs
-      { style with scale := (Ir.scaleStep 1000 Ir.footline.step).toNat }
-      content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
-      (ladder := geom.scale)
-  let breaks := kp items geom.textWidth
-  match breaks[0]? with
-  | none => (none, breaks.size > 1, ds, cache)
-  | some brk =>
-    let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-    (some (segs, w), breaks.size > 1, ds, cache)
-
-/-- The footline band's box on page `n`: the tallest and deepest ink of its
-slots (`segsInk`), each set as the furniture pass will set it — beamer's
-`\ht` and `\dp` of the footline, which its `\footheight` sums. -/
-private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
-    (n : Nat) (band : Array Ir.BandSlot) : Sp × Sp :=
-  band.foldl (fun (acc : Sp × Sp) slot =>
-    match (setBandSlot none fs imgs geom xHeight {} (substPage n 0 slot.content) {}).1 with
-    | some (segs, _) =>
-      let (h, d) := segsInk fs segs
-      (max acc.1 h, max acc.2 d)
-    | none => acc) (0, 0)
 
 /-- **A heading never ends a page** (`ParaJob.keepNext`): when a heading's
 own lines and what it keeps — the next block's first box, as placement
@@ -10146,11 +10171,11 @@ private def runPost (sh : Shipped) : Out := Id.run do
   -- band at the page bottom, at the declared alignment (`Ir.logoAlign`:
   -- right, beamer's default corner, unless the document styles it), its
   -- box standing on the bottom margin line.
-  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (Array Nat)) :
+  let mkLogoLine (content : Array Inline) (textH : Sp) (cache0 : Std.HashMap String (Array Nat)) :
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
       itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
-        (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+        (.fixed .unattributed) imgs geom.textWidth textH (ladder := geom.scale)
     let breaks := kp items geom.textWidth
     match breaks[0]? with
     | none => (none, ds, c)
@@ -10306,7 +10331,10 @@ slot yields in place: shorten the content or drop a slot"))
     if headOn && footOn then
       if let some content := logoContent then
         unless content.isEmpty do
-          let (l?, ds, c) := mkLogoLine content cache
+          -- Sized by the page's `\textheight`: beamer's on a footline page.
+          let textH := page.footBox.elim geom.textHeight fun (h, d) =>
+            footFloor geom.pageH b.footGap h d
+          let (l?, ds, c) := mkLogoLine content textH cache
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
@@ -10491,6 +10519,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
   -- judges (`judged_pair_is_shipped`), never a second `getD` chain.
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
+  let footGap := doc.page.furnitureGap.getD Ir.footline.sep
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
                    styles := doc.styles
                    captionPos := doc.captionPos
@@ -10498,7 +10527,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
                    slides := doc.docClass.record.model == .frame
                    lists := doc.docClass.record.lists
                    imgs := imgs
-                   headline := doc.headline }
+                   headline := doc.headline
+                   footGap := footGap }
   let acc0 : Acc := { pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
@@ -10633,7 +10663,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     footins := ((doc.tokens.find? "footins").getD
       (Ir.footinsDefault geom.fontSize)).resolve geom.fontSize xHeight |>.width
     noteInk := design.fg
-    footGap := doc.page.furnitureGap.getD Ir.footline.sep
+    footGap := footGap
     diags := preDiags
   }
   -- Placement, one op at a time (`stepStaged`) — except a float's ops,

@@ -995,3 +995,35 @@ width=.4\\textwidth]{rects.png}%\n"
       | some (_, x0, y0, _, _), some (_, x1, y1, w1, _) =>
         x0 == left && x1 + w1 == right && y0 == y1
       | _, _ => false)
+  -- beamer's `\textheight` is the paper less `\footheight` and
+  -- `\headheight` (beamerbaseframecomponents.sty:178-180): on a frame
+  -- page carrying the footline, the text area the page builder already
+  -- stands the body in (`Layout.footFloor`, moloch's headline empty). The
+  -- invented image is taller than the deck's, so the height binds the
+  -- keepaspectratio fit: its box is .28 of that height.
+  match out.pages[0]? with
+  | some p =>
+    match p.footBox with
+    | some (bh, bd) =>
+      let th := Layout.footFloor geom.pageH Ir.footline.sep bh bd
+      t s!"image rows: .28\\textheight is .28 of the frame's text area, {th}: {bs}"
+        (bs.size == 4 && bs.all fun (_, _, _, _, hh) => hh == 280 * th / 1000)
+    | none => t "image rows: the frame page carries the footline" false
+  | none => t "image rows: the frame lays out" false
+  -- A logo is furniture of the page, sized by the same `\textheight`.
+  let (logoDoc, _) := Elab.run "t" "\\documentclass[10pt,aspectratio=169]{beamer}\n\
+\\logo{\\includegraphics[totalheight=.2\\textheight, alt={An invented mark}]{rects.png}}\n\
+\\begin{document}\n\\begin{frame}{An invented frame}\nA line of invented text.\n\
+\\end{frame}\n\\end{document}\n"
+  let logoGeom := Layout.Geom.ofPage logoDoc.page
+  let logoOut := layoutOf oneFace logoDoc logoGeom none store
+  match logoOut.pages[0]? with
+  | some p =>
+    match p.footBox with
+    | some (bh, bd) =>
+      let th := Layout.footFloor logoGeom.pageH Ir.footline.sep bh bd
+      t s!"image rows: a logo's .2\\textheight is .2 of the frame's text area, {th}: \
+{boxes logoOut}"
+        ((boxes logoOut).map (·.2.2.2.2) == #[200 * th / 1000])
+    | none => t "image rows: the logo's page carries the footline" false
+  | none => t "image rows: the logo's frame lays out" false
