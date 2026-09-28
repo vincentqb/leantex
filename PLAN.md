@@ -23522,3 +23522,70 @@ as macros nothing calls, silently. A citation or `\ref` inside a
 citation's note is still flattened to text (the note is a string in
 `Ir.CiteForm`); `\citetext` is natbib's documented way to nest, and it
 holds.
+
+
+
+### 2026-09-28 — review-e's rhythm findings: kept lines, `\partopsep` and descriptions in HTML, `\leftmargin⟨n⟩` on both artifacts
+
+Five units on `agent/fix-rhythm` answer review-e's VR-1, VR-2 with HR-1, KE-5
+and O-4. Each guard was run on `2f81a8e1` (the main these units start from,
+which holds the code each finding names) with the fix absent, and fails there.
+
+- **A heading keeps with a paragraph's first lines as their boxes stand**
+  (VR-1). `keepExt`'s paragraph arm read nothing, so before a paragraph the
+  reserve stayed two nominal leadings, and a first line as tall as its image
+  or its display was never reserved. It now reads the lines `\@afterheading`'s
+  club penalty keeps together (latex.ltx:17317-17322) as placement sets them
+  (`keptHead`: `lineExtent` over the segs `paraLineGeom` sets, the pair
+  `placeLine` reads); the two leadings stay the floor, so a heading over
+  ordinary text keeps where it kept. Guard: `headingKeepChecks` rows "a tall
+  image" and "a tall display". CLI sweeps, n ∈ [20, 70) filler paragraphs:
+  lualatex strands 0 and 0, `2f81a8e1` 14 and 10, now 0 and 0; the picture,
+  tabular, minipage, list and centre sweeps are unchanged.
+- **`\partopsep` reaches the HTML** (VR-2, HR-1). The in-paragraph role only
+  spaces, so it is a class on the list's own element (`withClass`), and each
+  list level's pair spends `\@topsepadd` (`listOpenGap`, from
+  `Ir.partopsepFor` over the preamble's tokens), the in-paragraph pair after
+  it `\topsep` alone. An item after one ending in a nested list stands the
+  larger of the nested list's `\@topsepadd` and its own `\itemsep`, as
+  `\addvspace` keeps (`li:has(> list:last-child) + li`) — the one boundary the
+  nested list's pair cannot reach; beamer meets it at level two without
+  `\partopsep`. `listGaps_agree` states the fourth length. The rhythm tier
+  gains `article-openlists` (lists, a nested list, a quote and a description
+  that open paragraphs): 9 of 9 within 0.5 bp of lualatex.
+- **A description is a list level in HTML** (KE-5): `dl` joins the level's
+  elements, a `<dt>` after a `<dd>` opens `\itemsep`, and a level is reached
+  through an item ancestor per enclosing list — `<li>`, `<dd>` or a quotation
+  (`itemAncestor`). Guard: every description boundary resolves where the
+  itemize's does, at each level, for the size files and beamer.
+- **Each list level stands its class's `\leftmargin⟨n⟩` in** (O-4):
+  classes.dtx's 2.5, 2.2, 1.87, 1.7, 1, 1 em and beamer's 2 em, in one
+  resolving site (`Ir.leftMarginMilli`, `leftMargin_exact`) both artifacts
+  read — the page's list steps, quotation edges, description hang and
+  abstract, and the sheet's per-level padding in the class's em. The engine's
+  1.5 em stays the web lineage's only. A quotation is a `\list`, so it counts
+  a level (`Acc.quoteDepth`): a list inside one reads level two's margin and
+  `\topsep`, as LaTeX's does. A document's own `\leftmargin⟨n⟩` is read first,
+  at every `\list` of its level (the token `Ir.leftMarginName` names; the
+  sheet through its custom property). Guard: `listIndentChecks`. Against
+  lualatex (synthetic probes, Open Sans, a 300 pt measure): article levels 1-4
+  at 10, 11 and 12 pt within +0.10 to +0.75 bp (were −9.90 to −26.87), quote,
+  verse and a list in a quote within +0.23 bp, beamer's levels within
+  +0.55 bp (were −5.32 to −15.95); in Chromium the article's levels stand
+  40, 75.2, 105.1 and 132.3 CSS px in.
+
+Measured on the private corpus (scratch copies, `2f81a8e1` against the tip):
+the deck, résumé and card PDFs are byte-identical; the paper's pages 1-4 move
+(a quotation under its own declared `\leftmargini` now within 0.13 bp of
+lualatex's edges, and the text after it reflows), pages 5-8 are identical;
+the site's PDF moves its lists 10 bp right on both pages, and its HTML is
+pixel-identical at 360, 768 and 1280 px (its own stylesheet sets its lists).
+
+**Routed.** A declared `\leftmargini` is also written as
+`\style{itemize}{ indent = … }` and enumerate's (`Compat.setLength`'s
+`.listIndent` site); the list arm's base-style fallback then carries level
+one's value to levels three and four (a synthetic probe declaring the first
+two levels: −3.54 and −5.47 bp at levels three and four). With the resolving
+site reading the token, the two `\style` lines are redundant and can go.
+beamer's description is a 2 cm label column (beamerbaselocalstructure.sty,
+`\beamer@descdefault`), which the kernel's run-in label does not model.
