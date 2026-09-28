@@ -3181,6 +3181,19 @@ private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
     | _, _ => 0
   | _ => 0
 
+/-- Whether an item is a box of glyphs: the character TeX's `\/` corrects. -/
+private def glyphBox : Option Item → Bool
+  | some (.box _ _ _ _ glyphs _ _ _ _ _) => !glyphs.isEmpty
+  | _ => false
+
+/-- The items with the glue they end in `w` wider: a space taking the pair
+kern of the word that follows it. -/
+private def widenLast (items : Array Item) (w : Sp) : Array Item :=
+  if w == 0 then items else
+  match items.back? with
+  | some (.glue g) => items.set! (items.size - 1) (.glue { g with width := g.width + w })
+  | _ => items
+
 /-- TeX's `\/` at the end of the items: a kern after a word's last glyph,
 as wide as that glyph's italic correction, and nothing when the items end
 in anything else — a formula, a mark, a space, the list's head — since `\/`
@@ -3188,31 +3201,27 @@ corrects only a character. Either way the glyph no longer ends the items,
 so a space that follows pairs with nothing on that side (`spaceKern`): a
 kern of no width is set as that fact alone (`wordEnd` names no item). -/
 private def italicKern (acc : ItemsAcc) : ItemsAcc :=
-  if acc.wordEnd != acc.items.size then acc else
-  match acc.items.back? with
-  | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
-    if glyphs.isEmpty then acc else { acc with wordEnd := 0 }
-  | _ => acc
+  if acc.wordEnd == acc.items.size && glyphBox acc.items.back? then { acc with wordEnd := 0 }
+  else acc
 
 /-- An italic correction under the style in force (`Tk.corr`). TeX's `\/`
 is `italicKern`. ltfntcmd's `\maybe@ic` makes it only where the face in
 force is upright — `\fontdimen1`, the slant, zero: the face declares no
-forward-leaning angle — and through `\sw@slant`, which lifts a space the
-items end in, sets the kern, and puts the space back. The space then no
-longer touches the glyph, so it gives back the pair kern it took against
-it (`spaceKern`, the `.space` arm's own term). -/
+forward-leaning angle — and through `\sw@slant`, which lifts a space with
+width the items end in, sets the kern before it, and puts the space back.
+The space then no longer touches the glyph, so it gives back the pair kern
+it took against it (`spaceKern`, the `.space` arm's own term). -/
 private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
     (acc : ItemsAcc) : ItemsAcc :=
   if !maybe then italicKern acc
   else if (fs.get (fs.lookup sty.slot sty.weight.css sty.italic)).italicAngle < 0 then acc
   else match acc.items.back? with
     | some (.glue g) =>
-      if g.width == 0 then acc else
-      let body := acc.items.pop
-      let bare := if acc.wordEnd == body.size then g.width - spaceKern fs true body.back?
-        else g.width
-      let acc := italicKern { acc with items := body }
-      { acc with items := acc.items.push (.glue { g with width := bare }) }
+      let n := acc.items.size - 1
+      if g.width == 0 || acc.wordEnd != n || !glyphBox acc.items[n - 1]? then acc
+      else
+        let bare : Item := .glue { g with width := g.width - spaceKern fs true acc.items[n - 1]? }
+        { acc with items := acc.items.set! n bare }
     | _ => italicKern acc
 
 /-- One flatten token into the accumulator — the fold step of
@@ -3239,14 +3248,15 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
         sty.ground sty.link sty.underline useGsub attr fs font chars
         acc.dropped acc.substs acc.cache
-    let items := match acc.items.back? with
-      | some (.glue g) =>
-        if g.word then
-          acc.items.pop.push (.glue { g with width := g.width + spaceKern fs false ws[0]? })
-        else acc.items
-      | _ => acc.items
-    { acc with items := items ++ ws, dropped := m, substs := s, cache := c'
-               wordEnd := if ws.isEmpty then acc.wordEnd else items.size + ws.size }
+    -- The space before the word pairs with its first glyph. Read first,
+    -- written inside the one update, so the items array is written in
+    -- place: a copy of it per word made a paragraph's items quadratic.
+    let rk := match acc.items.back? with
+      | some (.glue g) => if g.word then spaceKern fs false ws[0]? else 0
+      | _ => 0
+    let n := acc.items.size
+    { acc with items := widenLast acc.items rk ++ ws, dropped := m, substs := s, cache := c'
+               wordEnd := if ws.isEmpty then acc.wordEnd else n + ws.size }
   | .icon sty c attr =>
     -- The styled face first (an icon font declared as the body face is
     -- legal), then the fallback chain; either hit is the icon's own face
