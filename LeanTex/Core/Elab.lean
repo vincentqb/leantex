@@ -1019,12 +1019,19 @@ theorem phantom_axes_set_eq :
       (phantomAxes.all fun e => e.2.width || e.2.extent)) = true := by
   decide +kernel
 
+/-- TU's accent and symbol tables as maps: the inline dispatch asks them of
+every control word the hand tables before them do not answer, and a list
+walk there cost `bench/underline.tex` 7 ms of 515. -/
+def accentMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.accents
+
+def textSymbolMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.symbols
+
 /-- TeX's accent commands the engine composes to NFC: the combining mark
 each adds to its base, from TU's accent table (`TextSymData.accents`) —
 one table with .bib values (`Bib.accentOf`), so a name renders identically
 in text and in a bibliography entry. -/
 def accentMarkOf (name : String) : Option Char :=
-  TextSymData.accents.lookup name
+  accentMap[name]?
 
 /-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
 `.bib` values read (`Bib.charCommands`), and TU's text symbols
@@ -1036,7 +1043,7 @@ def escapeOf (name : String) : Option String :=
   | none =>
     match (Bib.charCommands.find? (·.1 == name)).map (·.2) with
     | some lit => some lit
-    | none => (TextSymData.symbols.lookup name).map (String.ofList [·])
+    | none => textSymbolMap[name]?.map (String.ofList [·])
 
 /-- The letter a command stands for as an accent's base: `\i` and `\j` are
 the dotted letters (tuenc.def composes `\'\i` as í: the dotless letter
