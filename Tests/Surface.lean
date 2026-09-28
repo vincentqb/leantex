@@ -4019,22 +4019,6 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "apply: a document with no bibliography marker resolves every mark to [?], silently"
     (dsN == #[] && paraText outN 0 == "[?]" && (Ir.pendingNodes outN).isEmpty)
 
-/-- The synthetic bibliography natbib's rows cite: invented people and
-venues, one entry per name shape a citation prints differently — three
-authors (`et al.`, and all three starred), one, two, and a lowercase
-particle (`\Citet` capitalizes it). -/
-def natbibBib : String :=
-  "@article{alpha2019, author = {Ann Alpha and Bob Beta and Cy Gamma},\n\
-    title = {A study of invented widgets}, journal = {Journal of Examples},\n\
-    year = {2019}, volume = {3}, number = {2}, pages = {10--20}}\n\
-  @book{delta2021, author = {Dee Delta}, title = {Placeholder Methods},\n\
-    publisher = {Example Press}, year = {2021}}\n\
-  @inproceedings{eps2020, author = {Eve Epsilon and Finn Zeta},\n\
-    title = {On synthetic benchmarks},\n\
-    booktitle = {Proceedings of the Example Workshop}, year = {2020}, pages = {1--8}}\n\
-  @article{pome2018, author = {Quill de Pome}, title = {Lowercase particles},\n\
-    journal = {Example Letters}, year = {2018}}\n"
-
 /-- natbib's command table, one row per construct: the call, and the
 lines lualatex set for it with `\bibliographystyle{unsrtnat}` — first
 under `\usepackage[numbers]{natbib}`, then under a bare
@@ -4153,28 +4137,6 @@ def natbibDecls : List (String × String × List String) :=
     ["[Alpha et al., 2019; Delta, 2021]", "Alpha et al. [2019]",
      "[see Alpha et al., 2019, p. 5]"])]
 
-/-- The calls as one document, each in its own paragraph `Lk <call> end.`;
-the style is declared in the preamble, where natbib reads it back at
-`\begin{document}`. -/
-def natbibSrc (pre style : String) (calls : List String) : String := Id.run do
-  let mut body := ""
-  for call in calls, k in [1:calls.length + 1] do
-    body := body ++ s!"L{k} {call} end.\n\n"
-  return s!"\\documentclass\{article}\n{pre}\n\\bibliographystyle\{{style}}\n\
-    \\begin\{document}\n{body}\\bibliography\{refs}\n\\end\{document}\n"
-
-/-- An HTML page's text as a reader gets it: tags dropped, the entities
-the escaper writes read back, a no-break space a space. -/
-def htmlVisibleText (page : String) : String := Id.run do
-  let mut out := ""
-  let mut inTag := false
-  for c in page.toList do
-    if c == '<' then inTag := true
-    else if c == '>' then inTag := false
-    else if !inTag then out := out.push c
-  return ((((out.replace "&lt;" "<").replace "&gt;" ">").replace "&nbsp;" " ").replace
-    "&amp;" "&").replace "\u00A0" " "
-
 /-- **natbib's commands set the lines lualatex sets**, on the shipped page
 and in the HTML: every row of `natbibRows` in one synthetic document per
 mode, resolved against `natbibBib` and laid out, each line compared whole
@@ -4254,20 +4216,6 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
       | .rule w _ _ _ => w
       | .image _ w _ => w
   return out
-
-/-- The reference list's shipped lines, one array per entry: the lines after
-the References heading that set glyphs (a link's underline ships as a
-sibling line of rules), split where the leaf changes. -/
-def bibEntryLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) := Id.run do
-  let start := ((lines.findIdx? (lineText · == "References")).map (· + 1)).getD lines.size
-  let mut out : Array (Array Layout.LineOut) := #[]
-  let mut cur : Array Layout.LineOut := #[]
-  for l in (lines.extract start lines.size).filter hasGlyphRun do
-    if !cur.isEmpty && cur.back?.map (·.leaf) != some l.leaf then
-      out := out.push cur
-      cur := #[]
-    cur := cur.push l
-  return if cur.isEmpty then out else out.push cur
 
 /-- **The reference list is natbib's list**, on the shipped page and in the
 HTML (`\NAT@bibsetup`, `\NAT@bibsetnum`, natbib.sty:627–644): an
