@@ -207,6 +207,18 @@ def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"a preamble '\\{name}' says what LaTeX does with it, and is not unknown"
       ((dvE src).any (·.subject == some s!"ctrl:nothing:size:{name}") &&
         !(dvE src).any (·.code == "W0301"))
+  -- A skip copied from one the class set is read through the length door:
+  -- the class's value is unknown here, so the copy is named once and the
+  -- skip keeps its value — which is the copy, since the class's two are one.
+  let copy := doc (redef "\\belowdisplayskip\\abovedisplayskip\n") body
+  let cds := dvE copy
+  t "a redefined \\normalsize copying a skip it does not set builds"
+    (!cds.any (·.severity == .error))
+  t "a redefined \\normalsize copying a skip it does not set names the copy once"
+    ((cds.filter (·.code == "W0104")).map (·.subject) ==
+      #[some "ctrl:setlength:belowdisplayskip:value"])
+  t "a redefined \\normalsize copying a skip it does not set ships the page without the copy"
+    (pagesOf oneFace copy == pagesOf oneFace (doc (redef "") body))
 
 
 /-- **A counter set in the preamble holds where the body starts, and
@@ -292,6 +304,28 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a list level's arithmetic is read with it, and what it sets unread is named once"
     (!ds.any (·.subject == some "ctrl:advance") &&
       (ds.filter (·.subject == some "ctrl:setlength:labelwidth")).size == 1)
+  -- A body assignment between two lists reaches the second in LaTeX
+  -- exactly when the level's macro leaves the parameter be: the preamble's
+  -- styles are judged on the preamble alone, and a reach the engine's
+  -- per-level lists cannot follow is named.
+  let between (set : String) : String :=
+    "Alpha words.\n\\begin{itemize}\n\\item One.\n\\item Two.\n\\end{itemize}\n" ++ set ++
+      "\nBravo words.\n\\begin{itemize}\n\\item Three.\n\\item Four.\n\\end{itemize}\nCharlie."
+  for (set, names) in [("\\setlength{\\topsep}{9pt}", #["topsep"]),
+      ("\\setlength{\\itemsep}{0pt}\\setlength{\\parsep}{0pt}", #["itemsep", "parsep"])] do
+    let kds := dvE (doc (keep ++ listi) (between set))
+    t s!"a kept \\@listi and a body '{set}' build" (!kds.any (·.severity == .error))
+    t s!"a kept \\@listi and a body '{set}' name the lists they cannot reach, once each"
+      ((kds.filter (·.code == "W0104")).map (·.subject) ==
+        names.map fun n => some s!"ctrl:setlength:{n}")
+    t s!"the naming gate's premise: no list here reads a body '{set}' under a kept \\@listi"
+      (pagesOf oneFace (doc (keep ++ listi) (between set)) ==
+        pagesOf oneFace (doc (keep ++ listi) (between "")))
+  let cls := doc listi (between "\\setlength{\\itemsep}{0pt}")
+  t "under the class's \\@listi a body \\itemsep reaches no list, and says so"
+    (!(dvE cls).any (·.code == "W0104") &&
+      (dvE cls).any (·.subject == some "ctrl:nothing:setlength:itemsep") &&
+      pagesOf oneFace cls == pagesOf oneFace (doc listi (between "")))
 
 
 

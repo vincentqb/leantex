@@ -650,6 +650,10 @@ private structure St where
   at a cell's head stands in. A group or an environment inside the body
   hides it again. -/
   defTop : Bool := false
+  /-- The lengths as the preamble left them, taken where the document
+  environment opens: what the list levels' styles, declarations of the
+  preamble, are judged against. -/
+  preLens : Option (Array (String × String)) := none
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -3259,6 +3263,18 @@ private def readsAsLength (s : String) : Bool :=
   | some (.glue _) | some (.dim _) => true
   | _ => false
 
+/-- The list parameters a level's style carries: `\leftmargin` its indent,
+`\topsep` its opening space, `\itemsep` and `\parsep` its gap between items. -/
+private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "parsep"]
+
+/-- Does a body assignment of `n` reach the lists after it in LaTeX? Only
+where the document's `\@listi` stands (`listiKept`) and leaves `n` be: a
+class's own sets every carried parameter again at every list (size10.clo),
+and a deeper level inherits what the outermost left. -/
+private def reachesLists (st : St) (n : String) : Bool :=
+  listCarried.contains n && st.listiKept &&
+    (st.listDefs.find? (·.1 == 1)).any fun (_, _, as) => !as.any (·.name == n)
+
 /-- One length assignment, natively, at the site `paramSites` gives it: a
 page property, a token an engine site reads, a list level's indent, or —
 where LaTeX's own code sets the value again before anything reads it —
@@ -3288,7 +3304,13 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     if level == 1 then kind else s!"{kind}{level}"
   match (paramSites.lookup n).getD (.token n), st.inDef with
   | .page key, _ => emit s!"\\page\{ {key} = {src} }"
-  | .token t, _ => emit s!"\\tokens\{ {t} = {src} }"
+  | .token t, _ =>
+    -- premise: listLevelChecks — a named body setting under a kept \@listi
+    -- ships the page the document ships without it: no list reads it here
+    if !st.inDef && !preamble && !st.inList && reachesLists st n then
+      named "opens the lists after it, whose level macro leaves it be; a list here opens \
+with the space its level sets in the preamble, and only the trivlists after it read it"
+    else emit s!"\\tokens\{ {t} = {src} }"
   | _, true => emit own
   | .listIndent level, false =>
     if level > 4 then
@@ -3316,6 +3338,11 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
       -- named once, and the list keeps its level's spacing
       nameParam n "spaces this one list; a list here is spaced per level, in the preamble" pos
       return #[]
+    else if reachesLists st n then
+      -- premise: listLevelChecks — a named body setting under a kept \@listi
+      -- ships the page the document ships without it: no list reads it here
+      named "spaces the lists after it, whose level macro leaves it be; a list here is \
+spaced per level, in the preamble"
     else
       nothing s!"the next list sets '\\{n}' again from its class's parameters, so no list reads it"
   | .unmodelled why, false =>
@@ -3438,6 +3465,24 @@ private def skipEq (raws : Array Raw) (i : Nat) : Nat :=
   | some (.sym '=' _) | some (.word "=" _) => skipSpaces raws (j + 1)
   | _ => j
 
+/-- The display skips a redefined `\normalsize` assigns from `start`, each
+read through the length door in order, as TeX runs the body: a skip copied
+from one the body set earlier is that value, one it cannot read — a copy of
+a skip the class set — is named once and skipped (`unreadableLength`).
+Only the long skips a display reads are taken (`Ir.displaySkipDefault`). -/
+private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array String) := do
+  let mut lens := (← get).lens
+  let mut out : Array String := #[]
+  for a in (readAssigns body start).1 do
+    if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _)) then
+      if let some src := (lenValue lens a.value).filter readsAsLength then
+        out := out.push s!"{a.name} = {src}"
+        lens := (lens.filter (·.1 != a.name)).push (a.name, src)
+      else
+        let _ ← unreadableLength a.name (rawSrc a.value).trimAscii.toString pos
+        pure ()
+  return out
+
 /-- The raw standing before index `i`, spaces skipped. -/
 private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
   let mut k := i
@@ -3500,10 +3545,6 @@ def listLevelOf : String → Option Nat
   | "@listv" => some 5
   | "@listvi" => some 6
   | _ => none
-
-/-- The list parameters a level's style carries: `\leftmargin` its indent,
-`\topsep` its opening space, `\itemsep` and `\parsep` its gap between items. -/
-private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "parsep"]
 
 /-- Does a body run `\let\@listi\@listI`, a class `\normalsize`'s reset of
 the outermost list level (size10.clo)? -/
@@ -3573,7 +3614,8 @@ private def flushListLevels : M (Array Raw) := do
         s!"setlength:{n}" pos
   write fun s => { s with file := st.file }
   if st.listDefs.isEmpty then return #[]
-  let preamble (n : String) : Option String := if st.lens.any (·.1 == n) then some n else none
+  let lens := st.preLens.getD st.lens
+  let preamble (n : String) : Option String := if lens.any (·.1 == n) then some n else none
   let mut run : List (String × Option String) := listCarried.map fun n => (n, preamble n)
   let mut out : Array Raw := #[]
   for level in [1:5] do
@@ -3582,7 +3624,7 @@ private def flushListLevels : M (Array Raw) := do
     | some (pos, assigns) =>
       for a in assigns do
         if listCarried.contains a.name then
-          let v := if a.add then none else listOperand run st.lens a.value
+          let v := if a.add then none else listOperand run lens a.value
           run := run.map fun (n, o) => if n == a.name then (n, v) else (n, o)
       let op (n : String) : Option String := (run.lookup n).bind id
       let r := (["i", "ii", "iii", "iv"][level - 1]?).getD ""
@@ -6084,9 +6126,7 @@ skipped, and the length keeps its value" pos
             if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
               if sz > 0 && ld > 0 then
                 let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
-                let skips := (readAssigns sbody afterFs).1.filterMap fun a =>
-                  if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _))
-                  then some s!"{a.name} = {lengthSrc a.value}" else none
+                let skips ← sizeSkips sbody afterFs pos
                 let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
 leading = {milliStr factor} }" ++
                   (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
@@ -7223,8 +7263,9 @@ and patterns stand in" p
         -- placement defect; the flag is what the `\usepackage` arm reads.
         -- `\begin{document}` runs `\normalsize`, which sets the size's
         -- lengths again (size10.clo), so the preamble's values of them end.
-        write fun st => { st with inDoc := true,
-                                  lens := st.lens.filter fun e => !sizeReset e.1 }
+        write fun st =>
+          let lens := st.lens.filter fun e => !sizeReset e.1
+          { st with inDoc := true, lens := lens, preLens := st.preLens.orElse fun _ => some lens }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with inDoc := false }
         return .env n body' p
