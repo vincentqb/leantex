@@ -1,0 +1,41 @@
+% rhythm: article lists that open a paragraph: after a blank line an itemize, a nested itemize, a quote and a description spend \topsep and \partopsep above and below, where one inside an open paragraph spends \topsep alone
+% boundary: par-list-open Birch span
+% boundary: item-nested-open Cedar span
+% boundary: nested-item-open Dogwood span
+% boundary: list-par-open Elm span
+% boundary: par-quote-open Hazel span
+% boundary: quote-par-open Juniper span
+% boundary: par-desc-open Larch span
+% boundary: desc-item Maple span
+% boundary: desc-par-open Oak span
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+Alder is the paragraph before the first list.
+
+\begin{itemize}
+\item Birch is the first item.
+
+  \begin{itemize}
+  \item Cedar opens the nested list after a blank line.
+  \end{itemize}
+
+\item Dogwood returns to the outer list.
+\end{itemize}
+
+Elm is the paragraph after the first list.
+
+\begin{quote}
+Hazel is the quoted line.
+\end{quote}
+
+Juniper is the paragraph after the quote.
+
+\begin{description}
+\item[Larch] is the first described term.
+\item[Maple] is the second described term.
+\end{description}
+
+Oak closes the page.
+\end{document}

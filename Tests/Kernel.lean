@@ -300,7 +300,7 @@ def kernelVerseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((lineWith "Dogwood").any fun l => l.x == geom.hmargin &&
       (lineWith "Cedar").any fun c => c.x == geom.hmargin + geom.listIndent)
   t "html: verse is a blockquote"
-    (hasStr (HtmlDoc.emit {} doc).1 "<blockquote>")
+    (hasStr (HtmlDoc.emit {} doc).1 "<blockquote")
 
 
 /-- **A description item runs its bold label in at the list's outer margin,
@@ -354,5 +354,5 @@ def kernelDescChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ys (short "itemize" "")).length == 4)
   let page := (HtmlDoc.emit {} doc).1
   t "html: a description is a dl of dt and dd"
-    (hasStr page "<dl>" && hasStr page "<strong>Birch</strong>" &&
+    (hasStr page "<dl" && hasStr page "<strong>Birch</strong>" &&
       hasStr page "<dd>follows.</dd>")

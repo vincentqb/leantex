@@ -502,7 +502,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- element the classed subjects of that element, a class the subjects
   -- carrying it.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
-    (HtmlDoc.blockGapRules l Ir.baseFontSize).flatMap fun r => match r with
+    (HtmlDoc.blockGapRules l Ir.baseFontSize {}).flatMap fun r => match r with
     | .boundary sel _ => (selParts sel).filterMap fun part =>
         let s := selSubject part
         if s == "*" || s.isEmpty then none else some s
@@ -573,8 +573,9 @@ print and 0.725 rem of screen), never read back from the emitter — the
 web's lineage keeps its lists a peer gap apart and its items a leading,
 and a reference list's entries stand a peer gap apart, as the PDF walk
 sets them. It fails on the sheet that set every item at zero
-(`8d3df368`). The rendered half is the rhythm tier's browser report
-(`scripts/rhythm.lean --html`). -/
+(`8d3df368`), and its `\partopsep` rows on the sheet that spent `\topsep`
+alone at every list (`f66f9381`, review-e HR-1). The rendered half is the
+rhythm tier's browser report (`scripts/rhythm.lean --html`). -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (cls : String) : String := (HtmlDoc.emit {} (elabStr (s!"\\documentclass{cls}" ++
@@ -585,24 +586,48 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a 10pt list's items stand itemsep over the item's parsep apart"
     (hasStr art s!":where(li + {item}) \{ margin-top: {space "0.483"}; }" &&
      hasStr art s!":where({item}, blockquote > *) \{ --parskip: 0.483rem; }")
-  t "html a 10pt list and quote stand topsep over the parskip in force from their neighbours"
+  -- `\@trivlist`'s `\@topsepadd` (latex.ltx:15871-15878): `\topsep`, with
+  -- `\partopsep` on top in vertical mode — size10.clo:215's 2pt, one
+  -- conversion of the summed length — the same above and below.
+  t "html a 10pt list and quote that open a paragraph stand topsep and partopsep from their neighbours"
     (hasStr art (":where(* + ul:not(.bibliography), * + ol:not(.algorithm):not(.algorithm *), " ++
-      s!"* + blockquote) \{ margin-top: {space "0.966"}; }") &&
+      s!"* + blockquote) \{ margin-top: {space "1.208"}; }") &&
      hasStr art (":where(ul:not(.bibliography) + *, ol:not(.algorithm):not(.algorithm *) + *, " ++
-      s!"blockquote + *) \{ margin-top: {space "0.966"}; }"))
+      s!"blockquote + *) \{ margin-top: {space "1.208"}; }"))
+  t "html a 10pt list and quote inside an open paragraph stand topsep alone"
+    (hasStr art s!":where(* + .u-in-paragraph) \{ margin-top: {space "0.966"}; }" &&
+     hasStr art s!":where(.u-in-paragraph + *) \{ margin-top: {space "0.966"}; }")
   t "html a nested 10pt list reads its own level"
     (hasStr art s!":where(li {item}, li blockquote > *) \{ --parskip: 0.241rem; }" &&
      hasStr art s!":where(li li + {item}) \{ margin-top: {space "0.241"}; }" &&
-     hasStr art s!"li * + blockquote) \{ margin-top: {space "0.483"}; }")
+     hasStr art s!"li * + blockquote) \{ margin-top: {space "0.725"}; }" &&
+     hasStr art s!":where(li * + .u-in-paragraph) \{ margin-top: {space "0.483"}; }")
+  -- The nested list's `\@topsepadd` meets the next item's `\itemsep`, and
+  -- `\addvspace` keeps the larger: level two's 4pt + 2pt over level one's 4pt.
+  t "html an item after a nested list that opened a paragraph stands the larger space"
+    (hasStr art (s!"li:has(> :is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), " ++
+      s!"blockquote):not(.u-in-paragraph):last-child) + {item}) \{ margin-top: {space "0.725"}; }"))
+  -- size10.clo:233: level three sets its own 1pt, which a declared value does not reach.
+  let declared := page "{article}\\setlength{\\partopsep}{5pt}"
+  t "html a declared partopsep reaches the top level and not level three"
+    (hasStr declared s!"* + blockquote) \{ margin-top: {space "1.570"}; }" &&
+     hasStr declared s!"li li * + blockquote) \{ margin-top: {space "0.362"}; }")
   let art12 := page "[12pt]{article}"
   t "html a 12pt list reads size12's spacing"
     (hasStr art12 s!":where({item}, blockquote > *) \{ --parskip: 0.503rem; }" &&
-     hasStr art12 s!"* + blockquote) \{ margin-top: {space "1.006"}; }")
+     hasStr art12 s!"* + blockquote) \{ margin-top: {space "1.309"}; }" &&
+     hasStr art12 s!":where(* + .u-in-paragraph) \{ margin-top: {space "1.006"}; }")
   let deck := page "{beamer}"
-  t "html a deck's list reads beamer's spacing"
+  t "html a deck's list reads beamer's spacing, its partopsep zero"
     (hasStr deck s!":where({item}, blockquote > *) \{ --parskip: 0.000rem; }" &&
      hasStr deck s!":where(li + {item}) \{ margin-top: {space "0.329"}; }" &&
-     hasStr deck s!"* + blockquote) \{ margin-top: {space "0.329"}; }")
+     hasStr deck s!"* + blockquote) \{ margin-top: {space "0.329"}; }" &&
+     !hasStr deck ".u-in-paragraph")
+  -- beamerbaselocalstructure.sty:156-163: level two's `\itemsep` is zero and
+  -- level three's `\topsep` 2pt, so the nested list's end is the larger.
+  t "html a deck's level-two item after a nested list stands level three's topsep"
+    (hasStr deck (s!"li li:has(> :is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), " ++
+      s!"blockquote):last-child) + {item}) \{ margin-top: {space "0.219"}; }"))
   let web := page "{webpage}"
   t "html a webpage's lists keep the peer gap and its items a leading"
     (!hasStr web "li + li:" && !hasStr web "--parskip:" &&

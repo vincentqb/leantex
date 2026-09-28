@@ -806,25 +806,59 @@ def listLevelGaps (size : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
   (screenMilli size sk.topsep.width.sp, screenMilli size sk.itemsep.width.sp,
    screenMilli size sk.parsep.width.sp)
 
+/-- A list level's `\@topsepadd` where the list opens a paragraph, in
+screen milli-rem: `\topsep` with the level's `\partopsep` on top
+(`Ir.partopsepFor`, the site the PDF walk spends), one conversion of the
+summed length. -/
+def listOpenGap (size : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
+  screenMilli size (sk.topsep.width.sp + partopsep.width.sp)
+
 /-- One list level's rules, `pre` reaching the level — an item ancestor
 per enclosing list, as `\@listdepth` counts them over both kinds: its
 items' and quotations' paragraphs stand `\parsep` apart, each list and
-quotation stands `\topsep` from its neighbours above and below, and each
-item after the first opens `\itemsep`. -/
-private def listLevelRules (pre : String) (g : Nat × Nat × Nat) : List GapRule :=
+quotation stands `\@topsepadd` (`opened`) from its neighbours above and
+below, and each item after the first opens `\itemsep`. A list or quotation
+whose `\begin` stands inside an open paragraph carries the in-paragraph
+role's class (`Ir.inParagraphRole`), and `\@trivlist` gives it `\topsep`
+alone (latex.ltx:15871-15878): its pair stands after the level's own, and
+only where the level's `\partopsep` is not zero. An item after one whose
+last block is a nested list stands the larger of the two spaces that meet
+there, the nested list's `\@topsepadd` and the item's `\itemsep` —
+`\addvspace` takes the larger, and the item's `\parskip` stands on top —
+the one boundary the nested list's own pair cannot reach, since the item
+after it is its parent's sibling: `nested` is the next level's `\topsep`
+and its `\@topsepadd` where it opens a paragraph, each rule written only
+where it is the larger. -/
+private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
+    (nested : Nat × Nat) : List GapRule :=
+  let inPar := roleClass Ir.inParagraphRole
+  let after (sel : String) (m : Nat) : GapRule :=
+    .boundary (s!"{pre}li:has(> :is({", ".intercalate listElems}){sel}:last-child) + " ++
+      itemSubject) (listSpace m)
   [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *" (milliRem g.2.2),
-   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace g.1),
-   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace g.1),
-   .boundary s!"{pre}li + {itemSubject}" (listSpace g.2.1)]
+   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace opened),
+   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace opened),
+   .boundary s!"{pre}li + {itemSubject}" (listSpace g.2.1)] ++
+  (if opened == g.1 then [] else
+    [.boundary s!"{pre}* + .{inPar}" (listSpace g.1),
+     .boundary s!"{pre}.{inPar} + *" (listSpace g.1)]) ++
+  (if nested.1 ≤ g.2.1 then [] else [after "" nested.1]) ++
+  (if nested.2 ≤ max g.2.1 nested.1 then [] else [after s!":not(.{inPar})" nested.2])
 
 /-- The list rules a page's class owes: LaTeX's `\@list⟨n⟩` for levels one
 to three — a deeper level keeps the third's, as `Ir.listSkips` clamps —
 read from the one resolving site the PDF walk spends and converted once
-(`listLevelGaps`). The web's lineage owes none: its lists open the peer
-gap and its items stand a leading apart, as its print twin sets them. -/
-def listRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+(`listLevelGaps`, `listOpenGap`, over the preamble's `tokens` a declared
+`\partopsep` rides in). The web's lineage owes none: its lists open the
+peer gap and its items stand a leading apart, as its print twin sets
+them. -/
+def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+  let spaces (n : Nat) : Nat × Nat := match Ir.listSkips l size n with
+    | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
+    | none => (0, 0)
   [1, 2, 3].flatMap fun n => match Ir.listSkips l size n with
-    | some sk => listLevelRules (String.join (List.replicate (n - 1) "li ")) (listLevelGaps size sk)
+    | some sk => listLevelRules (String.join (List.replicate (n - 1) "li "))
+        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
     | none => []
 
 /-- The rules a theorem-like block's space owes, on the element its role's
@@ -903,11 +937,11 @@ heading, whose band below is the heading's own (the reset's
 consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
-def blockGapRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size ++ gapAfterLists
+def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+  gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists
 
-def blockGapCss (l : Ir.ListLineage) (size : Int) : String :=
-  String.join ((blockGapRules l size).map GapRule.render)
+def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : String :=
+  String.join ((blockGapRules l size tokens).map GapRule.render)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -925,14 +959,16 @@ private theorem dropWhile_none {α : Type} (p : α → Bool) (ys : List α)
     simp only [List.all_cons, Bool.and_eq_true, Bool.not_eq_true'] at h
     simp [h.1]
 
-private theorem listLevelRules_noReset (pre : String) (g : Nat × Nat × Nat) :
-    (listLevelRules pre g).all (fun r => !r.isReset) = true := rfl
+private theorem listLevelRules_noReset (pre : String) (g : Nat × Nat × Nat) (o : Nat)
+    (n : Nat × Nat) : (listLevelRules pre g o n).all (fun r => !r.isReset) = true := by
+  unfold listLevelRules
+  split <;> split <;> split <;> rfl
 
-private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) :
-    (listRules l size).all (fun r => !r.isReset) = true := by
+private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+    (listRules l size tokens).all (fun r => !r.isReset) = true := by
   simp only [listRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
     Bool.and_eq_true]
-  refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _
+  refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _
 
 private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
@@ -948,10 +984,10 @@ needs before the emitted gap is the rendered one; the heading's follower
 rule stands last. That no base-sheet rule outside the emitter declares a
 margin on an element it spaces is the text's to show, and
 `htmlRhythmChecks` reads it off every golden page's sheet. -/
-theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) :
-    ((blockGapRules l size).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
-    (blockGapRules l size).getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
-  have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size ++ gapAfterLists).all
+theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+    ((blockGapRules l size tokens).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
+    (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+  have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists).all
       (fun r => !r.isReset) = true := by
     simp only [List.all_append, thmRules_noReset, listRules_noReset, Bool.and_true,
       Bool.and_eq_true]
@@ -967,26 +1003,34 @@ theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) :
 /-- **A list's spaces are LaTeX's `\@list⟨n⟩` on both artifacts** (`_agree`):
 for any level's spaces — so at every lineage, body size and level
 `Ir.listSkips` answers for, the one resolving site the PDF walk spends —
-each of the three lengths the level's rules carry (`listLevelGaps`), its
-`\topsep` above and below a list, its `\itemsep` before an item and its
-`\parsep` inside one, is the print length as the screen's multiple of its
-quantum, to within a milli-rem (`screenMilli_between`). -/
-theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (hq : 0 < Ir.rhythmQuantum size)
-    (h0 : 0 ≤ sk.topsep.width.sp ∧ 0 ≤ sk.itemsep.width.sp ∧ 0 ≤ sk.parsep.width.sp) :
+each of the four lengths the level's rules carry (`listLevelGaps`,
+`listOpenGap`), its `\topsep` above and below a list inside an open
+paragraph, its `\topsep` and `\partopsep` above and below one that opens a
+paragraph, its `\itemsep` before an item and its `\parsep` inside one, is
+the print length as the screen's multiple of its quantum, to within a
+milli-rem (`screenMilli_between`). -/
+theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
+    (hq : 0 < Ir.rhythmQuantum size)
+    (h0 : 0 ≤ sk.topsep.width.sp ∧ 0 ≤ sk.itemsep.width.sp ∧ 0 ≤ sk.parsep.width.sp)
+    (hp : 0 ≤ sk.topsep.width.sp + pt.width.sp) :
     let h : Int := ((bodyLeadingMilli / 2 : Nat) : Int)
     let q := Ir.rhythmQuantum size
     let g := listLevelGaps size sk
+    let o := listOpenGap size sk pt
     ((g.1 : Int) * q ≤ sk.topsep.width.sp * h ∧ sk.topsep.width.sp * h < ((g.1 : Int) + 1) * q) ∧
     ((g.2.1 : Int) * q ≤ sk.itemsep.width.sp * h ∧
       sk.itemsep.width.sp * h < ((g.2.1 : Int) + 1) * q) ∧
     ((g.2.2 : Int) * q ≤ sk.parsep.width.sp * h ∧
-      sk.parsep.width.sp * h < ((g.2.2 : Int) + 1) * q) :=
+      sk.parsep.width.sp * h < ((g.2.2 : Int) + 1) * q) ∧
+    ((o : Int) * q ≤ (sk.topsep.width.sp + pt.width.sp) * h ∧
+      (sk.topsep.width.sp + pt.width.sp) * h < ((o : Int) + 1) * q) :=
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
-   screenMilli_between size _ hq h0.2.2⟩
+   screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
 /-- The web's lineage owes no list space: a webpage's lists keep the peer
 gap and its items a leading apart, where its print twin sets them. -/
-theorem listRules_web_exact (size : Int) : listRules .web size = [] := rfl
+theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
+    listRules .web size tokens = [] := rfl
 
 /-- The document's declared `\parskip` as the screen peer gap: its multiple
 of the print quantum at the document's size, realized in the screen's
@@ -3996,7 +4040,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  blockGapCss doc.docClass.record.lists doc.page.fontSize ++
+  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -5397,9 +5441,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("class", raggedClass flush)]
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper. The
-  -- trivlist role only spaces, so it is a class on the environment's own
-  -- element and never an element: a consumer sheet's child combinators
-  -- (`main > .centered`) were written against the tree without it.
+  -- trivlist and in-paragraph roles only space, so each is a class on the
+  -- environment's own element and never an element: a consumer sheet's
+  -- child combinators (`main > .centered`) were written against the tree
+  -- without it, and the list levels read the in-paragraph one to spend
+  -- `\topsep` without `\partopsep` (`listLevelRules`).
   | .role n body =>
     -- A title slot's role marks its content as the slot's own: set under
     -- the slot's template alone (`Config.slotTitle`), placed by the rule
@@ -5407,11 +5453,9 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
     let kids := blockNodesInto cfg.into #[] body.toList
-    match n == Ir.trivlistRole || (Ir.thmSpaceOf? n).isSome, kids.toList with
+    match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
+        kids.toList with
     | true, [k] => withClass (roleClass n) k
-    -- The in-paragraph role is the PDF's spacing fact (`\partopsep`): the
-    -- page's element tree is the environment's own either way.
-    | false, [k] => if n == Ir.inParagraphRole then k else Html.elem "div" kids #[("class", roleClass n)]
     | _, _ => Html.elem "div" kids #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.

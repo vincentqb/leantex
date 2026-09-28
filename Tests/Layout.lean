@@ -533,7 +533,7 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- HTML: the platform's own construct, built through the typed tree.
   let page := (HtmlDoc.emit {} doc).1
   t "html sets the quotation as a blockquote"
-    (match (page.splitOn "<blockquote>")[1]? with
+    (match (page.splitOn "<blockquote")[1]? with
      | some rest =>
        ((rest.splitOn "</blockquote>")[0]?.map fun inner =>
          (inner.splitOn "<p>One invented line.</p>").length == 2).getD false
@@ -4288,14 +4288,19 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     "\n\nCharlie.\n\\end{frame}\\end{document}"
   t "a deck's list after a blank line spends beamer's zero partopsep"
     (steps deck abc == [leadOf deck + Dim.pt 3, leadOf deck + Dim.pt 3])
-  -- The HTML half: the role is the PDF's spacing fact, and the page's
-  -- element tree is the same either way.
+  -- The HTML half: the role only spaces, so it is a class on the list's own
+  -- element and never an element of its own (`withClass`): with the
+  -- classes read away the two spellings ship one tree, and the sheet spends
+  -- `\partopsep` on the list that opens a paragraph alone
+  -- (`htmlListGapChecks`).
   let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
   let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
+  let inPar := art ("Alpha.\n" ++ item ++ "\nCharlie.")
   t "html: a list inside an open paragraph ships the element tree a blank-line list ships"
-    (shape (art ("Alpha.\n" ++ item ++ "\nCharlie.")) == shape (art ("Alpha.\n\n" ++ item ++ "\n\nCharlie.")) &&
-     !hasStr (Html.document "en" #[] (body (art ("Alpha.\n" ++ item ++ "\nCharlie."))))
-       (HtmlDoc.roleClass Ir.inParagraphRole))
+    (shape inPar == shape (art ("Alpha.\n\n" ++ item ++ "\n\nCharlie.")))
+  t "html: a list inside an open paragraph carries the role's class on its own element"
+    (hasStr (Html.document "en" #[] (body inPar))
+      s!"<ul class=\"{HtmlDoc.roleClass Ir.inParagraphRole}\">")
 
 /-- **A list right after a heading opens no `\topsep`** (`Acc.afterHeading`).
 `\@afterheading` sets `\@nobreak` until the next paragraph starts, and a
