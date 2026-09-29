@@ -5323,7 +5323,7 @@ def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "figure",
    "figure*", "table", "table*", "quote", "quotation", "verse", "description",
-   "thebibliography", "abstract", "ifbackend",
+   "thebibliography", "abstract", "titlepage", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
@@ -9743,6 +9743,12 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
+  else if n == "titlepage" then
+    -- article.cls defines titlepage as an isolated page with the empty page
+    -- style. Its body supplies any vertical glue, so the page-opening path
+    -- declares the top distribution and otherwise elaborates it unchanged.
+    let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+    blocks := blocks.push (.frame #[] false .top false inner)
   else if n == "tabular" || n == "tabular*" then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then

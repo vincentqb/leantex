@@ -1029,6 +1029,10 @@ structure PageOut where
   /-- Picture paths, painted after the fills and before the text, so a
   node's own fill sits under its label. -/
   paths : Array PathOut := #[]
+  /-- This page was opened by the frame/page-opening path. Flow classes use
+  that fact to suppress their running furniture on an isolated page; frame
+  classes keep their own declared furniture. -/
+  framed : Bool := false
   /-- The chrome footer this page carries, resolved at collection time (the
   frame's own number, the section in force): the band of slots the final
   pass lays into the margin once the page count is known. `none` on section
@@ -4608,7 +4612,8 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   -- the page after the vertical distribution moved the body lines, so
   -- the distribution can never move a note.
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
-                                   paths := paths, foot := b.curFoot,
+                                   paths := paths, framed := b.cur.framed,
+                                   foot := b.curFoot,
                                    footBox := b.footBox,
                                    frame := b.curFrame, band := b.curBand },
            cur := {}, curBand := none,
@@ -4677,7 +4682,7 @@ page's pin) and carry no shrink or fil share. -/
 private def B.reopenChrome (b : B) : B :=
   match b.chrome with
   | some (lines, fills, y0, d0, bl0) =>
-    { b with cur := { lines := lines, fills := fills }
+    { b with cur := { lines := lines, fills := fills, framed := true }
              pinnedLines := lines.size
              pinnedFills := fills.size
              shrinkAbove := .replicate lines.size 0
@@ -9314,10 +9319,12 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b.finishPage b.closingOwed with
                chrome := none, frameBreak := none, spillWarned := false }
     else
-      b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
+      b := { b with cur := {}, pageBg := none, vdist := .top,
+                    pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
                     frameBreak := none, spillWarned := false, opened := false }
-  | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
+  | .frameOpen br => b := { b with cur := { b.cur with framed := true },
+                                   frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with epochBg := bg }
   | .foot c fr =>
@@ -10473,13 +10480,14 @@ private def runPost (sh : Shipped) : Out := Id.run do
     -- declaration must not silently gate it.
     let headOn := doc.headFrom ≤ i + 1
     let footOn := doc.footFrom ≤ i + 1
-    if headOn then
+    let physicalFurn := !page.framed || doc.docClass.record.model != .flow
+    if physicalFurn && headOn then
       if let some content := doc.head then
         let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
-    if footOn then
+    if physicalFurn && footOn then
       if let some content := doc.foot then
         let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
         diags := diags ++ ds
