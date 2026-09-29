@@ -759,6 +759,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       groundName := look.bar.map (fun _ => "the block-title bar") }
     usesBlocks cx (usesInlines titleCx acc title.toList) body.toList
   | .role _ body => usesBlocks cx acc body.toList
+  | .link _ body => usesBlocks cx acc body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
   | .step n last body => usesBlocks cx (acc.step n last) body.toList

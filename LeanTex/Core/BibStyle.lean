@@ -1364,6 +1364,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
     out.push (.titled kind (resolveArr p find title)
       (resolveBlocks p find items #[] body.toList))
   | .role nm body => out.push (.role nm (resolveBlocks p find items #[] body.toList))
+  | .link target body => out.push (.link target (resolveBlocks p find items #[] body.toList))
   | .spaced g body => out.push (.spaced g (resolveBlocks p find items #[] body.toList))
   | .columns cols => out.push (.columns (resolveCols p find items #[] cols.toList))
   | .step n last body =>
@@ -1854,7 +1855,7 @@ theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending p find title.toList _ q h
   | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
-  | .spaced _ body | .step _ _ body | .only _ body | .nav _ body | .note body =>
+  | .link _ body | .spaced _ body | .step _ _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveBlocks_pending p find items body.toList #[] _ q h

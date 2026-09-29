@@ -4518,7 +4518,7 @@ no extent is reserved for it" pos
             let acc := flushText acc sb
             let anchor := Ir.labelAnchor key
             let acc ← if name == "hyperlink" then
-                if Ir.anyInline (fun x => x matches .link _ _) inner then do
+                if Ir.anyInline (·.anchorBearing) inner then do
                   warnOnce ctx "link:nested" .W0104
                     "a link wrapper contains another link; the outer link is skipped" pos
                     (help := "links cannot nest; move the inner link outside the outer wrapper")
@@ -10252,8 +10252,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         else
           let anchor := Ir.labelAnchor target
           let url := if n == "hyperlink" then "#".append anchor else target
-          let nested := Ir.foldBlocks (fun found _ => found) (fun found x =>
-            found || (x matches .link _ _)) false inner
+          let nested := Ir.hasBlockAnchor inner
           if nested then do
             warnOnce ctx "link:nested" .W0104
               "a link wrapper contains another link; the outer link is skipped" pos

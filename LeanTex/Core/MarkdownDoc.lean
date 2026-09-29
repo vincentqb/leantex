@@ -184,6 +184,8 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     blocksInto loc summary ind (acc ++ head) body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto loc summary ind acc body.toList
+  -- CommonMark has no block-link construct; the twin preserves the body.
+  | .link _ body => blocksInto loc summary ind acc body.toList
   | .verbatim _ s spec =>
     let lines := String.intercalate "\n" (verbatimLines s).toList
     -- The numbered caption leads the fence, as the twin sets a float's
@@ -444,6 +446,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .spaced _ body => blocksInto_extends loc summary ind acc body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
   | .role _ body => blocksInto_extends loc summary ind acc body.toList
+  | .link _ body => blocksInto_extends loc summary ind acc body.toList
   | .verbatim _ _ spec => by
     simp only [blockInto]
     cases spec.caption <;> exact append_chain₄ _ _ _ _ _
@@ -696,6 +699,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .role _ body, out, h => headingLevelList_mem x body.toList out h
+  | .link _ body, out, h => headingLevelList_mem x body.toList out h
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h
   | .columns cols, out, h => headingLevelColumns_mem x cols.toList out h
   | .step _ _ body, out, h => headingLevelList_mem x body.toList out h

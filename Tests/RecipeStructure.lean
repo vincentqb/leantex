@@ -1,6 +1,23 @@
 import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+open LeanTex.Core.PdfRead (Obj)
+
+private def pdfLinkTargets (pdf : ByteArray) : Except String (Array ByteArray) := do
+  let es ← PdfRead.objects pdf
+  let mut out : Array ByteArray := #[]
+  for e in es.val do
+    if PdfCensus.kindOf e.val == .page then
+      match PdfCensus.deref es.val ((e.val.get? "Annots").getD .null) with
+      | .arr annots =>
+        for raw in annots do
+          let annot := PdfCensus.deref es.val raw
+          if PdfCensus.kindOf annot == .annot "Link" then
+            let action := PdfCensus.deref es.val ((annot.get? "A").getD .null)
+            if let some (Obj.str target) := action.get? "URI" then
+              out := out.push target
+      | _ => pure ()
+  return out
 
 private def countTag (tag : String) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => 0
@@ -38,17 +55,25 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
       if l.segs.isEmpty || l.furniture then none else some (lineText l, l.x, l.y)
   t "a block target adds no page spacing or displacement"
     (placed ("\\hypertarget{spot}{" ++ anchorBody ++ "}") == placed anchorBody)
-  t "the linked block reaches Layout.Out as an internal link"
-    ((allLines out).any fun l => l.segs.any fun s => match s with
-      | .run _ _ (some "#panel") _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-      | _ => false)
+  t "the linked block reaches Layout.Out as one whole-block rectangle"
+    (match out.pages[0]?.bind (·.links[0]?) with
+     | some rect =>
+       (out.pages[0]?.map (·.links.size == 1)).getD false && rect.target == "#panel" &&
+         ((allLines out).filter (fun l =>
+           ["Linked panel.", "One", "Two", "Three", "Four"].any (hasStr (lineText l) ·))).all
+           fun l => rect.x ≤ l.x && l.x + l.setWidth ≤ rect.x + rect.w &&
+             rect.y ≤ l.y && l.y ≤ rect.y + rect.h
+     | none => false)
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let hrefs := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let ids := trees.foldl
     (fun acc n => acc ++ attrValuesOf (fun _ => true) "id" n) #[]
-  t "the typed HTML tree carries the matching target and internal link"
-    (ids.contains "panel" && hrefs.contains "#panel")
+  t "the typed HTML tree carries exactly one matching internal link"
+    (ids.contains "panel" && hrefs == #["#panel"])
+  let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
+  t "the PDF artifact carries exactly one matching block-link annotation"
+    (pdfLinkTargets pdf == .ok #["(#panel)".toUTF8])
   t "the typed HTML tree keeps both nested tables"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 2)
   let (nestedDoc, nestedDs) := elabStr (dvDoc "\\usepackage{hyperref}\n"

@@ -5772,6 +5772,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
         kids.toList with
     | true, [k] => withClass (roleClass n) k
     | _, _ => Html.elem "div" kids #[("class", roleClass n)]
+  -- HTML anchors have a transparent content model, so one anchor may own
+  -- arbitrary flow children; elaboration rejects every anchor-bearing
+  -- descendant before this node is built.
+  | .link target body =>
+    Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
+      #[("href", target), ("style", "display: block; color: inherit")]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>

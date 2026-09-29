@@ -322,12 +322,14 @@ theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut
   rw [ite_eq_left hp]
   exact html_fonts_cover_pdf fs pages h
 
-/-- Link rectangles for one page, in PDF user space. Adjacent runs with the
-same destination merge, so a hyphenated or multi-font link is one annotation
-per line rather than one per glyph run. -/
+/-- Link rectangles for one page, in PDF user space. Block links arrive
+as one placed rectangle over their whole page segment; adjacent inline runs
+with the same destination still merge per line. -/
 private def linkRects (geom : Geom) (page : PageOut) :
     Array (Sp × Sp × Sp × Sp × String) := Id.run do
-  let mut out : Array (Sp × Sp × Sp × Sp × String) := #[]
+  let mut out : Array (Sp × Sp × Sp × Sp × String) := page.links.map fun r =>
+    (geom.bleed + r.x, geom.bleed + geom.pageH - r.y - r.h,
+      geom.bleed + r.x + r.w, geom.bleed + geom.pageH - r.y, r.target)
   for l in page.lines do
     let mut x := geom.bleed + l.x
     -- Merge tolerance of one em: a run separated only by an interword space

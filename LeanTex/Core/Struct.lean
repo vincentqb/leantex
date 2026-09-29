@@ -257,6 +257,7 @@ def blockRaw (out : Array Node) : Block → Array Node
   | .ragged _ body => blocksRaw out body.toList
   | .spaced _ body => blocksRaw out body.toList
   | .role _ body => blocksRaw out body.toList
+  | .link target body => out.push (.node (.link target) (blocksRaw #[] body.toList))
   | .quote body => out.push (.node .quote (blocksRaw #[] body.toList))
   | .abstract body => out.push (.node .section (blocksRaw #[] body.toList))
   | .titled _ title body =>
@@ -900,6 +901,10 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .role n body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
+  | .link target body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
+    rw [blocksRaw_text]
+    rfl
   | .quote body =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text]
@@ -1223,6 +1228,11 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .role n body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
+  | .link target body =>
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
+    rw [blocksRaw_headings]
+    rfl
   | .quote body =>
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
@@ -1548,6 +1558,10 @@ theorem blockRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (b 
   | .role n body =>
     simp only [blockRaw, foldBlock, altPicPush]
     exact blocksRaw_alts is out body.toList
+  | .link target body =>
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts]
+    rfl
   | .quote body =>
     simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
     rw [blocksRaw_alts]
@@ -1864,6 +1878,7 @@ theorem blockRaw_acc (out : Array Node) (b : Block) :
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
   | .role nm body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .link target body => simp [blockRaw]
   | .quote body => simp [blockRaw]
   | .abstract body => simp [blockRaw]
   | .titled kind title body => simp [blockRaw]
