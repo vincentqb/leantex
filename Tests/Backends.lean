@@ -3406,6 +3406,15 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (Pdf.Feature.all.all fun f => Pdf.Feature.ofName? f.name == some f)
   t "features: row names are distinct" ((Pdf.Feature.all.map Pdf.Feature.name).Nodup)
   t "features: an unknown row name is nobody's" (Pdf.Feature.ofName? "hologram").isNone
+  let requestsAgree (f : Ir.Features) : Bool :=
+    (!(HtmlDoc.kernCssFor f).isEmpty) == Layout.kernEnabled f
+  let kernOn : Ir.Features := { kern := true }
+  let kernOff : Ir.Features := { kern := false }
+  t "features: both backend projections agree in both feature states"
+    (requestsAgree kernOn && requestsAgree kernOff)
+  t "features: crossing either projection falsifies the agreement check"
+    ((!(HtmlDoc.kernCssFor kernOn).isEmpty) != Layout.kernEnabled kernOff &&
+      (!(HtmlDoc.kernCssFor kernOff).isEmpty) != Layout.kernEnabled kernOn)
   -- One page placing one image; the store decides the row.
   let png ← IO.FS.readBinFile "tests/corpus/rects.png"
   let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"

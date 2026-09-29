@@ -3800,11 +3800,14 @@ private def bibCss (doc : Doc) : String :=
   "  grid-template-columns: subgrid; }\n" ++
   ".bib-marker { text-align: right; }\n"
 
-/-- The kerning request, HTML projection of `Ir.features`: the one place
-this stylesheet asks a browser to kern, present exactly when the record
-the PDF path reads asks for it (`Pdf.features_agree` states the pair). -/
-def kernCss : String :=
-  if Ir.features.kern then "  font-kerning: normal;\n" else ""
+/-- The HTML projection of an OpenType feature record. Parameterized so
+the backend agreement theorem ranges over the same value the live
+stylesheet resolves below. -/
+def kernCssFor (features : Ir.Features) : String :=
+  if features.kern then "  font-kerning: normal;\n" else ""
+
+/-- The kerning request from the one live feature value. -/
+def kernCss : String := kernCssFor Ir.features
 
 /-- Whether a declared style paints a colour of its own outside the inline
 regions the document walk reads (`Ir.foldDoc` covers each style's font

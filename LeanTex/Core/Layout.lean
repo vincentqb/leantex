@@ -1743,18 +1743,26 @@ theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char × Sp) :
   unfold boxWidth
   rw [Array.foldl_push]
 
+/-- The PDF/layout projection of the shared OpenType feature record. The
+shaping helpers take the record, not a detached Bool, so their live callers
+cannot silently select another value. -/
+def kernEnabled (features : Ir.Features) : Bool := features.kern
+
 /-- A face's pair kern between two glyphs, scaled to `size`: 0 when
 kerning is off, and 0 for every pair of a face with no kern data. -/
-def pairKern (kern : Bool) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
-  (if kern then font.kernAdv g1 g2 else 0) * size / (font.unitsPerEm : Int)
+def pairKern (features : Ir.Features) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
+  (if kernEnabled features then font.kernAdv g1 g2 else 0) * size /
+    (font.unitsPerEm : Int)
 
 /-- A glyph's pair kern with its own face's space glyph, scaled to `size`:
 `(g, space)` when `after` (the space follows `g`), `(space, g)` otherwise —
-`pairKern`'s value for that pair, read from the face's per-glyph memo
+`pairKern`'s value for that pair, read from the face's demand-lazy memo
 (`Font.spaceKernAdv`), so a space beside a word asks the kern data once
 per glyph and face, never once per space; 0 when kerning is off. -/
-def spacePairKern (kern : Bool) (size : Sp) (font : Font) (after : Bool) (g : Nat) : Sp :=
-  (if kern then font.spaceKernAdv after g else 0) * size / (font.unitsPerEm : Int)
+def spacePairKern (features : Ir.Features) (size : Sp) (font : Font)
+    (after : Bool) (g : Nat) : Sp :=
+  (if kernEnabled features then font.spaceKernAdv after g else 0) * size /
+    (font.unitsPerEm : Int)
 
 /-- The scaled pair kern the next glyph owes against the box's last: 0
 at a box head, and 0 for every pair of a face with no kern data (Open
@@ -1762,10 +1770,10 @@ Sans ships none). Both backends read one `Ir.Features` value for whether
 kerning applies at all — `features_agree` (stated in Pdf.lean, where both
 backends are in scope), `font-kerning` in CSS and this application being
 two projections of it. -/
-def kernVal (kern : Bool) (size : Sp) (font : Font)
+def kernVal (features : Ir.Features) (size : Sp) (font : Font)
     (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
   match box.back? with
-  | some (pg, _, _) => pairKern kern size font pg g1
+  | some (pg, _, _) => pairKern features size font pg g1
   | none => 0
 
 /-- Apply a pair kern to the box's last glyph's advance: the pen position
@@ -1816,9 +1824,9 @@ theorem kern_measure_exact (box : Array (Nat × Char × Sp))
 
 /-- At a box head there is nothing to kern against: the applied value is
 0 by definition, so the width moves by the glyph's advance alone. -/
-theorem kernVal_head (kern : Bool) (size : Sp) (font : Font) (g1 : Nat)
+theorem kernVal_head (features : Ir.Features) (size : Sp) (font : Font) (g1 : Nat)
     (box : Array (Nat × Char × Sp)) (h : box.back? = none) :
-    kernVal kern size font box g1 = 0 := by
+    kernVal features size font box g1 = 0 := by
   unfold kernVal
   rw [h]
 
@@ -1905,7 +1913,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               (.pen hyphW hyphenPenalty true fontIdx color (hyphenGlyph size font))
           match glyphOfSc smallcaps size font c' with
           | some g =>
-            let ks := kernVal Ir.features.kern size font box g.1
+            let ks := kernVal Ir.features size font box g.1
             box := (kernApply box ks).push g
             boxW := boxW + ks + g.2.2
           | none =>
@@ -1946,7 +1954,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         else
         match glyphOfSc smallcaps size font c with
         | some g =>
-          let ks := kernVal Ir.features.kern size font box g.1
+          let ks := kernVal Ir.features size font box g.1
           box := (kernApply box ks).push g
           boxW := boxW + ks + g.2.2
         | none =>
@@ -3182,7 +3190,7 @@ face's own size. -/
 private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
   | some (.box _ fontIdx _ _ glyphs size _ _ _ _) =>
     match (if after then glyphs.back? else glyphs[0]?) with
-    | some (g, _, _) => spacePairKern Ir.features.kern size (fs.get fontIdx) after g
+    | some (g, _, _) => spacePairKern Ir.features size (fs.get fontIdx) after g
     | none => 0
   | _ => 0
 
