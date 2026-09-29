@@ -6624,29 +6624,38 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\palette{ rose = #B03060 }\\begin{document}\n" ++ inner ++ "\n\\end{document}"
   let node (body : String) : String :=
     doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
-  -- One shipped line as its runs: face, glyphs and colour, in order, with
-  -- `none` where an interword space stands — a space is a gap, not a run,
-  -- and a row that read only runs would pass a label that lost one.
+  -- One shipped line as its runs: a right value carries each face, glyph
+  -- array and colour; a left value carries each interword gap's width. A
+  -- row that kept only runs — or represented every gap as the same value —
+  -- would pass a label whose text-command edges kerned the spaces wrongly.
   let runsOf (l : Layout.LineOut) :
-      Array (Option (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color)) :=
+      Array (Sum Dim.Sp (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color)) :=
     l.segs.filterMap fun seg => match seg with
-      | .run idx color _ _ glyphs _ _ _ _ _ => some (some (idx, glyphs, color))
-      | .gap _ true => some none
+      | .run idx color _ _ glyphs _ _ _ _ _ => some (.inr (idx, glyphs, color))
+      | .gap w true => some (.inl w)
       | _ => none
   let shipped (src : String) :
-      Array (Array (Option (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color))) :=
+      Array (Array (Sum Dim.Sp (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color))) :=
     let (d, _) := elabStr src
-    ((bodyLines (layoutOf fs d)).filter fun l => (runsOf l).any (·.isSome)).map runsOf
+    ((bodyLines (layoutOf fs d)).filter fun l => (runsOf l).any (· matches .inr _)).map runsOf
   let diagsOf (src : String) : Array Diag := (elabStr src).2
   -- **The invariant row.** The node's lines are the paragraph's lines.
   let agrees (body : String) : Bool :=
     let n := shipped (node body)
     !n.isEmpty && n == shipped (doc body)
+  let slide (pre body : String) (inPicture : Bool) : String :=
+    let content := if inPicture then
+      "\\begin{tikzpicture}\\node at (0,0) {" ++ body ++ "};\\end{tikzpicture}"
+    else body
+    dvDeck pre ("\\begin{frame}\n" ++ content ++ "\n\\end{frame}")
+  let slideAgrees (pre body : String) : Bool :=
+    let n := shipped (slide pre body true)
+    !n.isEmpty && n == shipped (slide pre body false)
   -- The faces a source's glyphs ship in, one per non-space glyph.
   let facesOf (src : String) : Array Nat :=
     (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
-      | some (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun _ => i
-      | none => #[]
+      | .inr (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun _ => i
+      | .inl _ => #[]
   t "a plain node's runs are the paragraph's (control)" (agrees "Middle")
   t "a bold node's runs are the paragraph's" (agrees "\\textbf{Middle}")
   t "the bold node ships in the bold face, not the regular"
@@ -6671,6 +6680,22 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a nested bold italic node ships in the bold italic face"
     (agrees "\\textbf{\\emph{Middle}}" &&
       (facesOf (node "\\textbf{\\emph{Middle}}")).all (· == 3))
+  t "a text-font command's space edges in a native picture are the paragraph's"
+    (agrees "T \\textrm{V}" && agrees "\\textrm{T} V" && agrees "\\textbf{T }a")
+  t "nested text-font command edges in a native picture are the paragraph's"
+    (agrees "\\textbf{T \\textrm{V} V}" && agrees "\\textrm{\\textbf{T }}a")
+  t "a scoped font declaration in a native picture is the paragraph's"
+    (agrees "Left {\\bfseries Middle} Right")
+  t "a themed alert declaration reaches the native picture artifact"
+    (slideAgrees "\\usetheme{moloch}" "\\alert{Middle}")
+  t "an unthemed alert declaration reaches the native picture artifact"
+    (slideAgrees "\\theme{default}" "One \\alert{Middle} here")
+  t "native picture font commands and alert declarations are not refused"
+    ([node "T \\textrm{V}", node "\\textbf{T \\textrm{V} V}",
+      node "Left {\\bfseries Middle} Right",
+      slide "\\usetheme{moloch}" "One \\alert{Middle} here" true,
+      slide "\\theme{default}" "One \\alert{Middle} here" true].all fun src =>
+        (diagsOf src).all (·.severity == .note))
   t "a coloured node's runs are the paragraph's (control)"
     (agrees "\\textcolor{rose}{Middle}")
   t "a coloured bold node, the alert shape, keeps both"
@@ -6742,9 +6767,9 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- face; the SVG's is what CSS computes for the run (`svgFace`).
   let pdfFaces (src : String) : Array (Char × Nat × Bool × Bool) :=
     (shipped src).flatMap fun rs => rs.flatMap fun r => match r with
-      | some (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun (_, c, _) =>
+      | .inr (i, gs, _) => (gs.filter (·.2.1 != ' ')).map fun (_, c, _) =>
         (c, (fs.get i).weight, (fs.get i).isItalic, fs.math == some i)
-      | none => #[]
+      | .inl _ => #[]
   let svgFaces (src : String) : Array (Char × Nat × Bool) :=
     (svgRuns src).flatMap fun (s, env) =>
       let (w, it) := svgFace env

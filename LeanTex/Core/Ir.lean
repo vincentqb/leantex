@@ -2740,6 +2740,24 @@ inductive Inline where
   | footnote (num : Option Nat) (body : Array Inline)
   deriving Repr, BEq, Inhabited
 
+/-- Which edges of a text-font command get an italic correction, factored
+over the surface token predicates so prose and native picture labels read
+the same ltfntcmd rule. -/
+def fontCmdEdges {α : Type} (isSpace isNocorr : α → Bool)
+    (reads : Option α → Bool) (body : List α) (next? : Option α) : Bool × Bool :=
+  match body.dropWhile isSpace with
+  | [] => (false, false)
+  | first :: rest => (!isNocorr first && reads body.head?,
+      !rest.any isNocorr && reads next?)
+
+/-- The inline sequence one text-font command contributes: its selected
+face, the argument-side correction under that face, and the trailing
+correction under the surrounding face. -/
+def fontCmdInlines (style : Style) (edges : Bool × Bool)
+    (inner : Array Inline) : Array Inline :=
+  let run : Inline := .styled style (if edges.1 then #[.italicCorr true] ++ inner else inner)
+  if edges.2 then #[run, .italicCorr true] else #[run]
+
 /-- The anchor a reference-list entry carries in HTML and its citations
 link to (`#` prefixed): one naming site, read by the resolver's link
 construction and the backend's id emission, so the two cannot drift. -/

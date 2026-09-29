@@ -2236,6 +2236,9 @@ structure Sal where
   out : Array Ir.Inline := #[]
   text : String := ""
   scale : Nat := 1000
+  styles : Array Ir.Style := #[]
+  consumeNocorr : Bool := false
+  next : Option Tok := none
   fresh : Bool := true
   /-- How many groups deep the walk stands. A size switch inside a group is
   the group's own, and a label shape carries one size, so only a switch at
@@ -2260,12 +2263,21 @@ def str (s : Sal) (t : String) : Sal :=
 /-- Close the pending text run, so an inline can follow it in order. -/
 def flush (s : Sal) : Sal :=
   if s.text.isEmpty then s
-  else { s with out := s.out.push (.text s.text), text := "" }
+  else
+    let xs := s.styles.foldr (fun st inner => #[.styled st inner]) #[.text s.text]
+    { s with out := xs.foldl Array.push s.out, text := "" }
+
+/-- Add elaborated inlines under the declarations in force. -/
+def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
+  if xs.isEmpty then s
+  else
+    let f := s.flush
+    let xs := f.styles.foldr (fun st inner => #[.styled st inner]) xs
+    { f with out := xs.foldl Array.push f.out, fresh := false }
 
 /-- Add one elaborated inline (a math span, a coloured group). -/
 def inline (s : Sal) (i : Ir.Inline) : Sal :=
-  let f := s.flush
-  { f with out := f.out.push i, fresh := false }
+  s.inlines #[i]
 
 def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
   { s with diags := ds.foldl Array.push s.diags }
@@ -2320,7 +2332,8 @@ does in a paragraph, and only the ends a break made are trimmed here. An
 empty line wraps nothing, so no empty wrapper ships; the body's own losses
 join this label's. The body was walked one group deeper, so no size switch
 inside it set a line's size — a size it asked for was named instead. -/
-def splice (s : Sal) (body : Sal) (wrap : Array Ir.Inline → Ir.Inline) : Sal := Id.run do
+def splice (s : Sal) (body : Sal)
+    (wrap : Bool → Bool → Array Ir.Inline → Array Ir.Inline) : Sal := Id.run do
   let body := body.newline
   let n := body.lines.size
   let mut s := s.addDiags (body.diags.extract s.diags.size body.diags.size)
@@ -2328,7 +2341,7 @@ def splice (s : Sal) (body : Sal) (wrap : Array Ir.Inline → Ir.Inline) : Sal :
     if let some (xs, _) := body.lines[k]? then
       if k > 0 then s := s.newline
       let xs := trimEnds (0 < k) (k + 1 < n) xs
-      unless xs.isEmpty do s := s.inline (wrap xs)
+      unless xs.isEmpty do s := s.inlines (wrap (k == 0) (k + 1 == n) xs)
   return { s with mode := .text }
 
 /-- Does this label ship ink? The inlines it ships, counted across its
@@ -2412,7 +2425,8 @@ private def salCtrl (cx : Cx) (env : List (String × Val))
   match env.lookup n with
   | some v => s.str v.text
   | none =>
-    if n == "\\" then { s.newline with mode := .optMaybe 0 }
+    if n == "nocorr" && s.consumeNocorr then s
+    else if n == "\\" then { s.newline with mode := .optMaybe 0 }
     else if phantomCtrl.contains n then { s with mode := .optMaybe 1 }
     else if n == "textcolor" then { s with mode := .colorRole }
     else match cx.argStyles.lookup n with
@@ -2424,10 +2438,26 @@ private def salCtrl (cx : Cx) (env : List (String × Val))
         else
           (s.refuse s!"the size '\\{n}' inside a label line").mode0
       | none =>
-        let s := s.refuse s!"unknown macro '\\{n}'"
-        match Ir.floorNamedArgs.lookup n with
-        | some arity => { s with mode := .optMaybe arity }
-        | none => { s with mode := .optMaybe 0 }
+      match cx.declStyles.lookup n with
+        | some st =>
+          let s := s.flush
+          { s with styles := s.styles.push st }
+        | none =>
+          let s := s.refuse s!"unknown macro '\\{n}'"
+          match Ir.floorNamedArgs.lookup n with
+          | some arity => { s with mode := .optMaybe arity }
+          | none => { s with mode := .optMaybe 0 }
+
+private def fontCmdNocorr : Tok → Bool
+  | .ctrl "nocorr" => true
+  | _ => false
+
+private def fontCmdEdges (body : List Tok) (next? : Option Tok) : Bool × Bool :=
+  Ir.fontCmdEdges (· == .space) fontCmdNocorr
+    (fun
+      | some (.sym ',') | some (.sym '.') => false
+      | _ => true)
+    body next?
 
 mutual
 
@@ -2435,14 +2465,15 @@ mutual
 recursion into a pre-matched group subtree, so totality is structural. -/
 def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
   | [], s => s
-  | t :: rest, s => salList cx env rest (salOne cx env t s)
+  | t :: rest, s => salList cx env rest (salOne cx env t { s with next := rest.head? })
 
 /-- One token. The mode settles first — twice, because a construct's own
 run can hand the same token from one mode to the next (`\hspace` opens
 `optMaybe 1`, and a `*` then has to stay with the *name* rather than count
 as the argument) — and `.text` is a fixed point, so two passes reach it.
 After settling, the content arm runs at most once per token and the walk
-needs no lookahead. -/
+needs no lookahead beyond `Sal.next`, the token after a text-command
+argument. -/
 def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
   let s : Sal := Sal.settle t (Sal.settle t s)
   match s.mode with
@@ -2470,17 +2501,22 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
     | _ => s
   | .colorBody c role =>
     match t with
-    | .group g => s.splice (salList cx env g s.inner) (.colored c role)
+    | .group g => s.splice (salList cx env g s.inner) fun _ _ xs => #[.colored c role xs]
     | _ => s
   -- Only a space, a group or one word reaches here (`Sal.settle`): the
   -- group is the argument, and a word standing where it would be is the
   -- argument too, as the elaborator reads `\textbf x`.
   | .styleBody st =>
+    let add (s : Sal) (raw : List Tok) (inner : Array Ir.Inline) : Sal :=
+      { (s.inlines (Ir.fontCmdInlines st (fontCmdEdges raw s.next) inner)) with mode := .text }
     match t with
-    | .group g => s.splice (salList cx env g s.inner) (.styled st)
-    | .ident w => { (s.inline (.styled st #[.text w])) with mode := .text }
-    | .num m => { (s.inline (.styled st #[.text (milliString m)])) with mode := .text }
-    | .sym c => { (s.inline (.styled st #[.text (String.singleton c)])) with mode := .text }
+    | .group g =>
+      let edges := fontCmdEdges g s.next
+      s.splice (salList cx env g { s.inner with consumeNocorr := true }) fun first last xs =>
+        Ir.fontCmdInlines st (edges.1 && first, edges.2 && last) xs
+    | .ident w => add s [.ident w] #[.text w]
+    | .num m => add s [.num m] #[.text (milliString m)]
+    | .sym c => add s [.sym c] #[.text (String.singleton c)]
     | _ => s
   | .text =>
     match t with
@@ -2491,8 +2527,16 @@ def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
     -- A group is grouping: its content is the line's, and a size it set is
     -- the group's own, as TeX scopes a size switch.
     | .group g =>
-      { (salList cx env g { s with depth := s.depth + 1 }) with
-        mode := .text, scale := s.scale, depth := s.depth }
+      let nested : Sal := { s with depth := s.depth + 1 }
+      let nested : Sal := { nested with consumeNocorr := false }
+      let inner := salList cx env g nested
+      let inner := if inner.styles == s.styles then inner else inner.flush
+      let inner : Sal := { inner with mode := .text }
+      let inner : Sal := { inner with scale := s.scale }
+      let inner : Sal := { inner with styles := s.styles }
+      let inner : Sal := { inner with depth := s.depth }
+      let inner : Sal := { inner with consumeNocorr := s.consumeNocorr }
+      { inner with next := s.next }
     | .math d body =>
       let (inl, ds) := cx.math d body.toArray
       (s.inline inl).addDiags ds

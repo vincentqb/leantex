@@ -902,13 +902,11 @@ def fontCmdNocorr : Raw → Bool
   | _ => false
 
 def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
-  let reads : Option Raw → Bool
-    | some (.word s _) => !(s.startsWith "," || s.startsWith ".")
-    | _ => true
-  match body.dropWhile (· == .space) with
-  | [] => (false, false)
-  | first :: rest => (!fontCmdNocorr first && reads body.head?,
-      !rest.any fontCmdNocorr && reads next?)
+  Ir.fontCmdEdges (· == .space) fontCmdNocorr
+    (fun
+      | some (.word s _) => !(s.startsWith "," || s.startsWith ".")
+      | _ => true)
+    body next?
 
 /-- The argument content after ltfntcmd consumes its top-level `\nocorr`
 markers. A marker inside a nested group is not one `fontCmdEdges` reads, so
@@ -922,8 +920,7 @@ corrections `fontCmdEdges` asks for inside it before the argument, under
 the face the command selects, and after it, under the face around it. -/
 def fontCmdPush (acc : Array Inline) (style : Style) (edges : Bool × Bool)
     (inner : Array Inline) : Array Inline :=
-  let run : Inline := .styled style (if edges.1 then #[.italicCorr true] ++ inner else inner)
-  if edges.2 then (acc.push run).push (.italicCorr true) else acc.push run
+  (Ir.fontCmdInlines style edges inner).foldl Array.push acc
 
 def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
