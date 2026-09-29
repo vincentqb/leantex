@@ -90,7 +90,7 @@ structure Glue where
   indent, alignment, kern, fill — is `false`. Read by the line setter onto
   `Seg.gap`'s `word`, the tagger's interword channel. -/
   word : Bool := false
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 def Glue.add (a b : Glue) : Glue :=
   { width := a.width + b.width
@@ -128,7 +128,7 @@ structure Length where
   sp : Sp := 0
   em : Int := 0
   ex : Int := 0
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 namespace Length
 
@@ -183,7 +183,7 @@ structure SymGlue where
   `\vfill` declare glue whose share of a page's leftover is what places
   the content. Finite components ride beside it as in TeX. -/
   fil : Bool := false
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 namespace SymGlue
 
@@ -216,5 +216,171 @@ def resolve (g : SymGlue) (fontSize xHeight : Sp) : Glue :=
     fil := g.fil }
 
 end SymGlue
+
+/-- A local measure a length may read. The names stay distinct until the
+consumer supplies its context: a minipage makes all three horizontal
+measures its own, while other page models may not. -/
+inductive Measure where
+  | textWidth
+  | lineWidth
+  | columnWidth
+  | textHeight
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The source control word for a local measure. -/
+def Measure.ofName? : String → Option Measure
+  | "textwidth" => some .textWidth
+  | "linewidth" => some .lineWidth
+  | "columnwidth" => some .columnWidth
+  | "textheight" => some .textHeight
+  | _ => none
+
+/-- A diagnostic label for a typed measure. Source spelling never rides the IR. -/
+def Measure.label : Measure → String
+  | .textWidth => "\\textwidth"
+  | .lineWidth => "\\linewidth"
+  | .columnWidth => "\\columnwidth"
+  | .textHeight => "\\textheight"
+
+/-- A typed affine expression: literals and variables combined only by
+addition, subtraction, and scalar multiplication. Keeping the operations
+rather than flattening coefficients preserves TeX's fixed-point rounding at
+each scalar product. -/
+inductive Affine (α : Type) where
+  | lit (g : SymGlue)
+  | ref (name : α)
+  | scale (num : Int) (den : Nat) (e : Affine α)
+  | add (a b : Affine α)
+  | sub (a b : Affine α)
+  deriving Repr, BEq, DecidableEq
+
+instance [Inhabited α] : Inhabited (Affine α) := ⟨.lit {}⟩
+
+namespace Affine
+
+/-- Canonical rational scaling. Equivalent coefficient spellings construct
+the same tree, which makes parser normalization a structural fact. -/
+def scaleQ (num : Int) (den : Nat) (e : Affine α) : Affine α :=
+  if den == 0 then .scale num den e
+  else
+    let g := Nat.gcd num.natAbs den
+    .scale (num.tdiv g) (den / g) e
+
+/-- Whether an expression reads a reference satisfying `p`. -/
+def anyRef (p : α → Bool) : Affine α → Bool
+  | .lit _ => false
+  | .ref n => p n
+  | .scale _ _ e => anyRef p e
+  | .add a b | .sub a b => anyRef p a || anyRef p b
+
+/-- Whether every literal is a rigid absolute length. Local measures are
+rigid by definition; dimension consumers reject rubber and font-relative
+literals before the expression reaches their IR. -/
+def rigidAbsolute : Affine α → Bool
+  | .lit g => !g.fil && g.stretch == {} && g.shrink == {} &&
+      g.width.em == 0 && g.width.ex == 0
+  | .ref _ => true
+  | .scale _ _ e => rigidAbsolute e
+  | .add a b | .sub a b => rigidAbsolute a && rigidAbsolute b
+
+/-- Replace every reference with a typed expression. This is the boundary
+between source names and the IR: unresolved spellings cannot cross it. -/
+def bind (f : α → Except ε (Affine β)) : Affine α → Except ε (Affine β)
+  | .lit g => .ok (.lit g)
+  | .ref n => f n
+  | .scale num den e =>
+    match bind f e with
+    | .ok e' => .ok (.scale num den e')
+    | .error x => .error x
+  | .add a b =>
+    match bind f a, bind f b with
+    | .ok a', .ok b' => .ok (.add a' b')
+    | .error x, _ => .error x
+    | _, .error x => .error x
+  | .sub a b =>
+    match bind f a, bind f b with
+    | .ok a', .ok b' => .ok (.sub a' b')
+    | .error x, _ => .error x
+    | _, .error x => .error x
+
+/-- Evaluate with a total context. Use this only after the source boundary
+has proved every variable is representable there. -/
+def eval (look : α → SymGlue) : Affine α → SymGlue
+  | .lit g => g
+  | .ref n => look n
+  | .scale num den e => (eval look e).scale num den
+  | .add a b => (eval look a).add (eval look b)
+  | .sub a b => (eval look a).sub (eval look b)
+
+/-- Total evaluation is also independent of ambient state. -/
+theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
+    (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
+  induction e with
+  | lit g => rfl
+  | ref n => simp [eval, h n]
+  | scale num den e ih => simp only [eval, ih]
+  | add a b iha ihb => simp only [eval, iha, ihb]
+  | sub a b iha ihb => simp only [eval, iha, ihb]
+
+/-- Resolve an affine expression against one context. An absent variable is
+returned as that typed variable, never as zero and never as source text. -/
+def resolve (look : α → Option SymGlue) : Affine α → Except α SymGlue
+  | .lit g => .ok g
+  | .ref n =>
+    match look n with
+    | some g => .ok g
+    | none => .error n
+  | .scale num den e =>
+    match resolve look e with
+    | .ok g => .ok (g.scale num den)
+    | .error n => .error n
+  | .add a b =>
+    match resolve look a, resolve look b with
+    | .ok ga, .ok gb => .ok (ga.add gb)
+    | .error n, _ => .error n
+    | _, .error n => .error n
+  | .sub a b =>
+    match resolve look a, resolve look b with
+    | .ok ga, .ok gb => .ok (ga.sub gb)
+    | .error n, _ => .error n
+    | _, .error n => .error n
+
+/-- Resolution depends only on the supplied values, not on any ambient
+state. -/
+theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affine α)
+    (h : ∀ n, l₁ n = l₂ n) : resolve l₁ e = resolve l₂ e := by
+  induction e with
+  | lit g => rfl
+  | ref n => simp [resolve, h n]
+  | scale num den e ih => simp only [resolve, ih]
+  | add a b iha ihb => simp only [resolve, iha, ihb]
+  | sub a b iha ihb => simp only [resolve, iha, ihb]
+
+/-- A literal resolves exactly; no context can change it. -/
+theorem resolve_lit_exact (look : α → Option SymGlue) (g : SymGlue) :
+    resolve look (.lit g) = .ok g := rfl
+
+end Affine
+
+/-- A fully resolved local-measure context, used only after the source
+boundary admitted exactly the variables the consumer supplies. -/
+structure MeasureValues where
+  textWidth : Sp
+  lineWidth : Sp
+  columnWidth : Sp
+  textHeight : Sp
+  deriving Repr, BEq
+
+/-- Look up one measure as rigid glue. -/
+def MeasureValues.find (env : MeasureValues) : Measure → SymGlue
+  | .textWidth => { width := .ofSp env.textWidth }
+  | .lineWidth => { width := .ofSp env.lineWidth }
+  | .columnWidth => { width := .ofSp env.columnWidth }
+  | .textHeight => { width := .ofSp env.textHeight }
+
+/-- One value for every horizontal measure, with a separate text height. -/
+def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
+  { textWidth := measure, lineWidth := measure,
+    columnWidth := measure, textHeight := textHeight }
 
 end LeanTex.Core.Dim

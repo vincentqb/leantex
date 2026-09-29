@@ -83,9 +83,11 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
   let (doc, ds) := elabStr src
   t "columns elaborate with widths, its option a note" (ds.all (·.severity == .note) &&
-    doc.body == #[.frame #[] false .center false #[.columns #[
-      (.frac 600, #[.para #[.text "left"]]),
-      (.frac 400, #[.para #[.text "right"]])]]])
+    match doc.body with
+    | #[.frame #[] false .center false #[.columns #[(w1, #[.para #[.text "left"]]),
+                                                     (w2, #[.para #[.text "right"]])]]] =>
+      w1.resolve 1000 == some 600 && w2.resolve 1000 == some 400
+    | _ => false)
   -- PDF: the columns' first lines share a baseline, and the second sits
   -- past the first one's measure — visibly two columns, by geometry.
   let out := layoutOf oneFace doc
@@ -118,9 +120,13 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      (match aDoc.body with
       | #[.frame _ _ _ _ #[.columns cols]] =>
         (match cols[0]?.map (·.1), cols[1]?.map (·.1) with
-         | some (Ir.BoxWidth.abs l), some (Ir.BoxWidth.frac 500) =>
-           -- 3cm, within a point of TeX's 28.45276 pt per cm.
-           decide (l > Dim.pt 84) && decide (l < Dim.pt 87)
+         | some a, some b =>
+           let measure := Dim.pt 1000
+           match a.resolve measure, b.resolve measure with
+           | some l, some half =>
+             decide (l > Dim.pt 84) && decide (l < Dim.pt 87) &&
+               half == measure / 2
+           | _, _ => false
          | _, _ => false)
       | _ => false))
   -- `\hfill` between `column`s is the gutter, never a paragraph: beamer's

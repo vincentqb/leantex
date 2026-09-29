@@ -6371,16 +6371,14 @@ def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
   match spec.width with
   | .natural => nats.zipIdx.foldl (init := 0) fun m (r, i) =>
       if inSpan spans i j then m else max m ((r[j]?).getD 0)
-  | .frac f => total * f / 1000
-  | .abs w => w
+  | .sized e => (e.eval (MeasureValues.horizontal total 0).find).width.sp
 
 /-- What a span needs across the columns it covers: its text's natural
 width, or the width its own `p{…}` spec declares. -/
 def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
   match s.spec.width with
   | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
-  | .frac f => total * f / 1000
-  | .abs w => w
+  | .sized e => (e.eval (MeasureValues.horizontal total 0).find).width.sp
 
 /-- The box a span sets in: the columns it covers and the `2·colsep` gaps
 between them. -/
@@ -6604,7 +6602,7 @@ private def collectTable (r : Rd) (a0 : Acc)
           | some s => spanBox colsep widths s
           | none => widths[j]?.getD 0
         let measureW := match sp, spec.width with
-          | some s, .frac _ | some s, .abs _ => spanNeed total nats s
+          | some s, .sized _ => spanNeed total nats s
           | _, _ => wj
         let x := colX j
         let cell := row[j]!

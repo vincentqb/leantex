@@ -2138,17 +2138,25 @@ size, times any `scale`. The theorems after the function are the contract:
 declared size wins to the sp, and every derived dimension holds the
 intrinsic ratio to within one sp of rounding. -/
 
-/-- A requested dimension: an absolute part plus per-mille fractions of the
-text width and text height, so `0.8\textwidth` rides symbolically to layout
-where the measure is known. -/
+/-- A requested dimension as the shared typed affine algebra. Local measure
+names survive only as `Measure` constructors until the layout context is
+known. -/
 structure Len where
-  sp : Sp := 0
-  tw : Int := 0
-  th : Int := 0
+  value : Affine Measure := .lit {}
   deriving Repr, BEq, Inhabited
 
+/-- An absolute requested dimension. -/
+def Len.abs (sp : Sp) : Len := ⟨.lit { width := .ofSp sp }⟩
+
+/-- A fraction of one local measure. -/
+def Len.frac (measure : Measure) (permille : Int) : Len :=
+  ⟨Affine.scaleQ permille 1000 (.ref measure)⟩
+
+/-- Resolve with the local horizontal measure and text height supplied by
+layout. Every horizontal source name denotes the containing box here, as a
+minipage initializes them. -/
 def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
-  l.sp + l.tw * textW / 1000 + l.th * textH / 1000
+  (l.value.eval (MeasureValues.horizontal textW textH).find).width.sp
 
 /-- The sizing request from the source, unresolved. `scaleNum/scaleDen`
 carry `scale = 0.6` exactly; 1/1 is unscaled. -/

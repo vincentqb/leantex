@@ -4353,18 +4353,18 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- name resolved to a file with an extension must name that file, not
     -- the spelling in the source.
     let href := imageHref cfg.assetsDir cfg.imgs src
+    let horizontal (l : Image.Len) : Bool :=
+      l.value.anyRef fun m => m != .textHeight
+    let vertical (l : Image.Len) : Bool :=
+      l.value.anyRef (· == .textHeight)
     let cssDim (l : Image.Len) : Option String :=
-      if l.tw != 0 && l.sp == 0 && l.th == 0 then
-        some (decMilli (l.tw * 100) ++ "%")
-      else if l.sp != 0 && l.tw == 0 && l.th == 0 then
-        some s!"{Dim.Sp.toPtString l.sp}pt"
-      else none
-    let deckDim (l : Image.Len) (vertical : Bool) : Option String :=
-      if l.tw != 0 && l.sp == 0 && l.th == 0 then
-        some (decMilli (l.tw * 100) ++ "%")
-      else if l.tw == 0 then
+      if vertical l then none else some (Ir.Track.css (.affine l.value))
+    let deckDim (l : Image.Len) (isVertical : Bool) : Option String :=
+      if horizontal l && !vertical l then
+        some (Ir.Track.css (.affine l.value))
+      else if !horizontal l then
         let (stage, unit) :=
-          if vertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
+          if isVertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
         let textW := cfg.page.width - 2 * cfg.page.hmargin
         let textH := cfg.page.height - 2 * cfg.page.vmargin
         some (decMilli (deckStageMilli (l.resolve textW textH) stage) ++ unit)
@@ -4376,8 +4376,10 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- In a fill row a text-width fraction is the row's (`Config.inFillRow`),
     -- in `cqi`, after the percentage a browser without container units keeps.
     let wRow := size.width.bind fun l =>
-      if cfg.inFillRow && l.tw != 0 && l.sp == 0 && l.th == 0 then
-        some (decMilli (l.tw * 100) ++ "cqi") else none
+      if cfg.inFillRow && horizontal l && !vertical l then
+        let css := Ir.Track.css (.affine l.value)
+        some ((css.splitOn "%").intersperse "cqi" |>.foldl (· ++ ·) "")
+      else none
     let width (w : String) : String := match wRow with
       | some r => s!"width: {w}; width: {r}"
       | none => s!"width: {w}"
@@ -4655,8 +4657,8 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     | .top | .mid | .bottom | .cmid .. => true
   let colEls := cols.filterMap fun c =>
     match c.width with
-    | .frac f => some (Html.elem "col" #[] #[("style", s!"width: {decMilli (f * 100)}%")])
-    | .abs w => some (Html.elem "col" #[] #[("style", s!"width: {w.toPtString}pt")])
+    | .sized e => some (Html.elem "col" #[] #[
+        ("style", s!"width: {Ir.Track.css (.affine e)}")])
     | .natural => some (Html.elem "col" #[] #[])
   let rowEls := rows.mapIdx fun i row =>
     let cls := Id.run do
@@ -4780,7 +4782,8 @@ private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) 
   -- A row holding an image sized by a text-width fraction is the container
   -- that fraction is stated against (`Config.inFillRow`).
   let sized := Ir.foldInlines (fun acc x => acc || match x with
-    | .image _ size _ => size.width.any fun l => l.tw != 0 && l.sp == 0 && l.th == 0
+    | .image _ size _ => size.width.any fun l =>
+        l.value.anyRef (· != .textHeight) && !l.value.anyRef (· == .textHeight)
     | _ => false) false xs
   let cfg := { cfg with inFillRow := true }
   Html.elem tag (groups.map fun group =>

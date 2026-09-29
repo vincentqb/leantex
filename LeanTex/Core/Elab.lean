@@ -2334,47 +2334,19 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
     else break
   return (out, keys, nonum, tag)
 
-/-- A decimal factor of a named measure, in permille: `0.48\textwidth`,
-`.5\linewidth`, or a bare suffix (a factor of one, as TeX reads a
-coefficient-less internal dimen). `none` when `src` does not end in one of
-`suffixes`, or its factor does not read. The three fraction-of-measure
-readers — `imageLen`, `colWidth`, `columnWidth` — are its wrappers. -/
-private def measureFrac (suffixes : List String) (src : String) :
-    Option Int := Id.run do
-  let s := src.trimAscii.toString
-  for suffix in suffixes do
-    if s.endsWith suffix then
-      let f := (s.dropEnd suffix.length).toString.trimAscii.toString
-      if f.isEmpty then return some 1000
-      return (Decl.parseDecimal f).map fun (m, sc) => m * 1000 / sc
-  return none
+/-- One source length through the shared parser. Dimension consumers admit
+only rigid absolute literals; local measures remain typed until layout. -/
+private def affineLength (ctx : Ctx) (admits : Measure → Bool) (src : String) :
+    Except String (Affine Measure) := do
+  let e ← Decl.parseAffineLengthExprFor
+    (ctx.tokens.entries ++ ctx.engineTokens) admits src
+  if e.rigidAbsolute then return e
+  throw "rubber and font-relative terms are not available in this length context"
 
-/-- One `\includegraphics` dimension: a factor of `\textwidth` (or its
-`\linewidth`/`\columnwidth` spellings) or `\textheight`, or an absolute
-length. Font-relative units are refused — an image has no font size. -/
-private def imageLen (src : String) : Option Image.Len := Id.run do
-  let s := src.trimAscii.toString
-  if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (s.endsWith ·) then
-    return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] s).map
-      fun p => { tw := p }
-  if s.endsWith "\\textheight" then
-    return (measureFrac ["\\textheight"] s).map fun p => { th := p }
-  match Decl.parseLength s with
-  | some l => return if l.em == 0 && l.ex == 0 then some { sp := l.sp } else none
-  | none => return none
-
-/-- One `p{...}` column width: a fraction of `\linewidth` (or its
-`\textwidth`/`\columnwidth` spellings) in permille, or an absolute length.
-`none` is unreadable. -/
-private def colWidth (src : String) : Option Ir.ColWidth := Id.run do
-  let s := src.trimAscii.toString
-  if ["\\linewidth", "\\textwidth", "\\columnwidth"].any (s.endsWith ·) then
-    return (measureFrac ["\\linewidth", "\\textwidth", "\\columnwidth"] s).map
-      fun p => .frac p.toNat
-  match Decl.parseLength s with
-  | some l =>
-    return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
-  | none => return none
+/-- One `p{...}` column width, resolved against the table's local measure. -/
+private def colWidth (ctx : Ctx) (src : String) : Except String Ir.ColWidth := do
+  let e ← affineLength ctx (· != .textHeight) src
+  return .sized e
 
 /-- The `tabular` column spec: `l`/`c`/`r` natural columns, `p{width}`
 (and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
@@ -2382,7 +2354,7 @@ private def colWidth (src : String) : Option Ir.ColWidth := Id.run do
 "Never, ever use vertical rules" (booktabs.dtx §The layout of formal
 tables). Returns the columns, the outer-pad flags, and warnings as
 (key, message, help) for the caller's `warnOnce`. -/
-private def parseColSpec (spec : Array Raw) :
+private def parseColSpec (ctx : Ctx) (spec : Array Raw) :
     Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
   let mut cols : Array Ir.ColSpec := #[]
   let mut padL := true
@@ -2428,13 +2400,13 @@ only the empty '@{}' deleting an outer pad is",
             else none
             let mut width : Ir.ColWidth := .natural
             if let some src := widthGroup then
-              match colWidth src with
-              | some cw => width := cw
-              | none =>
+              match colWidth ctx src with
+              | .ok cw => width := cw
+              | .error why =>
                 warns := warns.push ("pwidth",
-                  s!"unreadable column width '{src}'; the column takes \
+                  s!"unreadable column width '{src}': {why}; the column takes \
 the full measure",
-                  "a fraction of \\linewidth or an absolute length")
+                  "use sums, differences, scalar products, local horizontal measures, or absolute lengths")
                 width := .frac 1000
             tookGroup := tookGroup || widthGroup.isSome
             if c != 'p' then
@@ -2690,22 +2662,11 @@ private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := 
       (help := "lengths look like 10pt or 1.5ex, or name a token")
     pure {}
 
-/-- An image length that resolves only through the token environment: an
-expression over declared and engine tokens (`0.5\\colwidth`,
-`0.2\\paperheight`) is a document constant, resolved eagerly at the
-declaration — the `\\setlength` rule. Tried after `imageLen`, so the
-measure-relative spellings (`0.8\\textwidth`) stay fractions: a column
-resolves those against itself. -/
-private def imageLenOf (ctx : Ctx) (v : String) : Option Image.Len :=
-  imageLen v <|>
-    -- The expression grammar spells tokens bare (`0.5colwidth`, as the
-    -- `\setlength` rewrite already spells them); the graphicx spelling
-    -- carries the backslash, dropped here.
-    match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
-        (String.join ((v.splitOn "\\"))) with
-    | .ok g => if g.width.em == 0 && g.width.ex == 0 then some { sp := g.width.sp }
-               else none
-    | .error _ => none
+/-- An image dimension through the shared affine parser. All local
+measures are carried to layout; literals stay rigid and absolute. -/
+private def imageLenOf (ctx : Ctx) (v : String) : Except String Image.Len := do
+  let e ← affineLength ctx (fun _ => true) v
+  return ⟨e⟩
 
 /-- The text of an `alt={...}` value: braced or quoted spellings both read
 as text — the one reading `\includegraphics` and `tikzpicture` share. -/
@@ -2727,16 +2688,16 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
       match Decl.splitEntry e with
       | some ("width", v) =>
         match imageLenOf ctx v with
-        | some l => spec := { spec with width := some l }
-        | none =>
+        | .ok l => spec := { spec with width := some l }
+        | .error _ =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
             (help := "image sizes look like 3cm or 0.8\\textwidth")
       | some ("height", v) | some ("totalheight", v) =>
         -- totalheight is height plus depth, and an image has no
         -- depth, so the two keys coincide here.
         match imageLenOf ctx v with
-        | some l => spec := { spec with height := some l }
-        | none =>
+        | .ok l => spec := { spec with height := some l }
+        | .error _ =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
             (help := "image sizes look like 3cm or 0.3\\textheight")
       | some ("scale", v) =>
@@ -5207,43 +5168,27 @@ step, not a fixpoint: a width is a length, and a length that needs two
 expansions to become one is a macro program rather than a declaration. -/
 private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
   let s := src.trimAscii.toString
-  if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (s.endsWith ·) then
-    return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] s).bind
-      fun p => if 0 ≤ p then some (.frac p.toNat) else none
-  if s.startsWith "\\" then
-    let name := (s.drop 1).toString.trimAscii.toString
-    -- A declared token names the width: its resolved length. The absolute
-    -- carrier keeps it a length, so a token inside a narrower measure is
-    -- the length it declares rather than a fraction of the page re-applied
-    -- to the box.
-    match ctx.tokens.find? name with
-    | some g => return some (.abs (g.width.resolve ctx.page.fontSize 0))
-    | none =>
-      -- A document command whose body spells a width: expanded once, then
-      -- read by the same two readings above.
+  match affineLength ctx (· != .textHeight) s with
+  | .ok e => return some (.sized e)
+  | .error _ =>
+    if s.startsWith "\\" then
+      let name := (s.drop 1).toString.trimAscii.toString
       match lookupUser ctx name with
       | some (_, cmd) =>
         if cmd.params.isEmpty then
           let body := (rawSrc cmd.body).trimAscii.toString
           if body != s then
-            if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (body.endsWith ·) then
-              return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] body).bind
-                fun p => if 0 ≤ p then some (.frac p.toNat) else none
-            match Decl.parseLength body with
-            | some l => return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
-            | none => return none
+            return (affineLength ctx (· != .textHeight) body).toOption.map .sized
           else return none
         else return none
       | none => return none
-  match Decl.parseDecimal s with
-  | some (m, sc) =>
-    if m ≥ 0 && sc > 0 then return some (.frac ((m * 1000 / sc).toNat)) else return none
-  | none =>
-    -- An absolute length rides as a length: the measure it is relative to is
-    -- known at placement and nowhere earlier (`Ir.BoxWidth`).
-    match Decl.parseLength s with
-    | some l => return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
-    | none => return none
+    else
+      match Decl.parseDecimal s with
+      | some (m, sc) =>
+        if m ≥ 0 && sc > 0 then
+          return some (.sized (Affine.scaleQ m sc (.ref .lineWidth)))
+        else return none
+      | none => return none
 
 mutual
 
@@ -7305,14 +7250,14 @@ read by the table's own spec reader so `p{…}` keeps its width, with what
 that reader names — a `|`, an unknown column type — and an `@{}`, whose pad
 a span does not model; the text group; and the index after it. `none` when
 the three groups are not there. -/
-private def readMulticolumn (raws : Array Raw) (j : Nat) :
+private def readMulticolumn (ctx : Ctx) (raws : Array Raw) (j : Nat) :
     Option (Option Nat × Ir.ColSpec × Array (String × String × String) × Array Raw × Nat) :=
   let j0 := skipSpaces raws (j + 1)
   let j1 := skipSpaces raws (j0 + 1)
   let j2 := skipSpaces raws (j1 + 1)
   match raws[j0]?, raws[j1]?, raws[j2]? with
   | some (.group count _), some (.group spec _), some (.group text _) =>
-    let (cols, padL, padR, warns) := parseColSpec spec
+    let (cols, padL, padR, warns) := parseColSpec ctx spec
     let warns := if padL && padR then warns else warns.push ("multicolumn-pad",
       "'@{}' in a '\\multicolumn' spec is not modelled: the span keeps its column pads", "")
     some ((Parse.rawSrc count).trimAscii.toString.toNat?,
@@ -7391,7 +7336,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   let mut padR := true
   match body[k]? with
   | some (.group spec _) =>
-    let (cs, pl, pr, warns) := parseColSpec spec
+    let (cs, pl, pr, warns) := parseColSpec ctx spec
     cols := cs
     padL := pl
     padR := pr
@@ -7445,7 +7390,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       | .ctrl "multicolumn" rpos =>
         -- At a cell's head the text is the cell and the count and spec its
         -- span; anywhere else LaTeX refuses it, and the text stays in place.
-        match readMulticolumn body j with
+        match readMulticolumn ctx body j with
         | some (count, spec, warns, text, next) =>
           if cellRaws.all isSpaceOrPar && spanHere.isNone then
             spanHere ← spanOf ctx count spec warns rpos
@@ -7504,7 +7449,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
           -- expansion must stay inside the cell.
           let head := if cellRaws.all isSpaceOrPar && spanHere.isNone then
               (expandSpanHead ctx body j name).bind fun (exp, took) =>
-                (readMulticolumn exp 0).bind fun (count, spec, warns, text, next) =>
+                (readMulticolumn ctx exp 0).bind fun (count, spec, warns, text, next) =>
                   let tail := exp.extract next exp.size
                   if tail.any (fun r => r matches .sym '&' _ | .ctrl "\\" _) then none
                   else some (count, spec, warns, text, tail, took)

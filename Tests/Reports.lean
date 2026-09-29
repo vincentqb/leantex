@@ -266,7 +266,13 @@ def reports : List Report := [
     pins := [check% artGroundParityChecks, check% titleGroundChecks,
       thm% Ir.Design.titleGround_exact]
     accept := ["the private presentation's first page measured against its lualatex build"]
-    state := .guarded "fed62cd2" .before .author }
+    state := .guarded "fed62cd2" .before .author },
+  { id := "R43", date := "2026-09-29"
+    what := "a book used affine dimension expressions and local measures across boxes, tables and images, which were refused or widened to the enclosing measure"
+    pins := [check% exprChecks, check% boxWidthChecks, check% tableChecks,
+      check% imageChecks]
+    accept := ["the private book's check recipe, with positions and sizes measured against its lualatex build"]
+    state := .guarded "82e1e271" .before .reviewer }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

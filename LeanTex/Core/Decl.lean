@@ -269,31 +269,25 @@ reference is one lookup into ground values, never a recursive walk: a
 cycle is unrepresentable, and a forward or unknown name is diagnosed by
 name (`eval_absent_named`), never defaulted to zero. -/
 
-/-- A length expression over literals and declared token names. -/
-inductive LenExpr where
-  | lit (l : Length)
-  | tok (name : String)
-  | scale (num : Int) (den : Nat) (e : LenExpr)
-  | add (a b : LenExpr)
-  | sub (a b : LenExpr)
-  deriving Repr, BEq
+/-- A parsed length expression whose references are still source names. -/
+abbrev LenExpr := Affine String
 
 namespace LenExpr
 
 /-- Whether an expression reads a token name: what its value may depend on. -/
 def reads : LenExpr → String → Bool
   | .lit _, _ => false
-  | .tok m, n => m == n
-  | .scale _ _ e, n => e.reads n
-  | .add a b, n | .sub a b, n => a.reads n || b.reads n
+  | .ref m, n => m == n
+  | .scale _ _ e, n => reads e n
+  | .add a b, n | .sub a b, n => reads a n || reads b n
 
 /-- Evaluate against a lookup of declared tokens. Structural recursion:
 the checker's acceptance is the termination proof, and an unknown name is
 an error carrying that name. The matches are explicit so the exactness
 proof below can follow them case by case. -/
 def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
-  | .lit l => .ok { width := l }
-  | .tok n =>
+  | .lit g => .ok g
+  | .ref n =>
     match look n with
     | some g => .ok g
     | none => .error n
@@ -312,24 +306,16 @@ def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
     | .error m, _ => .error m
     | _, .error m => .error m
 
-/-- Resolution is deterministic and local: the answer depends only on what
-the expression's own names resolve to — one document, one answer, however
-the rest of the environment is stated or ordered. -/
+/-- Resolution is deterministic: one expression and one lookup answer
+produce one value, independently of ambient state. -/
 theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
-    (h : ∀ n, e.reads n → l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
+    (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
   induction e with
-  | lit l => rfl
-  | tok n => simp [eval, h n (by simp [reads])]
-  | scale num den e ih =>
-    simp only [eval, ih (fun n hn => h n (by simpa [reads] using hn))]
-  | add a b iha ihb =>
-    simp only [eval,
-      iha (fun n hn => h n (by simp [reads, hn])),
-      ihb (fun n hn => h n (by simp [reads, hn]))]
-  | sub a b iha ihb =>
-    simp only [eval,
-      iha (fun n hn => h n (by simp [reads, hn])),
-      ihb (fun n hn => h n (by simp [reads, hn]))]
+  | lit g => rfl
+  | ref n => simp [eval, h n]
+  | scale num den e ih => simp only [eval, ih]
+  | add a b iha ihb => simp only [eval, iha, ihb]
+  | sub a b iha ihb => simp only [eval, iha, ihb]
 
 /-- The same expression evaluated in ℤ, over any one fixed-point component
 (the sp part, the em part, …): the arithmetic the engine owes exactness
@@ -339,8 +325,8 @@ stated rounding, TeX's own (`\divide` and `xn_over_d` both truncate
 toward zero; only e-TeX's `\dimexpr` division rounds to nearest, which is
 why that spelling is refused rather than mapped). -/
 def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
-  | .lit l, part => .ok (part l)
-  | .tok n, _ =>
+  | .lit g, part => .ok (part g.width)
+  | .ref n, _ =>
     match look n with
     | some v => .ok v
     | none => .error n
@@ -370,7 +356,7 @@ theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
       = evalInt (fun n => (look n).map (fun g => g.width.sp)) e (fun l => l.sp) := by
   induction e with
   | lit l => rfl
-  | tok n => simp only [eval, evalInt]; cases look n <;> rfl
+  | ref n => simp only [eval, evalInt]; cases look n <;> rfl
   | scale num den e ih =>
     simp only [eval, evalInt]
     cases h : eval look e with
@@ -402,7 +388,7 @@ theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
 /-- Absent is diagnosed, never defaulted: an unknown token name in an
 expression errors *as that name* — it never resolves to zero. -/
 theorem eval_absent_named (look : String → Option SymGlue) (n : String)
-    (h : look n = none) : eval look (.tok n) = .error n := by
+    (h : look n = none) : eval look (.ref n) = .error n := by
   simp [eval, h]
 
 end LenExpr
@@ -411,7 +397,7 @@ end LenExpr
 private inductive ETok where
   | num (mantissa : Int) (scale : Nat)
   | ident (s : String)
-  | plus | minus | times | divide | lparen | rparen
+  | plus | minus | times | divide | lparen | rparen | dimexpr | relax
   deriving Repr, BEq
 
 /-- Scan a length expression into tokens. Numbers are unsigned here — a
@@ -436,11 +422,23 @@ private def exprToks (s : String) : Option (Array ETok) := Id.run do
           | return none
         out := out.push (.num m sc)
         i := j
-      else if c.isAlpha || c == '_' then
+      else if c == '\\' then
+        let mut j := i + 1
+        for _ in [i + 1:cs.size] do
+          if h' : j < cs.size then
+            if cs[j].isAlpha || cs[j] == '@' then j := j + 1 else break
+          else break
+        if j == i + 1 then return none
+        let n := String.ofList (cs.extract (i + 1) j).toList
+        if n == "dimexpr" then out := out.push .dimexpr
+        else if n == "relax" then out := out.push .relax
+        else out := out.push (.ident n)
+        i := j
+      else if c.isAlpha || c == '_' || c == '@' then
         let mut j := i
         for _ in [i:cs.size] do
           if h' : j < cs.size then
-            if cs[j].isAlphanum || cs[j] == '_' then j := j + 1 else break
+            if cs[j].isAlphanum || cs[j] == '_' || cs[j] == '@' then j := j + 1 else break
           else break
         out := out.push (.ident (String.ofList (cs.extract i j).toList))
         i := j
@@ -465,13 +463,13 @@ private def applyBinOp (op : Char) (a b : EVal) : Except String EVal :=
   | '-', .len x, .len y => .ok (.len (.sub x y))
   | '+', .scalar m s, .scalar m' s' => .ok (.scalar (m * s' + m' * s) (s * s'))
   | '-', .scalar m s, .scalar m' s' => .ok (.scalar (m * s' - m' * s) (s * s'))
-  | '*', .scalar m s, .len e => .ok (.len (.scale m s e))
-  | '*', .len e, .scalar m s => .ok (.len (.scale m s e))
+  | '*', .scalar m s, .len e => .ok (.len (Affine.scaleQ m s e))
+  | '*', .len e, .scalar m s => .ok (.len (Affine.scaleQ m s e))
   | '*', .scalar m s, .scalar m' s' => .ok (.scalar (m * m') (s * s'))
   | '*', .len _, .len _ => .error "a length times a length has no meaning"
   | '/', _, .scalar 0 _ => .error "division by zero"
   | '/', .len e, .scalar m s =>
-    .ok (.len (.scale (if m < 0 then -(s : Int) else (s : Int)) m.natAbs e))
+    .ok (.len (Affine.scaleQ (if m < 0 then -(s : Int) else (s : Int)) m.natAbs e))
   | '/', .scalar m s, .scalar m' s' =>
     .ok (.scalar (if m' < 0 then -(m * s') else m * s') (s * m'.natAbs))
   | '/', _, .len _ => .error "dividing by a length has no meaning"
@@ -485,7 +483,7 @@ private def popOne (vals : Array EVal) (op : Char) : Except String (Array EVal) 
   if op == 'u' then
     match vals.back? with
     | some (.scalar m s) => return vals.pop.push (.scalar (-m) s)
-    | some (.len e) => return vals.pop.push (.len (.scale (-1) 1 e))
+    | some (.len e) => return vals.pop.push (.len (Affine.scaleQ (-1) 1 e))
     | none => throw "malformed expression"
   else
     match vals.back?, vals.pop.back? with
@@ -503,7 +501,7 @@ private def pushOp (vals : Array EVal) (ops : Array Char) (c : Char) :
   for _ in [0:ops.size + 1] do
     match ops.back? with
     | some top =>
-      if top != '(' && opPrec top ≥ opPrec c then
+      if top != '(' && top != 'd' && opPrec top ≥ opPrec c then
         vals ← popOne vals top
         ops := ops.pop
       else break
@@ -530,12 +528,38 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
         -- The number before it binds: a unit makes a literal, a token
         -- name a coefficient (TeXbook ch. 24's ⟨factor⟩⟨internal dimen⟩).
         match lengthOfUnit m s n with
-        | some l => vals := vals.pop.push (.len (.lit l))
-        | none => vals := vals.pop.push (.len (.scale m s (.tok n)))
+        | some l => vals := vals.pop.push (.len (.lit { width := l }))
+        | none => vals := vals.pop.push (.len (Affine.scaleQ m s (.ref n)))
       | _, true => throw "malformed expression"
       | _, false =>
-        vals := vals.push (.len (.tok n))
+        vals := vals.push (.len (.ref n))
         prevOperand := true
+    | .dimexpr =>
+      if prevOperand then
+        match vals.back? with
+        | some (.scalar _ _) =>
+          let (vals', ops') ← pushOp vals ops '*'
+          vals := vals'
+          ops := ops'
+        | _ => throw "a length times a length has no meaning"
+      ops := ops.push 'd'
+      prevOperand := false
+    | .relax =>
+      unless prevOperand do throw "empty \\dimexpr"
+      let mut closed := false
+      for _ in [0:ops.size + 1] do
+        match ops.back? with
+        | some 'd' =>
+          ops := ops.pop
+          closed := true
+          break
+        | some '(' => throw "unbalanced '(' before \\relax"
+        | some top =>
+          vals ← popOne vals top
+          ops := ops.pop
+        | none => break
+      unless closed do throw "unexpected \\relax"
+      prevOperand := true
     | .plus | .minus =>
       let isMinus := t == ETok.minus
       if prevOperand then
@@ -547,9 +571,17 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
         -- Unary: highest precedence, applied to the next operand alone.
         ops := ops.push 'u'
       -- A unary plus says nothing; it is skipped.
-    | .times | .divide =>
+    | .times =>
       unless prevOperand do throw "malformed expression"
-      let (vals', ops') ← pushOp vals ops (if t == ETok.divide then '/' else '*')
+      let (vals', ops') ← pushOp vals ops '*'
+      vals := vals'
+      ops := ops'
+      prevOperand := false
+    | .divide =>
+      unless prevOperand do throw "malformed expression"
+      if ops.contains 'd' then
+        throw "'\\dimexpr' division rounds to nearest"
+      let (vals', ops') ← pushOp vals ops '/'
       vals := vals'
       ops := ops'
       prevOperand := false
@@ -566,6 +598,7 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
           ops := ops.pop
           closed := true
           break
+        | some 'd' => throw "unbalanced ')'"
         | some top =>
           vals ← popOne vals top
           ops := ops.pop
@@ -576,6 +609,7 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   for _ in [0:ops.size + 1] do
     match ops.back? with
     | some '(' => throw "unbalanced '('"
+    | some 'd' => ops := ops.pop
     | some top =>
       vals ← popOne vals top
       ops := ops.pop
@@ -585,18 +619,44 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
   | _, _ => throw "malformed expression"
 
-/-- Read a length expression against the declared tokens: `a + b`,
-`a - b`, `2 b`, `0.5 * b` and `a / 2`, parentheses (a parenthesized
-numeric subexpression is a scalar factor), literals with units. The error
-is worth surfacing — an unknown token name errors as itself. -/
-def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
-    Except String SymGlue := do
+/-- Parse one length expression without resolving its references. The raw
+TeX controls and the normalized declaration spelling share this one grammar;
+`\\dimexpr ... \\relax` contributes grouping only. -/
+def parseLengthSyntax (s : String) : Except String LenExpr := do
   let some toks := exprToks s.trimAscii.toString
     | throw "malformed expression"
-  let e ← exprParse toks
+  exprParse toks
+
+/-- Read a length expression against declared tokens. Local measure names
+are intentionally absent here: declaration values are resolved eagerly. -/
+def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
+    Except String SymGlue := do
+  let e ← parseLengthSyntax s
   match e.eval (fun n => (tokens.find? (·.1 == n)).map (·.2)) with
   | .ok g => return g
   | .error n => throw s!"'{n}' is not a declared token"
+
+/-- Parse a context-resolved length. Declared tokens become literals now;
+local measures become typed references that resolve only where geometry is
+known. A measure the context cannot represent is returned by its typed name;
+no source spelling can cross into the IR. -/
+def parseAffineLengthExprFor (tokens : Array (String × SymGlue))
+    (admits : Measure → Bool) (s : String) : Except String (Affine Measure) := do
+  let e ← parseLengthSyntax s
+  Affine.bind (fun n =>
+    match Measure.ofName? n with
+    | some m =>
+      if admits m then .ok (.ref m)
+      else .error s!"'{m.label}' is not available in this length context"
+    | none =>
+      match tokens.find? (·.1 == n) with
+      | some (_, g) => .ok (.lit g)
+      | none => .error s!"'{n}' is not a declared token or local measure") e
+
+/-- The unrestricted typed parser, for consumers that supply all measures. -/
+def parseAffineLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
+    Except String (Affine Measure) :=
+  parseAffineLengthExprFor tokens (fun _ => true) s
 
 /-- Does the length-expression grammar read `s`? Its syntax alone, names
 unresolved: what a rewrite that composes an expression checks before it

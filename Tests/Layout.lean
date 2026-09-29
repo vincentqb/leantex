@@ -589,6 +589,14 @@ def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (decide (abs90 ≤ Dim.pt 90) && decide (abs90 > Dim.pt 30))
   t "an absolute box width is no longer a named loss"
     (!(warnCodes (boxDoc "" "90pt")).contains "W0314")
+  -- One grammar carries an affine local width all the way to this box.
+  let affineSrc := "0.334\\dimexpr \\textwidth +28mm\\relax"
+  let affine := widest (boxDoc "" affineSrc)
+  let affineBound := ((geom.textWidth + Dim.mm 28) * 334).tdiv 1000
+  t "an affine box width resolves against its enclosing measure"
+    (decide (affine ≤ affineBound) && decide (affine > geom.textWidth / 3))
+  t "an affine box width has one successful reading"
+    (!(warnCodes (boxDoc "" affineSrc)).contains "W0314")
   -- A width the document spells through its own command resolves to what the
   -- command expands to, so the fraction reader sees a fraction.
   let viaMacro := widest (boxDoc "\\newcommand{\\panelw}{.5\\textwidth}" "\\panelw")
@@ -955,11 +963,15 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   -- A minipage is one column of declared width: the column model reused,
   -- not a parallel box model.
   t "minipage is one column of its declared width"
-    ((elabStr (doc "\\begin{minipage}{0.5\\textwidth}x\\end{minipage}")).1.body ==
-      #[.columns #[(.frac 500, #[.para #[.text "x"]])]])
+    (match (elabStr (doc "\\begin{minipage}{0.5\\textwidth}x\\end{minipage}")).1.body with
+     | #[.columns #[(w, #[.para #[.text "x"]])]] =>
+       w.resolve geom.textWidth == some (geom.textWidth / 2)
+     | _ => false)
   t "a bare textwidth minipage takes the whole measure"
-    ((elabStr (doc "\\begin{minipage}{\\textwidth}x\\end{minipage}")).1.body ==
-      #[.columns #[(.frac 1000, #[.para #[.text "x"]])]])
+    (match (elabStr (doc "\\begin{minipage}{\\textwidth}x\\end{minipage}")).1.body with
+     | #[.columns #[(w, #[.para #[.text "x"]])]] =>
+       w.resolve geom.textWidth == some geom.textWidth
+     | _ => false)
   t "minipage alignment options are a note, never an error"
     (let ds := (elabStr (doc "\\begin{minipage}[c][2cm][t]{\\textwidth}x\\end{minipage}")).2
      ds.all (·.severity != .error) && ds.any (·.code == "N0102"))
@@ -2998,6 +3010,13 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "a fitting table is not named"
     (!(layoutDiags (wrap "\\begin{tabular}{ll}a & b \\\\\\end{tabular}")).any
       (·.code == "W0338"))
+  let affineTable := wrap
+    "\\begin{tabular}{p{0.334\\dimexpr \\linewidth +28mm\\relax}}word word word word word word word word \\\\\\end{tabular}"
+  t "an affine table column width parses once without a fallback"
+    ((elabStr affineTable).2.all fun d =>
+      d.severity != .error && d.code != "W0104" && d.code != "W0314")
+  t "an affine table column ships wrapped lines on the page"
+    (((bodyLines (layoutOut affineTable)).filter (!·.segs.isEmpty)).size >= 2)
   t "a caption written above its table stands above"
     (match (elabStr (wrap "\\begin{table}\\caption{Above}\\begin{tabular}{l}a\\\\\\end{tabular}\\end{table}")).1.body with
      | #[.float .table _ true _ cap] => Ir.plainText cap == "Above"
@@ -3048,7 +3067,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         | #[.columns #[(w1, #[.float .sub (some 1) false _ c1]),
                        (w2, #[.float .sub (some 2) false _ c2])]] =>
           -- `[t]` is the point each box stands on the row's baseline by.
-          w1 == { size := .frac 400, pos := .first } && w2 == { size := .frac 400, pos := .first } &&
+          w1.pos == .first && w2.pos == .first &&
+          w1.resolve 1000 == some 400 && w2.resolve 1000 == some 400 &&
           Ir.plainText c1 == "First sub" && Ir.plainText c2 == "Second sub"
         | _ => false)
      | _ => false)

@@ -298,6 +298,20 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
     (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
+  let affineSrc := "\\includegraphics[width=0.334\\dimexpr \\textwidth +28mm\\relax]{rects.png}"
+  let outAffine := layoutSrc affineSrc
+  let affineW := ((geom.textWidth + Dim.mm 28) * 334).tdiv 1000
+  t "layout resolves an affine image width against the local measure"
+    (imageSegs outAffine == #[(some 0, affineW, affineW * Dim.pt 40 / Dim.pt 64)])
+  t "an affine image width emits no length error"
+    (!(errCodes affineSrc).contains "E0331")
+  let localSrc := "\\begin{minipage}{0.5\\textwidth}" ++
+    "\\includegraphics[width=0.5\\dimexpr \\linewidth +10pt\\relax]{rects.png}" ++
+    "\\end{minipage}"
+  let localW := ((geom.textWidth / 2 + Dim.pt 10) * 1).tdiv 2
+  t "linewidth resolves inside its minipage rather than against the page"
+    (imageSegs (layoutSrc localSrc) ==
+      #[(some 0, localW, localW * Dim.pt 40 / Dim.pt 64)])
   -- Both dimensions declared win exactly.
   let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
   t "layout declared size wins"
@@ -421,6 +435,10 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (twHtml, _) := HtmlDoc.emit hcfg twDoc
   t "html width fraction becomes a percentage"
     ((twHtml.splitOn "style=\"width: 80%; height: auto\"").length == 2)
+  let (affineDoc, _) := Elab.run "t" affineSrc
+  let (affineHtml, _) := HtmlDoc.emit hcfg affineDoc
+  t "html emits a mixed affine image width as calc"
+    (hasStr affineHtml "style=\"width: calc(33.4% + " && hasStr affineHtml "pt); height: auto\"")
   let (missHtml, _) := HtmlDoc.emit hcfg
     ((Elab.run "t" "\\includegraphics{missing.png}").1)
   t "html missing image still emits the img with alt"
@@ -440,7 +458,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "includegraphics totalheight is height"
     (match (elabStr "\\includegraphics[totalheight=8pt]{x.png}").1.body.toList with
      | [.para xs] => xs.any fun x => match x with
-        | .image _ spec _ => spec.height == some { sp := Dim.pt 8 }
+        | .image _ spec _ => spec.height == some (Image.Len.abs (Dim.pt 8))
         | _ => false
      | _ => false)
   -- \logo is a declaration in the body too, and it is stateful there, as

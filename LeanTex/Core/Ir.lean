@@ -3777,14 +3777,19 @@ def raggedSideOf? : String → Option FlushSide
   | "raggedleft" | "flushright" => some .right
   | _ => none
 
-/-- A table column's declared width. `p{0.31\linewidth}` is a fraction of
-the measure, `p{54pt}` an absolute length; `l`/`c`/`r` size to the widest
-cell (`natural`), as LaTeX's own column types do. -/
+/-- A table column's declared width. `natural` sizes to the widest
+cell; `sized` carries the shared affine length until the table measure is
+known. -/
 inductive ColWidth where
   | natural
-  | frac (permille : Nat)
-  | abs (w : Sp)
+  | sized (width : Affine Measure)
   deriving Repr, BEq, Inhabited
+
+@[match_pattern] def ColWidth.frac (permille : Nat) : ColWidth :=
+  .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
+
+@[match_pattern] def ColWidth.abs (w : Sp) : ColWidth :=
+  .sized (.lit { width := .ofSp w })
 
 /-- A box's declared width: `{minipage}`/`\parbox`/`{column}`'s mandatory
 argument. `frac` is a factor of the enclosing measure in per mille
@@ -3809,9 +3814,14 @@ resolving in the wrong layer forced an operator to invent an answer it could
 not have. -/
 inductive BoxSize where
   | share
-  | frac (permille : Nat)
-  | abs (w : Sp)
+  | sized (width : Affine Measure)
   deriving Repr, BEq, Inhabited
+
+@[match_pattern] def BoxSize.frac (permille : Nat) : BoxSize :=
+  .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
+
+@[match_pattern] def BoxSize.abs (w : Sp) : BoxSize :=
+  .sized (.lit { width := .ofSp w })
 
 /-- Which point of a box stands on the baseline of the row it is set in —
 the `[pos]` a box declares (latex.ltx `\@iiiparbox`: `t` builds a `\vtop`,
@@ -3837,8 +3847,11 @@ structure BoxWidth where
   deriving Repr, BEq, Inhabited
 
 @[match_pattern] def BoxWidth.share : BoxWidth := ⟨.share, .top⟩
-@[match_pattern] def BoxWidth.frac (permille : Nat) : BoxWidth := ⟨.frac permille, .top⟩
-@[match_pattern] def BoxWidth.abs (w : Sp) : BoxWidth := ⟨.abs w, .top⟩
+@[match_pattern] def BoxWidth.sized (width : Affine Measure) : BoxWidth := ⟨.sized width, .top⟩
+@[match_pattern] def BoxWidth.frac (permille : Nat) : BoxWidth :=
+  ⟨.frac permille, .top⟩
+@[match_pattern] def BoxWidth.abs (w : Sp) : BoxWidth :=
+  ⟨.abs w, .top⟩
 
 /-- The declared width against a known measure: the width the box is set at.
 One resolving site, read by the page's column arithmetic, so a box's measure
@@ -3851,8 +3864,9 @@ it (`Layout`'s `shareW`). -/
 def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
   match w.size with
   | .share => none
-  | .frac p => some (min measure (measure * p / 1000))
-  | .abs l => some (min measure (max 0 l))
+  | .sized e =>
+    let values := MeasureValues.horizontal measure 0
+    some (min measure (max 0 (e.eval values.find).width.sp))
 
 /-- The declared width as a CSS grid track, structured: the same three
 readings the page resolves, before they are spelled
@@ -3863,6 +3877,7 @@ inductive Track where
   | free
   | percent (permille : Nat)
   | length (l : Sp)
+  | affine (e : Affine Measure)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The track a declared width takes: a fraction is a percentage of the
@@ -3872,8 +3887,54 @@ length; a shared column takes a free fraction of the leftover, which is what
 def BoxWidth.trackOf (w : BoxWidth) : Track :=
   match w.size with
   | .share => .free
-  | .frac p => .percent p
-  | .abs l => .length l
+  | .sized e => .affine e
+
+/-- One normalized CSS term from an affine box track. -/
+private inductive TrackTerm where
+  | length (l : Dim.Length)
+  | measure (m : Measure) (num : Int) (den : Nat)
+
+private def affineTrackTerms (e : Affine Measure) : Array TrackTerm := Id.run do
+  let rec go (num : Int) (den : Nat) (out : Array TrackTerm) :
+      Affine Measure → Array TrackTerm
+    | .lit g => out.push (.length (g.width.scale num den))
+    | .ref m => out.push (.measure m num den)
+    | .scale n d e => go (num * n) (den * d) out e
+    | .add a b => go num den (go num den out a) b
+    | .sub a b => go (-num) den (go num den out a) b
+  return go 1 1 #[] e
+
+private def milliDecimal (n : Int) : String :=
+  let sign := if n < 0 then "-" else ""
+  let n := n.natAbs
+  let whole := n / 1000
+  let wholeText := toString whole
+  let frac := n % 1000
+  if frac == 0 then sign ++ wholeText
+  else
+    let digits := ((toString (1000 + frac)).drop 1).toString
+    let digits := if digits.endsWith "00" then (digits.dropEnd 2).toString
+      else if digits.endsWith "0" then (digits.dropEnd 1).toString else digits
+    sign ++ wholeText ++ "." ++ digits
+
+private def TrackTerm.css : TrackTerm → Array String
+  | .length l =>
+    (if l.sp == 0 then #[] else #[l.sp.toPtString ++ "pt"]) ++
+    (if l.em == 0 then #[] else #[milliDecimal l.em ++ "em"]) ++
+    (if l.ex == 0 then #[] else #[milliDecimal l.ex ++ "ex"])
+  | .measure m num den =>
+    let unit := if m == .textHeight then "dvh" else "%"
+    #[milliDecimal (num * 100000 / den) ++ unit]
+
+private def affineTrackCss (e : Affine Measure) : String :=
+  let terms := (affineTrackTerms e).flatMap TrackTerm.css
+  match terms[0]? with
+  | none => "0pt"
+  | some first =>
+    let body := (terms.extract 1 terms.size).foldl (fun out term =>
+      if term.startsWith "-" then out ++ " - " ++ (term.drop 1).toString
+      else out ++ " + " ++ term) first
+    if terms.size == 1 then body else "calc(" ++ body ++ ")"
 
 /-- One track, spelled. The only site a grid track's units are written, read
 by the HTML backend. -/
@@ -3881,6 +3942,7 @@ def Track.css : Track → String
   | .free => "1fr"
   | .percent p => (if p % 10 == 0 then s!"{p / 10}" else s!"{p / 10}.{p % 10}") ++ "%"
   | .length l => l.toPtString ++ "pt"
+  | .affine e => affineTrackCss e
 
 /-- Does this declaration name a width at all? The question the census and
 the diagnostics ask, so `share` is named once rather than tested as a
@@ -3888,13 +3950,13 @@ constructor at each site. -/
 def BoxWidth.declared (w : BoxWidth) : Bool :=
   match w.size with
   | .share => false
-  | .frac _ | .abs _ => true
+  | .sized _ => true
 
 /-- Is this the leftover's track — the one whose width is not the box's own
 declaration but what the declared boxes leave? -/
 def Track.isFree : Track → Bool
   | .free => true
-  | .percent _ | .length _ => false
+  | .percent _ | .length _ | .affine _ => false
 
 /-- The page's resolution and the stylesheet's track are two readings of one
 declared width, and they agree on which declarations name a width: a
@@ -8254,10 +8316,14 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .pageCount => s!"{ind}pagecount\n"
   | .image src size alt =>
     let dim (label : String) (l : Image.Len) : String :=
-      let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
-        (if l.tw != 0 then [s!"{l.tw}/1000tw"] else []) ++
-        (if l.th != 0 then [s!"{l.th}/1000th"] else [])
-      s!" {label} {if bits.isEmpty then "0" else String.intercalate "+" bits}"
+      let v := match l.value with
+        | .lit g => g.width.sp.toPtString ++ "pt"
+        | .scale n d (.ref .textHeight) => s!"{n * 1000 / d}/1000th"
+        | .scale n d (.ref _) => s!"{n * 1000 / d}/1000tw"
+        | .ref .textHeight => "1000/1000th"
+        | .ref _ => "1000/1000tw"
+        | e => Track.css (.affine e)
+      s!" {label} {v}"
     let parts :=
       (match size.width with | some l => dim "width" l | none => "") ++
       (match size.height with | some l => dim "height" l | none => "") ++
@@ -8292,8 +8358,13 @@ def dumpColSpec (c : ColSpec) : String :=
     | .right => "r"
   match c.width with
   | .natural => al
-  | .frac f => s!"{al}:{f}/1000"
-  | .abs w => s!"{al}:{w.toPtString}pt"
+  | .sized e =>
+    let width := match e with
+      | .scale n d (.ref _) => s!"{n * 1000 / d}/1000"
+      | .ref _ => "1000/1000"
+      | .lit g => g.width.sp.toPtString ++ "pt"
+      | other => Track.css (.affine other)
+    s!"{al}:{width}"
 
 def dumpTableRule (r : TableRule) : String :=
   match r with
@@ -8342,8 +8413,11 @@ def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String 
       | .center => " [c]"
       | .last => " [b]"
     let self := (match w.size with
-      | .frac f => s!"{ind}column {f}/1000{pos}\n"
-      | .abs l => s!"{ind}column {l.toPtString}pt{pos}\n"
+      | .sized (.scale n d (.ref _)) =>
+        s!"{ind}column {n * 1000 / d}/1000{pos}\n"
+      | .sized (.ref _) => s!"{ind}column 1000/1000{pos}\n"
+      | .sized (.lit g) => s!"{ind}column {g.width.sp.toPtString}pt{pos}\n"
+      | .sized e => s!"{ind}column {Track.css (.affine e)}{pos}\n"
       | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
     self ++ tail
