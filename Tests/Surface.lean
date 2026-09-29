@@ -1922,7 +1922,7 @@ def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
   let shippedText (src : String) : String :=
     let out := layoutOf fs (elabStr src).1
     ((allLines out).flatMap (·.segs)).foldl (init := "") fun s seg => match seg with
-      | .run _ _ _ _ gs _ _ _ _ _ => s ++ String.ofList (gs.map (·.2.1)).toList
+      | .run _ _ _ _ gs _ _ _ _ _ _ => s ++ String.ofList (gs.map (·.2.1)).toList
       | _ => s
   let hook (pre body : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
@@ -2020,7 +2020,7 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       call ++ " here\n\\end{document}")).1
     let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
     segs.filterMap fun s => match s with
-      | .run fi _ link w gs sz ul _ _ _ =>
+      | .run fi _ link w gs sz _ ul _ _ _ =>
         if String.ofList (gs.map (·.2.1)).toList == url then
           some ((fi, w, gs, sz), link.isSome, ul)
         else none
@@ -4271,7 +4271,7 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
   for s in l.segs do
     out := out.push (x, s)
     x := x + match s with
-      | .run _ _ _ w _ _ _ _ _ _ => w
+      | .run _ _ _ w _ _ _ _ _ _ _ => w
       | .gap w _ => w
       | .rule w _ _ _ => w
       | .image _ w _ => w
@@ -4348,7 +4348,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let ns := bibEntryLines (bodyLines nout)
   let label (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) :=
     (segStarts l).findSome? fun (x, s) => match s with
-      | .run _ _ _ w _ _ _ _ _ .label => some (x, x + w)
+      | .run _ _ _ w _ _ _ _ _ _ .label => some (x, x + w)
       | _ => none
   let labels := ns.filterMap fun e => e[0]?.bind fun l => (label l).map fun (a, b) =>
     (a + l.hang, b + l.hang)
@@ -4356,7 +4356,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let column := ngeom.hmargin + widest + ngeom.fontSize / 2
   let textStart (l : Layout.LineOut) : Option Dim.Sp :=
     (segStarts l).findSome? fun (x, s) => match s with
-      | .run _ _ _ _ glyphs _ _ _ _ a =>
+      | .run _ _ _ _ glyphs _ _ _ _ _ a =>
         if glyphs.isEmpty || a == .label then none else some x
       | _ => none
   t s!"natbib list: ten numbered entries ship, each with its label ({labels.size})"
@@ -4439,7 +4439,7 @@ def bibTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "bib text: the span sets in the math face on the page"
     ((bibEntryLines (bodyLines out)).any fun e => e.any fun l => l.segs.any fun s =>
       match s with
-      | .run idx _ _ _ glyphs _ _ _ _ _ => fs.math == some idx && !glyphs.isEmpty
+      | .run idx _ _ _ glyphs _ _ _ _ _ _ => fs.math == some idx && !glyphs.isEmpty
       | _ => false)
   let html := (HtmlDoc.emit {} doc).1
   t "bib text: the HTML entry carries the formula as MathML and the curly quotes"
@@ -6661,7 +6661,7 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runsOf (l : Layout.LineOut) :
       Array (Sum Dim.Sp (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color)) :=
     l.segs.filterMap fun seg => match seg with
-      | .run idx color _ _ glyphs _ _ _ _ _ => some (.inr (idx, glyphs, color))
+      | .run idx color _ _ glyphs _ _ _ _ _ _ => some (.inr (idx, glyphs, color))
       | .gap w true => some (.inl w)
       | _ => none
   let shipped (src : String) :
@@ -7722,7 +7722,7 @@ def pictureMacroReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (out.pages[0]?.map fun p =>
       p.lines.flatMap fun l => l.segs.filterMap fun s =>
         match s with
-        | .run _ col _ _ glyphs _ _ _ _ _ =>
+        | .run _ col _ _ glyphs _ _ _ _ _ _ =>
           if glyphs.any (·.2.1 == 'B') then some col else none
         | _ => none).getD #[]
   t "a macro-supplied '\\textcolor' paints the run it wraps"

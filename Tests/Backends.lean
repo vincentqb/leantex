@@ -1602,7 +1602,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let out := layoutOf oneFace doc
   let sizes := (bodyLines out).flatMap fun l => l.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ _ size _ _ _ _ => some size
+    | .run _ _ _ _ _ size _ _ _ _ _ => some size
     | _ => none
   t "the venue tiny sets at 0.6 of the body on the shipped page"
     (sizes.contains (doc.page.fontSize * 600 / 1000) &&
@@ -1617,7 +1617,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let psizes := (bodyLines (layoutOf oneFace plain)).flatMap fun l =>
     l.segs.filterMap fun s =>
       match s with
-      | .run _ _ _ _ _ size _ _ _ _ => some size
+      | .run _ _ _ _ _ size _ _ _ _ _ => some size
       | _ => none
   t "an undeclared document keeps the engine ladder on the page"
     (psizes.contains (plain.page.fontSize * 500 / 1000))
@@ -2547,7 +2547,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
                  | .elem _ attrs _ => attrs.find? (·.1 == "style")
                  | _ => none
              | _ => none
-         | _ => none) == some ("style", "text-align: center")
+         | _ => none) == some ("style", "container-type: inline-size; text-align: center")
      | _ => false)
   -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
@@ -2973,7 +2973,7 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size false
+  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size none false
     raise none (.leaf 0)
 
 /-- The widths the synthetic pages' faces declare, in millionths of the
@@ -3538,7 +3538,7 @@ the line before it set (`lineSt`'s `Tz`), which `expectedArtifacts`
 tracks. -/
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
     | .image _ _ _ | .rule _ _ _ _ | .gap _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
@@ -3553,12 +3553,12 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .rule _ _ _ _ => acc + 1
-      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
+      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .image _ _ _ => acc + 1
-      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
+      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
     let nonEmpty := lineInks l || l.expand != tz
     (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)

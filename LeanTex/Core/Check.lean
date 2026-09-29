@@ -84,7 +84,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
               x (x + w) (l.y - raise - thickness) (l.y - raise) worstAt
           x := x + w
-        | .run idx _ _ w glyphs size _ raise _ _ =>
+        | .run idx _ _ w glyphs size _ _ raise _ _ =>
           unless glyphs.isEmpty do
             let font := fs.get idx
             let sz := if size == 0 then l.size else size

@@ -986,7 +986,7 @@ def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
           | .image _ w hh =>
             acc := acc.push (i, x, l.y, w, hh)
             x := x + w
-          | .run _ _ _ w _ _ _ _ _ _ => x := x + w
+          | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
           | .gap w _ => x := x + w
           | .rule w _ _ _ => x := x + w
     return acc

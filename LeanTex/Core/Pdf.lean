@@ -152,7 +152,7 @@ private def markUsed (fs : FontSet) (pages : Array PageOut) : Array (Array (Opti
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ _ _ glyphs _ _ _ _ _ := s then
+        if let .run idx _ _ _ glyphs _ _ _ _ _ _ := s then
           seen := seen.modify idx fun marks => Id.run do
             let mut marks := marks
             for (g, c, _) in glyphs do
@@ -335,7 +335,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
     let pad := l.size
     for seg in l.segs do
       match seg with
-      | .run _ _ link w _ segSize _ _ _ _ =>
+      | .run _ _ link w _ segSize _ _ _ _ _ =>
         let size := if segSize == 0 then l.size else segSize
         let y0 := geom.bleed + geom.pageH - l.y - size / 4
         let y1 := geom.bleed + geom.pageH - l.y + size * 4 / 5

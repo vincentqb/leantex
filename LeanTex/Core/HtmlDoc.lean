@@ -399,6 +399,9 @@ private def markerStyleDecls (scale : List (String × Nat)) :
   | .normal => some #[]
   | .size name => (scale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
+  | .fontSize size leading => some #[
+      s!"font-size: {Ir.Track.contextCss size};",
+      s!"line-height: {Ir.Track.contextCss leading};"]
   -- a language changes no marker styling; the wrapper is expressible as
   -- nothing rather than inexpressible
   | .lang _ => some #[]
@@ -4223,6 +4226,8 @@ private def styleClass : Style → String
   | .series w => s!"w{w.css}"
   | .upright => "up"
   | .size n => "size-" ++ n
+  -- unused: arbitrary sizes emit one inline declaration.
+  | .fontSize _ _ => "fontsize"
   -- unused: the styled arm emits `.lang` as a `lang` attribute, the
   -- declaration WCAG 2.2 SC 3.1.2 reads, never a class
   | .lang tag => "lang-" ++ tag
@@ -4362,11 +4367,14 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       l.value.anyRef fun m => m != .textHeight
     let vertical (l : Image.Len) : Bool :=
       l.value.anyRef (· == .textHeight)
-    let cssDim (l : Image.Len) : Option String :=
-      if vertical l then none else some (Ir.Track.css (.affine l.value))
+    let cssDim (l : Image.Len) (isVertical : Bool) : Option String :=
+      if vertical l then none
+      else if isVertical then some (Ir.Track.contextCss l.value)
+      else some (Ir.Track.css (.affine l.value))
     let deckDim (l : Image.Len) (isVertical : Bool) : Option String :=
       if horizontal l && !vertical l then
-        some (Ir.Track.css (.affine l.value))
+        some (if isVertical then Ir.Track.contextCss l.value
+          else Ir.Track.css (.affine l.value))
       else if !horizontal l then
         let (stage, unit) :=
           if isVertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
@@ -4375,15 +4383,14 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         some (decMilli (deckStageMilli (l.resolve textW textH) stage) ++ unit)
       else none
     let dim (l : Image.Len) (vertical : Bool) : Option String :=
-      if cfg.deck then deckDim l vertical else cssDim l
+      if cfg.deck then deckDim l vertical else cssDim l vertical
     let wCss := size.width.bind (dim · false)
     let hCss := size.height.bind (dim · true)
     -- In a fill row a text-width fraction is the row's (`Config.inFillRow`),
     -- in `cqi`, after the percentage a browser without container units keeps.
     let wRow := size.width.bind fun l =>
       if cfg.inFillRow && horizontal l && !vertical l then
-        let css := Ir.Track.css (.affine l.value)
-        some ((css.splitOn "%").intersperse "cqi" |>.foldl (· ++ ·) "")
+        some (Ir.Track.contextCss l.value)
       else none
     let width (w : String) : String := match wRow with
       | some r => s!"width: {w}; width: {r}"
@@ -4459,6 +4466,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- through `FontSet.lookup` (`Layout.weight_agree`).
     | .series w =>
       acc.push (Html.elem "span" kids #[("style", s!"font-weight: {w.css}")])
+    | .fontSize size leading =>
+      acc.push (Html.elem "span" kids #[
+        ("style", s!"font-size:{Ir.Track.contextCss size};line-height:{Ir.Track.contextCss leading}")])
     -- The language of a run is a declaration, not a style: the span
     -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
     -- `hyphens: auto` and assistive technology both read.
@@ -4542,8 +4552,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     else acc.push node
   | .rule width height raise =>
     let w := Ir.Track.css (.affine width)
-    let h := Ir.Track.css (.affine height)
-    let r := Ir.Track.css (.affine raise)
+    let h := Ir.Track.contextCss height
+    let r := Ir.Track.contextCss raise
     acc.push (Html.elem "span" #[] #[
       ("style", s!"display:inline-block;inline-size:{w};block-size:{h};vertical-align:{r};background:currentColor")])
   -- A strut props its line open in print; a continuous page reads at its
@@ -4611,10 +4621,11 @@ def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat �
   let align : Ir.HAlign := match sp with
     | some s => s.spec.align
     | none => (cols[j]?.map (·.align)).getD .left
-  let al := match align with
-    | .center => #[("style", "text-align: center")]
-    | .right => #[("style", "text-align: right")]
-    | .left => #[]
+  let alignCss := match align with
+    | .center => "; text-align: center"
+    | .right => "; text-align: right"
+    | .left => ""
+  let al := #[("style", "container-type: inline-size" ++ alignCss)]
   let al := match sp with
     | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
     | none => al
@@ -5244,6 +5255,7 @@ def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
   | .normal => {}
   | .lang tag => { f with lang := some tag }
   | .size n => { f with size := some n }
+  | .fontSize _ _ => f
   | .bold | .medium | .series _ => f
 
 /-- A face as the attributes of the `<tspan>` its run sets in, relative to
@@ -5947,15 +5959,19 @@ private def columnNodesInto (cfg : Config) (acc : Array Node) :
   | (w, body) :: rest =>
     -- The point the box stands on the row's baseline by (`Ir.BoxPos`), as
     -- the grid's own baseline alignment says it; a top box keeps the
-    -- grid's default.
-    let pos : Array (String × String) := match w.pos with
-      | .top => #[]
-      | .first => #[("style", "align-self: baseline")]
-      | .center => #[("style", "align-self: center")]
-      | .last => #[("style", "align-self: last baseline")]
+    -- grid's default. Every box is also the query container for affine
+    -- local measures in its content: `cqi` reads this column's actual
+    -- inline size, never the outer page's.
+    let align := match w.pos with
+      | .top => ""
+      | .first => "align-self: baseline"
+      | .center => "align-self: center"
+      | .last => "align-self: last baseline"
+    let style := if align.isEmpty then "container-type: inline-size"
+      else "container-type: inline-size; " ++ align
     columnNodesInto cfg
       (acc.push (Html.elem "div" (blockNodesInto cfg #[] body.toList)
-        (#[("class", "column")] ++ pos))) rest
+        #[("class", "column"), ("style", style)])) rest
 
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
@@ -6676,8 +6692,9 @@ first; retitle one frame, or link to '#{id}'"))
                   ("aria-label", "back to the text"), ("style", "color: inherit")]))
             #[("id", s!"fn{n}")]) #[]]
       #[("role", "doc-endnotes")])
-  let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
-    else #[("class", bodyClass)])
+  let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++
+    #[("style", "container-type: inline-size")]
+  let main := Html.elem "main" inner mainAttrs
   -- The headline band: the page's own <header> before <main> (the banner
   -- landmark — the HTML poster is a page, and the band is its header),
   -- title as the one h1, authors and institute as their own lines, the

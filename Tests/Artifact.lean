@@ -1057,7 +1057,7 @@ def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id
     let mut x := geom.bleed + l.x
     for s in l.segs do
       match s with
-      | .run _ _ _ w glyphs _ _ _ _ _ =>
+      | .run _ _ _ w glyphs _ _ _ _ _ _ =>
         let mut adv : Dim.Sp := 0
         for (_, _, a) in glyphs do
           out := out.push (x + adv + adv * l.expand / 1000)

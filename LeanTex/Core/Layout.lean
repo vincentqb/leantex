@@ -659,8 +659,8 @@ inductive Attribution where
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool) (raise : Sp)
-      (ground : Option Ir.Color) (attr : Attribution)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+      (underline : Bool) (raise : Sp) (ground : Option Ir.Color) (attr : Attribution)
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -690,8 +690,8 @@ inductive Seg where
   run at script size. `attr` names the structure leaf (or the generated
   kind) the ink stands for. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool) (raise : Sp)
-      (ground : Option Ir.Color) (attr : Attribution)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+      (underline : Bool) (raise : Sp) (ground : Option Ir.Color) (attr : Attribution)
   /-- Horizontal space. `word` is true exactly for glue that came from
   `interword` — the space between two words of one leaf's text, what the
   tagger's interword policy reads; an indent, an alignment gap, a kern, the
@@ -1073,6 +1073,13 @@ structure TextStyle where
   /-- Size relative to the surrounding text, per mille. Absolute rather than
   compounding, as in LaTeX: `\large\Large` is Large, not the product. -/
   scale : Nat := 1000
+  /-- An arbitrary `\fontsize` size, unresolved until the local measure and
+  current font metrics are available. Named size commands clear it. -/
+  fontSize : Option (Affine Measure) := none
+  /-- The matching baseline skip from `\fontsize`, resolved with the size at
+  the same site. `none` uses the document's ordinary leading; `some 0`
+  preserves an explicitly zero skip. -/
+  leading : Option (Affine Measure) := none
   /-- Set as small caps. Applies to the word, not the face: see
   `smallCapSynth`. -/
   smallcaps : Bool := false
@@ -1342,8 +1349,9 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .normal => {}
   | .lang tag => { sty with lang := some tag }
   | .size n => match ladder.lookup n with
-    | some k => { sty with scale := k }
+    | some k => { sty with scale := k, fontSize := none, leading := none }
     | none => sty
+  | .fontSize size leading => { sty with fontSize := some size, leading := some leading }
 
 /-- `weight_agree`: the weight a style leaves in force is exactly
 `Ir.Style.weight?` — the one projection the HTML emission also reads —
@@ -1860,7 +1868,7 @@ through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
 only when the styled face has one, synthesis having already rewritten the
 word otherwise. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
-    (size : Sp) (fontIdx : Nat)
+    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (underline : Bool) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
@@ -1876,7 +1884,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
     if box.isEmpty then items
-    else items.push (.box w fontIdx color link box size underline 0 ground attr)
+    else items.push (.box w fontIdx color link box size leading underline 0 ground attr)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -1928,7 +1936,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               items := flush items box boxW
               box := #[]
               boxW := 0
-              items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground attr)
+              items := items.push (.box g.2.2 fb color link #[g] size leading underline 0 ground attr)
               unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
                 substs := substs.push (fontIdx, c', fb)
             | none =>
@@ -1944,7 +1952,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           box := #[]
           boxW := 0
           items := items.push
-            (.box (size * num / den) fontIdx color link #[] size underline 0 ground attr)
+            (.box (size * num / den) fontIdx color link #[] size leading underline 0 ground attr)
           i := i + 1
         | none =>
         if c == '\u00a0' then
@@ -1953,7 +1961,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           box := #[]
           boxW := 0
           items := items.push
-            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size underline 0
+            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size leading underline 0
               ground attr)
           i := i + 1
         else
@@ -1969,7 +1977,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             items := flush items box boxW
             box := #[]
             boxW := 0
-            items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground attr)
+            items := items.push (.box g.2.2 fb color link #[g] size leading underline 0 ground attr)
             unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
               substs := substs.push (fontIdx, c, fb)
           | none =>
@@ -2442,6 +2450,7 @@ private structure MathEnv where
   color : Ir.Color
   link : Option String
   underline : Bool
+  leading : Option Sp
   base : Sp
   ground : Option Ir.Color := none
   /-- The formula's attribution: its one `Struct` leaf (the source), on
@@ -2471,7 +2480,7 @@ private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :
 
 /-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
-  .box w e.idx e.color e.link #[] size e.underline 0 e.ground e.attr
+  .box w e.idx e.color e.link #[] size e.leading e.underline 0 e.ground e.attr
 
 /-- Width of assembled math items: boxes only ever enter the stream, so the
 advance of a math box is the sum of what it contains plus the kerns the
@@ -2479,7 +2488,7 @@ spacing table put between them — `mathBoxChecks` holds the two ways of
 computing it equal in sp. -/
 def mathItemsWidth (items : Array Item) : Sp :=
   items.foldl (fun w it => match it with
-    | .box bw _ _ _ _ _ _ _ _ _ => w + bw
+    | .box bw _ _ _ _ _ _ _ _ _ _ => w + bw
     | _ => w) 0
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
@@ -2495,7 +2504,7 @@ private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.
   let upem : Int := font.unitsPerEm
   for it in items do
     match it with
-    | .box _ _ _ _ glyphs size _ raise _ _ =>
+    | .box _ _ _ _ glyphs size _ _ raise _ _ =>
       for (g, _, _) in glyphs do
         match font.yExtent g with
         | some (lo, hi) =>
@@ -2514,7 +2523,7 @@ private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.
 private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
   if delta == 0 then items else
   items.map fun it => match it with
-    | .box w i c l g s u r gr a => .box w i c l g s u (r + delta) gr a
+    | .box w i c l g s ld u r gr a => .box w i c l g s ld u (r + delta) gr a
     | .rule w t r c => .rule w t (r + delta) c
     | .glue g => .glue g
     | .pen w c f i col g => .pen w c f i col g
@@ -2526,8 +2535,8 @@ size) plus its raise, so a 1 sp box raised to `top` (and one sunk to `bot`)
 tells the line builder exactly the room an assembled construction needs —
 the fraction hanging above and below, the grown delimiter's reach. -/
 private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
-  #[.box 0 e.idx e.color e.link #[] 1 false (max 0 top) e.ground e.attr,
-    .box 0 e.idx e.color e.link #[] 1 false (min 0 bot) e.ground e.attr]
+  #[.box 0 e.idx e.color e.link #[] 1 e.leading false (max 0 top) e.ground e.attr,
+    .box 0 e.idx e.color e.link #[] 1 e.leading false (min 0 bot) e.ground e.attr]
 
 /-- The size ladder a glyph grows through: its vertical variants, or just
 itself when the face grows it no further. -/
@@ -2561,7 +2570,7 @@ private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
       let (vTop, vBot) := e.glyphExtent size gv
       let w := scaledAt size e.font (e.font.widths[gv]?.getD 0)
       let dRaise := raise + axis - (vTop + vBot) / 2
-      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline dRaise e.ground e.attr),
+      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.leading e.underline dRaise e.ground e.attr),
        missing, dRaise - raise + vTop, dRaise - raise + vBot)
     | none =>
       (items, if missing.contains (e.idx, c) then missing else missing.push (e.idx, c),
@@ -2767,7 +2776,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
         return (#[mathKern e size kernB] ++ raiseItems degRaise degItems).push
           (mathKern e size kernA)
     let items := (degPrefix.push
-        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.underline surdRaise e.ground e.attr)
+        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.leading e.underline surdRaise e.ground e.attr)
       |>.push (Item.rule bodyW θ (raise + ruleBot) e.color)
       |>.push (mathKern e size (-bodyW)))
       ++ raisedBody
@@ -2810,9 +2819,9 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
     -- glyph of the math face; else the assembled width's centre.
     let baseTA :=
       match bItems.filter (fun it => match it with
-        | .box _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+        | .box _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
         | _ => false) with
-      | #[.box _ fi _ _ #[(bg, _, _)] bsize _ _ _ _] =>
+      | #[.box _ fi _ _ #[(bg, _, _)] bsize _ _ _ _ _] =>
         if fi == e.idx then e.constAt bsize (e.font.topAccentX bg) else baseW / 2
       | _ => baseW / 2
     let gv :=
@@ -2828,7 +2837,7 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
       max 0 (bTop - e.constAt size e.consts.accentBaseHeight)
     let (mTop, mBot) := e.glyphExtent size gv
     let items := ((raisedBody.push (mathKern e size (-baseW + shift))).push
-        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.underline accRaise e.ground e.attr)
+        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.leading e.underline accRaise e.ground e.attr)
       |>.push (mathKern e size (baseW - shift - wAcc)))
       ++ struts e (max (raise + bTop) (accRaise + mTop))
         (min (raise + bBot) (accRaise + mBot))
@@ -2899,7 +2908,7 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           let (vTop, vBot) := e.glyphExtent size gv
           let axis := e.constAt size e.consts.axisHeight
           let vRaise := raise + axis - (vTop + vBot) / 2
-          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline vRaise e.ground e.attr)]
+          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.leading e.underline vRaise e.ground e.attr)]
             ++ struts e (vRaise + vTop) (vRaise + vBot), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then (#[], acc.2)
@@ -2969,7 +2978,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let size := e.sizeAt st
     match glyphOf size e.font c with
     | some g =>
-      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
+      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.leading e.underline raise e.ground e.attr)), acc.2)
     | none =>
       -- A scalar the math face lacks goes through the per-scalar chain the
       -- driver precomputed for text (`FontSet.fallback`) — one mechanism,
@@ -2977,7 +2986,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match e.fs.fallbackFor c |>.bind fun fb =>
           (glyphOf size (e.fs.get fb) c).map (fb, ·) with
       | some (fb, g) =>
-        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
+        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.leading e.underline raise e.ground e.attr)), acc.2)
       | none =>
         -- A math alphabet's scalar uncovered everywhere: the base letter
         -- stands in — bold/italic from the text face where that is the
@@ -2992,7 +3001,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           return (fi, g)
         match synth with
         | some (fi, g) =>
-          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
+          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.leading e.underline raise e.ground e.attr)), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then acc
           else (acc.1, acc.2.push (e.idx, c))
@@ -3013,7 +3022,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match hit with
       | some (fi, g) =>
         if fi != cur && !glyphs.isEmpty then
-          items := items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground e.attr)
+          items := items.push (.box w cur e.color e.link glyphs size e.leading e.underline raise e.ground e.attr)
           glyphs := #[]
           w := 0
         cur := fi
@@ -3022,7 +3031,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | none =>
         unless missing.contains (e.idx, c) do
           missing := missing.push (e.idx, c)
-    return (items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground e.attr), missing)
+    return (items.push (.box w cur e.color e.link glyphs size e.leading e.underline raise e.ground e.attr), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
@@ -3156,7 +3165,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
       gs := gs.push g
       w := w + g.2.2
     | none => miss := miss.push (idx, c)
-  return (.box w idx sty.color sty.link gs markSize sty.underline raise sty.ground attr, miss)
+  return (.box w idx sty.color sty.link gs markSize none sty.underline raise sty.ground attr, miss)
 
 /-- The token fold's state: what the walk has built, and what it has
 lost beside it. `dropped` is the never-silent ledger — a (face, char)
@@ -3193,7 +3202,7 @@ value keeps its own face's, the one departure — it differs only where both
 sides kern and their scales differ, and it is the face's own pair at the
 face's own size. -/
 private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
-  | some (.box _ fontIdx _ _ glyphs size _ _ _ _) =>
+  | some (.box _ fontIdx _ _ glyphs size _ _ _ _ _) =>
     match (if after then glyphs.back? else glyphs[0]?) with
     | some (g, _, _) => spacePairKern Ir.features size (fs.get fontIdx) after g
     | none => 0
@@ -3201,7 +3210,7 @@ private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
 
 /-- Whether an item is a box of glyphs: the character TeX's `\/` corrects. -/
 private def glyphBox : Option Item → Bool
-  | some (.box _ _ _ _ glyphs _ _ _ _ _) => !glyphs.isEmpty
+  | some (.box _ _ _ _ glyphs _ _ _ _ _ _) => !glyphs.isEmpty
   | _ => false
 
 /-- The items with the glue they end in `w` wider: a space taking the pair
@@ -3244,6 +3253,21 @@ private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
         { acc with items := acc.items.set! n bare, wordEnd := 0 }
     | _ => italicKern acc
 
+/-- Resolve the size and baseline skip in force at one token. Named size
+steps select `scale`; `\fontsize` then evaluates against that current size
+and the actual local measure. `none` uses the document's ordinary
+line-height rule; `some 0` keeps an explicitly zero baseline skip. -/
+private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) :
+    Sp × Option Sp :=
+  let basis := base * sty.scale / 1000
+  let xBasis := xHeight * sty.scale / 1000
+  let values := MeasureValues.horizontal textW textH
+  let size := match sty.fontSize with
+    | some e => max 1 (e.resolveWidth values basis xBasis)
+    | none => basis
+  let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
+  (size, leading)
+
 /-- One flatten token into the accumulator — the fold step of
 `itemsOfInlines`, named so a conservation statement can induct over it:
 every token's ink becomes items, an entry in `dropped`, or a note body
@@ -3263,9 +3287,9 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       if sty.smallcaps && !useGsub then
         smallCapSynth (smallCapScaleFor font) sty chars
       else (sty, chars)
-    let sz := size * sty.scale / 1000
+    let (sz, leading) := sty.metrics size xHeight textW textH
     let (ws, m, s, c') :=
-      wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
+      wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link sty.underline useGsub attr fs font chars
         acc.dropped acc.substs acc.cache
     -- The space before the word pairs with its first glyph. Read first,
@@ -3283,7 +3307,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     -- by design. Only total absence is a loss (E0405, rendered by the
     -- caller from `dropped`).
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
-    let sz := size * sty.scale / 1000
+    let (sz, leading) := sty.metrics size xHeight textW textH
     let hit :=
       match glyphOf sz (fs.get idx) c with
       | some g => some (idx, g)
@@ -3292,14 +3316,15 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (glyphOf sz (fs.get fb) c).map (fb, ·)
     match hit with
     | some (fb, g) =>
-      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz sty.underline 0
+      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz leading sty.underline 0
         sty.ground attr
       { acc with items := acc.items.push box }
     | none =>
       if acc.dropped.contains (idx, c) then acc
       else { acc with dropped := acc.dropped.push (idx, c) }
   | .note num sty body bodyLeaf =>
-    let (mk, miss) := markBox fs sty (size * sty.scale / 1000) num
+    let (around, _) := sty.metrics size xHeight textW textH
+    let (mk, miss) := markBox fs sty around num
     let acc := miss.foldl (fun acc m =>
       if acc.dropped.contains m then acc
       else { acc with dropped := acc.dropped.push m }) acc
@@ -3314,12 +3339,13 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
       -- `Math.mathSize` states and its agreement theorems bound to the sp.
       let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
-      let runSize := size * sty.scale / 1000
+      let (runSize, leading) := sty.metrics size xHeight textW textH
       let e : MathEnv := {
         idx, font, consts, fs
         color := sty.color
         link := sty.link
         underline := sty.underline
+        leading := leading
         ground := sty.ground
         attr := attr
         base := (Math.mathSize runSize.toNat around.xHeightOptical
@@ -3349,7 +3375,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     | none => acc
   | .space sty =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
-    let g := interword (size * sty.scale / 1000) (fs.get idx)
+    let (sz, _) := sty.metrics size xHeight textW textH
+    let g := interword sz (fs.get idx)
     let after := if acc.wordEnd == acc.items.size then spaceKern fs true acc.items.back? else 0
     { acc with items := acc.items.push (.glue { g with width := g.width + after }) }
   | .fill =>
@@ -3358,7 +3385,9 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .hskip sty e keep =>
     let values := MeasureValues.horizontal textW textH
     let g := e.eval values.find
-    let glue := g.resolve (size * sty.scale / 1000) (xHeight * sty.scale / 1000)
+    let (sz, _) := sty.metrics size xHeight textW textH
+    let xh := xHeight * sz / max size 1
+    let glue := g.resolve sz xh
     let items := if keep then
         (acc.items.push (.rule 0 0 0 Ir.Color.black)).push
           (.pen 0 10000 false 0 Ir.Color.black #[])
@@ -3366,8 +3395,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     { acc with items := items.push (.glue glue) }
   | .rule sty width height raise =>
     let values := MeasureValues.horizontal textW textH
-    let fs := size * sty.scale / 1000
-    let xh := xHeight * sty.scale / 1000
+    let (fs, _) := sty.metrics size xHeight textW textH
+    let xh := xHeight * fs / max size 1
     let w := width.resolveWidth values fs xh
     let h := height.resolveWidth values fs xh
     let r := raise.resolveWidth values fs xh
@@ -3483,7 +3512,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _ _ _ _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _ _ _ _ _ _ _) => j > 0
     | some (.img _ _ _) => j > 0
     | some (.rule _ _ _ _) => j > 0
     | _ => false
@@ -3587,7 +3616,7 @@ every candidate the breaker evaluates. -/
 def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
   for k in [a:j] do
     match items[k]? with
-    | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
+    | some (.box _ _ _ _ glyphs _ _ _ _ _ _) =>
       if let some (_, c, adv) := glyphs[0]? then
         return adv * (protrusionLR c).1 / 1000
     | some (.img ..) | some (.rule ..) => return 0
@@ -3604,7 +3633,7 @@ def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
       return adv * (protrusionLR c).2 / 1000
   for i in [0:j - a] do
     match items[j - 1 - i]? with
-    | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
+    | some (.box _ _ _ _ glyphs _ _ _ _ _ _) =>
       if let some (_, c, adv) := glyphs.back? then
         return adv * (protrusionLR c).2 / 1000
     | some (.img ..) | some (.rule ..) => return 0
@@ -3619,7 +3648,7 @@ def maxProtrudeRight (items : Array Item) : Sp := Id.run do
   let mut best : Sp := 0
   for it in items do
     match it with
-    | .box _ _ _ _ glyphs _ _ _ _ _ =>
+    | .box _ _ _ _ glyphs _ _ _ _ _ _ =>
       if let some (_, c, adv) := glyphs.back? then
         best := max best (adv * (protrusionLR c).2 / 1000)
     | .pen _ _ _ _ _ glyphs =>
@@ -3646,7 +3675,7 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ _ _ _ _ =>
+    | .box w _ _ _ _ _ _ _ _ _ _ =>
       m := { m with natural := m.natural + w, boxW := m.boxW + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
     | .rule w _ _ _ => m := { m with natural := m.natural + w }
@@ -3750,7 +3779,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   pb := pb.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
-      | .box w _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
+      | .box w _ _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
       | .img _ w _ => (w, 0, 0, 0, 0)
       | .rule w _ _ _ => (w, 0, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
@@ -3978,7 +4007,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut boxTaken : Sp := 0
   if f != 0 then
     for k in [a:j] do
-      if let some (.box w _ _ _ _ _ _ _ _ _) := items[k]? then
+      if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
         boxTaken := boxTaken + w * f / 1000
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
@@ -4001,7 +4030,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box w fontIdx color link glyphs size underline raise ground attr =>
+    | .box w fontIdx color link glyphs size leading underline raise ground attr =>
       -- The declared width is authoritative, as it already is in `measure`: a
       -- kern is a box with a width and no glyphs, and recomputing from the
       -- advances would silently set it to zero. Expansion rescales the box
@@ -4009,7 +4038,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- under the same horizontal scale.
       let w := w + w * f / 1000
       segs := segs.push
-        (.run fontIdx color link w glyphs size underline raise ground attr)
+        (.run fontIdx color link w glyphs size leading underline raise ground attr)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
@@ -4051,11 +4080,13 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- the line's expansion factor, like any glyph. Its attribution is
       -- `.hyphen`: the breaker's ink, not the leaf's text.
       let w := w + w * f / 1000
-      let (inherited, inheritedUl, inheritedGr) := segs.foldl (fun acc s => match s with
-        | .run _ _ _ _ _ sz ul _ gr _ => (if sz != 0 then sz else acc.1, ul, gr)
-        | _ => acc) ((0 : Sp), false, (none : Option Ir.Color))
+      let inherited := segs.foldl (fun acc s => match s with
+        | .run _ _ _ _ _ sz ld ul _ gr _ =>
+          if sz != 0 then (sz, ld, ul, gr) else acc
+        | _ => acc) ((0 : Sp), (none : Option Sp), false, (none : Option Ir.Color))
       segs := segs.push
-        (.run fontIdx color none w glyphs inherited inheritedUl 0 inheritedGr .hyphen)
+        (.run fontIdx color none w glyphs inherited.1 inherited.2.1
+          inherited.2.2.1 0 inherited.2.2.2 .hyphen)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -4827,8 +4858,8 @@ private theorem doc_geometry_uniform (b : B) (l line : LineOut)
 /-- A run emptied of its glyph payload, every metric field kept: the
 transformation `line_box_glyph_free` quantifies over. -/
 def Seg.stripGlyphs : Seg → Seg
-  | .run idx color link w _ size underline raise ground attr =>
-    .run idx color link w #[] size underline raise ground attr
+  | .run idx color link w _ size leading underline raise ground attr =>
+    .run idx color link w #[] size leading underline raise ground attr
   | .gap w word => .gap w word
   | .rule w t r c => .rule w t r c
   | .image s w h => .image s w h
@@ -4879,6 +4910,27 @@ theorem baselines_on_grid (ascent descent leading : Int) :
     + (leading - ascent - (leading - (ascent + descent)) / 2) = leading
   omega
 
+private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox :=
+  match acc with
+  | none => some box
+  | some a => some ⟨max a.above box.above, max a.below box.below,
+      max a.inkAbove box.inkAbove, max a.inkBelow box.inkBelow⟩
+
+private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
+    (acc : Option LineBox) : Seg → Option LineBox
+  | .run idx _ _ _ _ sz leading _ raise _ _ =>
+    let font := fs.get idx
+    let sz := if sz == 0 then nominal else sz
+    let lineHeight := leading.getD (Ir.leadingFor sz leadFactor)
+    let box := leadedBox (scaledAt sz font font.ascent.toNat)
+      (scaledAt sz font (-font.descent).toNat) lineHeight
+    mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
+      scaledAt sz font font.inkAscent.toNat + max 0 raise,
+      scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
+  | .image _ _ h => mergeLineBox acc ⟨h, 0, h, 0⟩
+  | .rule _ t r _ => mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
+  | .gap _ _ => acc
+
 /-- A line's vertical extent, measured seg by seg, each run its own
 leaded metric box (`leadedBox` of the font's ascent and descent at the
 run's size, plus `raise`) — a sans title is as tall as the sans says,
@@ -4898,28 +4950,19 @@ which a phantom body ascent above a 1 pt rule would falsify. -/
 def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
     (leadFactor : Nat) (size : Sp) (segs : Array Seg) : LineBox :=
   let nominal := if size == 0 then fontSize else size
-  let init : LineBox :=
-    if segs.isEmpty || segs.any (· matches .run ..) then
+  let customLeading := segs.any fun s => match s with
+    | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
+    | _ => false
+  let init : Option LineBox :=
+    if customLeading then none
+    else if segs.isEmpty || segs.any (· matches .run ..) then
       let strut := leadedBox (bodyAscent * nominal / fontSize)
         (bodyDescent * nominal / fontSize) (Ir.leadingFor nominal leadFactor)
-      ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
-       bodyDescent * nominal / fontSize⟩
-    else ⟨0, 0, 0, 0⟩
-  segs.foldl (fun (acc : LineBox) s => match s with
-    | .run idx _ _ _ _ sz _ raise _ _ =>
-      let font := fs.get idx
-      let sz := if sz == 0 then nominal else sz
-      let box := leadedBox (scaledAt sz font font.ascent.toNat)
-        (scaledAt sz font (-font.descent).toNat) (Ir.leadingFor sz leadFactor)
-      ⟨max acc.above (box.1 + max 0 raise),
-       max acc.below (box.2 + max 0 (-raise)),
-       max acc.inkAbove (scaledAt sz font font.inkAscent.toNat + max 0 raise),
-       max acc.inkBelow (scaledAt sz font (-font.descent).toNat + max 0 (-raise))⟩
-    | .image _ _ h => ⟨max acc.above h, acc.below, max acc.inkAbove h, acc.inkBelow⟩
-    | .rule _ t r _ => ⟨max acc.above (r + t), max acc.below (-r),
-       max acc.inkAbove (r + t), max acc.inkBelow (-r)⟩
-    | _ => acc)
-    init
+      some ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
+        bodyDescent * nominal / fontSize⟩
+    else none
+  let measured := segs.foldl (lineBoxStep fs nominal leadFactor) init
+  measured.getD ⟨0, 0, 0, 0⟩
 
 /-- The line-box convention's guard: a line's box is the metric extent of
 the (font, size, raise) triples present on it — the fonts' declared
@@ -4950,13 +4993,28 @@ theorem line_box_glyph_free (fs : FontSet)
     congr 1
     funext s
     cases s <;> rfl
+  have hlead : (segs.map Seg.stripGlyphs).any (fun s => match s with
+      | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
+      | _ => false) =
+      segs.any (fun s => match s with
+        | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
+        | _ => false) := by
+    rw [Array.any_map]
+    congr 1
+    funext s
+    cases s <;> rfl
   have hemp : (segs.map Seg.stripGlyphs).isEmpty = segs.isEmpty := by
     unfold Array.isEmpty
     rw [Array.size_map]
-  rw [Array.foldl_map, hrun, hemp]
+  rw [hrun, hlead, hemp]
+  simp only [Array.foldl_map]
   congr 1
-  funext acc s
-  cases s <;> rfl
+  apply Array.foldl_congr rfl
+  · funext acc s
+    cases s <;> rfl
+  · rfl
+  · rfl
+  · rfl
 
 /-- The box TeX builds around a set line, read from the glyphs' own
 outlines: the tallest glyph above the baseline and the deepest below it,
@@ -4972,7 +5030,7 @@ frame's text area stops above, as beamer's `\footheight` is the band's
 `\ht` plus `\dp`. -/
 def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun (acc : Sp × Sp) s => match s with
-    | .run idx _ _ _ glyphs sz _ raise _ _ =>
+    | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
       let font := fs.get idx
       let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
       glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
@@ -6223,7 +6281,7 @@ private def collectPara (r : Rd) (a : Acc)
   -- with them.
   let (items, extras, noteBlocks) :=
     if hangIndent == 0 then (items, extras, noteBlocks)
-    else (#[Item.box (-hangIndent) 0 a.fg none #[] size false 0 a.ground .unattributed] ++ items,
+    else (#[Item.box (-hangIndent) 0 a.fg none #[] size none false 0 a.ground .unattributed] ++ items,
       extras.fold (fun m k v => m.insert (k + 1) v) {},
       noteBlocks.map fun (i, nb) => (i + 1, nb))
   { a with
@@ -6708,7 +6766,7 @@ glyph payload is not consulted, so the band a label sets in is a function of
 (face, size, raise) alone. -/
 def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
   match seg with
-  | .run idx _ _ _ _ sz _ raise _ _ =>
+  | .run idx _ _ _ _ sz _ _ raise _ _ =>
     let font := fs.get idx
     let sz := if sz == 0 then size else sz
     (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
@@ -6730,7 +6788,7 @@ image stands on the baseline and a rule on its raise. This is what a node's
 text box is (pgf's), where the band above is what places the letters. -/
 def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun acc seg => match seg with
-    | .run idx _ _ _ glyphs sz _ raise _ _ =>
+    | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
       let font := fs.get idx
       let sz := if sz == 0 then size else sz
       glyphs.foldl (fun acc (g, _) =>
@@ -7077,7 +7135,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
   let mut items : Array Item :=
-    #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground mirrorAttr,
+    #[.box numW 0 a.fg none #[] r.geom.fontSize none false 0 a.ground mirrorAttr,
       .glue { fil := true }]
   items := items ++ citems
   items := items.push (.glue { fil := true })
@@ -8501,7 +8559,7 @@ nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
-      | .run _ _ _ _ _ _ true _ _ _ => true
+      | .run _ _ _ _ _ _ _ true _ _ _ => true
       | _ => false) do
     return #[]
   -- Pass 1: obstruction intervals in line coordinates, each glyph's
@@ -8513,7 +8571,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w
     | .image _ w _ => x := x + w
-    | .run fontIdx _ _ w glyphs size _ _ _ _ =>
+    | .run fontIdx _ _ w glyphs size _ _ _ _ _ =>
       let font := fs.get fontIdx
       let sz := if size == 0 then lineSize else size
       let upem : Int := font.unitsPerEm
@@ -8541,7 +8599,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .image _ w _ =>
       out := out.push (.gap w false)
       x := x + w
-    | .run fontIdx color _ w _ size underline _ _ _ =>
+    | .run fontIdx color _ w _ size _ underline _ _ _ =>
       if !underline then
         out := out.push (.gap w false)
       else
@@ -8624,7 +8682,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
           let xHeight := match segs1.find? (fun s => match s with
             | .run .. => true
             | _ => false) with
-            | some (.run idx _ _ _ _ sz _ _ _ _) =>
+            | some (.run idx _ _ _ _ sz _ _ _ _ _) =>
               let font := fs.get idx
               let sz := if sz == 0 then j.size else sz
               scaledAt sz font font.xHeightOptical
@@ -10389,7 +10447,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
             -- only consumer of the estimate).
             let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
               | .image _ _ h => max m h
-              | .run _ _ _ _ _ size _ raise _ _ => max m (size + raise)
+              | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
               | _ => m
             let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
             lines := lines.push { x := x, y := (bandB + inkH) / 2,

@@ -55,7 +55,7 @@ def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :
   let out := layoutOf fs (elabStr src).1
   let ink := out.pages.flatMap fun p => p.lines.flatMap fun l => l.segs.flatMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.map (·.2.1)
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
     | _ => #[]
   (ink, out.diags)
 

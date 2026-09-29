@@ -590,7 +590,7 @@ def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : S
                                          origin := og },
               x := st.x + w }
   | .gap w _ => { st with x := st.x + w }
-  | .run idx color _ w glyphs segSize _ raise _ _ =>
+  | .run idx color _ w glyphs segSize _ _ raise _ _ =>
     stepRun remap lineSize ypdf st idx color w glyphs segSize raise
 
 /-- One line's operators, walked from a state whose `ops` are empty: the
@@ -1045,7 +1045,7 @@ def ContentOp.decoration : ContentOp → Bool
 /-- The glyph run a segment ships: a run's glyph ids when it has any (a
 kern is a run with none, and paints nothing). -/
 def segRuns : Seg → List (Array Nat)
-  | .run _ _ _ _ glyphs _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
+  | .run _ _ _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
   | .gap _ _ => []
   | .rule _ _ _ _ => []
   | .image _ _ _ => []

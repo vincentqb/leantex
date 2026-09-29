@@ -1,6 +1,6 @@
 import Tests.Support
 import Tests.Surface
-import Tests.Lengths
+import Tests.FontSize
 import Tests.Markdown
 import Tests.Census
 import Tests.Backends
@@ -308,6 +308,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   natbibCiteStyleChecks ref oneFace
   hspaceAffineChecks ref oneFace
   inlineRuleChecks ref oneFace
+  fontSizeAffineChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and

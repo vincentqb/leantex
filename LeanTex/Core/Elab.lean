@@ -991,7 +991,7 @@ def renderedBuiltins : List String :=
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
    "paragraph", "subparagraph", "href", "link", "url", "nolinkurl",
-   "hspace", "rule", "includegraphics", "faIcon", "pagenumber", "pagecount",
+   "hspace", "rule", "fontsize", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
@@ -2686,6 +2686,45 @@ private def lengthFormError (body : Array Raw) (why : String) : String :=
   match unsupportedLengthControl body with
   | some n => s!"register arithmetic '\\{n}' is not supported by affine lengths"
   | none => why
+
+private def lengthStringError (src why : String) : String :=
+  match ["wd", "ht", "dp", "advance", "multiply", "divide", "glueexpr",
+      "numexpr", "muexpr", "skip", "dimen", "count"].find?
+      (fun n => (src.splitOn ("\\" ++ n)).length > 1) with
+  | some n => s!"register arithmetic '\\{n}' is not supported by affine lengths"
+  | none => why
+
+/-- One `\fontsize` argument through the affine dimension grammar. NFSS
+supplies `pt` when the argument is a bare decimal; every other spelling is
+the shared parser's unchanged. -/
+private def fontDim (ctx : Ctx) (src : String) : Except String (Affine Measure) := do
+  let trimmed := src.trimAscii.toString
+  let src := if (Decl.parseDecimal trimmed).isSome then trimmed ++ "pt" else trimmed
+  let e ← Decl.parseAffineLengthExpr (ctx.tokens.entries ++ ctx.engineTokens) src
+  if e.rigid then return e
+  throw "rubber is not a font dimension"
+
+/-- Decode the compatibility marker into one typed size declaration. -/
+private def readFontSizeStyle (ctx : Ctx) (name : String) (pos : Pos) :
+    EM (Option Style) := do
+  let payload := (name.drop Compat.fontSizeMark.length).toString
+  match payload.splitOn Compat.fontSizeSep with
+  | [sizeSrc, leadingSrc] =>
+    match fontDim ctx sizeSrc with
+    | .error why =>
+      diag ctx .E0331
+        s!"cannot read font size in '\\fontsize' from '{sizeSrc}': {lengthStringError sizeSrc why}" pos
+      return none
+    | .ok size =>
+      match fontDim ctx leadingSrc with
+      | .error why =>
+        diag ctx .E0331
+          s!"cannot read leading in '\\fontsize' from '{leadingSrc}': {lengthStringError leadingSrc why}" pos
+        return none
+      | .ok leading => return some (.fontSize size leading)
+  | _ =>
+    diag ctx .E0331 "cannot read the affine dimensions in '\\fontsize'" pos
+    return none
 
 /-- `\hspace` glue through the affine parser; finite TeX glue and infinite
 fill keep their existing semantics. -/
@@ -4691,6 +4730,18 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
       elabInlinesFrom ctx raws raws.size acc ""
+  else if name.startsWith Compat.fontSizeMark then
+    let style ← readFontSizeStyle ctx name pos
+    have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
+        < sliceWeight raws i :=
+      extract_lt_slice raws.size h (Nat.lt_succ_self i)
+    let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
+    let acc := match style with
+      | some s => (flushText acc sb).push (.styled s rest)
+      | none => flushText acc sb ++ rest
+    have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+      sliceWeight_lt raws h h
+    elabInlinesFrom ctx raws raws.size acc ""
   else if let some style := declStyleOf name then
     let declCtx := { ctx with
       literalText := style == Style.mono || ctx.literalText }
@@ -5419,7 +5470,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
 `\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
-    n == "centering" || (Ir.raggedSideOf? n).isSome
+    n == "centering" || n.startsWith Compat.fontSizeMark || (Ir.raggedSideOf? n).isSome
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
 
@@ -5456,17 +5507,22 @@ private def declBlockOf (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
 knot, computed outside it. -/
 private def isDeclBlock (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Bool :=
-  (declBlockOf ctx n raws i cur).isSome
+  (cur.all isSpaceOrPar && n.startsWith Compat.fontSizeMark) ||
+    (declBlockOf ctx n raws i cur).isSome
 
 /-- Enter the rest of a declaration's scope: the declaration joins the open
 ones innermost (unchanged for `\centering` and the ragged pair). Returns
 the list to restore on leaving. -/
 private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
-    (cur : Array Raw) : EM (List Ir.Decl) := do
+    (cur : Array Raw) (pos : Pos) : EM (List Ir.Decl) := do
   let saved := (← get).blockDecls
-  match declBlockOf ctx n raws i cur with
-  | some d => modify fun st => { st with blockDecls := saved ++ [d] }
-  | none => pure ()
+  if n.startsWith Compat.fontSizeMark then
+    if let some style ← readFontSizeStyle ctx n pos then
+      modify fun st => { st with blockDecls := saved ++ [.style style] }
+  else
+    match declBlockOf ctx n raws i cur with
+    | some d => modify fun st => { st with blockDecls := saved ++ [d] }
+    | none => pure ()
   return saved
 
 /-- Leave the scope: restore what `enterBlockDecl` saved. -/
@@ -10450,7 +10506,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
-        let saved ← enterBlockDecl ctx' n raws i cur
+        let saved ← enterBlockDecl ctx' n raws i cur cpos
         let inner ← elabBlocksGo ctx' (raws.extract (i + 1) raws.size) 0
           #[] #[] (← get).flowGen
         leaveBlockDecl saved

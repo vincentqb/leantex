@@ -209,7 +209,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | _, _ => false)
   let lineColors (p : Layout.PageOut) : Array Ir.Color :=
     p.lines.filterMap fun l => l.segs.findSome? fun s => match s with
-      | .run _ c _ _ _ _ _ _ _ _ => some c
+      | .run _ c _ _ _ _ _ _ _ _ _ => some c
       | _ => none
   t "pdf pending content is dimmed, then undimmed"
     (match out.pages[0]?, out.pages[2]? with
@@ -241,7 +241,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | some p1, some p3 =>
        let colorOf (p : Layout.PageOut) (k : Nat) : Option Ir.Color :=
          p.lines[k]?.bind fun l => l.segs.findSome? fun s => match s with
-           | .run _ c _ _ _ _ _ _ _ _ => some c
+           | .run _ c _ _ _ _ _ _ _ _ _ => some c
            | _ => none
        -- Page 1: the <1> item crisp, the rest dimmed. Page 3: the <1> item
        -- dimmed again — its range ended — and the rest crisp.
@@ -255,7 +255,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- other text.
   let runColors (p : Layout.PageOut) : Array Ir.Color :=
     p.lines.flatMap fun l => l.segs.filterMap fun s => match s with
-      | .run _ c _ _ _ _ _ _ _ _ => some c
+      | .run _ c _ _ _ _ _ _ _ _ _ => some c
       | _ => none
   let colorSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
     "\\palette{ hot = #AA0000 }\n\\begin{document}\n\\begin{frame}\n" ++
@@ -641,7 +641,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == fg)
   t "standout text keeps standoutfg on every step page"
     (so.pages.all fun p => p.lines.any fun l => l.segs.any fun s => match s with
-      | .run _ c _ _ _ _ _ _ _ _ => c == bg
+      | .run _ c _ _ _ _ _ _ _ _ _ => c == bg
       | _ => false)
   -- The furniture is the frame's, not the step's: three step pages advance
   -- the deck position by ONE frame, so the section page after them shows
@@ -893,7 +893,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ _ _ _ => c == ({ r := 0x64, g := 0x72, b := 0x74 } : Ir.Color)
+           | .run _ c _ _ _ _ _ _ _ _ _ => c == ({ r := 0x64, g := 0x72, b := 0x74 } : Ir.Color)
            | _ => false
      | none => false)
   -- Invariant (a) of the footer: body ink never reaches the footer's ink,
@@ -1233,13 +1233,13 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "frame title text takes frametitlefg"
     (match out.pages[0]?.bind (·.lines[0]?) with
      | some l => l.segs.any fun s => match s with
-        | .run _ c _ _ _ _ _ _ _ _ => c == bg
+        | .run _ c _ _ _ _ _ _ _ _ _ => c == bg
         | _ => false
      | none => false)
   t "body text takes fg"
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.segs.any fun s => match s with
-        | .run _ c _ _ _ _ _ _ _ _ => c == fg
+        | .run _ c _ _ _ _ _ _ _ _ _ => c == fg
         | _ => false
      | none => false)
   let mp : Dim.Sp := geom.textWidth * 7875 / 10000
@@ -1496,7 +1496,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | some p => p.lines.any fun l =>
          l.size == sGeom.fontSize * 1440 / 1000 &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ _ _ _ => c == Ir.Color.white
+           | .run _ c _ _ _ _ _ _ _ _ _ => c == Ir.Color.white
            | _ => false
      | none => false)
   t "standout content centres vertically"
@@ -2417,7 +2417,7 @@ def realizedAgreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let runOf (needle : String) : Option (Ir.Color × Option Ir.Color) :=
     out.pages.findSome? fun p => (p.lines.find? fun l => hasStr (lineText l) needle).bind fun l =>
       l.segs.findSome? fun s => match s with
-        | .run _ c _ _ _ _ _ _ g _ => some (c, g)
+        | .run _ c _ _ _ _ _ _ _ g _ => some (c, g)
         | _ => none
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList (treeCssList "" head.toList) body.toList
@@ -3304,7 +3304,7 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- The artifact half: the title ships on no fill of its own.
   let runs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
     l.segs.filterMap fun seg => match seg with
-      | .run _ color _ _ glyphs _ _ _ ground _ =>
+      | .run _ color _ _ glyphs _ _ _ _ ground _ =>
         if glyphs.isEmpty then none else some (color, ground)
       | _ => none
   t "the unbarred title run ships on the undeclared page"
@@ -3332,7 +3332,7 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a declared bar is the title's ground"
     (barOut.pages.any fun p => p.lines.any fun l => l.segs.any fun seg =>
       match seg with
-      | .run _ color _ _ glyphs _ _ _ ground _ =>
+      | .run _ color _ _ glyphs _ _ _ _ ground _ =>
         !glyphs.isEmpty && color == grey &&
           ground == some { r := 0xEE, g := 0xEE, b := 0xEE }
       | _ => false)

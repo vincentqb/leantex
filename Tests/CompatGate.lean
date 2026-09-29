@@ -539,7 +539,7 @@ when {main} is the main language"
   let faceOf (src word : String) : Option Nat :=
     (allLines (layoutOf weighted (elabStr src).1)).findSome? fun l =>
       l.segs.findSome? fun s => match s with
-        | .run idx _ _ _ glyphs _ _ _ _ _ =>
+        | .run idx _ _ _ glyphs _ _ _ _ _ _ =>
           if glyphs.foldl (fun acc (_, c, _) => acc.push c) "" == word then some idx else none
         | _ => none
   let htmlRuns (src key : String) : Array (String × String) :=

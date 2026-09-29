@@ -4589,6 +4589,12 @@ private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)
 
+/-- Unforgeable prefix for a parsed `\fontsize` declaration. The two
+source dimensions follow, separated by NUL; source names cannot contain it,
+and elaboration removes the spelling before any IR value exists. -/
+def fontSizeMark : String := "@fontsize:"
+def fontSizeSep : String := "\u0000"
+
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one
 logical dispatcher, two compilation units. `rewriteCtrl`'s own match
@@ -4685,6 +4691,18 @@ were dropped: {o}" pos
     -- cleveref's range form: desugared by `crefRangeArm` (its docstring
     -- carries the shape and the source).
     crefRangeArm name pos raws start
+  | "fontsize" =>
+    -- NFSS records the two dimensions and `\selectfont` commits them. The
+    -- latter is already an earned no-op here; this marker carries both
+    -- values to the one typed style parser without reparsing document text.
+    let (args, k) := takeGroups raws start 2
+    if args.size < 2 then
+      say .E0304 "'\\fontsize' needs {size} and {leading} groups" pos
+      return some (#[], k)
+    let size := rawSrc (args.getD 0 #[])
+    let leading := rawSrc (args.getD 1 #[])
+    became "\\fontsize" "an affine font size and baseline skip" pos
+    return some (#[.ctrl (fontSizeMark ++ size ++ fontSizeSep ++ leading) pos], k)
   | "fontseries" =>
     -- NFSS's series declaration (fntguide §2.2): the weight half rides the
     -- unforgeable `@series:` marker into elaboration (`declStyleOf`, the

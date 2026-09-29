@@ -447,7 +447,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
       let mut runFonts : Array Nat := #[]
       for seg in l.segs do
         match seg with
-        | .run idx color _ _ glyphs size _ _ _ _ =>
+        | .run idx color _ _ glyphs size _ _ _ _ _ =>
           runSize := max runSize size
           runFonts := runFonts.push idx
           if coveredColors.contains color then
@@ -607,7 +607,7 @@ a gap as one space (`gapAsSpace := false` reads the bare glyphs — a page
 number's centring gaps are not its text). -/
 def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
   l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
@@ -618,7 +618,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
   let mut x := l.x
   for seg in l.segs do
     match seg with
-    | .run idx _ _ w gs _ _ _ _ _ =>
+    | .run idx _ _ w gs _ _ _ _ _ _ =>
       out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
       x := x + w
     | .gap w _ => x := x + w
@@ -630,14 +630,14 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
 as a line of its own that sets none. -/
 def hasGlyphRun (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
     | _ => false
 
 /-- A line's text as a reader sees it: `lineText`, but a glyphless run — a
 tie, which ships as a box a space wide (Layout's no-break-space arm) —
 reads as the space the page shows. -/
 def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
-  | .run _ _ _ _ glyphs _ _ _ _ _ =>
+  | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c, _) => s.push c) s
   | .gap _ _ => s.push ' '
   | _ => s) ""
@@ -968,6 +968,55 @@ What a claim about the body's setting means; a furniture claim reads the
 flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
+
+/-- The x each glyph run of a shipped line starts at, with its text. -/
+def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
+  let mut x := l.x
+  let mut out : Array (String × Dim.Sp) := #[]
+  for s in l.segs do
+    match s with
+    | .run _ _ _ w glyphs _ _ _ _ _ _ =>
+      unless glyphs.isEmpty do
+        out := out.push (String.ofList (glyphs.toList.map (·.2.1)), x)
+      x := x + w
+    | .gap w _ => x := x + w
+    | .rule w _ _ _ => x := x + w
+    | .image _ w _ => x := x + w
+  return out
+
+/-- Gaps that stand before glyph ink, excluding a paragraph's closing fill. -/
+def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
+  let mut out : Array Dim.Sp := #[]
+  let mut pending : Array Dim.Sp := #[]
+  for s in l.segs do
+    match s with
+    | .gap w _ => pending := pending.push w
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
+      unless glyphs.isEmpty do
+        out := out ++ pending
+        pending := #[]
+    | .rule _ _ _ _ | .image _ _ _ => pure ()
+  return out
+
+/-- Painted inline rules on shipped body pages. -/
+def metricRuleSegs (out : Layout.Out) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+  (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .rule w h raise color => some (w, h, raise, color)
+    | _ => none
+
+/-- Sizes of glyph runs on shipped body pages. -/
+def metricRunSizes (out : Layout.Out) : Array Dim.Sp :=
+  (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .run _ _ _ _ glyphs size _ _ _ _ _ => if glyphs.isEmpty then none else some size
+    | _ => none
+
+/-- A compact article wrapper for metric command checks. -/
+def metricDoc (body : String) : String :=
+  "\\documentclass{article}\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+
+/-- A metric check's source through elaboration and shipped layout. -/
+def metricOut (oneFace : Font.FontSet) (body : String) : Layout.Out :=
+  layoutOf oneFace (elabStr (metricDoc body)).1
 
 /-- The glyphs a source's body lines ship, in page order — the instrument for
 a claim about what a page shows, read off `Layout.Out` rather than an IR

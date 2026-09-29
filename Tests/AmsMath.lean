@@ -85,7 +85,7 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     let (d, _) := elabStr src
     (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap fun s =>
       match s with
-      | .run _ _ _ _ glyphs sz _ _ _ _ => if glyphs.isEmpty then none else some sz
+      | .run _ _ _ _ glyphs sz _ _ _ _ _ => if glyphs.isEmpty then none else some sz
       | _ => none
   let oneSize (xs : Array Dim.Sp) : Bool :=
     !xs.isEmpty && xs.all (· == xs[0]!)
@@ -112,7 +112,7 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     let (d, _) := elabStr src
     let raises := (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap
       fun s => match s with
-        | .run _ _ _ _ glyphs _ _ raise _ _ =>
+        | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
           if glyphs.any (·.2.1 == MathParse.italicVar 'a') then some (0, raise)
           else if glyphs.any (·.2.1 == MathParse.italicVar 'c') then some (1, raise)
           else none
@@ -226,7 +226,7 @@ def amsTagTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let glyphs (src : String) : Array (Nat × Char × Dim.Sp) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.flatMap fun s =>
       match s with
-      | .run idx _ _ _ gs _ _ raise _ _ => gs.map fun g => (idx, g.2.1, raise)
+      | .run idx _ _ _ gs _ _ _ raise _ _ => gs.map fun g => (idx, g.2.1, raise)
       | _ => #[]
   let formula : List (Nat × Char) := [(math, v 'a'), (math, '='), (math, v 'b')]
   let cases : List (String × List (Nat × Char) × String × String) := [
@@ -335,7 +335,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       (w > 0 && w == wb)
   let sizeOf (src : String) (c : Char) : Option Dim.Sp :=
     ((laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
-      | .run _ _ _ _ gs sz _ _ _ _ => if gs.any (·.2.1 == c) then some sz else none
+      | .run _ _ _ _ gs sz _ _ _ _ _ => if gs.any (·.2.1 == c) then some sz else none
       | _ => none).head?
   let (a, x) := (MathParse.italicVar 'a', MathParse.italicVar 'x')
   t "amsmath fraction: an inline \\dfrac's parts set at the formula's size"
@@ -351,7 +351,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       | _ => none
   let mathGlyphs (src : String) : List (Nat × Char) :=
     (laid src).toList.flatMap fun l => l.segs.toList.flatMap fun s => match s with
-      | .run idx _ _ _ gs _ _ _ _ _ => gs.toList.map fun g => (idx, g.2.1)
+      | .run idx _ _ _ gs _ _ _ _ _ _ => gs.toList.map fun g => (idx, g.2.1)
       | _ => []
   let mathFace := fs.math.getD 0
   t "amsmath binom: a stack sets its parts between its parentheses with no rule"
@@ -363,7 +363,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   -- The parenthesis's variant, read off the run and the face that set it.
   let parenExtent (src : String) : Option (Int × Nat) :=
     ((laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
-      | .run idx _ _ _ gs _ _ _ _ _ => (gs.find? (·.2.1 == '(')).bind fun (g, _) =>
+      | .run idx _ _ _ gs _ _ _ _ _ _ => (gs.find? (·.2.1 == '(')).bind fun (g, _) =>
           (fs.fonts[idx]?).bind fun f =>
             (f.yExtent g).map fun (lo, hi) => (hi - lo, f.unitsPerEm)
       | _ => none).head?

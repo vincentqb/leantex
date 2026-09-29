@@ -2282,6 +2282,9 @@ inductive Style where
   selecting upright clears italic and small caps both. -/
   | upright
   | size (name : String)
+  /-- `\fontsize{size}{leading}\selectfont`: both dimensions stay affine
+  until the run's local measure and current font metrics are known. -/
+  | fontSize (size leading : Affine Measure)
   /-- A language switch (BCP 47 tag): `\foreignlanguage`, `\selectlanguage`,
   babel's `otherlanguage`. Not a new `Inline` constructor — every walk
   already recurses through `.styled` generically, and the attribute is
@@ -2463,6 +2466,7 @@ def Style.label : Style → String
   | .series w => s!"series:{w.series}"
   | .upright => "upright"
   | .size n => s!"size:{n}"
+  | .fontSize _ _ => "fontsize"
   | .lang tag => s!"lang:{tag}"
 
 
@@ -3922,17 +3926,17 @@ private def milliDecimal (n : Int) : String :=
       else if digits.endsWith "0" then (digits.dropEnd 1).toString else digits
     sign ++ wholeText ++ "." ++ digits
 
-private def TrackTerm.css : TrackTerm → Array String
+private def TrackTerm.css (horizontalUnit : String) : TrackTerm → Array String
   | .length l =>
     (if l.sp == 0 then #[] else #[l.sp.toPtString ++ "pt"]) ++
     (if l.em == 0 then #[] else #[milliDecimal l.em ++ "em"]) ++
     (if l.ex == 0 then #[] else #[milliDecimal l.ex ++ "ex"])
   | .measure m num den =>
-    let unit := if m == .textHeight then "dvh" else "%"
+    let unit := if m == .textHeight then "dvh" else horizontalUnit
     #[milliDecimal (num * 100000 / den) ++ unit]
 
-private def affineTrackCss (e : Affine Measure) : String :=
-  let terms := (affineTrackTerms e).flatMap TrackTerm.css
+private def affineTrackCss (e : Affine Measure) (horizontalUnit : String) : String :=
+  let terms := (affineTrackTerms e).flatMap (TrackTerm.css horizontalUnit)
   match terms[0]? with
   | none => "0pt"
   | some first =>
@@ -3947,7 +3951,13 @@ def Track.css : Track → String
   | .free => "1fr"
   | .percent p => (if p % 10 == 0 then s!"{p / 10}" else s!"{p / 10}.{p % 10}") ++ "%"
   | .length l => l.toPtString ++ "pt"
-  | .affine e => affineTrackCss e
+  | .affine e => affineTrackCss e "%"
+
+/-- An affine local measure in a property whose percentages would use the
+wrong axis (font size, line height, block size): `cqi` is the nearest
+query container's inline measure. -/
+def Track.contextCss (e : Affine Measure) : String :=
+  affineTrackCss e "cqi"
 
 /-- Does this declaration name a width at all? The question the census and
 the diagnostics ask, so `share` is named once rather than tested as a

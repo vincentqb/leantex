@@ -64,7 +64,7 @@ def docInk (doc : Ir.Doc) : List Char :=
 
 /-- The ink a shipped segment carries. -/
 def segInk : Seg → List Char
-  | .run _ _ _ _ glyphs _ _ _ _ _ => inkChars (String.ofList (glyphs.toList.map (·.2.1)))
+  | .run _ _ _ _ glyphs _ _ _ _ _ _ => inkChars (String.ofList (glyphs.toList.map (·.2.1)))
   | _ => []
 
 def lineInk (l : LineOut) : List Char := l.segs.toList.flatMap segInk
@@ -242,7 +242,7 @@ def runPairs (defaultBg : Ir.Color) (p : PageOut) :
   for l in p.lines do
     for s in l.segs do
       match s with
-      | .run _ color _ _ glyphs _ _ _ ground _ =>
+      | .run _ color _ _ glyphs _ _ _ _ ground _ =>
         unless glyphs.isEmpty do
           out := out.push (color, ground.getD defaultBg)
       | _ => pure ()
