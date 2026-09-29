@@ -221,6 +221,13 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((styledMarkerPage.splitOn
       "{ content: \"–  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
   t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0331"))
+  let (nestedMarkerPage, nestedMarkerDs) :=
+    HtmlDoc.emit {} (markerDoc "\\textbf{\\textit{»}}")
+  t "html nested text-command marker reaches its exact ::marker styles"
+    ((nestedMarkerPage.splitOn
+      "{ content: \"»  \"; font-weight: 600; font-style: italic; }").length == 2)
+  t "html nested text-command marker is clean"
+    (nestedMarkerDs.all (·.code != "W0331"))
   let (contentMarkerPage, contentMarkerDs) :=
     HtmlDoc.emit {} (markerDoc "\\includegraphics{rects.png}")
   t "html inexpressible marker is named, not silently defaulted"

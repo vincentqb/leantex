@@ -481,11 +481,17 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .cite _ _ => none
   | .footnote _ _ => none
 
+private def markerCorr : Inline → Bool
+  | .italicCorr _ => true
+  | _ => false
+
 def markerCssList (scale : List (String × Nat)) (decls : Array String) :
     List Inline → Option MarkerCss
-  | [x] => markerCssOne scale decls x
-  | [x, .italicCorr _] => markerCssOne scale decls x
-  | xs => (markerTextInto "" xs).map fun t => { text := t, decls := decls }
+  | [] => some { text := "", decls := decls }
+  | x :: rest =>
+    if markerCorr x then markerCssList scale decls rest
+    else if rest.all markerCorr then markerCssOne scale decls x
+    else (markerTextInto "" (x :: rest)).map fun t => { text := t, decls := decls }
 
 end
 
@@ -504,6 +510,21 @@ private theorem markerTextInto_text (xs : List Inline) :
     intro acc t h
     cases x <;> simp [markerTextInto] at h <;>
       (rw [ih _ _ h]; simp [Ir.plainTextList, Ir.plainTextOne, String.append_assoc])
+
+private theorem markerCorrOne_text (x : Inline) (h : markerCorr x = true) :
+    Ir.plainTextOne x = "" := by
+  cases x <;> simp [markerCorr, Ir.plainTextOne] at h ⊢
+
+private theorem markerCorr_text (xs : List Inline)
+    (h : ∀ x ∈ xs, markerCorr x = true) : Ir.plainTextList xs = "" := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx : markerCorr x = true := h x (by simp)
+    have hxs : ∀ y ∈ xs, markerCorr y = true := by
+      intro y hy
+      exact h y (by simp [hy])
+    simp [Ir.plainTextList, markerCorrOne_text x hx, ih hxs]
 
 mutual
 
@@ -534,7 +555,7 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
   | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
-  | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ =>
+  | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
     simp [markerCssOne] at h
   | .alt _ _ _ _ => simp [markerCssOne] at h
 
@@ -543,27 +564,25 @@ theorem markerCssList_text (scale : List (String × Nat)) (decls : Array String)
     (r : MarkerCss) (h : markerCssList scale decls xs = some r) :
     r.text = Ir.plainTextList xs := by
   match xs with
-  | [x] =>
-    rw [markerCssList] at h
-    simp [Ir.plainTextList, markerCssOne_text scale decls x r h]
-  | [x, .italicCorr m] =>
-    rw [markerCssList] at h
-    simp [Ir.plainTextList, Ir.plainTextOne, markerCssOne_text scale decls x r h]
   | [] =>
-    simp [markerCssList, markerTextInto] at h
+    simp [markerCssList] at h
     simp [← h, Ir.plainTextList]
-  | x :: y :: rest =>
-    rw [markerCssList.eq_def] at h
+  | x :: rest =>
+    rw [markerCssList] at h
     split at h
-    · simp_all
-    · rename_i x' m heq
-      simp only [List.cons.injEq] at heq
-      obtain ⟨rfl, rfl, rfl⟩ := heq
-      simp [Ir.plainTextList, Ir.plainTextOne, markerCssOne_text scale decls x r h]
-    · simp only [Option.map_eq_some_iff] at h
-      obtain ⟨t, ht, hr⟩ := h
-      rw [← hr]
-      simpa using markerTextInto_text _ _ _ ht
+    · rename_i hx
+      rw [markerCssList_text scale decls rest r h]
+      simp [Ir.plainTextList, markerCorrOne_text x hx]
+    · split at h
+      · rename_i hc
+        have hrest : ∀ y ∈ rest, markerCorr y = true := by
+          simpa only [List.all_eq_true] using hc
+        rw [markerCssOne_text scale decls x r h]
+        simp [Ir.plainTextList, markerCorr_text rest hrest]
+      · simp only [Option.map_eq_some_iff] at h
+        obtain ⟨t, ht, hr⟩ := h
+        rw [← hr]
+        simpa using markerTextInto_text (x :: rest) "" t ht
 
 end
 
