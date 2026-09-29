@@ -1208,6 +1208,8 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .label k => out.push (.label k)
   | .ref k form text anchor => out.push (.ref k form text anchor)
   | .fill => out.push .fill
+  | .hspace g keep => out.push (.hspace g keep)
+  | .rule w h r => out.push (.rule w h r)
   | .strut h => out.push (.strut h)
   | .italicCorr m => out.push (.italicCorr m)
   | .pageNumber => out.push .pageNumber
@@ -1241,7 +1243,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .footnote _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => true
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => true
 
 def citeFreeList : List Ir.Inline → Bool
   | [] => true
@@ -1268,7 +1270,7 @@ where
     | .alt _ _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
-    | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+    | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
       simp [resolveInline]
 
 mutual
@@ -1309,7 +1311,7 @@ theorem resolveInline_id (p : CitePunct) (find : Resolver)
     rw [resolveInline, resolveInlines_id p find body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     rw [resolveInline]
 
 theorem resolveInlines_id (p : CitePunct) (find : Resolver)
@@ -1742,7 +1744,7 @@ theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) 
       simp only [Ir.pendingLeaf, Array.append_empty] at h
       exact .inl h
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,

@@ -191,6 +191,8 @@ def inlineRaw (out : Array Node) : Inline → Array Node
   | .ref _ _ text target => out.push (.node (.reference target) #[.leaf 0 (.text text)])
   | .underline body => inlinesRaw out body.toList
   | .fill => out
+  | .hspace _ _ => out
+  | .rule _ _ _ => out.push (.node .artifact #[])
   | .pageNumber => out
   | .pageCount => out
   | .linebreak _ => out.push (.leaf 0 .linebreak)
@@ -765,6 +767,9 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
   | .fill => simp [inlineRaw, plainTextOne]
+  | .hspace g keep => simp [inlineRaw, plainTextOne]
+  | .rule w h r => simp [inlineRaw, plainTextOne, leafTextList_snoc, leafTextOne_node_exact,
+      leafTextList_nil_exact]
   | .pageNumber => simp [inlineRaw, plainTextOne]
   | .pageCount => simp [inlineRaw, plainTextOne]
   | .linebreak extra => simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, Leaf.census,
@@ -1091,6 +1096,9 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
   | .fill => rfl
+  | .hspace g keep => rfl
+  | .rule w h r => simp [inlineRaw, headingsList_snoc, headingsOne_node_exact,
+      headingsList_nil_exact, Kind.outlineDescends, Kind.outlineEmit]
   | .pageNumber => rfl
   | .pageCount => rfl
   | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
@@ -1406,6 +1414,9 @@ theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x
     simp only [inlineRaw, foldInline, altPush]
     exact inlinesRaw_alts is out body.toList
   | .fill => simp [inlineRaw, foldInline, altPush]
+  | .hspace g keep => simp [inlineRaw, foldInline, altPush]
+  | .rule w h r => simp [inlineRaw, altsList_snoc, altsOne_node_exact,
+      altsList_nil_exact, foldInline, altPush]
   | .pageNumber => simp [inlineRaw, foldInline, altPush]
   | .pageCount => simp [inlineRaw, foldInline, altPush]
   | .linebreak extra => simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, Leaf.altCensus,
@@ -1797,6 +1808,8 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
     simp only [inlineRaw]
     exact inlinesRaw_acc out body.toList
   | .fill => simp [inlineRaw]
+  | .hspace g keep => simp [inlineRaw]
+  | .rule w h r => simp [inlineRaw]
   | .pageNumber => simp [inlineRaw]
   | .pageCount => simp [inlineRaw]
   | .linebreak extra => simp [inlineRaw]

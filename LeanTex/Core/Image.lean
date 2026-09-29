@@ -2156,7 +2156,7 @@ def Len.frac (measure : Measure) (permille : Int) : Len :=
 layout. Every horizontal source name denotes the containing box here, as a
 minipage initializes them. -/
 def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
-  (l.value.eval (MeasureValues.horizontal textW textH).find).width.sp
+  l.value.resolveWidth (MeasureValues.horizontal textW textH)
 
 /-- The sizing request from the source, unresolved. `scaleNum/scaleDen`
 carry `scale = 0.6` exactly; 1/1 is unscaled. -/

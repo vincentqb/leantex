@@ -709,7 +709,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   -- a note's body is ink like any other; it holds the contrast contract
   | .footnote _ body => usesInlines cx acc body.toList
-  | .fill | .strut _ | .italicCorr _ | .linebreak _ => acc
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.
   | .image _ _ _ => acc

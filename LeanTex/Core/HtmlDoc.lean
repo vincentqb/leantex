@@ -422,6 +422,8 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .link _ _ :: _ => none
   | .underline _ :: _ => none
   | .fill :: _ => none
+  | .hspace _ _ :: _ => none
+  | .rule _ _ _ :: _ => none
   | .strut _ :: _ => none
   -- a text command's italic correction is a kern: no ::marker content
   | .italicCorr _ :: rest => markerTextInto acc rest
@@ -467,6 +469,8 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .link _ _ => none
   | .underline _ => none
   | .fill => none
+  | .hspace _ _ => none
+  | .rule _ _ _ => none
   | .strut _ => none
   | .italicCorr _ => none
   | .pageNumber => none
@@ -554,8 +558,9 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
-  | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
-  | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+  | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
+  | .linebreak _ | .step _ _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
+  | .cite _ _ | .footnote _ _ =>
     simp [markerCssOne] at h
   | .alt _ _ _ _ => simp [markerCssOne] at h
 
@@ -4526,6 +4531,21 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[Html.elem "span" #[Html.text (String.ofList [c])] #[("aria-hidden", "true")]]
       #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
+  -- Glue is room in the line, not ink. Infinite stretch keeps the fill
+  -- carrier; a finite component remains its authored inline offset.
+  | .hspace e _ =>
+    let finite := e.withoutFil
+    let room := Ir.Track.css (.affine finite)
+    let node := Html.elem "span" #[] #[("style", s!"margin-inline-start:{room}")]
+    if e.hasFil then
+      (acc.push node).push (Html.elem "span" #[] #[("class", "fill")])
+    else acc.push node
+  | .rule width height raise =>
+    let w := Ir.Track.css (.affine width)
+    let h := Ir.Track.css (.affine height)
+    let r := Ir.Track.css (.affine raise)
+    acc.push (Html.elem "span" #[] #[
+      ("style", s!"display:inline-block;inline-size:{w};block-size:{h};vertical-align:{r};background:currentColor")])
   -- A strut props its line open in print; a continuous page reads at its
   -- own line-height, so the carrier is empty and adds no box.
   | .strut _ => acc
@@ -4740,6 +4760,7 @@ the CSS equivalent of the stretch it asked for. -/
 private def hasFill (xs : Array Inline) : Bool :=
   xs.any fun x => match x with
     | .fill => true
+    | .hspace e _ => e.hasFil
     | _ => false
 
 /-- Split inline content at each `\\`. A stretched row is a column of rows, one
@@ -4766,6 +4787,15 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
     | .fill =>
       out := out.push cur
       cur := #[]
+    | .hspace e keep =>
+      if e.hasFil then
+        let finite := e.withoutFil
+        let zero := MeasureValues.horizontal 0 0
+        unless !finite.anyRef (fun _ => true) && finite.eval zero.find == {} do
+          cur := cur.push (.hspace finite keep)
+        out := out.push cur
+        cur := #[]
+      else cur := cur.push x
     | other => cur := cur.push other
   return out.push cur
 
@@ -5282,7 +5312,7 @@ def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :
   | .role n body =>
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
   | .italicCorr _ => acc
-  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .strut _
+  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))
 

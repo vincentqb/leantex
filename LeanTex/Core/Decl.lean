@@ -213,6 +213,17 @@ def parseLength (s : String) : Option Length :=
   | none => none
   | some (mantissa, scale) => lengthOfUnit mantissa scale unit
 
+/-- A stretch in one of TeX's infinite units and its order. -/
+def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
+  let t := s.trimAscii.toString
+  let digits := t.toList.takeWhile fun c => c.isDigit || c == '.' || c == '+'
+  let order := match String.ofList (t.toList.drop digits.length) with
+    | "fil" => some 1
+    | "fill" => some 2
+    | "filll" => some 3
+    | _ => none
+  order.bind fun o => (parseDecimal (String.ofList digits)).map (·, o)
+
 /-- `<len> [plus <len>] [minus <len>]`, TeX's glue spelling. -/
 def parseGlue (s : String) : Option SymGlue := do
   let words := (s.trimAscii.toString.splitOn " ").filterMap fun w =>

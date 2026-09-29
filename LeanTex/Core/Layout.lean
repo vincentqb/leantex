@@ -1095,6 +1095,8 @@ private inductive Tk where
   | word (style : TextStyle) (chars : Array Char) (attr : Attribution)
   | space (style : TextStyle)
   | fill
+  | hskip (style : TextStyle) (glue : Affine Measure) (keep : Bool)
+  | rule (style : TextStyle) (width height raise : Affine Measure)
   /-- A strut: zero width, this much height above the baseline. -/
   | strut (height : SymGlue)
   | brk (extra : SymGlue)
@@ -1128,7 +1130,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .space _ | .fill | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
+  | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
 
 /-- The Layout-private marker a decorating site wraps its declared content
 in: `.role leafRole content`. A role is transparent to layout
@@ -1397,6 +1399,9 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .image src spec _ => { st with toks := st.toks.push (.img src spec), ctr := st.ctr.skip 1 }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
+  | .hspace g keep => { st with toks := st.toks.push (.hskip sty g keep) }
+  | .rule width height raise =>
+    { st with toks := st.toks.push (.rule sty width height raise) }
   | .strut h => { st with toks := st.toks.push (.strut h) }
   | .italicCorr maybe => { st with toks := st.toks.push (.corr maybe sty) }
   -- Math the engine cannot model (the constructs M6 still owes): the
@@ -1644,7 +1649,7 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
     rcases hm with hm | hm
     · exact Or.inl hm
     · subst hm; exact Or.inr rfl
-  | .fill =>
+  | .fill | .hspace _ _ | .rule _ _ _ =>
     refine ⟨h, fun tk hm => ?_⟩
     simp only [flattenOne, Array.mem_push] at hm
     rcases hm with hm | hm
@@ -2323,7 +2328,7 @@ private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle
   | .footnote _ body => weightKeysInlineList acc {} body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => acc
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => acc
 
 private def weightKeysInlineList (acc : Array (Nat × Nat × Bool))
     (sty : TextStyle) : List Ir.Inline → Array (Nat × Nat × Bool)
@@ -3350,6 +3355,24 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
     { acc with items := acc.items.push (.glue { fil := true }) }
+  | .hskip sty e keep =>
+    let values := MeasureValues.horizontal textW textH
+    let g := e.eval values.find
+    let glue := g.resolve (size * sty.scale / 1000) (xHeight * sty.scale / 1000)
+    let items := if keep then
+        (acc.items.push (.rule 0 0 0 Ir.Color.black)).push
+          (.pen 0 10000 false 0 Ir.Color.black #[])
+      else acc.items
+    { acc with items := items.push (.glue glue) }
+  | .rule sty width height raise =>
+    let values := MeasureValues.horizontal textW textH
+    let fs := size * sty.scale / 1000
+    let xh := xHeight * sty.scale / 1000
+    let w := width.resolveWidth values fs xh
+    let h := height.resolveWidth values fs xh
+    let r := raise.resolveWidth values fs xh
+    let item : Item := .rule (max 0 w) (max 0 h) r sty.color
+    { acc with items := acc.items.push item }
   | .corr maybe sty => correctItalic fs maybe sty acc
   | .strut g =>
     -- Zero width, declared height: raises the line box, ships no ink.
@@ -3605,11 +3628,15 @@ def maxProtrudeRight (items : Array Item) : Sp := Id.run do
     | _ => pure ()
   return best
 
+/-- Where a line's content starts: past the glue and penalties a break
+leaves, which TeX discards after a line break. A paragraph's first line
+follows no break, so authored glue at index zero remains. -/
 def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
   let mut a := start
   for _ in [a:items.size] do
     match items[a]? with
-    | some (.glue _) => a := a + 1
+    | some (.glue g) =>
+      if start == 0 && !g.word && !g.parfill then break else a := a + 1
     | some (.pen _ cost _ _ _ _) => if cost ≥ 10000 then break else a := a + 1
     | _ => break
   return a
@@ -4011,8 +4038,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
             g.width
       if m.shrink < -delta then
         overfull := true
-      segs := segs.push (.gap (max 0 setW) g.word)
-      width := width + max 0 setW
+      -- Authored glue can pull as well as push; interword glue cannot go
+      -- negative because its declared shrink bounds it above.
+      segs := segs.push (.gap setW g.word)
+      width := width + setW
     | .pen _ _ _ _ _ _ => pure ()
   -- breaking at a penalty appends its glyphs (the hyphen)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
@@ -6371,14 +6400,14 @@ def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
   match spec.width with
   | .natural => nats.zipIdx.foldl (init := 0) fun m (r, i) =>
       if inSpan spans i j then m else max m ((r[j]?).getD 0)
-  | .sized e => (e.eval (MeasureValues.horizontal total 0).find).width.sp
+  | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
 
 /-- What a span needs across the columns it covers: its text's natural
 width, or the width its own `p{…}` spec declares. -/
 def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
   match s.spec.width with
   | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
-  | .sized e => (e.eval (MeasureValues.horizontal total 0).find).width.sp
+  | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
 
 /-- The box a span sets in: the columns it covers and the `2·colsep` gaps
 between them. -/

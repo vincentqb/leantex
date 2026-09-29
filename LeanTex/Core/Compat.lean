@@ -3146,7 +3146,7 @@ end
 `\relax` vanishes. Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
-private def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
+def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
     Option String := Id.run do
   let mut s := ""
   let mut prevNumber := false

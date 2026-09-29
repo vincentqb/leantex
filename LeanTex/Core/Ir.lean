@@ -2646,6 +2646,11 @@ inductive Inline where
   | underline (body : Array Inline)
   /-- `\hfill`: stretch that pushes what follows to the far margin. -/
   | fill
+  /-- `\hspace{...}`: affine horizontal glue; the starred form survives a
+  line break. -/
+  | hspace (glue : Affine Measure) (keep : Bool)
+  /-- `\rule[raise]{width}{height}`: a painted inline rectangle. -/
+  | rule (width height raise : Affine Measure)
   /-- Running-content placeholders, resolved once page count is known. -/
   | pageNumber
   | pageCount
@@ -3866,7 +3871,7 @@ def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
   | .share => none
   | .sized e =>
     let values := MeasureValues.horizontal measure 0
-    some (min measure (max 0 (e.eval values.find).width.sp))
+    some (min measure (max 0 (e.resolveWidth values)))
 
 /-- The declared width as a CSS grid track, structured: the same three
 readings the page resolves, before they are spelled
@@ -6310,6 +6315,8 @@ def fillOne (content : Array Inline) : Inline → Inline
   | .label k => .label k
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
+  | .hspace g keep => .hspace g keep
+  | .rule w h r => .rule w h r
   | .strut h => .strut h
   | .italicCorr m => .italicCorr m
   | .pageNumber => .pageNumber
@@ -7325,7 +7332,7 @@ def plainTextOne (x : Inline) : String :=
   | .step _ _ body => plainTextList body.toList
   | .alt _ _ firstPage otherPage =>
     plainTextList firstPage.toList ++ plainTextList otherPage.toList
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount => ""
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount => ""
   | .image _ _ _ => ""
   -- an icon is worth its text alternative: what the markdown twin renders
   | .icon _ label => label
@@ -7396,7 +7403,7 @@ def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   | .footnote _ body => foldInlineList fi (fi acc x) body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
 
 def foldInlineList (fi : α → Inline → α) (acc : α) : List Inline → α
   | [] => acc
@@ -7550,7 +7557,7 @@ def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) : α :=
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     w.closeInline ctx (w.openInline ctx acc x).1 x
 
 def foldCtxInlineList (w : CtxFold γ α) (ctx : γ) (acc : α) : List Inline → α
@@ -7751,7 +7758,7 @@ theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inline → 
     exact foldCtxInlineList_covers fb fi _ body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
 
@@ -8146,7 +8153,7 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .label _ | .ref _ _ _ _ | .cite _ _
   -- a footnote's links are the note's own, never navigation entries
   | .footnote _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
 
@@ -8294,6 +8301,10 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}  first page\n" ++ dumpInlines (ind ++ "    ") firstPage ++
     s!"{ind}  other page\n" ++ dumpInlines (ind ++ "    ") otherPage
   | .fill => s!"{ind}fill\n"
+  | .hspace g keep =>
+    s!"{ind}hspace{if keep then "*" else ""} {Track.css (.affine g)}\n"
+  | .rule w h r =>
+    s!"{ind}rule {Track.css (.affine w)} × {Track.css (.affine h)} raise {Track.css (.affine r)}\n"
   | .strut _ => s!"{ind}strut\n"
   | .italicCorr maybe => s!"{ind}italicCorr{if maybe then " maybe" else ""}\n"
   | .label key => s!"{ind}label {key.quote}\n"
@@ -9068,7 +9079,7 @@ def maxStepInline : Inline → Nat
       (max (maxStepInlineList firstPage.toList) (maxStepInlineList otherPage.toList))
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
 
 end
 
@@ -9289,6 +9300,8 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   | .label k => .label k
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
+  | .hspace g keep => .hspace g keep
+  | .rule w h r => .rule w h r
   | .strut h => .strut h
   | .italicCorr m => .italicCorr m
   | .pageNumber => .pageNumber
@@ -9833,7 +9846,7 @@ def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
     footnoteInlineList (footnoteInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
 
@@ -10151,7 +10164,7 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     -- the walk leaves a formula node whole (a pending formula dims in the
     -- backends' hands); its census is its source, untouched on both sides
     rfl
-  | .text _ | .math _ _ | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _
+  | .text _ | .math _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _
   | .label _ | .ref _ _ _ _
   | .icon _ _ | .cite _ _ =>
     rfl
@@ -10878,6 +10891,8 @@ def recolorRolesInline (recolor : RoleRecolor) (pal : Palette)
   | .ref k p t tg => .ref k p t tg
   | .cite t keys => .cite t keys
   | .fill => .fill
+  | .hspace g keep => .hspace g keep
+  | .rule w h r => .rule w h r
   | .strut h => .strut h
   | .italicCorr m => .italicCorr m
   | .pageNumber => .pageNumber
@@ -10949,7 +10964,7 @@ theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
       plainTextList]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .fill | .strut _ | .italicCorr _ | .pageNumber | .pageCount
+  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ => rfl
 
 end
@@ -12843,6 +12858,8 @@ def mapInline (f : Inline → Inline) : Inline → Inline
   | .ref k p t tg => f (.ref k p t tg)
   | .cite tx keys => f (.cite tx keys)
   | .fill => f .fill
+  | .hspace g keep => f (.hspace g keep)
+  | .rule w h r => f (.rule w h r)
   | .strut h => f (.strut h)
   | .italicCorr m => f (.italicCorr m)
   | .pageNumber => f .pageNumber
@@ -13002,7 +13019,7 @@ theorem mapInline_text (f : Inline → Inline)
     rw [mapInlineList_text f hf body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _ | .italicCorr _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => exact hf _
 
 theorem mapInlineList_text (f : Inline → Inline)
@@ -13079,7 +13096,7 @@ theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _ | .italicCorr _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => simp [foldInline]
 
 theorem foldInlineList_or (p : Inline → Bool) (b : Bool) (xs : List Inline) :
@@ -13149,7 +13166,7 @@ theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
     simp
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _ | .italicCorr _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ =>
     exact hf _ (by simpa [foldInline] using h)
 
@@ -13475,7 +13492,7 @@ def textUnder (p : Style → Bool) (x : Inline) : String :=
     textUnderList p (textUnderList p "" firstPage.toList) otherPage.toList
   | .footnote _ body => textUnderList p "" body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _ | .italicCorr _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => ""
 
 def textUnderList (p : Style → Bool) (acc : String) (xs : List Inline) : String :=

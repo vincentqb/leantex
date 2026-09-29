@@ -79,6 +79,19 @@ private def inlineInto (acc : String) : Inline → String
   | .fill =>
     let acc := if acc.endsWith " " then (acc.dropEnd 1).toString else acc
     acc ++ " — "
+  -- Horizontal glue separates prose when it has positive room or a local
+  -- measure; a fill has the same prose separator as `\hfill`. A painted
+  -- rule has no textual reading.
+  | .hspace e _ =>
+    let zero := Dim.MeasureValues.horizontal 0 0
+    let g := e.eval (Dim.MeasureValues.find zero)
+    if g.fil then
+      let acc := if acc.endsWith " " then (acc.dropEnd 1).toString else acc
+      acc ++ " — "
+    else if e.anyRef (fun _ => true) || g.width.sp > 0 || g.width.em > 0 || g.width.ex > 0 then
+      if acc.endsWith " " then acc else acc ++ " "
+    else acc
+  | .rule _ _ _ => acc
   | .pageNumber => acc
   | .pageCount => acc
   -- a strut is metric, and text has no line box to prop open

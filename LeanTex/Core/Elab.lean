@@ -991,7 +991,7 @@ def renderedBuiltins : List String :=
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
    "paragraph", "subparagraph", "href", "link", "url", "nolinkurl",
-   "includegraphics", "faIcon", "pagenumber", "pagecount",
+   "hspace", "rule", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
@@ -2661,6 +2661,126 @@ private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := 
     diag ctx .E0331 s!"cannot read a length from '{src}'" pos
       (help := "lengths look like 10pt or 1.5ex, or name a token")
     pure {}
+
+/-- A raw TeX length with macro arguments and kernel unit controls
+substituted before the shared string parser reads it. -/
+private def inlineLengthSrc (ctx : Ctx) (body : Array Raw) : String :=
+  (Compat.lengthSrcBy (fun n _ => match ctx.args.find? (·.1 == n) with
+    | some (_, some inlines) => some (Ir.plainText inlines)
+    | some (_, none) => some ""
+    | none => some n) body).getD ""
+
+/-- A register operation the affine grammar deliberately does not model.
+These controls need mutable TeX register state rather than a local geometric
+value, so each consumer names the boundary instead of treating the register
+name as a token or as zero. -/
+private def unsupportedLengthControl (body : Array Raw) : Option String :=
+  body.findSome? fun r => match r with
+    | .ctrl n _ =>
+      if ["wd", "ht", "dp", "advance", "multiply", "divide", "glueexpr",
+          "numexpr", "muexpr", "skip", "dimen", "count"].contains n then some n
+      else none
+    | _ => none
+
+private def lengthFormError (body : Array Raw) (why : String) : String :=
+  match unsupportedLengthControl body with
+  | some n => s!"register arithmetic '\\{n}' is not supported by affine lengths"
+  | none => why
+
+/-- `\hspace` glue through the affine parser; finite TeX glue and infinite
+fill keep their existing semantics. -/
+private def readHskip (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Affine Measure) := do
+  let parts := body.filter fun r => !(r matches .space)
+  let src := match parts.toList with
+    | [.ctrl "stretch" _, .group n _] => s!"0pt plus {argText ctx n}fill"
+    | _ => inlineLengthSrc ctx body
+  let words := (src.splitOn " ").filter (!·.isEmpty)
+  let (fil, rest) := match words.span (· != "plus") with
+    | (pre, "plus" :: v :: post) =>
+      match Decl.filFactor? v with
+      | some f => (some f, String.intercalate " " (pre ++ post))
+      | none => (none, src)
+    | _ => (none, src)
+  let parsed : Except String (Affine Measure) :=
+    if rest.trimAscii.toString == "fill" then .ok (.lit { fil := true })
+    else
+      match Decl.parseAffineLengthExpr
+          (ctx.tokens.entries ++ ctx.engineTokens) rest with
+      | .ok e => .ok e
+      | .error why =>
+        match Decl.parseGlue rest with
+        | some g => .ok (.lit g)
+        | none => .error (lengthFormError body why)
+  match parsed, fil with
+  | .ok e, none => return e
+  | .ok e, some ((m, sc), order) =>
+    unless m == (sc : Int) && order == 2 do
+      warnOnce ctx "ctrl:hspace:fil" .W0104
+        s!"'\\hspace\{{src}}' stretches as one fill: fills here have one order" pos
+        (help := "write \\hfill when equal sharing is intended")
+    return .add e (.lit { fil := true })
+  | .error why, _ =>
+    diag ctx .E0331 s!"cannot read a length from '{src}': {why}" pos
+      (help := "write a length such as 10pt, 1em plus 2pt, or 0.5\\linewidth")
+    return .lit {}
+
+/-- `\hspace{g}` and its starred, non-discardable form. -/
+private def hspaceArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM (Option Inline × { j : Nat // i < j }) := do
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  let keep := raws[j0]? matches some (.word "*" _)
+  let j1 := skipStar raws j0
+  have hj1 := skipStar_ge raws j0
+  match raws[j1]? with
+  | some (.group body _) =>
+    let g ← readHskip ctx body pos
+    let zero := MeasureValues.horizontal 0 0
+    let finite := g.withoutFil
+    let isFill := g.hasFil && !finite.anyRef (fun _ => true) && finite.eval zero.find == {}
+    return (some (if !keep && isFill then .fill else .hspace g keep),
+      ⟨j1 + 1, by omega⟩)
+  | _ =>
+    diag ctx .E0304 "missing argument 'length' for '\\hspace'" pos
+    return (none, ⟨i + 1, by omega⟩)
+
+/-- One rigid dimension through the shared affine parser. -/
+private def readInlineDim (ctx : Ctx) (command role : String)
+    (body : Array Raw) (pos : Pos) : EM (Affine Measure) := do
+  let src := inlineLengthSrc ctx body
+  let parsed := Decl.parseAffineLengthExpr (ctx.tokens.entries ++ ctx.engineTokens) src
+  match parsed with
+  | .ok e =>
+    if e.rigid then return e
+    diag ctx .E0331 s!"cannot read {role} in '\\{command}' from '{src}': rubber is not a dimension" pos
+      (help := "write an affine dimension over local measures, points, em, or ex")
+  | .error why =>
+    diag ctx .E0331 s!"cannot read {role} in '\\{command}' from '{src}': {lengthFormError body why}" pos
+      (help := "write an affine dimension over local measures, points, em, or ex")
+  return .lit {}
+
+/-- `\rule[raise]{width}{height}` as one typed rectangle. -/
+private def ruleArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM (Option Inline × { j : Nat // i < j }) := do
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  let raiseSrc := bracketRunSrc raws j0
+  let j1 := skipBracketRun raws j0
+  have hj1 := skipBracketRun_ge raws j0
+  let j2 := skipSpaces raws (j1 + 1)
+  have hj2 := skipSpaces_ge raws (j1 + 1)
+  match raws[j1]?, raws[j2]? with
+  | some (.group width _), some (.group height _) =>
+    let width ← readInlineDim ctx "rule" "width" width pos
+    let height ← readInlineDim ctx "rule" "height" height pos
+    let raise ← match raiseSrc with
+      | some src => readInlineDim ctx "rule" "raise" src pos
+      | none => pure (.lit {})
+    return (some (.rule width height raise), ⟨j2 + 1, by omega⟩)
+  | _, _ =>
+    diag ctx .E0304 "'\\rule' needs {width} and {height} groups" pos
+    return (none, ⟨i + 1, by omega⟩)
 
 /-- An image dimension through the shared affine parser. All local
 measures are carried to layout; literals stay rigid and absolute. -/
@@ -4405,7 +4525,19 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (h : i < raws.size)
     (hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
-  if name == "includegraphics" then
+  if name == "hspace" then
+    let (node, ⟨j, hj⟩) ← hspaceArm ctx raws i pos
+    let acc := flushText acc sb
+    let acc := match node with | some x => acc.push x | none => acc
+    have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+    elabInlinesFrom ctx raws j acc ""
+  else if name == "rule" then
+    let (node, ⟨j, hj⟩) ← ruleArm ctx raws i pos
+    let acc := flushText acc sb
+    let acc := match node with | some x => acc.push x | none => acc
+    have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+    elabInlinesFrom ctx raws j acc ""
+  else if name == "includegraphics" then
     -- graphicx's command, native. The keys that size figures in real
     -- documents are modelled — width, height, scale, keepaspectratio —
     -- and anything else (rotation included) is named and skipped: a

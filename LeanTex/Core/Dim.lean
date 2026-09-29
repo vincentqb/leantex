@@ -273,6 +273,30 @@ def anyRef (p : α → Bool) : Affine α → Bool
   | .scale _ _ e => anyRef p e
   | .add a b | .sub a b => anyRef p a || anyRef p b
 
+/-- Whether every literal is rigid glue. -/
+def rigid : Affine α → Bool
+  | .lit g => !g.fil && g.stretch == {} && g.shrink == {}
+  | .ref _ => true
+  | .scale _ _ e => rigid e
+  | .add a b | .sub a b => rigid a && rigid b
+
+/-- Whether an expression carries an infinite-stretch literal. References
+are local rigid lengths, so only a literal can contribute one. -/
+def hasFil : Affine α → Bool
+  | .lit g => g.fil
+  | .ref _ => false
+  | .scale _ _ e => hasFil e
+  | .add a b | .sub a b => hasFil a || hasFil b
+
+/-- Remove infinite stretch while preserving the expression's finite width,
+stretch, shrink, references, and fixed-point operation order. -/
+def withoutFil : Affine α → Affine α
+  | .lit g => .lit { g with fil := false }
+  | .ref n => .ref n
+  | .scale num den e => .scale num den (withoutFil e)
+  | .add a b => .add (withoutFil a) (withoutFil b)
+  | .sub a b => .sub (withoutFil a) (withoutFil b)
+
 /-- Whether every literal is a rigid absolute length. Local measures are
 rigid by definition; dimension consumers reject rubber and font-relative
 literals before the expression reaches their IR. -/
@@ -382,5 +406,26 @@ def MeasureValues.find (env : MeasureValues) : Measure → SymGlue
 def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
   { textWidth := measure, lineWidth := measure,
     columnWidth := measure, textHeight := textHeight }
+
+/-- Resolve one typed affine length against the geometry and font metrics at
+its consuming site. This is the only door from `Affine Measure` to sp: boxes,
+table columns, images, glue, rules, and font-size declarations supply their
+actual local context rather than estimating it during elaboration. -/
+def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
+    (fontSize xHeight : Sp := 0) : Sp :=
+  (e.eval env.find).width.resolve fontSize xHeight
+
+/-- A local reference resolves to exactly the value its context supplies. -/
+theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
+    (fontSize xHeight : Sp) :
+    (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.sp := by
+  cases m <;> simp [Affine.resolveWidth, Affine.eval, MeasureValues.find,
+    Length.resolve, Length.ofSp]
+
+/-- A rigid literal is independent of every local measure. -/
+theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Sp)
+    (fontSize xHeight : Sp) :
+    (Affine.lit { width := .ofSp v }).resolveWidth env fontSize xHeight = v := by
+  simpa [Affine.resolveWidth, Affine.eval] using Length.resolve_ofSp v fontSize xHeight
 
 end LeanTex.Core.Dim
