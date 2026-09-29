@@ -6,8 +6,8 @@ body impl \href{https://example.org}{x}
 body impl \url{https://example.org}
 body impl \nolinkurl{https://example.org}
 body refuse:W0301 \hyperref[s]{x}
-body refuse:W0301 \hyperlink{t}{x}
-body refuse:W0301 \hypertarget{t}{x}
+body impl \hyperlink{t}{x}
+body impl \hypertarget{t}{x}
 body refuse:W0301 \phantomsection
 body refuse:W0301 \autoref{sec}
 body refuse:W0301 \autopageref{sec}

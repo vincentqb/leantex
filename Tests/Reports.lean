@@ -3,6 +3,7 @@ import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
 import Tests.BoxRow
+import Tests.RecipeStructure
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -299,7 +300,11 @@ def reports : List Report := [
       check% titleTemplateOptionalChecks]
     accept := ["the external synthetic title placement differential against LuaLaTeX",
       "invented-metadata builds through both private theme variants measured against their LuaLaTeX pages"]
-    state := .guarded "82613240" .before .author }
+    state := .guarded "82613240" .before .author },
+  { id := "R48", date := "2026-09-29"
+    what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
+    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text]
+    state := .guarded "82e1e271" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
