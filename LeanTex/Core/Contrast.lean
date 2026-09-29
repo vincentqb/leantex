@@ -452,6 +452,9 @@ reads — resolves the realized value. -/
 private structure PalWrite where
   pal : Palette
   key : String
+  /-- The ground of the pair this write solved. A write can propagate to a
+  different palette snapshot only when this is that snapshot's page. -/
+  ground : Color
   value : Color
   deriving Repr, BEq
 
@@ -910,7 +913,7 @@ def effectivePairJudged (doc : Doc) : Judged :=
         match realize aaText p.bg p.fg with
         | some c' =>
           { diags := #[realizedNote "fg" p.bg none p.fg c' aaText]
-            palWrites := #[{ pal := doc.palette, key := "fg", value := c' }] }
+            palWrites := #[{ pal := doc.palette, key := "fg", ground := p.bg, value := c' }] }
         | none =>
           { diags := #[Diag.of .W0315
               (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
@@ -954,8 +957,8 @@ private def epochStep (s : Judged × Array ColorPair) (pal : Palette) :
       if (pal.find? "fg").isSome then
         match realize aaText p.bg p.fg with
         | some c' =>
-          let j := { j with
-            palWrites := j.palWrites.push { pal := pal, key := "fg", value := c' } }
+          let pw : PalWrite := { pal := pal, key := "fg", ground := p.bg, value := c' }
+          let j := { j with palWrites := j.palWrites.push pw }
           (if dup then j else
             { j with diags := j.diags.push (realizedNote "fg" p.bg none p.fg c' aaText) },
            done)
@@ -1024,7 +1027,7 @@ private def blockTitleStep (s : Judged) (kp : TitledKind × Palette) : Judged :=
         diags := s.diags.push (realizedNote s!"{kind.name}titlefg" ground
           (look.bar.map fun _ => "the block-title bar") look.fg c' aaText)
         palWrites := s.palWrites.push
-          { pal := pal, key := s!"{kind.name}titlefg", value := c' } }
+          { pal := pal, key := s!"{kind.name}titlefg", ground := ground, value := c' } }
     | none =>
       { s with diags := s.diags.push (Diag.of .W0345
         (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
@@ -1045,7 +1048,7 @@ private def frameTitleStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
           diags := s.diags.push (realizedNote "frametitlefg" p.bg
             (some "the frame-title bar") p.fg c' aaText)
           palWrites := s.palWrites.push
-            { pal := pal, key := "frametitlefg", value := c' } }
+            { pal := pal, key := "frametitlefg", ground := p.bg, value := c' } }
       | none =>
         { s with diags := s.diags.push (Diag.of .W0345
           (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
@@ -1064,7 +1067,7 @@ private def standoutStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
         diags := s.diags.push (realizedNote "standoutfg" d.standout.bg
           (some "the standout frame") d.standout.fg c' aaLargeText)
         palWrites := s.palWrites.push
-          { pal := pal, key := "standoutfg", value := c' } }
+          { pal := pal, key := "standoutfg", ground := d.standout.bg, value := c' } }
     | none =>
       { s with diags := s.diags.push (Diag.of .W0345
         (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
@@ -1097,7 +1100,7 @@ private def titlePageStep (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
           diags := s.diags.push (realizedNote "titlepagefg" p.bg
             (some "the title page") p.fg c' aaText)
           palWrites := s.palWrites.push
-            { pal := pal, key := "titlepagefg", value := c' } }
+            { pal := pal, key := "titlepagefg", ground := p.bg, value := c' } }
       | none =>
         { s with diags := s.diags.push (Diag.of .W0345
           (s!"the title page pairs {hexOf p.fg} on {hexOf p.bg} at " ++
@@ -1287,7 +1290,8 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
           let fresh := u.pal.find? role == some u.color && !written.contains u.pal
           let palSeen := if fresh then s.palSeen.insert key (written.push u.pal)
             else s.palSeen
-          let pw : PalWrite := { pal := u.pal, key := role, value := c' }
+          let pw : PalWrite :=
+            { pal := u.pal, key := role, ground := u.surface, value := c' }
           let site : InkSite :=
             { pal := u.pal, role := role, declared := u.color, ground := u.surface }
           let jw : Judged := if !fresh then s.j
@@ -1401,11 +1405,23 @@ private def Judged.inkOf (j : Judged) (role : String) (declared ground : Color) 
   (j.runWrites.find? fun w =>
     w.role == role && w.declared == declared && w.ground == ground).map (·.value)
 
+/-- A palette write is keyed by the semantic pair it solved, not by every
+unrelated entry in the palette snapshot. Two epochs carrying the same role
+value on the same page ground therefore receive the same realization; an
+epoch that changes either remains independent. -/
+private def PalWrite.matches (w : PalWrite) (p : Palette) : Bool :=
+  w.pal == p ||
+    ((w.pal.find? w.key).isSome &&
+      w.ground == surfaceOf w.pal &&
+      w.pal.find? w.key == p.find? w.key &&
+      w.ground == surfaceOf p &&
+      w.pal.decorative.contains w.key == p.decorative.contains w.key)
+
 /-- A palette as the realized document carries it: each failing entry of
 its own realized, and the inks of the roles judged under it on other
 grounds recorded (`Palette.inks`). -/
 private def Judged.repal (j : Judged) (p : Palette) : Palette :=
-  let q := j.palWrites.foldl (fun q w => if w.pal == p then q.declare w.key w.value else q) p
+  let q := j.palWrites.foldl (fun q w => if w.matches p then q.declare w.key w.value else q) p
   { q with inks := j.inkSites.filterMap fun s =>
       if s.pal == p then (j.inkOf s.role s.declared s.ground).map fun v =>
         { role := s.role, declared := s.declared, ground := s.ground, ink := v }

@@ -1562,7 +1562,7 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
      "\\begin{document}x\\end{document}") == ["E0303"])
   t "color value parsed" (Decl.parseValue "#7C3AED" == some (.color 0x7C 0x3A 0xED))
   t "color rejects bad hex" (Decl.parseValue "#12345" == none)
-  t "color pdf components" ((Ir.Color.mk 255 0 128 none).pdfComponents == "1 0 0.502")
+  t "color pdf components" (({ r := 255, g := 0, b := 128 } : Ir.Color).pdfComponents == "1 0 0.502")
   t "color black components" (Ir.Color.black.pdfComponents == "0 0 0")
 
 /-- xcolor's `!` mixing in the palette. Its own def: `main`'s elaboration

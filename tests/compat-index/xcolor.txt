@@ -10,5 +10,5 @@ body impl {\color{black!50!white} x}
 body refuse:W0301 \colorbox{black}{x}
 body refuse:W0301 \fcolorbox{black}{white}{x}
 pre impl \pagecolor{black}
-body refuse:W0301 \nopagecolor
+body impl \nopagecolor
 body refuse:W0301 \rowcolors{1}{black}{white}

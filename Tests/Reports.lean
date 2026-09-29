@@ -280,7 +280,13 @@ def reports : List Report := [
       check% fontSizeAffineChecks]
     accept := ["the private book's check recipe, with geometry measured against its lualatex build",
       "the public affine fixture's computed screen and print geometry in Chromium"]
-    state := .guarded "82e1e271" .before .reviewer }
+    state := .guarded "82e1e271" .before .reviewer },
+  { id := "R45", date := "2026-09-29"
+    what := "modelled colour specifications were parsed as missing groups, and a page-colour reset failed to restore the opening ground"
+    pins := [check% colorModelChecks, thm% Ir.Palette.resolveSpec_models_exact,
+      thm% Ir.Palette.restore_exact]
+    accept := ["the external reference corpus builds with its direct colours and restored page ground"]
+    state := .guarded "82e1e271" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

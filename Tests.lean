@@ -104,6 +104,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   headingRhythmChecks ref oneFace
   titleBreakChecks ref oneFace
   bodyColorChecks ref oneFace
+  colorModelChecks ref oneFace
   listChecks ref oneFace font
   algNumberColumnChecks ref oneFace
   filChecks ref oneFace

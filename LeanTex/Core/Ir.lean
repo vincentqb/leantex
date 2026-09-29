@@ -1,5 +1,6 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Dim
+import LeanTex.Core.Decl
 import LeanTex.Core.Image
 import LeanTex.Core.Math
 import LeanTex.Core.LocaleContract
@@ -321,22 +322,33 @@ pasted on a board. A document's own `\assert{ text.xheight >= ... }`
 takes control. -/
 def posterXHeightFloor : Sp := Dim.mm100 350
 
-/-- An sRGB colour — and, when the document declared it in CMYK, the
-declared components ride along so the PDF can honour the declared model.
-`r g b` are always populated: they are the one screen-facing reading
-(HTML, contrast judgement, dimming), computed for a CMYK declaration by
-`ofCmyk`'s stated conversion. -/
+/-- The PDF device model a source colour declared. Its components are
+canonical decimal spellings validated by `Decl.parseColorSpec`; retaining them
+lets the PDF backend preserve rgb, gray, and cmyk without quantizing through
+the screen preview. -/
+inductive PdfColor where
+  | rgb (r g b : String)
+  | gray (v : String)
+  | cmyk (c m y k : String)
+  deriving Repr, BEq
+
+/-- A source colour's screen preview plus its exact PDF device-model rider.
+`r g b` are always populated for HTML, contrast judgement, and dimming.
+`pdfModel` is present for an explicit xcolor model; legacy/native palette
+bytes use the established derived DeviceRGB spelling. `cmyk` remains the
+thousandth projection used by xcolor mix arithmetic and print registration. -/
 structure Color where
   r : UInt8
   g : UInt8
   b : UInt8
-  /-- Declared-model components in thousandths (0–1000 each) when the
-  colour was declared in CMYK; `none` for a colour declared in RGB. The
-  PDF backend emits these as `DeviceCMYK` verbatim (`cmyk_components_kept`)
-  — converting a print colour to RGB would silently change what a press
-  prints. -/
+  /-- CMYK components projected to thousandths for the existing model-closed
+  mix arithmetic. Exact source components live in `pdfModel` and reach PDF. -/
   cmyk : Option (Nat × Nat × Nat × Nat) := none
-  deriving Repr, BEq, Inhabited
+  pdfModel : Option PdfColor := none
+  deriving Repr, Inhabited
+
+instance : BEq Color where
+  beq a b := a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk
 
 def Color.black : Color := { r := 0, g := 0, b := 0 }
 
@@ -348,17 +360,21 @@ def Color.hexByte (v : UInt8) (upper : Bool := true) : String :=
   let d := (if upper then "0123456789ABCDEF" else "0123456789abcdef").toList
   String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
 
-/-- The sRGB preview of a CMYK declaration, for the screen-facing readers
-only (HTML output, contrast checks): CSS Color 4's `device-cmyk` naive
-conversion, `red = 1 − min(1, cyan·(1−black) + black)` and its siblings —
-explicitly an un-colour-managed approximation, not a lossless mapping;
-the CSS spec itself calls naive conversion "a poor substitute" for a
-colour profile. The declared components stay in `cmyk`; only they reach
-the PDF. -/
+/-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
+then the package's TeX-scaled conversion to an HTML byte. -/
+def Color.cmykPreviewByte (v k : Decl.ColorComponent) : UInt8 :=
+  let scale := v.scale * k.scale
+  let used := min scale (v.num * k.scale + k.num * v.scale)
+  ({ num := scale - used, scale := scale } : Decl.ColorComponent).unitByte
+
+/-- A CMYK value used by the engine's thousandth mix arithmetic. The exact
+source constructor below uses the same preview rule while retaining finer
+components for PDF. -/
 def Color.ofCmyk (c m y k : Nat) : Color :=
-  let ch (v : Nat) : UInt8 :=
-    UInt8.ofNat (255 * (1000 - min 1000 (v * (1000 - min 1000 k) / 1000 + k)) / 1000)
-  { r := ch c, g := ch m, b := ch y, cmyk := some (c, m, y, k) }
+  let part (v : Nat) : Decl.ColorComponent := { num := min 1000 v, scale := 1000 }
+  let black := part k
+  { r := cmykPreviewByte (part c) black, g := cmykPreviewByte (part m) black,
+    b := cmykPreviewByte (part y) black, cmyk := some (c, m, y, k) }
 
 /-- The colour model a colour was declared in — read off the rider, never
 stored twice. Every colour operation is closed in its first operand's
@@ -392,28 +408,67 @@ distinct thousandths (`milli_inj`), so the PDF never merges two inks the
 HTML keeps apart. -/
 def Color.milli (v : UInt8) : Nat := (v.toNat * 1000 + 127) / 255
 
+/-- An HTML byte triple keeps its exact screen bytes and the five-decimal
+DeviceRGB values xcolor's PDF driver derives from them. -/
+def Color.ofHtml (r g b : UInt8) : Color :=
+  let part (v : UInt8) : Decl.ColorComponent := { num := v.toNat, scale := 1 }
+  { r := r, g := g, b := b,
+    pdfModel := some (.rgb (part r).pdfRgb (part g).pdfRgb (part b).pdfRgb) }
+
+/-- An RGB-range source keeps decimal components until the PDF driver's
+0–255 conversion and projects each independently to the HTML byte view. -/
+def Color.ofRgbByte (r g b : Decl.ColorComponent) : Color :=
+  { r := r.rgbByte, g := g.rgbByte, b := b.rgbByte,
+    pdfModel := some (.rgb r.pdfRgb g.pdfRgb b.pdfRgb) }
+
+/-- A unit-rgb source keeps its exact components for PDF and uses xcolor's
+fixed-point HTML projection for the shared screen view. -/
+def Color.ofRgbUnit (r g b : Decl.ColorComponent) : Color :=
+  { r := r.unitByte, g := g.unitByte, b := b.unitByte,
+    pdfModel := some (.rgb r.pdfUnit g.pdfUnit b.pdfUnit) }
+
+/-- A gray source remains DeviceGray in PDF instead of becoming three equal
+RGB channels; its screen preview is the same xcolor byte projection. -/
+def Color.ofGray (v : Decl.ColorComponent) : Color :=
+  { r := v.unitByte, g := v.unitByte, b := v.unitByte,
+    pdfModel := some (.gray v.pdfUnit) }
+
+/-- A source CMYK value retains all decimal digits for DeviceCMYK. The
+thousandth tuple is only the existing arithmetic projection used by mixes. -/
+def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
+  { r := cmykPreviewByte c k, g := cmykPreviewByte m k, b := cmykPreviewByte y k,
+    pdfModel := some (.cmyk c.pdfUnit m.pdfUnit y.pdfUnit k.pdfUnit),
+    cmyk := some (c.milli, m.milli, y.milli, k.milli) }
+
 /-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
 def Color.pdfComponents (c : Color) : String :=
   pdfMilli (milli c.r) ++ " " ++ pdfMilli (milli c.g) ++ " " ++ pdfMilli (milli c.b)
 
-/-- The fill-colour operation for this colour: a CMYK declaration paints in
-`DeviceCMYK` with its own components (`k` sets fill colour in DeviceCMYK,
-ISO 32000-2 §8.6.8, Table 73; DeviceCMYK is §8.6.4.4), an RGB one in
-`DeviceRGB` (`rg`). One emission site per backend, so the declared model
-cannot be quietly re-interpreted anywhere else. -/
+/-- The fill-colour operation for this colour. Explicit source models keep
+their device operator and exact validated components; native byte colours use
+the established DeviceRGB projection, and legacy CMYK values keep their
+thousandth rider. -/
 def Color.pdfFill (c : Color) : String :=
-  match c.cmyk with
-  | some (cy, m, y, k) =>
-    s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
-  | none => s!"{c.pdfComponents} rg"
+  match c.pdfModel with
+  | some (.rgb r g b) => s!"{r} {g} {b} rg"
+  | some (.gray v) => s!"{v} g"
+  | some (.cmyk cy m y k) => s!"{cy} {m} {y} {k} k"
+  | none => match c.cmyk with
+    | some (cy, m, y, k) =>
+      s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
+    | none => s!"{c.pdfComponents} rg"
 
-/-- The stroke-colour twin of `pdfFill`: the same declared components
-through the stroking operators (`K`/`RG`, ISO 32000-2 §8.6.8, Table 74). -/
+/-- The stroke-colour twin of `pdfFill`, with the corresponding uppercase
+PDF operators. -/
 def Color.pdfStroke (c : Color) : String :=
-  match c.cmyk with
-  | some (cy, m, y, k) =>
-    s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} K"
-  | none => s!"{c.pdfComponents} RG"
+  match c.pdfModel with
+  | some (.rgb r g b) => s!"{r} {g} {b} RG"
+  | some (.gray v) => s!"{v} G"
+  | some (.cmyk cy m y k) => s!"{cy} {m} {y} {k} K"
+  | none => match c.cmyk with
+    | some (cy, m, y, k) =>
+      s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} K"
+    | none => s!"{c.pdfComponents} RG"
 
 /-- A colour declared in a model round-trips to that model in a backend
 that supports it: the components the document declared are the components
@@ -424,11 +479,20 @@ theorem Color.cmyk_components_kept (c m y k : Nat) :
       = s!"{pdfMilli c} {pdfMilli m} {pdfMilli y} {pdfMilli k} k" := by
   exact ⟨rfl, rfl⟩
 
-/-- An RGB declaration paints in `DeviceRGB` from its thousandths: the
-`rg` half of the one emission site, by definition. -/
-theorem Color.pdfFill_srgb (c : Color) (h : c.cmyk = none) :
+/-- A native byte colour with no explicit device rider paints through the
+established DeviceRGB projection. -/
+theorem Color.pdfFill_srgb (c : Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     c.pdfFill = s!"{c.pdfComponents} rg" := by
-  simp [Color.pdfFill, h]
+  simp [Color.pdfFill, hm, hc]
+
+/-- Each exact source model selects its own PDF operator and keeps the
+validated component spellings. -/
+theorem Color.pdf_models_exact (r g b c m y k : Decl.ColorComponent) :
+    (Color.ofRgbUnit r g b).pdfFill = s!"{r.pdfUnit} {g.pdfUnit} {b.pdfUnit} rg" ∧
+    (Color.ofGray r).pdfFill = s!"{r.pdfUnit} g" ∧
+    (Color.ofCmykSource c m y k).pdfFill =
+      s!"{c.pdfUnit} {m.pdfUnit} {y.pdfUnit} {k.pdfUnit} k" := by
+  exact ⟨rfl, rfl, rfl⟩
 
 /-- The reader of `pdfMilli`'s output: `"1"` ↦ 1000, `"0.d…"` ↦ the digits
 padded to three, anything else 0. Exists for `pdfMilli_decode`. -/
@@ -1409,6 +1473,59 @@ def Palette.declare (p : Palette) (key : String) (c : Color)
         else p.decorative.push key
       else p.decorative.filter (· != key) }
 
+/-- Remove one palette key while leaving every unrelated declaration in its
+current epoch. Used by a page-ground reset when the opening document palette
+had no explicit ground. -/
+def Palette.erase (p : Palette) (key : String) : Palette :=
+  { p with entries := p.entries.filter (·.1 != key)
+           decorative := p.decorative.filter (· != key) }
+
+/-- Restore one key from an opening palette: its original value and
+classification when present, absence when the opening palette inherited the
+class default. -/
+def Palette.restore (p opening : Palette) (key : String) : Palette :=
+  match opening.find? key with
+  | some c => p.declare key c (opening.decorative.contains key)
+  | none => p.erase key
+
+/-- Erasing a key makes that key absent, not a guessed replacement colour. -/
+theorem Palette.erase_exact (p : Palette) (key : String) :
+    (p.erase key).find? key = none := by
+  simp only [Palette.erase, Palette.find?]
+  have hnone : (p.entries.filter (·.1 != key)).find? (·.1 == key) = none := by
+    rw [Array.find?_eq_none]
+    intro x hx
+    have hne := (Array.mem_filter.mp hx).2
+    simpa using hne
+  simp [hnone]
+
+/-- Erasing one key preserves every other palette lookup. -/
+theorem Palette.erase_keeps_others (p : Palette) (key other : String)
+    (h : other ≠ key) : (p.erase key).find? other = p.find? other := by
+  unfold Palette.erase Palette.find?
+  rw [Array.find?_filter]
+  have hpred :
+      (fun a : String × Color => decide ((a.fst != key) = true ∧ (a.fst == other) = true))
+        = (fun a : String × Color => a.fst == other) := by
+    funext x
+    by_cases hx : (x.1 == other) = true
+    · have hxe : x.1 = other := by simpa using hx
+      simp [hxe, h]
+    · simp [hx]
+  rw [hpred]
+
+/-- A reset reads exactly as the opening palette read, whether that means a
+concrete document colour or the class's undeclared default. -/
+theorem Palette.restore_exact (p opening : Palette) (key : String) :
+    (p.restore opening key).find? key = opening.find? key := by
+  cases h : opening.find? key with
+  | none => simpa [Palette.restore, h] using Palette.erase_exact p key
+  | some c =>
+    simp only [Palette.restore, h]
+    unfold Palette.declare Palette.find?
+    rw [declare_find_eq]
+    rfl
+
 /-- Keyed last-wins for colours (T2), the same statement `\tokens` carries:
 the declared colour is the one resolved. -/
 theorem Palette.declare_last_wins (p : Palette) (k : String) (c : Color) :
@@ -1437,6 +1554,34 @@ theorem Palette.declare_keeps_others (p : Palette) (k k' : String) (c : Color) (
     (h : k' ≠ k) : (p.declare k c d).find? k' = p.find? k' := by
   unfold declare find?
   rw [declare_keeps _ _ _ _ h]
+
+/-- Restoring a page-ground key preserves every unrelated body declaration,
+whether the opening palette supplies that key or leaves it absent. -/
+theorem Palette.restore_keeps_others (p opening : Palette) (key other : String)
+    (h : other ≠ key) : (p.restore opening key).find? other = p.find? other := by
+  unfold Palette.restore
+  cases opening.find? key with
+  | none => exact p.erase_keeps_others key other h
+  | some c => exact p.declare_keeps_others key other c _ h
+
+/-- Restoring one key never changes the palette's cover fraction. -/
+theorem Palette.restore_keeps_covered (p opening : Palette) (key : String) :
+    (p.restore opening key).coveredFraction = p.coveredFraction := by
+  unfold Palette.restore
+  cases opening.find? key <;> rfl
+
+/-- The restored key carries the opening declaration's decorative
+classification when it exists, and no stale exemption when it does not. -/
+theorem Palette.restore_decorative_exact (p opening : Palette) (key : String) :
+    (p.restore opening key).decorative.contains key =
+      ((opening.find? key).isSome && opening.decorative.contains key) := by
+  cases h : opening.find? key with
+  | none => simp [Palette.restore, h, Palette.erase]
+  | some c =>
+    by_cases hd : key ∈ opening.decorative
+    · by_cases hp : key ∈ p.decorative <;>
+        simp [Palette.restore, h, Palette.declare, hd, hp]
+    · simp [Palette.restore, h, Palette.declare, hd]
 
 /-- A colour override never touches the covered fraction. -/
 theorem Palette.declare_keeps_covered (p : Palette) (k : String) (c : Color) (d : Bool) :
@@ -1607,6 +1752,41 @@ def Palette.resolve (p : Palette) (expr : String) : Option Color :=
     match p.atom first with
     | some c => go c rest
     | none => none
+
+/-- Resolve one typed colour specification to the single `Color` value both
+backends consume. Named/no-model input delegates to the existing xcolor
+expression resolver; every numeric model becomes a concrete value here and
+nowhere else. -/
+def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
+  | .named expr => p.resolve expr
+  | .html r g b => some (Color.ofHtml r g b)
+  | .rgbByte r g b => some (Color.ofRgbByte r g b)
+  | .rgbUnit r g b => some (Color.ofRgbUnit r g b)
+  | .gray v => some (Color.ofGray v)
+  | .cmyk c m y k => some (Color.ofCmykSource c m y k)
+
+/-- Parsing and resolution are one public door for source colour syntax.
+Callers choose their diagnostic for an unsupported/malformed model or an
+unresolved name, but no caller converts components independently. -/
+def Palette.resolveSource (p : Palette) (model : Option String) (src : String) :
+    Except Decl.ColorSpecError (Option Color) := do
+  return p.resolveSpec (← Decl.parseColorSpec model src)
+
+/-- The typed resolver preserves the established no-model expression
+semantics exactly. -/
+theorem Palette.resolveSpec_named_exact (p : Palette) (expr : String) :
+    p.resolveSpec (.named expr) = p.resolve expr := rfl
+
+/-- Every concrete model projects by construction at the one resolving site,
+retaining the source device operator while exposing one screen preview. -/
+theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
+    (x y z c m k : Decl.ColorComponent) :
+    p.resolveSpec (.html r g b) = some (Color.ofHtml r g b) ∧
+    p.resolveSpec (.rgbByte x y z) = some (Color.ofRgbByte x y z) ∧
+    p.resolveSpec (.rgbUnit x y z) = some (Color.ofRgbUnit x y z) ∧
+    p.resolveSpec (.gray x) = some (Color.ofGray x) ∧
+    p.resolveSpec (.cmyk c m y k) = some (Color.ofCmykSource c m y k) := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The mixing fold never leaves the model it started in: every step is a
 `mix` whose first operand is the accumulator (`mix_model_exact`). -/
@@ -12298,15 +12478,18 @@ def cmykPart (v : Nat) : String :=
     let padded := "".pushn '0' (3 - s.length) ++ s
     "0." ++ String.ofList (padded.toList.reverse.dropWhile (· == '0')).reverse
 
-/-- One palette role as the `\definecolor` the boundary tool reads: the
-model the palette holds is the model the tool paints — a CMYK declaration
-rides as `cmyk` components (`Color.cmyk`, kept exactly as `Color.mix`
-keeps them), an RGB one as `RGB` bytes. -/
+/-- One palette role as the `\definecolor` the boundary tool reads. An
+explicit source model keeps its exact validated components; computed/native
+colours fall back to the model carried by the IR. -/
 def colorDeclLine : String × Color → String
-  | (n, c) => match c.cmyk with
-    | some (cy, m, y, k) =>
-      s!"\\definecolor\{{n}}\{cmyk}\{{cmykPart cy},{cmykPart m},{cmykPart y},{cmykPart k}}\n"
-    | none => s!"\\definecolor\{{n}}\{RGB}\{{c.r},{c.g},{c.b}}\n"
+  | (n, c) => match c.pdfModel with
+    | some (.rgb r g b) => s!"\\definecolor\{{n}}\{rgb}\{{r},{g},{b}}\n"
+    | some (.gray v) => s!"\\definecolor\{{n}}\{gray}\{{v}}\n"
+    | some (.cmyk cy m y k) => s!"\\definecolor\{{n}}\{cmyk}\{{cy},{m},{y},{k}}\n"
+    | none => match c.cmyk with
+      | some (cy, m, y, k) =>
+        s!"\\definecolor\{{n}}\{cmyk}\{{cmykPart cy},{cmykPart m},{cmykPart y},{cmykPart k}}\n"
+      | none => s!"\\definecolor\{{n}}\{RGB}\{{c.r},{c.g},{c.b}}\n"
 
 /-- The document's declared font roles, projected into the standalone's
 preamble: fontspec's `\setmainfont`/`\setsansfont`/`\setmonofont` for the

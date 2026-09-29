@@ -4887,13 +4887,25 @@ private def joinStyles (a b : String) : String :=
 palette in force before it: exactly the changed entries, so an epoch
 declares what it changed and nothing else. -/
 def epochPaletteStyle (before after : Ir.Palette) : String :=
-  String.intercalate "; " ((after.entries.filter fun (n, c) =>
-    before.find? n != some c).toList.map fun (n, c) => s!"--{n}: {cssColor c}")
+  let changed := (after.entries.filter fun (n, c) => before.find? n != some c).toList.map
+    fun (n, c) => s!"--{n}: {cssColor c}"
+  let removed := (before.entries.filter fun (n, _) => (after.find? n).isNone).toList.map
+    fun (n, _) => s!"--{n}: initial"
+  String.intercalate "; " (changed ++ removed)
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
 def epochTokenStyle (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
+
+/-- A flow epoch that changes the page ground paints each following
+continuous-flow box in that ground. This avoids a wrapper (which would break
+sibling rhythm and host selectors); deck stages already paint their own full
+page from the same `--bg`. -/
+private def epochSurfaceStyle (style : String) : String :=
+  if (style.splitOn "--bg:").length > 1 then
+    joinStyles style "background: var(--bg, var(--surface, #fafaf9))"
+  else style
 
 /-- The epoch's redefinitions onto one emitted sibling node. The epoch
 comes first, so an element's own style declarations win (CSS style
@@ -4901,6 +4913,7 @@ attribute: last declaration of a property applies). A text node carries no
 attributes and needs none. -/
 def withEpoch (style : String) : Node → Node
   | .elem t attrs kids =>
+    let style := epochSurfaceStyle style
     if style.isEmpty then .elem t attrs kids
     else if attrs.any (·.1 == "style") then
       .elem t (attrs.map fun kv =>

@@ -172,6 +172,10 @@ structure Ctx where
   args : Array (String × Option (Array Inline)) := #[]
   /-- Palette names usable as colour commands, from `\palette`. -/
   palette : Palette := {}
+  /-- The document/class palette in force when the body opens. A page-colour
+  reset restores only its ground from this snapshot while preserving every
+  unrelated body declaration. -/
+  basePalette : Palette := {}
   /-- The document's resolved main locale, from the preamble's declared
   language: what the body walk's generated furniture (the References
   heading) is worded in. -/
@@ -3644,6 +3648,33 @@ private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
       else s!"declared: {String.intercalate ", "
         (ctx.palette.entries.toList.map (·.1))}")
 
+private inductive ColorRead where
+  | resolved (color : Color) (token : Option String)
+  | missing
+  | rejected
+
+/-- Parse and resolve one source colour through `Palette.resolveSource`.
+This is the only elaboration door for model syntax; callers differ only in
+how an unresolved named expression is reported. -/
+private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
+    (src : String) (pos : Pos) : EM ColorRead := do
+  let label := match model with
+    | some m => s!"{m.trimAscii.toString}({src.trimAscii.toString})"
+    | none => src.trimAscii.toString
+  match pal.resolveSource model src with
+  | .ok (some c) =>
+    let token := if model.isNone && (pal.find? label).isSome then some label else none
+    return .resolved c token
+  | .ok none => return .missing
+  | .error (.unsupported m) =>
+    diag ctx .W0102
+      s!"colour model '{m}' is not supported; use {String.intercalate ", " Decl.colorModelNames}" pos
+    return .rejected
+  | .error (.malformed m detail) =>
+    diag ctx .E0321 s!"cannot read {m} colour {src.trimAscii.toString.quote}: {detail}" pos
+      (help := "model values use their documented component count and range")
+    return .rejected
+
 /-- The one W0105 for an overlay specification the step model cannot
 number, outside the knot: one spelling for its three doors. -/
 private def warnOverlaySpec (ctx : Ctx) (w : String) (pos : Pos) : EM Unit :=
@@ -4646,8 +4677,12 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if name == "pagecount" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
   else if name == "textcolor" then
-    let j := skipSpaces raws (i + 1)
-    have hjge := skipSpaces_ge raws (i + 1)
+    let j0 := skipSpaces raws (i + 1)
+    have hj0ge := skipSpaces_ge raws (i + 1)
+    let model := (bracketRunSrc raws j0).map fun opt =>
+      (rawSrc opt).trimAscii.toString
+    let j := skipBracketRun raws j0
+    have hjge : i + 1 ≤ j := Nat.le_trans hj0ge (skipBracketRun_ge raws j0)
     let j2 := skipSpaces raws (j + 1)
     have hj2ge := skipSpaces_ge raws (j + 1)
     match hj : raws[j]?, hj2 : raws[j2]? with
@@ -4657,21 +4692,22 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
       have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
-      let key := argText ctx cname
-      match ctx.palette.resolve key with
-      | some c =>
-        -- A mix expression is a computed value, not a token: only a
-        -- plain palette name rides along for the HTML var(--name).
-        let cssName := if (ctx.palette.find? key).isSome then some key else none
-        recordColorSpan ctx key c cssName.isSome pos
+      let source := argText ctx cname
+      let label := match model with
+        | some m => s!"{m}({source})"
+        | none => source
+      match ← readColor ctx ctx.palette model source pos with
+      | .resolved c cssName =>
+        recordColorSpan ctx label c cssName.isSome pos
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
         elabInlinesFrom ctx raws (j2 + 1) (acc.push (.colored c cssName inner)) ""
-      | none =>
-        -- The colour is unresolvable; the content is not. Keeping it
-        -- uncoloured is the best-effort contract: a wrong colour beats
-        -- a missing word.
-        warnPaletteMiss ctx key pos
+      | .missing =>
+        warnPaletteMiss ctx source pos
+        let acc := flushText acc sb
+        let inner ← elabInlines ctx body
+        elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
+      | .rejected =>
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
         elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
@@ -4694,21 +4730,20 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     -- underscore-prefixed.
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
-  -- `\color{n}`'s marker: inline it reads exactly as the bare name.
-  let name := if name.startsWith "@ink:" then (name.drop "@ink:".length).toString
-    else name
-  if let some c := ctx.palette.resolve name then
+  let inkMarker := name.startsWith "@ink:"
+  let source := if inkMarker then (name.drop "@ink:".length).toString else name
+  let read ← if inkMarker then
+      readColor ctx ctx.palette none source pos
+    else
+      pure <| match ctx.palette.resolve source with
+        | some c => .resolved c (if (ctx.palette.find? source).isSome then some source else none)
+        | none => .missing
+  if let .resolved c cssName := read then
 
     -- With a group, that group is the argument: `\primary{Alex}` means
     -- colour Alex, which is what it looks like. Without one it is a
     -- declaration colouring the rest of the group, as `\bfseries` does.
-    -- `resolve`, not `find?`: the name may be the `!`-mix expression
-    -- `\color`'s rewrite carries whole, and the mix grammar lives in
-    -- one place (`Palette.resolve`). A computed mix is a value, not a
-    -- token: only a declared entry rides as the HTML var(--name), the
-    -- same rule `\textcolor` holds.
-    let cssName := if (ctx.palette.find? name).isSome then some name else none
-    recordColorSpan ctx name c cssName.isSome pos
+    recordColorSpan ctx source c cssName.isSome pos
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match hj : raws[j]? with
@@ -4730,6 +4765,11 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
       elabInlinesFrom ctx raws raws.size acc ""
+  else if inkMarker then
+    match read with
+    | .missing => warnPaletteMiss ctx source pos
+    | _ => pure ()
+    elabInlinesFrom ctx raws (i + 1) acc sb
   else if name.startsWith Compat.fontSizeMark then
     let style ← readFontSizeStyle ctx name pos
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
@@ -4742,7 +4782,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
       sliceWeight_lt raws h h
     elabInlinesFrom ctx raws raws.size acc ""
-  else if let some style := declStyleOf name then
+  else if let some style := declStyleOf source then
     let declCtx := { ctx with
       literalText := style == Style.mono || ctx.literalText }
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
@@ -5474,14 +5514,6 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
 
-/-- The flow palette `\color{n}`'s block form declares: `fg` set to the
-resolved colour — the palette's one resolving site, mixes included —
-or `none` when the name resolves to nothing. Outside the block-walk knot
-so the arm stays one match. -/
-private def inkFlowPalette (ctx : Ctx) (marker : String) : Option Ir.Palette :=
-  (ctx.palette.resolve ((marker.drop "@ink:".length).toString)).map fun c =>
-    ctx.palette.declare "fg" c
-
 /-- The block reading of a declaration met between blocks — the `isB` row
 and its arm's one computation: the `Ir.Decl` the rest of the scope is
 elaborated under, when `n` is a style declaration or a bare palette name
@@ -5539,24 +5571,37 @@ private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
     | some side => (if inner.isEmpty then #[] else #[.ragged side inner])
     | none => inner
 
-/-- The W0304 the inline colour arm speaks, for the block form. -/
-private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit :=
-  warnPaletteMiss ctx ((marker.drop "@ink:".length).toString) pos
-
-/-- The block form's whole effect but the recursion: declare the flow ink
-(the palette with `fg` resolved) and bump the flow state, or warn. One
-function outside the block-walk knot, so the arm inside costs the knot's
-elaboration one call and one recursion. -/
+/-- The block form's whole effect but the recursion: resolve the explicit
+ink source through the typed colour door, declare the flow ink, and bump the
+flow state. -/
 private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
-  match inkFlowPalette ctx marker with
-  | some pal =>
+  let source := (marker.drop "@ink:".length).toString
+  match ← readColor ctx ctx.palette none source pos with
+  | .resolved c _ =>
+    let pal := ctx.palette.declare "fg" c
     modify fun st => { st with flowPalette := some pal
                                flowGen := st.flowGen + 1 }
     return some pal
-  | none =>
-    warnInkUnknown ctx marker pos
+  | .missing =>
+    warnPaletteMiss ctx source pos
     return none
+  | .rejected => return none
+
+private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx ("palette:" ++ source) .W0304
+    s!"'{source}' is not in the palette; the page ground is unchanged" pos
+    (help := "declare the colour before using it as a page ground")
+
+private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
+    EM (Option Ir.Palette) := do
+  let source := (marker.drop Compat.pageColorMarkPrefix.length).toString
+  match ← readColor ctx ctx.palette none source pos with
+  | .resolved c _ => return some (ctx.palette.declare "bg" c)
+  | .missing =>
+    warnPageColorMiss ctx source pos
+    return none
+  | .rejected => return none
 
 private def isParRaw : Raw → Bool
   | .par _ => true
@@ -6235,26 +6280,21 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         let put (pal : Palette) (c : Color) : EM Palette := do
           noteDeclared ctx "palette" key
           return pal.declare key c decorative
-        match Decl.parseValue valueSrc with
-        | some (.color r g b) => pal := ← put pal { r := r, g := g, b := b }
-        | some (.cmyk c m y k) => pal := ← put pal (Ir.Color.ofCmyk c m y k)
-        | v? =>
-          -- A name, an alias, or a mix: all read against what is declared
-          -- so far, so two names that must never drift apart share a value.
-          match pal.resolve valueSrc with
-          | some c => pal := ← put pal c
+        match ← readColor ctx pal none valueSrc pos with
+        | .resolved c _ => pal := ← put pal c
+        | .rejected => pure ()
+        | .missing =>
+          match Decl.parseValue valueSrc with
+          | some (.ident other) =>
+            diag ctx .E0326 s!"'{other}' is not in the palette" pos
+              (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
+          | some v =>
+            modify fun st => { st with
+              diags := st.diags.push (Decl.wrongType ctx.file "palette" key
+                "a color like #7C3AED" v pos) }
           | none =>
-            match v? with
-            | some (.ident other) =>
-              diag ctx .E0326 s!"'{other}' is not in the palette" pos
-                (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
-            | some v =>
-              modify fun st => { st with
-                diags := st.diags.push (Decl.wrongType ctx.file "palette" key
-                  "a color like #7C3AED" v pos) }
-            | none =>
-              diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
-                (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
+            diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
+              (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
 
@@ -10444,6 +10484,30 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
+      -- A page-ground command in horizontal mode changes shipout state,
+      -- not paragraph structure. Consume it without flushing `cur`, and
+      -- elaborate the whole open paragraph under the last state that will
+      -- paint its page.
+      if !cur.isEmpty &&
+          (n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark) then
+        let pal? ← if n.startsWith Compat.pageColorMarkPrefix then
+            pageGroundDecl ctx' n cpos
+          else
+            pure (some (ctx'.palette.restore ctx'.basePalette "bg"))
+        match pal? with
+        | some pal => modify fun st =>
+          { st with flowPalette := some pal, flowGen := st.flowGen + 1 }
+        | none => pure ()
+        let ⟨palCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
+        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        return ← elabBlocksGo palCtx raws (i + 1)
+          (match pal? with
+            | some pal => blocks.push (.setPalette pal)
+            | none => blocks) cur ((← get).flowGen)
       let isB : Bool :=
         n == "par" || n == "block" || n == "centering" || n == "pause"
           || (Ir.raggedSideOf? n).isSome
@@ -10461,6 +10525,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- below). Mid-paragraph the marker keeps the inline reading —
           -- splitting the paragraph there would move text.
           || (cur.isEmpty && n.startsWith "@ink:")
+          || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
+          || (cur.isEmpty && n == Compat.pageColorResetMark)
           || (cur.isEmpty && n.startsWith "@lang:")
           || (n != "note" &&
             ((sectionLevel n).isSome
@@ -10641,6 +10707,36 @@ a side channel, never slide content" cpos
           (match pal? with
             | some pal => blocks.push (.setPalette pal)
             | none => blocks) #[] ((← get).flowGen)
+      else if n.startsWith Compat.pageColorMarkPrefix then
+        let pal? ← pageGroundDecl ctx' n cpos
+        let ⟨palCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
+        match pal? with
+        | some pal => modify fun st =>
+          { st with flowPalette := some pal, flowGen := st.flowGen + 1 }
+        | none => pure ()
+        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo palCtx raws (i + 1)
+          (match pal? with
+            | some pal => blocks.push (.setPalette pal)
+            | none => blocks) #[] ((← get).flowGen)
+      else if n == Compat.pageColorResetMark then
+        -- A reset is an epoch, not a textual colour: restore the opening
+        -- document/class ground and preserve every other body declaration.
+        let pal := ctx'.palette.restore ctx'.basePalette "bg"
+        modify fun st => { st with flowPalette := some pal
+                                   flowGen := st.flowGen + 1 }
+        let ⟨palCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with palette := pal }, rfl, rfl, rfl, rfl⟩
+        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo palCtx raws (i + 1) (blocks.push (.setPalette pal)) #[]
+          ((← get).flowGen)
       else if n == "palette" then
         -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
         -- the entries apply from here on, and the document palette both
@@ -11381,21 +11477,15 @@ list levels: itemize2..4, enumerate2..4")
           (help := "draw rules around the title with rule-above, rule-below or separator")
       let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
-      -- A colour key resolves through the palette (mixes included), then
-      -- as a literal colour; a value that is neither is E0326 and the
-      -- key keeps what it had. Only a plain palette name rides along for
-      -- the HTML var(--name).
+      -- Every colour-valued style key uses the same typed source resolver
+      -- as palette declarations and inline colour commands.
       let asColor : EM (Option (Ir.Color × Option String)) := do
-        match ctx.palette.resolve valueSrc with
-        | some c =>
-          return some (c, if (ctx.palette.find? valueSrc).isSome then some valueSrc else none)
-        | none =>
-          match Decl.parseValue valueSrc with
-          | some (.color r g b) => return some ({ r := r, g := g, b := b }, none)
-          | some (.cmyk c m y k) => return some (Ir.Color.ofCmyk c m y k, none)
-          | _ =>
-            diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
-            return none
+        match ← readColor ctx ctx.palette none valueSrc pos with
+        | .resolved c token => return some (c, token)
+        | .rejected => return none
+        | .missing =>
+          diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+          return none
       match key with
       | "font" => st := { st with font := ← asInline }
       | "marker" => st := { st with marker := ← asInline }
@@ -11830,6 +11920,9 @@ inductive PDecl where
   one piece of inline content each, the headline band's corner slots. -/
   | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
+  /-- A preamble page-ground selection, resolved where it stands. `none`
+  is `\nopagecolor`; a concrete source is `\pagecolor`. -/
+  | pageGround (source : Option String) (pos : Pos)
   | style (args : Option (String × String)) (pos : Pos)
   | allow (body : Option String) (pos : Pos)
   | theme (src : Option String) (pos : Pos)
@@ -11889,6 +11982,9 @@ structure PreState where
   sawPage : Bool := false
   fonts : FontSpec := {}
   palette : Palette := {}
+  /-- A `\pagecolor` already resolved in preamble order. It overlays the
+  eventual class/document palette without becoming that reset target. -/
+  pageGround : Option Color := none
   tokens : Tokens := {}
   /-- Caption positions `\captionsetup` declared (`Doc.captionPos`). -/
   captionPos : Array (String × Ir.CaptionPos) := #[]
@@ -12048,9 +12144,14 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           -- unknown command: the marker is Compat's own spelling, and a
           -- warning quoting it named nothing the document wrote.
           pure ()
+        else if name.startsWith Compat.pageColorMarkPrefix then
+          out := out.push (.pageGround
+            (some (name.drop Compat.pageColorMarkPrefix.length).toString) pos)
+        else if name == Compat.pageColorResetMark then
+          out := out.push (.pageGround none pos)
         else if name.startsWith "@ink:" then
-          -- `\color`'s marker: LaTeX keeps the colour across
-          -- `\begin{document}`, so it is the body's first declaration.
+          -- An ink declaration survives `document`; page-ground markers
+          -- are applied above in preamble order instead.
           out := out.push (.bodyStart name pos)
         else if runningCtrl.contains name then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
@@ -12733,6 +12834,16 @@ tool = none refuses the boundary")
     | none =>
       diag s.ctx .E0304 "'\\urlstyle' needs a {tt|rm|sf|same} group" (some pos)
       return s
+  | .pageGround source pos =>
+    match source with
+    | none => return { s with pageGround := none }
+    | some source =>
+      match ← readColor s.ctx s.palette none source pos with
+      | .resolved c _ => return { s with pageGround := some c }
+      | .missing =>
+        warnPageColorMiss s.ctx source pos
+        return s
+      | .rejected => return s
   | .bodyStart _ _ =>
     -- Read off the scanned declarations by `elabDoc`, which opens the body
     -- with it; the fold has nothing to apply.
@@ -13548,11 +13659,14 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     let own : Theme.Decls := { palette := s.palette, tokens := s.tokens
                                styles := s.styles, chrome := s.chrome }
     if defaultBundle then Theme.applyUnder Theme.daylight own else own
-  let palette := themedDs.palette
+  let basePalette := themedDs.palette
+  let palette := match s.pageGround with
+    | some c => basePalette.declare "bg" c
+    | none => basePalette
   let tokens := themedDs.tokens
   let styles := themedDs.styles
   let chrome := themedDs.chrome
-  ctx := { ctx with palette := palette, tokens := tokens, styles := styles
+  ctx := { ctx with palette := palette, basePalette := basePalette, tokens := tokens, styles := styles
                     locale := s.info.locale }
   let mut head := s.head
   let mut foot := s.foot

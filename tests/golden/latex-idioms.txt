@@ -4,9 +4,9 @@ font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"
 palette primary #0F766E
-palette muted #72727F
 palette rulecolor #99F6E4
-palette bulletcolor #72727F
+palette bulletcolor #737380
+palette muted #73727F
 token rhythm 1800/1000ex plus 800/1000ex minus 400/1000ex
 token sepunit 900/1000ex plus 400/1000ex minus 200/1000ex
 runninghead
@@ -20,10 +20,10 @@ meta title "Alex Doe"
 meta author "Alex Doe"
 setPalette
   primary = #0F766E
-  muted = #72727F
   rulecolor = #99F6E4
-  bulletcolor = #72727F
+  bulletcolor = #737380
   fg = #0F766E
+  muted = #73727F
 role trivlist-env
   center
     para
@@ -35,7 +35,7 @@ role trivlist-env
             text " Doe "
     block before 1800/1000ex plus 800/1000ex minus 400/1000ex
     para
-      color muted #72727F
+      color muted #73727F
         text " alex@example.org · example.org"
 section* 1
   text "Experience"
@@ -52,10 +52,10 @@ role role
     italicCorr maybe
     text " "
     fill
-    color muted #72727F
+    color muted #73727F
       text "2021–present"
   para
-    color muted #72727F
+    color muted #73727F
       styled italic
         italicCorr maybe
         text "Platform"
@@ -78,7 +78,7 @@ role role
     italicCorr maybe
     text " "
     fill
-    color muted #72727F
+    color muted #73727F
       text "2017–2021"
 section* 1
   text "Education"
@@ -100,7 +100,7 @@ para
   italicCorr maybe
   text " "
   fill
-  color muted #72727F
+  color muted #73727F
     text "2019"
 para
   underline
@@ -128,9 +128,9 @@ note[N0100] 23:1 '\linespread' → \page{ leading = 1.04 }
 note[N0100] 25:1 '\usepackage{hyperref}' → nothing: the engine does this itself
 note[N0100] 26:1 '\usepackage{soul}' → nothing: the engine does this itself
 note[N0100] 27:1 '\hypersetup' → \pdfmeta{ author = "Alex Doe", title = "Alex Doe" }
-note[N0100] 34:1 '\definecolor{primary}' → \palette{ primary = #0F766E }
-note[N0100] 35:1 '\definecolor{muted}' → \palette{ muted = #72727F }
-note[N0100] 36:1 '\definecolor{rulecolor}' → \palette{ rulecolor = #99F6E4 }
+note[N0100] 34:1 '\definecolor{primary}' → \palette{ primary = HTML(0F766E) }
+note[N0100] 35:1 '\definecolor{muted}' → \palette{ muted = rgb(0.45,0.45,0.5) }
+note[N0100] 36:1 '\definecolor{rulecolor}' → \palette{ rulecolor = HTML(99F6E4) }
 note[N0100] 37:1 '\colorlet' → \palette{ bulletcolor = muted }
 note[N0100] 40:1 '\setkomafont{section}' → \style{section}{ font = {...} }
 note[N0100] 41:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 3 * sepunit, after = 1 * sepunit }
@@ -159,3 +159,4 @@ note[N0100] 87:1 '\ul' → \underline
 note[N0100] 87:38 '\varul' → \underline
 note[N0100] 16:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}
 note[N0100] 85:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force
+note[N0022] - 'muted' is realized darker (#73727F) on the page (#FAFAF9) to meet 4.50:1

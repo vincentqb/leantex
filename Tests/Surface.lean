@@ -1087,7 +1087,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let ds := (elabStr "\\ifsomething A\\else B\\fi x").2
      ds.all (·.code != "N0114"))
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
-    some { r := 255, g := 0, b := 127 })
+    some { r := 255, g := 0, b := 128 })
   t "compat colorlet aliases"
     ((elabStr (pre "\\definecolor{a}{HTML}{112233}\\colorlet{b}{a}")).1.palette.find? "b" ==
       some { r := 0x11, g := 0x22, b := 0x33 })
@@ -5729,7 +5729,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\end{tikzpicture}"
   let (cdoc, _) := elabStr (dvDoc pal picC)
   t "a palette role the picture mentions is declared in the standalone"
-    (hasStr (reqOf cdoc) "\\definecolor{ember}{RGB}{192,67,31}")
+    ((cdoc.palette.find? "ember").any fun c => hasStr (reqOf cdoc) (Ir.colorDeclLine ("ember", c)))
   t "a palette role the picture never mentions does not ride"
     (!hasStr (reqOf cdoc) "quietbg" && !hasStr (reqOf cdoc) "\\definecolor{fg}")
   let (cdoc', _) := elabStr (dvDoc "\\palette{ ember = #C0431F, quietbg = #000000 }\n" picC)
@@ -5802,7 +5802,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a macro the picture never reaches stays home"
     (!hasStr (reqOf mdoc) "elsewhere")
   t "a palette role only a carried macro spells is declared"
-    (hasStr (reqOf mdoc) "\\definecolor{ember}{RGB}{192,67,31}")
+    ((mdoc.palette.find? "ember").any fun c => hasStr (reqOf mdoc) (Ir.colorDeclLine ("ember", c)))
   t "carrying the document's macros costs the picture no diagnostic"
     (mds.all (·.code != "E0382") && (Ir.pictureRefs mdoc).size == 1)
   -- Locality of the cache key, as an oracle (no theorem stands behind it):

@@ -778,6 +778,20 @@ def Geom.ground (g : Geom) (c : Ir.Color) : Fill :=
   { x := -g.bleed, y := -g.bleed, w := g.pageW + 2 * g.bleed,
     h := g.pageH + 2 * g.bleed, color := c }
 
+/-- The ground a page ships: its own frame/title style, else the persistent
+palette epoch, else the opening document ground. -/
+def effectivePageGround (page epoch opening : Option Ir.Color) : Option Ir.Color :=
+  (page.orElse fun _ => epoch).orElse fun _ => opening
+
+theorem effectivePageGround_page_exact (c : Ir.Color) (epoch opening : Option Ir.Color) :
+    effectivePageGround (some c) epoch opening = some c := rfl
+
+theorem effectivePageGround_epoch_exact (c : Ir.Color) (opening : Option Ir.Color) :
+    effectivePageGround none (some c) opening = some c := rfl
+
+theorem effectivePageGround_clear_exact :
+    effectivePageGround none none none = none := rfl
+
 /-- The eight printer's cut marks a page ships under `\page{ marks = cut }`:
 a pure function of the trim box (`W × H`), the bleed, the gap, and the
 thickness — derived, never placed by hand, so the drawn marks and the
@@ -4198,9 +4212,11 @@ private structure B where
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
-  /-- Background every page gets: the palette's `bg`, when declared. A
-  page's own `.pageStyle` background wins. -/
+  /-- Background every page gets from the opening document palette. -/
   docBg : Option Ir.Color := none
+  /-- Background selected by the current palette epoch. It survives page
+  closes; a page's own `.pageStyle` background wins while present. -/
+  epochBg : Option Ir.Color := none
   /-- How the page being built distributes its leftover vertical space;
   reset when it closes. `.top` (all leftover below) is the undeclared
   default; a standout frame or section page sets `.center`. -/
@@ -4559,7 +4575,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
        d)
   let fills := if delta == 0 then b.cur.fills else
     b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
-  let fills := match b.pageBg.orElse (fun _ => b.docBg) with
+  let fills := match effectivePageGround b.pageBg b.epochBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
     | none => fills
   -- Picture paths ride with the fills: the same vertical-distribution
@@ -5639,6 +5655,9 @@ private inductive Op where
   section page centre; a title page takes the golden split). Applies when
   the page closes and resets with it. -/
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
+  /-- Persistent page ground from a palette epoch. Unlike `pageStyle`, it
+  survives a page close; a frame's own page style still wins for that page. -/
+  | pageGround (bg : Option Ir.Color)
   /-- A colour bar behind the line just placed — the frame title. Full page
   width, from the page top to `pad` below the line's depth. With a `strut`
   the bar is moloch's frametitle box instead (`Ir.frameTitleStrut`): the
@@ -6127,27 +6146,25 @@ the palette in force. -/
 private def fgOf (pal : Ir.Palette) : Ir.Color :=
   (pal.find? "fg").getD Ir.Color.black
 
-/-- `.setPalette` on the accumulator: the palette in force, the default
-ink, and the surface derived from it change; nothing else does. Named so
-its no-emission is a theorem, not a review note. -/
+/-- `.setPalette` on the accumulator: the palette, default ink, and
+surface change together. The page ground rides as a state op so placement
+can apply the epoch to the current and following pages; no content op or gap
+is introduced. -/
 private def Acc.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
-  { a with pal := p, fg := fgOf p, ground := p.find? "bg" }
+  { a with pal := p, fg := fgOf p, ground := p.find? "bg"
+           ops := a.ops.push (.pageGround (p.find? "bg")) }
 
 /-- `.setTokens`, same door. -/
 private def Acc.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
   { a with tokens := tk }
 
-/-- The checkable core of "a setting's effect is confined to its declared
-extent", placement side: a stateful declaration emits nothing — the ops
-stream every page is placed from, the glue owed, and the pending-gap flag
-are untouched, so nothing placed before (or at) the block can differ from
-the document without it. The walk-prefix form over `collectBlock` itself
-now has its equation lemmas (the per-arm split made the unfold cheap, as
-`role_transparent_collect` witnesses); what it still wants is the induction
-over the block sequence. Its executable oracle lives in Tests.lean
-(scopeChecks). -/
-private theorem Acc.setPalette_emits_nothing (a : Acc) (p : Ir.Palette) :
-    (a.setPalette p).ops = a.ops ∧ (a.setPalette p).owed = a.owed ∧
+/-- A palette epoch emits exactly its page-ground transition and no content,
+glue, or diagnostic. This is the confinement core: earlier placed material
+is untouched while the current page's eventual shipout reads the last ground
+state. -/
+private theorem Acc.setPalette_emits_no_content (a : Acc) (p : Ir.Palette) :
+    (a.setPalette p).ops = a.ops.push (.pageGround (p.find? "bg")) ∧
+      (a.setPalette p).owed = a.owed ∧
       (a.setPalette p).wantDefault = a.wantDefault ∧
       (a.setPalette p).diags = a.diags :=
   ⟨rfl, rfl, rfl, rfl⟩
@@ -8176,8 +8193,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A stateful declaration, like `.logo`: the palette in force from here
     -- on, in flow order — the accumulator threads it past the enclosing
     -- block's end (flow scope, no brace revert). The default ink follows
-    -- the palette it derives from. No line, no gap, no op: the node ships
-    -- no ink of its own (`Acc.setPalette_emits_nothing`).
+    -- the palette it derives from; one state op carries the page-ground
+    -- epoch and no content or gap (`Acc.setPalette_emits_no_content`).
     a.setPalette p
 
   | .setTokens tk =>
@@ -8888,6 +8905,7 @@ private inductive StagedOp where
   | bodyOpen (g : Glue)
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
+  | pageGround (bg : Option Ir.Color)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
   | frameOpen (breakable : Bool)
   | blockBar (color : Ir.Color) (pad x w : Sp)
@@ -9254,6 +9272,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     frameBreak := none, spillWarned := false, opened := false }
   | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
+  | .pageGround bg => b := { b with epochBg := bg }
   | .foot c fr =>
     b := { b with curFoot := c, curFrame := fr
                   footBox := c.map (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
@@ -9857,8 +9876,8 @@ private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
   · exact Or.inr (hg1 ▸ h)
 
 /-- The one shipping step ships filled: the page `finishPage` pushes
-carries the full-page background fill whenever the document declared
-one — `pageBg.orElse docBg` is some either way, and the fill it selects
+carries the full-page background fill whenever the opening document
+declared one — `pageBg.orElse epochBg.orElse docBg` is some either way, and the fill it selects
 is prepended whole, before anything can shift it. -/
 private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     b.docBg.isSome = true → ∀ p ∈ (b.finishPage o f).pages,
@@ -9871,12 +9890,15 @@ private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     unfold bgFilled
     dsimp only
     rcases hpb : b.pageBg with _ | c
-    · rcases hdb : b.docBg with _ | c'
-      · rw [hdb] at hd; simp at hd
-      · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
-        simp [Option.orElse]
+    · rcases heb : b.epochBg with _ | e
+      · rcases hdb : b.docBg with _ | c'
+        · rw [hdb] at hd; simp at hd
+        · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
+          simp [effectivePageGround]
+      · refine ⟨b.geom.ground e, ?_, rfl, rfl, rfl, rfl⟩
+        simp [effectivePageGround]
     · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
-      simp
+      simp [effectivePageGround]
 
 private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
     BgStep b (b.finishPage o f) :=
@@ -9912,7 +9934,7 @@ private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp} {f : Boo
     dsimp only
     refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl, rfl⟩
     rw [h]
-    simp
+    simp [effectivePageGround]
 
 private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
   (bgStep_finishPage b (o := 0) (f := b.flushes)).trans
@@ -10771,6 +10793,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .bodyOpen g => .bodyOpen g
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
+    | .pageGround bg => .pageGround bg
     | .titleBar color pad strut => .titleBar color pad strut
     | .frameOpen br => .frameOpen br
     | .blockBar color pad x w => .blockBar color pad x w

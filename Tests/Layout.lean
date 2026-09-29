@@ -903,19 +903,211 @@ apart exactly the same inks. A projection corollary in the shape of
 `Pdf.html_fonts_cover_pdf`; it stands beside the tests rather than in a
 backend module because it names both backends and neither imports the
 other's colour printer. -/
-theorem backend_rgb_exact (c : Ir.Color) (h : c.cmyk = none) :
+theorem backend_rgb_exact (c : Ir.Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     HtmlDoc.cssColor c =
         "#" ++ Ir.Color.hexByte c.r false ++ Ir.Color.hexByte c.g false ++
           Ir.Color.hexByte c.b false ∧
       c.pdfFill = Ir.Color.pdfMilli (Ir.Color.milli c.r) ++ " " ++
         Ir.Color.pdfMilli (Ir.Color.milli c.g) ++ " " ++
         Ir.Color.pdfMilli (Ir.Color.milli c.b) ++ " rg" :=
-  ⟨rfl, by rw [Ir.Color.pdfFill_srgb c h]; rfl⟩
+  ⟨rfl, by rw [Ir.Color.pdfFill_srgb c hm hc]; rfl⟩
+
+/-- **Every supported xcolor model reaches one concrete colour in every
+surface context, and both artifacts project that value.** The cases are a
+family, not spellings copied from a document: the paragraph and frame-title
+paths must both retain the body, PDF must paint the resolved value, and the
+typed HTML tree must carry the same screen projection. Malformed and unknown
+models retain their content and are named instead of sliding into the
+no-model grammar. -/
+def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let cases : List (String × String × Ir.Color × String) :=
+    [("HTML", "010203", { r := 0x01, g := 0x02, b := 0x03 },
+        "0.00392 0.00784 0.01176 rg"),
+     ("RGB", "+51.5,+102,+153", { r := 0x34, g := 0x66, b := 0x99 },
+        "0.20195 0.4 0.59999 rg"),
+     ("rgb", "0.1234,0.2345,0.3456", { r := 0x1F, g := 0x3C, b := 0x58 },
+        "0.1234 0.2345 0.3456 rg"),
+     ("gray", "0.2345", { r := 0x3C, g := 0x3C, b := 0x3C }, "0.2345 g"),
+     ("cmyk", "0.1234,0.2345,0.3456,0.4567",
+        { r := 0x6B, g := 0x4F, b := 0x32, cmyk := some (123, 235, 346, 457) },
+        "0.1234 0.2345 0.3456 0.4567 k")]
+  let colorsOf (d : Ir.Doc) : Array Ir.Color :=
+    Ir.foldDoc (fun acc i => match i with
+      | .colored c _ _ => acc.push c
+      | _ => acc) #[] d
+  let samePreview (a b : Ir.Color) : Bool :=
+    a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk
+  let article (pre body : String) : String :=
+    "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
+  let deck (body : String) : String :=
+    "\\documentclass{slides}\\theme{default}\\begin{document}" ++ body ++ "\\end{document}"
+  let artifactHas (d : Ir.Doc) (text : String) (want : Ir.Color) (pdfOp : String) : Bool :=
+    let geom := Layout.Geom.ofPage d.page
+    let pdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace d geom).pages d.info)
+    let (_, body, _) := HtmlDoc.emitTree {} d
+    bytesContain pdf pdfOp &&
+      (elemStylesList #[] body.toList).any fun (shown, style) =>
+        hasStr shown text && hasStr style ("color: " ++ HtmlDoc.cssColor want)
+  for (model, spec, want, pdfOp) in cases do
+    let direct := "\\textcolor[" ++ model ++ "]{" ++ spec ++ "}{Model Ink}"
+    let (paragraph, pds) := elabStr (article "" direct)
+    t s!"xcolor {model}: direct text colour resolves in a paragraph"
+      (pds.all (·.severity != .error) && (colorsOf paragraph).any (samePreview want))
+    t s!"xcolor {model}: paragraph colour reaches exact PDF and typed HTML"
+      (artifactHas paragraph "Model Ink" want pdfOp)
+    let (frame, fds) := elabStr (deck
+      ("\\begin{frame}{" ++ direct ++ "}Frame body.\\end{frame}"))
+    t s!"xcolor {model}: direct text colour resolves in a frame title"
+      (fds.all (·.severity != .error) && (colorsOf frame).any (samePreview want))
+    t s!"xcolor {model}: frame-title colour reaches exact PDF and typed HTML"
+      (artifactHas frame "Model Ink" want pdfOp)
+    let decl := "\\definecolor{modelink}{" ++ model ++ "}{" ++ spec ++ "}"
+    let (defined, dds) := elabStr (article decl "\\textcolor{modelink}{Defined Ink}")
+    t s!"xcolor {model}: definecolor and a named use share the resolved value"
+      (dds.all (·.severity != .error) &&
+        (defined.palette.find? "modelink").any (samePreview want) &&
+        (colorsOf defined).any (samePreview want))
+    let (flow, cds) := elabStr (article ""
+      ("Before {\\color[" ++ model ++ "]{" ++ spec ++ "}Flow Ink} after."))
+    t s!"xcolor {model}: the declaration form resolves through the same value"
+      (cds.all (·.severity != .error) && (colorsOf flow).any (samePreview want) &&
+        artifactHas flow "Flow Ink" want pdfOp)
+    let (pageDoc, pageDs) := elabStr (article ""
+      ("\\pagecolor[" ++ model ++ "]{" ++ spec ++ "}Model Ground"))
+    let pageGeom := Layout.Geom.ofPage pageDoc.page
+    let pageOut := layoutOf oneFace pageDoc pageGeom
+    let pagePdf := pdfText (Pdf.write pageGeom oneFace pageOut.pages pageDoc.info)
+    let (_, pageBody, _) := HtmlDoc.emitTree {} pageDoc
+    t s!"xcolor {model}: page colour shares the exact model projection"
+      (pageDs.all (·.severity != .error) && bytesContain pagePdf pdfOp &&
+        (pageOut.pages[0]?).any fun p => p.fills.any fun f => samePreview want f.color)
+    t s!"xcolor {model}: typed HTML paints the same page-colour preview"
+      ((elemStylesList #[] pageBody.toList).any fun (shown, style) =>
+        hasStr shown "Model Ground" && hasStr style ("--bg: " ++ HtmlDoc.cssColor want) &&
+          hasStr style "background: var(--bg")
+  let named := article "\\definecolor{namedink}{HTML}{336699}"
+    "\\textcolor{namedink}{Named Ink}"
+  let (namedDoc, namedDs) := elabStr named
+  t "xcolor no-model syntax resolves a declared name"
+    (namedDs.all (·.severity != .error) &&
+      (colorsOf namedDoc).contains ({ r := 0x33, g := 0x66, b := 0x99 } : Ir.Color))
+  let (contrastDoc, contrastDs) := elabStr (article
+    "\\palette{ muted = #737380 }" "\\color{black}\\textcolor{muted}{Muted Ink}")
+  let contrastEpoch := contrastDoc.body.foldl (fun p b => match b with
+    | .setPalette q => some q
+    | _ => p) none
+  let realizedMuted := contrastDoc.palette.find? "muted"
+  t "a role realized in one epoch also reaches an equal role-ground pair at the root"
+    (contrastDs.any (·.code == "N0022") && realizedMuted.isSome &&
+      contrastEpoch.bind (·.find? "muted") == realizedMuted &&
+      realizedMuted.any fun c =>
+        Contrast.aaText ≤ Contrast.contrastMilli c Contrast.light.surface)
+  t "the accessibility colour judge reads the realized root pair"
+    ((HtmlDoc.schemeFailures true {} contrastDoc).isEmpty)
+  let malformed : List (String × String × String) :=
+    [("short HTML", "\\textcolor[HTML]{369}{Kept Ink}", "E0321"),
+     ("bad HTML digit", "\\textcolor[HTML]{GG6699}{Kept Ink}", "E0321"),
+     ("short rgb", "\\textcolor[rgb]{.2,.4}{Kept Ink}", "E0321"),
+     ("large RGB", "\\textcolor[RGB]{256,0,0}{Kept Ink}", "E0321"),
+     ("wide gray", "\\textcolor[gray]{.2,.4}{Kept Ink}", "E0321"),
+     ("large cmyk", "\\textcolor[cmyk]{0,0,0,2}{Kept Ink}", "E0321"),
+     ("unsupported hsb", "\\textcolor[hsb]{.2,.4,.6}{Kept Ink}", "W0102")]
+  for (label, cmd, code) in malformed do
+    let (d, ds) := elabStr (article "" cmd)
+    let shipped := censusOf (coveredColorsOf d) (layoutOf oneFace d)
+    t s!"xcolor {label}: content is retained and the model failure is named"
+      ((ds.filter (·.code == code)).size == 1 && ds.all (·.code != "E0304") &&
+        pageHas shipped 0 "Kept Ink" && (colorsOf d).isEmpty)
+  let unsupported : List (String × String × String) :=
+    [("text colour", "", "\\textcolor[hsb]{.2,.4,.6}{Kept Unsupported}"),
+     ("declaration colour", "", "{\\color[hsb]{.2,.4,.6}Kept Unsupported}"),
+     ("named definition", "\\definecolor{badmodel}{hsb}{.2,.4,.6}",
+        "Kept Unsupported"),
+     ("page colour", "", "\\pagecolor[hsb]{.2,.4,.6}Kept Unsupported")]
+  for (label, pre, body) in unsupported do
+    let (d, ds) := elabStr (article pre body)
+    let shipped := censusOf (coveredColorsOf d) (layoutOf oneFace d)
+    t s!"xcolor unsupported model: {label} reports once and retains content"
+      ((ds.filter (·.code == "W0102")).size == 1 &&
+        ds.all (fun x => x.severity != .error && x.code != "W0301" && x.code != "E0304") &&
+        pageHas shipped 0 "Kept Unsupported" && d.palette.find? "badmodel" == none)
+  let (badDecl, badDeclDs) := elabStr (article
+    "\\definecolor{bad}{rgb}{1,0}" "\\textcolor{bad}{Kept Definition Body}")
+  t "a malformed colour definition is refused without installing a partial value"
+    (badDecl.palette.find? "bad" == none && badDeclDs.any (·.code == "E0321") &&
+      badDeclDs.all (·.code != "E0304"))
+  let (snapDoc, snapDs) := elabStr (article
+    ("\\definecolor{snap}{HTML}{111111}\\pagecolor{snap}" ++
+      "\\definecolor{snap}{HTML}{222222}") "Snapshot page.")
+  t "a preamble page colour snapshots the name where the command stands"
+    (snapDs.all (·.severity != .error) &&
+      snapDoc.palette.find? "bg" == some ({ r := 0x11, g := 0x11, b := 0x11 } : Ir.Color) &&
+      snapDoc.palette.find? "snap" == some ({ r := 0x22, g := 0x22, b := 0x22 } : Ir.Color))
+  let (forwardDoc, forwardDs) := elabStr (article
+    "\\pagecolor{latercolor}\\definecolor{latercolor}{HTML}{222222}" "Unpainted page.")
+  t "a preamble page colour cannot resolve a definition written after it"
+    (forwardDoc.palette.find? "bg" == none && forwardDs.any (·.code == "W0304"))
+  let base : Ir.Color := { r := 0xF7, g := 0xF7, b := 0xF7 }
+  let painted : Ir.Color := { r := 0x11, g := 0x22, b := 0x33 }
+  let accent : Ir.Color := { r := 0xAA, g := 0xBB, b := 0xCC }
+  let later : Ir.Color := { r := 0x22, g := 0x33, b := 0x44 }
+  let resetSrc := article
+    "\\palette{ bg = #F7F7F7, accent = #445566 }\\pagecolor[HTML]{112233}"
+    "\\palette{ accent = #AABBCC, later = #223344 }Painted page.\\pagebreak\\nopagecolor Reset page."
+  let (resetDoc, resetDs) := elabStr resetSrc
+  let resetGeom := Layout.Geom.ofPage resetDoc.page
+  let resetOut := layoutOf oneFace resetDoc resetGeom
+  let fullGround (page : Layout.PageOut) (c : Ir.Color) : Bool :=
+    page.fills.any fun f => f.x == 0 && f.y == 0 && f.w == resetGeom.pageW &&
+      f.h == resetGeom.pageH && f.color == c
+  t "page colour reset is a palette epoch restoring the document ground"
+    (resetDs.all (fun d => d.severity != .error && d.code != "W0301") &&
+      (resetOut.pages[0]?).any (fullGround · painted) &&
+      (resetOut.pages[1]?).any (fullGround · base))
+  let resetPal := resetDoc.body.foldl (fun p b => match b with
+    | .setPalette q => some q
+    | _ => p) none
+  t "page colour reset changes only the ground and keeps later palette reads"
+    (resetPal.bind (·.find? "bg") == some base &&
+      resetPal.bind (·.find? "accent") == some accent &&
+      resetPal.bind (·.find? "later") == some later)
+  let (resetHead, resetBody, _) := HtmlDoc.emitTree {} resetDoc
+  let resetRootCss := resetHead.foldl (fun css n => match n with
+    | .style s => css ++ s
+    | _ => css) ""
+  let resetStyles := elemStylesList #[] resetBody.toList
+  t "the typed HTML root paints the preamble ground and the reset epoch restores it"
+    (hasStr resetRootCss "--bg: #112233" &&
+      resetStyles.any (fun (text, style) => hasStr text "Reset page" &&
+        !hasStr text "Painted page" && hasStr style "--bg: #f7f7f7" &&
+        hasStr style "background: var(--bg"))
+  let (clearDoc, clearDs) := elabStr (article ""
+    "\\pagecolor[HTML]{112233}Painted clear page.\\pagebreak\\nopagecolor Default clear page.")
+  let clearGeom := Layout.Geom.ofPage clearDoc.page
+  let clearOut := layoutOf oneFace clearDoc clearGeom
+  let (_, clearBody, _) := HtmlDoc.emitTree {} clearDoc
+  let clearStyles := elemStylesList #[] clearBody.toList
+  t "page colour reset restores an undeclared class ground without inventing white"
+    (clearDs.all (fun d => d.severity != .error && d.code != "W0301") &&
+      (clearOut.pages[0]?).any (fun p => p.fills.any (·.color == painted)) &&
+      (clearOut.pages[1]?).any (·.fills.isEmpty))
+  t "typed HTML clears an epoch property when the document ground was undeclared"
+    (clearStyles.any fun (text, style) => hasStr text "Default clear page" &&
+      !hasStr text "Painted clear page" && hasStr style "--bg: initial" &&
+      hasStr style "background: var(--bg")
+  let (samePageDoc, samePageDs) := elabStr (article ""
+    "\\pagecolor[HTML]{112233}Earlier text. \\nopagecolor same paragraph.\\pagebreak Later text.")
+  let samePageOut := layoutOf oneFace samePageDoc (Layout.Geom.ofPage samePageDoc.page)
+  let samePageParas := samePageDoc.body.filter (· matches .para _)
+  t "the last page-ground epoch before shipout controls the whole current page"
+    (samePageDs.all (·.code != "W0301") && samePageParas.size == 2 &&
+      (samePageOut.pages[0]?).any (·.fills.isEmpty) &&
+      (samePageOut.pages[1]?).any (·.fills.isEmpty))
 
 /-- `\vspace{\fill}` and `\vfill`: TeX's first-order infinite glue, whose
 share of the page's leftover is what places the content. Asserted over
-`Layout.Out` — the claim is about where lines land, never about an IR
-dump. -/
+`Layout.Out` — the claim is about where lines land, never about an IR dump. -/
 def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
@@ -1020,25 +1212,24 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
      ds.any (·.code == "W0340") && ds.all (·.code != "W0301") &&
        ds.all (·.severity != .error))
   -- CMYK: the print model survives as declared. The PDF paints DeviceCMYK
-  -- with the declared components (asserted over the written bytes); the
-  -- screen preview is the CSS Color 4 device-cmyk naive conversion, pinned
-  -- here so it cannot drift silently.
+  -- with the exact source components; the screen preview is xcolor's own
+  -- cmyk-to-rgb projection, pinned against the differential probe.
   let (cdoc, cds) := elabStr
     "\\documentclass{article}\\definecolor{ink}{cmyk}{0,.83,.76,.07}\
 \\begin{document}\\textcolor{ink}{x}\\end{document}"
   t "a cmyk definecolor lands in the palette with its components"
     (cds.all (·.severity != .error) && cds.all (·.code != "W0102") &&
       cdoc.palette.find? "ink" == some (Ir.Color.ofCmyk 0 830 760 70))
-  t "the cmyk screen preview is the CSS device-cmyk conversion"
+  t "the cmyk screen preview follows xcolor's cmyk-to-rgb conversion"
     (Ir.Color.ofCmyk 0 830 760 70 ==
-      { r := 237, g := 40, b := 57, cmyk := some (0, 830, 760, 70) })
+      { r := 237, g := 26, b := 43, cmyk := some (0, 830, 760, 70) })
   let cpdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace cdoc geom).pages cdoc.info)
   t "the pdf paints a cmyk colour in DeviceCMYK, components as declared"
     (bytesContain cpdf "0 0.83 0.76 0.07 k")
   t "the html backend converts, explicitly, to the preview"
     (((HtmlDoc.emit {} cdoc).1.splitOn
         (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70))).length ≥ 2 &&
-      HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed2839")
+      HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed1a2b")
   -- A colour expression keeps its model (xcolor §2.3.2: evaluated in the
   -- first colour's model). Before `mix` dispatched on the model, a
   -- CMYK-first mix was repainted as DeviceRGB — `0 0.502 0.502 rg` for

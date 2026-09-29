@@ -37,27 +37,93 @@ structure Entry where
   value : Value
   deriving Repr, BEq
 
+/-- One non-negative decimal component, kept as the exact rational the
+source wrote. `scale` is a power of ten and nonzero for every value made by
+`parseColorSpec`; consumers use the numeric fields, never reparsing text. -/
+structure ColorComponent where
+  num : Nat
+  scale : Nat
+  deriving Repr
+
+instance : BEq ColorComponent where
+  beq a b := a.num * b.scale == b.num * a.scale
+
+private def decimalFraction (num scale : Nat) : String :=
+  if num == 0 then "0"
+  else if num == scale then "1"
+  else
+    let places := (toString scale).length - 1
+    let raw := toString num
+    let digits := "".pushn '0' (places - raw.length) ++ raw
+    let digits := (digits.dropEndWhile (· == '0')).toString
+    "0." ++ digits
+
+/-- A unit component as a canonical PDF decimal, without losing source
+precision. -/
+def ColorComponent.pdfUnit (c : ColorComponent) : String :=
+  decimalFraction c.num c.scale
+
+private def texScaledDecimal (sp : Nat) : String := Id.run do
+  let mut out := toString (sp / 65536) ++ "."
+  let mut rem := 10 * (sp % 65536) + 5
+  let mut delta := 10
+  for _ in [0:6] do
+    if delta > 65536 then rem := rem - 17232
+    out := out ++ toString (rem / 65536)
+    rem := 10 * (rem % 65536)
+    delta := delta * 10
+    if rem ≤ delta then return out
+  return out
+
+/-- xcolor's RGB/HTML driver conversion: read the source number at TeX's
+scaled-point precision, divide by 255 as the driver does, then use TeX's own
+scaled-decimal printer. -/
+def ColorComponent.pdfRgb (c : ColorComponent) : String :=
+  let sourceSp := (c.num * 65536 + c.scale / 2) / c.scale
+  texScaledDecimal (sourceSp / 255)
+
+/-- xcolor's HTML projection of a unit component. Parsing to TeX's 16-bit
+fixed point before scaling reproduces the package's half-boundary behavior. -/
+def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
+  let sp := (c.num * 65536 + c.scale / 2) / c.scale
+  UInt8.ofNat ((sp * 255 + 32768) / 65536)
+
+/-- An RGB-range component projected to the nearest byte. -/
+def ColorComponent.rgbByte (c : ColorComponent) : UInt8 :=
+  UInt8.ofNat ((c.num + c.scale / 2) / c.scale)
+
+/-- The existing internal CMYK arithmetic uses thousandths; this is its one
+projection from an exact source component. -/
+def ColorComponent.milli (c : ColorComponent) : Nat :=
+  (c.num * 1000 + c.scale / 2) / c.scale
+
+/-- The source model of one xcolor specification. The constructors are the
+models the engine can project without guessing: HTML is an exact byte triple;
+RGB keeps its 0–255 decimals; rgb, gray, and cmyk keep their exact unit
+components until each backend chooses its own projection. -/
+inductive ColorSpec where
+  | named (expr : String)
+  | html (r g b : UInt8)
+  | rgbByte (r g b : ColorComponent)
+  | rgbUnit (r g b : ColorComponent)
+  | gray (v : ColorComponent)
+  | cmyk (c m y k : ColorComponent)
+  deriving Repr, BEq
+
+inductive ColorSpecError where
+  | unsupported (model : String)
+  | malformed (model detail : String)
+  deriving Repr, BEq
+
+/-- The public model names accepted by `parseColorSpec`, with xcolor's
+case-sensitive spellings. -/
+def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk"]
+
 private def hexDigit? (c : Char) : Option Nat :=
   if c.isDigit then some (c.toNat - '0'.toNat)
   else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
   else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
   else none
-
-/-- `#RGB` or `#RRGGBB`. -/
-private def parseColor (s : String) : Option Value := do
-  let cs := s.toList
-  match cs with
-  | '#' :: rest =>
-    let digits ← rest.mapM hexDigit?
-    match digits with
-    | [r, g, b] =>
-      -- #abc means #aabbcc, as in CSS
-      some (.color (UInt8.ofNat (r * 17)) (UInt8.ofNat (g * 17)) (UInt8.ofNat (b * 17)))
-    | [r1, r2, g1, g2, b1, b2] =>
-      some (.color (UInt8.ofNat (r1 * 16 + r2)) (UInt8.ofNat (g1 * 16 + g2))
-        (UInt8.ofNat (b1 * 16 + b2)))
-    | _ => none
-  | _ => none
 
 def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
@@ -119,6 +185,120 @@ def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
   if digits == 0 then
     return none
   return some (if neg then -(mantissa : Int) else mantissa, scale)
+
+private def colorParts (s : String) : Option (List String) :=
+  if s.contains ',' then
+    let parts := (s.splitOn ",").map (·.trimAscii.toString)
+    if parts.any (·.isEmpty) then none else some parts
+  else
+    let normalized := String.ofList (s.toList.map fun c =>
+      if c == '\t' || c == '\n' || c == '\r' then ' ' else c)
+    some ((normalized.splitOn " ").filterMap fun p =>
+      let p := p.trimAscii.toString
+      if p.isEmpty then none else some p)
+
+private def malformedColor (model detail : String) : Except ColorSpecError α :=
+  .error (.malformed model detail)
+
+private def colorComponents (model value : String) (count : Nat) :
+    Except ColorSpecError (List String) := do
+  let some parts := colorParts value
+    | return ← malformedColor model s!"expected {count} components"
+  if parts.length == count then return parts
+  else malformedColor model s!"expected {count} components, got {parts.length}"
+
+private def unitComponent (model src : String) : Except ColorSpecError ColorComponent := do
+  let some (m, scale) := parseDecimal src
+    | return ← malformedColor model s!"'{src}' is not a decimal"
+  if m < 0 || (scale : Int) < m then
+    malformedColor model s!"'{src}' is outside 0–1"
+  else
+    return { num := m.toNat, scale := scale }
+
+private def rgbComponent (model src : String) : Except ColorSpecError ColorComponent := do
+  let some (m, scale) := parseDecimal src
+    | return ← malformedColor model s!"'{src}' is not a decimal"
+  if m < 0 || (255 * scale : Int) < m then
+    malformedColor model s!"'{src}' is outside 0–255"
+  else
+    return { num := m.toNat, scale := scale }
+
+private def htmlBytes (value : String) : Except ColorSpecError (UInt8 × UInt8 × UInt8) := do
+  let digits ← match value.toList.mapM hexDigit? with
+    | some ds => pure ds
+    | none => malformedColor "HTML" "expected six hexadecimal digits"
+  match digits with
+  | [r1, r2, g1, g2, b1, b2] =>
+    return (UInt8.ofNat (r1 * 16 + r2), UInt8.ofNat (g1 * 16 + g2),
+      UInt8.ofNat (b1 * 16 + b2))
+  | _ => malformedColor "HTML" s!"expected six hexadecimal digits, got {digits.length}"
+
+private def wrappedColor (s : String) : Option (String × String) :=
+  match s.splitOn "(" with
+  | [model, rest] =>
+    let model := model.trimAscii.toString
+    if !model.isEmpty && model.toList.all Char.isAlpha && rest.endsWith ")" then
+      some (model, (rest.dropEnd 1).toString)
+    else none
+  | _ => none
+
+private def parseModeledColor (model value : String) : Except ColorSpecError ColorSpec := do
+  match model with
+  | "HTML" =>
+    let (r, g, b) ← htmlBytes value.trimAscii.toString
+    return .html r g b
+  | "RGB" =>
+    let parts ← colorComponents model value 3
+    let vals ← parts.mapM (rgbComponent model)
+    match vals with
+    | [r, g, b] => return .rgbByte r g b
+    | _ => malformedColor model "expected three components"
+  | "rgb" =>
+    let parts ← colorComponents model value 3
+    let vals ← parts.mapM (unitComponent model)
+    match vals with
+    | [r, g, b] => return .rgbUnit r g b
+    | _ => malformedColor model "expected three components"
+  | "gray" =>
+    let parts ← colorComponents model value 1
+    match parts with
+    | [v] => return .gray (← unitComponent model v)
+    | _ => malformedColor model "expected one component"
+  | "cmyk" =>
+    let parts ← colorComponents model value 4
+    let vals ← parts.mapM (unitComponent model)
+    match vals with
+    | [c, m, y, k] => return .cmyk c m y k
+    | _ => malformedColor model "expected four components"
+  | _ => .error (.unsupported model)
+
+/-- Parse one colour source. An explicit model follows xcolor's
+case-sensitive model grammar. With no model, native `#RGB`/`#RRGGBB` and the
+modelled `MODEL(...)` carrier are read; every other value remains a named
+xcolor expression for `Palette.resolveSpec` to resolve. -/
+def parseColorSpec (model : Option String) (raw : String) :
+    Except ColorSpecError ColorSpec :=
+  let value := raw.trimAscii.toString
+  match model with
+  | some model => parseModeledColor model.trimAscii.toString value
+  | none =>
+    if value.startsWith "#" then
+      let hex := (value.drop 1).toString
+      match hex.toList with
+      | [r, g, b] =>
+        match [r, g, b].mapM hexDigit? with
+        | some [rv, gv, bv] =>
+          .ok (.html (UInt8.ofNat (rv * 17)) (UInt8.ofNat (gv * 17))
+            (UInt8.ofNat (bv * 17)))
+        | _ => .error (.malformed "HTML" "expected three or six hexadecimal digits")
+      | _ =>
+        match htmlBytes hex with
+        | .ok (r, g, b) => .ok (.html r g b)
+        | .error e => .error e
+    else
+      match wrappedColor value with
+      | some (m, v) => parseModeledColor m v
+      | none => .ok (.named value)
 
 /-- sp per unit, expressed as a fraction so conversions stay exact. -/
 private def unitScaleBase : String → Option (Int × Nat)
@@ -698,19 +878,17 @@ def looksLikeExpr (s : String) : Bool := Id.run do
     i := i + 1
   return false
 
-/-- `cmyk(c, m, y, k)`: xcolor's cmyk model, four decimals in [0, 1],
-carried in thousandths. Print declares in CMYK because that is what a
-press mixes; the value survives as declared. -/
-private def parseCmyk (s : String) : Option Value := do
-  let inner := ((s.drop "cmyk(".length).toString.dropEnd 1).toString
-  let parts := (inner.splitOn ",").map (·.trimAscii.toString)
-  let vals ← parts.mapM fun p => do
-    let (m, sc) ← parseDecimal p
-    let v := m * 1000 / sc
-    if 0 ≤ v && v ≤ 1000 then some v.toNat else none
-  match vals with
-  | [c, m, y, k] => some (.cmyk c m y k)
-  | _ => none
+/-- A modelled colour carried inside the native declaration grammar. The
+xcolor compatibility layer writes the same `MODEL(...)` form, so every model
+and every malformed component passes through `parseColorSpec` once. -/
+private def parseModeledValue (s : String) : Option Value :=
+  match parseColorSpec none s with
+  | .ok (.html r g b) => some (.color r g b)
+  | .ok (.rgbByte r g b) => some (.color r.rgbByte g.rgbByte b.rgbByte)
+  | .ok (.rgbUnit r g b) => some (.color r.unitByte g.unitByte b.unitByte)
+  | .ok (.gray v) => some (.color v.unitByte v.unitByte v.unitByte)
+  | .ok (.cmyk c m y k) => some (.cmyk c.milli m.milli y.milli k.milli)
+  | .ok (.named _) | .error _ => none
 
 /-- `digits:digits` is a name, not a malformed dimension: the slides stage
 spellings (`\page{ size = 16:9 }`) parse as idents and the consuming
@@ -727,10 +905,8 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
     some (.str (String.ofList (s.toList.drop 1).dropLast))
-  else if s.startsWith "#" then
-    parseColor s
-  else if s.startsWith "cmyk(" && s.endsWith ")" then
-    parseCmyk s
+  else if s.startsWith "#" || (wrappedColor s).isSome then
+    parseModeledValue s
   else if s.startsWith "{" && s.endsWith "}" && s.length ≥ 2 then
     -- Nested blocks stay opaque; the declaration decides whether it takes one.
     some (.block (String.ofList (s.toList.drop 1).dropLast |>.trimAscii.toString))

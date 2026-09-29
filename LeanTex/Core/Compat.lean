@@ -4243,34 +4243,25 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
   -- the stream ends where it began: every group closed, no command half read
   if (mode == 0 || mode == 13) && stack.size == 1 then return some rules else return none
 
-/-- `\pagecolor[model]{colour}` sets the page background from here on
-(xcolor manual §2.6); the engine's page background is the palette's `bg`
-role, the one resolving site both backends read, so the contrast contracts
-judge text against the colour the page actually paints. -/
-private def pageColor (value : String) (pos : Pos) : M (Array Raw) := do
-  let native := s!"\\palette\{ bg = {value} }"
-  became "\\pagecolor" native pos
-  synthAt native pos
+/-- Internal marker prefix for xcolor's page-ground epoch. -/
+def pageColorMarkPrefix : String := "@pagecolor:"
 
-private def color (model value : String) (pos : Pos) : M (Option String) := do
+/-- `\pagecolor[model]{colour}` sets the page background from here on
+(xcolor manual §2.6). The source rides intact to the typed resolver; keeping
+this distinct from `\palette{bg=...}` lets `\nopagecolor` restore the
+document/class ground that existed before page colour was applied. -/
+private def pageColor (value : String) (pos : Pos) : M (Array Raw) := do
+  became "\\pagecolor" s!"the {value} page-ground epoch" pos
+  return #[.ctrl (pageColorMarkPrefix ++ value) pos]
+
+private def modeledColorSource (model : Option String) (value : String) : String :=
   match model with
-  | "HTML" => return some s!"#{value}"
-  | "cmyk" =>
-    -- The print model, kept as declared: PDF paints it in DeviceCMYK.
-    return some s!"cmyk({value})"
-  | "rgb" | "RGB" =>
-    let parts := (value.splitOn ",").filterMap fun p =>
-      Decl.parseDecimal p.trimAscii.toString
-    match parts with
-    | [(r, rs), (g, gs), (b, bs)] =>
-      let mult := if model == "rgb" then 255 else 1
-      let ch (m : Int) (s : Nat) : Nat := min 255 (m * mult / s).toNat
-      let hex (n : Nat) : String := Ir.Color.hexByte (UInt8.ofNat n)
-      return some s!"#{hex (ch r rs)}{hex (ch g gs)}{hex (ch b bs)}"
-    | _ => return none
-  | _ =>
-    say .W0102 s!"colour model '{model}' is not supported; use HTML, rgb, or cmyk" pos
-    return none
+  | some m => s!"{m.trimAscii.toString}({value})"
+  | none => value
+
+/-- Internal marker for xcolor's global page-ground reset. `@` is not a
+surface control-word character, so a document cannot forge the transition. -/
+def pageColorResetMark : String := "@pagecolor-reset"
 
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
 idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
@@ -4795,15 +4786,18 @@ and patterns stand in" pos
       return some (#[.word o pos, g, .word c pos], k + 1)
     | _ => return none
   | "color" =>
-    -- `\color{n}` colours to the end of the group (xcolor manual §2.6.4).
-    -- The marker keeps the spelling distinct from a bare palette name:
-    -- inline it declares like one, but at the flow's top level it is the
-    -- document's ink, and only the explicit \color form may claim that.
-    -- `@` never lexes into a control word, so no document can forge it.
-    let (args, k) := takeGroups raws start 1
-    let n := rawSrc (args.getD 0 #[])
-    became s!"\\color\{{n}}" s!"\\{n}" pos
-    return some (#[.ctrl ("@ink:" ++ n) pos], k)
+    -- `\color[model]{spec}` colours to the end of the group (xcolor manual
+    -- §2.6.4). The marker carries the source specification intact; the
+    -- typed colour parser and resolver in the elaborator own conversion.
+    let (model, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if args.isEmpty then return none
+    let value := rawSrc (args.getD 0 #[])
+    let source := modeledColorSource model value
+    match model with
+    | some m => became s!"\\color[{m}]\{{value}}" s!"the {source} ink declaration" pos
+    | none => became s!"\\color\{{value}}" s!"\\{value}" pos
+    return some (#[.ctrl ("@ink:" ++ source) pos], k)
   | "vspace" =>
     -- The star is `\@vspacer`'s zero rule before the space: its mark goes
     -- first, so the space stays at a page's top (`vspaceAnchorMark`).
@@ -6001,12 +5995,11 @@ face serves every language, so the binding is dropped" pos
     let (args, k) := takeGroups raws start 3
     if h : args.size = 3 then
       let n := rawSrc args[0]
-      match ← color (rawSrc args[1]) (rawSrc args[2]) pos with
-      | some hex =>
-        let native := s!"\\palette\{ {n} = {hex} }"
-        became s!"\\definecolor\{{n}}" native pos
-        return some (← synthAt native pos, k)
-      | none => return some (#[], k)
+      let model := rawSrc args[1]
+      let source := modeledColorSource (some model) (rawSrc args[2])
+      let native := s!"\\palette\{ {n} = {source} }"
+      became s!"\\definecolor\{{n}}" native pos
+      return some (← synthAt native pos, k)
     else return none
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
@@ -6021,16 +6014,15 @@ face serves every language, so the binding is dropped" pos
       return some (← synthAt native pos, k)
     else return none
   | "pagecolor" =>
-    let (opt, j) := takeOpt raws start
+    let (model, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if h : args.size = 1 then
-      let value ← match opt with
-        | some model => color model (rawSrc args[0]) pos
-        | none => pure (some (rawSrc args[0]))
-      match value with
-      | some v => return some (← pageColor v pos, k)
-      | none => return some (#[], k)
+      let value := modeledColorSource model (rawSrc args[0])
+      return some (← pageColor value pos, k)
     else return none
+  | "nopagecolor" =>
+    became "\\nopagecolor" "the document's default page ground" pos
+    return some (#[.ctrl pageColorResetMark pos], start)
   | "geometry" | "newgeometry" =>
     -- The command forms: the same keys the package options carry
     -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to
