@@ -897,16 +897,25 @@ before when the argument opens with `\nocorr`, none after when a `\nocorr`
 follows its first token (`\check@nocorr@`), and none where the token
 `\maybe@ic` reads next — the argument's first, or the one after the
 group — is `,` or `.` (`\nocorrlist`). -/
+def fontCmdNocorr : Raw → Bool
+  | .ctrl "nocorr" _ => true
+  | _ => false
+
 def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
   let reads : Option Raw → Bool
     | some (.word s _) => !(s.startsWith "," || s.startsWith ".")
     | _ => true
-  let nocorr : Raw → Bool
-    | .ctrl "nocorr" _ => true
-    | _ => false
   match body.dropWhile (· == .space) with
   | [] => (false, false)
-  | first :: rest => (!nocorr first && reads body.head?, !rest.any nocorr && reads next?)
+  | first :: rest => (!fontCmdNocorr first && reads body.head?,
+      !rest.any fontCmdNocorr && reads next?)
+
+/-- The argument content after ltfntcmd consumes its top-level `\nocorr`
+markers. A marker inside a nested group is not one `fontCmdEdges` reads, so
+it stays for that group's own elaboration rather than becoming a global
+no-op command. -/
+def fontCmdContent (body : Array Raw) : Array Raw :=
+  body.filter fun r => !fontCmdNocorr r
 
 /-- A text-font command's run: the styled argument, with the italic
 corrections `fontCmdEdges` asks for inside it before the argument, under
@@ -2055,6 +2064,14 @@ private theorem sliceWeight_eq (raws : Array Raw) (i : Nat) :
 private theorem rawWeightList_append (a b : List Raw) :
     rawWeightList (a ++ b) = rawWeightList a + rawWeightList b := by
   simp only [rawWeightList_eq]; exact measList_append ..
+
+private theorem rawWeightList_filter_monotone (p : Raw → Bool) (xs : List Raw) :
+    rawWeightList (xs.filter p) ≤ rawWeightList xs := by
+  induction xs with
+  | nil => simp [rawWeightList]
+  | cons x xs ih =>
+    simp only [List.filter_cons]
+    split <;> simp only [rawWeightList] <;> omega
 
 private theorem rawWeight_pos (r : Raw) : 1 ≤ rawWeight r := by
   cases r <;> simp [rawWeight]
@@ -4154,7 +4171,11 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
-            let inner ← elabInlines argCtx body
+            have hwc : rawWeightList (fontCmdContent body).toList < sliceWeight raws i := by
+              exact Nat.lt_of_le_of_lt (by
+                simpa [fontCmdContent] using
+                  rawWeightList_filter_monotone (fun r => !fontCmdNocorr r) body.toList) hw
+            let inner ← elabInlines argCtx (fontCmdContent body)
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)

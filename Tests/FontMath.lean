@@ -724,12 +724,14 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the kern stands on one side of the glue only (`\emph{a} V` keeps
   -- (space, V)). Source Serif Pro bold kerns (T, space) −6.
   let some sfs ← serifFacesSet | t "font edge: the serif faces load" false
-  let edgeGap (src : String) : Array Dim.Sp :=
-    let (d, _) := Elab.run "t" src
-    ((layoutOf sfs d ({} : Layout.Geom)).pages.flatMap (·.lines)).flatMap (·.segs)
+  let edgeRun (src : String) : Array Dim.Sp × Array Diag :=
+    let (d, ds) := Elab.run "t" src
+    let gaps := ((layoutOf sfs d ({} : Layout.Geom)).pages.flatMap (·.lines)).flatMap (·.segs)
       |>.filterMap fun s => match s with
         | .gap w true => some w
         | _ => none
+    (gaps, ds)
+  let edgeGap (src : String) : Array Dim.Sp := (edgeRun src).1
   let edgeU (n : Int) : Dim.Sp := n * ({} : Layout.Geom).fontSize / 1000
   let edgeSp := edgeU ssp.spaceAdvance
   -- Two edges at one space give its pair back once: after the first
@@ -745,6 +747,14 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("\\textrm{\\textbf{T }}a", boldSp), ("\\textbf{T }\\textbf{a}", boldSp),
       ("V \\emph{V}", edgeSp + edgeU (-39)), ("\\emph{a} V", edgeSp + edgeU (-30))] do
     t s!"font edge: '{src}' ships the gap lualatex sets" (edgeGap src == #[want])
+  for (src, want) in [("T \\textrm{\\nocorr V}", edgeSp + edgeU (-19) + edgeU (-30)),
+      ("\\textrm{T\\nocorr} a", edgeSp + edgeU (-19))] do
+    let got := edgeRun src
+    t s!"font edge: '{src}' consumes nocorr and ships the gap lualatex sets"
+      (got.1 == #[want] && got.2.isEmpty)
+  let (_, nestedNocorrDs) := Elab.run "t" "\\textrm{{\\nocorr}V}"
+  t "font edge: a nested nocorr is not consumed as the command's edge marker"
+    (nestedNocorrDs.map (·.code) == #["W0301"])
   t "no MATH face anywhere: the pick is none"
     ((← FontDb.pickMathFace
         (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))
