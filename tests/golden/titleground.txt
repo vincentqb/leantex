@@ -29,25 +29,30 @@ frame golden
   role titlepage-slot-0
     ragged left
       section* 0
-        styled bold
-          text "A Placeholder Deck"
+        role titlepage-slot-0-part-0
+          styled bold
+            text "A Placeholder Deck"
   role titlepage-slot-1
     ragged left
       para
-        text "Invented matter only"
+        role titlepage-slot-1-part-0
+          text "Invented matter only"
   role titlepage-slot-2
     ragged left
       para
-        styled size:large
-          text "P. Placeholder"
+        role titlepage-slot-2-part-0
+          styled size:large
+            text "P. Placeholder"
   role titlepage-slot-3
     ragged right
       para
-        text "example.org"
+        role titlepage-slot-3-part-0
+          text "example.org"
   role titlepage-slot-4
     ragged right
       para
-        text "2026-01-01"
+        role titlepage-slot-4-part-0
+          text "2026-01-01"
 frame
   title
     text "On the document’s ground"

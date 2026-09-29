@@ -1312,28 +1312,29 @@ def titleSlotCss (doc : Doc) : String :=
     let e := if l.ex != 0 then s!" + {decMilli l.ex}ex" else ""
     s!"{decMilli (l.em + l.sp * 1000 / body)}em{e}"
   let zero : Dim.Length := {}
-  let rules := slots.zipIdx.toList.filterMap fun (sl, i) => sl.place.map fun pl =>
-    let sel := s!"section.slide.title-page > .{roleClass (Ir.titleSlotRole i)}"
-    let dx := (pl.xshift.map (·.width)).getD zero
-    let dy := (pl.yshift.map (·.width)).getD zero
-    -- TikZ's `yshift` is up; the stage's `top` grows down.
-    let up : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
-    let sep := (pl.innerSep.map (·.width)).getD
-      (Dim.Length.ofSp (Ir.pgfInnerSep doc.page.fontSize))
-    let width := match sl.width with
-      | some w => s!" width: {emOf w.width};"
-      | none => ""
-    -- The declared size is the content's, never the box's: the box's own
-    -- offsets, measure and inner sep stay em of the body, as on the page.
-    let size := match sl.size with
-      | some z => s!"{sel} > * \{ font-size: {emOf z.width}; }\n"
-      | none => ""
-    s!"{sel} \{ position: absolute; margin: 0;\n" ++
-    s!"  left: calc({decMilli (Ir.shareOf pl.pagePoint.hshares 100000)}% + {emOf dx});\n" ++
-    s!"  top: calc({decMilli (Ir.shareOf pl.pagePoint.vshares 100000)}% + {emOf up});\n" ++
-    s!"  transform: translate(-{decMilli (Ir.shareOf pl.anchor.hshares 100000)}%, \
+  let rules := slots.zipIdx.toList.filterMap fun (sl, i) =>
+    let (slotWidth, place) := sl.box
+    place.map fun pl =>
+      let sel := s!"section.slide.title-page > .{roleClass (Ir.titleSlotRole i)}"
+      let dx := (pl.xshift.map (·.width)).getD zero
+      let dy := (pl.yshift.map (·.width)).getD zero
+      -- TikZ's `yshift` is up; the stage's `top` grows down.
+      let up : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+      let sep := (pl.innerSep.map (·.width)).getD
+        (Dim.Length.ofSp (Ir.pgfInnerSep doc.page.fontSize))
+      let width := match slotWidth with
+        | some w => s!" width: {emOf w.width};"
+        | none => ""
+      let partSizes := String.join (sl.parts.zipIdx.toList.filterMap fun (p, k) =>
+        p.size.map fun z =>
+          let partSel := s!"{sel} .{roleClass (Ir.titlePartRole i k)}"
+          s!"{partSel} \{ font-size: {emOf z.width}; }\n")
+      s!"{sel} \{ position: absolute; margin: 0;\n" ++
+      s!"  left: calc({decMilli (Ir.shareOf pl.pagePoint.hshares 100000)}% + {emOf dx});\n" ++
+      s!"  top: calc({decMilli (Ir.shareOf pl.pagePoint.vshares 100000)}% + {emOf up});\n" ++
+      s!"  transform: translate(-{decMilli (Ir.shareOf pl.anchor.hshares 100000)}%, \
 -{decMilli (Ir.shareOf pl.anchor.vshares 100000)}%);\n" ++
-    s!"  padding: {emOf sep};{width} }\n" ++ size
+      s!"  padding: {emOf sep};{width} }\n" ++ partSizes
   "@media screen, print { section.slide.title-page { position: relative; }\n" ++
   String.join rules ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] h1 {\n" ++
@@ -3827,7 +3828,8 @@ hover and focus inks, or a coloured run in the author line's template or a
 title slot's. -/
 def styleColored (st : ElementStyle) : Bool :=
   st.rule.isSome || st.separator.isSome || st.hover.isSome || st.focus.isSome ||
-    ((st.authorFont.getD #[]) :: st.slots.toList.flatMap (fun s => [s.content, s.font.getD #[]])).any
+    ((st.authorFont.getD #[]) :: st.slots.toList.flatMap (fun s =>
+      s.parts.toList.flatMap fun p => [p.content, p.font.getD #[]])).any
       (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)
 
 /-- Whether a loaded image paints on the page's own ground: a raster the

@@ -6012,29 +6012,40 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       | .date => part st.date
     let mut out : Array Block := #[]
     for (sl, i) in tps.slots.zipIdx do
-      -- The slot's lines: its first datum (or its own content), then each
-      -- further datum on a line of its own or sharing the line before.
-      let first := match sl.datum with
-        | some d => datumOf d
-        | none => part (some sl.content)
-      let mut lines : Array (Array Inline) := first.toArray
-      for (own, d) in sl.more do
-        if let some xs := datumOf d then
-          match lines.back?, own with
-          | some prev, false => lines := lines.pop.push (prev ++ #[.text " "] ++ xs)
-          | _, _ => lines := lines.push xs
-      let fill (xs : Array Inline) : Array Inline := match sl.font with
-        | some tpl => Ir.fillTemplate tpl xs
-        | none => xs
-      let blks : Array Block := lines.zipIdx.map fun (xs, k) =>
-        if k == 0 && first.isSome && sl.datum == some .title then .section 0 true none (fill xs)
-        else .para (fill xs)
+      let mut lines : Array
+          (Array Inline × Option String × Option SymGlue × Bool) := #[]
+      for (p, k) in sl.parts.zipIdx do
+        let content := match p.datum with
+          | some d => datumOf d
+          | none => part (some p.content)
+        if let some xs := content then
+          let xs := match p.font with
+            | some tpl => Ir.fillTemplate tpl xs
+            | none => xs
+          let xs : Array Inline := #[.role (Ir.titlePartRole i k) xs]
+          let isTitle := p.datum == some .title
+          match lines.back? with
+          | some (prev, align, before, hasTitle) =>
+            if p.newLine then
+              lines := lines.push (xs, p.align, p.before, isTitle)
+            else
+              lines := lines.pop.push
+                (prev ++ #[.text " "] ++ xs, align <|> p.align, before, hasTitle || isTitle)
+          | none => lines := lines.push (xs, p.align, none, isTitle)
+      let blks : Array Block := lines.zipIdx.map fun ((xs, align, before, hasTitle), k) =>
+        let blk : Block :=
+          if hasTitle then .section 0 true none xs else .para xs
+        let blk : Block := match align with
+          | some "center" => .center #[blk]
+          | some "right" => .ragged .right #[blk]
+          | _ => .ragged .left #[blk]
+        if k > 0 then
+          match before with
+          | some g => .spaced (Ir.Sourced.bare g) #[blk]
+          | none => blk
+        else blk
       unless blks.isEmpty do
-        let blk : Block := match sl.align with
-          | some "center" => .center blks
-          | some "right" => .ragged .right blks
-          | _ => .ragged .left blks
-        out := out.push (.role (Ir.titleSlotRole i) #[blk])
+        out := out.push (.role (Ir.titleSlotRole i) blks)
     return out
   let push (inner : Array Block) (before : Option (Sourced SymGlue)) (b : Block) : Array Block :=
     match before, inner.isEmpty with
@@ -11402,11 +11413,16 @@ def styleKeys : List String :=
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
    "author-strut", "body-size", "hover", "focus", "motion", "slot"]
 
-/-- The keys of one `slot = {...}` group in `\style{titlepage}`: what it
-sets, in which font, aligned how, how wide, and where it is pinned. -/
+/-- The keys of one `slot = {...}` group in `\style{titlepage}`. A
+slot owns its box; repeated `part` entries own independently styled data.
+The legacy part keys remain accepted and translate to one or more parts. -/
 def titleSlotKeys : List String :=
-  ["set", "content", "font", "align", "width", "size", "anchor", "at", "xshift", "yshift",
-   "inner-sep"]
+  ["part", "set", "content", "font", "align", "width", "size", "anchor", "at",
+   "xshift", "yshift", "inner-sep"]
+
+/-- The keys of one independently styled part in a title slot. -/
+def titlePartKeys : List String :=
+  ["set", "content", "font", "align", "size", "new-line", "before"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -11528,9 +11544,69 @@ list levels: itemize2..4, enumerate2..4")
           diag ctx .E0323 s!"'slot' in '\\style' belongs to the title page, not '{element}'" pos
             (help := "write \\style{titlepage}{ slot = { set = title, anchor = west, at = west } }")
         else
-          let inner := if valueSrc.startsWith "{" && valueSrc.endsWith "}" && valueSrc.length ≥ 2
-            then (valueSrc.drop 1).dropEnd 1 |>.toString else valueSrc
-          let mut sl : Ir.TitleSlot := { datum := none }
+          let unbrace (src : String) : String :=
+            if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
+            then (src.drop 1).dropEnd 1 |>.toString else src
+          let partOf (src : String) : EM (Option Ir.TitlePart) := do
+            let mut p : Ir.TitlePart := { datum := none }
+            let mut ok := true
+            let mut hasDatum := false
+            let mut hasContent := false
+            for sub in Decl.splitEntries (unbrace src) do
+              match Decl.splitEntry sub with
+              | none =>
+                ok := false
+                diag ctx .E0320 s!"invalid entry in a title part: {sub.quote}" pos
+                  (help := "entries look like: key = value")
+              | some (k, v) =>
+                let vt := v.trimAscii.toString
+                match k with
+                | "set" =>
+                  match Ir.TitleDatum.ofName? vt with
+                  | some d =>
+                    p := { p with datum := some d }
+                    hasDatum := true
+                  | none =>
+                    ok := false
+                    diag ctx .E0323 s!"'set' in a title part expects title, subtitle, author, \
+institute, or date, got '{vt}'" pos
+                | "content" =>
+                  p := { p with content := (← inlineOf v).getD #[] }
+                  hasContent := true
+                | "font" => p := { p with font := ← inlineOf v }
+                | "align" =>
+                  if vt == "left" || vt == "center" || vt == "right" then
+                    p := { p with align := some vt }
+                  else
+                    ok := false
+                    diag ctx .E0323
+                      s!"'align' in a title part expects left, center, or right, got '{vt}'" pos
+                | "size" => p := { p with size := ← lengthOf "size" v }
+                | "new-line" =>
+                  if vt == "true" then p := { p with newLine := true }
+                  else if vt == "false" then p := { p with newLine := false }
+                  else
+                    ok := false
+                    diag ctx .E0323
+                      s!"'new-line' in a title part expects true or false, got '{vt}'" pos
+                | "before" => p := { p with before := ← lengthOf "before" v }
+                | _ =>
+                  modify fun st' => { st' with
+                    diags := st'.diags.push
+                      (Decl.unknownKey ctx.file "title part" k titlePartKeys pos) }
+            if hasDatum && hasContent then
+              ok := false
+              diag ctx .E0323 "a title part cannot declare both 'set' and 'content'" pos
+            return if ok then some p else none
+          let inner := unbrace valueSrc
+          let mut parts : Array Ir.TitlePart := #[]
+          let mut legacyData : Array (Bool × Ir.TitleDatum) := #[]
+          let mut legacyContent : Array Inline := #[]
+          let mut legacyFont : Option (Array Inline) := none
+          let mut legacyAlign : Option String := none
+          let mut legacySize : Option SymGlue := none
+          let mut legacySeen := false
+          let mut width : Option SymGlue := none
           let mut anchor : Option Ir.BoxPoint := none
           let mut pagePoint : Option Ir.BoxPoint := none
           let mut xshift : Option SymGlue := none
@@ -11553,29 +11629,40 @@ list levels: itemize2..4, enumerate2..4")
 such as north west, got '{vt}'" pos
                   return none
               match k with
+              | "part" =>
+                match ← partOf v with
+                | some p => parts := parts.push p
+                | none => ok := false
               | "set" =>
-                -- One datum, or several in order: `\\` between two puts the
-                -- next on a line of its own, a space keeps it on the line.
+                legacySeen := true
                 let pieces := (vt.splitOn "\\\\").map fun p =>
                   (p.splitOn " ").filter (!·.isEmpty)
                 let names : List (Bool × String) := (pieces.zipIdx.map fun (ws, k) =>
                   ws.zipIdx.map fun (w, j) => (k > 0 && j == 0, w)).flatten
                 match names.mapM fun (own, w) => (Ir.TitleDatum.ofName? w).map (own, ·) with
-                | some ((_, d) :: rest) => sl := { sl with datum := some d, more := rest.toArray }
+                | some ds@(_ :: _) => legacyData := ds.toArray
                 | _ =>
                   ok := false
                   diag ctx .E0323 s!"'set' in a title slot expects title, subtitle, author, \
 institute, or date, got '{vt}'" pos
-              | "content" => sl := { sl with content := (← inlineOf v).getD #[] }
-              | "font" => sl := { sl with font := ← inlineOf v }
+              | "content" =>
+                legacySeen := true
+                legacyContent := (← inlineOf v).getD #[]
+              | "font" =>
+                legacySeen := true
+                legacyFont := ← inlineOf v
               | "align" =>
+                legacySeen := true
                 if vt == "left" || vt == "center" || vt == "right" then
-                  sl := { sl with align := some vt }
+                  legacyAlign := some vt
                 else
+                  ok := false
                   diag ctx .E0323
                     s!"'align' in a title slot expects left, center, or right, got '{vt}'" pos
-              | "width" => sl := { sl with width := ← lengthOf "width" v }
-              | "size" => sl := { sl with size := ← lengthOf "size" v }
+              | "width" => width := ← lengthOf "width" v
+              | "size" =>
+                legacySeen := true
+                legacySize := ← lengthOf "size" v
               | "anchor" => anchor := (← point "anchor") <|> anchor
               | "at" => pagePoint := (← point "at") <|> pagePoint
               | "xshift" => xshift := ← lengthOf "xshift" v
@@ -11584,11 +11671,26 @@ institute, or date, got '{vt}'" pos
               | _ =>
                 modify fun st' => { st' with
                   diags := st'.diags.push (Decl.unknownKey ctx.file "slot" k titleSlotKeys pos) }
+          if legacySeen && !parts.isEmpty then
+            ok := false
+            diag ctx .E0323 "a title slot cannot mix 'part' entries with legacy part keys" pos
+          let legacyParts : Array Ir.TitlePart :=
+            if legacyData.isEmpty then
+              if legacySeen then
+                #[{ datum := none, content := legacyContent, font := legacyFont,
+                    align := legacyAlign, size := legacySize }]
+              else #[]
+            else legacyData.map fun (newLine, datum) =>
+              { datum := some datum, font := legacyFont, align := legacyAlign,
+                size := legacySize, newLine := newLine }
           let place : Option Ir.TitlePlace :=
             if anchor.isNone && pagePoint.isNone then none
             else some { anchor := anchor.getD .center, pagePoint := pagePoint.getD .center
                         xshift := xshift, yshift := yshift, innerSep := innerSep }
-          if ok then st := { st with slots := st.slots.push { sl with place := place } }
+          if ok then
+            let slot := Ir.TitleSlot.ofNodeParts
+              (if parts.isEmpty then legacyParts else parts) width place
+            st := { st with slots := st.slots.push slot }
       | "align" =>
         match valueSrc.trimAscii.toString with
         | "left" => st := { st with align := some "left" }

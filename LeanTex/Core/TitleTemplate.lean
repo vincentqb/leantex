@@ -20,32 +20,31 @@ namespace LeanTex.Core.TitleTemplate
 open LeanTex.Core
 open LeanTex.Core.Picture (Tok)
 
-/-- One node of the template, as native source. -/
-structure Node where
-  /-- The datum the node inserts (`title`, `author`, ...), or `none` for
-  literal content. -/
+/-- One ordered datum or literal part inside a source node. Styling
+belongs to the part; placement and measure belong to its node. -/
+structure Part where
   datum : Option String
-  /-- Further data the node sets after its first, each with whether a line
-  end stands before it. -/
-  more : Array (Bool × String) := #[]
-  /-- Literal content, as source (empty for a datum node). -/
   content : String := ""
   font : String := ""
-  /-- The size the node's font declares, as source (`size*`'s first
-  argument). -/
   size : Option String := none
   ink : Option String := none
   align : Option String := none
-  width : Option String := none
+  newLine : Bool := false
+  before : Option String := none
+  deriving Repr, BEq, Inhabited
+
+/-- One node of the template, as native source. -/
+structure Node where
+  parts : Array Part := #[]
   /-- Whether the node stands pinned to a point of the page. A node the
-  engine cannot pin — no `at (current page.<point>)`, or several data in
-  one node — still sets what it inserts, unpinned: at the title page's
-  default place, in its flow. -/
+  engine cannot pin — no `at (current page.<point>)` — still sets its
+  parts unpinned at the title page's default place. -/
   pinned : Bool := true
   anchor : String := "center"
   pagePoint : String := "center"
   xshift : Option String := none
   yshift : Option String := none
+  width : Option String := none
   innerSep : Option String := none
   deriving Repr, BEq, Inhabited
 
@@ -60,9 +59,8 @@ structure Read where
   here, so its skip at the declaration is withdrawn. -/
   fonts : Array String := #[]
   /-- Nodes the engine cannot pin as the template does: the data each sets
-  (empty for literal content) and whether it is several data in one node.
-  What each sets still ships, unpinned. -/
-  unplaced : Array (Array String × Bool) := #[]
+  (empty for literal content). What each sets still ships, unpinned. -/
+  unplaced : Array (Array String) := #[]
   /-- Control words met beside a datum and not read, with the datum: the
   datum ships without them. -/
   skipped : Array (String × String) := #[]
@@ -213,17 +211,27 @@ structure Style where
   align : Option String := none
   deriving Repr, BEq, Inhabited
 
+/-- One datum found in node content, with the style and boundary in
+force where it stands. -/
+structure ScannedPart where
+  datum : String
+  style : Style
+  newLine : Bool := false
+  before : Option String := none
+  deriving Repr, BEq, Inhabited
+
 /-- What a node's content group sets: each datum it inserts with the style
-in force where the insert stands and whether a line end stands between it
-and the datum before, whether any other ink stands beside them, the
-control words met and not read, and the theme fonts selected. -/
+in force where the insert stands, its line and gap boundary, whether any
+other ink stands beside the data, the control words met and not read, and
+the theme fonts selected. -/
 structure Scan where
-  data : Array (String × Style × Bool) := #[]
+  data : Array ScannedPart := #[]
   words : Bool := false
   skipped : Array String := #[]
   used : Array String := #[]
-  /-- A line end met since the last datum. -/
+  /-- A line end and gap met since the last datum. -/
   broke : Bool := false
+  before : Option String := none
   deriving Repr, Inhabited
 
 /-- NFSS's font-change commands, declaration beside its one-argument form —
@@ -247,9 +255,11 @@ def lineCtrls : List String := ["par", "\\", "newline", "null"]
 recorded with the style in force where its insert stands; a group scopes
 declarations; a font declaration, `\usebeamerfont`, `\color` and a ragged
 declaration are read; the breaker's integer parameters and line ends are
-transparent; `\usebeamercolor` and any other control word are named and
-not read, an argument group of theirs still scanned for data. Anything
-else is ink beside the data. -/
+transparent. Beamer's empty-datum `\ifx` idiom contributes only its else
+body, so the comparison operand is not mistaken for ink or a second datum.
+A literal `\vskip` belongs to the next optional part. `\usebeamercolor`
+and any other control word are named and not read, and an argument group
+of theirs is still scanned for data. Anything else is ink beside the data. -/
 def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List Tok → Scan
   | [] => acc
   | .space :: rest => scanList fonts st acc rest
@@ -257,6 +267,23 @@ def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List To
   | .ctrl n :: .sym '=' :: .num _ :: rest =>
     if breakParams.contains n then scanList fonts st acc rest
     else scanList fonts st { acc with skipped := acc.skipped.push s!"\\{n}" } rest
+  | .ctrl "ifx" :: .ctrl datum :: .ctrl "@empty" :: .ctrl "else" :: rest
+  | .ctrl "ifx" :: .ctrl "@empty" :: .ctrl datum :: .ctrl "else" :: rest =>
+    if (insertDatum datum).isSome then scanList fonts st acc rest
+    else scanList fonts st { acc with skipped := acc.skipped.push "\\ifx" } rest
+  | .ctrl "ifx" :: rest =>
+    scanList fonts st { acc with skipped := acc.skipped.push "\\ifx" } rest
+  | .ctrl "fi" :: rest => scanList fonts st acc rest
+  | .ctrl "vskip" :: .space :: rest =>
+    scanList fonts st acc (.ctrl "vskip" :: rest)
+  | .ctrl "vskip" :: .group body :: rest =>
+    scanList fonts st { acc with broke := true, before := some (srcList (trim body)) } rest
+  | .ctrl "vskip" :: n@(.num _) :: u@(.ident _) :: rest =>
+    scanList fonts st { acc with broke := true, before := some (srcList [n, u]) } rest
+  | .ctrl "vskip" :: s@(.sym '-') :: n@(.num _) :: u@(.ident _) :: rest =>
+    scanList fonts st { acc with broke := true, before := some (srcList [s, n, u]) } rest
+  | .ctrl "vskip" :: rest =>
+    scanList fonts st { acc with skipped := acc.skipped.push "\\vskip" } rest
   | .ctrl "usebeamerfont" :: .group g :: rest =>
     let name := srcList (trim g)
     match fonts.lookup name with
@@ -267,10 +294,7 @@ def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List To
       scanList fonts st
         { acc with skipped := acc.skipped.push s!"\\usebeamerfont\{{name}}" } rest
   | .ctrl "color" :: .group g :: rest =>
-    let c := srcList (trim g)
-    if c.contains '!' then
-      scanList fonts st { acc with skipped := acc.skipped.push s!"\\color\{{c}}" } rest
-    else scanList fonts { st with ink := some c } acc rest
+    scanList fonts { st with ink := some (srcList (trim g)) } acc rest
   | .ctrl "usebeamercolor" :: .sym '[' :: .ident _ :: .sym ']' :: .group _ :: rest
   | .ctrl "usebeamercolor" :: .group _ :: rest =>
     scanList fonts st { acc with skipped := acc.skipped.push "\\usebeamercolor" } rest
@@ -288,10 +312,18 @@ def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List To
     let (st', acc') := ctrlStep st acc n
     scanList fonts st' acc' rest
   | _ :: rest => scanList fonts st { acc with words := true } rest
+termination_by ts => sizeOf ts
+decreasing_by
+  all_goals simp_wf
+  all_goals omega
 where
-  /-- Record a datum, with whether a line end stood before it. -/
+  /-- Record a datum with the line and gap boundary immediately before it. -/
   push (acc : Scan) (d : String) (st : Style) : Scan :=
-    { acc with data := acc.data.push (d, st, acc.broke), broke := false }
+    { acc with
+      data := acc.data.push
+        { datum := d, style := st, newLine := acc.broke, before := acc.before }
+      broke := false
+      before := none }
   /-- One bare control word: a datum, a line end, a ragged or font
   declaration, or a construct named and not read. -/
   ctrlStep (st : Style) (acc : Scan) (n : String) : Style × Scan :=
@@ -413,8 +445,9 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
     (coord.bind pagePointOf).filter fun (point, _, _) => (Ir.BoxPoint.ofName? point).isSome
   let some body := content | return { rd with unread := rd.unread.push "a node with no content" }
   let mut n : Node := match pin with
-    | some (point, xs, ys) => { datum := none, pagePoint := point, xshift := xs, yshift := ys }
-    | none => { datum := none, pinned := false }
+    | some (point, xs, ys) => { pagePoint := point, xshift := xs, yshift := ys }
+    | none => { pinned := false }
+  let mut base : Style := {}
   let mut unread := rd.unread
   let mut used := rd.fonts
   for o in opts do
@@ -425,55 +458,45 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
       else unread := unread.push s!"anchor={a}"
     | ("align", some v) =>
       let a := srcList v
-      if a == "left" || a == "center" || a == "right" then n := { n with align := some a }
+      if a == "left" || a == "center" || a == "right" then
+        base := { base with align := some a }
       else unread := unread.push s!"align={a}"
     | ("text width", some v) => n := { n with width := some (srcList v) }
     | ("text", some v) =>
-      let c := srcList v
-      if c.contains '!' then unread := unread.push s!"text={c}"
-      else n := { n with ink := some c }
+      base := { base with ink := some (srcList v) }
     | ("inner sep", some v) => n := { n with innerSep := some (srcList v) }
     | ("font", some v) =>
       match fontOf fonts v with
       | some (f, names) =>
-        n := { n with font := f.cmds, size := f.size }
+        base := { base with font := f.cmds, size := f.size }
         unread := unread ++ f.unread
         used := used ++ names
       | none => unread := unread.push s!"font={srcList v}"
     | (k, _) => unless k.isEmpty do unread := unread.push k
-  let sc := scanList fonts {} {} body
+  let sc := scanList fonts base {} body
   used := used ++ sc.used
-  -- Each datum takes the node's options, then what its content declared
-  -- before it: the content's own font follows `font=`, as TeX reads them.
-  let styled (d : String) (s : Style) : Node :=
-    { n with datum := some d
-             font := if s.font.isEmpty then n.font else (n.font ++ " " ++ s.font).trimAscii.toString
-             size := s.size <|> n.size
-             ink := s.ink <|> n.ink
-             align := n.align <|> s.align }
   if sc.words && !sc.data.isEmpty then
-    return { rd with mixed := rd.mixed <|> sc.data[0]?.map (·.1) }
+    return { rd with mixed := rd.mixed <|> sc.data[0]?.map (·.datum) }
   let rd := { rd with unread := unread, fonts := used }
-  match sc.data.toList with
-  | [] =>
-    let node := { n with content := srcList body }
-    return { rd with nodes := rd.nodes.push node
-                     unplaced := if node.pinned then rd.unplaced else rd.unplaced.push (#[], false) }
-  | (d, s, _) :: later =>
-    let data := #[d] ++ later.toArray.map (·.1)
-    let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, d) }
-    if later.all (·.2.1 == s) then
-      -- One style for every datum: one slot sets them all, in the node's
-      -- order and on the node's lines, pinned as the node is.
-      let node := { styled d s with more := later.toArray.map fun (d', _, br) => (br, d') }
-      return { rd with nodes := rd.nodes.push node
-                       unplaced := if node.pinned then rd.unplaced else rd.unplaced.push (data, false) }
-    else
-      -- Data the node styles apart are no one slot: each sets unpinned, in
-      -- its own style, in the order the node inserts them.
-      let nodes := ((d, s, false) :: later).toArray.map fun (d', s', _) =>
-        { styled d' s' with pinned := false }
-      return { rd with nodes := rd.nodes ++ nodes, unplaced := rd.unplaced.push (data, true) }
+  match sc.data[0]? with
+  | none =>
+    let literal : Part :=
+      { datum := none, content := srcList body, font := base.font, size := base.size
+        ink := base.ink, align := base.align }
+    let node := { n with parts := #[literal] }
+    return { rd with
+      nodes := rd.nodes.push node
+      unplaced := if node.pinned then rd.unplaced else rd.unplaced.push #[] }
+  | some first =>
+    let parts := sc.data.map fun p =>
+      { datum := some p.datum, font := p.style.font, size := p.style.size
+        ink := p.style.ink, align := p.style.align, newLine := p.newLine, before := p.before }
+    let data := sc.data.map (·.datum)
+    let node := { n with parts := parts }
+    let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, first.datum) }
+    return { rd with
+      nodes := rd.nodes.push node
+      unplaced := if node.pinned then rd.unplaced else rd.unplaced.push data }
 
 /-- The data a node sets, as prose: `the author and the institute`. -/
 def dataPhrase (ds : List String) : String :=
@@ -483,24 +506,19 @@ def dataPhrase (ds : List String) : String :=
   | last :: init =>
     String.intercalate ", " (init.reverse.map (s!"the {·}")) ++ s!" and the {last}"
 
-/-- The one loss a node the engine cannot pin is named by (`W0363`): the
-key's suffix (the data it sets), what it sets and where that stands
+/-- The one loss a node the engine cannot pin is named by (`W0363`):
+the key's suffix (the data it sets), what it sets and where that stands
 instead, and the help. -/
-def unplacedLoss (data : Array String) (several : Bool) : String × String × Option String :=
+def unplacedLoss (data : Array String) : String × String × Option String :=
   let key := if data.isEmpty then "text" else String.intercalate "+" data.toList
   let help := data[0]?.map fun d =>
-    (if several then "pin one datum per node: " else "pin the node to a point of the page: ") ++
-      s!"\\node[anchor=west] at (current page.west) \{\\insert{d}}"
-  let msg :=
-    if several then
-      s!"one title-page template node styles {dataPhrase data.toList} apart; each sets \
-unpinned, in the title page's flow"
-    else match data[0]? with
-      | some d =>
-        let verb := if data.size > 1 then "set" else "sets"
-        s!"the title-page template's {d} node is not pinned to the page; \
+    s!"pin the node to a point of the page: \\node[anchor=west] at (current page.west) \{\\insert{d}}"
+  let msg := match data[0]? with
+    | some d =>
+      let verb := if data.size > 1 then "set" else "sets"
+      s!"the title-page template's {d} node is not pinned to the page; \
 {dataPhrase data.toList} {verb} in the title page's flow"
-      | none => "a title-page template node of literal text is not pinned to the page; \
+    | none => "a title-page template node of literal text is not pinned to the page; \
 it sets in the title page's flow"
   (key, msg, help)
 
@@ -559,33 +577,38 @@ The title page the template replaces draws no lineage separator. A node's
 ink rides its font template as the palette colour command; the title's is
 the title page's own ink role when a ground stands. -/
 def native (rd : Read) : String :=
-  let titleInk := (rd.nodes.find? (·.datum == some "title")).bind (·.ink)
+  let titleInk := rd.nodes.toList.findSome? fun n =>
+    (n.parts.find? (·.datum == some "title")).bind (·.ink)
   let roles := (rd.ground.map (s!"titlepagebg = {·}")).toList ++
     (if rd.ground.isSome then (titleInk.map (s!"titlepagefg = {·}")).toList else [])
   let palette := if roles.isEmpty then "" else
     "\\palette{ " ++ String.intercalate ", " roles ++ " }"
-  let slot (n : Node) : String :=
-    let ink := match n.ink with
+  let part (p : Part) : String :=
+    let ink := match p.ink with
       | some c =>
-        if rd.ground.isSome && n.ink == titleInk then "" else s!"\\{c} "
+        if rd.ground.isSome && p.ink == titleInk then "" else s!"\\color\{{c}} "
       | none => ""
-    let font := n.font ++ (if n.font.isEmpty || ink.isEmpty then "" else " ") ++ ink
-    let parts :=
-      (match n.datum with
-       | some d => [s!"set = {d}" ++ String.join (n.more.toList.map fun (own, d') =>
-           (if own then " \\\\ " else " ") ++ d')]
-       | none => ["content = {" ++ n.content ++ "}"]) ++
+    let font := p.font ++ (if p.font.isEmpty || ink.isEmpty then "" else " ") ++ ink
+    let fields :=
+      (match p.datum with
+       | some d => [s!"set = {d}"]
+       | none => ["content = {" ++ p.content ++ "}"]) ++
+      (if p.newLine then ["new-line = true"] else []) ++
+      (p.before.map (s!"before = {·}")).toList ++
+      (p.size.map (s!"size = {·}")).toList ++
+      (p.align.map (s!"align = {·}")).toList ++
+      (if font.isEmpty then [] else ["font = {" ++ font.trimAscii.toString ++ "}"])
+    "part = { " ++ String.intercalate ", " fields ++ " }"
+  let slot (n : Node) : String :=
+    let fields := n.parts.toList.map part ++
       (if n.pinned then
         [s!"anchor = {n.anchor}", s!"at = {n.pagePoint}"] ++
         (n.xshift.map (s!"xshift = {·}")).toList ++
         (n.yshift.map (s!"yshift = {·}")).toList ++
         (n.width.map (s!"width = {·}")).toList
       else []) ++
-      (n.size.map (s!"size = {·}")).toList ++
-      (if n.pinned then (n.innerSep.map (s!"inner-sep = {·}")).toList else []) ++
-      (n.align.map (s!"align = {·}")).toList ++
-      (if font.isEmpty then [] else ["font = {" ++ font.trimAscii.toString ++ "}"])
-    "slot = { " ++ String.intercalate ", " parts ++ " }"
+      (if n.pinned then (n.innerSep.map (s!"inner-sep = {·}")).toList else [])
+    "slot = { " ++ String.intercalate ", " fields ++ " }"
   let style := "\\style{titlepage}{ separator = none" ++
     String.join (rd.nodes.toList.map fun n => ", " ++ slot n) ++ " }"
   palette ++ style

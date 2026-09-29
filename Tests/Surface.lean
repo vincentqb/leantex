@@ -5282,26 +5282,55 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let t := check ref
   let overlay (titleNode authorNode : String) : String :=
     "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeLeaf}{HTML}{9AD1A0}" ++
+    "\\definecolor{probeGold}{HTML}{F2CC60}\\definecolor{probeSnow}{HTML}{F4F4F0}" ++
     "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
     "\\fill[probeNight] (current page.south west) rectangle (current page.north east);" ++
-    titleNode ++ authorNode ++ "\\end{tikzpicture}}" ++
-    "\\title{Probe Heading}\\author{Pat Example}\\institute{example.org}"
+    titleNode ++ authorNode ++ "\\end{tikzpicture}}"
   let pinnedTitle (body : String) : String :=
     "\\node[anchor=west, text=probeLeaf] at ([xshift=2cm]current page.west) {" ++ body ++ "};"
   let pinnedAuthor (body : String) : String :=
     "\\node[anchor=south west, text=probeLeaf] at ([xshift=2cm,yshift=1cm]current page.south west) {" ++
       body ++ "};"
-  let ship (pre : String) : Ir.Doc × Array Diag × Array CensusPage × String :=
-    let (doc, ds) := elabStr (deck169 pre "\\titlepage")
+  let shipWith (pre decls : String) : Ir.Doc × Array Diag × Array CensusPage × String :=
+    let (doc, ds) := elabStr (deck169 (pre ++ decls) "\\titlepage")
     let (_, body, _) := HtmlDoc.emitTree {} doc
     (doc, ds, censusOf (coveredColorsOf doc) (layoutOf oneFace doc),
      titleSlideTextList false "" body.toList)
+  let declared :=
+    "\\title{Probe Heading}\\author{Pat Example}\\institute{example.org}"
+  let ship (pre : String) : Ir.Doc × Array Diag × Array CensusPage × String :=
+    shipWith pre declared
   let slotOf (doc : Ir.Doc) (d : String) : Option Ir.TitleSlot :=
     ((doc.styles.find? "titlepage").getD {}).slots.find? fun sl =>
-      sl.datum.map (·.name) == some d
+      sl.parts.any fun p => p.datum.map (·.name) == some d
+  let partOf (doc : Ir.Doc) (d : String) : Option Ir.TitlePart :=
+    (slotOf doc d).bind fun sl => sl.parts.find? fun p => p.datum.map (·.name) == some d
+  let runColorOf (doc : Ir.Doc) (needle : String) : Option Ir.Color :=
+    ((layoutOf oneFace doc).pages[0]?.bind fun page =>
+      page.lines.find? fun line => hasStr (lineText line) needle).bind fun line =>
+        line.segs.findSome? fun seg => match seg with
+          | .run _ color .. => some color
+          | _ => none
+  let renderedTitle (doc : Ir.Doc) : String :=
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    Html.render (Html.elem "body" body) 0
   let key (x : String) : Option String := some ("beamer:setbeamertemplate:title page:" ++ x)
   let shows (c : Array CensusPage) (html needle : String) : Bool :=
     pageHas c 0 needle && hasStr html needle
+  let micro (src : String) : List Picture.Tok :=
+    let (raws, _) := Parse.parse "title-part-unit" (Lex.lex "title-part-unit" src).1
+    (Picture.ofRaws raws).toList
+  let scanOptional := TitleTemplate.scanList [] {} {}
+    (micro ("{\\bfseries\\inserttitle\\par}" ++
+      "\\ifx\\insertsubtitle\\@empty\\else\\vskip0.5cm" ++
+      "{\\large\\insertsubtitle\\par}\\fi"))
+  t "unit: an empty-check conditional scans each datum once and no literal ink"
+    (scanOptional.data.map (·.datum) == #["title", "subtitle"] && !scanOptional.words)
+  let readCompound := TitleTemplate.nodeStmt [] {}
+    (micro "[anchor=west] at (current page.west) {\\insertauthor\\\\\\small\\insertinstitute}")
+  t "unit: one source node stays one pinned reader node across style changes"
+    (readCompound.nodes.size == 1 &&
+      readCompound.nodes[0]?.any fun node => node.pinned && node.parts.size == 2)
   -- The control: the reader's own shape, read whole.
   let (docK, dsK, cK, hK) := ship (overlay (pinnedTitle "\\inserttitle")
     (pinnedAuthor "\\insertauthor"))
@@ -5314,8 +5343,8 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (pinnedAuthor "\\insertauthor"))
   t "a font declaration beside the title is read: the title ships pinned, in bold"
     (shows cB hB "Probe Heading" && dsB.all (fun d => d.code != "W0110" && d.code != "W0363") &&
-     (slotOf docB "title").any fun sl => sl.place.isSome &&
-       sl.font.any fun f => f.any fun i => i == .styled .bold #[])
+     (partOf docB "title").any fun p => p.font.any fun f =>
+       f.any fun i => i == .styled .bold #[])
   -- `{\usebeamercolor[fg]{title}\inserttitle}`: the colour selection is
   -- named and not read; the title ships where it is pinned.
   let (docC, dsC, cC, hC) := ship (overlay
@@ -5340,19 +5369,73 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (pinnedAuthor "\\insertauthor\\\\\\insertinstitute"))
   t "a node setting two data ships both, pinned, on the node's two lines"
     (shows cT hT "Pat Example" && shows cT hT "example.org" && shows cT hT "Probe Heading" &&
-     (slotOf docT "author").any (fun sl => sl.place.isSome && sl.more == #[(true, .institute)]) &&
+     (slotOf docT "author").any (fun sl => sl.place.isSome &&
+       sl.parts.map (fun p => (p.newLine, p.datum)) ==
+         #[(false, some .author), (true, some .institute)]) &&
      (lineYOf cT 0 "Pat Example").any fun y => (lineYOf cT 0 "example.org").any (y < ·))
   t "a node setting two data in one style is read whole: no loss is named"
     (dsT.all fun d => d.code != "W0363" && d.code != "W0110")
-  -- Data the node styles apart are no one slot: each ships unpinned, and
-  -- that is one named loss with its subject.
+  -- Differently styled data still belong to the one source node: style
+  -- boundaries may change runs, never box ownership or placement.
   let (_, dsA, cA, hA) := ship (overlay (pinnedTitle "\\inserttitle")
     (pinnedAuthor "\\insertauthor\\\\\\small\\insertinstitute"))
   t "two data styled apart in one node both ship"
     (shows cA hA "Pat Example" && shows cA hA "example.org")
-  t "two data styled apart are one named loss with its subject"
-    ((dsA.filter (·.code == "W0363")).size == 1 &&
-     dsA.any fun d => d.code == "W0363" && d.subject == key "author+institute")
+  t "styles inside one node neither split nor unpin its box"
+    (dsA.all (·.code != "W0363") &&
+     (lineXOf cA 0 "Pat Example").any (· > Dim.mm 19) &&
+     (lineXOf cA 0 "example.org").any (· > Dim.mm 19) &&
+     (lineYOf cA 0 "Pat Example").any (· > Dim.pt 175) &&
+     (lineYOf cA 0 "example.org").any (· > Dim.pt 175))
+  -- Optional title data are a conditional omission, not template control
+  -- flow in the output model. The gap belongs to the optional part and
+  -- materialises only when that datum does.
+  let optional :=
+    "\\setbeamerfont{probe display}{size*={20pt}{24pt},series=\\bfseries}" ++
+    overlay
+      (pinnedTitle ("{\\usebeamerfont{probe display}\\inserttitle\\par}" ++
+        "\\ifx\\insertsubtitle\\@empty\\else\\vskip0.5cm" ++
+        "{\\raggedright\\large\\color{probeGold}\\insertsubtitle\\par}\\fi"))
+      (pinnedAuthor ("{\\insertauthor\\par}" ++
+        "\\ifx\\insertinstitute\\@empty\\else\\vskip0.25cm" ++
+        "{\\raggedright\\small\\color{probeSnow}\\insertinstitute\\par}\\fi"))
+  let fullDecl := declared ++ "\\subtitle{River Detail}"
+  let (docF, dsF, cF, hF) := shipWith optional fullDecl
+  t "optional nonempty data stay in their two pinned source nodes"
+    (shows cF hF "Probe Heading" && shows cF hF "River Detail" &&
+     shows cF hF "Pat Example" && shows cF hF "example.org" &&
+     dsF.all (·.code != "W0363") &&
+     (lineXOf cF 0 "Probe Heading").any (· > Dim.mm 19) &&
+     (lineXOf cF 0 "River Detail").any (· > Dim.mm 19) &&
+     (lineYOf cF 0 "River Detail").any fun sy =>
+       (lineYOf cF 0 "Probe Heading").any fun ty => sy - ty > Dim.mm 10)
+  t "each present part keeps its declared size and colour on the shipped page"
+    (lineSizeOf cF 0 "Probe Heading" == some (Dim.pt 20) &&
+     lineSizeOf cF 0 "River Detail" ==
+       some (Ir.scaleStep docF.page.fontSize "large") &&
+     lineSizeOf cF 0 "example.org" ==
+       some (Ir.scaleStep docF.page.fontSize "small") &&
+     runColorOf docF "River Detail" == some { r := 0xF2, g := 0xCC, b := 0x60 } &&
+     runColorOf docF "example.org" == some { r := 0xF4, g := 0xF4, b := 0xF0 })
+  let htmlF := renderedTitle docF
+  let cssF := HtmlDoc.titleSlotCss docF
+  t "typed HTML keeps the two boxes and every independently styled part"
+    (["u-titlepage-slot-0-part-0", "u-titlepage-slot-0-part-1",
+      "u-titlepage-slot-1-part-0", "u-titlepage-slot-1-part-1"].all (hasStr htmlF) &&
+     hasStr htmlF "class=\"ragged\"" && hasStr htmlF "var(--probeGold" &&
+     hasStr htmlF "var(--probeSnow" && hasStr cssF "u-titlepage-slot-0-part-0" &&
+     hasStr cssF "font-size: 1.818em")
+  let (_, dsS, cS, hS) := shipWith optional
+    ("\\title{Probe Heading}\\subtitle{}\\author{Pat Example}\\institute{example.org}")
+  t "an empty subtitle omits only its part"
+    (shows cS hS "Probe Heading" && !pageHas cS 0 "River Detail" && !hasStr hS "River Detail" &&
+     shows cS hS "Pat Example" && dsS.all (·.code != "W0363"))
+  let (_, dsI, cI, hI) := shipWith optional
+    ("\\title{Probe Heading}\\subtitle{River Detail}\\author{Pat Example}\\institute{}")
+  t "an empty institute omits only its part"
+    (shows cI hI "Probe Heading" && shows cI hI "River Detail" &&
+     shows cI hI "Pat Example" && !pageHas cI 0 "example.org" &&
+     !hasStr hI "example.org" && dsI.all (·.code != "W0363"))
   -- A datum beside literal text has no slot to stand in: the template is
   -- not read, the built-in title page sets every datum, and that is one
   -- named loss with its subject.

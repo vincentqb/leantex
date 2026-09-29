@@ -6080,32 +6080,67 @@ node's options are read in the surrounding font, the body's. The same
 value as `Picture.innerSepDefault`, which the picture subset reads. -/
 def pgfInnerSep (em : Sp) : Sp := em * 3333 / 10000
 
-/-- One slot of a declared title page: the datum it sets (or, with no datum,
-its own `content`), the font template it sets it in, its lines' alignment,
-its measure, and where it stands. A title page that declares slots is the
-slots: a declared datum no slot names is not set, as a beamer title-page
-template that never inserts it does not set it. -/
-structure TitleSlot where
+/-- One independently styled part of a title slot. `datum` selects document
+metadata; with no datum, `content` is literal slot content. `newLine` starts
+this part below the preceding present part, and `before` is the additional
+vertical gap there. A missing or empty datum omits this part and its gap.
+Font, alignment and absolute size belong to the part, while width and
+placement belong once to the containing slot. -/
+structure TitlePart where
   datum : Option TitleDatum
-  /-- The data the slot sets after its first, in the node's order: `true`
-  starts a line of its own (a line end between the two in the node, as
-  `\insertauthor\\\insertinstitute` writes it), `false` shares the line. -/
-  more : Array (Bool × TitleDatum) := #[]
   content : Array Inline := #[]
   font : Option (Array Inline) := none
   align : Option String := none
-  width : Option SymGlue := none
-  /-- The slot's own body size: its content sets at this size, a font
-  template's named steps relative to it (beamer's `size*={18pt}{22pt}`,
-  beamerbasefont.sty); undeclared, the document's body size. -/
   size : Option SymGlue := none
+  newLine : Bool := false
+  before : Option SymGlue := none
+  deriving Repr, BEq, Inhabited
+
+/-- One box of a declared title page: its ordered, independently styled
+optional parts, its measure, and where the one box stands. A title page
+that declares slots is the slots: a declared datum no part names is not
+set, as a beamer title-page template that never inserts it does not set it. -/
+structure TitleSlot where
+  parts : Array TitlePart := #[]
+  width : Option SymGlue := none
   place : Option TitlePlace := none
   deriving Repr, BEq, Inhabited
+
+/-- Build the one slot owned by a source node. This is the construction
+door the node-to-slot conservation statement ranges over. -/
+def TitleSlot.ofNodeParts (parts : Array TitlePart) (width : Option SymGlue)
+    (place : Option TitlePlace) : TitleSlot :=
+  { parts := parts, width := width, place := place }
+
+/-- **One node's ordered parts stay in its one slot** (`_exact`): node
+translation changes neither their order nor their identity. -/
+theorem TitleSlot.ofNodeParts_exact (parts : Array TitlePart) (width : Option SymGlue)
+    (place : Option TitlePlace) :
+    (TitleSlot.ofNodeParts parts width place).parts = parts := by
+  rfl
+
+/-- The box-owned projection both backends consume: width and placement,
+never a part's style. -/
+def TitleSlot.box (slot : TitleSlot) : Option SymGlue × Option TitlePlace :=
+  (slot.width, slot.place)
+
+/-- **A translated node's box projects unchanged** (`_projects`): the
+layout and HTML backends read this one pair, so part styling cannot split
+or move the node's box. -/
+theorem TitleSlot.ofNodeParts_projects (parts : Array TitlePart) (width : Option SymGlue)
+    (place : Option TitlePlace) :
+    (TitleSlot.ofNodeParts parts width place).box = (width, place) := by
+  rfl
 
 /-- The role a title slot's block rides in, by the slot's index: the class
 hook both backends already read (`Block.role`), so the one IR value that
 says where slot `i` stands is found from the block that shows it. -/
 def titleSlotRole (i : Nat) : String := s!"titlepage-slot-{i}"
+
+/-- The role one styled part rides inside its slot. The slot role owns the
+box; this nested inline role preserves the part in the typed HTML tree and
+names any absolute size in the layout's existing size ladder. -/
+def titlePartRole (slot part : Nat) : String := s!"titlepage-slot-{slot}-part-{part}"
 
 /-- The slot a role name shows, among a title page's declared slots: the
 one lookup both backends make from the block to the value that places it. -/
@@ -12341,16 +12376,20 @@ def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
 
 /-- Every inline region a backend sets beside the body — the running head
 and foot, the logo state, the headline band, the corner logos, and each
-style's font template and marker — as one list, so a walk over "the whole
-document" is declared once: `foldDoc` reads these, `mapDoc` rewrites them,
-and a resolver and a census cannot disagree on what the document is. -/
+style's templates, marker and title-slot parts — as one list, so a walk
+over "the whole document" is declared once: `foldDoc` reads these,
+`mapDoc` rewrites them, and a resolver and a census cannot disagree on
+what the document is. -/
 def furnitureInlines (doc : Doc) : Array (Array Inline) :=
   optRegion doc.head ++ optRegion doc.foot ++ optRegion doc.logo ++
     (match doc.headline with
       | some hl => #[hl.title, hl.author, hl.institute]
       | none => #[]) ++
     optRegion doc.logoLeft ++ optRegion doc.logoRight ++
-    doc.styles.entries.flatMap fun (_, st) => optRegion st.font ++ optRegion st.marker
+    doc.styles.entries.flatMap fun (_, st) =>
+      optRegion st.font ++ optRegion st.marker ++
+        st.slots.flatMap fun slot =>
+          slot.parts.flatMap fun part => #[part.content] ++ optRegion part.font
 where
   /-- An optional region as zero or one entries. -/
   optRegion : Option (Array Inline) → Array (Array Inline)
@@ -12378,7 +12417,12 @@ def mapDoc (fi : Array Inline → Array Inline) (fb : Array Block → Array Bloc
     logoLeft := doc.logoLeft.map fi
     logoRight := doc.logoRight.map fi
     styles := { doc.styles with entries := doc.styles.entries.map fun (nm, st) =>
-      (nm, { st with font := st.font.map fi, marker := st.marker.map fi }) } }
+      (nm, { st with
+        font := st.font.map fi
+        marker := st.marker.map fi
+        slots := st.slots.map fun slot =>
+          { slot with parts := slot.parts.map fun part =>
+            { part with content := fi part.content, font := part.font.map fi } } }) } }
 
 private theorem optRegion_map (fi : Array Inline → Array Inline) (o : Option (Array Inline)) :
     furnitureInlines.optRegion (o.map fi) = (furnitureInlines.optRegion o).map fi := by

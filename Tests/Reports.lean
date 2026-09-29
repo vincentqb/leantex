@@ -286,6 +286,12 @@ def reports : List Report := [
     pins := [check% colorModelChecks, thm% Ir.Palette.resolveSpec_models_exact,
       thm% Ir.Palette.restore_exact]
     accept := ["the external reference corpus builds with its direct colours and restored page ground"]
+    state := .guarded "82e1e271" .before .author },
+  { id := "R46", date := "2026-09-29"
+    what := "a title-page node containing independently styled optional data lost its page pin and set each datum in the default flow"
+    pins := [thm% Ir.TitleSlot.ofNodeParts_exact,
+      thm% Ir.TitleSlot.ofNodeParts_projects, check% titleSlotShipChecks]
+    accept := ["two private title-page builds measured against their lualatex pages"]
     state := .guarded "82e1e271" .before .author }
 ]
 

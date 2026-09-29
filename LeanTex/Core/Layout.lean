@@ -1254,6 +1254,9 @@ private structure FlattenSt where
   diags : Array Diag := #[]
   /-- The size ladder named runs resolve through (`Geom.scale`). -/
   ladder : List (String × Nat) := Ir.sizeScale
+  /-- Internal title-part roles whose exact absolute size has been resolved
+  at the slot boundary. Other roles remain transparent. -/
+  roleSizes : List (String × Sp) := []
   /-- The inline leaf counter (`LeafCtr`). -/
   ctr : LeafCtr := .fixed .unattributed
   /-- The overlay step this page sets, the number `Ir.altShowsFirst` reads to
@@ -1316,7 +1319,10 @@ Chosen only when the face carries no real small caps (`Font.smallCaps`);
 2026-09-18 entry carries the decision). -/
 def smallCapSynth (scale : Nat) (sty : TextStyle) (chars : Array Char) :
     TextStyle × Array Char :=
-  ({ sty with scale := sty.scale * scale / 1000 }, chars.map (·.toUpper))
+  let sty := match sty.fontSize with
+    | some size => { sty with fontSize := some (Affine.scaleQ scale 1000 size) }
+    | none => { sty with scale := sty.scale * scale / 1000 }
+  (sty, chars.map (·.toUpper))
 
 private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
     (attr : Attribution) : FlattenSt :=
@@ -1447,16 +1453,20 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty (Ir.formulaFloor body)
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
-  -- A role is a name, pure grouping: zero metric impact, no style change
-  -- (role_transparent_layout is the statement). The one Layout-private
-  -- role, `leafRole`, is the decorating walk's marker for its declared
-  -- content: the counter counts the body's leaves, and the tokens are the
-  -- same ink under another attribution.
+  -- Authored roles are names, pure grouping. The engine's title-part
+  -- roles additionally carry the absolute size resolved at their slot;
+  -- the role remains the same typed-tree hook in both artifacts.
   | .role n body =>
     if n == leafRole then
       let inner := flatten mathOk noteOk { st with ctr := st.ctr.enter } sty body
       { inner with ctr := LeafCtr.leave inner.ctr st.ctr }
-    else flatten mathOk noteOk st sty body
+    else
+      match st.roleSizes.lookup n with
+      | some size =>
+        flatten mathOk noteOk st
+          { sty with fontSize := some (.lit { width := Dim.Length.ofSp size }), leading := none }
+          body
+      | none => flatten mathOk noteOk st sty body
   -- The underline is the link's affordance in both backends (the HTML
   -- anchor keeps the browser's): never colour alone, and never nothing
   -- (WCAG 2.2 SC 1.4.1, use of colour).
@@ -1484,19 +1494,16 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
 
 end
 
-/-- A role is transparent to layout: the flatten walk recurses into the
-body with the state and the style unchanged, so wrapping content in a role
-moves no ink and no metric — the `.step` property, and the reason the PDF
-page is byte-identical with and without the annotation. The block half is
-`role_transparent_collect`, beside the block walk. The one exception
-is the walk's own `leafRole` marker (a NUL-prefixed name no document can
-spell), which changes the attribution the body's tokens carry and nothing
-else. -/
+/-- An unstyled role is transparent to layout: absent an internal
+role-scale entry, the flatten walk recurses with state and style unchanged.
+The block half is `role_transparent_collect`, beside the block walk. The
+Layout-private `leafRole` marker changes attribution only and is excluded. -/
 theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
-    (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole) :
+    (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
+    (hs : st.roleSizes.lookup n = none) :
     flattenOne mathOk noteOk st sty (.role n body)
       = flatten mathOk noteOk st sty body := by
-  simp [flattenOne, h]
+  simp [flattenOne, h, hs]
 
 -- The attribution covers the walk: a counter standing in a block hands out
 -- nothing but that block's leaves, the block itself, and note marks. The
@@ -1712,7 +1719,9 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
     · obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk { st with ctr := st.ctr.enter } sty body
         (by rw [LeafCtr.enter_attributes]; exact h)
       exact ⟨by rw [LeafCtr.leave_attributes]; exact h1, m1⟩
-    · exact flatten_attr_covers mathOk noteOk st sty body h
+    · split
+      · exact flatten_attr_covers mathOk noteOk st _ body h
+      · exact flatten_attr_covers mathOk noteOk st sty body h
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .underline body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .step _ _ body => exact flatten_attr_covers mathOk noteOk st sty body h
@@ -3468,11 +3477,12 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
-    (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1) :
+    (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
+    (roleSizes : List (String × Sp) := []) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
-    { ladder := ladder, ctr := ctr, step := step } baseStyle xs
+    { ladder := ladder, roleSizes := roleSizes, ctr := ctr, step := step } baseStyle xs
   let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
     { cache := cache }
   let mut items := acc.items
@@ -5780,11 +5790,13 @@ private structure Rd where
   read. `run`'s step driver sets it per step page; a page with no overlay
   behind it is step 1. -/
   step : Nat := 1
-  /-- Inside a declared title slot (`Ir.TitleSlot`): the slot's own font
-  template already wraps what it sets, so the document title there takes
-  the body size and nothing else — a template node sets its text in the
-  font its options name and in no other (TikZ manual §17.4.2, `font=`). -/
+  /-- Inside a declared title slot (`Ir.TitleSlot`): its own part templates
+  already wrap what they set, so a document title there takes the body size
+  before the part's role applies any declared absolute size. -/
   slotTitle : Bool := false
+  /-- Exact absolute title-part sizes, resolved at the slot boundary and
+  scoped to that slot. -/
+  roleSizes : List (String × Sp) := []
   /-- The gap above the footline band: the document's furniture gap, else
   beamer's 4 pt (`Ir.footline.sep`) — the page builder's own (`B.footGap`),
   from one binding in `run`. -/
@@ -6216,7 +6228,7 @@ private def collectPara (r : Rd) (a : Acc)
   let (items, ds, cache, extras, rawNotes) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
-      (ladder := r.geom.scale) (step := r.step)
+      (ladder := r.geom.scale) (step := r.step) (roleSizes := r.roleSizes)
   let items :=
     if r.geom.justify then items
     else if display then
@@ -7735,8 +7747,9 @@ mutual
 /-- The declared title slot a block shows, if it is one: a slot's content
 rides in the role `Ir.titleSlotRole` names, found by the one lookup both
 backends make (`Ir.titleSlotOf`). -/
-private def slotOfBlock (slots : Array Ir.TitleSlot) : Block → Option Ir.TitleSlot
-  | .role n _ => Ir.titleSlotOf slots n
+private def slotOfBlock (slots : Array Ir.TitleSlot) :
+    Block → Option (Ir.TitleSlot × Nat)
+  | .role n _ => slots.zipIdx.find? fun (_, i) => Ir.titleSlotRole i == n
   | _ => none
 
 /-- A rule standing on its own is furniture, not a paragraph. TeX
@@ -7783,16 +7796,15 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
   | [] => a
   | blk :: rest =>
     let a := match slotOfBlock slots blk with
-      | some sl =>
-        -- The slot's declared size is its body size, the abstract's
-        -- `\small` shape: a modified reader handed to the sub-walk.
-        let rs := { r with slotTitle := true
-                           geom := match sl.size with
-                             | some g => { r.geom with fontSize := (r.resolve g).width }
-                             | none => r.geom }
-        match sl.place with
+      | some (sl, i) =>
+        let roleSizes := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
+          p.size.map fun g =>
+            (Ir.titlePartRole i k, max 0 (r.resolve g).width)
+        let rs := { r with slotTitle := true, roleSizes := roleSizes }
+        let (width, place) := sl.box
+        match place with
         | some pl =>
-          let w := sl.width.map fun g => (r.resolve g).width
+          let w := width.map fun g => (r.resolve g).width
           let saved := a.measure
           let a := a.pushOp .slotOpen
           let a := match w with

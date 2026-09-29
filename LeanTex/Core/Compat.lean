@@ -5218,8 +5218,8 @@ is skipped" pos
 {String.intercalate ", " rd.unread.toList}; the rest of it stands" pos
         -- What a node the engine cannot pin sets still ships, unpinned:
         -- the loss is the pin, named once per node by the data it sets.
-        for (data, several) in rd.unplaced do
-          let (sfx, msg, help) := TitleTemplate.unplacedLoss data several
+        for data in rd.unplaced do
+          let (sfx, msg, help) := TitleTemplate.unplacedLoss data
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
         for (construct, datum) in rd.skipped do
           let (sfx, msg) := TitleTemplate.skippedLoss construct datum
