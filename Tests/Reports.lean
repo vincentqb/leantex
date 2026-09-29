@@ -9,6 +9,7 @@ import Tests.HtmlTokens
 import Tests.Settings
 import Tests.Redefine
 import Tests.Images
+import Tests.FontSize
 import scripts.LandCore
 
 /-!
@@ -272,6 +273,12 @@ def reports : List Report := [
     pins := [check% exprChecks, check% boxWidthChecks, check% tableChecks,
       check% imageChecks]
     accept := ["the private book's check recipe, with positions and sizes measured against its lualatex build"]
+    state := .guarded "82e1e271" .before .reviewer },
+  { id := "R44", date := "2026-09-29"
+    what := "a book's horizontal space, inline rules and arbitrary font sizes kept source syntax or ignored local measures instead of shipping their declared geometry"
+    pins := [check% hspaceAffineChecks, check% inlineRuleChecks,
+      check% fontSizeAffineChecks]
+    accept := ["the private book's check recipe, with geometry measured against its lualatex build"]
     state := .guarded "82e1e271" .before .reviewer }
 ]
 
