@@ -519,6 +519,60 @@ private def pairAdv (b : ByteArray) (kd : Array KernSub × Array (Nat × Int)) (
   | some (_, _, v) => return v
   | none => return 0
 
+/-- A demand-lazy memo tree for one face's `(glyph, space)` and
+`(space, glyph)` kern pair. A branch allocates its two child thunks only
+when a lookup reaches it; a leaf computes its pair once. -/
+inductive SpaceKernTree where
+  | leaf (pair : Int × Int)
+  | branch (split : Nat) (left right : Thunk SpaceKernTree)
+  deriving Inhabited
+
+/-- The bounded index around a space-kern memo tree. `depth` is also the
+deterministic lookup-work census: a hit visits `depth + 1` nodes. -/
+structure SpaceKernCache where
+  size : Nat
+  space : Nat
+  depth : Nat
+  root : Thunk SpaceKernTree
+  deriving Inhabited
+
+/-- Tree depth for `numGlyphs` leaves. An sfnt count is a UInt16, so a
+parsed face needs at most 16 branch levels and a lookup visits at most 17
+nodes. The extra level at an exact power of two is virtual: no branch is
+allocated until a lookup reaches it. -/
+def spaceKernDepth (numGlyphs : Nat) : Nat :=
+  if numGlyphs == 0 then 0 else Nat.log2 numGlyphs + 1
+
+private def makeSpaceKernTree (data : ByteArray)
+    (kd : Array KernSub × Array (Nat × Int)) (space base span : Nat) :
+    (depth : Nat) → Thunk SpaceKernTree
+  | 0 => Thunk.mk fun _ => .leaf (pairAdv data kd base space, pairAdv data kd space base)
+  | depth + 1 => Thunk.mk fun _ =>
+    let half := span / 2
+    .branch half
+      (makeSpaceKernTree data kd space base half depth)
+      (makeSpaceKernTree data kd space (base + half) half depth)
+
+private def spaceKernLookup : Nat → Thunk SpaceKernTree → Nat → (Int × Int) × Nat
+  | 0, tree, _ =>
+    match tree.get with
+    | .leaf pair => (pair, 1)
+    | .branch _ _ _ => ((0, 0), 1)
+  | depth + 1, tree, g =>
+    match tree.get with
+    | .leaf pair => (pair, 1)
+    | .branch split left right =>
+      let hit := if g < split then spaceKernLookup depth left g
+        else spaceKernLookup depth right (g - split)
+      (hit.1, hit.2 + 1)
+
+/-- A cached pair and the number of memo-tree nodes visited, or `none` for
+a gid outside the parsed face. The work count is deterministic and keeps
+the allocation bound executable rather than a timing assertion. -/
+def SpaceKernCache.lookup? (cache : SpaceKernCache) (g : Nat) :
+    Option ((Int × Int) × Nat) :=
+  if g < cache.size then some (spaceKernLookup cache.depth cache.root g) else none
+
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
 driver's job. -/
@@ -619,14 +673,13 @@ structure Font where
   fallback rule (F_GLOBAL_HAS_FALLBACK). Both empty for a face with
   neither: Open Sans, and every monospace done right (Source Code Pro). -/
   kernData : Thunk (Array KernSub × Array (Nat × Int))
-  /-- Each glyph's pair kerns with the face's space glyph, lazily per glyph:
-  `(kern (g, space), kern (space, g))` in font units, from the same pairs
-  `Font.kernAdv` reads — luaotfload's `spacekerns` table, which its space
-  kerning reads beside every interword glue. `(0, 0)` throughout for a
-  face with no space glyph. Read through `Font.spaceKernAdv`. Filled from
-  what `parse` read: a copy that edits `cmap` or `data` keeps its source's
-  pairs, and the engine edits neither. -/
-  spaceKerns : Thunk (Array (Thunk (Int × Int)))
+  /-- Each glyph's pair kerns with the face's space glyph, cached in a
+  demand-lazy binary tree: `(kern (g, space), kern (space, g))` in font
+  units, from the same pairs `Font.kernAdv` reads. The first lookup forces
+  one path, not one thunk per glyph; repeated paths are memoized. `none`
+  short-circuits a face with no kern data or no space glyph. Read through
+  `Font.spaceKernAdv`; filled from the bytes and cmap `parse` read. -/
+  spaceKerns : Thunk (Option SpaceKernCache)
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -966,13 +1019,15 @@ def parse (data : ByteArray) : Except String Font := do
   let kernData : Thunk (Array KernSub × Array (Nat × Int)) := Thunk.mk fun _ =>
     let subs := parseKernSubs data
     (subs, if subs.isEmpty then parseLegacyKern data else #[])
-  let spaceKerns : Thunk (Array (Thunk (Int × Int))) := Thunk.mk fun _ => Id.run do
-    let some sp := gidIn cmap ' ' | return Array.replicate numGlyphs (Thunk.pure (0, 0))
-    let mut out : Array (Thunk (Int × Int)) := Array.mkEmpty numGlyphs
-    for g in [0:numGlyphs] do
-      out := out.push (Thunk.mk fun _ =>
-        (pairAdv data kernData.get g sp, pairAdv data kernData.get sp g))
-    return out
+  let spaceKerns : Thunk (Option SpaceKernCache) := Thunk.mk fun _ =>
+    let kd := kernData.get
+    if numGlyphs == 0 || (kd.1.isEmpty && kd.2.isEmpty) then none
+    else (gidIn cmap ' ').map fun space =>
+      let depth := spaceKernDepth numGlyphs
+      { size := numGlyphs
+        space := space
+        depth := depth
+        root := makeSpaceKernTree data kd space 0 (2 ^ depth) depth }
   return {
     data := data
     isCff := isCff
@@ -1039,17 +1094,19 @@ face with no kern data at all. -/
 def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int :=
   pairAdv f.data f.kernData.get g1 g2
 
-/-- Glyph `g`'s pair kern with the face's space glyph, in font units: the
-pair `(g, space)` when `after` (the space follows `g`), `(space, g)`
-otherwise — `Font.kernAdv`'s answer, read from the per-glyph memo
-`spaceKerns` fills on first use (a gid past it is asked directly). -/
+/-- Glyph `g`'s pair kern with the face's space glyph, in font units:
+the pair `(g, space)` when `after` (the space follows `g`), `(space, g)`
+otherwise. In-range pairs come from the path-lazy memo; an out-of-range gid
+keeps `Font.kernAdv`'s total fallback. -/
 def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
-  match f.spaceKerns.get[g]? with
-  | some t => if after then t.get.1 else t.get.2
-  | none =>
-    match f.gid ' ' with
-    | some sp => if after then f.kernAdv g sp else f.kernAdv sp g
-    | none => 0
+  match f.spaceKerns.get with
+  | none => 0
+  | some cache =>
+    match cache.lookup? g with
+    | some (pair, _) => if after then pair.1 else pair.2
+    | none =>
+      if after then pairAdv f.data f.kernData.get g cache.space
+      else pairAdv f.data f.kernData.get cache.space g
 
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only

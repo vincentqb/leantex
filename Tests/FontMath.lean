@@ -665,6 +665,22 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (spaceMemoExact ssp && spaceMemoExact firaSans && spaceMemoExact osans &&
       (List.range ssp.numGlyphs).any (ssp.spaceKernAdv true · != 0) &&
       (List.range ssp.numGlyphs).any (ssp.spaceKernAdv false · != 0))
+  let boundedSpaceLookup (f : Font.Font) : Bool :=
+    match f.spaceKerns.get with
+    | none => false
+    | some cache =>
+      cache.size == f.numGlyphs && cache.depth == Font.spaceKernDepth f.numGlyphs &&
+        match cache.lookup? (f.numGlyphs - 1) with
+        | some (_, work) => work == cache.depth + 1 && work ≤ 17
+        | none => false
+  -- maxp stores numGlyphs as UInt16, so 65,535 is the largest parsed face.
+  t "kern: the memo depth covers and bounds every sfnt glyph count"
+    ((List.range 65536).all fun n =>
+      Font.spaceKernDepth n ≤ 16 && (n == 0 || n ≤ 2 ^ Font.spaceKernDepth n))
+  t "kern: one space lookup visits at most 17 memo nodes"
+    (boundedSpaceLookup ssp && boundedSpaceLookup firaSans)
+  t "kern: a pairless face short-circuits its space cache"
+    osans.spaceKerns.get.isNone
   -- The applied value reaches the box: a "Ta" word's width is the two
   -- advances plus the (negative) kern, exactly
   -- (kern_measure_exact holds the general fact).
