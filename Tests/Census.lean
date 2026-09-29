@@ -85,6 +85,13 @@ shipped (or deliberately not, for a note), covered-coloured runs on step
 pages, rules and fills drawn, line positions for centring and columns. -/
 def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("affine-lengths", fun _ c => [
+    ("one page", c.size == 1),
+    ("every unequal measure ships its labelled content",
+      ["Top measure", "Minipage measure", "Column measure", "Paragraph cell",
+        "Target-width cell"].all (hasStr (censusText c) ·)),
+    ("every affine rule reaches the shipped page",
+      (c[0]?.map (·.rules)).getD 0 == 5)]),
   ("listings", fun geom c => [
     ("one page", c.size == 1),
     -- a no-break space ships as a glyphless box, so the census text of a

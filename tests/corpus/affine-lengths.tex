@@ -1,0 +1,54 @@
+% Invented browser fixture: the same affine dimensions stand in five unequal
+% measures so a query unit bound to any ancestor but its local owner fails.
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+\title{Affine Geometry Probe}
+\author{}
+\date{}
+\assert{ pages = 1 }
+
+\define \affinetop(body: content) {\body}
+\define \affinemini(body: content) {\body}
+\define \affinecolumn(body: content) {\body}
+\define \affinepcell(body: content) {\body}
+\define \affinexcell(body: content) {\body}
+\define \affineleft(body: content) {\body}
+\define \affineright(body: content) {\body}
+
+\begin{document}
+
+\maketitle
+
+Top measure probe.
+
+\affinetop{{\fontsize{0.1\linewidth + 2pt}{0.12\linewidth + 3pt}\selectfont T}\affineleft{A}\hspace{0.2\linewidth + 3pt}\affineright{B}\rule[0.01\linewidth + 1pt]{0.25\linewidth - 2pt}{0.02\linewidth + 1pt}}
+
+Minipage measure probe.
+
+\begin{minipage}{240pt}
+\affinemini{{\fontsize{0.1\linewidth + 2pt}{0.12\linewidth + 3pt}\selectfont M}\affineleft{A}\hspace{0.2\linewidth + 3pt}\affineright{B}\rule[0.01\linewidth + 1pt]{0.25\linewidth - 2pt}{0.02\linewidth + 1pt}}
+\end{minipage}
+
+Column measure probe.
+
+\begin{columns}
+\begin{column}{180pt}
+\affinecolumn{{\fontsize{0.1\linewidth + 2pt}{0.12\linewidth + 3pt}\selectfont C}\affineleft{A}\hspace{0.2\linewidth + 3pt}\affineright{B}\rule[0.01\linewidth + 1pt]{0.25\linewidth - 2pt}{0.02\linewidth + 1pt}}
+\end{column}
+\end{columns}
+
+% Paragraph columns and resolved X columns share the same typed td carrier;
+% the second one-column table is the target-width case.
+Paragraph cell probe.
+
+\begin{tabular}{@{}p{140pt}@{}}
+\affinepcell{{\fontsize{0.1\linewidth + 2pt}{0.12\linewidth + 3pt}\selectfont P}\affineleft{A}\hspace{0.2\linewidth + 3pt}\affineright{B}\rule[0.01\linewidth + 1pt]{0.25\linewidth - 2pt}{0.02\linewidth + 1pt}} \\
+\end{tabular}
+
+Target-width cell probe.
+
+\begin{tabular}{@{}p{220pt}@{}}
+\affinexcell{{\fontsize{0.1\linewidth + 2pt}{0.12\linewidth + 3pt}\selectfont X}\affineleft{A}\hspace{0.2\linewidth + 3pt}\affineright{B}\rule[0.01\linewidth + 1pt]{0.25\linewidth - 2pt}{0.02\linewidth + 1pt}} \\
+\end{tabular}
+
+\end{document}

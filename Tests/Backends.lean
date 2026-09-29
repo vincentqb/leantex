@@ -2547,7 +2547,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
                  | .elem _ attrs _ => attrs.find? (·.1 == "style")
                  | _ => none
              | _ => none
-         | _ => none) == some ("style", "container-type: inline-size; text-align: center")
+         | _ => none) == some ("style", "text-align: center")
      | _ => false)
   -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
@@ -2729,6 +2729,7 @@ PDF is built with the suite's one face and the fixture's own images; a
 boundary picture is a placeholder box (no converter runs in the suite). -/
 def pdfCensusTable :
     List (String × (Nat × Nat × Nat × Nat × Nat × Nat × Nat × Option String × List String)) := [
+  ("affine-lengths", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("paragraphs", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("layout", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("declared", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

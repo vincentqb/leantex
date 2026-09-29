@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  pdftotext version 26.09.0
 date: 2026-09-29
-src-key: 19e2f3facf95430d
-fixtures: 83 built, unbuilt: theme-modern
+src-key: d96b574dbc7b5696
+fixtures: 84 built, unbuilt: theme-modern
 
 [feature]
 # feature         chromium      firefox
@@ -16,6 +16,8 @@ lang              pass          untested
 landmarks         pass          untested
 snaps             pass          untested
 box-side          pass          untested
+affine-screen     pass          untested
+affine-print      pass          untested
 color-scheme      pass          untested
 reduced-motion    pass          untested
 print             pass          untested
@@ -26,6 +28,7 @@ no-script         pass          untested
 [fixture]
 # fixture         chromium      firefox       exercised
 abstract          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+affine-lengths    pass          untested      load,fonts,lang,landmarks,affine-screen,affine-print,color-scheme,reduced-motion,print,no-script
 algorithm         pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 bibliography      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 blocks            pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script

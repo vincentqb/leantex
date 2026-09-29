@@ -152,7 +152,7 @@ golden run's membership is visible here, and held to `tests/corpus` by
 `corpusCoverageChecks` — a fixture on disk is in this list or its own header
 says why not. -/
 def goldenNames : List String :=
-  ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
+  ["affine-lengths", "paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "deck1610", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "overprint", "notes", "furniture",
    "chrome", "footer-left", "footer-mixed", "footer-collide", "lists",

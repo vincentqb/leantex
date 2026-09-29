@@ -184,7 +184,7 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "bt-light-above", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -4608,31 +4608,63 @@ theorem tableCellTag_th_iff (headerRows i : Nat) :
   · simp_all
   · simp_all
 
+private def readsInlineMeasure (e : Affine Measure) : Bool :=
+  e.anyRef (· != .textHeight)
+
+/-- Whether an emitted inline property reads `cqi`. The leaf runs through
+`Ir.foldInlines`, so nested styles and roles are covered by the shared IR
+walk rather than a backend-specific recursion. -/
+private def contextUnitLeaf (found : Bool) : Inline → Bool
+  | .styled st _ => found || match st with
+    | .fontSize size leading => readsInlineMeasure size || readsInlineMeasure leading
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ | .lang _ => false
+  | .rule _ height raise =>
+    found || readsInlineMeasure height || readsInlineMeasure raise
+  | .image _ size _ => found || size.height.any fun l =>
+    readsInlineMeasure l.value && !l.value.anyRef (· == .textHeight)
+  | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .role _ _
+  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill
+  | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _
+  | .linebreak _ => found
+
+private def usesContextUnit (xs : Array Inline) : Bool :=
+  Ir.foldInlines contextUnitLeaf false xs
+
 /-- One table cell: its column's alignment as inline style (the PDF path
 reads the same `ColSpec.align`), the `bt-cmid` class when a `\cmidrule`
 spans its column, and — for a header cell — `scope=col`, the one scope a
 booktabs head declares (HTML §4.9.10: a `th` heading the cells below it).
 A `\multicolumn` head takes its own spec's alignment and `colspan` for the
-columns it covers (HTML §4.9.11), the layout's `spanBox`. The cell's
-children are the same `inlines` a `td` carried. -/
+columns it covers (HTML §4.9.11), the layout's `spanBox`. Plain cells
+carry the same `inlines` a `td` carried; a cell whose emitted dimensions
+read `cqi` puts those inlines in its content-measure container. -/
 def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
   let sp := spans.find? fun s => s.row == i && s.col == j
   let align : Ir.HAlign := match sp with
     | some s => s.spec.align
     | none => (cols[j]?.map (·.align)).getD .left
-  let alignCss := match align with
-    | .center => "; text-align: center"
-    | .right => "; text-align: right"
-    | .left => ""
-  let al := #[("style", "container-type: inline-size" ++ alignCss)]
+  let al := match align with
+    | .center => #[("style", "text-align: center")]
+    | .right => #[("style", "text-align: right")]
+    | .left => #[]
   let al := match sp with
     | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
     | none => al
   let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
     then al.push ("class", "bt-cmid") else al
   let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
-  Html.elem (tableCellTag headerRows i) (inlines cfg cell) attrs
+  let content := inlines cfg cell
+  -- Chromium does not resolve query units against a table-cell container.
+  -- A block inside the cell has the same content measure and works in both
+  -- screen and print; emit it only where a descendant actually reads cqi.
+  let content := if usesContextUnit cell then
+      #[Html.elem "div" content
+        #[("class", "cell-measure"), ("style", "container-type: inline-size")]]
+    else content
+  Html.elem (tableCellTag headerRows i) content attrs
 
 /-- Is cell `(i, j)` covered by a `\multicolumn` head to its left? Such a
 cell has no element of its own: the head's `colspan` is its place. -/

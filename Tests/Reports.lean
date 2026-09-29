@@ -278,7 +278,8 @@ def reports : List Report := [
     what := "a book's horizontal space, inline rules and arbitrary font sizes kept source syntax or ignored local measures instead of shipping their declared geometry"
     pins := [check% hspaceAffineChecks, check% inlineRuleChecks,
       check% fontSizeAffineChecks]
-    accept := ["the private book's check recipe, with geometry measured against its lualatex build"]
+    accept := ["the private book's check recipe, with geometry measured against its lualatex build",
+      "the public affine fixture's computed screen and print geometry in Chromium"]
     state := .guarded "82e1e271" .before .reviewer }
 ]
 

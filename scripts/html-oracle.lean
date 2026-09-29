@@ -46,7 +46,8 @@ def readers : List String := ["chromium", "firefox"]
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
   ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps", "box-side",
-   "color-scheme", "reduced-motion", "print", "print-spill", "print-sheets", "no-script"]
+   "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
+   "print-sheets", "no-script"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -261,6 +262,74 @@ const checks = {
   },
 };
 
+// A CSS-pixel half is the declared browser bound: deviceScaleFactor=1,
+// Chromium's layout boxes are quantized below it, while a wrong ancestor in
+// this fixture differs by tens of pixels. Every expected value is recomputed
+// from the semantic owner's live content box, never from the emitted cqi text.
+const affineGeometry = () => {
+  const bound = 0.5;
+  const top = document.querySelector('.u-affinetop');
+  if (!top) return { ok: true, n: 0, why: '' };
+  const pt = n => n * 4 / 3;
+  const num = (style, property) => parseFloat(style.getPropertyValue(property));
+  const contentWidth = el => {
+    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    return r.width - num(s, 'padding-left') - num(s, 'padding-right')
+      - num(s, 'border-left-width') - num(s, 'border-right-width');
+  };
+  const specs = [
+    ['top', '.u-affinetop', role => document.querySelector('main'), null],
+    ['minipage', '.u-affinemini', role => role.closest('.column'), pt(240)],
+    ['column', '.u-affinecolumn', role => role.closest('.column'), pt(180)],
+    ['p-cell', '.u-affinepcell', role => role.closest('td'), pt(140)],
+    ['target-cell', '.u-affinexcell', role => role.closest('td'), pt(220)],
+  ];
+  const offences = [], measured = [];
+  const judge = (where, property, got, want) => {
+    if (!Number.isFinite(got) || Math.abs(got - want) > bound) {
+      const shown = Number.isFinite(got) ? got.toFixed(3) : String(got);
+      offences.push(`${where} ${property} ${shown}px, expected ${want.toFixed(3)}px`);
+    }
+  };
+  for (const [name, selector, ownerOf, target] of specs) {
+    const role = document.querySelector(selector), owner = role && ownerOf(role);
+    const font = role && role.querySelector('[style*="font-size"]');
+    const room = role && role.querySelector('[style*="margin-inline-start"]');
+    const left = role && role.querySelector('.u-affineleft');
+    const right = role && role.querySelector('.u-affineright');
+    const rule = role && role.querySelector('[style*="inline-size"]');
+    if (!(role && owner && font && room && left && right && rule)) {
+      offences.push(`${name} is missing its role, owner, font, hspace markers, or rule box`);
+      continue;
+    }
+    const width = contentWidth(owner), fs = getComputedStyle(font);
+    const rs = getComputedStyle(rule);
+    const leftBox = left.getBoundingClientRect(), rightBox = right.getBoundingClientRect();
+    const values = {
+      fontSize: num(fs, 'font-size'), lineHeight: num(fs, 'line-height'),
+      hspace: rightBox.left - leftBox.right, ruleWidth: num(rs, 'inline-size'),
+      ruleHeight: num(rs, 'block-size'), ruleRaise: num(rs, 'vertical-align'),
+    };
+    judge(name, 'font-size', values.fontSize, 0.10 * width + pt(2));
+    judge(name, 'line-height', values.lineHeight, 0.12 * width + pt(3));
+    judge(name, 'hspace', values.hspace, 0.20 * width + pt(3));
+    judge(name, 'rule width', values.ruleWidth, 0.25 * width - pt(2));
+    judge(name, 'rule height', values.ruleHeight, 0.02 * width + pt(1));
+    judge(name, 'rule raise', values.ruleRaise, 0.01 * width + pt(1));
+    if (target !== null) judge(name, 'owner width', width, target);
+    measured.push(`${name} owner=${width.toFixed(2)} font=${values.fontSize.toFixed(2)} line=${values.lineHeight.toFixed(2)} hspace=${values.hspace.toFixed(2)} rule=${values.ruleWidth.toFixed(2)}x${values.ruleHeight.toFixed(2)}+${values.ruleRaise.toFixed(2)}`);
+  }
+  const widths = specs.map(([, selector, ownerOf]) => {
+    const role = document.querySelector(selector);
+    return role && ownerOf(role) ? contentWidth(ownerOf(role)) : 0;
+  });
+  if (Math.max(...widths) - Math.min(...widths) < 40)
+    offences.push('the fixture owners are not distinct enough to expose an ancestor binding');
+  return { ok: offences.length === 0, n: measured.length,
+    why: offences.length ? offences.join('; ') + `; measured ${measured.join(' | ')}` : measured.join(' | ') };
+};
+checks['affine-screen'] = affineGeometry;
+
 const readColors = () => {
   const b = getComputedStyle(document.body);
   return { bg: b.backgroundColor, fg: b.color,
@@ -463,6 +532,7 @@ async function runReader(name) {
       await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
       out(fx, name, 'reduced-motion', cell(await page.evaluate(mediaChecks['reduced-motion'])));
       await page.emulateMedia({ reducedMotion: 'no-preference', media: 'print' });
+      out(fx, name, 'affine-print', cell(await page.evaluate(affineGeometry)));
       out(fx, name, 'print', cell(await page.evaluate(mediaChecks.print, light.deck)));
       const printed = light.deck ? await printDeck(page, name, fx)
         : { spill: { n: 0 }, sheets: { n: 0 } };

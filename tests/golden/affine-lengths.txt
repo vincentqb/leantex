@@ -1,0 +1,88 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+meta title "Affine Geometry Probe"
+assert pages == 1
+center
+  section* 0
+    text "Affine Geometry Probe"
+para
+  text "Top measure probe."
+para
+  role affinetop
+    styled fontsize
+      text "T"
+    role affineleft
+      text "A"
+    hspace calc(20% + 3pt)
+    role affineright
+      text "B"
+    rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+para
+  text "Minipage measure probe."
+columns
+  column 240pt
+    para
+      role affinemini
+        styled fontsize
+          text "M"
+        role affineleft
+          text "A"
+        hspace calc(20% + 3pt)
+        role affineright
+          text "B"
+        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+para
+  text "Column measure probe."
+columns
+  column 180pt
+    para
+      role affinecolumn
+        styled fontsize
+          text "C"
+        role affineleft
+          text "A"
+        hspace calc(20% + 3pt)
+        role affineright
+          text "B"
+        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+para
+  text "Paragraph cell probe."
+table @{}l:140pt@{}
+  row
+    cell
+      role affinepcell
+        styled fontsize
+          text "P"
+        role affineleft
+          text "A"
+        hspace calc(20% + 3pt)
+        role affineright
+          text "B"
+        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+para
+  text "Target-width cell probe."
+table @{}l:220pt@{}
+  row
+    cell
+      role affinexcell
+        styled fontsize
+          text "X"
+        role affineleft
+          text "A"
+        hspace calc(20% + 3pt)
+        role affineright
+          text "B"
+        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+-- diagnostics
+note[N0100] 24:13 '\fontsize' → an affine font size and baseline skip
+note[N0100] 24:65 '\selectfont' → nothing: font declarations apply where they stand
+note[N0100] 29:14 '\fontsize' → an affine font size and baseline skip
+note[N0100] 29:66 '\selectfont' → nothing: font declarations apply where they stand
+note[N0100] 36:16 '\fontsize' → an affine font size and baseline skip
+note[N0100] 36:68 '\selectfont' → nothing: font declarations apply where they stand
+note[N0100] 45:15 '\fontsize' → an affine font size and baseline skip
+note[N0100] 45:67 '\selectfont' → nothing: font declarations apply where they stand
+note[N0100] 51:15 '\fontsize' → an affine font size and baseline skip
+note[N0100] 51:67 '\selectfont' → nothing: font declarations apply where they stand

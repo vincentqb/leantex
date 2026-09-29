@@ -66,8 +66,15 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\begin{tabular}{p{100pt}}{\\fontsize{0.1\\linewidth + 2pt}{14pt}\\selectfont Alpha}\\end{tabular}"
   let cellDoc := (elabStr (metricDoc cellBody)).1
   let (_, cellTree, _) := HtmlDoc.emitTree {} cellDoc
+  let cellHtml := (HtmlDoc.emit {} cellDoc).1
   t "fontsize resolves against a table cell in both artifacts"
-    (sizes cellBody == #[Dim.pt 12] && cqiOwnersList "" #[] cellTree.toList == #["td"])
+    (sizes cellBody == #[Dim.pt 12] &&
+      cqiOwnersList "" #[] cellTree.toList == #["cell-measure"] &&
+      hasStr cellHtml "<div class=\"cell-measure\" style=\"container-type: inline-size\">")
+  let plainCellHtml := (HtmlDoc.emit {} (elabStr (metricDoc
+    "\\begin{tabular}{p{100pt}}Alpha\\end{tabular}")).1).1
+  t "a table cell with no context unit gets no query container"
+    (!hasStr plainCellHtml "cell-measure")
   let nonlinear := dvE (metricDoc
     "{\\fontsize{\\linewidth * \\columnwidth}{14pt}\\selectfont Alpha}")
   t "nonlinear fontsize arithmetic is refused by name"
