@@ -305,10 +305,14 @@ def reports : List Report := [
     what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
     pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text]
     state := .guarded "82e1e271" .before .author },
-  { id := "R44", date := "2026-09-29"
+  { id := "R49", date := "2026-09-29"
     what := "a title-page wrapper kept its body in surrounding flow instead of isolating one furniture-free page"
     pins := [check% recipeTitlePageChecks]
-    state := .guarded "31710f9c" .before .author }
+    state := .guarded "31710f9c" .before .author },
+  { id := "R50", date := "2026-09-29"
+    what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
+    pins := [check% recipeParacolChecks, thm% Ir.boxWidth_tracks_agree]
+    state := .guarded "b91c2555" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
