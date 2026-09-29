@@ -3101,8 +3101,8 @@ Outside after.")
   -- declaration is identical with and without it. The theorem itself is
   -- blocked: unfolding `collectBlock` needs its equation lemmas, whose
   -- generation for that match exhausts `whnf` (the
-  -- `role_transparent_layout` blocker); `Acc.setPalette_emits_nothing`
-  -- carries the provable core (the arm emits nothing).
+  -- `role_transparent_layout` blocker); `Acc.setPalette_emits_no_content`
+  -- carries the provable core (the arm emits only its page-ground state).
   let outOf (src : String) : Layout.Out :=
     let (d, _) := elabStr src
     layoutOf oneFace d geom

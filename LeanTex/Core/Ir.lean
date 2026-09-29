@@ -347,8 +347,17 @@ structure Color where
   pdfModel : Option PdfColor := none
   deriving Repr, Inhabited
 
+/-- Colour equality is screen-and-mix equality. `pdfModel` is source
+projection provenance: PDF emission reads it directly, while contrast,
+palette diffing, and equivalent model spellings compare the shared preview
+and the CMYK arithmetic rider. -/
 instance : BEq Color where
   beq a b := a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk
+
+/-- The equality boundary is explicit: device-operator provenance cannot
+silently enter a screen or contrast comparison. -/
+theorem Color.beq_screen_exact (a b : Color) :
+    (a == b) = (a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk) := rfl
 
 def Color.black : Color := { r := 0, g := 0, b := 0 }
 
