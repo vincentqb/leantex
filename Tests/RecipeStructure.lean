@@ -91,19 +91,26 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
 installed class opens a fresh page, applies the empty page style, and opens
 another page at the close (`article.cls`, `titlepage`). Its body remains an
 ordinary block sequence: explicit infinite glue controls vertical placement.
-Assertions read the shipped pages and typed HTML tree. -/
+Assertions read the shipped pages under the document's own flow geometry and
+the typed HTML tree. -/
 def recipeTitlePageChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let src := dvDoc "" ("Lead page.\\begin{titlepage}\nTop marker.\n" ++
-    "\\vfill\nBottom marker.\\end{titlepage}Tail page.")
+  let src := dvDoc
+    "\\page{ width = 420pt, height = 600pt, hmargin = 54pt, vmargin = 48pt }\n"
+    ("Lead page.\\begin{titlepage}\nTop marker.\n" ++
+      "\\vfill\nBottom marker.\\end{titlepage}Tail page.")
   let (doc, ds) := elabStr src
   let cascade := ["W0302", "E0336", "E0311"]
   t "titlepage is recognized without an unknown-wrapper cascade"
     (ds.all fun d => !cascade.contains d.code)
-  let geom : Layout.Geom := {}
+  let geom := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom
   let census := censusOf (coveredColorsOf doc) out
+  t "titlepage uses the document's flow geometry"
+    (match lineXOf census 1 "Top marker.", lineXOf census 1 "Bottom marker." with
+     | some top, some bottom => top == doc.page.hmargin && bottom == doc.page.hmargin
+     | _, _ => false)
   t "titlepage opens and closes exactly one physical page"
     (out.pages.size == 3 && pageHas census 0 "Lead page." &&
       pageHas census 1 "Top marker." &&
