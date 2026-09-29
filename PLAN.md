@@ -7346,9 +7346,10 @@ and the model is written down.
   remainders, stated not hidden: page background and the overlay cover
   fraction (page-scoped attributes of the run), `themeCss` feature gating,
   and chrome/running furniture and their contrast judgement.
-- **Theorems and evidence.** `Acc.setPalette_emits_nothing`/`setTokens…`
-  (proved, rfl): the arm touches no op, no owed glue, no gap flag — the
-  checkable core of confinement. The walk-prefix statement
+- **Theorems and evidence.** `Acc.setPalette_emits_no_content` and
+  `Acc.setTokens_emits_nothing` (proved, rfl): a palette arm emits only its
+  page-ground state transition, while neither arm emits content, owed glue,
+  or a gap flag — the checkable core of confinement. The walk-prefix statement
   (`setting_confined_to_suffix`) is blocked: unfolding `collectBlock`
   needs equation lemmas whose generation exhausts `whnf` (the
   `role_transparent_layout` blocker); its executable oracle in Tests
@@ -24082,3 +24083,53 @@ Boxes, table columns and images carry that value until layout knows the enclosin
 The independent browser review promoted the HTML side from a typed-tree claim to a rendered one. Chromium measures font size, line height, horizontal space, rule width/height/raise, and paragraph/target cell widths against five unequal live content boxes on screen and under print, with a declared 0.5 CSS-pixel bound. The red run found that Chromium did not bind `cqi` to a `table-cell` query container: cell text instead read the outer measure. A `cell-measure` block now owns the cell's content width, emitted only when that cell's inline tree actually produces a context unit; plain cells keep their old tree. The browser matrix passes both affine rows, and moving either nested case to the outer owner misses by tens of pixels.
 
 The out-of-repo site port was rebuilt from a scratch clone with the branch binary. Its two-page PDF, markdown twin, and rendered screenshots at 360, 768, and 1280 CSS pixels were byte-identical to the mainline run; its structural comparison had the same field verdicts, and its fixed return control moved 0 px after scrolling at all three widths. The top-level `inline-size` container therefore changes source bytes but not that caller's layout or fixed descendant in the browser this matrix names.
+
+### 2026-09-29 — xcolor model specifications and page-ground epochs
+
+The model is a source type, not a compatibility rewrite. `Decl.ColorSpec` is
+the only parser for named/no-model colour expressions and the `HTML`, `RGB`,
+`rgb`, `gray`, and `cmyk` models; `Decl.ColorComponent` retains every decimal
+digit and rejects wrong arity, malformed numbers, and out-of-range components
+before any value enters the palette. `Palette.resolveSpec`/`resolveSource` is
+the one conversion site. Text colour, the declaration form, `\definecolor`,
+palette/style values, and `\pagecolor` all reach it. `Ir.PdfColor` preserves
+the source device operator and components for PDF; the shared RGB bytes are
+the xcolor projection HTML and contrast consume. Unsupported model names
+remain W0102 and never fall through as a colour name.
+
+The installed xcolor 3.02 sources are the authority. A lualatex differential
+probe confirms the byte projections used here: rgb `0.45,0.45,0.5` becomes
+HTML `737380`, gray `0.4` becomes `666666`, and the synthetic CMYK probe
+becomes `B2804D`. Uncompressed PDF probes hold HTML/RGB to the driver's
+TeX-scaled division and hold rgb, gray, and cmyk to their respective `rg`, `g`,
+and `k` operators without decimal quantization. The fail-first artifact family
+failed 22 checks against `82e1e271` before the implementation. The old
+compatibility conversion truncated the rgb channels to `72727F`; the shared
+parser now rounds once as xcolor does.
+
+`\nopagecolor` restores `bg` from the palette at the body's opening. That is a
+palette epoch: `Palette.restore_exact` says the named ground returns to its
+opening value or absence while unrelated body declarations stand. Layout
+carries each `.setPalette` ground as a persistent `pageGround` state op, so
+the last epoch before shipout paints the current page and following pages;
+a frame's own `pageStyle` still wins on its page. HTML emits changed values
+and writes a removed custom property as `initial`, making its fallback active
+instead of leaking the prior epoch. `colorModelChecks` exercises all five
+models in paragraphs, frame titles, declaration forms, named definitions, and
+page grounds; it reads the exact PDF operators and typed HTML styles, checks
+malformed/refused values at every colour door, and restores both a
+document-declared and an undeclared reset ground.
+
+The corrected rounding exposed a contrast-cascade bug: a role realized in a
+body epoch remained at its failing source value in the root palette, even
+when both palettes carried the same role on the same ground. `PalWrite` now
+matches that semantic pair rather than the whole palette snapshot, so the
+root and epoch custom properties agree with the run PDF paints. The
+`htmla11y` contrast tier stays level, and `colorModelChecks` pins the
+pair-key propagation.
+
+Remaining colour scope is explicit: xcolor's package-level target-model
+option is still not carried (PM-4), models outside the five above remain
+W0102, direct model syntax inside the math and picture floors remains a named
+loss, and CMYK HTML is an unprofiled screen preview rather than colour-managed
+print simulation.
