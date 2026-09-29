@@ -179,3 +179,29 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
   t "typed HTML keeps the nested tabularx and its target/flexible track"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
+
+/-- **Strikeout stays one explicit unsupported boundary until it has shared
+geometry.** Installed ulem defines `\sout` by moving an underline to
+`ULdepth=-.55ex`, a rule through the glyphs. The current IR has only the
+below-baseline `underline` decoration; pretending that is strikeout would
+misrender both PDF geometry and HTML semantics. Until a shared strike value
+and exhaustive backend/walk arms land, the package and command each fire
+once and the command's text remains visible. -/
+def recipeUlemRefusalChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "\\usepackage[normalem]{ulem}\n"
+    "Kept before. \\sout{Crossed words.} Kept after."
+  let (doc, ds) := elabStr src
+  t "ulem and sout each have one truthful diagnostic, with no cascade"
+    ((ds.filter (·.code == "W0103")).size == 1 &&
+      (ds.filter (·.code == "W0301")).size == 1 &&
+      ds.all (·.severity != .error))
+  let out := layoutOf oneFace doc
+  let census := censusOf (coveredColorsOf doc) out
+  t "the unsupported strike boundary preserves its text exactly once"
+    (pageOccurs census 0 "Crossed words." == 1)
+  let trees := doc.body.map (HtmlDoc.blockNode {})
+  t "typed HTML does not claim strike semantics it cannot share with PDF"
+    (trees.foldl (fun n tree => n + countTag "s" tree) 0 == 0 &&
+      trees.foldl (fun n tree => n + treeShownOccurs #[tree] "Crossed words.") 0 == 1)
