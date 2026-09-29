@@ -971,14 +971,14 @@ def builtinNames : List String :=
 /-- Built-ins a definition may never touch, whatever its body: the names
 the walks' own shape depends on — grouping, definition machinery, block
 boundaries, the reserved characters' escapes, the engine's declarations —
-plus the underline family, whose refusal is the recorded divergence
-(`builtinNames`' comment). Redefining one would not change what renders
+plus the underline family and the flexible-table column resolver, whose
+refusal is the recorded divergence (`builtinNames`' comment). Redefining one would not change what renders
 (the dispatch reads these before any user definition), so refusing loudly
 (W0303) is the honest answer. Every other protected name is in
 `renderedBuiltins`, where rule (b) judges the body instead. -/
 def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
-   "underline", "uline", "ul", "varul",
+   "underline", "uline", "ul", "varul", "tabularxcolumn",
    "item", "defineenv", "block", "framefoot", "pagebreak"] ++
   (escapes.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl
 
@@ -2353,13 +2353,18 @@ private def colWidth (ctx : Ctx) (src : String) : Except String Ir.ColWidth := d
   let e ← affineLength ctx (· != .textHeight) src
   return .sized e
 
+private def tableTarget (ctx : Ctx) (src : String) : Except String Ir.TableTarget := do
+  let e ← affineLength ctx (· != .textHeight) src
+  return .sized e
+
 /-- The `tabular` column spec: `l`/`c`/`r` natural columns, `p{width}`
 (and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
 `@{}` deleting the outer pad on its edge, `|` warned and never drawn —
 "Never, ever use vertical rules" (booktabs.dtx §The layout of formal
 tables). Returns the columns, the outer-pad flags, and warnings as
 (key, message, help) for the caller's `warnOnce`. -/
-private def parseColSpec (ctx : Ctx) (spec : Array Raw) :
+private def parseColSpec (ctx : Ctx) (spec : Array Raw)
+    (flexTarget : Option Ir.TableTarget := none) :
     Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
   let mut cols : Array Ir.ColSpec := #[]
   let mut padL := true
@@ -2397,6 +2402,13 @@ only the empty '@{}' deleting an outer pad is",
           | 'l' => cols := cols.push { width := .natural, align := .left }
           | 'c' => cols := cols.push { width := .natural, align := .center }
           | 'r' => cols := cols.push { width := .natural, align := .right }
+          | 'X' =>
+            match flexTarget with
+            | some target => cols := cols.push { width := .flex target, align := .left }
+            | none =>
+              warns := warns.push ("colspec",
+                "unsupported column type 'X'; set as 'l'", "load tabularx and use its environment")
+              cols := cols.push { width := .natural, align := .left }
           | 'p' | 'm' | 'b' =>
             let widthGroup := if ci == last then
               match spec[i + 1]? with
@@ -5321,7 +5333,7 @@ theorem take_args_consumes_forward
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
-   "columns", "figure",
+   "columns", "tabularx", "figure",
    "figure*", "table", "table*", "quote", "quotation", "verse", "description",
    "thebibliography", "abstract", "titlepage", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
@@ -7596,6 +7608,20 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   -- trusts: a short row is padded, a long one widens the grid,
   -- warning either way (W0337).
   let mut k := skipSpaces body 0
+  let mut flexTarget : Option Ir.TableTarget := none
+  if n == "tabularx" then
+    match body[k]? with
+    | some (.group targetRaw _) =>
+      let src := rawSrc targetRaw
+      match tableTarget ctx src with
+      | .ok target => flexTarget := some target
+      | .error why =>
+        diag ctx .E0331 s!"cannot read tabularx target width from '{src}': {why}" pos
+          (help := "use sums, differences, scalar products, local horizontal measures, or absolute lengths")
+        flexTarget := some (.frac 1000)
+      k := skipSpaces body (k + 1)
+    | _ =>
+      diag ctx .E0304 "'tabularx' needs a {target width} before its {column spec}" pos
   if n == "tabular*" then
     if let some (.group _ _) := body[k]? then
       warnOnce ctx "tabular:starwidth" .N0102
@@ -7612,7 +7638,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   let mut padR := true
   match body[k]? with
   | some (.group spec _) =>
-    let (cs, pl, pr, warns) := parseColSpec ctx spec
+    let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
     cols := cs
     padL := pl
     padR := pr
@@ -9749,7 +9775,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     -- declares the top distribution and otherwise elaborates it unchanged.
     let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
     blocks := blocks.push (.frame #[] false .top false inner)
-  else if n == "tabular" || n == "tabular*" then
+  else if n == "tabular" || n == "tabular*" || n == "tabularx" then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)

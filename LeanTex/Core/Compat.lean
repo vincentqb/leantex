@@ -34,7 +34,7 @@ a document actually uses them). `xurl` is `url` with better breaking;
 judged at `\captionsetup` (honoured or W0354, never silent). -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
-   "beamerposter", "paracol",
+   "beamerposter", "paracol", "tabularx",
    "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",

@@ -108,6 +108,7 @@ def blockUse (n : String) : String :=
     | "ifbackend" => "{pdf}Backend words."
     | "tabular" => "{ll}Left & Right\\\\"
     | "tabular*" => "{8cm}{ll}Left & Right\\\\"
+    | "tabularx" => "{8cm}{lX}Left & Right\\\\"
     | "align" | "align*" => "x &= y"
     | "gather" | "gather*" | "equation" | "equation*" | "displaymath" => "x = y"
     | "block" | "alertblock" | "exampleblock" => "{Block title}Block words."

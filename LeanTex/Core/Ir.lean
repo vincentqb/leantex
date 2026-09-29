@@ -3986,12 +3986,36 @@ def raggedSideOf? : String → Option FlushSide
   | "raggedleft" | "flushright" => some .right
   | _ => none
 
-/-- A table column's declared width. `natural` sizes to the widest
-cell; `sized` carries the shared affine length until the table measure is
-known. -/
+/-- A percentage track spelling shared by table targets and box tracks. -/
+def percentCss (permille : Nat) : String :=
+  (if permille % 10 == 0 then s!"{permille / 10}"
+   else s!"{permille / 10}.{permille % 10}") ++ "%"
+
+/-- The total affine width a flexible table targets in its enclosing
+measure. It remains typed until each backend supplies that local measure. -/
+inductive TableTarget where
+  | sized (width : Affine Measure)
+  deriving Repr, BEq, Inhabited
+
+@[match_pattern] def TableTarget.frac (permille : Nat) : TableTarget :=
+  .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
+
+@[match_pattern] def TableTarget.abs (w : Sp) : TableTarget :=
+  .sized (.lit { width := .ofSp w })
+
+/-- Resolve a flexible table target against its local horizontal measure. -/
+def TableTarget.resolve (target : TableTarget) (measure : Sp) : Sp :=
+  match target with
+  | .sized e => max 0 (e.resolveWidth (MeasureValues.horizontal measure 0))
+
+/-- A table column's declared width. `natural` sizes to the widest cell;
+`sized` carries the shared affine length until the table measure is known;
+`flex` receives an equal share of its target left after fixed columns and
+gaps. -/
 inductive ColWidth where
   | natural
   | sized (width : Affine Measure)
+  | flex (target : TableTarget)
   deriving Repr, BEq, Inhabited
 
 @[match_pattern] def ColWidth.frac (permille : Nat) : ColWidth :=
@@ -4149,7 +4173,7 @@ private def affineTrackCss (e : Affine Measure) (horizontalUnit : String) : Stri
 by the HTML backend. -/
 def Track.css : Track → String
   | .free => "1fr"
-  | .percent p => (if p % 10 == 0 then s!"{p / 10}" else s!"{p / 10}.{p % 10}") ++ "%"
+  | .percent p => percentCss p
   | .length l => l.toPtString ++ "pt"
   | .affine e => affineTrackCss e "%"
 
@@ -4158,6 +4182,10 @@ wrong axis (font size, line height, block size): `cqi` is the nearest
 query container's inline measure. -/
 def Track.contextCss (e : Affine Measure) : String :=
   affineTrackCss e "cqi"
+
+/-- Spell a flexible table target from the same affine value layout resolves. -/
+def TableTarget.css : TableTarget → String
+  | .sized e => Track.css (.affine e)
 
 /-- Does this declaration name a width at all? The question the census and
 the diagnostics ask, so `share` is named once rather than tested as a
@@ -8635,6 +8663,7 @@ def dumpColSpec (c : ColSpec) : String :=
       | .lit g => g.width.sp.toPtString ++ "pt"
       | other => Track.css (.affine other)
     s!"{al}:{width}"
+  | .flex target => s!"{al}:flex:{target.css}"
 
 def dumpTableRule (r : TableRule) : String :=
   match r with

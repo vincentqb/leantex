@@ -40,7 +40,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     (placed ("\\hypertarget{spot}{" ++ anchorBody ++ "}") == placed anchorBody)
   t "the linked block reaches Layout.Out as an internal link"
     ((allLines out).any fun l => l.segs.any fun s => match s with
-      | .run _ _ (some "#panel") _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+      | .run _ _ (some "#panel") _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
       | _ => false)
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let hrefs := trees.foldl
@@ -133,3 +133,49 @@ def recipeParacolChecks (ref : IO.Ref (List String))
     ((starDs.filter (·.code == "W0104")).size == 1 &&
       starDs.all (fun d => !["W0301", "W0302", "E0336"].contains d.code) &&
       ((Ir.blocksText starDoc.body).splitOn "Spanning words.").length == 2)
+
+/-- **A tabularx X column receives the target's remaining width.** The
+installed package rewrites X to a paragraph column, repeatedly choosing its
+width so the table reaches the first argument (`tabularx.sty`,
+`\TX@endtabularx`, `\TX@arith`, and `\tabularxcolumn`). The target is the
+enclosing measure when written as `\linewidth`, including inside a
+minipage. Assertions read Layout.Out and the typed HTML table. -/
+def recipeTabularxChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "\\usepackage{tabularx}\n" (
+    "\\begin{minipage}{.6\\textwidth}\\begin{tabularx}{\\linewidth}{lX}\n" ++
+    "Key & Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.\\\\\n" ++
+    "End & Short value.\\end{tabularx}\\end{minipage}")
+  let (doc, ds) := elabStr src
+  let cascade := ["W0103", "W0301", "W0302", "W0104", "E0336", "E0311"]
+  t "tabularx and X produce no package, environment, or column-type cascade"
+    (ds.all fun d => !cascade.contains d.code)
+  let out := layoutOf oneFace doc
+  let census := censusOf (coveredColorsOf doc) out
+  t "tabularx preserves its nested table body on the shipped page"
+    (["Key", "Alpha", "kilo", "End", "Short value."].all (pageHas census 0 ·) &&
+      (ds ++ out.diags).all (·.code != "W0338"))
+  t "the X cell wraps at one stable column origin inside the minipage"
+    (match lineXOf census 0 "Alpha", lineXOf census 0 "kilo",
+        lineYOf census 0 "Alpha", lineYOf census 0 "kilo" with
+     | some xa, some xk, some ya, some yk => xa == xk && ya < yk
+     | _, _, _, _ => false)
+  let tableCols := Ir.foldBlocks (fun acc b => match b with
+      | .table cols _ _ _ _ _ => acc.push cols
+      | _ => acc) (fun acc _ => acc) #[] doc.body
+  t "X reaches the shared table IR as a flexible target-width column"
+    ((tableCols[0]?.bind (·[1]?)).map (·.width) == some (.flex (.frac 1000)))
+  let probeCols : Array Ir.ColSpec :=
+    #[{ width := .natural, align := .left },
+      { width := .flex (.frac 1000), align := .left }]
+  t "X receives exactly the target remainder after the natural column and pads"
+    (Layout.tableColWidths 10 1000 probeCols #[#[100, 200]] #[] == #[100, 860])
+  let trees := doc.body.map (HtmlDoc.blockNode {})
+  let tableStyles := trees.foldl
+    (fun acc n => acc ++ attrValuesOf (· == "table") "style" n) #[]
+  let colStyles := trees.foldl
+    (fun acc n => acc ++ attrValuesOf (· == "col") "style" n) #[]
+  t "typed HTML keeps the nested tabularx and its target/flexible track"
+    (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
+      tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
