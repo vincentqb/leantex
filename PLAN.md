@@ -24132,4 +24132,6 @@ Remaining colour scope is explicit: xcolor's package-level target-model
 option is still not carried (PM-4), models outside the five above remain
 W0102, direct model syntax inside the math and picture floors remains a named
 loss, and CMYK HTML is an unprofiled screen preview rather than colour-managed
-print simulation.
+print simulation. Exact device riders survive direct values and aliases;
+`!` mixes still use the established byte/thousandth arithmetic, so sub-byte
+decimal precision and DeviceGray identity are not yet preserved through a mix.
