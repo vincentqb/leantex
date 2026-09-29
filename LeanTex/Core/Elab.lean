@@ -4517,10 +4517,16 @@ no extent is reserved for it" pos
             let inner ← elabInlines ctx body
             let acc := flushText acc sb
             let anchor := Ir.labelAnchor key
-            let acc := if name == "hyperlink" then
-                acc.push (.link ("#".append anchor) inner)
+            let acc ← if name == "hyperlink" then
+                if Ir.anyInline (fun x => x matches .link _ _) inner then do
+                  warnOnce ctx "link:nested" .W0104
+                    "a link wrapper contains another link; the outer link is skipped" pos
+                    (help := "links cannot nest; move the inner link outside the outer wrapper")
+                  pure (acc ++ inner)
+                else
+                  pure (acc.push (.link ("#".append anchor) inner))
               else
-                (acc.push (.label key)) ++ inner
+                pure ((acc.push (.label key)) ++ inner)
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j2 + 1) acc ""
@@ -10241,12 +10247,20 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
       let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
       let target := argText ctx targetRaw
-      let wrapped :=
-        if n == "hypertarget" then #[Block.para #[.label target]] ++ inner
+      let wrapped ←
+        if n == "hypertarget" then pure (#[Block.para #[.label target]] ++ inner)
         else
           let anchor := Ir.labelAnchor target
           let url := if n == "hyperlink" then "#".append anchor else target
-          Ir.linkBlocks url inner
+          let nested := Ir.foldBlocks (fun found _ => found) (fun found x =>
+            found || (x matches .link _ _)) false inner
+          if nested then do
+            warnOnce ctx "link:nested" .W0104
+              "a link wrapper contains another link; the outer link is skipped" pos
+              (help := "links cannot nest; move the inner link outside the outer wrapper")
+            pure inner
+          else
+            pure (Ir.linkBlocks url inner)
       return (blocks ++ wrapped, ⟨j2 + 1, by omega⟩)
     | _, _ =>
       diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos

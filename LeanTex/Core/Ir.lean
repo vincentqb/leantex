@@ -13273,7 +13273,7 @@ def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
 
 end
 
-/-- Wrap every inline leaf of a block tree in one link destination while
+/-- Wrap every inline leaf of a block tree with the same link destination while
 preserving every block and inline wrapper. Block-shaped content wrappers use
 this generic map instead of inventing a parallel linked-block IR. -/
 def linkBlocks (url : String) (xs : Array Block) : Array Block :=
