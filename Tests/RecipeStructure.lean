@@ -211,9 +211,13 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     (fun acc n => acc ++ attrValuesOf (· == "table") "style" n) #[]
   let colStyles := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "col") "style" n) #[]
+  let cellStyles := trees.foldl
+    (fun acc n => acc ++ attrValuesOf (· == "td") "style" n) #[]
   t "typed HTML keeps the nested tabularx and its target/flexible track"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
+  t "typed HTML justifies only the X paragraph cells"
+    (cellStyles == #["text-align: justify", "text-align: justify"])
 
 /-- **Strikeout stays one explicit unsupported boundary until it has shared
 geometry.** Installed ulem defines `\sout` by moving an underline to

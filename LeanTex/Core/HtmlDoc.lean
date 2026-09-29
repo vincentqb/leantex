@@ -4645,7 +4645,8 @@ private def usesContextUnit (xs : Array Inline) : Bool :=
   Ir.foldInlines contextUnitLeaf false xs
 
 /-- One table cell: its column's alignment as inline style (the PDF path
-reads the same `ColSpec.align`), the `bt-cmid` class when a `\cmidrule`
+reads the same `ColSpec.align`), with a left-aligned paragraph column justified
+as TeX's `p`/`X` template does; the `bt-cmid` class when a `\cmidrule`
 spans its column, and — for a header cell — `scope=col`, the one scope a
 booktabs head declares (HTML §4.9.10: a `th` heading the cells below it).
 A `\multicolumn` head takes its own spec's alignment and `colspan` for the
@@ -4655,13 +4656,16 @@ read `cqi` puts those inlines in its content-measure container. -/
 def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
   let sp := spans.find? fun s => s.row == i && s.col == j
-  let align : Ir.HAlign := match sp with
-    | some s => s.spec.align
-    | none => (cols[j]?.map (·.align)).getD .left
-  let al := match align with
+  let spec : Ir.ColSpec := match sp with
+    | some s => s.spec
+    | none => cols[j]?.getD { width := .natural, align := .left }
+  let paragraph := match spec.width with
+    | .natural => false
+    | .abs _ | .frac _ | .flex _ => true
+  let al := match spec.align with
     | .center => #[("style", "text-align: center")]
     | .right => #[("style", "text-align: right")]
-    | .left => #[]
+    | .left => if paragraph then #[("style", "text-align: justify")] else #[]
   let al := match sp with
     | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
     | none => al
