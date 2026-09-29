@@ -2,7 +2,7 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  pdftotext version 26.09.0
 date: 2026-09-29
-src-key: 46e4c6ceeabe6fdc
+src-key: 19e2f3facf95430d
 fixtures: 83 built, unbuilt: theme-modern
 
 [feature]
