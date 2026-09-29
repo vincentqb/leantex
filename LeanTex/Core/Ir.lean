@@ -359,6 +359,17 @@ silently enter a screen or contrast comparison. -/
 theorem Color.beq_screen_exact (a b : Color) :
     (a == b) = (a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk) := rfl
 
+/-- Equality for a lookup that selects source-bearing data. Screen equality
+is intentionally weaker; any selection that can carry a PDF rider uses this
+relation instead. -/
+def Color.sameSource (a b : Color) : Bool :=
+  a == b && a.pdfModel == b.pdfModel
+
+/-- A source-equal selection cannot exchange its PDF device provenance. -/
+theorem Color.sameSource_pdfModel_exact (a b : Color) :
+    a.sameSource b = true → (a.pdfModel == b.pdfModel) = true := by
+  simp [Color.sameSource]
+
 def Color.black : Color := { r := 0, g := 0, b := 0 }
 
 /-- One byte as two hex digits; `upper` picks the alphabet's case. The dump

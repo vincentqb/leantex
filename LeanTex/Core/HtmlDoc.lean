@@ -62,6 +62,9 @@ structure Config where
   without a wrapper element — a wrapper would break the `* + *` sibling
   adjacency the rhythm gap rules key on. -/
   epochStyle : String := ""
+  /-- Whether that accumulated palette diff changes the rendered page ground.
+  Kept as data: no CSS substring is used to infer a semantic epoch. -/
+  epochGround : Bool := false
   /-- The document's resolved faces, from the driver — the same `FontSet`
   the PDF embeds from — when the artifact ships them: one `@font-face` per
   face, files written beside the page. `none` (a document that declared
@@ -4878,32 +4881,55 @@ private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
 style already stands on an ancestor element and inherits into it, so it is
 never re-applied below. The epoch palette and tokens carry in for the
 diffs a nested declaration makes. -/
-def Config.into (cfg : Config) : Config := { cfg with epochStyle := "" }
+def Config.into (cfg : Config) : Config :=
+  { cfg with epochStyle := "", epochGround := false }
 
 private def joinStyles (a b : String) : String :=
   if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
 
+/-- A body palette epoch as semantic changes, before CSS serialization. `none`
+removes a property. -/
+structure PaletteDiff where
+  entries : Array (String × Option Ir.Color)
+
+/-- Whether this epoch changes the page ground. -/
+def PaletteDiff.groundChanged (diff : PaletteDiff) : Bool :=
+  diff.entries.any (·.1 == "bg")
+
+/-- Serialize the semantic palette changes as custom-property declarations. -/
+def PaletteDiff.style (diff : PaletteDiff) : String :=
+  String.intercalate "; " (diff.entries.toList.map fun
+    | (n, some c) => s!"--{n}: {cssColor c}"
+    | (n, none) => s!"--{n}: initial")
+
 /-- The custom-property redefinitions a body `\palette` makes, against the
-palette in force before it: exactly the changed entries, so an epoch
-declares what it changed and nothing else. -/
-def epochPaletteStyle (before after : Ir.Palette) : String :=
-  let changed := (after.entries.filter fun (n, c) => before.find? n != some c).toList.map
-    fun (n, c) => s!"--{n}: {cssColor c}"
-  let removed := (before.entries.filter fun (n, _) => (after.find? n).isNone).toList.map
-    fun (n, _) => s!"--{n}: initial"
-  String.intercalate "; " (changed ++ removed)
+palette in force before it. Equality is explicitly over the HTML projection:
+a PDF device rider can change without selecting a different screen value. -/
+def epochPaletteDiff (before after : Ir.Palette) : PaletteDiff :=
+  let changed := (after.entries.filter fun (n, c) =>
+    (before.find? n).map cssColor != some (cssColor c)).map fun (n, c) => (n, some c)
+  let removed := (before.entries.filter fun (n, _) =>
+    (after.find? n).isNone).map fun (n, _) => (n, none)
+  { entries := changed ++ removed }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
 def epochTokenStyle (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
 
+/-- Advance the palette epoch while retaining its semantic ground fact. -/
+def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
+  let diff := epochPaletteDiff cfg.pal p
+  { cfg with pal := p
+             epochStyle := joinStyles cfg.epochStyle diff.style
+             epochGround := cfg.epochGround || diff.groundChanged }
+
 /-- A flow epoch that changes the page ground paints each following
 continuous-flow box in that ground. This avoids a wrapper (which would break
 sibling rhythm and host selectors); deck stages already paint their own full
 page from the same `--bg`. -/
-private def epochSurfaceStyle (style : String) : String :=
-  if (style.splitOn "--bg:").length > 1 then
+private def epochSurfaceStyle (style : String) (groundChanged : Bool) : String :=
+  if groundChanged then
     joinStyles style "background: var(--bg, var(--surface, #fafaf9))"
   else style
 
@@ -4911,9 +4937,9 @@ private def epochSurfaceStyle (style : String) : String :=
 comes first, so an element's own style declarations win (CSS style
 attribute: last declaration of a property applies). A text node carries no
 attributes and needs none. -/
-def withEpoch (style : String) : Node → Node
+def withEpoch (style : String) (groundChanged : Bool) : Node → Node
   | .elem t attrs kids =>
-    let style := epochSurfaceStyle style
+    let style := epochSurfaceStyle style groundChanged
     if style.isEmpty then .elem t attrs kids
     else if attrs.any (·.1 == "style") then
       .elem t (attrs.map fun kv =>
@@ -5987,8 +6013,7 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
   | [] => acc
   | .logo _ :: rest => blockNodesInto cfg acc rest
   | .setPalette p :: rest =>
-    let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
-    blockNodesInto { cfg with pal := p, epochStyle := style } acc rest
+    blockNodesInto (cfg.advancePalette p) acc rest
   | .setTokens tk :: rest =>
     let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
     blockNodesInto { cfg with tokens := tk, epochStyle := style } acc rest
@@ -5996,7 +6021,7 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
   -- medium has no page top and no interline glue.
   | b :: rest =>
     if Ir.pageMarkerBlock b then blockNodesInto cfg acc rest
-    else blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle (blockNode cfg b))) rest
+    else blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -6046,14 +6071,13 @@ def listItem (cfg : Config) : List Block → Array Node
   | [.para content] => inlines cfg content
   | [] => #[]
   | .setPalette p :: rest =>
-    let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
-    listItem { cfg with pal := p, epochStyle := style } rest
+    listItem (cfg.advancePalette p) rest
   | .setTokens tk :: rest =>
     let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
     listItem { cfg with tokens := tk, epochStyle := style } rest
   | b :: rest =>
     if Ir.pageMarkerBlock b then listItem cfg rest
-    else blockNodesInto cfg #[withEpoch cfg.epochStyle (blockNode cfg b)] rest
+    else blockNodesInto cfg #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)] rest
 
 end
 
@@ -6239,8 +6263,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   for b in blocks do
     match b with
     | .setPalette p =>
-      let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
-      cfg := { cfg with pal := p, epochStyle := style }
+      cfg := cfg.advancePalette p
     | .setTokens tk =>
       let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
       cfg := { cfg with tokens := tk, epochStyle := style }
@@ -6258,9 +6281,9 @@ anchor '{base}'; the second becomes '{id}'"
 retitle one section, or link to '#{id}'"))
       taken := taken.insert id text
       openId := some id
-      cur := #[withEpoch cfg.epochStyle (blockNode cfg b)]
+      cur := #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)]
     | _ =>
-      unless Ir.pageMarkerBlock b do cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
+      unless Ir.pageMarkerBlock b do cur := cur.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))
   return (close out cur openId, diags)
 
 /-- Does an element take keyboard focus in sequential navigation — a tab
@@ -6580,8 +6603,7 @@ def emitTree (cfg : Config) (doc : Doc) :
         if doc.frameRestart == some i then done := 0
         match b with
         | .setPalette p =>
-          let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
-          cfg := { cfg with pal := p, epochStyle := style }
+          cfg := cfg.advancePalette p
         | .setTokens tk =>
           let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
           cfg := { cfg with tokens := tk, epochStyle := style }
@@ -6688,7 +6710,7 @@ first; retitle one frame, or link to '#{id}'"))
               | .text s => Node.text s
               | .style s => Node.style s
               | .script attrs s => Node.script attrs s
-          acc := acc.push (withEpoch cfg.epochStyle node)
+          acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround node)
         | .section 1 starred num title =>
           curSection := title
           if themedSections then
@@ -6706,17 +6728,17 @@ first; retitle one frame, or link to '#{id}'"))
             -- force, as the PDF furnishes every page.
             let name := claimName named (sectionPageName title)
             named := named.insert name
-            acc := acc.push (withEpoch cfg.epochStyle
+            acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround
               (attachLogo cfg
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
                     stageAttrs cfg.deck name ++ #[("data-snap", "")]))
                 (Ir.logoInForce doc.logo logoSpans i)))
           else
-            acc := acc.push (withEpoch cfg.epochStyle
+            acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround
               (blockNode cfg (.section 1 starred num title)))
         | _ =>
-          unless Ir.pageMarkerBlock b do acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
+          unless Ir.pageMarkerBlock b do acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   -- The endnotes: one section before the article end (W3C DPUB-ARIA 1.1

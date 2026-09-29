@@ -24097,15 +24097,25 @@ the source device operator and components for PDF; the shared RGB bytes are
 the xcolor projection HTML and contrast consume. Unsupported model names
 remain W0102 and never fall through as a colour name.
 
-The installed xcolor 3.02 sources are the authority. A lualatex differential
-probe confirms the byte projections used here: rgb `0.45,0.45,0.5` becomes
-HTML `737380`, gray `0.4` becomes `666666`, and the synthetic CMYK probe
-becomes `B2804D`. Uncompressed PDF probes hold HTML/RGB to the driver's
-TeX-scaled division and hold rgb, gray, and cmyk to their respective `rg`, `g`,
-and `k` operators without decimal quantization. The fail-first artifact family
-failed 22 checks against `82e1e271` before the implementation. The old
-compatibility conversion truncated the rgb channels to `72727F`; the shared
-parser now rounds once as xcolor does.
+The installed xcolor 3.02 sources are the authority. The original differential
+confirmed the screen projections: rgb `0.45,0.45,0.5` becomes HTML `737380`,
+gray `0.4` becomes `666666`, and the synthetic CMYK probe becomes `B2804D`.
+Its fail-first artifact family failed 22 checks against `82e1e271`; the old
+compatibility conversion truncated the rgb channels to `72727F` before the
+shared parser fixed it. The external `scripts/color-diff.lean` oracle now
+builds one synthetic page per case under LuaLaTeX with content and object
+compression disabled, parses both engines'
+page streams through `PdfRead`, and compares PDF numeric values. Direct model
+uses preserve their source values: rgb `.000009 .123456 .999999 rg`, gray
+`.500009 g`, and cmyk `.000009 .00001 .123456 .999999 k`. A named
+`\definecolor` passes through xcolor's `XC@calcR`, which truncates unit models
+to five fractional digits: `0 0.12345 0.99999 rg`, `0.5 g`, and
+`0 0.00001 0.12345 0.99999 k`. The parser carries that distinction through
+one definition marker and one `ColorSpec.xcolorDefined` projection; direct
+values still retain all digits. The same oracle holds xcolor's actual
+separator grammar: commas and ASCII whitespace may be mixed. Re-run this
+oracle whenever `Decl` colour arithmetic or the `\definecolor` carrier changes.
+The fail-first run found all three differences before the implementation.
 
 `\nopagecolor` restores `bg` from the palette at the body's opening. That is a
 palette epoch: `Palette.restore_exact` says the named ground returns to its
@@ -24118,7 +24128,17 @@ instead of leaking the prior epoch. `colorModelChecks` exercises all five
 models in paragraphs, frame titles, declaration forms, named definitions, and
 page grounds; it reads the exact PDF operators and typed HTML styles, checks
 malformed/refused values at every colour door, and restores both a
-document-declared and an undeclared reset ground.
+document-declared and an undeclared reset ground. `HtmlDoc.PaletteDiff`
+keeps changed keys structured until serialization; its `groundChanged` fact,
+not a search for `--bg:` in CSS text, decides whether a flow sibling paints a
+surface. The diff compares `cssColor` explicitly, so a screen-equivalent PDF
+rider change is not mistaken for an HTML change.
+
+Source-bearing lookup uses `Color.sameSource`, not screen `BEq`;
+`sameSource_pdfModel_exact` proves a successful match retains the same
+`pdfModel`. The regression puts equal-preview rgb and gray values in the same
+span table and requires the gray site, preventing equality-based selection
+from exchanging device provenance.
 
 The corrected rounding exposed a contrast-cascade bug: a role realized in a
 body epoch remained at its failing source value in the root palette, even

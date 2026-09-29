@@ -5996,10 +5996,11 @@ face serves every language, so the binding is dropped" pos
     if h : args.size = 3 then
       let n := rawSrc args[0]
       let model := rawSrc args[1]
-      let source := modeledColorSource (some model) (rawSrc args[2])
-      let native := s!"\\palette\{ {n} = {source} }"
+      let modeled := modeledColorSource (some model) (rawSrc args[2])
+      let native := s!"\\palette\{ {n} = {modeled} }"
+      let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
       became s!"\\definecolor\{{n}}" native pos
-      return some (← synthAt native pos, k)
+      return some (← synthAt carried pos, k)
     else return none
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2

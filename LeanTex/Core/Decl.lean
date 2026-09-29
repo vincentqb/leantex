@@ -63,6 +63,12 @@ precision. -/
 def ColorComponent.pdfUnit (c : ColorComponent) : String :=
   decimalFraction c.num c.scale
 
+/-- The value xcolor stores for a `\definecolor` unit component. Its
+`XC@calcR` keeps five fractional digits (truncating, not rounding) before the
+driver sees the colour; direct modeled uses retain their source values. -/
+def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
+  { num := c.num * 100000 / c.scale, scale := 100000 }
+
 private def texScaledDecimal (sp : Nat) : String := Id.run do
   let mut out := toString (sp / 65536) ++ "."
   let mut rem := 10 * (sp % 65536) + 5
@@ -109,6 +115,21 @@ inductive ColorSpec where
   | gray (v : ColorComponent)
   | cmyk (c m y k : ColorComponent)
   deriving Repr, BEq
+
+/-- xcolor definitions normalize unit models through `XC@calcR`; direct
+modelled uses retain their source values. -/
+def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
+  | .named expr => .named expr
+  | .html r g b => .html r g b
+  | .rgbByte r g b => .rgbByte r g b
+  | .rgbUnit r g b => .rgbUnit r.xcolorDefined g.xcolorDefined b.xcolorDefined
+  | .gray v => .gray v.xcolorDefined
+  | .cmyk c m y k =>
+    .cmyk c.xcolorDefined m.xcolorDefined y.xcolorDefined k.xcolorDefined
+
+/-- Compatibility-only carrier marking a modeled value that passed through
+xcolor's `\definecolor` storage semantics before entering the palette. -/
+def xcolorDefinitionPrefix : String := "@xcolor-definition:"
 
 inductive ColorSpecError where
   | unsupported (model : String)
@@ -186,16 +207,19 @@ def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
     return none
   return some (if neg then -(mantissa : Int) else mantissa, scale)
 
+/-- xcolor's `XC@clean` accepts commas and runs of ASCII whitespace as
+component separators, including a mixture of the two; an empty comma field
+is not a component. -/
 private def colorParts (s : String) : Option (List String) :=
-  if s.contains ',' then
-    let parts := (s.splitOn ",").map (·.trimAscii.toString)
-    if parts.any (·.isEmpty) then none else some parts
+  let commaParts := s.splitOn ","
+  if commaParts.any (fun p => p.trimAscii.isEmpty) then none
   else
-    let normalized := String.ofList (s.toList.map fun c =>
-      if c == '\t' || c == '\n' || c == '\r' then ' ' else c)
-    some ((normalized.splitOn " ").filterMap fun p =>
-      let p := p.trimAscii.toString
-      if p.isEmpty then none else some p)
+    some (commaParts.flatMap fun part =>
+      let normalized := String.ofList (part.toList.map fun c =>
+        if c == '\t' || c == '\n' || c == '\r' then ' ' else c)
+      (normalized.splitOn " ").filterMap fun p =>
+        let p := p.trimAscii.toString
+        if p.isEmpty then none else some p)
 
 private def malformedColor (model detail : String) : Except ColorSpecError α :=
   .error (.malformed model detail)
@@ -282,7 +306,12 @@ def parseColorSpec (model : Option String) (raw : String) :
   match model with
   | some model => parseModeledColor model.trimAscii.toString value
   | none =>
-    if value.startsWith "#" then
+    if value.startsWith xcolorDefinitionPrefix then
+      let source := (value.drop xcolorDefinitionPrefix.length).toString
+      match wrappedColor source with
+      | some (m, v) => (parseModeledColor m v).map ColorSpec.xcolorDefined
+      | none => .error (.malformed "xcolor definition" "expected MODEL(components)")
+    else if value.startsWith "#" then
       let hex := (value.drop 1).toString
       match hex.toList with
       | [r, g, b] =>

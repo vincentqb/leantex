@@ -753,7 +753,7 @@ use, or the first expression that resolved to an anonymous colour. -/
 def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
     Option String → Color → Option (String × Span)
   | some r, _ => (colors.find? (·.1 == r)).map fun (e, _, _, sp) => (e, sp)
-  | none, c => (colors.find? fun (_, v, role, _) => !role && v == c).map
+  | none, c => (colors.find? fun (_, v, role, _) => !role && v.sameSource c).map
       fun (e, _, _, sp) => (e, sp)
 
 /-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/

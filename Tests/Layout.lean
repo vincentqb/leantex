@@ -986,6 +986,41 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       ((elemStylesList #[] pageBody.toList).any fun (shown, style) =>
         hasStr shown "Model Ground" && hasStr style ("--bg: " ++ HtmlDoc.cssColor want) &&
           hasStr style "background: var(--bg")
+  let boundaryPdf (pre body : String) : ByteArray :=
+    let (d, _) := elabStr (article pre body)
+    let geom := Layout.Geom.ofPage d.page
+    pdfText (Pdf.write geom oneFace (layoutOf oneFace d geom).pages d.info)
+  let directBoundary := boundaryPdf ""
+    "\\textcolor[rgb]{.000009,.123456,.999999}{Direct Boundary}"
+  t "xcolor direct rgb keeps the source's numeric value"
+    (bytesContain directBoundary "0.000009 0.123456 0.999999 rg")
+  let definitions :=
+    "\\definecolor{boundrgb}{rgb}{.000009,.123456,.999999}" ++
+      "\\definecolor{boundgray}{gray}{.500009}" ++
+      "\\definecolor{boundcmyk}{cmyk}{.000009,.00001,.123456,.999999}"
+  let definedRgb := boundaryPdf definitions "\\pagecolor{boundrgb}Defined RGB"
+  let definedGray := boundaryPdf definitions "\\pagecolor{boundgray}Defined Gray"
+  let definedCmyk := boundaryPdf definitions "\\pagecolor{boundcmyk}Defined CMYK"
+  t "xcolor definitions use the five-decimal device values LuaLaTeX writes"
+    (bytesContain definedRgb "0 0.12345 0.99999 rg" &&
+      bytesContain definedGray "0.5 g" &&
+      bytesContain definedCmyk "0 0.00001 0.12345 0.99999 k")
+  let (mixedDoc, mixedDs) := elabStr (article ""
+    "\\textcolor[rgb]{0.1, 0.2 0.3}{Mixed Separators}")
+  t "xcolor component separators may mix commas and ASCII whitespace"
+    (mixedDs.all (·.severity != .error) &&
+      (colorsOf mixedDoc).any (samePreview { r := 26, g := 51, b := 77 }))
+  let half : Decl.ColorComponent := { num := 1, scale := 2 }
+  let rgbHalf := Ir.Color.ofRgbUnit half half half
+  let grayHalf := Ir.Color.ofGray half
+  let rgbSpan : Span := ⟨"rgb.tex", ⟨1, 1⟩⟩
+  let graySpan : Span := ⟨"gray.tex", ⟨2, 1⟩⟩
+  let sites : Array (String × Ir.Color × Bool × Span) :=
+    #[("rgb(.5,.5,.5)", rgbHalf, false, rgbSpan),
+      ("gray(.5)", grayHalf, false, graySpan)]
+  t "anonymous colour-site selection keeps PDF model provenance"
+    (rgbHalf == grayHalf && rgbHalf.pdfModel != grayHalf.pdfModel &&
+      Elab.colorSiteOf sites none grayHalf == some ("gray(.5)", graySpan))
   let named := article "\\definecolor{namedink}{HTML}{336699}"
     "\\textcolor{namedink}{Named Ink}"
   let (namedDoc, namedDs) := elabStr named
@@ -1009,6 +1044,7 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     [("short HTML", "\\textcolor[HTML]{369}{Kept Ink}", "E0321"),
      ("bad HTML digit", "\\textcolor[HTML]{GG6699}{Kept Ink}", "E0321"),
      ("short rgb", "\\textcolor[rgb]{.2,.4}{Kept Ink}", "E0321"),
+     ("empty rgb field", "\\textcolor[rgb]{.2,,.4,.6}{Kept Ink}", "E0321"),
      ("large RGB", "\\textcolor[RGB]{256,0,0}{Kept Ink}", "E0321"),
      ("wide gray", "\\textcolor[gray]{.2,.4}{Kept Ink}", "E0321"),
      ("large cmyk", "\\textcolor[cmyk]{0,0,0,2}{Kept Ink}", "E0321"),
@@ -1050,6 +1086,16 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (forwardDoc.palette.find? "bg" == none && forwardDs.any (·.code == "W0304"))
   let base : Ir.Color := { r := 0xF7, g := 0xF7, b := 0xF7 }
   let painted : Ir.Color := { r := 0x11, g := 0x22, b := 0x33 }
+  let groundDiff := HtmlDoc.epochPaletteDiff ({} : Ir.Palette)
+    (({} : Ir.Palette).declare "bg" painted)
+  t "HTML palette epochs carry the ground change before CSS serialization"
+    (groundDiff.groundChanged && groundDiff.entries.any (·.1 == "bg") &&
+      hasStr groundDiff.style "--bg: #112233")
+  let projectionDiff := HtmlDoc.epochPaletteDiff
+    (({} : Ir.Palette).declare "bg" rgbHalf)
+    (({} : Ir.Palette).declare "bg" grayHalf)
+  t "HTML palette diffs compare the screen projection, not PDF provenance"
+    (projectionDiff.entries.isEmpty)
   let accent : Ir.Color := { r := 0xAA, g := 0xBB, b := 0xCC }
   let later : Ir.Color := { r := 0x22, g := 0x33, b := 0x44 }
   let resetSrc := article
