@@ -648,9 +648,10 @@ private structure Reader where
   b : ByteArray
   locs : Std.HashMap Nat Loc
 
-/-- A direct integer object, for an indirect `/Length` (§7.3.8.2 allows
-one): a single extra hop, never a chain. -/
-private def Reader.intAt (r : Reader) (num : Nat) : Option Int := do
+/-- Bootstrap an object stream's indirect `/Length`: §7.5.7 excludes
+these length objects from object streams. A single direct integer,
+never a chain or a recursive dependency on another object stream. -/
+private def Reader.directIntAt (r : Reader) (num : Nat) : Option Int := do
   if let some (.direct off) := r.locs.get? num then
     if let .ok (_, .int n, _) := parseIndirectAt r.b off then
       return n
@@ -660,7 +661,8 @@ private def Reader.intAt (r : Reader) (num : Nat) : Option Int := do
 when `stream` stands there (§7.3.8): `/Length` direct or one indirect hop,
 and `endstream` where the length says it ends — a length that stops short
 or overruns is refused, never read through. -/
-private def Reader.streamAfter (r : Reader) (v : Obj) (j : Nat) :
+private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
+    (v : Obj) (j : Nat) :
     Except String (Option ByteArray) := do
   let k := skipWs r.b j
   match keywordAt r.b k "stream" with
@@ -671,7 +673,11 @@ private def Reader.streamAfter (r : Reader) (v : Obj) (j : Nat) :
     let len ← match (v.get? "Length") with
       | some (.int n) => pure n
       | some (.ref ln _) =>
-        match r.intAt ln with
+        -- Even when enumerated as an ordinary object, an object stream
+        -- cannot bootstrap from a compressed length (§7.5.7).
+        let length := if v.get? "Type" == some (.name "ObjStm")
+          then r.directIntAt ln else intAt ln
+        match length with
         | some n => pure n
         | none => throw "malformed PDF: an indirect /Length does not resolve"
       | _ => throw "malformed PDF: a stream has no /Length"
@@ -689,7 +695,7 @@ private def Reader.objStm (r : Reader) (stm : Nat) :
   let some (.direct off) := r.locs.get? stm
     | throw "malformed PDF: an object stream is not at a direct offset"
   let (_, sd, j) ← parseIndirectAt r.b off
-  let some raw ← r.streamAfter sd j
+  let some raw ← r.streamAfterWith r.directIntAt sd j
     | throw "malformed PDF: an object stream has no data"
   let data ← decodeStream sd raw
   let some n := (sd.get? "N").bind Obj.int?
@@ -707,16 +713,18 @@ private def Reader.objStm (r : Reader) (stm : Nat) :
     pairs := pairs.push (onum, ooff)
   return (data, pairs, first.toNat)
 
-/-- Fetch object `num`: its value, and its raw (still encoded) stream bytes
-when it carries a stream. An object the table does not list is the null
-object (§7.3.10). -/
-private def Reader.get (r : Reader) (num : Nat) :
-    Except String (Obj × Option ByteArray) := do
+/-- Fetch the value without reading its stream. A direct object also
+returns the position after its value; compressed objects cannot carry
+streams (§7.5.7). Separating these readings lets a compressed integer
+supply an ordinary stream's length without making object lookup recursive.
+An object the table does not list is null (§7.3.10). -/
+private def Reader.valueAt (r : Reader) (num : Nat) :
+    Except String (Obj × Option Nat) := do
   match r.locs.get? num with
   | none => return (.null, none)
   | some (.direct off) =>
     let (_, v, j) ← parseIndirectAt r.b off
-    return (v, ← r.streamAfter v j)
+    return (v, some j)
   | some (.inStm stm idx) =>
     let (data, pairs, first) ← r.objStm stm
     let some (_, ooff) := pairs[idx]?
@@ -724,11 +732,80 @@ private def Reader.get (r : Reader) (num : Nat) :
     let (v, _) ← parseVal data (first + ooff)
     return (v, none)
 
+/-- One resolved integer, independent of its physical storage. The value
+reader's object-stream bootstrap only uses `directIntAt`, so this cannot
+re-enter itself, even on cyclic or malformed references. -/
+private def Reader.intAt (r : Reader) (num : Nat) : Option Int :=
+  (r.valueAt num).toOption.bind (fun (v, _) => v.int?)
+
+/-- Artifact-specific shape facts about the actual value reader: arbitrary
+integer values, offsets and object-stream indices, conditional on parsing
+those values. These do not claim every arbitrary byte string parses. -/
+private theorem Reader.intAt_direct_exact (r : Reader) (num off header j : Nat) (n : Int)
+    (hloc : r.locs.get? num = some (.direct off))
+    (hval : parseIndirectAt r.b off = .ok (header, .int n, j)) :
+    r.intAt num = some n := by
+  simp only [Reader.intAt, Reader.valueAt, hloc, hval]
+  rfl
+
+private theorem Reader.intAt_compressed_exact (r : Reader) (num stm idx first header off j : Nat)
+    (n : Int) (data : ByteArray) (pairs : Array (Nat × Nat))
+    (hloc : r.locs.get? num = some (.inStm stm idx))
+    (hstm : r.objStm stm = .ok (data, pairs, first))
+    (hidx : pairs[idx]? = some (header, off))
+    (hval : parseVal data (first + off) = .ok (.int n, j)) :
+    r.intAt num = some n := by
+  simp only [Reader.intAt, Reader.valueAt, hloc, hstm]
+  dsimp only [Bind.bind, Except.bind]
+  simp only [hidx, hval]
+  rfl
+
+/-- Artifact-specific bootstrap restriction: no compressed entry can
+supply an object stream's own length, including a self or mutual cycle. -/
+private theorem Reader.directIntAt_compressed_exact (r : Reader) (num stm idx : Nat)
+    (hloc : r.locs.get? num = some (.inStm stm idx)) :
+    r.directIntAt num = none := by
+  simp only [Reader.directIntAt, hloc]
+
+/-- Fetch an object's value and its raw (still encoded) stream, if any. -/
+private def Reader.get (r : Reader) (num : Nat) :
+    Except String (Obj × Option ByteArray) := do
+  let (v, after) ← r.valueAt num
+  let raw ← match after with
+    | none => pure none
+    | some j => r.streamAfterWith r.intAt v j
+  return (v, raw)
+
 /-- One level of indirection: a `ref` fetched, anything else unchanged. -/
 private def Reader.deref (r : Reader) (o : Obj) : Except String Obj := do
   match o with
   | .ref n _ => return (← r.get n).1
   | _ => return o
+
+/-- Resolve an array before selecting its ordered stream references.
+For a single stream retain the original reference, not its dictionary. -/
+private def Reader.contentParts (r : Reader) (contents : Obj) : Except String (Array Obj) := do
+  match ← r.deref contents with
+  | .arr xs => return xs
+  | _ => return #[contents]
+
+/-- Artifact-specific: every resolved array is preserved exactly,
+including order, multiplicity and the empty value, whichever storage
+form supplied it. The premise is the reader's actual dereference. -/
+private theorem Reader.contentParts_array_exact (r : Reader) (contents : Obj) (xs : Array Obj)
+    (h : r.deref contents = .ok (.arr xs)) :
+    r.contentParts contents = .ok xs := by
+  simp only [Reader.contentParts, h]
+  rfl
+
+/-- Artifact-specific: resolving a single stream's dictionary does not
+replace the reference from which the caller reads its stream bytes. -/
+private theorem Reader.contentParts_stream_exact (r : Reader) (num gen : Nat)
+    (es : Array (String × Obj)) (raw : ByteArray)
+    (h : r.get num = .ok (.dict es, some raw)) :
+    r.contentParts (.ref num gen) = .ok #[.ref num gen] := by
+  simp only [Reader.contentParts, Reader.deref, h]
+  rfl
 
 -- ## Every object (§7.5.4, §7.5.7): the substrate a census reads
 
@@ -790,6 +867,7 @@ def objectsOf (b : ByteArray) (x : Xref) :
   let nums := x.locs.keysArray.qsort (· < ·)
   let mut stms : Std.HashMap Nat (ByteArray × Array (Nat × Nat) × Nat) := {}
   let mut es : Array Entry := #[]
+  let mut afters : Std.HashMap Nat Nat := {}
   for num in nums do
     if let some size := size? then
       if num ≥ size then
@@ -800,8 +878,8 @@ def objectsOf (b : ByteArray) (x : Xref) :
       let (header, val, j) ← parseIndirectAt b off
       if header != num then
         throw s!"malformed PDF: object {num} is not at its cross-referenced offset (the file spells {header} there)"
-      let stream ← r.streamAfter val j
-      es := es.push { num, loc := .direct off, header, val, stream }
+      afters := afters.insert num j
+      es := es.push { num, loc := .direct off, header, val, stream := none }
     | some (.inStm stm idx) =>
       let (data, pairs, first) ← match stms.get? stm with
         | some t => pure t
@@ -815,6 +893,18 @@ def objectsOf (b : ByteArray) (x : Xref) :
         throw s!"malformed PDF: object stream {stm} lists {header} where the cross-reference names {num}"
       let (val, _) ← parseVal data (first + ooff)
       es := es.push { num, loc := .inStm stm idx, header, val, stream := none }
+  -- All values are now available, including compressed length integers.
+  -- Reuse them instead of decoding object streams again for each length.
+  let ints := es.foldl (fun ints e =>
+    match e.val.int? with
+    | some n => ints.insert e.num n
+    | none => ints) ({} : Std.HashMap Nat Int)
+  es ← es.mapM fun e => do
+    match afters.get? e.num with
+    | none => return e
+    | some j =>
+      let stream ← r.streamAfterWith ints.get? e.val j
+      return { e with stream }
   if h : entriesWf es then
     return ⟨es, h⟩
   else
@@ -1107,9 +1197,7 @@ def readForm (b : ByteArray) (page : PageSelection := .first) :
   match page.node.get? "Contents" with
   | none => pure ()
   | some contents =>
-    let parts ← match contents with
-      | .arr xs => pure xs
-      | one => pure #[one]
+    let parts ← r.contentParts contents
     for part in parts do
       let num ← match part with
         | .ref n _ => pure n
