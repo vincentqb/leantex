@@ -2724,6 +2724,80 @@ def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
         text := pdfText pdf, objs := (PdfRead.objects pdf).map (·.val) }
   return arts
 
+/-- Finding: the shipped artifact of a page-selecting fixture must carry the
+*selected source frame*, not merely some form. The multi-page fixture
+`figures/multipage.pdf` is this engine's own output; its two pages carry
+different content (Frame One vs Frame Two), so a wrong selection would show.
+`page-select` requests page 2 and `animation`'s poster is `first` (page 1);
+each artifact embeds a form, and the exact form the writer embeds — the
+store's decoded `PdfRead.Form`, read through the same `Image.probePage`
+selector the reader uses — is provably that source page and not the other.
+The typed HTML of the animation fixture emits exactly one `<picture>` whose
+moving primary and reduced-motion/print poster hrefs are the expected
+`i…`/`p…` assets `HtmlDoc.browserFaceAssets` projects. -/
+def figurePageProvenanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let multi ← IO.FS.readBinFile "tests/corpus/figures/multipage.pdf"
+  let pageForm (p : PdfRead.PageSelection) : Option ByteArray :=
+    (Image.probePage multi p).toOption.bind (·.form) |>.map (·.val.content)
+  let page1 := pageForm .first
+  let page2 := pageForm (.number 2)
+  -- The two source pages are genuinely distinguishable, and selection
+  -- resolves to the physical page, so a wrong pick cannot pass unseen.
+  t "multipage fixture: pages 1 and 2 carry different content"
+    (page1.isSome && page2.isSome && page1 != page2)
+  t "multipage fixture: selection resolves to the physical source page"
+    ((PdfRead.pageNumber multi (.number 2)) == .ok 2 &&
+      (PdfRead.pageNumber multi .first) == .ok 1)
+  -- The exact form the artifact embeds, for a corpus fixture built the way
+  -- the driver builds it, read back through the parser.
+  let embedded (name : String) : IO (Option ByteArray × Option ByteArray) := do
+    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let (doc, _) ← elabFixture name src
+    let store ← corpusStore doc
+    let geom := Layout.Geom.ofPage doc.page
+    let out := layoutOf oneFace doc geom none store
+    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
+    let storeForm := (store.entries[0]?.bind (·.info)).bind (·.form) |>.map (·.val.content)
+    let artifactForm := (PdfRead.readForm pdf).toOption.map (·.val.content)
+    return (storeForm, artifactForm)
+  let (psStore, psArtifact) ← embedded "page-select"
+  t "page-select embeds a form in the shipped artifact"
+    (psArtifact.any (!·.isEmpty))
+  t "page-select's embedded form is source page 2, not page 1"
+    (psStore == page2 && psStore != page1 && page2.isSome)
+  let (anStore, anArtifact) ← embedded "animation"
+  t "animation embeds a poster form in the shipped artifact"
+    (anArtifact.any (!·.isEmpty))
+  t "animation's static poster is source page 1, not page 2"
+    (anStore == page1 && anStore != page2 && page1.isSome)
+  -- Typed HTML: the hermetic animation fixture, with its companion SVG read
+  -- beside it as the driver reads it, emits one picture whose primary and
+  -- reduced-motion/print poster hrefs are exactly the expected i…/p… assets.
+  let anSrc ← IO.FS.readFile "tests/corpus/animation.tex"
+  let (anDoc, _) ← elabFixture "animation" anSrc
+  let anBaseStore ← corpusStore anDoc
+  let companion ← IO.FS.readBinFile "tests/corpus/figures/multipage.svg"
+  let withCompanion : Image.Store := { entries := anBaseStore.entries.map fun en =>
+    if en.animated then { en with companion := some companion } else en }
+  let faced := HtmlDoc.facedStore withCompanion
+  let expected := (HtmlDoc.browserFaceAssets faced).map (·.file)
+  t "animation projects exactly the moving primary and static poster faces"
+    (expected == #["i0-multipage.svg", "p0-multipage.svg"])
+  let (_, tree, _) := HtmlDoc.emitTree { imgs := faced, assetsDir := "animation.assets" } anDoc
+  let imgNodes := elemAttrsList (· == "img") #[] tree.toList
+  let sources := elemAttrsList (· == "source") #[] tree.toList
+  t "animation emits exactly one picture with one moving primary image"
+    (imgNodes.size == 1 && (HtmlDoc.imgSrcsList #[] tree.toList).size == 1)
+  t "animation's moving primary href is the expected i… asset"
+    (imgNodes.any fun (_, attrs) => attrs.contains ("src", "animation.assets/" ++ expected[0]!))
+  t "animation's reduced-motion/print poster href is the expected p… asset"
+    (sources.any fun (_, attrs) =>
+      (HtmlDoc.attrOf? attrs "media").any (fun m =>
+        hasStr m "print" && hasStr m "prefers-reduced-motion") &&
+      attrs.contains ("srcset", "animation.assets/" ++ expected[1]!))
+
 /-- What each golden fixture's PDF carries, read back from its bytes by the
 census: `(pages, type0Fonts, images, forms, smasks, linkAnnots,
 outlineItems, lang, filters)`. A fixture without a row fails the coverage
