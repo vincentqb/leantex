@@ -239,28 +239,67 @@ alpha       pass       untested\n"
   -- Moved hermetic inputs stale the capture even when records match.
   no "browser face: moved hermetic inputs stale the capture"
     (!(browserFaceFaults (faces #[face]) "different-source" exp).isEmpty)
-  -- A boundary picture's hex-named SVG is a distinct path: captured beside
-  -- the image face, it is neither missing nor an extra.
+  -- A boundary picture's hex-named SVG is classified positively (its stem is
+  -- the shape `Ir.picHash` produces): captured beside the image face, it is
+  -- neither missing nor an extra image face.
   let boundary := BrowserFace.captured "figures"
     "figures.assets/0123456789abcdef0123456789abcdef.svg" "<svg/>".toUTF8
   no "browser face: a boundary picture SVG is neither missing nor extra"
     (browserFaceFaults (faces #[face, boundary]) "source" exp).isEmpty
-  no "browser face: the boundary SVG name is not classified as an image face"
-    (!HtmlDoc.isImageFaceName (HtmlDoc.basename boundary.href))
+  no "browser face: the boundary SVG name is classified as a boundary face, not an image face"
+    (HtmlDoc.isBoundaryFaceName (HtmlDoc.basename boundary.href) &&
+      !HtmlDoc.isImageFaceName (HtmlDoc.basename boundary.href))
+  -- Fail-closed: a captured SVG matching neither classifier is unclassified
+  -- and faults, rather than being silently admitted as a boundary face.
+  let garbage := BrowserFace.captured "figures" "figures.assets/garbage.svg" "<svg/>".toUTF8
+  no "browser face: an unclassified SVG name is a fault"
+    (!(browserFaceFaults (faces #[face, garbage]) "source" exp).isEmpty)
+  let shortHex := BrowserFace.captured "figures" "figures.assets/0123abcd.svg" "<svg/>".toUTF8
+  no "browser face: a wrong-length hex stem is not a boundary face and faults"
+    (!HtmlDoc.isBoundaryFaceName (HtmlDoc.basename shortHex.href) &&
+      !(browserFaceFaults (faces #[face, shortHex]) "source" exp).isEmpty)
+  -- Deleting a boundary capture moves the content key, so a committed key can
+  -- never outlive the boundary faces it measured.
+  no "browser face: deleting a boundary capture moves the key"
+    (browserFaceKey #[face, boundary] != browserFaceKey #[face])
   no "browser face: an image face name is classified as one"
     (HtmlDoc.isImageFaceName (HtmlDoc.basename face.href) &&
       HtmlDoc.isImageFaceName (HtmlDoc.basename
         (BrowserFace.captured "f" "f.assets/p0-box.svg" "".toUTF8).href))
-  -- Real generated names run through the classifier: i…/p… are image faces,
-  -- a picHash boundary name and a raster are not.
-  no "browser face: real image-face names classify as image faces"
-    (HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "box.pdf") &&
+  -- Real generated names run through the classifier: converted i…/p… .svg
+  -- faces are image faces; a picHash boundary name is a boundary face; a
+  -- raster's own-extension name and a non-.svg i-name are neither image faces.
+  no "browser face: real converted image-face names classify as image faces"
+    (HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "box.svg") &&
       HtmlDoc.isImageFaceName (HtmlDoc.imagePosterName 3 { src := "box.pdf" }))
-  no "browser face: a picHash boundary name is not an image face"
-    (!HtmlDoc.isImageFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
+  no "browser face: a non-.svg i-name (a raster asset) is rejected as an image face"
+    (!HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "photo.png") &&
+      !HtmlDoc.isImageFaceName "i0-box.pdf")
+  no "browser face: a picHash boundary name is a boundary face, not an image face"
+    (HtmlDoc.isBoundaryFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
+      !HtmlDoc.isImageFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
       !HtmlDoc.isImageFaceName (Ir.picHash "\\node {x};" ++ ".svg"))
-  no "browser face: a raster source name is not an image face"
-    (!HtmlDoc.isImageFaceName "box.pdf")
+  no "browser face: a raster source name is neither an image nor a boundary face"
+    (!HtmlDoc.isImageFaceName "box.pdf" && !HtmlDoc.isBoundaryFaceName "box.pdf")
+  -- The tool a face failure names is read from the diagnostic's own text, not
+  -- from another line of the log; missing output with no diagnostic is
+  -- unattributed, never a guessed converter.
+  no "face failure tool: named in the diagnostic's reason"
+    (faceFailureTool "warning[W0605]: image has no browser face\n  rsvg-convert exited 19"
+      == "rsvg-convert" &&
+     faceFailureTool "warning[W0605]: no browser face\n  pdftocairo exited 1" == "pdftocairo")
+  no "face failure tool: a diagnostic naming no converter is unattributed"
+    (faceFailureTool "warning[W0605]: PDF page no browser decodes" == "unattributed")
+  no "face failure tool: a build log mentioning a tool elsewhere does not attribute it"
+    (faceFailureTool
+      (String.intercalate "\n" (w0605Blocks
+        "note: rsvg-convert is installed\nwarning[W0605]: no browser face\n  no reason given\n\
+info: pdftocairo present").toList) == "unattributed")
+  no "w0605 blocks: only W0605 diagnostics and their indented reasons are read"
+    (let bs := w0605Blocks "warning[W0605]: a\n  reason a\nwarning[W0301]: b\n  reason b"
+     bs.size == 1 &&
+       ((bs.getD 0 "").splitOn "reason a").length == 2 &&
+       ((bs.getD 0 "").splitOn "reason b").length == 1)
   let malformedFace := "browser-face-src-key: source\nbrowser-face-key: deadbeef\n\
 browser-face: figures missing-fields\n"
   no "browser face: a malformed record is a fault"

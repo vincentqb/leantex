@@ -1214,16 +1214,22 @@ def browserFaces (text : String) : Except String (Array BrowserFace) := do
 
 /-- Faults that stop committed pass cells certifying another set of browser
 faces. The source key is rebuilt hermetically; the content key is recomputed
-from the committed exact-byte digests. `expected` is the set of converted
-image-face identities the typed store projects (`HtmlDoc.browserFaceAssets`),
-each `(fixture, href)`: every one must have a committed record — captured or
-explicitly failed — and every committed image face (an `i…`/`p…` name, as
-`HtmlDoc.isImageFaceName` classifies it) must be one of them, so a missing,
-extra, or wrong-href converted image face is a fault. A boundary picture's
-hex-named SVG is a distinct publication path: it is neither expected nor an
-extra here, and keeps its own duplicate/malformed/failed checks. Host
-conversion itself remains an explicit report and a failed conversion is never
-a passing capture. -/
+from the committed exact-byte digests. Every committed face is classified
+positively — a converted image face (`HtmlDoc.isImageFaceName`, an `i…`/`p…`
+`.svg`) or a boundary picture's SVG (`HtmlDoc.isBoundaryFaceName`, a stem of
+the exact shape `Ir.picHash` produces, `Ir.picHash_chars_mem`) — and a
+capture matching neither is unclassified and faults, so a stray or corrupted
+SVG identity can never pass. `expected` is the set of converted image-face
+identities the typed store projects (`HtmlDoc.browserFaceAssets`), each
+`(fixture, href)`: every one must have a committed record — captured or
+explicitly failed — and every committed image face must be one of them, so a
+missing, extra, or wrong-href converted image face is a fault. Boundary
+picture SVGs are validated by shape and covered by the content key (deleting
+one moves `browser-face-key`), but not by an exact expected set: whether a
+boundary-routed picture publishes an SVG is a host-conversion fact, not a
+hermetic one, so complete boundary expectation is not derivable here — that
+remains the explicit boundary of this report. Host conversion itself remains
+an explicit report and a failed conversion is never a passing capture. -/
 def browserFaceFaults (text freshSourceKey : String)
     (expected : Array (String × String)) : Array String := Id.run do
   let mut faults : Array String := #[]
@@ -1251,11 +1257,21 @@ def browserFaceFaults (text freshSourceKey : String)
         faults := faults.push s!"duplicate browser face {face.fixture}/{face.href}"
       if let BrowserFaceResult.failed tool := face.result then
         faults := faults.push s!"{face.fixture}: {tool} produced no browser face"
+    -- Positive, fail-closed classification. `some true` = a converted image
+    -- face, `some false` = a boundary picture's SVG, `none` = neither, which
+    -- faults rather than being silently admitted as a boundary face.
+    let classify (f : BrowserFace) : Option Bool :=
+      let b := LeanTex.Core.HtmlDoc.basename f.href
+      if LeanTex.Core.HtmlDoc.isImageFaceName b then some true
+      else if LeanTex.Core.HtmlDoc.isBoundaryFaceName b then some false
+      else none
+    for f in faces do
+      if (classify f).isNone then
+        faults := faults.push s!"unclassified browser face {f.fixture}/{f.href}: neither a \
+converted image face (i…/p… .svg) nor a boundary picture's SVG (a picHash stem + .svg)"
     -- Exact accounting against the converted image faces the typed store
-    -- projects. Only image faces (i…/p…) participate; a boundary picture's
-    -- hex-named SVG is a separate path, never missing nor extra here.
-    let imageFaces := faces.filter fun f =>
-      LeanTex.Core.HtmlDoc.isImageFaceName (LeanTex.Core.HtmlDoc.basename f.href)
+    -- projects. Boundary SVGs are covered by shape and the content key only.
+    let imageFaces := faces.filter fun f => classify f == some true
     for (fx, href) in expected do
       unless imageFaces.any fun f => f.fixture == fx && f.href == href do
         faults := faults.push s!"expected converted image face {fx}/{href} has no committed record"
@@ -1267,6 +1283,37 @@ def browserFaceFaults (text freshSourceKey : String)
       if key != actual then
         faults := faults.push s!"browser-face key {key}, committed records give {actual}"
   return faults
+
+/-- The text of each W0605 (image has no browser face) diagnostic block in a
+build log: the `warning[W0605]` line and the indented lines that follow it,
+up to the next unindented line. The converter that failed is named inside the
+diagnostic's own reason, so tool attribution reads only here — never another
+line of the log that happens to mention a tool. -/
+def w0605Blocks (log : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur : Option String := none
+  for line in log.splitOn "\n" do
+    if (line.splitOn "warning[W0605]").length > 1 then
+      if let some b := cur then out := out.push b
+      cur := some line
+    else if line.startsWith " " || line.startsWith "\t" then
+      cur := cur.map (· ++ "\n" ++ line)
+    else
+      if let some b := cur then out := out.push b
+      cur := none
+  if let some b := cur then out := out.push b
+  return out
+
+/-- The converter a browser-face failure names, read only from the failing
+diagnostic's own text. A diagnostic whose reason names a known converter
+attributes it; text naming none is `unattributed`, never guessed. Missing
+expected output with no attributing diagnostic at all is `missing-output`
+(the caller's default), so a tool is never inferred merely because another
+line of the log mentions it. -/
+def faceFailureTool (diagnostic : String) : String :=
+  if (diagnostic.splitOn "rsvg-convert").length > 1 then "rsvg-convert"
+  else if (diagnostic.splitOn "pdftocairo").length > 1 then "pdftocairo"
+  else "unattributed"
 
 /-- A file pinned by the sha256 of the bytes it held when it was declared.
 The line is `sha256sum`'s own format, `<64 hex>  <path>`, so a pin is made,

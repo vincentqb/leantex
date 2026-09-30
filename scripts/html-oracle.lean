@@ -800,8 +800,10 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
             args := #["-q", "build", e.path.toString, "-o", (work / "corpus" / (name ++ ".html")).toString] }
         let log := r.stdout ++ r.stderr
         if (log.splitOn "warning[W0605]").length > 1 then
-          let tool := if (log.splitOn "rsvg-convert").length > 1
-            then "rsvg-convert" else "pdftocairo"
+          -- Attribute the failed converter from the W0605 diagnostic's own
+          -- text, not from any other line of the log that mentions a tool.
+          let tool := Scoreboard.faceFailureTool
+            (String.intercalate "\n" (Scoreboard.w0605Blocks log).toList)
           faceTool := faceTool.push (name, tool)
         if (log.splitOn "warning[W0378]").length > 1 then
           boundaryFailures := boundaryFailures.push
@@ -814,7 +816,9 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     let mut browserFaces := captured
     for (fx, href) in keys.expectedFaces do
       unless browserFaces.any (fun f => f.fixture == fx && f.href == href) do
-        let tool := ((faceTool.find? (·.1 == fx)).map (·.2)).getD "pdftocairo"
+        -- A missing expected face with no attributing W0605 diagnostic is
+        -- `missing-output`, never guessed as a particular converter.
+        let tool := ((faceTool.find? (·.1 == fx)).map (·.2)).getD "missing-output"
         browserFaces := browserFaces.push (Scoreboard.BrowserFace.failed fx href tool)
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"
