@@ -1986,6 +1986,43 @@ def imageAssets (imgs : Image.Store) : Array ImageAsset :=
         some { file := imagePosterName k en, srcIndex := k, poster := true }
       else none)
 
+/-- The published SVG browser faces of a store: every image asset whose file
+is an SVG — a converted primary (a PDF page or a moving SVG) or any static
+poster. This is exactly what a successful real build writes under the assets
+directory and what the browser oracle captures and hashes. A raster ships its
+own bytes under a non-SVG name and is not a browser face; a boundary picture
+publishes through its own path (`Main.picsToSvg`). The set is read from the
+typed `imageAssets` projection, never rebuilt by hand, so the expected
+identities and the page's `<img>`/`<picture>` links agree by construction. -/
+def browserFaceAssets (imgs : Image.Store) : Array ImageAsset :=
+  (imageAssets imgs).filter fun a => a.file.endsWith ".svg"
+
+/-- Classify a published asset's file name as an image browser face — a
+converted primary (`imageAssetName`, `i` then the store index) or a static
+poster (`imagePosterName`, `p` then the index) — as opposed to a boundary
+picture's SVG, which `Main.picsToSvg` publishes as `Ir.picHash body ++ ".svg"`:
+32 hex digits whose first character is drawn from `0…9 a…f`. An image face's
+name is `i`/`p` immediately followed by a decimal digit (the index), which a
+boundary hash — starting with a hex digit, never `i` or `p` — can never be,
+so the classifier separates the two publication paths by construction and a
+boundary picture's SVG is never counted as a converted-image face nor falsely
+flagged as an extra. The classification is by these two leading characters,
+not an accidental prefix: `hexDigit_ne_ip` states the character-set
+disjointness, and `Tests.expectedFaceChecks` runs real
+`imageAssetName`/`imagePosterName`/`picHash` names through it. -/
+def isImageFaceName (name : String) : Bool :=
+  match name.toList with
+  | c :: d :: _ => (c == 'i' || c == 'p') && d.isDigit
+  | _ => false
+
+/-- No hexadecimal digit — the alphabet `Ir.picHash` draws every character of
+a boundary picture's SVG name from — is `i` or `p`. This is the stated
+disjointness property `isImageFaceName` relies on: an image face's name
+begins with `i` or `p`, a boundary picture's with a hex digit, so the
+classifier separates the two publication paths by construction. -/
+theorem hexDigit_ne_ip :
+    ∀ c ∈ "0123456789abcdef".toList, c ≠ 'i' ∧ c ≠ 'p' := by decide
+
 /-- What an `<img>` for a request links: the copy under `assetsDir` when the
 entry ships, else the resolved spelling (the placeholder of an unloaded
 entry, an unconverted PDF source, a boundary picture's SVG href). Selection
