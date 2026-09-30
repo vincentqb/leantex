@@ -24740,11 +24740,17 @@ it does not execute the package's Lua converter or arbitrary installed TeX.
 
 Review also reproduced a pre-existing input-expansion gap: a file input
 inside an unused macro is read, and a filename supplied by a macro argument
-is treated as literal source. Six additional artifact guards fail for
-the two input surfaces. Use-time file effects remain owed to the input
-expansion boundary; resolving them needs the elaborator's bound arguments
-and a typed request/answer path, not a second macro interpreter in the
-driver. The direct-inclusion contract above does not claim this case.
+is treated as literal source. Eleven of fifteen additional artifact
+assertions fail for the two input surfaces; independent LuaLaTeX probes
+confirm that unused inputs stay inert and called inputs observe the
+caller's conditional state. Use-time file effects remain owed to the
+input expansion boundary. The prerequisite is a pure request/answer
+continuation carrying Compat's bindings, flags and scopes through the
+selected input, before conditional and provision decisions discard
+source. Preparing candidate files early or independently loses that
+state. The selected answer must also determine block/inline classification.
+This needs a shared execution boundary, not a second macro interpreter
+in the driver; the direct-inclusion contract above does not claim it.
 
 ### 2026-09-30 — PDF imports do not depend on object storage form
 
