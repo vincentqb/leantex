@@ -793,37 +793,47 @@ W0378 for this artifact only — the PDF is unaffected — and the sources it
 failed on are returned: a picture the rendered subset draws in part is
 drawn by the subset on the page (`Boundary.htmlWithdraw`), and any other
 shows its text alternative. -/
-def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store) :
+def picsToSvg (ui : Ui) (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store) :
     IO (Image.Store × Array Publication × Array Diag × Array String) := do
   if pics.isEmpty then return (imgs, #[], #[], #[])
+  let t0 ← IO.monoMsNow
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
   let mut pubs : Array Publication := #[]
   let mut unconverted : Array String := #[]
+  let mut served := 0
+  let mut converted := 0
   for r in pics do
     let svgName := Ir.picFaceName r.src
     let svgPath := r.cached.withExtension "svg"
     let ok ← do
-      if ← svgPath.pathExists then pure true
+      if ← svgPath.pathExists then
+        served := served + 1
+        pure true
       else
-        try
-          let out ← IO.Process.output { cmd := "pdftocairo"
-                                        args := #["-svg", r.cached.toString,
-                                          svgPath.toString] }
-          if out.exitCode == 0 then pure true
-          else do
-            diags := diags.push (DriverDiag.boundarySvgMissing
-              s!"exit code {out.exitCode}")
-            pure false
-        catch e =>
+        match ← (IO.FS.readBinFile r.cached).toBaseIO with
+        | .error e =>
           diags := diags.push (DriverDiag.boundarySvgMissing (toString e))
           pure false
+        | .ok pdfBytes =>
+          -- One `pdftocairo -svg` of the picture's first page, through the
+          -- shared budget and conversion cache: a warmed slot serves with no
+          -- tool, a refusal is remembered, an unfinished attempt retries.
+          match ← ImageAssets.picFace pdfBytes with
+          | .ok bytes =>
+            match ← (IO.FS.writeBinFile svgPath bytes).toBaseIO with
+            | .ok () => converted := converted + 1; pure true
+            | .error e => diags := diags.push (DriverDiag.boundarySvgMissing (toString e)); pure false
+          | .error e =>
+            diags := diags.push (DriverDiag.boundarySvgMissing e)
+            pure false
     if ok then
       pubs := pubs.push { cached := svgPath, name := svgName }
       entries := entries.map fun en =>
         if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
         else en
     else unconverted := unconverted.push r.src
+  ui.phase "svg-convert" s!"{converted} converted, {served} cached" (← since t0)
   return ({ entries }, pubs, diags, unconverted)
 
 /-- An image publication: captured SVG bytes when converted, or the source
@@ -1258,7 +1268,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
-        let (imgs, pubs, svgDiags, unconverted) ← picsToSvg pics assetsDir imgs
+        let (imgs, pubs, svgDiags, unconverted) ← picsToSvg ui pics assetsDir imgs
         let imgs ← imageBrowserFaces imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
