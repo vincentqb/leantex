@@ -421,6 +421,54 @@ list.
 
 ### Log
 
+2026-09-30 — math alphabets resolve at the selected face, before host
+fallback. A reported formula used Fira Math, whose script range is absent;
+the parser had already replaced `\mathcal{O}` by U+1D4AA, so the driver's
+per-scalar scan found an unrelated installed face carrying that scalar and
+made it part of the artifact. The selected math face's own source glyph was
+never asked. A synthetic reproduction at `236d3b06` recorded exactly that
+failure: the host fallback set U+1D4AA and layout emitted W0009.
+
+The parser now keeps an alphabet scope as typed math IR. `MathAlphabetRange`
+splits Latin upper/lower, digits, Greek upper/lower, and misc; a selected
+face derives `MathAlphabetCoverage` once from each range's unicode-math
+anchor. `Math.resolveMathAlphas` is one context-threaded structural walk:
+a supported range maps to its requested scalar, an unsupported range keeps
+the ordinary source scalar, and a nested alphabet replaces its outer scope.
+`resolveMathAlphas_id`, `resolveMathAlphas_covers`, and
+`resolveMathAlphas_fixed_point` hold the pass. `Ir.resolveMathAlphas` applies
+it through `mapDoc`, names N0018 once per alphabet, and hands the resolved
+document to `Layout.docScalars`, Layout, MathML, and PDF. Consequently a
+whole missing range cannot enter host fallback; a missing character in a
+supported range remains mapped and still takes the existing per-character
+fallback. `Layout.resolveMathAlphas_layout_agree` and
+`MathMl.resolveMathAlphas_html_agree` pin the two backend projections.
+
+The artifact regression uses the shipped Fira face and a synthetic host face
+that alone carries U+1D4AA. Layout now sets U+1D442 from Fira at Fira's own
+advance, selects no synthetic run, and emits no W0009; the typed HTML tree
+carries the same U+1D442. Repeated script/fraktur uses produce one N0018 per
+alphabet. The external `scripts/math-alphabet-diff.lean` report compares
+Fira Math and Latin Modern Math across eight symbol-sourced alphabets by
+reading scalar, embedded font, advance, and point size from both PDFs with
+Ghostscript; all 16 rows agree with LuaLaTeX on this host.
+
+The unicode-math option audit found that `mathrm`, `mathit`, `mathbf`,
+`mathsf`, and `mathtt` default to `text` and independently accept `sym`.
+Those five choices now live in `MathAlphabetSources`; package options and
+`\unimathsetup` carry them, and boundary standalones replay non-default
+choices. Explicit `mathrm=sym` therefore reaches the math face correctly.
+This change deliberately leaves the other commands' existing page semantics
+unchanged. The scoped follow-up is to project each typed `text` source onto
+its body bold/italic, sans, or mono slot in Layout and onto corresponding
+MathML semantics, then remove the compatibility-preserving `text` arm in
+`MathAlphabetCoverage.remaps`. That is a text-slot feature, not a reason to
+change these commands while fixing missing symbol ranges.
+
+No repository-declared safe entry point for the private reference acceptance
+was discoverable, so it was not run or searched for; no private content,
+values, or location entered the repository.
+
 Newest first. Entries are immutable; corrections are new entries.
 
 2026-09-25 — the last two places a key name was not read whole, found by
