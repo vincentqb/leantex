@@ -53,10 +53,21 @@ def readSource (file : String) : IO (Except Diag ByteArray) := do
 
 /-- Every included surface uses the document reader's UTF-8 and IO error
 contract. The surface reader returns a fragment of the same AST; its bytes
-are never converted to TeX source and parsed again. -/
-private def readFragment (dir : System.FilePath) (file name preferred : String) (pos : Pos)
-    (command : String) (reader : String → String → Array Parse.Raw × Array Diag) :
+are never converted to TeX source and parsed again. Filename normalization
+precedes the surface's extension policy: LaTeX's file-name sanitizer removes
+paired quotes and trims both ends when the name contains a dot, only the
+start otherwise (expl3-code.tex; quotedInputFilenameChecks). -/
+private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
+    (prefer : String → String) (command : String)
+    (reader : String → String → Array Parse.Raw × Array Diag) :
     IO (Array Parse.Raw × Array Diag) := do
+  -- Do not turn an unmatched quote into an accepted, unquoted filename.
+  let name := if name.toList.count '"' % 2 == 0 then
+      let unquoted := name.replace "\"" ""
+      if unquoted.contains '.' then unquoted.trimAscii.toString
+      else unquoted.trimAsciiStart.toString
+    else name
+  let preferred := prefer name
   let candidate := dir / preferred
   let path ← if ← candidate.pathExists then pure candidate else pure (dir / name)
   if ← path.pathExists then
@@ -78,7 +89,8 @@ def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
     IO (Array Parse.Raw × Array Diag) :=
   -- TeX's input scanner tries the default `.tex` suffix before the literal
   -- spelling, unless that spelling already ends in `.tex` (inputFileChecks).
-  readFragment dir file name (if name.endsWith ".tex" then name else name ++ ".tex") pos
+  readFragment dir file name pos (fun name =>
+    if name.endsWith ".tex" then name else name ++ ".tex")
     "input" fun path text =>
       let (toks, lexDs) := Lex.lex path text
       let (raws, parseDs) := Parse.parse path toks
@@ -127,9 +139,9 @@ def spliceList (dir : System.FilePath) (file : String)
       let name := Parse.rawSrc nameRaws
       -- markdown.sty's file lookup honours an explicit extension; without
       -- one it tries `.tex`, then the literal spelling (inputFileChecks).
-      let preferred := if (System.FilePath.mk name).extension.isSome then name
+      let prefer := fun name : String => if (System.FilePath.mk name).extension.isSome then name
         else name ++ ".tex"
-      let (sub, ds') ← readFragment dir file name preferred pos
+      let (sub, ds') ← readFragment dir file name pos prefer
         "markdownInput" Md.read
       let opts := (opt.getD "").trimAscii.toString
       let ds' := if opts.isEmpty then ds' else ds'.push <|
