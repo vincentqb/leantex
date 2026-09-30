@@ -10967,7 +10967,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .frame title standout valign breakable body =>
       let num := nums[i]?.getD none
       acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
-      let steps := Ir.maxStepBlocks body
+      let steps := Ir.frameSteps blk
       if steps ≤ 1 then
         acc := collectBlock rd acc
           (.frame title standout valign breakable (Ir.unwrapItemSteps body)) 0
