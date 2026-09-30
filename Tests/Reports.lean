@@ -9,6 +9,11 @@ import Tests.HtmlTokens
 import Tests.Settings
 import Tests.Redefine
 import Tests.Images
+import Tests.SvgImages
+import Tests.AnimatedGraphics
+import Tests.AnimatedFaces
+import Tests.PdfPageSelection
+import Tests.RasterPages
 import Tests.FontSize
 import Tests.CancelRegression
 import Tests.CancelHtml
@@ -44,7 +49,8 @@ promoted.
 
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
-open Tests (mintedSettingsChecks listingHighlightChecks)
+open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks
+  animatedGraphicsChecks animatedFacesChecks)
 
 namespace Reports
 
@@ -344,7 +350,17 @@ def reports : List Report := [
     pins := [check% beamerColorsChecks, check% titleTemplateColorChecks,
       thm% Ir.beamerColors_agree]
     accept := ["the private presentations' title, section and footer colours compared with their lualatex builds"]
-    state := .guarded "2bb0d181" .before .author }
+    state := .guarded "2bb0d181" .before .author },
+  { id := "R54", date := "2026-09-30"
+    what := "vector figures failed image discovery and browser publication, while an animation command leaked its arguments instead of showing the selected poster"
+    pins := [check% svgAssetChecks, check% animatedGraphicsChecks,
+      check% animatedFacesChecks, check% pdfPageSelectionChecks,
+      check% rasterPageChecks, thm% Image.fulfilRequests_covers,
+      thm% Image.Loaded.size?_exact, thm% HtmlDoc.img_request_src_shipped,
+      thm% HtmlDoc.imagePosterHref_covers]
+    accept := ["the private presentation builds through both engines, with the selected poster in the native PDF and the original moving SVG in the browser",
+      "synthetic SVG validation and static print and reduced-motion faces through the installed vector converters"]
+    state := .guarded "a9116a2f" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

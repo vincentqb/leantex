@@ -990,7 +990,7 @@ def renderedBuiltins : List String :=
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
    "paragraph", "subparagraph", "href", "link", "url", "nolinkurl",
-   "hspace", "rule", "fontsize", "includegraphics", "faIcon", "pagenumber", "pagecount",
+   "hspace", "rule", "fontsize", "includegraphics", "animategraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
@@ -2879,14 +2879,34 @@ private def altValueText (v : String) : String :=
     String.ofList (v.toList.drop 1).dropLast
   else v
 
-/-- `\\includegraphics`' option run: the modelled keys — width, height,
-scale, keepaspectratio, alt, artifact — and a name for everything else. -/
+/-- Local image settings, with animation losses collected for one
+diagnostic at the command. A frame-selection option cannot be ignored if
+doing so would silently choose a different poster. -/
+private structure ImageOptions where
+  spec : Image.Spec := {}
+  alt : Ir.Alt := .undeclared
+  ignored : Array String := #[]
+  refused : Array String := #[]
+  valid : Bool := true
+
+/-- graphicx's size keys and page selection; animate manual §6.1's poster
+selection uses zero-based frame numbers, whereas graphicx's `page` key
+uses positive one-based PDF pages (graphicx.sty `Gin/page`, luatex.def;
+a synthetic three-page LuaLaTeX probe also rejects page=0 and page=last).
+The animate default and a bare `poster` both mean the first frame. -/
 private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
-    (pos : Pos) : EM (Image.SizeSpec × Ir.Alt) := do
-  let mut spec : Image.SizeSpec := {}
+    (pos : Pos) (animated : Bool) : EM ImageOptions := do
+  let mut spec : Image.Spec := { animated }
   let mut alt : Ir.Alt := .undeclared
+  let mut ignored : Array String := #[]
+  let mut refused : Array (String × String) := #[]
+  let mut valid := true
   if let some src := optSrc then
     for e in Decl.splitEntries (rawSrc src) do
+      -- Like the package's key reader, repeated keys keep their last
+      -- value: `poster=none,poster=last` still has a printable poster.
+      if let some (key, _) := Decl.splitEntry e then
+        refused := refused.filter (·.1 != key)
       match Decl.splitEntry e with
       | some ("width", v) =>
         match imageLenOf ctx v with
@@ -2906,6 +2926,56 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
         match Decl.parseDecimal v with
         | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
         | none => diag ctx .E0321 s!"'scale' needs a number, got {v.quote}" pos
+      | some ("keepaspectratio", v) =>
+        match listingVal v with
+        | "true" => spec := { spec with keepAspect := true }
+        | "false" => spec := { spec with keepAspect := false }
+        | _ =>
+          diag ctx .E0321 s!"'keepaspectratio' needs true or false, got {v.quote}" pos
+      | some ("page", v) =>
+        if animated then
+          ignored := ignored.push e
+        else
+          match (listingVal v).toNat? with
+          | some (n + 1) => spec := { spec with page := .number (n + 1) }
+          | _ =>
+            valid := false
+            diag ctx .E0321
+              s!"'\\includegraphics' page needs a positive one-based integer, got {v.quote}" pos
+      | some ("poster", v) =>
+        if animated then
+          match listingVal v with
+          | "first" => spec := { spec with page := .first }
+          | "last" => spec := { spec with page := .last }
+          | "none" =>
+            refused := refused.push ("poster", "'poster=none' has no static PDF poster")
+          | n =>
+            match n.toNat? with
+            | some n => spec := { spec with page := .number (n + 1) }
+            | none =>
+              valid := false
+              diag ctx .E0321
+                s!"'\\animategraphics' poster needs first, last, none, or a zero-based integer, got {v.quote}" pos
+        else
+          ignored := ignored.push e
+      | some ("every", v) =>
+        if animated then
+          unless (listingVal v).toNat? == some 1 do
+            refused := refused.push ("every", s!"'{e}' changes the frame sequence")
+        else
+          ignored := ignored.push e
+      | some ("timeline", _) =>
+        if animated then
+          refused := refused.push ("timeline", s!"'{e}' changes the frame sequence")
+        else
+          ignored := ignored.push e
+      | some ("type", v) =>
+        if animated then
+          unless listingVal v == "pdf" || (listingVal v).isEmpty do
+            refused := refused.push
+              ("type", s!"'{e}' selects a source other than a multipage PDF")
+        else
+          ignored := ignored.push e
       | some ("alt", v) =>
         -- graphicx's own alt key (LaTeX News 37, 2023): the text
         -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
@@ -2914,16 +2984,84 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
       | _ =>
         if e.trimAscii.toString == "keepaspectratio" then
           spec := { spec with keepAspect := true }
+        else if animated && e.trimAscii.toString == "poster" then
+          refused := refused.filter (·.1 != "poster")
+          spec := { spec with page := .first }
         else if e.trimAscii.toString == "artifact" ||
             (Decl.splitEntry e).any (·.1 == "artifact") then
           -- latex-lab-graphic's key for decoration (its value is ignored):
           -- no Figure in the PDF, its ink an artifact.
           alt := .decorative
         else
-          warnOnce ctx ("imgopt:" ++ e) .W0110
-            s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
-            (help := "modelled keys: width, height, scale, keepaspectratio, alt, artifact")
-  return (spec, alt)
+          ignored := ignored.push e
+  unless animated do
+    for e in ignored do
+      warnOnce ctx ("imgopt:" ++ e) .W0110
+        s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
+        (help := "modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact")
+  return { spec, alt, ignored, refused := refused.map (·.2), valid }
+
+/-- Read exactly the grammar's number of mandatory groups, preserving the
+first non-group for body recovery. The cursor bound lets the inline knot
+consume every supplied argument even when the image itself is refused. -/
+private def imageGroups (raws : Array Raw) (start : Nat) :
+    Nat → Array (Array Raw) × { j : Nat // start ≤ j }
+  | 0 => (#[], ⟨start, Nat.le_refl _⟩)
+  | n + 1 =>
+    let j := skipSpaces raws start
+    have hj := skipSpaces_ge raws start
+    match raws[j]? with
+    | some (.group arg _) =>
+      let (args, ⟨k, hk⟩) := imageGroups raws (j + 1) n
+      (#[arg] ++ args, ⟨k, by omega⟩)
+    | _ => (#[], ⟨j, hj⟩)
+
+/-- Both image commands lower at this door. animate manual §5 gives four
+groups and makes empty first/last groups the whole multipage PDF. A
+nonempty range also admits numbered files, reversed order and skipped
+frames: none of those may silently select a PDF page here. Playback is
+always named as degraded: PDF has no animation JavaScript, and HTML uses
+the companion SVG when present or the same static poster otherwise. -/
+private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (pos : Pos) (animated : Bool) :
+    EM (Option Inline × { j : Nat // i < j }) := do
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  let optSrc := bracketRunSrc raws j0
+  let j1 := skipBracketRun raws j0
+  have hj1 := skipBracketRun_ge raws j0
+  let arity := if animated then 4 else 1
+  let (args, ⟨j, hj⟩) := imageGroups raws j1 arity
+  let next : { j : Nat // i < j } := ⟨j, by omega⟩
+  if args.size != arity then
+    diag ctx .E0304 (if animated then
+      "'\\animategraphics' needs {fps}{basename}{first}{last} groups" else
+      "'\\includegraphics' needs a {file} group") pos
+    return (none, next)
+  let opts ← readImageOpts ctx optSrc pos animated
+  if !opts.valid then return (none, next)
+  if animated then
+    let mut refused := opts.refused
+    let first := (argText ctx (args.getD 2 #[])).trimAscii.toString
+    let last := (argText ctx (args.getD 3 #[])).trimAscii.toString
+    if !first.isEmpty || !last.isEmpty then
+      refused := refused.push
+        "nonempty first/last ranges and numbered file sequences are not supported"
+    unless refused.isEmpty do
+      let why := String.intercalate "; " refused.toList
+      warnOnce ctx "animategraphics:source" .W0307
+        s!"'\\animategraphics' is not rendered: {why}" pos
+        (help := "use a multipage PDF with empty first/last groups and poster=first, last, or a zero-based frame number")
+      return (none, next)
+    let fps := argText ctx (args.getD 0 #[])
+    let ignored := if opts.ignored.isEmpty then "" else
+      "; these options are also ignored: " ++ String.intercalate ", " opts.ignored.toList
+    warnOnce ctx "animategraphics:playback" .W0110
+      s!"'\\animategraphics' uses a static PDF poster without PDF JavaScript; HTML uses the companion SVG when present, otherwise the same static poster; the SVG owns timing, and frame rate '{fps}' and playback controls are not applied{ignored}" pos
+      (help := "author timing and playback behavior in the companion SVG; the PDF contains only the selected poster")
+  let src := argText ctx (args.getD (if animated then 1 else 0) #[])
+  recordImageSpan ctx src pos
+  return (some (.image src opts.spec opts.alt), next)
 
 /-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
 icon's default text alternative. -/
@@ -3747,6 +3885,7 @@ seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recove
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
+seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 
@@ -4634,29 +4773,12 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let acc := match node with | some x => acc.push x | none => acc
     have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
     elabInlinesFrom ctx raws j acc ""
-  else if name == "includegraphics" then
-    -- graphicx's command, native. The keys that size figures in real
-    -- documents are modelled — width, height, scale, keepaspectratio —
-    -- and anything else (rotation included) is named and skipped: a
-    -- silently dropped key would misplace the figure without a word.
-    let j0 := skipSpaces raws (i + 1)
-    have hj0 := skipSpaces_ge raws (i + 1)
-    let optSrc := bracketRunSrc raws j0
-    let j := skipBracketRun raws j0
-    have hjb := skipBracketRun_ge raws j0
-    let (spec, alt) ← readImageOpts ctx optSrc pos
-    match hj : raws[j]? with
-    | some (.group pathRaw _) =>
-      have hjlt := getElem?_lt hj
-      let src := argText ctx pathRaw
-      recordImageSpan ctx src pos
-      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
-        sliceWeight_lt raws h (by omega)
-      elabInlinesFrom ctx raws (j + 1)
-        ((flushText acc sb).push (.image src spec alt)) ""
-    | _ =>
-      diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
-      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "includegraphics" || name == "animategraphics" then
+    let (node, ⟨j, hj⟩) ← imageArm ctx raws i pos (name == "animategraphics")
+    let acc := flushText acc sb
+    let acc := match node with | some x => acc.push x | none => acc
+    have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+    elabInlinesFrom ctx raws j acc ""
   else if name == "faIcon" then
     -- fontawesome5's generic spelling: `\faIcon[style]{icon-name}`,
     -- optionally starred for the `-alt` variant. The style argument
@@ -5182,6 +5304,7 @@ unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage reco
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
+unseal imageArm
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead

@@ -12,13 +12,13 @@ diagnostics, assembled from each resolver's own lemma:
 - `Ir.refDiags_named` — every `.ref` still showing `??` has a W0349 whose
   subject is its key; the judge reads the same census.
 - `Bib.apply_no_cite` — no `.cite` survives resolution, in any region.
-- `Image.fulfil_named` and `Image.fulfil_covers` — every store entry with
+- `Image.fulfilRequests_named` and `Image.fulfilRequests_covers` — every store entry with
   no payload has a diagnostic whose subject is its source, and the store
   has an entry per fetched source.
 
 The driver (`Main.frontend`, `Main.build`) is the statement's shape:
 `Bib.apply` on the elaborated document, `Ir.refDiags` over its output,
-then `Image.fulfil` over one read per `Ir.imageRefs` source — which is the
+then `Image.fulfilRequests` over one read per `Ir.imageRequests` entry — which is the
 hypothesis `hcov`, the one fact the driver contributes. -/
 
 namespace LeanTex.Core
@@ -26,15 +26,15 @@ namespace LeanTex.Core
 open Ir
 
 /-- **Every pending thing is named.** Over the document the backends read
-(`Bib.apply`'s output) and the store they read (`Image.fulfil`'s), every
+(`Bib.apply`'s output) and the store they read (`Image.fulfilRequests`'s), every
 element of the pending census has a diagnostic in the run's output whose
 structured subject is its key. -/
 theorem pending_named (table : RefTable) (spanOf : String → Option Span)
     (sources : Array (String × String)) (doc : Doc)
-    (fetched : Array (String × Image.Fetch))
-    (hcov : fetched.map (·.1) = imageRefs (Bib.apply sources doc).1) :
-    ∀ p ∈ pending (Bib.apply sources doc).1 (Image.fulfil fetched).1,
-      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc).1 ++ (Image.fulfil fetched).2,
+    (fetched : Array (Image.Request × Image.Fetch))
+    (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc).1) :
+    ∀ p ∈ pending (Bib.apply sources doc).1 (Image.fulfilRequests fetched).1,
+      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc).1 ++ (Image.fulfilRequests fetched).2,
         d.mentions p = true := by
   intro p hp
   unfold pending at hp
@@ -53,19 +53,21 @@ theorem pending_named (table : RefTable) (spanOf : String → Option Span)
     obtain ⟨src, hsrc, rfl⟩ := hi
     rw [Array.mem_filter] at hsrc
     obtain ⟨hmem, hnone⟩ := hsrc
-    rw [← hcov, ← Image.fulfil_covers, Array.mem_map] at hmem
+    rw [← hcov, ← Image.fulfilRequests_covers, Array.mem_map] at hmem
     obtain ⟨en, hen, rfl⟩ := hmem
-    unfold Image.Store.info? at hnone
-    cases hf : (Image.fulfil fetched).1.entries.find? (·.src == en.src) with
+    unfold Image.Store.infoRequest? at hnone
+    cases hf : (Image.fulfilRequests fetched).1.entries.find? (·.toRequest == en.toRequest) with
     | none =>
       rw [Array.find?_eq_none] at hf
-      exact absurd (beq_self_eq_true en.src) (hf en hen)
+      exact absurd (beq_self_eq_true en.toRequest) (hf en hen)
     | some en' =>
       rw [hf] at hnone
       simp only [Option.bind, Option.isNone_iff_eq_none] at hnone
-      obtain ⟨d, hd, hs⟩ := Image.fulfil_named fetched en' (Array.mem_of_find?_eq_some hf) hnone
+      obtain ⟨d, hd, hs⟩ :=
+        Image.fulfilRequests_named fetched en' (Array.mem_of_find?_eq_some hf) hnone
       have hsrc := Array.find?_some hf
+      have hsources := congrArg Image.Request.src (eq_of_beq hsrc)
       refine ⟨d, Array.mem_append_right _ hd, ?_⟩
-      simp [Diag.mentions, Pending.key, hs, eq_of_beq hsrc]
+      simp [Diag.mentions, Pending.key, hs, hsources]
 
 end LeanTex.Core

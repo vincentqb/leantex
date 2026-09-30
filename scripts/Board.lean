@@ -1413,19 +1413,22 @@ resolution, with the bytes read — the page names them, so the key hashes
 them. A boundary picture has no file and stays unfulfilled. -/
 def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
     IO (Image.Store × Array Diag × Array (String × ByteArray)) := do
-  let mut fetched : Array (String × Image.Fetch) := #[]
+  let mut fetched : Array (Image.Request × Image.Fetch) := #[]
   let mut read : Array (String × ByteArray) := #[]
-  for src in Ir.imageRefs doc do
+  for req in Ir.imageRequests doc do
+    let src := req.src
     let mut f : Image.Fetch := .missing src
     for cand in Image.sourceCandidates src do
       let p := dir / cand
       if ← p.pathExists then
         let bytes ← IO.FS.readBinFile p
         read := read.push (cand, bytes)
-        f := .decoded (if cand == src then "" else cand) (Image.decode bytes)
+        let decoded := Image.decodeRequest .default bytes req
+        f := .decoded (if cand == src then "" else cand)
+          (decoded.map (·.1)) none (decoded.toOption.bind (·.2))
         break
-    fetched := fetched.push (src, f)
-  let (store, diags) := Image.fulfil fetched
+    fetched := fetched.push (req, f)
+  let (store, diags) := Image.fulfilRequests fetched
   return (store, diags, read)
 
 /-- One fixture's page, or `none` where the driver would refuse to write one

@@ -2,14 +2,13 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  pdftotext version 26.09.0
 date: 2026-09-30
-src-key: d8ca11af77f1642b
+src-key: 00f32113f3f2d614
 fixtures: 85 built, unbuilt: theme-modern
 
 [feature]
 # feature         chromium      firefox
 load              pass          untested
-images            fail:figures  untested
-#   chromium figures: 2/2 images not loaded at their declared natural size: figures/box.pdf natural 0x0 declared 340x204
+images            pass          untested
 fonts             pass          untested
 mathml            pass          untested
 lang              pass          untested
@@ -53,7 +52,7 @@ diagram-scm       pass          untested      load,fonts,lang,landmarks,color-sc
 diagram-tikzset   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 eqnum             pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
-figures           fail:images   untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+figures           pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 fill              pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 float-center      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 fonts             pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script

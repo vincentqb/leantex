@@ -248,7 +248,7 @@ warning[W0108]: '\centering' centres nothing inside an argument; content stays l
   help: move '\centering' to the start of the group or environment body
 ── W0110 (degraded) unsupported command option; ignored
 warning[W0110]: '\includegraphics' option 'angle=45' is not modelled; ignored
-  help: modelled keys: width, height, scale, keepaspectratio, alt, artifact
+  help: modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact
 ── W0111 (config) a styling declaration names no styleable element; ignored
 warning[W0111]: '\setkomafont{banana}' names no styleable element; ignored
   help: \style{element}{ font = {...} } styles the elements the engine draws
@@ -518,7 +518,7 @@ warning[W0435]: '\qedhere' in '{align*}' does not set its QED where amsthm sets 
   help: an unnumbered \[ ... \] sets it beside the formula
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
-  help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added
+  help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
 warning[W0601]: cannot read image 'figures/plot.png': permission denied (error code: 13); a placeholder box holds its place
 ── W0602 (degraded) image format unusable; placeholder box placed
 warning[W0602]: cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
@@ -529,7 +529,7 @@ warning[W0603]: image 'figures/plot.png' carries an embedded colour profile; the
 ── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
 warning[W0604]: image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
   help: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
-── W0605 (degraded) an image is a format no browser decodes; the web page shows a placeholder box instead
+── W0605 (degraded) an image has no usable browser face; the web page shows a placeholder instead
 warning[W0605]: image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   help: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
 ── W0701 (pending) an output contract fact this artifact does not yet realize

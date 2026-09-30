@@ -1,0 +1,24 @@
+# source: animate manual, §5 The user interface (animate.tex):
+# \animategraphics, animateinline, \newframe and its starred form,
+# \multiframe, \multiframebreak. §6.1 Basic options specifies poster=first
+# by default and zero-based numeric posters. §7 is a JavaScript interface,
+# not further TeX commands; this engine emits no animation JavaScript.
+# Only whole multipage PDFs (both range groups empty) lower natively.
+# Their PDF is a static poster. HTML uses the authored companion SVG when
+# present (which owns its timing), otherwise the same static poster.
+# Every such use keeps W0110 for the unimplemented rate/control semantics.
+# §6 package-wide options are named, not applied as command defaults.
+pre refuse:W0110 \usepackage[poster=last]{animate}
+body impl \animategraphics{12}{frames}{}{}
+body impl \animategraphics[poster=1,width=2cm,keepaspectratio]{12}{frames}{}{}
+body impl \animategraphics[poster=last,controls,loop]{12}{frames}{}{}
+body refuse:W0307 \animategraphics{12}{frames}{0}{2}
+body refuse:W0307 \animategraphics[poster=none]{12}{frames}{}{}
+body refuse:W0307 \animategraphics[timeline=frames.txt]{12}{frames}{}{}
+body refuse:W0307 \animategraphics[every=2]{12}{frames}{}{}
+body refuse:W0307 \animategraphics[type=png]{12}{frames}{}{}
+body refuse:W0302 \begin{animateinline}{12}x\end{animateinline}
+body refuse:W0301 \newframe
+body refuse:W0301 \newframe*
+body refuse:W0301 \multiframe{2}{i=0+1}{x}
+body refuse:W0301 \multiframebreak

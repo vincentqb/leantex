@@ -24424,3 +24424,62 @@ without regressing an existing cell; its two existing image failures remain
 recorded, and Firefox remains untested because it cannot launch on this host.
 The standard benchmark completes with five runs per case; the reference-list
 phase grows 4.0 times for four times the entries, within its bound of eight.
+
+### 2026-09-30 — SVG figures and selected animation posters
+
+Image requests carry a source, a physical PDF page selection and an animation
+intent through the existing store. Native placement and HTML read the same
+request and canvas. An animation's selected poster keeps the first frame's
+canvas, including when the selected page has different dimensions. PDF page
+selection walks the physical page tree with inherited boxes, resources and
+rotation; it does not trust `/Count`. Raster images ignore the page setting,
+as the synthetic LuaLaTeX probes measured.
+
+The CLI validates captured SVG bytes through libxml and converts their static
+reading with librsvg. The original self-contained SVG remains the browser
+image, preserving declarative animation. A selected PDF page converts through
+Poppler; an animation may supply a validated SVG companion beside that PDF.
+The typed HTML picture selects the static poster for print and reduced motion.
+There is no inline XML or generated animation script. PDF 2.0 carries the
+selected still frame, since it has no native SVG animation model.
+
+The documented whole-PDF form of `\animategraphics` and ordinary
+`\includegraphics` share one option reader and image resolver. Poster selection,
+dimensions and raster page behaviour have measured reference probes.
+Unsupported playback controls and frame-sequence forms remain diagnosed.
+The animate package has a manual command index, and the README states the
+converter dependencies and the supported SVG boundary.
+
+Review caught two losses in that path. A mandatory browser-face conversion
+failure previously published the moving source without its print or
+reduced-motion face. The loaded image now carries that failure as data:
+native placement keeps its decoded plan, HTML ships a named placeholder,
+and W0605 accounts for the converter's reason once. Optional animation
+companions still fall back to the successfully converted PDF poster.
+The forced-converter failure broke twelve typed-page assertions and three
+CLI artifact assertions before the fix. That probe also exposed HTML
+publication relying on image copies to create its output directory;
+publication now creates the parent even when all images become placeholders.
+PDF page rotation also has to
+dereference its value after resolving inheritance; thirty-nine selected-page
+checks broke before that one-site correction. Explicit zero still overrides
+an inherited rotation, and unsupported rotations remain refused.
+The final review also found failure messages selected by filename rather than
+by image request. Failed typed nodes now retain their store index, and the
+loss census names each emitted request once with its own conversion reason.
+Nineteen assertions failed before this correction, covering repeated pages,
+animation posters, aliases and a different request hidden from HTML; the
+accessibility judge also rejects an error that names no emitted request.
+Two further fail-first checks hold that judge to the emitted request when
+hidden and visible pages share a filename; missing or invalid request indices
+fail the same judge.
+
+R54 pins the fail-first asset, page-selection, animation and canvas guards.
+Those guards inspect native placements, PDF streams and typed HTML, including
+accessible image names and both picture sources. The full build and test suite
+pass, as do 92,871 image-decoder fuzz inputs and the installed-converter oracle.
+Acceptance on the private reference corpus observes the animation advancing in
+Chromium, stable reduced-motion and printed posters, and both figures fitting
+their stages. The native, browser-printed and reference PDFs pass strict
+object and stream decoding. A document-local reference-driver repair preserves
+source PDF transparency groups without changing the installed TeX tree.

@@ -1769,9 +1769,9 @@ theorem shipFaces_src_shipped (fs : Font.FontSet) :
   simp only [fontAssets, Array.mem_map]
   exact ⟨i, hi, rfl⟩
 
-/-! ## Rasters beside the page
+/-! ## Images beside the page
 
-A loaded PNG or JPEG is published under `<stem>.assets/` beside the page,
+A loaded PNG, JPEG or SVG is published under `<stem>.assets/` beside the page,
 as the faces are under `<stem>.fonts/`, so the page is self-contained
 wherever `-o` puts it: `src` once kept the source-relative spelling, and a
 page built outside its source directory showed broken images. Phase 2
@@ -1780,12 +1780,13 @@ only code that puts a byte under the directory, after the gate. The proof
 stops at the emitted `src` and the asset list — that a browser resolves
 the relative URL and decodes the bytes is the oracle. -/
 
-/-- One raster the page links: the file name it takes beside the page and
+/-- One image the page links: the file name it takes beside the page and
 the store index it came from — a copy request for the driver (effects as
 data), the source path being the store entry's. -/
 structure ImageAsset where
   file : String
   srcIndex : Nat
+  poster : Bool := false
   deriving Repr, BEq
 
 /-- The last path segment of a source spelling. -/
@@ -1797,14 +1798,22 @@ itself — the file whose bytes were decoded. -/
 def resolvedSrc (en : Image.Loaded) : String :=
   if en.href.isEmpty then en.src else en.href
 
-/-- Which entries copy: a loaded raster plan that is not a boundary picture.
-A picture publishes as SVG through `picsToSvg`'s own list; a PDF source carries a
-form XObject and no browser image either way, so it keeps its spelling. -/
-def rasterShips (en : Image.Loaded) : Bool :=
-  !en.src.startsWith Ir.picSrcPrefix &&
+/-- Which entries copy: a loaded image with a browser face. An SVG's print
+face is a PDF form, but its original bytes still belong in the browser.
+A PDF may also carry a converted SVG. Boundary pictures publish through
+their own list. -/
+def imageShips (en : Image.Loaded) : Bool :=
+  -- premise: Tests.svgAssetChecks — a failed conversion publishes no source bytes.
+  !en.src.startsWith Ir.picSrcPrefix && en.webError.isNone &&
   match en.info with
-  | some i => i.form.isNone
+  | some i => i.form.isNone || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
   | none => false
+
+/-- A converted browser face takes the source's basename with an SVG
+extension. The store index still distinguishes different selected pages. -/
+def browserAssetSrc (en : Image.Loaded) : String :=
+  if en.webSvg.isSome then ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
+  else resolvedSrc en
 
 /-- The copy's file name: the store index, then the source's basename. The
 index prefix makes the name collision-free whatever the sources are called
@@ -1814,25 +1823,51 @@ def imageAssetName (k : Nat) (href : String) : String :=
   let base := basename href
   "i" ++ ListMark.arabicN k ++ "-" ++ base
 
-/-- The copy requests of the page: one per shipping entry, in store order. -/
-def imageAssets (imgs : Image.Store) : Array ImageAsset :=
-  (Array.range imgs.entries.size).filterMap fun k =>
-    (imgs.get? k).bind fun en =>
-      if rasterShips en then some { file := imageAssetName k (resolvedSrc en), srcIndex := k }
-      else none
+/-- The static face has its own namespace: the same entry's moving SVG and
+print poster must never overwrite each other. -/
+def imagePosterName (k : Nat) (en : Image.Loaded) : String :=
+  "p" ++ ListMark.arabicN k ++ "-" ++
+    basename ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
 
-/-- What an `<img>` for `src` links: the copy under `assetsDir` when the
+/-- The copy requests of the page: primary faces in store order, followed
+by any static faces selected by print or reduced-motion media. -/
+def imageAssets (imgs : Image.Store) : Array ImageAsset :=
+  ((Array.range imgs.entries.size).filterMap fun k =>
+    (imgs.get? k).bind fun en =>
+      if imageShips en then some { file := imageAssetName k (browserAssetSrc en), srcIndex := k }
+      else none) ++
+  ((Array.range imgs.entries.size).filterMap fun k =>
+    (imgs.get? k).bind fun en =>
+      if imageShips en && en.posterSvg.isSome then
+        some { file := imagePosterName k en, srcIndex := k, poster := true }
+      else none)
+
+/-- What an `<img>` for a request links: the copy under `assetsDir` when the
 entry ships, else the resolved spelling (the placeholder of an unloaded
-entry, a PDF source, a boundary picture's SVG href). -/
-def imageHref (assetsDir : String) (imgs : Image.Store) (src : String) : String :=
-  match imgs.find? src with
+entry, an unconverted PDF source, a boundary picture's SVG href). Selection
+is part of the key: two pages from one PDF must not share an image. -/
+def imageRequestHref (assetsDir : String) (imgs : Image.Store) (req : Image.Request) : String :=
+  match imgs.findRequest? req with
   | some k =>
     match imgs.get? k with
     | some en =>
-      if rasterShips en then assetsDir ++ "/" ++ imageAssetName k (resolvedSrc en)
+      if imageShips en then assetsDir ++ "/" ++ imageAssetName k (browserAssetSrc en)
       else resolvedSrc en
-    | none => src
-  | none => src
+    | none => req.src
+  | none => req.src
+
+/-- The default first-page request's browser link. -/
+def imageHref (assetsDir : String) (imgs : Image.Store) (src : String) : String :=
+  imageRequestHref assetsDir imgs { src }
+
+/-- A static media source exists exactly when its captured bytes publish. -/
+def imagePosterHref (assetsDir : String) (imgs : Image.Store) (req : Image.Request) :
+    Option String := do
+  let k ← imgs.findRequest? req
+  let en ← imgs.get? k
+  if imageShips en && en.posterSvg.isSome then
+    some (assetsDir ++ "/" ++ imagePosterName k en)
+  else none
 
 /-- A length on the CSS ruler, in whole pixels, to nearest: CSS fixes
 1in = 72pt = 96px (CSS Values 4 §6.2), so a point reads as 4/3 px — the
@@ -1864,38 +1899,46 @@ def intrinsicPx (p : Image.Plan) : Nat × Nat :=
   | none => (p.pxW, p.pxH)
 
 /-- Is this entry a page no browser decodes in an `<img>`? A decoded entry
-is a raster (PNG, JPEG — `rasterShips`, which every browser decodes) or a
-PDF page (a form XObject: vector for the PDF artifact, nothing at all to an
-`<img>`). A boundary picture ships its SVG face (`picsToSvg`) and is not
-one. Every other failure — a file that did not load, a boundary picture
+is a raster or carries an SVG browser face (`imageShips`), or is a
+PDF page with no browser face (a form XObject: vector for the PDF artifact,
+nothing at all to an `<img>`). A boundary picture ships its SVG face and
+is not one. Every other failure — a file that did not load, a boundary picture
 with no SVG face — was named where it failed, by a diagnostic whose subject
 is the source, so it is not named twice. -/
 def pdfPageImg (en : Image.Loaded) : Bool :=
-  !en.src.startsWith Ir.picSrcPrefix &&
+  -- premise: Tests.svgAssetChecks — the SVG face is linked and published.
+  !en.src.startsWith Ir.picSrcPrefix && !imageShips en &&
   match en.info with
   | some p => p.form.isSome
   | none => false
 
-/-- The files a page's `<img>`s link that no browser decodes, each once, in
-page order: of the `src` values the page emits, those an entry that is a PDF
-page (`pdfPageImg`) links (`imageHref`). -/
-def undecodableSrcs (assetsDir : String) (imgs : Image.Store) (srcs : Array String) :
-    Array String :=
-  (srcs.foldl (fun acc s => if acc.contains s then acc else acc.push s) #[]).filter fun s =>
-    imgs.entries.any fun en => pdfPageImg en && imageHref assetsDir imgs en.src == s
+/-- The emitted image requests with no browser face, each once, in page
+order. The typed node's store index retains page and animation selection;
+resolved filenames alone cannot distinguish those requests. -/
+def undecodableIndices (imgs : Image.Store) (uses : Array String) : Array Nat :=
+  ((uses.filterMap String.toNat?).foldl (fun acc k =>
+    if acc.contains k then acc else acc.push k) #[]).filter fun k =>
+      (imgs.get? k).any pdfPageImg
 
-/-- W0605: the page links a file no browser decodes — the image stays a
-dead box, labelled only by its text alternative where it has one. Keyed
-`img:<src>` so the site census counts it. The help names the remedy that
-clears it: the web page's include and the print include each gated to
-their own backend. -/
-def undecodableDiag (src : String) : Diag :=
+/-- W0605: this image has no browser face. A failed conversion retains its
+reason; an unconverted PDF retains its format explanation. An emitted use
+carries its store index in the subject so distinct requests sharing one
+filename remain distinct losses under site accounting. -/
+def undecodableDiag (src : String) (reason : Option String := none)
+    (index : Option Nat := none) : Diag :=
   Diag.of .W0605
-    s!"image '{src}' is a PDF page no browser decodes; the web page shows a \
-placeholder box instead"
-    (subject := some s!"img:{src}")
-    (help := some "for the web page, \\includegraphics a PNG export inside \
-\\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}")
+    (match reason with
+      | some err => s!"image '{src}' could not produce its browser face: {err}; \
+the web page shows a labelled placeholder instead"
+      | none => s!"image '{src}' is a PDF page no browser decodes; the web page shows a \
+placeholder box instead")
+    (subject := some (match index with
+      | some k => s!"img:{k}:{src}"
+      | none => s!"img:{src}"))
+    (help := some (match reason with
+      | some _ => "fix the conversion error, or include a PNG export for the web page"
+      | none => "for the web page, \\includegraphics a PNG export inside \
+\\begin{ifbackend}{html}, and move this include inside \\begin{ifbackend}{pdf}"))
 
 /-- No decimal digit is the separator the asset name is split on. -/
 private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by
@@ -1941,32 +1984,61 @@ theorem imageAssetName_inj {k k' : Nat} {h h' : String}
     (dash_split _ _ _ _ (arabicN_no_dash k) (arabicN_no_dash k') (List.cons.inj hl).2))
 
 /-- Every shipping entry has an asset row (`_covers`): for each store index
-whose entry is a loaded raster, `imageAssets` carries a request naming it —
+whose entry has a browser face, `imageAssets` carries a request naming it —
 the `shipFaces_covers` shape. -/
 theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loaded}
-    (hen : imgs.get? k = some en) (hr : rasterShips en = true) :
+    (hen : imgs.get? k = some en) (hr : imageShips en = true) :
     ∃ a ∈ imageAssets imgs, a.srcIndex = k := by
-  refine ⟨{ file := imageAssetName k (resolvedSrc en), srcIndex := k }, ?_, rfl⟩
-  simp only [imageAssets, Array.mem_filterMap]
+  refine ⟨{ file := imageAssetName k (browserAssetSrc en), srcIndex := k }, ?_, rfl⟩
+  apply Array.mem_append.mpr
+  left
+  simp only [Array.mem_filterMap]
   refine ⟨k, Array.mem_range.mpr ?_, ?_⟩
   · exact (Array.getElem?_eq_some_iff.mp hen).1
   · simp [hen, hr]
 
-/-- Every `src` a loaded raster entry produces is a file the driver is asked
-to copy: `imageHref` and `imageAssets` are projections of one decision
-(`rasterShips`), so the page cannot link a copy that was never requested —
+/-- Every `src` a loaded browser face produces is a file the driver is asked
+to copy: `imageRequestHref` and `imageAssets` project one decision
+(`imageShips`), so the page cannot link a copy that was never requested —
 the `shipFaces_src_shipped` shape. A fact of the artifact, not the IR: file
 placement is where a page lives. That the browser resolves the relative URL
 and decodes the bytes is the oracle, never this theorem. -/
-theorem img_src_shipped (assetsDir : String) (imgs : Image.Store) (src : String)
-    {k : Nat} {en : Image.Loaded} (hk : imgs.find? src = some k)
-    (hen : imgs.get? k = some en) (hr : rasterShips en = true) :
-    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = assetsDir ++ "/" ++ a.file := by
-  refine ⟨{ file := imageAssetName k (resolvedSrc en), srcIndex := k }, ?_, ?_⟩
-  · simp only [imageAssets, Array.mem_filterMap]
+theorem img_request_src_shipped (assetsDir : String) (imgs : Image.Store) (req : Image.Request)
+    {k : Nat} {en : Image.Loaded} (hk : imgs.findRequest? req = some k)
+    (hen : imgs.get? k = some en) (hr : imageShips en = true) :
+    ∃ a ∈ imageAssets imgs, imageRequestHref assetsDir imgs req =
+      assetsDir ++ "/" ++ a.file := by
+  refine ⟨{ file := imageAssetName k (browserAssetSrc en), srcIndex := k }, ?_, ?_⟩
+  · apply Array.mem_append.mpr
+    left
+    simp only [Array.mem_filterMap]
     refine ⟨k, Array.mem_range.mpr (Array.getElem?_eq_some_iff.mp hen).1, ?_⟩
     simp [hen, hr]
-  · simp [imageHref, hk, hen, hr]
+  · simp [imageRequestHref, hk, hen, hr]
+
+/-- The default request projects the same publication guarantee. -/
+theorem img_src_shipped (assetsDir : String) (imgs : Image.Store) (src : String)
+    {k : Nat} {en : Image.Loaded} (hk : imgs.find? src = some k)
+    (hen : imgs.get? k = some en) (hr : imageShips en = true) :
+    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = assetsDir ++ "/" ++ a.file :=
+  img_request_src_shipped assetsDir imgs { src } hk hen hr
+
+/-- Every static `<source>` names a captured asset, the publication half
+of the media choice. This is an artifact fact: file placement belongs to
+the HTML output directory. -/
+theorem imagePosterHref_covers (assetsDir : String) (imgs : Image.Store) (req : Image.Request)
+    {k : Nat} {en : Image.Loaded} (hk : imgs.findRequest? req = some k)
+    (hen : imgs.get? k = some en) (hr : imageShips en = true)
+    (hp : en.posterSvg.isSome = true) :
+    ∃ a ∈ imageAssets imgs, imagePosterHref assetsDir imgs req =
+      some (assetsDir ++ "/" ++ a.file) := by
+  refine ⟨{ file := imagePosterName k en, srcIndex := k, poster := true }, ?_, ?_⟩
+  · apply Array.mem_append.mpr
+    right
+    simp only [Array.mem_filterMap]
+    refine ⟨k, Array.mem_range.mpr (Array.getElem?_eq_some_iff.mp hen).1, ?_⟩
+    simp [hen, hr, hp]
+  · simp [imagePosterHref, hk, hen, hr, hp]
 
 def fontFaceRule (dir : String) (ff : FontFace) : String :=
   s!"@font-face \{ font-family: \"{ff.family}\"; font-weight: {ff.weight}; " ++
@@ -3858,13 +3930,12 @@ def styleColored (st : ElementStyle) : Bool :=
       s.parts.toList.flatMap fun p => [p.content, p.font.getD #[]])).any
       (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)
 
-/-- Whether a loaded image paints on the page's own ground: a raster the
-page ships whose plan carries transparency (`Image.Plan.alpha`, a soft mask
-or a colour key), so its ink stands on whichever surface the scheme paints.
-An opaque raster carries its own ground. -/
+/-- Whether a loaded image can paint on the page's own ground. Raster
+transparency is explicit in the plan. An SVG can be transparent too, and
+its PDF print face does not certify an opaque browser background. -/
 def imageSeeThrough (en : Image.Loaded) : Bool :=
-  rasterShips en && match en.info with
-    | some p => p.alpha != .opaque
+  imageShips en && match en.info with
+    | some p => p.alpha != .opaque || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
     | none => false
 
 /-- Whether the page ships the dark colour scheme. Only the engine's own
@@ -4354,6 +4425,16 @@ def imgAltAttrs : Ir.Alt → Array (String × String)
   | .decorative => #[("alt", ""), ("role", "presentation")]
   | .undeclared => #[("alt", "")]
 
+/-- A picture or image placeholder's role and name project its one
+alternative. Described, `role="img"` makes its children presentational
+(WAI-ARIA 1.2 §5.3) and `aria-label` names it; decorative,
+`aria-hidden="true"` removes it from the accessibility tree; undeclared,
+the locale's figure word supplies a name. -/
+def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String)
+  | .described t => #[("role", "img"), ("aria-label", firstNonBlank t floor)]
+  | .decorative => #[("aria-hidden", "true")]
+  | .undeclared => #[("role", "img"), ("aria-label", floor)]
+
 /-- Absolute font size and leading keep their physical lengths in the IR;
 on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
 so they scale with its named size ladder. Context-dependent expressions keep
@@ -4389,7 +4470,14 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- was the "very small image" defect. `height: auto` (or width) keeps
     -- the browser on the intrinsic ratio, the same invariant the PDF path
     -- proves.
-    let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
+    let index? := cfg.imgs.findRequest? (size.request src)
+    let loaded? := index?.bind cfg.imgs.get?
+    let info? := loaded?.bind (·.info)
+    let canvas? := loaded?.bind (·.canvasSize)
+    let pixels? : Option (Nat × Nat) := info?.map fun inf =>
+      match canvas? with
+      | some (w, h) => (cssPxOfSp w, cssPxOfSp h)
+      | none => intrinsicPx inf
     -- A boundary picture with no face in the store ships its request key as
     -- the `src`, which draws nothing, so the text alternative is all that
     -- reaches the page: never decorative. With no author text it is named
@@ -4404,7 +4492,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- or, for an entry that ships none, the file on disk: a bare graphicx
     -- name resolved to a file with an extension must name that file, not
     -- the spelling in the source.
-    let href := imageHref cfg.assetsDir cfg.imgs src
+    let href := imageRequestHref cfg.assetsDir cfg.imgs (size.request src)
     let horizontal (l : Image.Len) : Bool :=
       l.value.anyRef fun m => m != .textHeight
     let vertical (l : Image.Len) : Bool :=
@@ -4443,11 +4531,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         -- `keepaspectratio` is graphicx's fit: the box is the image scaled
         -- by the smaller of the two ratios (`Image.resolveSize`), so the box
         -- is what it draws, never a letterbox around it.
-        match size.keepAspect, info? with
-        | true, some inf =>
-          let (pw, ph) := intrinsicPx inf
+        match size.keepAspect, pixels? with
+        | true, some (pw, ph) =>
+          let (rw, rh) := canvas?.getD (Int.ofNat pw, Int.ofNat ph)
           let floor := if wRow.isSome then s!"width: {w}; " else ""
-          some (s!"{floor}width: min({wRow.getD w}, calc({h} * {pw} / {ph})); " ++
+          some (s!"{floor}width: min({wRow.getD w}, calc({h} * {rw} / {rh})); " ++
             "height: auto")
         | true, none => some s!"{width w}; height: {h}; object-fit: contain"
         | false, _ => some s!"{width w}; height: {h}"
@@ -4456,23 +4544,43 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       | none, none =>
         if size.width.isNone && size.height.isNone &&
             (size.scaleNum != 1 || size.scaleDen != 1) then
-          info?.map fun inf =>
-            let scaled := inf.width * size.scaleNum / size.scaleDen
+          (loaded?.bind (·.size?)).map fun (iw, _) =>
+            let scaled := iw * size.scaleNum / size.scaleDen
             if cfg.deck then
               s!"width: {decMilli (deckStageMilli scaled cfg.page.width)}vw; height: auto"
             else
               s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
         else none
-    let attrs := #[("src", href)] ++ imgAltAttrs alt ++
-      (match info? with
-       | some inf =>
-         let (pw, ph) := intrinsicPx inf
+    -- animate §6.1 fixes the canvas to frame one. A later poster's natural
+    -- ratio must not replace it once the browser decodes the image.
+    let style := match canvas? with
+      | some (w, h) => some (style.getD "" ++
+          s!"; aspect-ratio: {w} / {h}; object-fit: fill")
+      | none => style
+    let requestAttrs := match index? with
+      | some k => if loaded?.any pdfPageImg then #[("data-image-index", toString k)] else #[]
+      | none => #[]
+    if loaded?.any (·.webError.isSome) then
+      let attrs := pictureAltAttrs (figureWord cfg.locale) alt
+      let label := (attrOf? attrs "aria-label").getD ""
+      acc.push (Html.elem "span" #[Html.text label]
+        (attrs ++ requestAttrs ++ #[("data-image-src", href),
+          ("style", "display: inline-block; " ++ style.getD "")]))
+    else
+    let attrs := #[("src", href)] ++ requestAttrs ++ imgAltAttrs alt ++
+      (match pixels? with
+       | some (pw, ph) =>
          #[("width", toString pw), ("height", toString ph)]
        | none => #[]) ++
       (match style with
        | some st => #[("style", st)]
        | none => #[])
-    acc.push (Html.elem "img" #[] attrs)
+    let img := Html.elem "img" #[] attrs
+    acc.push (match imagePosterHref cfg.assetsDir cfg.imgs (size.request src) with
+      | some poster => Html.elem "picture" #[
+          Html.elem "source" #[] #[("media", "print, (prefers-reduced-motion: reduce)"),
+            ("srcset", poster)], img]
+      | none => img)
   | .math display src =>
     -- Until native MathML lands for what the parser cannot model, the
     -- element's own text is the floor — the formula's content, never its
@@ -5633,21 +5741,6 @@ handout card that never scrolls, and carries neither. -/
 def stageAttrs (deck : Bool) (name : String) : Array (String × String) :=
   if deck then #[("tabindex", "0"), ("aria-label", name)] else #[]
 
-/-- **`html_picture_name_projects`** (the `_projects` statement, by
-construction): an inline `<svg>`'s role and name are a function of the
-picture's one alternative. Described, `role="img"` — its children
-presentational (WAI-ARIA 1.2 §5.3), so the label `<text>` a sighted reader
-sees is not read out twice — and `aria-label` the text; decorative,
-`aria-hidden="true"`, out of the accessibility tree; undeclared, `role="img"`
-named by what it is (`floor`, `figureWord`), the name the svg fact asks
-of every picture a reader is handed. A refused picture's placeholder
-carries the code of its loss as its one label (`Picture.placeholder`), so
-it resolves described by that code: a placeholder is never decorative. -/
-def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String)
-  | .described t => #[("role", "img"), ("aria-label", firstNonBlank t floor)]
-  | .decorative => #[("aria-hidden", "true")]
-  | .undeclared => #[("role", "img"), ("aria-label", floor)]
-
 /-- The picture's role and name (`pictureAltAttrs` over its resolved
 alternative) and its class hook. -/
 def pictureRole (loc : Locale) (pic : Ir.Pic.Picture) : Array (String × String) :=
@@ -6469,27 +6562,36 @@ private def attachLogo (cfg : Config) (node : Node)
 
 mutual
 
-/-- Every `<img src>` a tree carries, hidden or not — a browser fetches and
-decodes an image under `aria-hidden` all the same — onto `acc`, in order. A
-hand-rolled walk because `Html.Node` has no generic fold; the list
-companion keeps it structural. -/
-def imgSrcsOne (acc : Array String) : Node → Array String
+/-- Read an image-use attribute in tree order, including hidden uses.
+With no override, an `<img>` contributes `src` and a conversion placeholder
+contributes `data-image-src`. The request census selects `data-image-index`
+through the same walk. `Html.Node` has no generic fold; the list companion
+keeps this walk structural. -/
+private def imageAttrsOne (name : Option String) (acc : Array String) : Node → Array String
   | .elem tag attrs kids =>
-    let acc := if tag == "img" then
-        match attrs.find? (·.1 == "src") with
-        | some (_, s) => acc.push s
+    let acc :=
+        match attrOf? attrs (name.getD (if tag == "img" then "src" else "data-image-src")) with
+        | some s => acc.push s
         | none => acc
-      else acc
-    imgSrcsList acc kids.toList
+    imageAttrsList name acc kids.toList
   | .text _ => acc
   | .style _ => acc
   | .script _ _ => acc
 
-def imgSrcsList (acc : Array String) : List Node → Array String
+private def imageAttrsList (name : Option String) (acc : Array String) : List Node → Array String
   | [] => acc
-  | k :: rest => imgSrcsList (imgSrcsOne acc k) rest
+  | k :: rest => imageAttrsList name (imageAttrsOne name acc k) rest
 
 end
+
+/-- Every image source a node carries, including failed conversion
+placeholders whose source is evidence rather than a fetch URL. -/
+def imgSrcsOne (acc : Array String) (node : Node) : Array String :=
+  imageAttrsOne none acc node
+
+/-- Every image source a tree carries, hidden or not, in page order. -/
+def imgSrcsList (acc : Array String) (nodes : List Node) : Array String :=
+  imageAttrsList none acc nodes
 
 /-- Emit a document as its typed tree — head and body nodes — plus any
 diagnostics the backend itself raises; `emit` renders it. The tree is the
@@ -6919,8 +7021,10 @@ one in the article class"
   -- Every <img> this page ships is one a browser decodes, or its loss is
   -- named: judged over the emitted tree, so an image the page never links
   -- is never named, and one under a hidden strip still is.
-  for s in undecodableSrcs cfg.assetsDir cfg.imgs (imgSrcsList #[] body.toList) do
-    diags := diags.push (undecodableDiag s)
+  for k in undecodableIndices cfg.imgs
+      (imageAttrsList (some "data-image-index") #[] body.toList) do
+    if let some en := cfg.imgs.get? k then
+      diags := diags.push (undecodableDiag (resolvedSrc en) en.webError (some k))
   return (head, body, diags)
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
@@ -6987,7 +7091,8 @@ structure A11yFacts where
   hiddenTabStops : Nat := 0
   imgs : Nat := 0
   /-- `<img>` with no non-blank `alt` and no declared decorative role
-  (`presentation`/`none`): WCAG 2.2 SC 1.1.1. -/
+  (`presentation`/`none`), or a non-SVG `role="img"` with no accessible
+  name: WCAG 2.2 SC 1.1.1. SVG has its own count below. -/
   imgsUnnamed : Nat := 0
   svgs : Nat := 0
   /-- `<svg>` that carries no accessible name (`carriesName`): axe's
@@ -7034,8 +7139,9 @@ def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
     | some "presentation" | some "none" => true
     | _ => false
   let acc := if tag == "h1" then { acc with h1s := acc.h1s + 1 } else acc
-  let acc := if tag == "img" then
-      let named := nonBlank ((attrOf? attrs "alt").getD "")
+  let acc := if tag == "img" || (tag != "svg" && attrOf? attrs "role" == some "img") then
+      let named := if tag == "img" then nonBlank ((attrOf? attrs "alt").getD "")
+        else carriesName (.elem tag attrs kids)
       { acc with imgs := acc.imgs + 1
                  imgsUnnamed := acc.imgsUnnamed + (if named || decorative then 0 else 1) }
     else acc

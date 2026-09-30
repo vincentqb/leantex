@@ -2874,7 +2874,7 @@ inductive Inline where
   fulfilled as an `Image.Store` — and `alt` is the text alternative the
   author declared (`alt={...}`, `artifact`, or a figure's caption filled in
   by `setAltBlocks`), the one value both backends project. -/
-  | image (src : String) (size : Image.SizeSpec) (alt : Alt)
+  | image (src : String) (size : Image.Spec) (alt : Alt)
   /-- An icon (`\faGithub`, `\faIcon{arrow-up}` — the spellings the
   fontawesome5 package defines): one glyph in an icon face, resolved like
   any other scalar through the per-scalar fallback chain, so a document
@@ -12672,6 +12672,22 @@ into the `Image.Store` layout and the backends consume. Files are effects,
 so the core never opens one — the same shape as fonts. -/
 def imageRefs (doc : Doc) : Array String := foldDoc imageSrcPush #[] doc
 
+/-- The asset selector belongs to an image's identity: two includes of
+different pages in one PDF must not share a store entry. The generic fold
+visits every document region, including furniture. -/
+def imageRequestPush (out : Array Image.Request) : Inline → Array Image.Request
+  | .image src spec _ =>
+    let req := spec.request src
+    if out.contains req then out else out.push req
+  | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
+  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .underline _ | .fill
+  | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
+  | .strut _ | .italicCorr _ | .step _ _ _ | .alt _ _ _ _ | .icon _ _
+  | .cite _ _ | .footnote _ _ => out
+
+def imageRequests (doc : Doc) : Array Image.Request :=
+  foldDoc imageRequestPush #[] doc
+
 /-- The image-source spelling of a boundary picture: an `.image` whose
 source is this prefix plus the request's content hash. The driver fulfils
 it from the boundary cache instead of the filesystem. -/
@@ -14424,7 +14440,8 @@ def pendingNodes (doc : Doc) : Array Unresolved :=
 /-- Every image source the document names that the store holds no payload
 for — the placeholder boxes every consumer places. -/
 def pendingImages (doc : Doc) (store : Image.Store) : Array Pending :=
-  ((imageRefs doc).filter fun src => (store.info? src).isNone).map .image
+  ((imageRequests doc).filter fun req => (store.infoRequest? req).isNone).map
+    (fun req => .image req.src)
 
 /-- The census: everything a backend would ship as `??`, `?`, or a
 placeholder box, over the document and the store the backends read. -/

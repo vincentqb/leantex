@@ -74,7 +74,31 @@ they build on any machine:
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
 machine's default sans. `images.tex` shows `\includegraphics` and `figure`:
 the synthetic PNG/JPEG fixtures beside it embed into the PDF and link from
-the HTML. `talk.tex` and `deck.tex` are slide decks: each
+the HTML. Self-contained SVG images work too: `xmllint` checks the supported
+subset, `rsvg-convert` supplies the vector PDF face, and HTML publishes the
+original SVG. Fragment references and plain CSS are supported; external
+resources, scripts, DTDs and CSS functions, escapes or at-rules are refused.
+A PDF image can select a page with `\includegraphics[page=2]{figure.pdf}`;
+`pdftocairo` supplies its SVG browser face.
+
+`\animategraphics[poster=last]{10}{figure}{}{}` selects the last page of
+`figure.pdf` for the PDF poster. HTML uses `figure.svg` when present, preserving
+its authored animation; otherwise it shows the same static poster. Printing
+HTML or requesting reduced motion selects the static poster too. The first
+frame determines the figure's dimensions, even when the poster has a
+different size. The SVG owns playback timing. PDF JavaScript, playback controls, numbered file
+sequences and animation timelines are not implemented and are diagnosed.
+PDF 2.0 does not play SVG animations natively.
+
+If browser conversion fails, HTML shows a labelled placeholder and reports
+the converter error; the native PDF image remains available.
+
+The converter oracle uses synthetic SVGs, including resources a converter
+would silently omit: build `leantex Tests.SvgValidation`, then run
+`lake env lean --run scripts/svg-check.lean` on a host with `xmllint` and
+`rsvg-convert`. It is separate from the hermetic test suite.
+
+`talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.
 `icons.tex` shows the fontawesome5 spellings
 (`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever

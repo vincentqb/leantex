@@ -32,7 +32,10 @@ where it stands, as `\nicefrac` and `\multirow` are when
 a document actually uses them). `xurl` is `url` with better breaking;
 `amsfonts` is a subset of what `amssymb`/`unicode-math` already provide;
 `caption`/`subcaption` land on the caption path, their option interface
-judged at `\captionsetup` (honoured or W0354, never silent). -/
+judged at `\captionsetup` (honoured or W0354, never silent). `animate`
+lowers only whole multipage PDF requests with authored SVG companions;
+playback loss is W0110 at every use, unsupported source selection W0307,
+and package-wide defaults are named rather than silently discarded. -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
    "beamerposter",
@@ -46,7 +49,7 @@ def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel"]
+   "cancel", "animate"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -5985,6 +5988,20 @@ dropped: {String.intercalate ", " unknown}" pos
           "the cancel marks, drawn from the math font's own rule constants" pos
         out := (out.push (.ctrl cancelOptionsMark pos)).push
           (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
+      else if p == "animate" then
+        -- animate manual §6 allows package-wide animation defaults. This
+        -- scoped lowering reads only each command's own options.
+        -- premise: animatedGraphicsChecks — local posters select distinct
+        -- shipped images, and package defaults keep their named warning.
+        let opts := (opt.getD "").trimAscii.toString
+        if opts.isEmpty then
+          discard s!"\\{name}\{{p}}"
+            "whole multipage animations are read at each '\\animategraphics' command"
+            s!"{name}:{p}" pos
+        else
+          sayOnce "animate:package-options" .W0110
+            s!"'animate' package options '{opts}' are not applied" pos
+            (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then

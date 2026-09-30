@@ -2671,16 +2671,19 @@ def flipByte (hay : ByteArray) (i : Nat) : ByteArray :=
 driver reads them beside the document (boundary pictures stay unfulfilled:
 their placeholder boxes are what an unconverted build ships). -/
 def corpusStore (doc : Ir.Doc) : IO Image.Store := do
-  let mut fetched : Array (String × Image.Fetch) := #[]
-  for src in Ir.imageRefs doc do
+  let mut fetched : Array (Image.Request × Image.Fetch) := #[]
+  for req in Ir.imageRequests doc do
+    let src := req.src
     let mut f : Image.Fetch := .missing src
     for cand in Image.sourceCandidates src do
       let p := System.FilePath.mk "tests/corpus" / cand
       if ← p.pathExists then
-        f := .decoded (if cand == src then "" else cand) (Image.decode (← IO.FS.readBinFile p))
+        let decoded := Image.decodeRequest .default (← IO.FS.readBinFile p) req
+        f := .decoded (if cand == src then "" else cand)
+          (decoded.map (·.1)) none (decoded.toOption.bind (·.2))
         break
-    fetched := fetched.push (src, f)
-  return (Image.fulfil fetched).1
+    fetched := fetched.push (req, f)
+  return (Image.fulfilRequests fetched).1
 
 /-- One golden fixture, elaborated, laid out, written and read back once.
 Three judges over the corpus — the contract slice, the conformance walk and

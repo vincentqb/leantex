@@ -32,6 +32,7 @@ import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
+import LeanTex.Cli.ImageAssets
 
 open LeanTex.Core LeanTex.Cli
 
@@ -668,11 +669,12 @@ like `\input`, then through graphicx's extension resolution (a deck says
 the pure core through the content-hash cache when the decode is the
 expensive kind. Returns whether the cache answered, for the phase line. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (params : Image.PlanParams) (src : String) :
+    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request) :
     IO (Image.Fetch × Bool) := do
+  let src := req.src
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
-    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params), false)
+    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none, false)
     | none =>
       match refused.find? (·.1 == src) with
       | some (_, why) => return (.refused why, false)
@@ -695,10 +697,18 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     match bytes with
     | .error e => return (.unreadable e, false)
     | .ok bytes =>
-      let (res, fromCache) ← decodeImageCached params bytes
-      return (.decoded (if cand == src then "" else cand) res, fromCache)
+      let href := if cand == src then "" else cand
+      if Image.isSvg cand then
+        let res ← ImageAssets.svgPlan params bytes req.page
+        return (.decoded href res (some bytes) none, false)
+      else if req.page != .first || req.animated then
+        let res := Image.decodeRequest params bytes req
+        return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2)), false)
+      else
+        let (res, fromCache) ← decodeImageCached params bytes
+        return (.decoded href res none none, fromCache)
 
-/-- The image request an elaborated document states (`Ir.imageRefs`),
+/-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
 decides what each read means (`Image.fulfil`) — an entry with a payload,
 or a placeholder box with the diagnostic that names it (`fulfil_named`),
@@ -712,18 +722,51 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     IO (Image.Store × Array Diag × Nat) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
-  let mut fetched : Array (String × Image.Fetch) := #[]
+  let mut fetched : Array (Image.Request × Image.Fetch) := #[]
   let mut hits := 0
-  for src in Ir.imageRefs doc do
-    let (f, fromCache) ← fetchImage dir pics refused params src
+  for req in Ir.imageRequests doc do
+    let (f, fromCache) ← fetchImage dir pics refused params req
     if fromCache then hits := hits + 1
-    fetched := fetched.push (src, f)
-  let (store, diags) := Image.fulfil fetched
+    fetched := fetched.push (req, f)
+  let (store, diags) := Image.fulfilRequests fetched
   let mut diags := diags
   for en in store.entries do
     if let some pl := en.info then
       diags := diags ++ Image.lossDiags en.src pl
   return (store, diags, hits)
+
+/-- PDF sources receive a browser image of their selected page. A declared
+animation also looks for a readable, self-contained SVG beside that PDF:
+its SMIL stays intact in an image context, while print and reduced motion
+select the static poster. An absent or unusable companion leaves the PDF
+poster as the browser face. No generated script or inline XML is needed. -/
+def imageBrowserFaces (file : String) (imgs : Image.Store) : IO Image.Store := do
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let entries ← imgs.entries.mapM fun en => do
+    if en.src.startsWith Ir.picSrcPrefix then return en
+    let some plan := en.info | return en
+    if plan.form.isNone then return en
+    if let some svg := en.webSvg then
+      match ← ImageAssets.svgPoster svg with
+      | .ok poster => return { en with posterSvg := some poster, webError := none }
+      | .error err => return { en with webError := some err }
+    let src := System.FilePath.mk (HtmlDoc.resolvedSrc en)
+    let path := if src.isAbsolute then src else dir / src
+    try
+      let bytes ← IO.FS.readBinFile path
+      match ← ImageAssets.pdfSvg bytes en.page with
+      | .error err => return { en with webError := some err }
+      | .ok poster =>
+        let static := { en with webSvg := some poster, webError := none }
+        if en.animated then
+          try
+            let svg ← IO.FS.readBinFile (path.withExtension "svg")
+            if (← ImageAssets.validateSvg svg).isOk then
+              return { static with webSvg := some svg, posterSvg := some poster }
+          catch _ => pure ()
+        return static
+    catch err => return { en with webError := some (toString err) }
+  return { entries }
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
@@ -781,17 +824,25 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
     else unconverted := unconverted.push r.src
   return ({ entries }, pubs, diags, unconverted)
 
-/-- The raster copies a page requests (`HtmlDoc.imageAssets`), each with the
+/-- An image publication: captured SVG bytes when converted, or the source
+file of a native raster. The file name is the typed page's asset request. -/
+structure ImageCopy where
+  source : System.FilePath
+  name : String
+  data : Option ByteArray
+
+/-- The image copies a page requests (`HtmlDoc.imageAssets`), each with the
 path its bytes are read from: the entry's resolved spelling against the
 document's directory — what `fetchImage` resolved, so the bytes copied are
 the bytes decoded. Pure: the plan of the copies, which `publish` performs
 after the gate. -/
-def rasterCopies (file : String) (imgs : Image.Store) : Array (System.FilePath × String) :=
+def imageCopies (file : String) (imgs : Image.Store) : Array ImageCopy :=
   let dir := (System.FilePath.mk file).parent.getD "."
   (HtmlDoc.imageAssets imgs).filterMap fun a =>
     (imgs.get? a.srcIndex).map fun en =>
       let p := System.FilePath.mk (HtmlDoc.resolvedSrc en)
-      (if p.isAbsolute then p else dir / p, a.file)
+      { source := if p.isAbsolute then p else dir / p, name := a.file
+        data := if a.poster then en.posterSvg else en.webSvg }
 
 /-- Phase 3's single write site, after the assertion gate: the only code in
 the driver that brings an output location into existence — the `-o`
@@ -801,7 +852,7 @@ so a failing document reaches none of this and leaves nothing behind; an
 artifact absent from the plan creates nothing, not even its directory.
 Returns the paths written, for the verdict line. -/
 def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
-    (html : Option (String × String × Array Publication × Array (System.FilePath × String) ×
+    (html : Option (String × String × Array Publication × Array ImageCopy ×
       Option (Array HtmlDoc.FontAsset)))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String) := do
@@ -810,6 +861,7 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
     IO.FS.createDirAll o
   if let some (path, page, pubs, rasters, fonts?) := html then
     let parent := (System.FilePath.mk path).parent.getD "."
+    IO.FS.createDirAll parent
     unless pubs.isEmpty do
       let t ← IO.monoMsNow
       let dir := parent / assetsDir
@@ -817,16 +869,18 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
       for pub in pubs do
         IO.FS.writeBinFile (dir / pub.name) (← IO.FS.readBinFile pub.cached)
       ui.phase "boundary-svg" s!"{pubs.size} pictures ({assetsDir})" (← since t)
-    -- The page's rasters, copied beside it under the names `imageHref`
-    -- linked: byte for byte the source files the store decoded.
+    -- Images publish under the names the typed page linked. SVG bytes
+    -- come from the captured source or conversion; native rasters copy.
     unless rasters.isEmpty do
       let t ← IO.monoMsNow
       let dir := parent / assetsDir
       IO.FS.createDirAll dir
       let mut bytes := 0
-      for (src, name) in rasters do
-        let data ← IO.FS.readBinFile src
-        IO.FS.writeBinFile (dir / name) data
+      for image in rasters do
+        let data ← match image.data with
+          | some data => pure data
+          | none => IO.FS.readBinFile image.source
+        IO.FS.writeBinFile (dir / image.name) data
         bytes := bytes + data.size
       ui.phase "assets" s!"{rasters.size} images, {bytes} bytes ({assetsDir})" (← since t)
     IO.FS.writeFile path page
@@ -1186,7 +1240,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       fired := fired ++ rC.fired
       accepted := accepted ++ rC.accepted
       warnings := warnings + rC.warnings
-      let mut htmlBuilt : Option (String × Array Publication × Array (System.FilePath × String)) :=
+      let mut htmlBuilt : Option (String × Array Publication × Array ImageCopy) :=
         none
       if emit.contains .html then
         let t ← IO.monoMsNow
@@ -1203,6 +1257,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
         let (imgs, pubs, svgDiags, unconverted) ← picsToSvg pics assetsDir imgs
+        let imgs ← imageBrowserFaces file imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
         accepted := accepted ++ rS.accepted
@@ -1236,9 +1291,8 @@ in the HTML" (← since t)
         accepted := accepted ++ r4.accepted
         warnings := warnings + r4.warnings
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
-        -- The page's raster copies, planned here (pure) and performed by
-        -- `publish`: the files every loaded raster's `src` links.
-        htmlBuilt := some (html, pubs, rasterCopies file imgs)
+        -- The page's image copies, planned here and performed by `publish`.
+        htmlBuilt := some (html, pubs, imageCopies file imgs)
       let mut mdBuilt : Option String := none
       if emit.contains .md then
         let t ← IO.monoMsNow

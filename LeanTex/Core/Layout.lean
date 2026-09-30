@@ -1134,7 +1134,7 @@ private inductive Tk where
   | strut (height : SymGlue)
   | brk (extra : SymGlue)
   /-- An image reference, resolved against the store when items are built. -/
-  | img (src : String) (spec : Image.SizeSpec)
+  | img (src : String) (spec : Image.Spec)
   /-- An elaborated formula, measured against the math face by
   `itemsOfInlines`: one unbreakable run of boxes and kerns, every box
   attributed `attr` (the formula's one leaf is its source). -/
@@ -3513,11 +3513,11 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     -- that did not load (the driver has said why) keeps the requested
     -- size around a default 1 in square, so the document still compiles
     -- and the placeholder shows where the figure would stand.
-    let idx? := imgs.find? src
-    let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.info) with
-      | some inf => (inf.width, inf.height)
+    let idx? := imgs.findRequest? (spec.request src)
+    let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.size?) with
+      | some wh => wh
       | none => (Dim.inch 1, Dim.inch 1) -- the placeholder square: a stated default (comment above), not a design token — the driver already named the load failure
-    let (w, h) := Image.resolveSize spec iW iH textW textH
+    let (w, h) := Image.resolveSize spec.toSizeSpec iW iH textW textH
     -- A boundary picture wider than the measure fits it: the box is the
     -- engine's to measure and place (N0023's claim), it is vector — the
     -- form's `/Matrix` scales losslessly — and the document declared no

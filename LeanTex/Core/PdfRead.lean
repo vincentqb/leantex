@@ -9,17 +9,18 @@ open LeanTex.Core.Dim
 /-! # Reading a PDF page as a form XObject
 
 The asset half of PLAN's graphics boundary: `\includegraphics{file.pdf}` —
-and every boundary result — embeds page 1 of an existing PDF as a form
-XObject, so vector stays vector. This module is the pure reader: a total
-function over a `ByteArray` that follows the cross-reference (classic
-tables *and* xref streams with object streams — modern lualatex output
-uses the streams), finds page 1, takes its box, concatenates its decoded
-content streams, and copies its `/Resources` dictionary with the whole
-object graph behind it — fonts, XObjects, ExtGState — renumbered into a
-local space the writer offsets. Stream payloads (font programs above all)
-are copied verbatim, never re-parsed. A PDF the reader cannot follow is a
-named error value, never a crash: every read is bounds-checked and every
-loop bounded by the input's size (the `Ink` reader discipline).
+and every boundary result — embeds a selected page of an existing PDF as a
+form XObject, defaulting to page 1, so vector stays vector. This module is
+the pure reader: a total function over a `ByteArray` that follows the
+cross-reference (classic tables *and* xref streams with object streams —
+modern lualatex output uses the streams), selects in physical `/Kids`
+order, takes the page's box, concatenates its decoded content streams, and
+copies its `/Resources` dictionary with the whole object graph behind it —
+fonts, XObjects, ExtGState — renumbered into a local space the writer
+offsets. Stream payloads (font programs above all) are copied verbatim,
+never re-parsed. A PDF the reader cannot follow is a named error value,
+never a crash: every read is bounds-checked and every loop bounded by the
+input's size (the `Ink` reader discipline).
 
 The trust label: the engine claims the *box* — placement and measurement
 from the file's own page box — never the contents of the copied streams.
@@ -829,39 +830,94 @@ def trailer (b : ByteArray) : Except String Obj := do
   let x ← readXref b
   return x.trailer.getD (.dict #[])
 
--- ## Page 1 (§7.7.3)
+-- ## Page selection (§7.7.3)
+
+/-- A page selected by its physical, one-based position in `/Kids` order. -/
+inductive PageSelection where
+  | first
+  | last
+  | number (oneBased : Nat)
+  deriving Inhabited, BEq, ReflBEq, LawfulBEq, DecidableEq, Repr
 
 private structure Page where
   node : Obj
   mediaBox : Option Obj
   cropBox : Option Obj
   resources : Option Obj
+  rotate : Option Obj
 
-/-- Walk the page tree depth-first to the first `/Type /Page`, carrying the
-inheritable attributes (§7.7.3.4): `/MediaBox`, `/CropBox`, `/Resources`. -/
-private def firstPage (r : Reader) (root : Nat) : Except String Page := do
+/-- Walk `/Kids` depth-first, counting actual `/Type /Page` leaves and
+carrying inheritable attributes (§7.7.3.4). `/Count` never decides a page's
+ordinal or whether the traversal is finished. The first or numbered leaf
+can return immediately; the last requires an exhausted worklist.
+Revisited indirect nodes are malformed, and exhausting the reader's
+xref-sized visit bound also refuses, even when a leaf has been seen. -/
+private def selectPage (r : Reader) (root : Nat) (selection : PageSelection) :
+    Except String (Nat × Page) := do
+  if selection == .number 0 then
+    throw "PDF page number 0 is invalid; page numbers start at 1"
   let (catalog, _) ← r.get root
   let some pagesRef := catalog.get? "Pages"
     | throw "malformed PDF: the catalog has no /Pages"
-  let mut work : Array (Obj × Option Obj × Option Obj × Option Obj) :=
-    #[(pagesRef, none, none, none)]
+  let mut work : Array (Obj × Option Obj × Option Obj × Option Obj × Option Obj) :=
+    #[(pagesRef, none, none, none, none)]
+  let mut seen : Std.HashMap Nat Unit := {}
+  let mut count := 0
+  let mut latest : Option (Nat × Page) := none
   for _ in [0:r.locs.size + 2] do
-    let some (nodeRef, mb, cb, res) := work.back? | break
+    let some (nodeRef, mb, cb, res, rot) := work.back? | break
     work := work.pop
+    if let .ref num _ := nodeRef then
+      if seen.contains num then
+        throw s!"malformed PDF: cycle or repeated node {num} in the page tree"
+      seen := seen.insert num ()
     let node ← r.deref nodeRef
     let mb := (node.get? "MediaBox").or mb
     let cb := (node.get? "CropBox").or cb
     let res := (node.get? "Resources").or res
+    -- A declaration overrides inheritance even when its value is zero.
+    let rot := (node.get? "Rotate").or rot
     if node.get? "Type" matches some (.name "Page") then
-      return { node, mediaBox := mb, cropBox := cb, resources := res }
-    match node.get? "Kids" with
-    | some (.arr kids) =>
-      -- Depth-first: the first kid is visited first, so it is pushed last.
-      for k in [0:kids.size] do
-        if let some kid := kids[kids.size - 1 - k]? then
-          work := work.push (kid, mb, cb, res)
-    | _ => throw "malformed PDF: a page tree node has neither /Type /Page nor /Kids"
-  throw "malformed PDF: no page found in the page tree"
+      count := count + 1
+      let found : Nat × Page :=
+        (count, { node, mediaBox := mb, cropBox := cb, resources := res, rotate := rot })
+      if selection == .first || selection == .number count then
+        return found
+      latest := some found
+    else
+      match node.get? "Kids" with
+      | some (.arr kids) =>
+        -- Depth-first: the first kid is visited first, so it is pushed last.
+        for k in [0:kids.size] do
+          if let some kid := kids[kids.size - 1 - k]? then
+            work := work.push (kid, mb, cb, res, rot)
+      | _ => throw "malformed PDF: a page tree node has neither /Type /Page nor /Kids"
+  unless work.isEmpty do
+    throw "malformed PDF: the page tree exceeds its cross-reference"
+  match selection, latest with
+  | .last, some found => return found
+  | .number n, _ =>
+    throw s!"PDF page {n} is out of range (the file has {count} pages)"
+  | _, _ => throw "malformed PDF: no page found in the page tree"
+
+/-- The shared file validation and selection path for form inclusion and
+physical page-number resolution. -/
+private def readPage (b : ByteArray) (page : PageSelection) :
+    Except String (Reader × (Nat × Page)) := do
+  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
+    throw "not a PDF file (no %PDF header)"
+  let x ← readXref b
+  let some root := x.root
+    | throw "malformed PDF: no /Root in any trailer"
+  let r : Reader := { b, locs := x.locs }
+  return (r, ← selectPage r root page)
+
+/-- Resolve a selection to its one-based physical page number, using the
+same `/Kids` traversal and selection checks as `readForm`. Contents and
+resource streams need not be decoded to resolve an ordinal. -/
+def pageNumber (b : ByteArray) (page : PageSelection := .first) : Except String Nat := do
+  let (_, selected) ← readPage b page
+  return selected.1
 
 -- ## The copied graph, renumbered
 
@@ -947,9 +1003,9 @@ end
 
 -- ## The result
 
-/-- Page 1 of a read PDF, ready to embed: the page box in sp, the decoded
-content, and the `/Resources` graph renumbered into `objects`' local
-space. The engine claims the box; the copied streams stay opaque. -/
+/-- A selected page of a read PDF, ready to embed: the page box in sp, the
+decoded content, and the `/Resources` graph renumbered into `objects`'
+local space. The engine claims the box; the copied streams stay opaque. -/
 structure Form where
   x0 : Sp
   y0 : Sp
@@ -1010,23 +1066,19 @@ theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
   rw [Int.add_mul, Int.mul_comm (hi - lo) len]
   omega
 
-/-- Read page 1 of a PDF into an embeddable form: the box (CropBox when
-declared, else MediaBox — pdfTeX's rule for PDF inclusion), the decoded
-content streams concatenated, and the resources graph copied and
-renumbered. Total over arbitrary bytes; anything the reader cannot follow
-is a named error. -/
-def readForm (b : ByteArray) : Except String { f : Form // f.wf } := do
-  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
-    throw "not a PDF file (no %PDF header)"
-  let x ← readXref b
-  let some root := x.root
-    | throw "malformed PDF: no /Root in any trailer"
-  let r : Reader := { b, locs := x.locs }
-  let page ← firstPage r root
+/-- Read a selected page of a PDF into an embeddable form, defaulting to
+page 1: the box (CropBox when declared, else MediaBox — pdfTeX's rule for
+PDF inclusion), the decoded content streams concatenated, and the resources
+graph copied and renumbered. Total over arbitrary bytes; anything the
+reader cannot follow is a named error. -/
+def readForm (b : ByteArray) (page : PageSelection := .first) :
+    Except String { f : Form // f.wf } := do
+  let (r, selected) ← readPage b page
+  let page := selected.2
   -- The box: CropBox over MediaBox, elements resolved one level and read
   -- as numbers, corners normalized.
   let some boxObj := page.cropBox.or page.mediaBox
-    | throw "malformed PDF: page 1 has no /MediaBox"
+    | throw "malformed PDF: the selected page has no /MediaBox"
   let boxObj ← r.deref boxObj
   let nums ← match boxObj with
     | .arr xs =>
@@ -1046,7 +1098,7 @@ def readForm (b : ByteArray) : Except String { f : Form // f.wf } := do
   let y1 := max (nums[1]?.getD 0) (nums[3]?.getD 0)
   if x0 == x1 || y0 == y1 then
     throw "malformed PDF: the page box is empty"
-  match ((page.node.get? "Rotate").bind Obj.int?).getD 0 with
+  match (← r.deref (page.rotate.getD (.int 0))).int?.getD 0 with
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
   -- The content: one stream or an array, each decoded, joined by newlines

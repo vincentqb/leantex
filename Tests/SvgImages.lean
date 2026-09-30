@@ -1,0 +1,119 @@
+import Tests.Support
+import LeanTex.Cli.ImageAssets
+
+open LeanTex.Core
+
+namespace Tests
+
+/-- librsvg supplies a static drawing, not a selected SMIL frame. Reject
+non-first posters before invoking any converter. Empty input makes this
+guard independent of host tools; a converter error cannot satisfy it. -/
+def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for page in [PdfRead.PageSelection.last, .number 2] do
+    let result ← LeanTex.Cli.ImageAssets.svgPlan .default ByteArray.empty page
+    check ref s!"SVG poster {repr page} requires its PDF frame sequence"
+      (match result with
+        | .error err => hasStr err "selected poster requires a PDF frame sequence"
+        | .ok _ => false)
+
+/-- An SVG's PDF form is its print face, not evidence that the browser
+should receive a PDF. The typed page must link a published SVG, with its
+text alternative, even though layout reads vector PDF geometry. -/
+def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  svgPosterChecks ref
+  let t := check ref
+  t "extensionless image lookup includes SVG"
+    ((Image.sourceCandidates "diagram").contains "diagram.svg")
+  let data ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let info := (Image.decode data).toOption
+  t "SVG asset probe has a vector print face" (info.any (·.form.isSome))
+  let imgs : Image.Store := { entries := #[{ src := "diagram.svg", info }] }
+  let doc := (elabStr "\\includegraphics[alt={A moving square}]{diagram.svg}").1
+  let (_, body, diags) := HtmlDoc.emitTree { imgs, assetsDir := "assets" } doc
+  let srcs := body.foldl HtmlDoc.imgSrcsOne #[]
+  t "SVG print face still publishes the SVG browser asset"
+    ((HtmlDoc.imageAssets imgs).map (·.file) == #["i0-diagram.svg"])
+  t "typed HTML links the published SVG"
+    (srcs == #["assets/i0-diagram.svg"])
+  t "SVG browser face has no PDF-only placeholder diagnostic"
+    (!(diags.any (·.code == "W0605")))
+  -- The native decode can succeed before the mandatory browser poster
+  -- conversion fails. Neither a .svg extension nor captured moving bytes
+  -- can certify the missing static face.
+  let reason := "rsvg-convert exited 19: poster unavailable"
+  for (src, href) in [("diagram.svg", ""), ("diagram.pdf", ""), ("diagram", "diagram.svg")] do
+    let failed : Image.Store := { entries := #[
+      { src, href, info, webSvg := some "<svg/>".toUTF8, webError := some reason }] }
+    let source := "\\includegraphics[alt={A moving square}]{" ++ src ++ "}"
+    let doc := (elabStr (dvDoc "" source)).1
+    let (_, tree, ds) := HtmlDoc.emitTree { imgs := failed } doc
+    let nodes := elemAttrsList (fun _ => true) #[] tree.toList
+    t s!"failed browser conversion {src}: no source bytes publish"
+      (HtmlDoc.imageAssets failed).isEmpty
+    t s!"failed browser conversion {src}: no image or media URL ships"
+      (!(nodes.any fun (tag, _) => tag == "img" || tag == "source" || tag == "object"))
+    t s!"failed browser conversion {src}: a named placeholder ships"
+      (nodes.any fun (tag, attrs) => tag == "span" &&
+        attrs.contains ("role", "img") &&
+        attrs.contains ("aria-label", "A moving square") &&
+        attrs.contains ("data-image-src", if href.isEmpty then src else href))
+    let facts := HtmlDoc.a11yFacts true false tree
+    t s!"failed browser conversion {src}: the accessibility judge counts the placeholder"
+      (facts.imgs == 1 && facts.imgsUnnamed == 0)
+    let losses := ds.filter (·.code == "W0605")
+    t s!"failed browser conversion {src}: its reason is accounted once"
+      (losses.size == 1 && losses.any (fun d => hasStr d.message reason))
+    let pdfOnly := (elabStr (dvDoc ""
+      ("\\begin{ifbackend}{pdf}" ++ source ++ "\\end{ifbackend}"))).1
+    let (_, _, hiddenDs) := HtmlDoc.emitTree { imgs := failed } pdfOnly
+    t s!"failed browser conversion {src}: an absent HTML include has no loss"
+      (!(hiddenDs.any (·.code == "W0605")))
+
+  -- A resolved filename is not a request identity: selected pages,
+  -- animation posters and extensionless aliases can share it. The shipped
+  -- placeholders must retain the exact entry and its own failure, even
+  -- when a different request precedes it in the store or is PDF-only.
+  let selected : Image.Store := { entries := #[
+    { src := "sequence.pdf", page := .number 1, info, webError := some "page one failed" },
+    { src := "sequence.pdf", page := .number 2, info, webError := some "page two failed" },
+    { src := "sequence.pdf", page := .number 2, animated := true, info,
+      webError := some "animation poster failed" },
+    { src := "sequence.pdf", info, webError := some "default page failed" },
+    { src := "sequence.pdf", page := .number 3, info },
+    { src := "sequence", href := "sequence.pdf", info, webError := some "alias failed" }] }
+  let includes := #[
+    "\\includegraphics[page=1,alt={First}]{sequence.pdf}",
+    "\\includegraphics[page=2,alt={Second}]{sequence.pdf}",
+    "\\animategraphics[poster=1,alt={Moving}]{17}{sequence.pdf}{}{}",
+    "\\includegraphics[alt={Default}]{sequence.pdf}",
+    "\\includegraphics[page=3,alt={Unconverted}]{sequence.pdf}",
+    "\\includegraphics[alt={Alias}]{sequence}"]
+  let probes : Array (String × String × Array Nat) := #[
+    ("later page alone", includes[1]!, #[1]),
+    ("repeated page", includes[1]! ++ includes[1]!, #[1, 1]),
+    ("two selected pages", includes[1]! ++ includes[0]!, #[1, 0]),
+    ("ordinary and animated", includes[1]! ++ includes[2]!, #[1, 2]),
+    ("default page", includes[3]!, #[3]),
+    ("unconverted page", includes[4]!, #[4]),
+    ("resolved alias", includes[1]! ++ includes[5]!, #[1, 5]),
+    ("absent earlier request",
+      "\\begin{ifbackend}{pdf}" ++ includes[0]! ++ "\\end{ifbackend}" ++ includes[1]!, #[1])]
+  for (name, source, indices) in probes do
+    let (_, tree, ds) := HtmlDoc.emitTree { imgs := selected } (elabStr (dvDoc "" source)).1
+    let marked := (elemAttrsList (fun _ => true) #[] tree.toList).filterMap fun (_, attrs) =>
+      (HtmlDoc.attrOf? attrs "data-image-index").bind String.toNat?
+    t s!"image failure identity {name}: each emitted use keeps its store entry"
+      (marked == indices)
+    let unique := indices.foldl (fun acc k =>
+      if acc.contains k then acc else acc.push k) #[]
+    let losses := ds.filter (·.code == "W0605")
+    t s!"image failure identity {name}: each request is named once, in page order"
+      (losses.size == unique.size && (unique.zip losses).all fun (k, d) =>
+        d.subject == some s!"img:{k}:sequence.pdf" &&
+        match selected.entries[k]!.webError with
+        | some err => hasStr d.message err
+        | none => hasStr d.message "PDF page no browser decodes")
+    t s!"image failure identity {name}: distinct losses survive site accounting"
+      (losses.size == unique.size && (Diag.tallySites losses).all (·.sites == 1))
+
+end Tests

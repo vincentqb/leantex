@@ -98,6 +98,44 @@ def stageMarks (body : Array Html.Node) : Array (Option String × Option String)
       (HtmlDoc.classTokens attrs).any (fun c => c == "slide" || c == "section-page")).map
     fun (_, attrs) => (HtmlDoc.attrOf? attrs "tabindex", HtmlDoc.attrOf? attrs "aria-label")
 
+private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
+    (store : Image.Store) (body : Array Html.Node) (diags : Array Diag) : IO Nat := do
+  let t := check ref
+  let mut undecodableSeen := 0
+  let uses := (elemAttrsList (fun _ => true) #[] body.toList).filterMap fun (tag, attrs) =>
+    (HtmlDoc.attrOf? attrs (if tag == "img" then "src" else "data-image-src")).map fun src =>
+      (src, (HtmlDoc.attrOf? attrs "data-image-index").bind String.toNat?)
+  let marked := uses.filterMap (·.2)
+  for k in Array.range store.entries.size do
+    let en := store.entries[k]!
+    if en.info.isNone || en.src.startsWith Ir.picSrcPrefix then continue
+    let href := HtmlDoc.imageRequestHref "assets" store en.toRequest
+    let sameSource := uses.filter (·.1 == href)
+    if sameSource.isEmpty then continue
+    let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
+    if (sniffBrowserImage bytes).isNone then
+      for (_, index) in sameSource do
+        t s!"html a11y {name}: '{href}' carries its emitted request index"
+          (index.any fun i => (store.entries[i]?).any fun entry =>
+            entry.info.isSome &&
+            HtmlDoc.imageRequestHref "assets" store entry.toRequest == href)
+      unless sameSource.any (·.2 == some k) do continue
+      undecodableSeen := undecodableSeen + 1
+      t s!"html a11y {name}: '{href}' no browser decodes, and a diagnostic names it"
+        (diags.any fun d => d.subject == some s!"img:{k}:{href}")
+  for d in diags do
+    if d.code == "W0605" then
+      let named := (Array.range store.entries.size).filter fun k =>
+        d.subject == some s!"img:{k}:{HtmlDoc.resolvedSrc store.entries[k]!}"
+      t s!"html a11y {name}: a browser-face loss names exactly one emitted request"
+        (named.size == 1 && named.all marked.contains)
+      for k in named do
+        let href := HtmlDoc.resolvedSrc store.entries[k]!
+        let bytes ← IO.FS.readBinFile s!"tests/corpus/{href}"
+        let decodes := (sniffBrowserImage bytes).isSome
+        t s!"html a11y {name}: '{href}' is named undecodable only when it is" (!decodes)
+  return undecodableSeen
+
 /-- The HTML accessibility contract over the shipped corpus and the probes
 that break each half once. -/
 def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -110,7 +148,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut scrollsSeen := 0
   let mut undecodableSeen := 0
   for n in goldenNames do
-    let (doc, _, _, body, diags) ← a11yCorpusPage n
+    let (doc, store, _, body, diags) ← a11yCorpusPage n
     let f := a11yFactsOf doc body
     svgsSeen := svgsSeen + f.svgs
     scrollsSeen := scrollsSeen + f.scrolls
@@ -128,36 +166,45 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"html a11y {n}: no two stages share a name"
       (names.all fun nm => (names.filter (· == nm)).size == 1)
     -- W3: every <img src> the page emits is a format a browser decodes, or
-    -- a diagnostic names the file (subject `img:<src>`). The format is read
+    -- a diagnostic names the request (subject `img:<index>:<src>`). The format is read
     -- off the file's own bytes, never off the backend's classification;
     -- an image that did not load, or a boundary picture, was named where it
     -- failed, by the fulfilment's own subject-keyed diagnostic.
-    let store ← corpusStore doc
-    let emitted := a11yImgSrcs body
-    for en in store.entries do
-      if en.info.isNone || en.src.startsWith Ir.picSrcPrefix then continue
-      let href := HtmlDoc.imageHref "assets" store en.src
-      unless emitted.contains href do continue
-      let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
-      if (sniffBrowserImage bytes).isNone then
-        undecodableSeen := undecodableSeen + 1
-        t s!"html a11y {n}: '{href}' no browser decodes, and a diagnostic names it"
-          (diags.any fun d => d.subject == some s!"img:{href}")
-    for d in diags do
-      if let some s := d.subject then
-        if s.startsWith "img:" then
-          let href := (s.drop 4).toString
-          let named := store.entries.find? fun en => HtmlDoc.imageHref "assets" store en.src == href
-          let decodes ← match named with
-            | some en => do
-              let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
-              pure (sniffBrowserImage bytes).isSome
-            | none => pure false
-          t s!"html a11y {n}: '{href}' is named undecodable only when it is" (!decodes)
+    undecodableSeen := undecodableSeen + (← browserImageChecks ref n store body diags)
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
   t s!"html a11y: the corpus ships an image no browser decodes ({undecodableSeen})"
     (0 < undecodableSeen)
+  let imageBytes ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let selected : Image.Store := { entries := #[
+    { src := "figures/box.pdf", info := (Image.decode imageBytes).toOption },
+    { src := "figures/box.pdf", page := .number 2,
+      info := (Image.decode imageBytes).toOption }] }
+  let selectedDoc := (elabStr (dvDoc ""
+    "\\begin{ifbackend}{pdf}\\includegraphics{figures/box.pdf}\\end{ifbackend}\
+\\includegraphics[page=2,alt={Selected page}]{figures/box.pdf}")).1
+  let (_, selectedBody, selectedDiags) := HtmlDoc.emitTree { imgs := selected } selectedDoc
+  let selectedCount ← browserImageChecks ref "selected image requests"
+    selected selectedBody selectedDiags
+  t "html a11y: hidden requests sharing a filename do not enter the visible census"
+    (selectedCount == 1)
+  let placeholder := Html.elem "span" #[] #[("data-image-src", "figures/box.pdf"),
+    ("data-image-index", "1"), ("role", "img"), ("aria-label", "Selected page")]
+  let placeholderCount ← browserImageChecks ref "failed browser face"
+    selected #[placeholder] selectedDiags
+  t "html a11y: failure placeholders enter the same request census"
+    (placeholderCount == 1)
+  for tag in ["img", "span"] do
+    for index in [none, some "99"] do
+      let attrs := #[(if tag == "img" then "src" else "data-image-src", "figures/box.pdf")] ++
+        (match index with
+          | none => #[]
+          | some value => #[("data-image-index", value)])
+      let broken ← IO.mkRef ([] : List String)
+      let _ ← browserImageChecks broken "broken request marker"
+        selected #[Html.elem tag #[] attrs] #[]
+      t s!"html a11y: the judge rejects {tag} with request index {repr index}"
+        (!(← broken.get).isEmpty)
   -- W3's size half: `width`/`height` are CSS px, so a vector page's box is
   -- declared on the CSS ruler (1pt = 4/3 px), not as its point count. The
   -- boundary picture's SVG face (pdftocairo, `width="56.693pt"`) is what a
@@ -175,7 +222,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"html a11y: a PDF page's <img> declares its CSS-pixel box: {dims}"
       (dims == #[(some "340", some "204")])
     t "html a11y: a PDF page's <img> is named undecodable"
-      (pdiags.any fun d => d.subject == some "img:box.pdf")
+      (pdiags.any fun d => d.subject == some "img:0:box.pdf")
     -- W0605's remedy, followed, clears it: the web page's include gated to
     -- HTML and the PDF include to PDF. Keeping the PDF include for both
     -- backends, as a reader of "keep the PDF for print" might, does not.
@@ -184,7 +231,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     let pdfInclude := "\\includegraphics[alt={A card}]{box.pdf}"
     let fires (body : String) : Bool :=
       let (_, _, ds) := HtmlDoc.emitTree { imgs := boxStore } (elabStr (dvDoc "" body)).1
-      ds.any fun d => d.subject == some "img:box.pdf"
+      ds.any fun d => d.subject == some "img:0:box.pdf"
     t "html a11y: W0605 holds while the PDF include ships to both backends"
       (fires (webOnly ++ pdfInclude))
     t "html a11y: W0605's remedy clears it"

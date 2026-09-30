@@ -11,6 +11,11 @@ import Tests.Markdown
 import Tests.Census
 import Tests.Backends
 import Tests.Images
+import Tests.SvgImages
+import Tests.AnimatedGraphics
+import Tests.AnimatedFaces
+import Tests.PdfPageSelection
+import Tests.RasterPages
 import Tests.Diag
 import Tests.Themes
 import Tests.FontMath
@@ -41,7 +46,8 @@ import Tests.Reports
 import Tests.Natbib
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
-open Tests (mintedSettingsChecks listingHighlightChecks)
+open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks
+  animatedGraphicsChecks animatedFacesChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -265,6 +271,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   rhythmChecks ref oneFace
   measureChecks ref oneFace
   imageChecks ref oneFace
+  svgAssetChecks ref
+  animatedGraphicsChecks ref oneFace
+  animatedFacesChecks ref oneFace
+  pdfPageSelectionChecks ref
+  rasterPageChecks ref oneFace
   imageRowChecks ref oneFace
   colorKeyChecks ref oneFace
   planChecks ref

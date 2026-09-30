@@ -45,7 +45,7 @@ permitting declaration, a later slice's arm. -/
 inductive Format where
   | png
   | jpeg
-  /-- Page 1 of a PDF, embedded as a form XObject: vector stays vector. -/
+  /-- A selected PDF page, embedded as a form XObject: vector stays vector. -/
   | pdf
   | webp
   | avif
@@ -1344,6 +1344,17 @@ def probeJpx (b : ByteArray) : Except String Source := do
     return { format := .jpx, pxW := xsiz - xo, pxH := ysiz - yo }
   else throw "not a JPEG 2000 file (no signature)"
 
+/-- A PDF page's geometry and resource closure, shared by default and
+explicit page selection. The pixel fields round to whole points; placement
+reads the form's box exactly. -/
+def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
+    Except String Source := do
+  let f ← PdfRead.readForm b page
+  return { format := .pdf
+           pxW := (max 0 f.val.w / spPerPt).toNat
+           pxH := (max 0 f.val.h / spPerPt).toNat
+           form := some f }
+
 /-- Read any asset's header, told apart by signature: PNG, JPEG, a PDF
 whose page 1 reads as a form XObject, and the recognised-but-unembeddable
 containers. Total over every input — the fuzz oracle's claim, not a
@@ -1351,14 +1362,7 @@ theorem: the loops are bounded by the file and every read is checked. -/
 def probe (b : ByteArray) : Except String Source :=
   if sliceEq b 0 pngSig then probePng b
   else if sliceEq b 0 [0xFF, 0xD8] then probeJpeg b
-  else if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then do
-    let f ← PdfRead.readForm b
-    -- The pixel fields are the box rounded to whole points: only the dump
-    -- and the placeholder read them; placement reads the box exactly.
-    return { format := .pdf
-             pxW := (max 0 f.val.w / spPerPt).toNat
-             pxH := (max 0 f.val.h / spPerPt).toNat
-             form := some f }
+  else if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b
   else if sliceEq b 0 [0x52, 0x49, 0x46, 0x46] && sliceEq b 8 [0x57, 0x45, 0x42, 0x50] then
     probeWebp b
   else if sliceEq b 4 [0x66, 0x74, 0x79, 0x70] &&
@@ -1371,6 +1375,14 @@ def probe (b : ByteArray) : Except String Source :=
       sliceEq b 0 [0xFF, 0x4F, 0xFF, 0x51] then
     probeJpx b
   else .error "not a PNG, JPEG, or PDF file (unrecognised signature)"
+
+/-- PDFs resolve the requested physical page. Raster readers discard the
+page value, including zero and out-of-range ordinals: `luatex.def`'s
+`Gread@png` clears `Gin@page`, and `Gread@jpg` aliases it. The ordinary
+probe still owns format validation and its named refusals. -/
+def probePage (b : ByteArray) (page : PdfRead.PageSelection) : Except String Source :=
+  if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b page
+  else probe b
 
 /-! ## The plan: a pure match
 
@@ -1930,34 +1942,87 @@ def decodeBin (b : ByteArray) : Option Plan := do
 
 /-! ## The store: effects as data
 
-An image is a file, so the elaborated document carries only the path it
-wrote (`Ir.imageRefs` lists them); the CLI driver reads and decodes each,
+An image requests a source and a page (`Ir.imageRequests` lists them);
+the CLI driver reads and decodes each,
 and layout and the backends consume this value. An entry whose `info` is
 `none` did not load — the driver has already said why — and every consumer
 places its placeholder box instead. -/
 
-structure Loaded where
+/-- Everything that can change which image reaches a page. Sizing is local
+to the include and does not change the loaded asset. -/
+structure Request where
   src : String
+  page : PdfRead.PageSelection := .first
+  /-- An animated include may use its source SVG for the browser while
+  the selected PDF page supplies the static print face. -/
+  animated : Bool := false
+  deriving Repr, BEq, ReflBEq, LawfulBEq, DecidableEq, Inhabited
+
+/-- The animate manual §6.1 fixes the animation canvas from its first
+frame, independently of the poster. The selected plan still supplies the
+ink; both backends read the separate canvas when sizing the include. -/
+def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
+    Except String (Plan × Option (Dim.Sp × Dim.Sp)) := do
+  let selected ← probePage bytes req.page >>= plan params
+  let canvas ← if req.animated then do
+      let first ← if req.page == .first then pure selected
+        else probe bytes >>= plan params
+      pure (some (first.width, first.height))
+    else pure none
+  return (selected, canvas)
+
+structure Loaded extends Request where
   /-- The relative path the driver resolved, when it differs from `src`: a
   bare graphicx name (`figures/plot`) gains the extension the file on disk
   has, and an HTML link must name it. -/
   href : String := ""
   info : Option Plan := none
+  /-- An animation's canvas comes from its first frame (animate §6.1),
+  even when the selected poster has a different aspect ratio. -/
+  canvasSize : Option (Dim.Sp × Dim.Sp) := none
+  /-- A browser SVG supplied by the driver: original animation bytes or
+  the selected PDF page converted to SVG. It is published as an image
+  asset, never inserted into the document's HTML tree. -/
+  webSvg : Option ByteArray := none
+  /-- A static browser face of the selected animation poster. HTML uses
+  it for print and reduced motion, while `webSvg` carries the animation. -/
+  posterSvg : Option ByteArray := none
+  /-- A mandatory browser-face conversion failed. Keep the native plan,
+  but publish a named placeholder rather than the uncooked source. -/
+  webError : Option String := none
   deriving Inhabited
+
+/-- One intrinsic size for both backends: a successfully loaded image's
+animation canvas, or its own geometry for an ordinary include. -/
+def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
+  en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
+
+/-- The intrinsic box both backends read keeps a declared animation canvas
+independently of the selected poster's geometry. -/
+theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf) :
+    en.size? = some (en.canvasSize.getD (inf.width, inf.height)) := by
+  simp [Loaded.size?, h]
+
+/-- Extension recognition for the browser image format. The CLI still
+validates its print face through the converter and native PDF reader. -/
+def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
 /-- graphicx resolves an extensionless name against its extension list; the
 same convention here, over the formats that embed — `.pdf` first past the
 name as written, graphicx's own order under pdfTeX. -/
 def sourceCandidates (src : String) : List String :=
-  [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
-   src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG"]
+  [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg", src ++ ".svg",
+   src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".SVG"]
 
 structure Store where
   entries : Array Loaded := #[]
   deriving Inhabited
 
+def Store.findRequest? (s : Store) (req : Request) : Option Nat :=
+  s.entries.findIdx? (·.toRequest == req)
+
 def Store.find? (s : Store) (src : String) : Option Nat :=
-  s.entries.findIdx? (·.src == src)
+  s.findRequest? { src }
 
 def Store.get? (s : Store) (i : Nat) : Option Loaded :=
   s.entries[i]?
@@ -1965,8 +2030,11 @@ def Store.get? (s : Store) (i : Nat) : Option Loaded :=
 /-- The decoded image behind a source, when the driver loaded one: the one
 resolving question a consumer asks of the store — `none` is the placeholder
 box, whatever the reason (`Ir.pending` counts exactly these). -/
+def Store.infoRequest? (s : Store) (req : Request) : Option Plan :=
+  (s.entries.find? (·.toRequest == req)).bind (·.info)
+
 def Store.info? (s : Store) (src : String) : Option Plan :=
-  (s.entries.find? (·.src == src)).bind (·.info)
+  s.infoRequest? { src }
 
 /-! ## Fulfilment: the decision half of the image effect
 
@@ -1984,7 +2052,7 @@ def imageUnreadable (src err : String) : Diag :=
 /-- W0601: no file answers the image source. -/
 def imageMissing (src looked : String) : Diag :=
   Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
-    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg added")
+    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
     (subject := some src)
 
 /-- W0602: the image bytes are not a format the engine embeds. -/
@@ -2026,7 +2094,8 @@ file; a file that would not read; or a boundary picture nothing drew,
 carrying the boundary's own diagnostic (E0382, W0379), whose subject
 `fulfil` sets so the refusal names the picture whatever words it chose. -/
 inductive Fetch where
-  | decoded (href : String) (res : Except String Plan)
+  | decoded (href : String) (res : Except String Plan) (webSvg : Option ByteArray)
+      (canvasSize : Option (Dim.Sp × Dim.Sp))
   | missing (looked : String)
   | unreadable (err : String)
   | refused (why : Diag)
@@ -2034,31 +2103,37 @@ inductive Fetch where
 /-- One source's decision: its store entry, and the diagnostic naming the
 gap when there is one. Every arm that leaves `info := none` also returns
 a diagnostic whose subject is the source — `fulfilOne_named`. -/
-def fulfilOne (src : String) : Fetch → Loaded × Option Diag
-  | .decoded href (.ok info) => ({ src, href, info := some info }, none)
-  | .decoded href (.error e) => ({ src, href }, some (imageUndecodable src e))
-  | .missing looked => ({ src }, some (imageMissing src looked))
-  | .unreadable err => ({ src }, some (imageUnreadable src err))
-  | .refused why => ({ src }, some { why with subject := some src })
+def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
+  | .decoded href (.ok info) webSvg canvasSize =>
+    ({ toRequest := req, href, info := some info, webSvg, canvasSize }, none)
+  | .decoded href (.error e) _ _ =>
+    ({ toRequest := req, href }, some (imageUndecodable req.src e))
+  | .missing looked => ({ toRequest := req }, some (imageMissing req.src looked))
+  | .unreadable err => ({ toRequest := req }, some (imageUnreadable req.src err))
+  | .refused why => ({ toRequest := req }, some { why with subject := some req.src })
 
 def fulfilList (entries : Array Loaded) (diags : Array Diag) :
-    List (String × Fetch) → Store × Array Diag
+    List (Request × Fetch) → Store × Array Diag
   | [] => ({ entries }, diags)
   | (src, f) :: rest =>
     fulfilList (entries.push (fulfilOne src f).1)
       (match (fulfilOne src f).2 with | some d => diags.push d | none => diags) rest
 
 /-- The store and the diagnostics one run's reads decide, in the order the
-document requested them (`Ir.imageRefs`, the driver's loop). -/
-def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
+document requested them (`Ir.imageRequests`, the driver's loop). -/
+def fulfilRequests (fetched : Array (Request × Fetch)) : Store × Array Diag :=
   fulfilList #[] #[] fetched.toList
+
+/-- The default first-page request, for callers that only carry paths. -/
+def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
+  fulfilRequests (fetched.map fun (src, f) => ({ src }, f))
 
 /-- A gap is named: whenever the decision leaves no payload, it also returns
 a diagnostic whose subject is the source. -/
-theorem fulfilOne_named (src : String) (f : Fetch) (h : (fulfilOne src f).1.info = none) :
-    ∃ d, (fulfilOne src f).2 = some d ∧ d.subject = some src := by
+theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.info = none) :
+    ∃ d, (fulfilOne req f).2 = some d ∧ d.subject = some req.src := by
   cases f with
-  | decoded href res =>
+  | decoded href res webSvg canvasSize =>
     cases res with
     | ok info => simp [fulfilOne] at h
     | error e => exact ⟨_, rfl, rfl⟩
@@ -2067,14 +2142,18 @@ theorem fulfilOne_named (src : String) (f : Fetch) (h : (fulfilOne src f).1.info
   | refused why => exact ⟨_, rfl, rfl⟩
 
 /-- Every entry the decision writes is the fetched source's, in order. -/
-theorem fulfilOne_src (src : String) (f : Fetch) : (fulfilOne src f).1.src = src := by
+theorem fulfilOne_request (req : Request) (f : Fetch) :
+    (fulfilOne req f).1.toRequest = req := by
   cases f with
-  | decoded href res => cases res <;> rfl
+  | decoded href res webSvg canvasSize => cases res <;> rfl
   | missing _ | unreadable _ | refused _ => rfl
+
+theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.src = req.src :=
+  congrArg Request.src (fulfilOne_request req f)
 
 private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
     (hacc : ∀ en ∈ entries, en.info = none → ∃ d ∈ diags, d.subject = some en.src) :
-    ∀ (fs : List (String × Fetch)) (en : Loaded),
+    ∀ (fs : List (Request × Fetch)) (en : Loaded),
       en ∈ (fulfilList entries diags fs).1.entries → en.info = none →
       ∃ d ∈ (fulfilList entries diags fs).2, d.subject = some en.src := by
   intro fs
@@ -2101,15 +2180,20 @@ private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
 placeholder box every consumer places — has a diagnostic in the same
 run's output whose subject is its source. The image half of the
 resolution gate (`pending_named`). -/
+theorem fulfilRequests_named (fetched : Array (Request × Fetch)) :
+    ∀ en ∈ (fulfilRequests fetched).1.entries, en.info = none →
+      ∃ d ∈ (fulfilRequests fetched).2, d.subject = some en.src :=
+  fulfilList_named #[] #[] (fun _ h => by simp at h) fetched.toList
+
 theorem fulfil_named (fetched : Array (String × Fetch)) :
     ∀ en ∈ (fulfil fetched).1.entries, en.info = none →
       ∃ d ∈ (fulfil fetched).2, d.subject = some en.src :=
-  fulfilList_named #[] #[] (fun _ h => by simp at h) fetched.toList
+  fulfilRequests_named _
 
 private theorem fulfilList_covers (entries : Array Loaded) (diags : Array Diag) :
-    ∀ fs : List (String × Fetch),
-      ((fulfilList entries diags fs).1.entries.map (·.src)).toList =
-        (entries.map (·.src)).toList ++ fs.map (·.1) := by
+    ∀ fs : List (Request × Fetch),
+      ((fulfilList entries diags fs).1.entries.map (·.toRequest)).toList =
+        (entries.map (·.toRequest)).toList ++ fs.map (·.1) := by
   intro fs
   induction fs generalizing entries diags with
   | nil => simp [fulfilList]
@@ -2117,15 +2201,21 @@ private theorem fulfilList_covers (entries : Array Loaded) (diags : Array Diag) 
     obtain ⟨src, f⟩ := p
     simp only [fulfilList]
     rw [ih]
-    simp [Array.toList_map, Array.toList_push, fulfilOne_src]
+    simp [Array.toList_map, Array.toList_push, fulfilOne_request]
 
 /-- **The store covers the request.** The entries are the fetched sources,
-one each, in order: the driver fetches `Ir.imageRefs doc`, so every source
+one each, in order: the driver fetches `Ir.imageRequests doc`, so every source
 the document names has an entry to read. -/
+theorem fulfilRequests_covers (fetched : Array (Request × Fetch)) :
+    (fulfilRequests fetched).1.entries.map (·.toRequest) = fetched.map (·.1) := by
+  rw [← Array.toList_inj, fulfilRequests, fulfilList_covers]
+  simp [Array.toList_map]
+
 theorem fulfil_covers (fetched : Array (String × Fetch)) :
     (fulfil fetched).1.entries.map (·.src) = fetched.map (·.1) := by
-  rw [← Array.toList_inj, fulfil, fulfilList_covers]
-  simp [Array.toList_map]
+  have h := congrArg (·.map Request.src)
+    (fulfilRequests_covers (fetched.map fun (src, f) => ({ src }, f)))
+  simpa [fulfil, Array.map_map, Function.comp_def] using h
 
 /-! ## Sizing
 
@@ -2167,6 +2257,16 @@ structure SizeSpec where
   scaleDen : Nat := 1
   keepAspect : Bool := false
   deriving Repr, BEq, Inhabited
+
+/-- An include's local sizing plus the asset selection shared by both
+backends. An animation's selected page is its static PDF poster. -/
+structure Spec extends SizeSpec where
+  page : PdfRead.PageSelection := .first
+  animated : Bool := false
+  deriving Repr, BEq, Inhabited
+
+def Spec.request (spec : Spec) (src : String) : Request :=
+  { src, page := spec.page, animated := spec.animated }
 
 /-- The placed box, in sp. `iW`/`iH` are the intrinsic physical size. -/
 def resolveSize (spec : SizeSpec) (iW iH : Sp) (textW textH : Sp) : Sp × Sp :=
