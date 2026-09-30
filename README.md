@@ -6,7 +6,8 @@ in one fast run — no TeX installation, no preamble, no aux-file reruns.
 ## Quick start
 
 Prerequisite on macOS: the Xcode Command Line Tools, for the linker
-(`xcode-select --install`).
+(`xcode-select --install`). Documents with SVG images also need the runtime
+conversion tools described below.
 
 ```
 curl -sSf https://elan.lean-lang.org/elan-init.sh | sh
@@ -104,6 +105,21 @@ elements and unsupported timing are diagnosed; use a PDF frame sequence for
 those. `poster=first` and `poster=0` use the SVG's base drawing; later
 numbered posters require a PDF sequence.
 
+These tools must be on the `PATH` of the shell running leantex. One macOS
+setup using Homebrew is:
+
+```sh
+brew install librsvg libxml2 libxslt
+export PATH="$(brew --prefix)/bin:$(brew --prefix libxml2)/bin:$(brew --prefix libxslt)/bin:$PATH"
+command -v xmllint rsvg-convert xsltproc
+```
+
+Keep that PATH setting in the shell configuration used to build documents.
+Existing system XML tools also work; newer XML versions are not required.
+HTML that includes a PDF source additionally needs `pdftocairo`
+(`brew install poppler`). After installing a missing tool, rebuild the same
+document: SVG conversion happens automatically, without a manual PDF export.
+
 HTML publishes the original source or companion SVG unchanged, preserving
 its animation; otherwise it shows the same static poster. Printing HTML or
 requesting reduced motion selects the static poster too. For a PDF sequence,
@@ -154,4 +170,5 @@ bundle (dark variant, chrome) and does not build yet.
 
 Builds and runs on Linux and macOS. On the Amazon Linux 2 host the engine is
 developed on, the `LEAN_CC`/`LIBRARY_PATH` exports in AGENTS.md work around an
-old glibc; macOS needs nothing beyond the quick start.
+old glibc. macOS needs no additional compiler setup beyond the quick start;
+image conversion uses the runtime tools listed above.
