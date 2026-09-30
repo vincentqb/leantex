@@ -42,7 +42,16 @@ CSS is plain declarations/rules without functions, escapes or at-rules;
 presentation attributes admit exactly `url(#ASCII-id)`, without paint-server
 fallback syntax such as `url(#id) red`. Transforms and SMIL timing have their
 own non-resource function syntax. Animated resource/style assignments,
-scripts and foreign objects are refused. This is a refusal boundary, not a
+scripts and foreign objects are refused.
+
+Text and font features are refused too — `text`/`tspan`/`textPath`/`tref`,
+the SVG-font elements, and the `font`/`font-family` presentation attributes
+(`@font-face` is already caught by the at-rule CSS refusal). This is what
+makes the conversion's output a function of its inputs alone: with no glyph
+to shape, `rsvg-convert` and `pdftocairo` never consult the host's installed
+fonts or fontconfig, so the cache key — source content, recipe, tool version
+and engine version — captures everything that can change the bytes, and no
+font/environment fingerprint is owed. This is a refusal boundary, not a
 second XML or CSS parser. -/
 def supportedSvg : String :=
   let localUrl := "(starts-with(normalize-space(.),'url(#') and " ++
@@ -51,7 +60,14 @@ def supportedSvg : String :=
     "translate(substring(normalize-space(.),6,string-length(normalize-space(.))-6)," ++
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-','')='')"
   let cssSyntax := "(contains(.,'(') or contains(.,'\\') or contains(.,'@'))"
+  let textOrFont :=
+    "//*[local-name()='text' or local-name()='tspan' or local-name()='textPath' or " ++
+      "local-name()='tref' or local-name()='altGlyph' or local-name()='altGlyphDef' or " ++
+      "local-name()='altGlyphItem' or local-name()='glyphRef' or local-name()='font' or " ++
+      "local-name()='font-face'] | " ++
+    "//@*[local-name()='font-family' or local-name()='font']"
   let unsupported :=
+    textOrFont ++ " | " ++
     "//processing-instruction() | " ++
     "//*[local-name()='script' or local-name()='foreignObject'] | " ++
     "//@*[local-name()='base' or starts-with(local-name(),'on')] | " ++

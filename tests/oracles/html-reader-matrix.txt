@@ -3,7 +3,7 @@ target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-09-30
 src-key: 431d0e15607e02b1
-browser-face-src-key: 39532f7f79c4c0ef
+browser-face-src-key: 1fb54a97ef434c2a
 browser-face-key: 033b1d0e22ad6f5f
 browser-face: animation animation.assets/i0-multipage.svg ok:225:de6221450c7ed44220bf1c30608e526fab202b63e6ca8b6173e3256dba8e90d8
 browser-face: animation animation.assets/p0-multipage.svg ok:19306:76bd6a5122c75e82b01fb78db815195bf36f3cb7c55eebc7b819b31f1d5b7d30

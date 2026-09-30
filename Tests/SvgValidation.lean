@@ -93,6 +93,10 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
     svgCheck ref s!"SVG validation admits {name}" result.isOk
   for (name, body) in [
       ("network image", "<image href=\"https://example.invalid/tile.png\"/>"),
+      ("text element", "<text x=\"5\" y=\"15\">hi</text>"),
+      ("tspan in text", "<text x=\"5\" y=\"15\"><tspan>hi</tspan></text>"),
+      ("font-family attribute", "<g font-family=\"serif\"><rect width=\"2\" height=\"2\"/></g>"),
+      ("svg font element", "<font id=\"f\"><glyph unicode=\"a\"/></font>"),
       ("protocol-relative image", "<image href=\"//example.invalid/tile.png\"/>"),
       ("absolute image", "<image href=\"/tile.png\"/>"),
       ("empty href", "<image href=\"\"/>"),
