@@ -523,12 +523,6 @@ def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.sources.get a == .text || c.faceCovers a r
 
-def MathAlphabet.resolveChar (coverage : MathAlphabetCoverage)
-    (a : MathAlphabet) (c : Char) : Char :=
-  match a.rangeOf c with
-  | some r => if coverage.remaps a r then a.apply c else c
-  | none => a.apply c
-
 /-- The Latin letters every alphabet maps. -/
 def latinLetters : List Char :=
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toList
