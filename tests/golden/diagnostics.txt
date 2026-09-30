@@ -152,8 +152,6 @@ note[N0017]: no '\documentclass'; the article page model is assumed
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 note[N0018]: 'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand
   help: write \fonts{ math = "..." } with a face that carries this alphabet
-note[N0018]: 'Fira Math' has no sans-serif alphabet for the characters used; ordinary math source glyphs stand
-  help: write \fonts{ math = "..." } with a face that carries this alphabet
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
 note[N0019]: content addressed per backend encodes a per-medium decision by hand
   help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
@@ -223,7 +221,7 @@ warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty
 warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
   help: '{align*}' spells the unnumbered form, which renders the same
 ── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
-warning[W0016]: 'Fira Math' has no bold 'A' (U+1D400); a stand-in keeps the letter
+warning[W0016]: 'Fira Math' has no double-struck 'A' (U+1D538); a stand-in keeps the letter
   help: declare a math face that carries this alphabet: \fonts{ math = ... }
 ── W0101 (config) preamble keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: voffset
