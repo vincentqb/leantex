@@ -46,6 +46,15 @@ in this repo; refer to the private reference corpus abstractly.
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
+- `scripts/cancel-diff.lean` when touching the cancellation geometry
+  (`Math.cancelGeom` and the marks it lays) — an external LuaLaTeX
+  (cancel.sty over FiraMath) vs leantex placement differential over an
+  invented matrix of widths/heights/styles/thickness/room/value cases,
+  needing TeX so never in `lake test`; it gates the reserved-room advance to
+  a cross-engine band and the value direction exactly, and prints the value
+  placement as evidence (leantex sets the value as a superscript, cancel.sty
+  at the arrow tip). `--report` prints without gating, `--selftest` checks
+  the parsers.
 - `lake env lean --run scripts/owed.lean` — what does this engine not yet
   guarantee? Prints every owed obligation (a type-checked statement whose
   proof is open, staged under `Obligations/`) with owner, source, and
