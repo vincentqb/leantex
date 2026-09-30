@@ -265,13 +265,16 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       match ← FontEnv.loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
-        let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
-        let doc := (Ir.resolveMathAlphas coverage f.family doc).1
+        -- The override is one real face: read its own alphabet coverage so a
+        -- math override face is not falsely told it lacks every alphabet, and
+        -- carry the resolver's N0018 diagnostics out instead of dropping them.
+        let coverage := f.mathAlphabetCoverage spec.mathSources
+        let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
         let set : Font.FontSet := {
           fonts := #[f]
           index := singleFaceIndex
           mathAlphabets := coverage }
-        return .ok (set, doc, #[], path)
+        return .ok (set, doc, alphaDiags, path)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
@@ -390,13 +393,16 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       match ← cache.parse face.path with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
-        let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
-        let doc := (Ir.resolveMathAlphas coverage f.family doc).1
+        -- The single fallback face answers its own coverage, and its N0018
+        -- diagnostics join the errors already collected rather than being
+        -- dropped.
+        let coverage := f.mathAlphabetCoverage spec.mathSources
+        let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
         let set : Font.FontSet := {
           fonts := #[f]
           index := singleFaceIndex
           mathAlphabets := coverage }
-        return .ok (set, doc, diags, face.path)
+        return .ok (set, doc, diags ++ alphaDiags, face.path)
   -- The math face answers its alphabet ranges once. Resolve the shared IR
   -- before `docScalars`, so a wholly unavailable alphabet never becomes a
   -- request the host fallback scan can answer by accident.
@@ -407,8 +413,12 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       let (resolved, ds) := Ir.resolveMathAlphas coverage f.family doc
       (resolved, coverage, ds)
     | none =>
+      -- No math face resolved: the coverage carries no range, so the resolver
+      -- names every used alphabet as lost (N0018). Keep those diagnostics —
+      -- they are appended once below, so the normal path is not doubled.
       let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
-      ((Ir.resolveMathAlphas coverage "math face" doc).1, coverage, #[])
+      let (resolved, ds) := Ir.resolveMathAlphas coverage "math face" doc
+      (resolved, coverage, ds)
   diags := diags ++ alphaDiags
   -- Per-glyph fallback: map every scalar the resolved document uses to the first
   -- declared face covering it; scalars none covers go to the scan.
