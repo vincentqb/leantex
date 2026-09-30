@@ -4554,8 +4554,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- animate §6.1 fixes the canvas to frame one. A later poster's natural
     -- ratio must not replace it once the browser decodes the image.
     let style := match canvas? with
-      | some (w, h) => some (style.getD "" ++
-          s!"; aspect-ratio: {w} / {h}; object-fit: fill")
+      | some (w, h) =>
+        let ar := s!"aspect-ratio: {w} / {h}; object-fit: fill"
+        some (match style with | some s => s ++ "; " ++ ar | none => ar)
       | none => style
     let requestAttrs := match index? with
       | some k => if loaded?.any pdfPageImg then #[("data-image-index", toString k)] else #[]
@@ -4563,9 +4564,16 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     if loaded?.any (·.webError.isSome) then
       let attrs := pictureAltAttrs (figureWord cfg.locale) alt
       let label := (attrOf? attrs "aria-label").getD ""
+      -- A failed conversion still reserves the exact intrinsic pixel box, so
+      -- the page keeps the same geometry a successful face would have.
+      let dims := match pixels? with
+        | some (pw, ph) => [s!"width: {pw}px", s!"height: {ph}px"]
+        | none => []
+      let styleText := String.intercalate "; "
+        (["display: inline-block"] ++ dims ++ (style.map (fun s => [s])).getD [])
       acc.push (Html.elem "span" #[Html.text label]
         (attrs ++ requestAttrs ++ #[("data-image-src", href),
-          ("style", "display: inline-block; " ++ style.getD "")]))
+          ("style", styleText)]))
     else
     let attrs := #[("src", href)] ++ requestAttrs ++ imgAltAttrs alt ++
       (match pixels? with

@@ -31,6 +31,30 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     { en with webError := some "poster conversion failed" } }
   t "a failed browser conversion preserves the native poster and canvas"
     (placements (layoutOf fonts doc (imgs := failed)) == shipped)
+  -- req: a failed browser-face conversion still reserves the image's exact
+  -- intrinsic pixel box in the placeholder, so the page does not reflow.
+  let (_, failedTree, _) := HtmlDoc.emitTree { imgs := failed } doc
+  let failedSpans := elemAttrsList (· == "span") #[] failedTree.toList
+  t "a failed conversion placeholder reserves the exact intrinsic pixel box"
+    (failedSpans.any fun (_, attrs) =>
+      attrs.any fun (key, value) => key == "style" &&
+        hasStr value "width: 160px" && hasStr value "height: 107px")
+  -- req: a generated style never begins with a stray separator. An unsized
+  -- animation has only the canvas aspect-ratio, which must not lead with ';'.
+  let barePlan : Image.Plan := { pxW := 60, pxH := 120 }
+  let bareStore : Image.Store := { entries := #[
+    { src := "sequence.pdf", animated := true, info := some barePlan,
+      canvasSize := some (Dim.pt 120, Dim.pt 80), webSvg := some svg,
+      posterSvg := some svg }] }
+  let bare := (elabStr (dvDoc ""
+    "\\animategraphics[alt={Moving square}]{10}{sequence.pdf}{}{}")).1
+  let (_, bareTree, _) := HtmlDoc.emitTree { imgs := bareStore } bare
+  let bareImgs := elemAttrsList (· == "img") #[] bareTree.toList
+  t "an unsized animation declares the canvas without a leading separator"
+    (bareImgs.any fun (_, attrs) =>
+      attrs.any fun (key, value) => key == "style" &&
+        hasStr value "aspect-ratio: " && hasStr value "object-fit: fill" &&
+        !value.startsWith ";" && !value.startsWith " ")
   let (_, tree, _) := HtmlDoc.emitTree { imgs } doc
   let images := elemAttrsList (· == "img") #[] tree.toList
   t "HTML declares the same first-frame aspect ratio"
