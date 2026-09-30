@@ -1699,8 +1699,13 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mathbf keeps the spacing classes: x+y bolds with its medium spaces"
     (widthOf "$\\mathbf{x+y}$" ==
       adv mbase '𝐱' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝐲')
-  t "boldsymbol bolds a Greek variable italic"
-    (glyphChars "$\\boldsymbol{\\beta}$" == #['𝜷'])
+  -- \boldsymbol/\bm is near-identity here: with no bold math version
+  -- declared, LuaLaTeX leaves \boldsymbol{\beta} the italic β (measured
+  -- against four math faces in scripts/math-alphabet-diff.lean, `bsym`
+  -- rows). bfit installs no range, so the stack falls it through to the
+  -- source scalar rather than over-bolding.
+  t "boldsymbol leaves a Greek variable at its source italic"
+    (glyphChars "$\\boldsymbol{\\beta}$" == #['𝛽'])
   -- \boldsymbol/\bm carry no digits: with no bold math version, LuaLaTeX
   -- leaves \boldsymbol{5} a plain 5 (measured against four math faces in
   -- scripts/math-alphabet-diff.lean), while \mathbf still takes the bold
