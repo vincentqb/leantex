@@ -1349,10 +1349,13 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((List.range 3).flatMap fun slot =>
       [((slot, 400, false), 0), ((slot, 700, false), 0),
        ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
+  let symSources : Math.MathAlphabetSources := { rm := .sym }
+  let alphaCoverage := fira.mathAlphabetCoverage symSources
   let mfs : Font.FontSet := {
     fonts := #[serif, fira]
     index := allSlots
-    math := some 1 }
+    math := some 1
+    mathAlphabets := alphaCoverage }
   let geom : Layout.Geom := {}
   let base := geom.fontSize
   -- The engine sets the math face at the size that matches its x-height to
@@ -1373,6 +1376,85 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let adv (size : Dim.Sp) (c : Char) : Dim.Sp := (fira.advance c : Int) * size / upem
   let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
   let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
+
+  -- The math-face/alphabet boundary, asserted on artifacts rather than an
+  -- IR dump. Fira has no script range, while this synthetic host face does;
+  -- resolving first must keep the host face out of both backend inputs.
+  let scriptO := UInt32.ofNat '𝒪'.toNat
+  let fakeGid := UInt32.ofNat ((serif.gid 'O').getD 0)
+  let fakeHost : Font.Font := { serif with
+    family := "Synthetic Host Arsenal"
+    psName := "SyntheticHostArsenal"
+    cmap := (serif.cmap.push (scriptO, scriptO, fakeGid)).qsort (fun a b => a.1 < b.1) }
+  let alphaFs : Font.FontSet := { mfs with
+    fonts := #[serif, fira, fakeHost]
+    fallback := #[('𝒪', 2)] }
+  let alphaRaw := (Elab.run "synthetic.tex" "$\\mathcal{O}$").1
+  let (alphaDoc, alphaDiags) :=
+    Ir.resolveMathAlphas alphaCoverage fira.family alphaRaw
+  let alphaOut := Layout.run geom alphaFs none alphaDoc
+  let alphaRuns := (bodyLines alphaOut).flatMap (·.segs)
+  let alphaRun := alphaRuns.findSome? fun s => match s with
+    | .run idx _ _ w glyphs _ _ _ _ _ _ =>
+      if glyphs.any (·.2.1 == '𝑂') then some (idx, w) else none
+    | _ => none
+  t "unsupported calligraphic uses ordinary italic from the primary math face"
+    (alphaRun == some (1, adv mbase '𝑂'))
+  t "unsupported calligraphic never selects a host fallback carrying script O"
+    (!alphaRuns.any fun s => match s with
+      | .run 2 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '𝒪')
+      | _ => false)
+  t "unsupported calligraphic asks fallback for neither script O nor W0009"
+    (!(Layout.docScalars alphaDoc).contains '𝒪' &&
+      (Layout.docScalars alphaDoc).contains '𝑂' &&
+      !alphaOut.diags.any (·.code == "W0009"))
+  let alphaTree := HtmlDoc.blockNode { fonts := some alphaFs } alphaDoc.body[0]!
+  t "typed HTML carries the same ordinary italic scalar"
+    (nodeTextOne "" alphaTree == "𝑂")
+  t "the missing alphabet is named once by alphabet"
+    ((alphaDiags.filter (·.code == "N0018")).map (fun d => (d.subject, d.message)) ==
+      #[(some "math-alpha:cal",
+        "'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand")])
+  let twiceRaw := (Elab.run "synthetic.tex"
+    "$\\mathcal{O}$ and $\\mathcal{P}$ and $\\mathfrak{Q}$").1
+  let (_, twiceDiags) := Ir.resolveMathAlphas alphaCoverage fira.family twiceRaw
+  t "repeated misses report once per alphabet, not once per glyph"
+    ((twiceDiags.filter (·.code == "N0018")).map (·.subject) ==
+      #[some "math-alpha:cal", some "math-alpha:frak"])
+
+  -- A covered range with one missing scalar is different: the range stays
+  -- mapped, so the existing per-character fallback remains the mechanism.
+  let holeCoverage : Math.MathAlphabetCoverage := { alphaCoverage with
+    covered := alphaCoverage.covered.push (.cal, .latinUpper) }
+  let (holeDoc, holeDiags) := Ir.resolveMathAlphas holeCoverage fira.family alphaRaw
+  let holeOut := Layout.run geom { alphaFs with mathAlphabets := holeCoverage } none holeDoc
+  let holeRuns := (bodyLines holeOut).flatMap (·.segs)
+  t "a hole in a supported alphabet keeps per-character fallback"
+    (holeDiags.all (·.code != "N0018") &&
+      holeOut.diags.any (·.code == "W0009") &&
+      holeRuns.any fun s => match s with
+        | .run 2 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '𝒪')
+        | _ => false)
+
+  -- unicode-math's package option is carried as typed configuration. Its
+  -- five defaults are text-sourced; this document explicitly puts roman on
+  -- the symbol face, while the other four retain their existing semantics.
+  let (umDoc, umDiags) := Elab.run "synthetic.tex"
+    "\\documentclass{article}\\usepackage[mathrm=sym]{unicode-math}\\begin{document}$\\mathrm{R}$\\end{document}"
+  t "unicode-math source options elaborate without a configuration loss"
+    (umDiags.all (fun d => d.severity != .error && d.code != "W0101"))
+  t "mathrm=sym reaches the typed source configuration without changing its peers"
+    (umDoc.fonts.mathSources.rm == .sym && umDoc.fonts.mathSources.it == .text &&
+      umDoc.fonts.mathSources.bf == .text && umDoc.fonts.mathSources.sf == .text &&
+      umDoc.fonts.mathSources.tt == .text)
+  t "Fira coverage follows unicode-math range anchors, not one isolated hole"
+    (!alphaCoverage.faceCovers .cal .latinUpper &&
+      !alphaCoverage.faceCovers .cal .latinLower &&
+      alphaCoverage.faceCovers .bb .latinUpper)
+  t "text-sourced mathsf remains on the pre-existing path"
+    (!alphaCoverage.faceCovers .sf .latinUpper &&
+      alphaCoverage.remaps .sf .latinUpper)
+
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
   let lineOf (src : String) : Layout.LineOut :=
@@ -1672,17 +1754,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         + adv mbase 'r' + mu mbase 3 + adv mbase '𝑦')
   t "ensuremath in text enters math"
     (glyphsOf "" "\\ensuremath{x^2}" == #['𝑥', '2'])
-  -- The diagnosed synthesis: an alphabet scalar no face covers renders as
-  -- its base letter — bold/italic from the text face where that is the
-  -- alphabet's essence, the plain letter for the shape alphabets — and
-  -- N0018 names the styling difference. Never dropped: E0405 stays for
-  -- scalars with no stand-in.
+  -- An alphabet range the selected math face does not carry keeps the
+  -- source's ordinary math scalar. The face-level resolver has already
+  -- named the alphabet once, so layout neither consults host fallback nor
+  -- repeats a per-glyph note.
   let calOut := layoutOf mfs (Elab.run "t" "$\\mathcal{L}$").1 geom
-  t "an uncovered calligraphic letter sets plain, named N0018"
+  t "an unsupported calligraphic range keeps ordinary italic, named once"
     ((calOut.diags.filter (·.code == "E0405")).isEmpty &&
+      (calOut.diags.filter (·.code == "W0009")).isEmpty &&
       (calOut.diags.filter (·.code == "N0018")).map (·.message) ==
-        #["'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in"] &&
-      glyphChars "$\\mathcal{L}$" == #['L'])
+        #["'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand"] &&
+      glyphChars "$\\mathcal{L}$" == #['𝐿'])
   t "a covered alphabet stays silent"
     ((layoutOf mfs (Elab.run "t" "$\\mathbb{R}$").1 geom).diags.all
       (·.code != "N0018"))

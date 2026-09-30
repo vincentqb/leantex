@@ -418,7 +418,15 @@ def reports : List Report := [
     pins := [check% overlaySetChecks, thm% Ir.OverlaySpec.selects_exact,
       thm% Ir.OverlaySpec.union_selects_exact]
     accept := ["four-step native and browser slides select the first and fourth steps, with the interval spelling retained as an independent control"]
-    state := .guarded "db831892" .before .author }
+    state := .guarded "db831892" .before .author },
+  { id := "R64", date := "2026-09-30"
+    what := "an unavailable calligraphic alphabet selected an unrelated host glyph instead of the math face's ordinary source glyph"
+    pins := [thm% Math.resolveMathAlphas_covers,
+      thm% Math.resolveMathAlphas_fixed_point,
+      thm% Layout.resolveMathAlphas_layout_agree,
+      thm% MathMl.resolveMathAlphas_html_agree,
+      check% mathChecks]
+    state := .guarded "236d3b06" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

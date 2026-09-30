@@ -310,7 +310,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0014 => ("0014", .degraded, "alignment row disagrees with its grid's columns; padded")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
   | .N0016 => ("0016", .info, "no math face declared; the engine picked one and says which")
-  | .N0018 => ("0018", .info, "math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named")
+  | .N0018 => ("0018", .info, "math alphabet unavailable in the selected face; source glyphs stand")
   | .N0017 => ("0017", .info, "no document class declared; the article page model is assumed")
   | .N0019 => ("0019", .info, "a backend conditional in content names a class or kernel decision made by hand")
   | .N0020 => ("0020", .info, "a local style file is read as part of the preamble")

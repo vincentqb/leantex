@@ -957,14 +957,18 @@ def codeSources : IO (Array (String × List String)) := do
     out := out.push (f.toString, appliedCodes (stripNonCode (← IO.FS.readFile f)))
   return out
 
-/-- The layout spelling nearly every test claim uses: geometry from the
-document's own page, no hyphenation, no images — each overridable where a
-claim needs a narrower measure, patterns, or a store. -/
+/-- A document laid out as the driver hands it to the backends: math
+alphabet scopes resolve against the selected face before the fallback census
+or layout sees their scalars. Resolution diagnostics lead layout diagnostics,
+as they do in the driver. -/
 def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
     (pats : Option Hyphen.Patterns := none)
     (imgs : Image.Store := {}) : Layout.Out :=
-  Layout.run geom fonts pats doc imgs
+  let family := fonts.math.bind (fonts.fonts[·]?) |>.map (·.family) |>.getD "math face"
+  let (doc, alphaDiags) := Ir.resolveMathAlphas fonts.mathAlphabets family doc
+  let out := Layout.run geom fonts pats doc imgs
+  { out with diags := alphaDiags ++ out.diags }
 
 /-- The font set a golden fixture lays out under in the suite: `oneFace`,
 plus the math face a build would resolve — `mathSet` (the shipped Fira
@@ -989,6 +993,9 @@ def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face
             math := some oneFace.fonts.size }
         | .error _ => pure oneFace
       | none => pure oneFace
+  let fs := match fs.math.bind (fs.fonts[·]?) with
+    | some f => { fs with mathAlphabets := f.mathAlphabetCoverage doc.fonts.mathSources }
+    | none => fs
   let uncovered := (Layout.docScalars doc).filter fun ch =>
     0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF &&
       fs.fonts.all fun f => (f.gid ch).isNone
@@ -1014,7 +1021,8 @@ def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
     | .error e => throw (IO.userError s!"fixture fonts: FiraMath unparsable: {e}")
   return { oneFace with
     fonts := oneFace.fonts.push fira
-    math := some oneFace.fonts.size }
+    math := some oneFace.fonts.size
+    mathAlphabets := fira.mathAlphabetCoverage {} }
 
 /-- The four shipped Source Serif faces in every slot — regular 0, bold 1,
 italic 2, bold italic 3 — and Fira Math as the math face, 4: a set in which
@@ -1034,7 +1042,8 @@ def serifFacesSet : IO (Option Font.FontSet) := do
     index := ((List.range 3).flatMap fun slot =>
       [((slot, 400, false), 0), ((slot, 700, false), 1),
        ((slot, 400, true), 2), ((slot, 700, true), 3)]).toArray
-    math := some 4 }
+    math := some 4
+    mathAlphabets := loaded[4]!.mathAlphabetCoverage {} }
 
 /-- Every shipped line, furniture included, in page order: what a claim
 about absolute placement (a fil sandwich, a frame's vertical distribution)
@@ -1154,10 +1163,11 @@ def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
   doc.body.any fun b => p b ||
     (match b with | .center xs => xs.any p | _ => false)
 
-/-- Diagnostics after layout too. -/
+/-- Diagnostics after layout too, through the same pre-layout alphabet
+resolution as every test artifact. -/
 def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
   let (doc, ds) := elabStr src
-  ds ++ (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).diags
+  ds ++ (layoutOf fonts doc).diags
 
 /-- Diagnostics after the HTML backend. -/
 def dvH (src : String) : Array Diag :=

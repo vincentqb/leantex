@@ -809,7 +809,9 @@ def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon",
    "language", "version"]
 
-def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
+def fontKeys : List String :=
+  ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
+   "mathrm", "mathit", "mathbf", "mathsf", "mathtt"]
 
 /-- Named page sizes, in sp: the ISO 216 A-series at TeX's big-point
 rounding (A4 595 × 842 pt, A5 420 × 595 pt) and the ANSI/US office sizes
@@ -11691,27 +11693,41 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "dir", .str d =>
       spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
     | key, v =>
-      match fontVariantKey? key, v with
-      | some variant, .str f =>
-        spec := spec.declareFace variant f
-      | some _, _ =>
-        evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos))
-      | none, _ =>
-        if fontKeys.contains key then
-          let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
-          evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key expected v pos))
-        else
-          evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
-            (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
-              "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)"]) pos))
-    -- A family slot is a scalar; `dir` is a list and a dotted face is
-    -- fontspec's own replace idiom, so only the families report an
-    -- overwrite. The aliases fold onto the slot they name: `rm` after
-    -- `body` is the same setting twice.
+      match Math.MathAlphabet.sourceKey? key with
+      | some a =>
+        match v with
+        | .ident source =>
+          match Math.MathAlphabetSource.ofName? source with
+          | some value =>
+            spec := { spec with mathSources := spec.mathSources.set a value }
+          | none =>
+            evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key
+              "sym or text" v pos))
+        | _ =>
+          evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key
+            "sym or text" v pos))
+      | none =>
+        match fontVariantKey? key, v with
+        | some variant, .str f =>
+          spec := spec.declareFace variant f
+        | some _, _ =>
+          evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos))
+        | none, _ =>
+          if fontKeys.contains key then
+            let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
+            evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key expected v pos))
+          else
+            evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
+              (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
+                "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)"]) pos))
+    -- A family slot or alphabet source is a scalar; `dir` is a list and a
+    -- dotted face is fontspec's own replace idiom, so only those scalar
+    -- settings report an overwrite. The aliases fold onto their family.
     if evs.size == before then
       let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
       let canonical := (aliases.lookup e.key).getD e.key
-      if ["body", "sans", "mono", "math"].contains canonical then
+      if ["body", "sans", "mono", "math"].contains canonical ||
+          (Math.MathAlphabet.sourceKey? canonical).isSome then
         evs := evs.push (.scalar "fonts" canonical (renderValue e.value) pos)
   return (spec, evs)
 

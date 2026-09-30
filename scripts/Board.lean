@@ -1499,7 +1499,10 @@ def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.Fo
     IO Font.FontSet := do
   let withMath (path : String) : IO Font.FontSet := do
     match ← loadFont cache path with
-    | some f => pure { oneFace with fonts := oneFace.fonts.push f, math := some oneFace.fonts.size }
+    | some f => pure { oneFace with
+        fonts := oneFace.fonts.push f
+        math := some oneFace.fonts.size
+        mathAlphabets := f.mathAlphabetCoverage doc.fonts.mathSources }
     | none => pure oneFace
   let fs ← if doc.fonts.math.isSome then withMath (fontsDir / "FiraMath-Regular.otf").toString
     else if (Layout.docMathScalars doc).isEmpty then pure oneFace
@@ -1610,8 +1613,11 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
     (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
   let (doc, bibDiags) ← Input.resolveBibliography file doc spans.bib
   let fs ← fontSetFor cache oneFace faces fontsDir doc
+  let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
+  let (doc, alphaDiags) := Ir.resolveMathAlphas fs.mathAlphabets family doc
   let (store, imgDiags, read) ← storeFor corpus doc
-  if (Diag.resolveAll doc.allow false (elabDiags ++ bibDiags ++ imgDiags)).errors > 0 then
+  if (Diag.resolveAll doc.allow false
+      (elabDiags ++ bibDiags ++ alphaDiags ++ imgDiags)).errors > 0 then
     return none
   let css : HtmlDoc.CssMode := match cssFor doc.output.css with
     | .own => .own

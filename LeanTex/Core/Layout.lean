@@ -2309,6 +2309,16 @@ the note that names an engine-picked face is gated on. -/
 def docMathScalars (doc : Doc) : Array Char :=
   (docScalarAcc doc).math
 
+/-- The PDF layout's fallback census projects the same resolved math list
+the shared pass produced: the exact formula-leaf fold used by `docScalars`
+adds that list's scalars and no backend-local alphabet mapping. -/
+theorem resolveMathAlphas_layout_agree (coverage : Math.MathAlphabetCoverage)
+    (body : Math.MList) :
+    (leafScalars #[] #[]
+      #[.formula false "" (Math.resolveMathAlphas coverage body)]).2 =
+        Math.MList.scalarsList #[] (Math.resolveMathAlphas coverage body) := by
+  rfl
+
 def docScalars (doc : Doc) : Array Char := Id.run do
   let acc := docScalarAcc doc
   let texts := acc.texts.push (String.ofList acc.math.toList)
@@ -3123,6 +3133,8 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           missing := missing.push (e.idx, c)
     return (items.push (.box w cur e.color e.link glyphs size e.leading e.underline raise e.ground e.attr), missing)
   | .list body =>
+    layMathTail e st raise (Math.degrade body.classes) none acc body
+  | .alpha _ body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
     -- `\genfrac`'s style argument sets the whole construct in its style

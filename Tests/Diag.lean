@@ -1293,7 +1293,8 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   let withMath : Font.FontSet := {
     fonts := #[sans, fira]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray
-    math := some 1 }
+    math := some 1
+    mathAlphabets := fira.mathAlphabetCoverage {} }
   -- The witness registry is built here and read by two claims: this block's
   -- voice lint, and the name-refusal registry's closure against the code list.
   nameRefusalRegistryChecks ref one mapped withMath probeOf
