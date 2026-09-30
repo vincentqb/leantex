@@ -312,6 +312,15 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
         throw s!"object {e.num}: {err}"
   return verified
 
+/-- A source whose file includes are fulfilled before elaboration. The
+filename establishes the input directory even when the source itself is
+held in memory, so synthetic probes and file fixtures use the same path. -/
+def elabInputSrc (file src : String) : IO (Ir.Doc × Array Diag) := do
+  let (tokens, lexDs) := Lex.lex file src
+  let (raws, parseDs) := Parse.parse file tokens
+  let (raws, inputDs, _) ← Input.expandInputs file raws
+  return Elab.runRaws file raws (lexDs ++ parseDs ++ inputDs)
+
 /-- A `tests/corpus/sty-parity` fixture run the way the driver runs it: the
 splice fixpoint (`Input.expandInputs`) first, so a local `.sty` beside the
 fixture is read, then elaboration, then the N0020 records built from the
@@ -600,13 +609,17 @@ def compatRowSelfLoads (pkg call : String) : Bool :=
   hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
 
 /-- The document a compat-index row elaborates as: the call at its declared
-place, with the package loaded unless the call loads it itself. -/
+place, with the package loaded unless the call loads it itself. A frame
+uses a presentation class and loads an ordinary package in its preamble. -/
 def compatRowSrc (pkg place call : String) : String :=
   let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
   if place == "pre" then
     s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
   else if place == "frame" then
-    s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
+    let isClass := Compat.presentationClasses.contains pkg
+    let cls := if isClass then pkg else "beamer"
+    let load := if isClass then "" else load
+    s!"\\documentclass\{{cls}}\n{load}\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
   else
     s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
 
