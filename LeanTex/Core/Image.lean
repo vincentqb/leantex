@@ -2066,10 +2066,9 @@ def imageMissing (src looked : String) : Diag :=
     (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
     (subject := some src)
 
-/-- W0602: the image bytes are not a format the engine embeds. -/
+/-- W0602: image decoding or conversion failed; the cause carries its recovery. -/
 def imageUndecodable (src err : String) : Diag :=
   Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
-    (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
     (subject := some src)
 
 /-- W0603: the source carries a colour profile the plan did not. -/

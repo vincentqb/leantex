@@ -84,10 +84,33 @@ def browserFaceContract : String :=
     commandText "pdftocairo" (pdfSvgArgs "<page>" input output),
     "pdftocairo root " ++ pdfSvgRoot]
 
-private def runChecked (tool : String) (args : Array String) : IO String := do
-  let ran ← IO.Process.output { cmd := tool, args }
+private def toolRecovery (tool : String) : String :=
+  let formula := match tool with
+    | "xmllint" => "libxml2"
+    | "xsltproc" => "libxslt"
+    | "rsvg-convert" => "librsvg"
+    | "pdftocairo" => "poppler"
+    | _ => ""
+  let install := if formula.isEmpty then s!"install '{tool}'"
+    else s!"install '{tool}' (macOS: brew install {formula})"
+  install ++ s!" and ensure '{tool}' is executable on the PATH used to run leantex"
+
+private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
+    (tool : String) (args : Array String) : IO String := do
+  let recovery := toolRecovery tool
+  let ran ← try runTool { cmd := tool, args } catch e =>
+    let detail := s!"{tool}: {e}"
+    throw <| IO.userError (match e with
+      | .noFileOrDirectory .. | .permissionDenied .. => detail ++ "; " ++ recovery
+      | _ => detail)
   if ran.exitCode != 0 then
-    throw <| IO.userError s!"{tool} exited {ran.exitCode}: {ran.stderr.trimAscii.toString}"
+    let stderr := ran.stderr.trimAscii.toString
+    -- Lean's POSIX exec failure has this exact exit and stderr pair.
+    -- A converter's own exit 255 is not evidence that it failed to start.
+    let hint := if ran.exitCode == 255 &&
+        stderr == s!"could not execute external process '{tool}'"
+      then "; " ++ recovery else ""
+    throw <| IO.userError s!"{tool} exited {ran.exitCode}: {stderr}{hint}"
   return ran.stdout
 
 /-- SAX distinguishes an exporter's doctype identifier from declarations
@@ -114,40 +137,42 @@ recovery. Both validation passes read the same captured file. Namespace
 aliases and character references reach XPath through libxml. An inert
 doctype is removed only from this temporary input, so the converter never
 receives it; the authored browser source stays byte-identical. -/
-private def checkSvgFile (input : System.FilePath) : IO Unit := do
-  let sax ← runChecked "xmllint" (saxArgs input)
+private def checkSvgFile (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
+    (input : System.FilePath) : IO Unit := do
+  let sax ← runChecked runTool "xmllint" (saxArgs input)
   -- premise: Tests.svgDoctypeChecks — identification events supply no declarations.
   let hasDtd ← match svgSaxBoundary sax with
     | .error err => throw <| IO.userError err
     | .ok hasDtd => pure hasDtd
-  let result ← runChecked "xmllint" (xpathArgs input)
+  let result ← runChecked runTool "xmllint" (xpathArgs input)
   unless result.trimAscii.toString == "true" do
     throw <| IO.userError "SVG resource boundary requires fragment-only references and plain CSS; paint servers must be exactly url(#id), without fallback syntax; DTD declarations, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
   if hasDtd then
-    IO.FS.writeFile input (← runChecked "xmllint" (dropDtdArgs input))
+    IO.FS.writeFile input (← runChecked runTool "xmllint" (dropDtdArgs input))
 
 /-- Convert one captured input. A failed spawn, nonzero exit or absent
 output is an error, including when a failed process left an output file.
 SVG inputs pass the support boundary before librsvg sees them. -/
 private def convert (tool inputExt outputExt : String)
     (args : System.FilePath → System.FilePath → Array String) (bytes : ByteArray)
-    (terminal : Bool := false) :
+    (terminal : Bool := false)
+    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := fun args => IO.Process.output args) :
     IO (Except String ByteArray) := do
   try
     IO.FS.withTempDir fun dir => do
       let input := dir / ("source." ++ inputExt)
       let output := dir / ("face." ++ outputExt)
       IO.FS.writeBinFile input bytes
-      if inputExt == "svg" then checkSvgFile input
+      if inputExt == "svg" then checkSvgFile runTool input
       if terminal then
         let style := dir / "terminal.xsl"
         IO.FS.writeFile style SvgPoster.stylesheet
-        IO.FS.writeFile input (← runChecked "xsltproc" (terminalArgs style input))
-      discard <| runChecked tool (args input output)
+        IO.FS.writeFile input (← runChecked runTool "xsltproc" (terminalArgs style input))
+      discard <| runChecked runTool tool (args input output)
       let result ← IO.FS.readBinFile output
       if result.isEmpty then throw <| IO.userError s!"{tool} produced an empty image"
       return .ok result
-  catch e => return .error s!"{tool}: {e}"
+  catch e => return .error e.toString
 
 /-- Validate captured SVG bytes before accepting a browser companion. An
 error lets the caller fall back to converting its selected PDF page.
@@ -170,12 +195,13 @@ def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
 terminal-value projection. The caller retains the captured SVG unchanged
 for the browser. Unsupported timelines fail rather than paint the base. -/
 def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
-    (page : PdfRead.PageSelection := .first) :
+    (page : PdfRead.PageSelection := .first)
+    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := fun args => IO.Process.output args) :
     IO (Except String Image.Plan) := do
   match svgPosterAtEnd page with
   | .error err => return .error err
   | .ok terminal =>
-    let pdf ← convert "rsvg-convert" "svg" "pdf" (rsvgArgs "pdf") bytes terminal
+    let pdf ← convert "rsvg-convert" "svg" "pdf" (rsvgArgs "pdf") bytes terminal runTool
     return pdf >>= fun b => Image.probe b >>= Image.plan params
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on
