@@ -1,0 +1,22 @@
+% Generator for multipage.pdf, the multi-page vector fixture beside this
+% file:
+%
+%   ./.lake/build/bin/leantex tests/corpus/figures/multipage.tex
+%
+% run from the repository root regenerates it (the engine's own output is
+% the fixture, so the reader's page selection is tested against the writer's
+% own multi-page output -- xref stream, object stream, embedded font and
+% all). Synthetic content, invented text. It names a shipped corpus face so
+% regeneration is hermetic on any machine. Two pages let a document select
+% page 2 (a non-first PDF page) and an \animategraphics poster read a
+% specific frame.
+\documentclass{article}
+\fonts{ dir = "../fonts", body = "Open Sans" }
+
+\begin{document}
+\section{Frame One}
+The first synthetic frame.
+\clearpage
+\section{Frame Two}
+The second synthetic frame.
+\end{document}

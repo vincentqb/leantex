@@ -158,7 +158,7 @@ def goldenNames : List String :=
    "chrome", "footer-left", "footer-mixed", "footer-collide", "lists",
    "lists-styled", "lists-deck", "headroom",
    "marker-styled", "marker-content",
-   "trio-page", "trio-deck", "trio-card", "valign", "images", "figures", "math",
+   "trio-page", "trio-deck", "trio-card", "valign", "images", "figures", "page-select", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
    "bibliography", "resume-data",
    "icons",

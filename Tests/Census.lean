@@ -684,6 +684,11 @@ def censusTable :
       hasStr (censusText c) "Before the figure"),
     ("the inline sentence ships around its embedded page",
       hasStr (censusText c) "And extensionless")]),
+  ("page-select", fun _ c => [
+    ("one page", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "A selected page"),
+    ("the prose naming the selected page ships",
+      hasStr (censusText c) "embeds the second page")]),
   ("webpage", fun _ c => [
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Doe"),

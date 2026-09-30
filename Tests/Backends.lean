@@ -2772,6 +2772,7 @@ def pdfCensusTable :
   ("valign", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
   ("figures", (1, 3, 0, 2, 0, 0, 0, none, ["FlateDecode"])),
+  ("page-select", (1, 3, 0, 1, 0, 0, 0, none, ["FlateDecode"])),
   ("math", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("webpage", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),
   ("quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

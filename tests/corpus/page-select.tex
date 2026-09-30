@@ -1,0 +1,16 @@
+% Selecting a non-first page of a multi-page PDF: page 2 of the synthetic
+% multipage.pdf fixture beside this file (in figures/). The browser face
+% converts exactly that page; layout embeds its box as a form XObject.
+\documentclass{article}
+\usepackage{graphicx}
+\fonts{ dir = "fonts", body = "Open Sans" }
+
+\begin{document}
+\section{A selected page}
+This document embeds the second page of a synthetic multi-page figure.
+
+\begin{center}
+\includegraphics[width=0.5\textwidth, page=2, alt={The second synthetic
+frame of a multi-page figure}]{figures/multipage.pdf}
+\end{center}
+\end{document}
