@@ -2974,7 +2974,7 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size none false
+  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size none {}
     raise none (.leaf 0)
 
 /-- The widths the synthetic pages' faces declare, in millionths of the
@@ -3540,7 +3540,8 @@ tracks. -/
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ | .rule _ _ _ _ | .gap _ _ => false
+    | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+    | .gap _ _ | .decoratedGap _ _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
 tags, not from the stream: one block for its fills when it has any, one
@@ -3553,13 +3554,15 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
   let rules := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
-      | .rule _ _ _ _ => acc + 1
-      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
+      | .rule _ _ _ _ | .decoration _ _ _ _ _ => acc + 1
+      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _
+      | .gap _ _ | .decoratedGap _ _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .image _ _ _ => acc + 1
-      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
+      | .rule _ _ _ _ | .decoration _ _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _
+      | .gap _ _ | .decoratedGap _ _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
     let nonEmpty := lineInks l || l.expand != tz
     (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)

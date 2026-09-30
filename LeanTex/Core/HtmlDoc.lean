@@ -426,7 +426,7 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .colored _ _ _ :: _ => none
   | .role _ _ :: _ => none
   | .link _ _ :: _ => none
-  | .underline _ :: _ => none
+  | .decorated _ _ :: _ => none
   | .fill :: _ => none
   | .hspace _ _ :: _ => none
   | .rule _ _ _ :: _ => none
@@ -473,7 +473,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .math _ _ => none
   | .formula _ _ _ => none
   | .link _ _ => none
-  | .underline _ => none
+  | .decorated _ _ => none
   | .fill => none
   | .hspace _ _ => none
   | .rule _ _ _ => none
@@ -563,7 +563,7 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
-  | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
+  | .math _ _ | .formula _ _ _ | .link _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .step _ _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
   | .cite _ _ | .footnote _ _ =>
@@ -4047,6 +4047,8 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "    text-underline-position: from-font; text-decoration-skip-ink: auto; }\n" ++
   "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
   "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
+  "s { text-decoration-line: line-through; text-decoration-thickness: 0.4pt;\n" ++
+  "    text-decoration-skip-ink: none; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
@@ -4518,10 +4520,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       acc.push (Html.elem "a" #[Html.text text]
         #[("href", "#" ++ a), ("style", "color: inherit")])
     | none => acc.push (Html.text text)
-  | .underline body =>
-    -- skip-ink is the browser's native form of the PDF path's invariant: the
-    -- rule breaks where a descender crosses it.
-    acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
+  | .decorated kind body =>
+    let tag := match kind with
+      | .underline => "u"
+      | .lineThrough => "s"
+    acc.push (Html.elem tag (inlineNodesInto cfg #[] body.toList))
   | .step n last body =>
     -- Every step is fully visible here — the handout state, the floor the
     -- deck's reveal degrades to. On the paged deck the class-gated
@@ -4636,7 +4639,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .image _ size _ => found || size.height.any fun l =>
     readsInlineMeasure l.value && !l.value.anyRef (· == .textHeight)
   | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .role _ _
-  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill
+  | .link _ _ | .decorated _ _ | .step _ _ _ | .alt _ _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _
   | .linebreak _ => found
@@ -5416,7 +5419,7 @@ def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :
   | .role n body =>
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
   | .italicCorr _ => acc
-  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .link _ _ | .decorated _ _ | .step _ _ _ | .alt _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))
 

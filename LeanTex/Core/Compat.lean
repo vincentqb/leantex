@@ -5898,6 +5898,17 @@ dropped: {String.intercalate ", " dropped}" pos
         out := out ++ (← synthAt native pos)
       else if p == "lineno" && opt.isSome then
         out := out ++ (← linenoLoad (opt.getD "") pos)
+      else if p == "ulem" then
+        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+          |>.filter (!·.isEmpty)
+        if opts == ["normalem"] then
+          discard s!"\\{name}[normalem]\{{p}}"
+            "strikeout is native and normal emphasis remains in force"
+            s!"{name}:{p}:normalem" pos
+        else
+          say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
+            pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
+            (refused := some p)
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then

@@ -1193,7 +1193,8 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .colored c nm body => out.push (.colored c nm (resolveInlines p find #[] body.toList))
   | .role nm body => out.push (.role nm (resolveInlines p find #[] body.toList))
   | .link u body => out.push (.link u (resolveInlines p find #[] body.toList))
-  | .underline body => out.push (.underline (resolveInlines p find #[] body.toList))
+  | .decorated kind body =>
+    out.push (.decorated kind (resolveInlines p find #[] body.toList))
   | .step n last body => out.push (.step n last (resolveInlines p find #[] body.toList))
   | .alt n last active otherwise =>
     out.push (.alt n last (resolveInlines p find #[] active.toList)
@@ -1236,7 +1237,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .colored _ _ body => citeFreeList body.toList
   | .role _ body => citeFreeList body.toList
   | .link _ body => citeFreeList body.toList
-  | .underline body => citeFreeList body.toList
+  | .decorated _ body => citeFreeList body.toList
   | .step _ _ body => citeFreeList body.toList
   | .alt _ _ active otherwise =>
     citeFreeList active.toList && citeFreeList otherwise.toList
@@ -1266,7 +1267,7 @@ where
     match x with
     | .cite _ _ => simp [resolveInline]
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-    | .underline body | .step _ _ body | .footnote _ body => simp [resolveInline]
+    | .decorated kind body | .step _ _ body | .footnote _ body => simp [resolveInline]
     | .alt _ _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
@@ -1296,7 +1297,7 @@ theorem resolveInline_id (p : CitePunct) (find : Resolver)
   | .link u body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
-  | .underline body =>
+  | .decorated kind body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
   | .step n last body =>
@@ -1713,7 +1714,7 @@ theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) 
       q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-  | .underline body | .step _ _ body | .footnote _ body =>
+  | .decorated kind body | .step _ _ body | .footnote _ body =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,

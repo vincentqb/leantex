@@ -1,10 +1,10 @@
 # source: installed ulem.sty 2019-11-18 summary and command definitions.
-# The package changes emphasis unless normalem is selected; only its existing
-# underline spelling has shared semantics. Strike and patterned rules remain
-# explicit refusals until the IR carries their geometry across both backends.
-pre refuse:W0103 \usepackage[normalem]{ulem}
+# The package changes emphasis unless normalem is selected. The normalem load
+# is inert, and the shared decoration path implements its straight strike;
+# patterned and double rules remain explicit refusals.
+pre impl \usepackage[normalem]{ulem}
 body impl \uline{x}
-body refuse:W0301 \sout{x}
+body impl \sout{x}
 body refuse:W0301 \uuline{x}
 body refuse:W0301 \uwave{x}
 body refuse:W0301 \xout{x}

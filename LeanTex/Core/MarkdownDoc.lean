@@ -69,7 +69,7 @@ private def inlineInto (acc : String) : Inline → String
     let inner := inlinesInto "" body.toList
     -- A bare link prints its own URL; wrapping it as [url](url) says nothing.
     if inner == url then acc ++ url else acc ++ s!"[{inner}]({url})"
-  | .underline body => inlinesInto acc body.toList
+  | .decorated _ body => inlinesInto acc body.toList
   | .step _ _ body => inlinesInto acc body.toList
   | .alt _ _ active otherwise =>
     inlinesInto (inlinesInto acc active.toList) otherwise.toList

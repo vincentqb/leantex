@@ -357,8 +357,9 @@ def ofOut (out : Layout.Out) : Array MPage :=
           if glyphs.isEmpty then
             if w > 0 then text := text.push ' '
           else for (_, c, _) in glyphs do text := text.push c
-        | .gap _ _ => text := text.push ' '
-        | .rule _ th raise _ => marks := marks.push (l.y - raise - th, l.y - raise)
+        | .gap _ _ | .decoratedGap _ _ _ => text := text.push ' '
+        | .rule _ th raise _ | .decoration _ _ th raise _ =>
+          marks := marks.push (l.y - raise - th, l.y - raise)
         | .image _ _ h => marks := marks.push (l.y - h, l.y)
       if !(text.trimAscii.isEmpty) then
         lines := lines.push { y := l.y, text, leaf := l.leaf, furniture := l.furniture }

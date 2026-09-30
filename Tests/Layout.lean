@@ -13,7 +13,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) none false 0 none (.leaf 0))
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) none {} 0 none (.leaf 0))
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -1560,12 +1560,12 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (Elab.run "t" "see \\href{https://example.org/}{the example} here").1 geom
   let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   let linkRuns := segs.filterMap fun s => match s with
-    | .run _ _ (some _) _ _ _ _ ul _ _ _ => some ul
+    | .run _ _ (some _) _ _ _ _ decorations _ _ _ => some decorations.underline
     | _ => none
   t "pdf link runs exist" (!linkRuns.isEmpty)
   t "pdf link runs are underlined" (linkRuns.all (· == true))
   t "pdf link draws its underline rule" (segs.any fun s => match s with
-    | .rule .. => true
+    | .decoration .underline .. => true
     | _ => false)
 
 def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
@@ -1573,9 +1573,9 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let t := check ref
   -- IR shape
   t "underline ir shape" ((elabStr "\\underline{a}").1.body ==
-    #[.para #[.underline #[.text "a"]]])
+    #[.para #[.decorated .underline #[.text "a"]]])
   t "uline is underline" ((elabStr "\\uline{b}").1.body ==
-    #[.para #[.underline #[.text "b"]]])
+    #[.para #[.decorated .underline #[.text "b"]]])
   -- The font's own glyph outlines decide what interrupts the rule.
   let gidOf (c : Char) : Nat := (font.gid c).getD 0
   let hasInk (c : Char) : Bool := !(font.inkAt (gidOf c)).isEmpty
@@ -1632,7 +1632,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Sp × Dim.Sp) :=
     ((outOf fs src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
       match s with
-      | .rule w th _ _ => some (w, th)
+      | .decoration .underline w th _ _ => some (w, th)
       | _ => none)
   let widthOf (fs : Font.FontSet) (src : String) : Dim.Sp :=
     (((outOf fs src).pages.flatMap (·.lines))[0]?.map (·.setWidth)).getD 0
@@ -1722,7 +1722,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
               | _ => none
             let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
-              | .rule w _ _ _ => some w
+              | .decoration .underline w _ _ _ => some w
               | _ => none
             return (runW[0]?.getD 0, ruleW[0]?.getD 0)
           let (aW, aRule) := firstRunAndRule "\\underline{a\\textit{g}}"
@@ -1839,7 +1839,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let badRules := ((outOf badSet "\\underline{ab}").pages.flatMap
         (·.lines)).flatMap (·.segs.filterMap fun s =>
           match s with
-          | .rule w th raise _ => some (w, th, raise)
+          | .decoration .underline w th raise _ => some (w, th, raise)
           | _ => none)
       t "band: absurd post metrics still rule below the baseline"
         (badRules.size ≥ 1 && badRules.all fun (w, th, raise) =>
@@ -1852,12 +1852,12 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((uPage.splitOn "u { text-decoration: underline; text-decoration-skip-ink: auto;").length == 2)
   t "html links skip ink" ((uPage.splitOn "text-decoration-skip-ink").length ≥ 3)
   -- Compat: soul's \ul and the xparse \varul spelling become the native.
-  t "compat ul" ((elabStr "\\ul{x}").1.body == #[.para #[.underline #[.text "x"]]])
+  t "compat ul" ((elabStr "\\ul{x}").1.body == #[.para #[.decorated .underline #[.text "x"]]])
   t "compat varul drops its options"
     ((elabStr "\\varul<5>[0.2ex][0.1ex]{x}").1.body ==
-      #[.para #[.underline #[.text "x"]]])
+      #[.para #[.decorated .underline #[.text "x"]]])
   t "compat varul without options"
-    ((elabStr "\\varul{x}").1.body == #[.para #[.underline #[.text "x"]]])
+    ((elabStr "\\varul{x}").1.body == #[.para #[.decorated .underline #[.text "x"]]])
   t "compat soul is a note"
     ((elabStr ("\\documentclass{article}\\usepackage{soul}" ++
       "\\begin{document}x\\end{document}")).2.all (·.severity == .note))
@@ -1868,7 +1868,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\begin{document}\\varul{y}\\end{document}")
   t "document varul definition is ignored"
     ((redef.2.filter (·.severity == .warning)).any (·.code == "W0303") &&
-     redef.1.body == #[.para #[.underline #[.text "y"]]])
+     redef.1.body == #[.para #[.decorated .underline #[.text "y"]]])
 
 /-- Vertical spacing is TeX's, checked on the placed lines. Own function,
 same elaboration-budget reason as the others. -/
@@ -3535,7 +3535,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           | .rule w _ _ _ =>
             acc := acc.push (x, w)
             x := x + w
-          | .gap g _ => x := x + g
+          | .gap g _ | .decoratedGap g _ _ => x := x + g
+          | .decoration _ w _ _ _ => x := x + w
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
           | .image _ w _ => x := x + w
     return acc
@@ -3574,8 +3575,8 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
         if hasStr (lineText l) needle then
           let w := l.segs.foldl (fun a s => match s with
             | .run _ _ _ w .. => a + w
-            | .gap w _ => a + w
-            | .rule w .. => a + w
+            | .gap w _ | .decoratedGap w _ _ => a + w
+            | .rule w .. | .decoration _ w .. => a + w
             | .image _ w _ => a + w) (0 : Dim.Sp)
           return some (l.x + l.hang, l.x + w)
     return none
@@ -3884,7 +3885,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
         | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-        | .gap _ _ | .rule .. | .image .. => false
+        | .gap _ _ | .decoratedGap _ _ _ | .rule .. | .decoration .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
   t "an article at this measure does hyphenate"

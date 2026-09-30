@@ -704,7 +704,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   -- a role names its content; the ink inside keeps the current colour
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body => usesInlines cx acc body.toList
-  | .underline body => usesInlines cx acc body.toList
+  | .decorated _ body => usesInlines cx acc body.toList
   | .step n last body => usesInlines cx (acc.step n last) body.toList
   -- An alternative is never covered: it is inked at full colour or not
   -- inked at all, so no alt range makes a palette pending.

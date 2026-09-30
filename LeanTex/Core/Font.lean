@@ -882,7 +882,7 @@ def underlineBand (upem descent pos thick : Int) : Int × Int :=
 at least the em-tenth fallback, the normalized band position stays at or
 above the descender line — the rule is drawn in the descender region,
 inside the metric box `Layout.lineExtent` already reserves below the
-baseline, so drawing it can never ask for room (`underline_no_growth` is
+baseline, so drawing it can never ask for room (`decoration_no_growth` is
 the placement half). Containment of the band's full thickness is per-face
 (post values are fallback-normalized, so it is not a theorem) and is
 pinned as a test over every shipped fixture face. -/

@@ -201,7 +201,7 @@ appear before punctuation that follows a nested element. SVG's `text` and
 wrapped in a `tspan` would otherwise gain a space its source never had. -/
 def phrasingTags : List String :=
   ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "span", "a", "strong", "em",
-   "code", "u", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
+   "code", "u", "s", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
    "text", "tspan"]
 
 def elem (tag : String) (kids : Array Node := #[])
