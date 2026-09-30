@@ -343,6 +343,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linenoChecks ref
   footnoteChecks ref
   mathChecks ref
+  isolatedHoleChecks ref
   mathSymChecks ref
   textSymChecks ref
   inlineVerbChecks ref

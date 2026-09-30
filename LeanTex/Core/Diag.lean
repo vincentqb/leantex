@@ -184,7 +184,7 @@ inductive DiagCode where
   | E0501 | E0502 | E0503
   | N0100 | N0102 | N0103 | N0104 | N0105 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
-  | W0011 | W0012 | W0013 | W0014 | W0015
+  | W0011 | W0012 | W0013 | W0014 | W0015 | W0016
   | N0016 | N0018 | N0017 | N0019 | N0020
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
@@ -309,6 +309,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0013 => ("0013", .config, "an \\allow'd code never fired")
   | .W0014 => ("0014", .degraded, "alignment row disagrees with its grid's columns; padded")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
+  | .W0016 => ("0016", .degraded, "math alphabet glyph absent from the covered face; a stand-in keeps the letter")
   | .N0016 => ("0016", .info, "no math face declared; the engine picked one and says which")
   | .N0018 => ("0018", .info, "math alphabet unavailable in the selected face; source glyphs stand")
   | .N0017 => ("0017", .info, "no document class declared; the article page model is assumed")
