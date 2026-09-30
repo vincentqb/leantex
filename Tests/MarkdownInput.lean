@@ -1,8 +1,93 @@
 import Tests.Markdown
+import Tests.Artifact
 
 open LeanTex.Core LeanTex.Cli
 
 namespace Tests
+
+/-- Filename quoting is resolved before either surface chooses an extension.
+LuaLaTeX removes paired quotes even inside a name, trims surrounding spaces
+on names with an extension, and retains a trailing space before an inferred
+extension. Spaces within a name are preserved. The selected
+file must reach the actual PDF and HTML between its neighbours; a missing
+file must name the normalized path at the including source's position. -/
+def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some bytes ← findFont | failures ref "quoted input: missing fixture font"
+  let .ok font := Font.parse bytes | failures ref "quoted input: invalid fixture font"
+  let fonts := oneFaceOf font
+  IO.FS.withTempDir fun dir => do
+    let file := (dir / "host.tex").toString
+    let pre := "\\usepackage{markdown}\n"
+    let fixtures := [("file name.md", "Quotedword"), ("bare name", "Bareonly"),
+      ("choice name", "Barechoice"), ("choice name.tex", "Texchoice"),
+      ("typed name.md", "Explicitextension"), ("typed name.md.tex", "Extendedextension"),
+      ("texed name.tex", "Texextension"), ("texed name.tex.tex", "Doubledtex"),
+      ("spaced name .tex", "Spacedextension"), ("spaced name.tex", "Unspacedextension")]
+    for (name, text) in fixtures do
+      IO.FS.writeFile (dir / name) (text ++ ".\n")
+    for command in ["input", "markdownInput"] do
+      for (label, name, expected) in [
+          ("quoted", "\"file name.md\"", "Quotedword"),
+          ("unquoted spaces", "file name.md", "Quotedword"),
+          ("embedded quotes", "file \"name\".md", "Quotedword"),
+          ("outer spaces", "  \"file name.md\"  ", "Quotedword"),
+          ("inner spaces", "\" file name.md \"", "Quotedword"),
+          ("bare fallback", "\"bare name\"", "Bareonly"),
+          ("default extension", "\"choice name\"", "Texchoice"),
+          ("space before extension", "\" spaced name \"", "Spacedextension"),
+          ("explicit extension", "\"typed name.md\"",
+            if command == "input" then "Extendedextension" else "Explicitextension"),
+          ("tex extension", "\"texed name.tex\"", "Texextension"),
+          ("nested", "\"file name.md\"", "Quotedword")] do
+        let call := s!"\\{command}\{{name}}"
+        IO.FS.writeFile (dir / "nested file.tex") call
+        let call := if label == "nested" then "\\input{\"nested file.tex\"}" else call
+        let (doc, ds) ← elabInputSrc file (dvDoc pre
+          ("Beforefragment.\n\n" ++ call ++ "\n\nAfterfragment."))
+        let out := layoutOf fonts doc
+        let pdfText ← match readArtifact (driverPdf fonts (Layout.Geom.ofPage doc.page) doc out) with
+          | .error err => do
+            failures ref s!"quoted input {command}/{label}: PDF readback: {err}"
+            pure ""
+          | .ok pages => pure (pages.foldl (fun text page =>
+              page.runs.foldl (fun text run => text ++ run.text) text) "")
+        let (_, htmlTree, _) := HtmlDoc.emitTree {} doc
+        let (html, _) := HtmlDoc.emit {} doc
+        for marker in ["Beforefragment", expected, "Afterfragment"] do
+          t s!"quoted input {command}/{label}: PDF ships {marker} once"
+            ((pdfText.splitOn marker).length == 2)
+          t s!"quoted input {command}/{label}: HTML ships {marker} once"
+            (treeShownOccurs htmlTree marker == 1 && hasStr html marker)
+        for (artifact, text) in [("PDF", pdfText), ("HTML", html)] do
+          t s!"quoted input {command}/{label}: {artifact} preserves include order"
+            ((text.splitOn "Beforefragment").drop 1 |>.any fun tail =>
+              (tail.splitOn expected).drop 1 |>.any fun tail => hasStr tail "Afterfragment")
+          t s!"quoted input {command}/{label}: {artifact} selects only the intended file"
+            (fixtures.all fun (_, marker) => marker == expected || !hasStr text marker)
+        t s!"quoted input {command}/{label}: no missing file or parse error"
+          (ds.all (·.severity != .error))
+      for nested in [false, true] do
+        let call := s!"\\{command}\{  \"absent name.md\"  }"
+        let nestedFile := (dir / "missing caller.tex").toString
+        IO.FS.writeFile nestedFile ("\n\n" ++ call)
+        let (_, ds) ← elabInputSrc file (dvDoc pre
+          (if nested then "\\input{\"missing caller.tex\"}" else call))
+        let missing := ds.filter (·.kind == .E0502)
+        let preferred := if command == "input" then "absent name.md.tex" else "absent name.md"
+        t s!"quoted input {command}/{nested}: missing file names normalized path and caller"
+          (missing.size == 1 && missing.any fun d =>
+            hasStr d.message s!"'\\{command}' file '{preferred}'" &&
+              d.span.any fun sp =>
+                sp.file == (if nested then nestedFile else file) &&
+                sp.pos == ⟨if nested then 3 else 4, 1⟩)
+    IO.FS.writeFile (dir / "strict fragment.md") "paragraph\n\n<div>unsupported</div>\n"
+    let (_, ds) ← elabInputSrc file
+      (dvDoc pre "\\markdownInput{ \"strict fragment.md\" }")
+    t "quoted input: included diagnostic retains resolved filename and source line"
+      (ds.any fun d => d.kind == .E0390 &&
+        d.span.any fun sp =>
+          sp.file == (dir / "strict fragment.md").toString && sp.pos.line == 3)
 
 /-- Included files use their surface's filename contract and one read-error
 contract. LuaLaTeX's `\input` tries a `.tex` suffix, whereas `\markdownInput`
@@ -47,6 +132,7 @@ the source file and line that can be corrected. Failed on the tree before
 the file reader understood `\markdownInput`, including the empty-file and
 missing-file cases that a nonempty happy-path probe cannot distinguish. -/
 def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
+  quotedInputFilenameChecks ref
   inputFileChecks ref
   let t := check ref
   let some bytes ← findFont | failures ref "markdown input: missing fixture font"
