@@ -77,24 +77,68 @@ def logOf (err : String) : PicCache.Log :=
   let t := errTail err
   if t.isEmpty then .absent else .says t
 
-/-- `SIGKILL` the whole process group, addressed by the leader's pid (its
-own group under `setsid`). The escalation after `SIGTERM` did not take; a
-failure to spawn `kill` is swallowed, since the group is already isolated. -/
-private def hardKill (pid : UInt32) : IO Unit := do
+/-- The most of a tool's stream the build holds in memory. Conversions say
+little — a version banner, a short error — so this ceiling is never reached
+by a well-behaved tool; a tool spewing past it is still drained (so it never
+blocks on a full pipe) but only this many bytes are kept, bounding the
+build's footprint against a runaway. -/
+def maxCaptureBytes : Nat := 1 <<< 20
+
+/-- The read chunk, and the finite chunk ceiling that makes the drain
+loop total: `maxDrainChunks` 64 KiB reads bound one drain, after which the
+stream is left for the budget kill to close rather than read forever. -/
+def captureChunk : Nat := 65536
+def maxDrainChunks : Nat := 1 <<< 20
+
+/-- Decode captured bytes, trimming up to three trailing bytes so a cap that
+fell mid-codepoint still yields valid text rather than raising. -/
+private def decodeCapped (b : ByteArray) : String :=
+  match String.fromUTF8? b with
+  | some s => s
+  | none => match String.fromUTF8? (b.extract 0 (b.size - 1)) with
+    | some s => s
+    | none => match String.fromUTF8? (b.extract 0 (b.size - 2)) with
+      | some s => s
+      | none => (String.fromUTF8? (b.extract 0 (b.size - 3))).getD ""
+
+/-- Read a child stream to EOF, keeping at most `maxCaptureBytes` and
+draining the rest. The loop is bounded by `maxDrainChunks`, so it is total
+and a stream longer than the ceiling is abandoned to the budget kill rather
+than read without end; the captured prefix is decoded losslessly. -/
+def captureCapped (h : IO.FS.Handle) : IO String := do
+  let mut acc : ByteArray := .empty
+  let mut capped := false
+  for _ in [0:maxDrainChunks] do
+    let chunk ← h.read captureChunk.toUSize
+    if chunk.isEmpty then break
+    unless capped do
+      acc := acc ++ chunk
+      if acc.size ≥ maxCaptureBytes then
+        acc := acc.extract 0 maxCaptureBytes
+        capped := true
+  return decodeCapped acc
+
+/-- Send `signal` to the whole process group led by `pid` (its own group
+under `setsid`, so the negative-pid target reaches every descendant). A
+failure to spawn or reap `kill` is swallowed: an unkillable group is a
+machine fact the bounded drains still survive, never a crash. -/
+private def signalGroup (signal : String) (pid : UInt32) : IO Unit := do
   try
     let args : IO.Process.SpawnArgs :=
-      { cmd := "kill", args := #["-KILL", "-" ++ toString pid],
+      { cmd := "kill", args := #["-" ++ signal, "-" ++ toString pid],
         stdout := .null, stderr := .null, stdin := .null }
     let child ← IO.Process.spawn args
-    let _ ← child.wait
+    let _ ← (child.wait).toBaseIO
   catch _ => pure ()
 
 /-- Run one tool under a wall-clock budget in its own process group. On
-overrun the group gets `SIGTERM`, then `SIGKILL` after the grace window;
-the ending is `.overran` whether it died to the term or the kill, because
-the budget was spent either way. A spawn that raised is `.unstarted`. Both
-streams are drained concurrently, so the tool never blocks on a full pipe
-while the poll loop waits. -/
+overrun the whole group gets `SIGTERM`, then — after the grace window, and
+always, even if the leader has since exited — `SIGKILL`, so no descendant
+that inherited the pipes outlives the budget. Both streams are drained on
+dedicated tasks, each capped in memory (`captureCapped`) and each awaited
+under a bounded wait, so a descendant holding a pipe open can neither fill
+it nor hang the build. A spawn that raised is `.unstarted`; a kill or wait
+that raised is swallowed and leaves the ending inconclusive. -/
 def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
     (budgetMs : Nat := convBudgetMs) (graceMs : Nat := convGraceMs) : IO Ended := do
   let spawned ← (do
@@ -105,26 +149,37 @@ def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
   match spawned with
   | .error e => return { ran := .unstarted (toString e), out := "", err := "" }
   | .ok child =>
-    let outT ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
-    let errT ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+    let outT ← IO.asTask (captureCapped child.stdout) Task.Priority.dedicated
+    let errT ← IO.asTask (captureCapped child.stderr) Task.Priority.dedicated
     let mut ran : PicCache.Ran := .overran (budgetMs / 1000)
     let mut done := false
     for _ in [0:budgetMs / 50 + 1] do
       unless done do
-        match ← child.tryWait with
-        | some code => ran := .exited code.toNat; done := true
-        | none => IO.sleep 50
+        match ← (child.tryWait).toBaseIO with
+        | .ok (some code) => ran := .exited code.toNat; done := true
+        | _ => IO.sleep 50
     unless done do
-      child.kill
+      -- Overran: TERM the whole group, wait the grace window, then always
+      -- KILL the whole group — even if the leader has since exited — so a
+      -- descendant that inherited the pipes cannot outlive the budget.
+      signalGroup "TERM" child.pid
       for _ in [0:graceMs / 50 + 1] do
         unless done do
-          match ← child.tryWait with
-          | some _ => done := true
-          | none => IO.sleep 50
-      unless done do hardKill child.pid
-      discard child.wait
-    let out := (outT.get).toOption.getD ""
-    let err := (errT.get).toOption.getD ""
+          match ← (child.tryWait).toBaseIO with
+          | .ok (some _) => done := true
+          | _ => IO.sleep 50
+      signalGroup "KILL" child.pid
+      let _ ← (child.wait).toBaseIO
+    -- Bound the drains: once the group is dead its pipe write-ends close and
+    -- each `captureCapped` returns, but a descendant the kill could not reach
+    -- must not hang the build, so each task is awaited under a bounded wait
+    -- and abandoned to "" if it does not settle in time.
+    let drain (t : Task (Except IO.Error String)) : IO String := do
+      for _ in [0:budgetMs / 50 + graceMs / 50 + 2] do
+        unless (← IO.hasFinished t) do IO.sleep 50
+      if ← IO.hasFinished t then return (t.get).toOption.getD "" else return ""
+    let out ← drain outT
+    let err ← drain errT
     return { ran, out, err }
 
 /-! ## The cache

@@ -111,10 +111,57 @@ def emptyWarmedChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref "empty-warmed: the republished slot is non-empty" (!bytes.isEmpty)
     | _ => check ref "empty-warmed: exactly one slot warmed" false
 
+/-- **M1 — a timeout kills a TERM-ignoring descendant that holds the pipes,
+and never hangs the build.** The stub's leader and a grandchild both trap
+`SIGTERM` and sleep far past the budget, and the grandchild inherits the
+pipes; only the group `SIGKILL` after grace can reap them, and only the
+bounded drains keep the held pipe from hanging the reader. The probe must
+return well under the descendants' own sleep, and afterward no stub process
+may survive. -/
+def timeoutKillChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let probe ← IO.FS.realPath ".lake/build/bin/runBoundProbe"
+  IO.FS.withTempDir fun dir => do
+    let marker := dir / "marker"
+    IO.FS.createDirAll marker
+    let stub := dir / "hang"
+    -- Leader and grandchild both ignore TERM and sleep 30 s; the grandchild
+    -- holds the inherited stdout/stderr. Each records its pid.
+    writeStub stub <|
+      "#!/bin/sh\n\
+echo \"$$\" > \"" ++ (marker / "leader.pid").toString ++ "\"\n\
+sh -c 'trap \"\" TERM; echo \"$$\" > \"" ++ (marker / "grandchild.pid").toString ++
+        "\"; sleep 30' &\n\
+trap \"\" TERM\n\
+sleep 30\n"
+    let t0 ← IO.monoMsNow
+    let run ← IO.Process.output { cmd := probe.toString, args := #[stub.toString] }
+    let dt := (← IO.monoMsNow) - t0
+    check ref "timeout: the probe returned (no hang on the held pipe)" (run.exitCode == 0)
+    -- The stub descendants sleep 30 s; a budget of 0.4 s + 0.3 s grace means
+    -- a correct run returns in ~1 s. Allow generous slack, but far under 30 s.
+    check ref "timeout: returned far under the descendants' 30 s sleep" (dt < 10000)
+    check ref "timeout: the run is reported as an overrun"
+      (run.stdout.trimAscii.toString.startsWith "RAN LeanTex.Cli.PicCache.Ran.overran")
+    -- No stub process survives: both recorded pids are gone.
+    let alive (pidFile : System.FilePath) : IO Bool := do
+      match ← (IO.FS.readFile pidFile).toBaseIO with
+      | .error _ => return false
+      | .ok s =>
+        let pid := s.trimAscii.toString
+        if pid.isEmpty then return false
+        let r ← IO.Process.output { cmd := "kill", args := #["-0", pid] }
+        return r.exitCode == 0
+    -- Give the OS a moment to finish reaping after SIGKILL.
+    IO.sleep 300
+    check ref "timeout: no TERM-ignoring leader survived" (!(← alive (marker / "leader.pid")))
+    check ref "timeout: no TERM-ignoring grandchild survived"
+      (!(← alive (marker / "grandchild.pid")))
+
 def main : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
   concurrentWriteChecks ref
   emptyWarmedChecks ref
+  timeoutKillChecks ref
   let failed ← ref.get
   for name in failed.reverse do IO.eprintln s!"FAIL: {name}"
   IO.println s!"conversion-cache IO oracle: {failed.length} failures"

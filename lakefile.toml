@@ -111,3 +111,11 @@ root = "scripts.land"
 [[lean_exe]]
 name = "convProbe"
 root = "scripts.convprobe"
+
+
+# The runBounded probe: one bounded run against a stub tool, spawned by
+# scripts/conv-cache-io.lean to prove the timeout kills a TERM-ignoring
+# descendant that holds the pipes and never hangs the build.
+[[lean_exe]]
+name = "runBoundProbe"
+root = "scripts.runboundprobe"
