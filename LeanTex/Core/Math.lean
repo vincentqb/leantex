@@ -482,6 +482,15 @@ def MathAlphabetRange.anchor : MathAlphabetRange → Char
   | .greekLower => Char.ofNat 0x1D6FC
   | .misc => '\u2207'
 
+/-- The ranges a text family serves for a `text`-sourced alphabet: the
+Latin letters and digits unicode-math's text math alphabets cover. Greek
+and the miscellaneous `∇` stay math symbols under a text source (LuaLaTeX
+does not pull them from the text family), so a text-sourced alphabet does
+not style them. -/
+def MathAlphabetRange.textServed : MathAlphabetRange → Bool
+  | .latinUpper | .latinLower | .digits => true
+  | .greekUpper | .greekLower | .misc => false
+
 /-- The range an input scalar asks this alphabet to remap, if any. The
 input is the parser's ordinary math scalar: Latin variables are already
 italic, so `unItalic` recovers their source letter. -/
@@ -600,6 +609,66 @@ def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
   | .bfit => (true, true)
   | .it => (false, true)
   | _ => (false, false)
+
+/-- A text family slot a resolved text-sourced math alphabet projects to.
+Numbered to match the layout's `FontSet` slots — body/serif is 0, sans 1,
+mono 2 (`FontSet.lookup`) — so the PDF projection is a slot lookup, never a
+per-scalar host guess. Math-owned so the resolved nucleus can carry it
+without `Math` importing `Ir`. -/
+inductive MathTextSlot where
+  | body
+  | sans
+  | mono
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The `FontSet` slot number (0 body, 1 sans, 2 mono). -/
+def MathTextSlot.toNat : MathTextSlot → Nat
+  | .body => 0
+  | .sans => 1
+  | .mono => 2
+
+/-- The typed style a text-sourced math alphabet resolves to: which text
+family slot, and the weight/shape axes both backends project — the PDF
+through `FontSet.lookup (slot, weight, italic)`, MathML through a
+`mathvariant`. This is the resolved surface of `\mathrm`/`\mathit`/
+`\mathbf`/`\mathsf`/`\mathtt` under unicode-math's default (text) source:
+the glyph is the plain base letter set in a text family, not a Mathematical
+Alphanumeric scalar. -/
+structure MathTextStyle where
+  slot : MathTextSlot
+  bold : Bool := false
+  italic : Bool := false
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The text-family projection of a legacy math alphabet when its source is
+`text` (unicode-math's default for `mathrm`/`mathit`/`mathbf`/`mathsf`/
+`mathtt`). `none` for the shape alphabets (`bb`/`cal`/`frak`) and `bfit`,
+which are always symbol-sourced and have no text-slot form. `bf` is upright
+bold on the body slot, `it` italic on the body slot, matching what
+LuaLaTeX paints from the main family's variants. -/
+def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
+  | .rm => some { slot := .body, bold := false, italic := false }
+  | .it => some { slot := .body, bold := false, italic := true }
+  | .bf => some { slot := .body, bold := true, italic := false }
+  | .sf => some { slot := .sans, bold := false, italic := false }
+  | .tt => some { slot := .mono, bold := false, italic := false }
+  | .bb | .cal | .frak | .bfit => none
+
+/-- The semantic MathML `mathvariant` a resolved text style declares: the
+attribute a MathML consumer reads to style the plain base letter, since the
+scalar is the ASCII letter, not a Mathematical Alphanumeric code point. -/
+def MathTextStyle.mathvariant : MathTextStyle → String
+  | { slot := .sans, bold := b, italic := i } =>
+    if b && i then "sans-serif-bold-italic"
+    else if b then "bold-sans-serif"
+    else if i then "sans-serif-italic"
+    else "sans-serif"
+  | { slot := .mono, .. } => "monospace"
+  | { slot := .body, bold := b, italic := i } =>
+    if b && i then "bold-italic"
+    else if b then "bold"
+    else if i then "italic"
+    else "normal"
 
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
@@ -1253,6 +1322,15 @@ inductive MNucleus where
   carries. The driver eliminates every such node with `resolveMathAlphas`
   before scalar fallback, layout, or either backend. -/
   | alpha (alphabet : MathAlphabet) (body : MList)
+  /-- A resolved text-sourced alphabet scalar: the plain base letter `c`
+  set under the typed text `style`, the only outcome `resolveMathAlphas`
+  produces for a `text`-sourced alphabet (`\mathrm`, `\mathit`, `\mathbf`,
+  `\mathsf`, `\mathtt` under unicode-math's default). The backends project
+  `style` — the PDF to the body/sans/mono family slot with the weight and
+  italic axes through `FontSet`, MathML to a `mathvariant` — so no host
+  per-scalar fallback stands in for a text family. Constructed only by the
+  resolver door; a `.styled` in a math tree means the tree is resolved. -/
+  | styled (style : MathTextStyle) (c : Char)
   /-- A generalized fraction: numerator over denominator, positioned from
   the MATH constants — the fraction constants under a rule, the stack
   constants under none — between the delimiters and in the style its spec
@@ -1455,6 +1533,7 @@ def MItem.scalars (acc : Array Char) : MItem → Array Char
 
 def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
+  | .styled _ c => acc.push c
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.scalarsList acc body
   | .alpha _ body => MList.scalarsList acc body
@@ -1521,6 +1600,7 @@ def MathAlphabet.remapItem (a : MathAlphabet) : MItem → MItem
 
 def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .sym c => .sym (a.apply c)
+  | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (a.remapList body)
   | .alpha b body => .alpha b body
@@ -1584,6 +1664,7 @@ def MNucleus.inks (ink : Option (Ir.Color × Option String))
     (acc : Array (Ir.Color × Option String)) :
     MNucleus → Array (Ir.Color × Option String)
   | .sym c => if c.isWhitespace then acc else usedInk ink acc
+  | .styled _ c => if c.isWhitespace then acc else usedInk ink acc
   | .word s => if s.toList.any (!·.isWhitespace) then usedInk ink acc else acc
   | .list body => MList.inks ink acc body
   | .alpha _ body => MList.inks ink acc body
@@ -1632,6 +1713,7 @@ def MItem.mapInk (f : Ir.Color → Option String → Ir.Color) : MItem → MItem
 
 def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus → MNucleus
   | .sym c => .sym c
+  | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (MList.mapInk f body)
   | .alpha a body => .alpha a (MList.mapInk f body)
@@ -1677,6 +1759,7 @@ theorem MItem.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
 theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
     ∀ (n : MNucleus) (acc : Array Char), (MNucleus.mapInk f n).scalars acc = n.scalars acc
   | .sym _, _ => rfl
+  | .styled _ _, _ => rfl
   | .word _, _ => rfl
   | .list body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
@@ -1714,56 +1797,71 @@ theorem MRows.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
 
 end
 
+/-- What resolving one scalar under a stack produces: a plain math scalar
+(`sym`), or the plain base letter carried under a resolved text style
+(`styled`) when a `text`-sourced alphabet took it. The two outcomes a
+resolved `.sym` nucleus becomes. -/
+inductive Resolved where
+  | sym (c : Char)
+  | styled (style : MathTextStyle) (c : Char)
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- Resolve one scalar under a stack of active alphabets, innermost first.
-The first alphabet that both classifies `c` into one of its ranges and has
-that range remapped by the selected face wins; an alphabet that classifies
-`c` but whose range the face does not carry is stepped over, so an outer
-alphabet can still apply — LuaLaTeX falls a nested uncovered alphabet
-through to the enclosing one. With the stack exhausted the source scalar
-stands. Structural recursion on the list, so total by construction. -/
+The first alphabet that classifies `c` into one of its ranges decides:
+
+* a `text`-sourced legacy alphabet (`\mathrm`/`\mathit`/`\mathbf`/`\mathsf`/
+  `\mathtt` under unicode-math's default) wins on the Latin/digit ranges a
+  text family serves — the plain base letter (`unItalic c`) under that
+  alphabet's typed style, projected to a text family by the backends;
+* a `sym`-sourced range the selected face carries remaps
+  (`MathAlphabet.apply`);
+* a `sym`-sourced range the face does not carry is stepped over, so an outer
+  alphabet can still apply — LuaLaTeX falls a nested uncovered alphabet
+  through to the enclosing one.
+
+With the stack exhausted the source scalar stands (`.sym c`). Structural
+recursion on the list, so total by construction. -/
 def resolveCharStack (coverage : MathAlphabetCoverage) :
-    List MathAlphabet → Char → Char
-  | [], c => c
+    List MathAlphabet → Char → Resolved
+  | [], c => .sym c
   | a :: rest, c =>
     match a.rangeOf c with
     | some r =>
-      if coverage.remaps a r then a.apply c
-      else resolveCharStack coverage rest c
+      match a.textStyle? with
+      | some sty =>
+        if coverage.sources.get a == .text && r.textServed then .styled sty (unItalic c)
+        else if coverage.remaps a r then .sym (a.apply c)
+        else resolveCharStack coverage rest c
+      | none =>
+        if coverage.remaps a r then .sym (a.apply c)
+        else resolveCharStack coverage rest c
     | none => resolveCharStack coverage rest c
 
-/-- The first alphabet that both classifies `c` and has its range covered
-decides `c`: the innermost-first nesting order the resolver rests on. -/
-theorem resolveCharStack_first (coverage : MathAlphabetCoverage)
+/-- A `text`-sourced alphabet wins the Latin/digit ranges it serves: the
+resolved scalar is the plain base letter under its typed style, ahead of any
+outer alphabet — the innermost-first order the resolver rests on. -/
+theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List MathAlphabet) (c : Char) (r : MathAlphabetRange)
-    (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = true) :
-    resolveCharStack coverage (a :: rest) c = a.apply c := by
-  simp [resolveCharStack, hr, hcov]
+    (sty : MathTextStyle) (hr : a.rangeOf c = some r) (hst : a.textStyle? = some sty)
+    (hsrc : coverage.sources.get a = .text) (hserved : r.textServed = true) :
+    resolveCharStack coverage (a :: rest) c = .styled sty (unItalic c) := by
+  have hcond : (coverage.sources.get a == .text && r.textServed) = true := by
+    rw [hsrc, hserved]; rfl
+  simp [resolveCharStack, hr, hst, hcond]
 
-/-- The scalar a stack applies is drawn from the stack: whenever the result
-differs from the source scalar, some active alphabet produced it. The
-registry `_mem` property for the nesting resolver. -/
-theorem resolveCharStack_mem (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (c : Char),
-      resolveCharStack coverage active c ≠ c →
-        ∃ a, a ∈ active ∧ resolveCharStack coverage active c = a.apply c
-  | [], c => by simp [resolveCharStack]
-  | a :: rest, c => by
-    intro h
-    have hstep : resolveCharStack coverage (a :: rest) c = a.apply c ∨
-        resolveCharStack coverage (a :: rest) c = resolveCharStack coverage rest c := by
-      rw [resolveCharStack]
-      cases hr : a.rangeOf c with
-      | none => exact Or.inr rfl
-      | some r =>
-        cases hc : coverage.remaps a r with
-        | true => exact Or.inl (by simp [hc])
-        | false => exact Or.inr (by simp [hc])
-    cases hstep with
-    | inl he => exact ⟨a, List.mem_cons_self .., he⟩
-    | inr he =>
-      have hne : resolveCharStack coverage rest c ≠ c := by rw [← he]; exact h
-      obtain ⟨a', ha', he'⟩ := resolveCharStack_mem coverage rest c hne
-      exact ⟨a', List.mem_cons_of_mem a ha', he.trans he'⟩
+/-- A `sym`-sourced range the selected face carries remaps to the alphabet's
+mathematical-alphanumeric scalar. -/
+theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List MathAlphabet) (c : Char) (r : MathAlphabetRange)
+    (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
+    (hcov : coverage.remaps a r = true) :
+    resolveCharStack coverage (a :: rest) c = .sym (a.apply c) := by
+  simp [resolveCharStack, hr, hst, hcov]
+
+/-- The empty stack leaves the source scalar untouched: only an active
+alphabet can change a glyph. The base fact the resolver rests on. -/
+theorem resolveCharStack_nil (coverage : MathAlphabetCoverage) (c : Char) :
+    resolveCharStack coverage [] c = .sym c := rfl
 
 mutual
 
@@ -1790,7 +1888,11 @@ def resolveAlphaItem (coverage : MathAlphabetCoverage)
 
 def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
     (active : List MathAlphabet) : MNucleus → MNucleus
-  | .sym c => .sym (resolveCharStack coverage active c)
+  | .sym c =>
+    match resolveCharStack coverage active c with
+    | .sym c' => .sym c'
+    | .styled sty c' => .styled sty c'
+  | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (resolveAlphaList coverage active body)
   | .alpha a body => .list (resolveAlphaList coverage (a :: active) body)
@@ -1828,36 +1930,48 @@ def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :
 
 /-- The alphabet a stack blames for a scalar left at its source glyph, if
 any: walking innermost-first, the first alphabet that classifies `c` into a
-range decides. If it covers, `c` is applied — no loss. If it does not, and
-no outer alphabet covers `c` either (the resolver leaves the source scalar
-standing), that first classifying alphabet is the loss — provided it would
-in fact have changed the glyph (`apply c ≠ c`), so an identity remap is not
-named. Mirrors `resolveCharStack` exactly, so the N0018 census reports the
-alphabet the reader asked for and could not get. -/
+range decides. A `text`-sourced alphabet on a range it serves is never a
+loss — it projects to a text family (`.styled`), so it is stepped past. A
+`sym`-sourced range the face covers remaps — no loss. A `sym`-sourced range
+the face does not carry, with no outer alphabet taking `c` either, is the
+loss — provided the alphabet would in fact have changed the glyph
+(`apply c ≠ c`), so an identity remap is not named. Mirrors
+`resolveCharStack` exactly, so the N0018 census reports the alphabet the
+reader asked for and could not get. -/
 def missingCharAlpha (coverage : MathAlphabetCoverage) :
     List MathAlphabet → Char → Option MathAlphabet
   | [], _ => none
   | a :: rest, c =>
     match a.rangeOf c with
     | some r =>
-      if coverage.remaps a r then none
-      else if resolveCharStack coverage rest c != c then none
-      else if a.apply c != c then some a
-      else none
+      match a.textStyle? with
+      | some _ =>
+        if coverage.sources.get a == .text && r.textServed then none
+        else if coverage.remaps a r then none
+        else
+          match resolveCharStack coverage rest c with
+          | .sym c' => if c' == c && a.apply c != c then some a else none
+          | .styled _ _ => none
+      | none =>
+        if coverage.remaps a r then none
+        else
+          match resolveCharStack coverage rest c with
+          | .sym c' => if c' == c && a.apply c != c then some a else none
+          | .styled _ _ => none
     | none => missingCharAlpha coverage rest c
 
 /-- The census names only scalars the resolver left at their source: if
-`missingCharAlpha` blames an alphabet for `c`, the stack kept `c` rather
-than remapping it. So the whole-alphabet census (the N0018 owner) and the
-remapped scalars the per-character Layout path (W0016, an isolated glyph
-hole in a covered range) sees are over disjoint scalars — no glyph is
-accounted twice, and the census cannot drift from what the resolver
-rendered. -/
+`missingCharAlpha` blames an alphabet for `c`, the stack kept `c` as a plain
+math scalar rather than remapping or text-styling it. So the whole-alphabet
+census (the N0018 owner) and the remapped scalars the per-character Layout
+path (W0016, an isolated glyph hole in a covered range) sees are over
+disjoint scalars — no glyph is accounted twice, and the census cannot drift
+from what the resolver rendered. -/
 theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
     ∀ (active : List MathAlphabet) (c : Char),
       (missingCharAlpha coverage active c).isSome →
-        resolveCharStack coverage active c = c
-  | [], c => by intro h; simp [missingCharAlpha] at h
+        resolveCharStack coverage active c = .sym c
+  | [], c => by simp [missingCharAlpha]
   | a :: rest, c => by
     intro h
     rw [missingCharAlpha] at h
@@ -1868,12 +1982,36 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
       exact missingCharAlpha_kept coverage rest c h
     | some r =>
       simp only [hr] at h ⊢
-      cases hc : coverage.remaps a r with
-      | true => simp [hc] at h
-      | false =>
-        cases hk : resolveCharStack coverage rest c == c with
-        | true => simp [eq_of_beq hk]
-        | false => simp [hc, hk, bne] at h
+      cases hst : a.textStyle? with
+      | none =>
+        simp only [hst] at h ⊢
+        cases hcov : coverage.remaps a r with
+        | true => exact absurd h (by simp [hcov])
+        | false =>
+          cases hrc : resolveCharStack coverage rest c with
+          | styled s d => exact absurd h (by simp [hcov, hrc])
+          | sym c' =>
+            by_cases hcc : (c' == c && (a.apply c != c)) = true
+            · have hcceq : c' = c := by
+                simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
+              simp [hcceq]
+            · exact absurd h (by simp [hcov, hrc, hcc])
+      | some sty =>
+        simp only [hst] at h ⊢
+        cases htext : (coverage.sources.get a == .text && r.textServed) with
+        | true => exact absurd h (by simp [htext])
+        | false =>
+          cases hcov : coverage.remaps a r with
+          | true => exact absurd h (by simp [htext, hcov])
+          | false =>
+            cases hrc : resolveCharStack coverage rest c with
+            | styled s d => exact absurd h (by simp [htext, hcov, hrc])
+            | sym c' =>
+              by_cases hcc : (c' == c && (a.apply c != c)) = true
+              · have hcceq : c' = c := by
+                  simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
+                simp [hcceq]
+              · exact absurd h (by simp [htext, hcov, hrc, hcc])
 
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
     (active : List MathAlphabet) (out : Array MathAlphabet) (c : Char) :
@@ -1908,6 +2046,7 @@ private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
     (active : List MathAlphabet) (out : Array MathAlphabet) :
     MNucleus → Array MathAlphabet
   | .sym c => noteMissingAlpha coverage active out c
+  | .styled _ _ => out
   | .word _ => out
   | .list body => missingAlphaList coverage active out body
   | .alpha a body => missingAlphaList coverage (a :: active) out body
@@ -1954,6 +2093,7 @@ def MItem.alphaFree : MItem → Bool
 
 def MNucleus.alphaFree : MNucleus → Bool
   | .sym _ | .word _ => true
+  | .styled _ _ => true
   | .list body => body.alphaFree
   | .alpha _ _ => false
   | .frac _ num den => num.alphaFree && den.alphaFree
@@ -1998,7 +2138,10 @@ private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
 private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
     (active : List MathAlphabet) :
     ∀ nucleus, (resolveAlphaNucleus coverage active nucleus).alphaFree = true
-  | .sym _ => rfl
+  | .sym c => by
+    simp only [resolveAlphaNucleus]
+    cases resolveCharStack coverage active c <;> rfl
+  | .styled _ _ => rfl
   | .word _ => rfl
   | .list body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
@@ -2077,6 +2220,7 @@ private theorem resolveAlphaNucleus_nil_id (coverage : MathAlphabetCoverage) :
     ∀ nucleus, nucleus.alphaFree = true →
       resolveAlphaNucleus coverage [] nucleus = nucleus
   | .sym _, _ => rfl
+  | .styled _ _, _ => rfl
   | .word _, _ => rfl
   | .list body, h => by
     rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
@@ -2202,7 +2346,11 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
       acc₁.size = acc₂.size →
       ((resolveAlphaNucleus coverage active nuc).scalars acc₁).size
         = (MNucleus.scalars acc₂ nuc).size
-  | _, .sym c, _, _, hs => by
+  | active, .sym c, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus]
+    cases resolveCharStack coverage active c <;>
+      simp [MNucleus.scalars, Array.size_push, hs]
+  | _, .styled _ _, _, _, hs => by
     simp [resolveAlphaNucleus, MNucleus.scalars, Array.size_push, hs]
   | _, .word s, _, _, hs => by
     simp [resolveAlphaNucleus, MNucleus.scalars, hs]

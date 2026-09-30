@@ -873,16 +873,19 @@ def censusTable :
     ("\\mathbb takes its Letterlike scalars", hasStr (censusText c) "ℝ"
       && hasStr (censusText c) "ℂ"),
     ("the bold alphabet ships, boldsymbol keeps the variable italic",
-      hasStr (censusText c) "𝐯" && hasStr (censusText c) "𝛽"),
+      hasStr (censusText c) "v" && !hasStr (censusText c) "𝐯"
+        && hasStr (censusText c) "𝛽"),
     ("\\mathrm sets upright", hasStr (censusText c) "Err"),
-    ("a document macro's expansion ships", hasStr (censusText c) "𝐰"),
+    ("a document macro's expansion ships",
+      hasStr (censusText c) "w" && !hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),
   -- Colour and text in math; a font change inside one word still names
   -- its loss. cancelReportChecks holds the shipped colours and scope.
   ("math-text", fun _ c => [
     ("one page", c.size == 1),
     ("\\textbf and \\textit ship the alphabets \\mathbf and \\mathit mean",
-      hasStr (censusText c) "𝐮" && hasStr (censusText c) "𝑣"),
+      !hasStr (censusText c) "𝐮" && !hasStr (censusText c) "𝑣"
+        && hasStr (censusText c) "u"),
     ("a coloured letter ships its glyph", hasStr (censusText c) "𝑤"),
     ("\\text sets its words upright",
       hasStr (censusText c) "gain" && hasStr (censusText c) "loss"),
