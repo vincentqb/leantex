@@ -13,25 +13,25 @@ every target column, so it answers "is anything failing". This tier answers
 ratchet can carry, and which survives a matrix that legitimately holds a
 `fail:` cell with its reason beneath.
 
-This tier never launches a browser: it reads the committed matrix. What it
-does do is rebuild the corpus to HTML in-process (`hermeticHtmlKey`: the
-corpus and its shipped faces only — no TeX tree, no `PATH`, no font
-variable) and compare a content key against the `src-key:` line the matrix
-carries — the
-freshness question the matrix cannot answer for itself. Without it the
-engine can change what a page does and this tier keeps reporting the
-browser's verdict on pages nobody emits any more. A differing key is a
-fault, not a regression: the counts are not wrong, they are about something
-else. Only target readers are counted; a non-target column (Firefox, which
-the cached build cannot start on this host) is recorded data and gates
-nothing.
+This tier never launches a browser or a converter: it reads the committed
+matrix. It rebuilds the corpus in-process and compares `src-key:` with the
+HTML this tree emits. It separately compares `browser-face-src-key:` with a
+hermetic key over the vector inputs, generated hrefs, and the shared converter
+recipe. Every `browser-face:` row then pins one href to the SHA-256 and size of
+the exact bytes the oracle gave the browser; `browser-face-key:` covers those
+rows. Missing, malformed, duplicated, stale, or failed captures are faults, so
+pass cells cannot outlive the pages or browser faces they measured.
 
-Note what this tier does *not* claim. `scripts/html-oracle.lean --check`
-demands `pass` in every target cell and fails on the committed matrix: 7
-cells are `fail:` today, each with its reason beneath it, and no gate runs
-that check. This tier's numbers are "how much passes", which is the
-question a ratchet can carry; "is anything failing" stays html-oracle's,
-and it is currently answered no.
+Converter output is inherently a host report: this check does not execute
+`xmllint`, `rsvg-convert`, or `pdftocairo`. A binary version change with the
+same inputs requires rerunning `scripts/html-oracle.lean`; the matrix records
+those versions and the run date. A differing hermetic key is a fault, not a
+regression: the counts are not wrong, they describe something else. Only
+target readers are counted; a non-target column is data and gates nothing.
+
+`scripts/html-oracle.lean --check` demands both `pass` in every target cell
+and valid successful browser-face captures. This tier carries the separate
+ratchet question, "how much passes, and is it more than last time."
 -/
 import scripts.Board
 
@@ -84,10 +84,19 @@ def readMatrix (text : String) : Array String × Array Cells := Id.run do
   out := out ++ counts
   return (target, out)
 
-/-- The `src-key:` line, or none where the matrix carries no key. -/
-def matrixKey (text : String) : Option String :=
-  ((text.splitOn "\n").find? (·.trimAscii.toString.startsWith "src-key:")).map fun l =>
-    ((l.trimAscii.toString.drop "src-key:".length).toString).trimAscii.toString
+/-- A unique top-level `<name>:` value, or none when absent/duplicated. -/
+def matrixValue (text name : String) : Option String :=
+  let values := (text.splitOn "\n").filterMap fun raw =>
+    let line := raw.trimAscii.toString
+    if line.startsWith (name ++ ":") then
+      some ((line.drop (name.length + 1)).toString.trimAscii.toString)
+    else none
+  match values with
+  | [value] => some value
+  | _ => none
+
+/-- The `src-key:` line, or none where the matrix carries no unique key. -/
+def matrixKey (text : String) : Option String := matrixValue text "src-key"
 
 def measureTier : IO (Array String × Array Row) := do
   if !(← System.FilePath.pathExists matrixPath) then
@@ -106,27 +115,36 @@ lake env lean --run scripts/html-oracle.lean"
       untested := untested + c.rows
   -- Freshness. An empty row set is how this tier says "do not compare": the
   -- porcelain fault comes from tierMain's own malformed-measurement path.
-  let fresh ← hermeticHtmlKey
-  match matrixKey text, fresh with
-  | none, _ =>
-    IO.eprintln s!"scoreboard: {matrixPath} carries no `src-key:` line, so nothing \
+  let fresh ← hermeticHtmlKeys
+  let keys ← match fresh with
+    | .ok keys => pure keys
+    | .error e =>
+      IO.eprintln s!"scoreboard: cannot rebuild the corpus to compare against \
+{matrixPath}'s freshness keys: {e}"
+      return (#[], #[])
+  let some recordedHtml := matrixKey text
+    | IO.eprintln s!"scoreboard: {matrixPath} carries no unique `src-key:` line, so nothing \
 ties its counts to the HTML this tree emits; regenerate it with \
 lake env lean --run scripts/html-oracle.lean"
-    return (#[], #[])
-  | some k, .ok now =>
-    if k != now then
-      IO.eprintln s!"scoreboard: {matrixPath} was measured on different HTML \
-(src-key {k}, this tree builds {now}), so its counts are about pages this tree \
-no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean"
       return (#[], #[])
-  | some _, .error e =>
-    IO.eprintln s!"scoreboard: cannot rebuild the corpus to compare against \
-{matrixPath}'s src-key: {e}"
+  if recordedHtml != keys.html then
+    IO.eprintln s!"scoreboard: {matrixPath} was measured on different HTML \
+(src-key {recordedHtml}, this tree builds {keys.html}), so its counts are about pages this tree \
+no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean"
+    return (#[], #[])
+  let faceFaults := browserFaceFaults text keys.browserFaceSource
+  unless faceFaults.isEmpty do
+    IO.eprintln s!"scoreboard: {matrixPath} does not describe this tree's browser faces:"
+    for fault in faceFaults do IO.eprintln s!"  {fault}"
+    IO.eprintln "scoreboard: rerun the browser: lake env lean --run scripts/html-oracle.lean"
     return (#[], #[])
   return (#[s!"# source: {matrixPath}; target readers: {String.intercalate " " target.toList}; \
 {untested} cells in non-target columns are data and gate nothing",
-    s!"# src-key: {(matrixKey text).getD "absent"} — the HTML the browser saw, \
-rebuilt and compared on every --check"], rows)
+    s!"# src-key: {recordedHtml} — the HTML the browser saw, rebuilt and compared on every --check",
+    s!"# browser-face-src-key: {(matrixValue text "browser-face-src-key").getD "absent"} — \
+hermetic vector inputs, hrefs and conversion recipe",
+    s!"# browser-face-key: {(matrixValue text "browser-face-key").getD "absent"} — \
+exact converted hrefs and byte digests the browser run received"], rows)
 
 def selftest : IO UInt32 := tierSelftest "htmlreader" fun no => do
   let text := "target: chromium\n\
@@ -170,6 +188,44 @@ alpha       pass       untested\n"
   no "key: reordering changes it"
     (contentKey a != contentKey #[("y", "2".toUTF8), ("x", "1".toUTF8)])
   no "key: 16 hex digits" ((contentKey a).length == 16)
+  -- The browser-face capture is the exact href and converted content the
+  -- browser run received. A converter regression cannot retain its key.
+  let face := BrowserFace.captured "figures" "figures.assets/i0-box.svg" "<svg/>".toUTF8
+  let changedBytes := BrowserFace.captured "figures" "figures.assets/i0-box.svg"
+    "<svg><path/></svg>".toUTF8
+  let changedHref := BrowserFace.captured "figures" "figures.assets/i1-box.svg" "<svg/>".toUTF8
+  let failed := BrowserFace.failed "figures" "pdftocairo"
+  no "browser face: converted bytes move the key"
+    (browserFaceKey #[face] != browserFaceKey #[changedBytes])
+  no "browser face: the rendered href moves the key"
+    (browserFaceKey #[face] != browserFaceKey #[changedHref])
+  no "browser face: a tool failure moves the key"
+    (browserFaceKey #[face] != browserFaceKey #[failed])
+  no "browser face: the committed record round-trips"
+    (BrowserFace.parse face.render == some face)
+  no "browser face: a failed capture cannot certify pass cells"
+    (!(browserFaceFaults
+      ("browser-face-src-key: source\nbrowser-face-key: " ++ browserFaceKey #[failed] ++
+        "\n" ++ failed.render ++ "\n") "source").isEmpty)
+  let faceText := "browser-face-src-key: source\nbrowser-face-key: " ++
+    browserFaceKey #[face] ++ "\n" ++ face.render ++ "\n"
+  no "browser face: matching source and exact capture certify the cells"
+    (browserFaceFaults faceText "source").isEmpty
+  no "browser face: moved hermetic inputs stale the capture"
+    (!(browserFaceFaults faceText "different-source").isEmpty)
+  let staleHref := "browser-face-src-key: source\nbrowser-face-key: " ++
+    browserFaceKey #[face] ++ "\n" ++ changedHref.render ++ "\n"
+  no "browser face: changed captures cannot retain the committed key"
+    (!(browserFaceFaults staleHref "source").isEmpty)
+  let duplicateFace := faceText ++ face.render ++ "\n"
+  no "browser face: duplicate hrefs are a fault"
+    (!(browserFaceFaults duplicateFace "source").isEmpty)
+  let malformedFace := "browser-face-src-key: source\nbrowser-face-key: deadbeef\n\
+browser-face: figures missing-fields\n"
+  no "browser face: a malformed record is a fault"
+    (!(browserFaceFaults malformedFace "source").isEmpty)
+  no "browser face: absent records and keys are faults"
+    (!(browserFaceFaults "src-key: html\n" "source").isEmpty)
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmlreader" (.pairs "pass" "rows") measureTier selftest args

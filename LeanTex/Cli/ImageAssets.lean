@@ -10,10 +10,11 @@ open LeanTex.Core
 /-- A deliberately narrow support boundary, evaluated over libxml's parsed
 XML, never the source spelling. Only fragment references are supported.
 CSS is plain declarations/rules without functions, escapes or at-rules;
-presentation attributes additionally admit exactly `url(#ASCII-id)`.
-Transforms and SMIL timing have their own non-resource function syntax.
-Animated resource/style assignments, scripts and foreign objects are refused.
-This is a refusal boundary, not a second XML or CSS parser. -/
+presentation attributes admit exactly `url(#ASCII-id)`, without paint-server
+fallback syntax such as `url(#id) red`. Transforms and SMIL timing have their
+own non-resource function syntax. Animated resource/style assignments,
+scripts and foreign objects are refused. This is a refusal boundary, not a
+second XML or CSS parser. -/
 private def supportedSvg : String :=
   let localUrl := "(starts-with(normalize-space(.),'url(#') and " ++
     "substring(normalize-space(.),string-length(normalize-space(.)),1)=')' and " ++
@@ -40,6 +41,35 @@ private def supportedSvg : String :=
   "boolean(/*[local-name()='svg' and namespace-uri()='http://www.w3.org/2000/svg']) and " ++
     "not(" ++ unsupported ++ ")"
 
+private def saxArgs (input : System.FilePath) : Array String :=
+  #["--nonet", "--nocatalogs", "--sax", input.toString]
+
+private def xpathArgs (input : System.FilePath) : Array String :=
+  #["--nonet", "--nocatalogs", "--xpath", supportedSvg, input.toString]
+
+private def rsvgArgs (format : String) (input output : System.FilePath) : Array String :=
+  #["--format=" ++ format, "--output", output.toString, input.toString]
+
+private def pdfSvgArgs (page : String) (input output : System.FilePath) : Array String :=
+  #["-svg", "-f", page, "-l", page, input.toString, output.toString]
+
+private def commandText (tool : String) (args : Array String) : String :=
+  tool ++ " " ++ String.intercalate " " args.toList
+
+/-- The normalized host-tool recipe behind browser vector faces. The
+hermetic source key hashes this value, while the browser oracle separately
+records the exact output bytes. Every invocation below reads these same
+argument builders, so a recipe change invalidates the committed report. -/
+def browserFaceContract : String :=
+  let input := System.FilePath.mk "<input>"
+  let output := System.FilePath.mk "<output>"
+  String.intercalate "\n" [
+    commandText "xmllint" (saxArgs input),
+    commandText "xmllint" (xpathArgs input),
+    commandText "rsvg-convert" (rsvgArgs "pdf" input output),
+    commandText "rsvg-convert" (rsvgArgs "svg" input output),
+    commandText "pdftocairo" (pdfSvgArgs "<page>" input output)]
+
 private def runChecked (tool : String) (args : Array String) : IO String := do
   let ran ← IO.Process.output { cmd := tool, args }
   if ran.exitCode != 0 then
@@ -51,16 +81,19 @@ entity substitution, external-DTD loading, XInclude or recovery. Both
 passes read the same captured file; namespace aliases and XML character
 references are resolved by libxml before the XPath boundary sees them. -/
 private def checkSvgFile (input : System.FilePath) : IO Unit := do
-  let sax ← runChecked "xmllint" #["--nonet", "--nocatalogs", "--sax", input.toString]
-  let events := sax.splitOn "\n"
-  if events.any (·.startsWith "SAX.internalSubset(") then
+  let sax ← runChecked "xmllint" (saxArgs input)
+  let dtdEvent := fun raw =>
+    let event := raw.trimAscii.toString
+    ["internalSubset(", "externalSubset(", "entityDecl("].any fun marker =>
+      (event.splitOn marker).length > 1
+  if (sax.splitOn "\n").any dtdEvent then
     throw <| IO.userError "SVG resource boundary refuses DTDs and entity declarations"
-  unless events.contains "SAX.startDocument()" && events.contains "SAX.endDocument()" do
+  unless (sax.splitOn "\n").any (·.trimAscii.toString == "SAX.startDocument()") &&
+      (sax.splitOn "\n").any (·.trimAscii.toString == "SAX.endDocument()") do
     throw <| IO.userError "SVG validation received no complete XML parse"
-  let result ← runChecked "xmllint"
-    #["--nonet", "--nocatalogs", "--xpath", supportedSvg, input.toString]
+  let result ← runChecked "xmllint" (xpathArgs input)
   unless result.trimAscii.toString == "true" do
-    throw <| IO.userError "SVG resource boundary requires fragment-only references and plain CSS; DTDs, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
+    throw <| IO.userError "SVG resource boundary requires fragment-only references and plain CSS; paint servers must be exactly url(#id), without fallback syntax; DTDs, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
 
 /-- Convert one captured input. A failed spawn, nonzero exit or absent
 output is an error, including when a failed process left an output file.
@@ -87,8 +120,7 @@ the browser, preserving animation and source identity. Requires the
 installed xmllint and librsvg tools; either failing is an error value. -/
 def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .default) :
     IO (Except String Image.Plan) := do
-  let pdf ← convert "rsvg-convert" "svg" "pdf"
-    (fun input output => #["--format=pdf", "--output", output.toString, input.toString]) bytes
+  let pdf ← convert "rsvg-convert" "svg" "pdf" (rsvgArgs "pdf") bytes
   return pdf >>= fun b => Image.probe b >>= Image.plan params
 
 /-- librsvg's static vector reading of a self-contained SVG. The caller
@@ -104,8 +136,7 @@ def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
 the selected page instead when a companion PDF supplies a chosen frame. -/
 def svgPoster (bytes : ByteArray) : IO (Except String ByteArray) := do
   if let .error e := (← validateSvg bytes) then return .error e
-  convert "rsvg-convert" "svg" "svg"
-    (fun input output => #["--format=svg", "--output", output.toString, input.toString]) bytes
+  convert "rsvg-convert" "svg" "svg" (rsvgArgs "svg") bytes
 
 /-- Poppler reads the physical page selected by the same page-tree
 traversal as the native importer, including `last`; `/Count` is never a
@@ -115,8 +146,6 @@ def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
   match PdfRead.pageNumber bytes page with
   | .error e => return .error e
   | .ok n =>
-    convert "pdftocairo" "pdf" "svg"
-      (fun input output => #["-svg", "-f", toString n, "-l", toString n,
-        input.toString, output.toString]) bytes
+    convert "pdftocairo" "pdf" "svg" (pdfSvgArgs (toString n)) bytes
 
 end LeanTex.Cli.ImageAssets

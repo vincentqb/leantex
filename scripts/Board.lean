@@ -75,6 +75,7 @@ every tier, one comparison serves all of them and no tier can quietly
 invert the test.
 -/
 import LeanTex
+import LeanTex.Cli.ImageAssets
 import scripts.Gate
 
 namespace Scoreboard
@@ -867,9 +868,10 @@ The aggregate builds these once before fanning out, and a failed build is a
 moment that tier lands; a name no `lakefile.toml` declares is skipped
 rather than failed, so the list can run ahead of the tree.
 
-No tier reads the `leantex` binary: the HTML freshness key is built
-in-process from the library `BoardLib` imports (`hermeticHtmlKey`), so
-building `BoardLib` is what refreshes it. A tier that starts spawning the
+No tier reads the `leantex` binary: HTML and browser-face source freshness
+keys are built in-process from the library `BoardLib` imports
+(`hermeticHtmlKeys`), so building `BoardLib` refreshes them. The exact
+converted-face key is committed report data. A tier that starts spawning the
 binary owes `leantex` a place here. -/
 def tierImports : List String :=
   ["BoardLib", "GateLib", "TestsModules", "ParityLib"]
@@ -1131,6 +1133,120 @@ def sha256Hex (msg : ByteArray) : String := Id.run do
       out := out.push digits[((x >>> ((7 - i).toUInt32 * 4)) &&& 0xf).toNat]!
   return out
 
+/-- One browser face the external oracle actually gave a reader: either the
+exact href and content digest it loaded, or the converter whose failure kept
+that face from the page. The record is committed beside the browser verdict;
+it is measurement data, not a theorem about a host tool. -/
+inductive BrowserFaceResult where
+  | captured (size : Nat) (sha256 : String)
+  | failed (tool : String)
+deriving BEq, Repr, Inhabited
+
+structure BrowserFace where
+  fixture : String
+  href : String
+  result : BrowserFaceResult
+deriving BEq, Repr, Inhabited
+
+namespace BrowserFace
+
+/-- Capture exact converted bytes under the href the generated page names. -/
+def captured (fixture href : String) (bytes : ByteArray) : BrowserFace :=
+  { fixture, href, result := .captured bytes.size (sha256Hex bytes) }
+
+/-- A conversion that produced no browser face. -/
+def failed (fixture tool : String) : BrowserFace :=
+  { fixture, href := "!" ++ tool, result := .failed tool }
+
+def resultText : BrowserFaceResult → String
+  | .captured size pin => s!"ok:{size}:{pin}"
+  | .failed tool => "fail:" ++ tool
+
+def render (face : BrowserFace) : String :=
+  s!"browser-face: {face.fixture} {face.href} {resultText face.result}"
+
+/-- One committed capture line. Names and hrefs are single tokens because all
+of them are generated fixture/asset names, never author prose or host paths. -/
+def parse (line : String) : Option BrowserFace := do
+  let toks := (line.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
+  let [_, fixture, href, result] := toks | none
+  if !line.trimAscii.toString.startsWith "browser-face:" then none else
+  match result.splitOn ":" with
+  | ["ok", size, pin] =>
+    let size ← size.toNat?
+    if pin.length == 64 && pin.all fun c => c.isDigit || ('a' ≤ c && c ≤ 'f') then
+      some { fixture, href, result := .captured size pin }
+    else none
+  | ["fail", tool] =>
+    if tool.isEmpty then none else some { fixture, href, result := .failed tool }
+  | _ => none
+
+end BrowserFace
+
+/-- The committed key of browser-converted faces. The href and the SHA-256 of
+the exact bytes are both in the input; order is canonical, so directory walk
+order cannot move the measurement. -/
+def browserFaceKey (faces : Array BrowserFace) : String :=
+  let ordered := faces.qsort fun a b =>
+    if a.fixture == b.fixture then a.href < b.href else a.fixture < b.fixture
+  contentKey (ordered.map fun face =>
+    (face.fixture ++ "/" ++ face.href, (BrowserFace.resultText face.result).toUTF8))
+
+private def browserFaceField (text name : String) : Array String :=
+  ((text.splitOn "\n").filterMap fun raw =>
+    let line := raw.trimAscii.toString
+    if line.startsWith (name ++ ":") then
+      some ((line.drop (name.length + 1)).toString.trimAscii.toString)
+    else none).toArray
+
+/-- Parse every browser-face row, refusing even one malformed row rather than
+silently calculating a key over a subset. -/
+def browserFaces (text : String) : Except String (Array BrowserFace) := do
+  let mut out : Array BrowserFace := #[]
+  for raw in text.splitOn "\n" do
+    let line := raw.trimAscii.toString
+    if line.startsWith "browser-face:" then
+      let some face := BrowserFace.parse line
+        | throw s!"malformed browser-face record: {line}"
+      out := out.push face
+  return out
+
+/-- Faults that stop committed pass cells certifying another set of browser
+faces. The source key is rebuilt hermetically; the content key is recomputed
+from the committed exact-byte digests. Host conversion itself remains an
+explicit report and a failed conversion is never a passing capture. -/
+def browserFaceFaults (text freshSourceKey : String) : Array String := Id.run do
+  let mut faults : Array String := #[]
+  let sourceKeys := browserFaceField text "browser-face-src-key"
+  if sourceKeys.isEmpty then
+    faults := faults.push "no `browser-face-src-key:` line"
+  else if sourceKeys.size > 1 then
+    faults := faults.push "more than one `browser-face-src-key:` line"
+  else if sourceKeys[0]! != freshSourceKey then
+    faults := faults.push s!"browser-face source key {sourceKeys[0]!}, this tree builds {freshSourceKey}"
+  let declaredKeys := browserFaceField text "browser-face-key"
+  let declared := if declaredKeys.size == 1 then some declaredKeys[0]! else none
+  if declaredKeys.isEmpty then
+    faults := faults.push "no `browser-face-key:` line"
+  else if declaredKeys.size > 1 then
+    faults := faults.push "more than one `browser-face-key:` line"
+  match browserFaces text with
+  | .error e => faults := faults.push e
+  | .ok faces =>
+    if faces.isEmpty then faults := faults.push "no browser-face records"
+    for i in [0:faces.size] do
+      let face := faces[i]!
+      if (faces.extract 0 i).any fun prior =>
+          prior.fixture == face.fixture && prior.href == face.href then
+        faults := faults.push s!"duplicate browser face {face.fixture}/{face.href}"
+      if let BrowserFaceResult.failed tool := face.result then
+        faults := faults.push s!"{face.fixture}: {tool} produced no browser face"
+    if let some key := declared then
+      let actual := browserFaceKey faces
+      if key != actual then
+        faults := faults.push s!"browser-face key {key}, committed records give {actual}"
+  return faults
+
 /-- A file pinned by the sha256 of the bytes it held when it was declared.
 The line is `sha256sum`'s own format, `<64 hex>  <path>`, so a pin is made,
 and can be checked, by that one standard command. -/
@@ -1330,23 +1446,18 @@ end Scoreboard
 
 /-! ## The HTML freshness key, built hermetically
 
-A browser matrix is only as fresh as the pages it was measured on, so the
-`htmlreader` tier compares a key of the HTML this tree emits with the one the
-matrix recorded. The key used to rebuild the corpus through the CLI, which
-reads the host: the TeX tree's fonts through `kpsewhich`, whatever boundary
-tool is on `PATH`, `LEANTEX_FONT`, the user cache. With TeX off `PATH` or
-`LEANTEX_FONT` exported the same tree failed its gate. So the key is built
-in-process from in-repo inputs only — the corpus and its shipped faces — the
-way the suite builds a golden fixture: the one shipped face in every slot,
-the shipped math face where a document reaches math, a shipped fallback face
-per icon scalar, images read beside the fixture, and boundary pictures left
-unfulfilled (no tool runs). It then tracks the engine rather than the host,
-which is what freshness is for.
+A browser matrix is only as fresh as the artifacts it measured. The ordinary
+HTML key is rebuilt in-process from in-repo inputs only — corpus, images and
+shipped faces — so it tracks the engine rather than `PATH`, font variables,
+the user cache or a TeX tree.
 
-It mirrors the driver's HTML path (`Main.frontend`, then the emission's
-configuration) over that environment. A change to the driver's own glue is
-therefore not seen by the key — routed: lift that glue into a library
-function both call. -/
+Vector browser faces add a second contract because their bytes come from host
+converters. The hermetic half keys the HTML key, exact vector source bytes,
+page/animation request, generated href and `ImageAssets.browserFaceContract`.
+The external oracle keys the exact converted bytes under those hrefs. A host
+binary can still change its output without changing its inputs; that is an
+explicit report boundary, recorded by tool version and refreshed only by
+running the browser oracle, never disguised as a hermetic gate. -/
 
 namespace Scoreboard.Hermetic
 
@@ -1431,6 +1542,51 @@ def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
   let (store, diags) := Image.fulfilRequests fetched
   return (store, diags, read)
 
+/-- A canonical spelling for the page-selection part of a browser-face
+conversion request. -/
+private def pageSelectionKey : PdfRead.PageSelection → String
+  | .first => "first"
+  | .last => "last"
+  | .number n => s!"page:{n}"
+
+/-- Hermetic inputs to the host-only browser-face conversion: exact vector
+source bytes, request/page identity, generated hrefs, optional companions,
+and the shared tool recipe. No converter runs here. -/
+def browserSourceBlobs (corpus : System.FilePath) (name : String) (doc : Ir.Doc)
+    (store : Image.Store) (read : Array (String × ByteArray)) :
+    IO (Array (String × ByteArray)) := do
+  let mut out : Array (String × ByteArray) := #[]
+  for req in Ir.imageRequests doc do
+    let some k := store.findRequest? req | continue
+    let some en := store.get? k | continue
+    let resolved := HtmlDoc.resolvedSrc en
+    let vector := Image.isSvg resolved || (en.info.map (·.form.isSome)).getD false
+    unless vector do continue
+    let some (_, bytes) := read.find? (fun input => input.1 == resolved) | continue
+    let faceSrc := ((System.FilePath.mk resolved).withExtension "svg").toString
+    let href := s!"{name}.assets/{HtmlDoc.imageAssetName k faceSrc}"
+    let physicalPage := if Image.isSvg resolved then "none" else
+      match PdfRead.pageNumber bytes req.page with
+      | .ok n => toString n
+      | .error e => "error:" ++ e
+    let companionRel := (System.FilePath.mk resolved).withExtension "svg"
+    let companion := corpus / companionRel
+    let hasCompanion ← if req.animated && !Image.isSvg resolved
+      then companion.pathExists else pure false
+    let poster := if Image.isSvg resolved || hasCompanion
+      then s!"{name}.assets/{HtmlDoc.imagePosterName k en}" else "none"
+    let descriptor := s!"source={req.src}\nresolved={resolved}\npage={pageSelectionKey req.page}\nphysical-page={physicalPage}\nanimated={req.animated}\nhref={href}\nposter={poster}\ncompanion={if hasCompanion then companionRel.toString else "none"}"
+    out := out.push (s!"{name}/{k}/request", descriptor.toUTF8)
+    out := out.push (s!"{name}/{k}/source/{resolved}", bytes)
+    if hasCompanion then
+      out := out.push (s!"{name}/{k}/companion/{companionRel}", ← IO.FS.readBinFile companion)
+  return out
+
+structure PageOutput where
+  html : String
+  read : Array (String × ByteArray)
+  browserSources : Array (String × ByteArray)
+
 /-- One fixture's page, or `none` where the driver would refuse to write one
 (an error its `\allow` does not accept). The sequence is `Main.frontend`'s:
 lex, parse, `\input` and `\data` fulfilled beside the file, one preparation,
@@ -1438,7 +1594,7 @@ a picture label measured against the preamble's set, the bibliography
 fulfilled; then the emission configured as the driver configures it. -/
 def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (corpus fontsDir : System.FilePath) (name : String) :
-    IO (Option (String × Array (String × ByteArray))) := do
+    IO (Option PageOutput) := do
   let file := (corpus / s!"{name}.tex").toString
   let src ← IO.FS.readFile file
   let (toks, lexDiags) := Lex.lex file src
@@ -1464,13 +1620,18 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
     { css, imgs := store
       fonts := if doc.fontPolicy == .embedded then some fs else none
       fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
-  return some ((HtmlDoc.emit cfg doc).1, read)
+  let browserSources ← browserSourceBlobs corpus name doc store read
+  return some { html := (HtmlDoc.emit cfg doc).1, read, browserSources }
 
-/-- The key over a corpus directory holding `<name>.tex` fixtures and a
-`fonts/` directory of shipped faces: every page that builds, the images it
-reads, every shipped face once, and the names of the fixtures that do not
-build — a page that stopped building changes what a browser would see. -/
-def corpusKey (corpus : System.FilePath) : IO (Except String String) := do
+structure CorpusKeys where
+  html : String
+  browserFaceSource : String
+
+/-- The two freshness keys over a corpus. `html` covers every hermetic page,
+image and shipped face. `browserFaceSource` additionally covers the exact
+vector inputs, generated hrefs and conversion recipe whose host-produced
+bytes the browser oracle commits. -/
+def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   let fontsDir := corpus / "fonts"
   if !(← corpus.isDir) then return .error s!"{corpus} is not a directory"
   if !(← fontsDir.isDir) then return .error s!"{fontsDir} is not a directory"
@@ -1480,35 +1641,50 @@ def corpusKey (corpus : System.FilePath) : IO (Except String String) := do
     | return .error s!"{fontsDir}/OpenSans-Regular.ttf does not parse"
   let oneFace : Font.FontSet := { fonts := #[body], index := oneFaceIndex }
   let mut blobs : Array (String × ByteArray) := #[]
+  let mut browserSources : Array (String × ByteArray) :=
+    #[("conversion-contract", ImageAssets.browserFaceContract.toUTF8)]
+  for owner in ["LeanTex/Cli/ImageAssets.lean", "Main.lean"] do
+    if !(← System.FilePath.pathExists owner) then
+      return .error s!"browser-face implementation owner {owner} is missing"
+    browserSources := browserSources.push
+      ("implementation/" ++ owner, ← IO.FS.readBinFile owner)
   let mut unbuilt : Array String := #[]
   for e in (← corpus.readDir).qsort (·.fileName < ·.fileName) do
     if e.fileName.endsWith ".tex" then
       let name := (e.fileName.dropEnd ".tex".length).toString
       let page ← try pageFor cache oneFace faces corpus fontsDir name catch _ => pure none
       match page with
-      | some (html, read) =>
-        blobs := blobs.push (s!"{name}.html", html.toUTF8)
-        for (cand, bytes) in read do
+      | some page =>
+        blobs := blobs.push (s!"{name}.html", page.html.toUTF8)
+        for (cand, bytes) in page.read do
           blobs := blobs.push (s!"{name}.assets/{cand}", bytes)
+        browserSources := browserSources ++ page.browserSources
       | none => unbuilt := unbuilt.push name
   if blobs.isEmpty then return .error "no corpus fixture built to HTML"
   for e in (← fontsDir.readDir).qsort (·.fileName < ·.fileName) do
     if isFaceFile e.fileName then
       blobs := blobs.push (s!"fonts/{e.fileName}", ← IO.FS.readBinFile e.path)
   blobs := blobs.push ("unbuilt", (String.intercalate " " unbuilt.toList).toUTF8)
-  return .ok (Scoreboard.contentKey blobs)
+  let html := Scoreboard.contentKey blobs
+  browserSources := browserSources.push ("html-key", html.toUTF8)
+  return .ok { html, browserFaceSource := Scoreboard.contentKey browserSources }
+
+/-- The existing HTML-only view, retained for scoreboard probes and callers
+that do not consume the browser-face source key. -/
+def corpusKey (corpus : System.FilePath) : IO (Except String String) := do
+  return (← corpusKeys corpus).map (·.html)
 
 end Scoreboard.Hermetic
 
 namespace Scoreboard
 
-/-- The freshness key of the HTML this tree emits for `tests/corpus`, built
-hermetically (`Hermetic.corpusKey`): the one function `html-oracle` records
-the key through and `htmlreader --check` recomputes it with, so the number
-written and the number checked cannot differ by how each was built, and
-neither can differ by host. Measured on this host: see PLAN. -/
-def hermeticHtmlKey : IO (Except String String) := do
-  try Hermetic.corpusKey "tests/corpus"
+/-- Both hermetic keys for the shipped corpus, computed in one traversal. -/
+def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
+  try Hermetic.corpusKeys "tests/corpus"
   catch e => return .error (toString e)
+
+/-- The HTML freshness key retained as the narrow public projection. -/
+def hermeticHtmlKey : IO (Except String String) := do
+  return (← hermeticHtmlKeys).map (·.html)
 
 end Scoreboard

@@ -99,6 +99,7 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("character-encoded image", "<image href=\"&#x74;&#105;le.png\"/>"),
       ("aliased image", "<image xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"tile.png\"/>"),
       ("base URI", "<g xml:base=\"https://example.invalid/\"><use href=\"#p\"/></g>"),
+      ("paint-server fallback", "<defs><linearGradient id=\"paint\"/></defs><rect fill=\"url(#paint) red\"/>"),
       ("CSS escaped URL", "<style>rect { fill: u\\72l(tile.svg#p) }</style>"),
       ("CSS import", "<style>@import 'outside.css';</style>"),
       ("CSS string image", "<style>rect { fill: image-set('tile.png' 1x) }</style>"),

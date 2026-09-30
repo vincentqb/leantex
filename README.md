@@ -74,12 +74,16 @@ they build on any machine:
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
 machine's default sans. `images.tex` shows `\includegraphics` and `figure`:
 the synthetic PNG/JPEG fixtures beside it embed into the PDF and link from
-the HTML. Self-contained SVG images work too: `xmllint` checks the supported
-subset, `rsvg-convert` supplies the vector PDF face, and HTML publishes the
-original SVG. Fragment references and plain CSS are supported; external
-resources, scripts, DTDs and CSS functions, escapes or at-rules are refused.
-A PDF image can select a page with `\includegraphics[page=2]{figure.pdf}`;
-`pdftocairo` supplies its SVG browser face.
+the HTML. Self-contained SVG images work too. Building one requires
+`xmllint` and `rsvg-convert` at document-build time: libxml checks the
+supported subset, librsvg supplies the static vector face, and HTML publishes
+the original SVG. Fragment references and plain CSS are supported; a paint
+server is exactly `url(#id)` — fallback syntax such as `url(#id) red` is
+refused. External resources, scripts, DTDs and CSS functions, escapes or
+at-rules are refused. A PDF image can select a page with
+`\includegraphics[page=2]{figure.pdf}`; HTML output containing that PDF
+requires Poppler's `pdftocairo` at document-build time to supply its SVG
+browser face.
 
 `\animategraphics[poster=last]{10}{figure}{}{}` selects the last page of
 `figure.pdf` for the PDF poster. HTML uses `figure.svg` when present, preserving

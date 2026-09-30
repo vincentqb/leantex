@@ -24483,3 +24483,40 @@ Chromium, stable reduced-motion and printed posters, and both figures fitting
 their stages. The native, browser-printed and reference PDFs pass strict
 object and stream decoding. A document-local reference-driver repair preserves
 source PDF transparency groups without changing the installed TeX tree.
+
+### 2026-09-30 — Browser-face oracle freshness correction
+
+Review found that the browser oracle rendered driver-converted SVG faces while
+the `htmlreader` freshness key rebuilt image stores without those faces. A
+converter or href regression could therefore leave the HTML key unchanged and
+keep old browser pass cells. The invariant is now two-part: the matrix must
+match both the hermetic HTML and the hermetic browser-face sources, and its
+browser-face content key must match successful captures of the exact hrefs and
+bytes the browser run received. A missing, malformed, duplicate, stale or
+failed capture faults the tier; removing an image cannot turn a converter
+failure into an unexercised passing cell.
+
+The browser-face source key covers the HTML key, vector source and companion
+bytes, request and animation selection, the resolved physical PDF page,
+generated primary and poster hrefs, the shared converter recipe, and the two
+implementation owners that invoke and publish conversion. The content rows
+record fixture, href, byte count and SHA-256; the current report holds the
+boundary SVG and both selected copies of the synthetic PDF figure. Conversion
+itself remains a host report, not a hermetic gate: a converter binary can change
+under identical committed inputs only when the browser oracle is rerun. The
+matrix records converter versions and date so that boundary is explicit.
+
+The tier selftest changes converted bytes, href, tool success, source key,
+record syntax and duplication independently and requires each stale form to
+fault. The installed-converter oracle additionally refuses paint-server
+fallback syntax while admitting exact fragment paint, and DTD detection accepts
+xmllint's internal-subset, external-subset and entity-declaration event
+spellings. The README now names the SVG and PDF-to-SVG executables as document
+build-time dependencies.
+
+The fail-first check rejected the prior matrix for missing face records, then
+again when conversion implementation and physical-page ownership entered the
+source key. After regeneration, all 85 Chromium fixture cells and all three
+browser-face captures pass. `lake build`, `lake test`, the 92,871-input image
+fuzz run, the installed SVG converter oracle, HTML accessibility check and
+selftest, browser oracle/check/selftests, and every scoreboard tier pass.

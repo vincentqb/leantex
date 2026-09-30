@@ -9,12 +9,12 @@ from the repository root after `lake build`:
 Builds every `tests/corpus/*.tex` to HTML in a scratch copy of the corpus
 (so a page sits beside the files it names, as `leantex doc.tex` leaves it),
 drives the host's cached Playwright Chromium over each page, and writes
-`tests/oracles/html-reader-matrix.txt`: the readers the run actually
-exercised (`target:`), tool versions and a date (data, never gated), one
-row per feature × reader and one per fixture × reader. This script is the
-matrix's only writer; the file has exactly a golden's exposure, and a cell
-that moves without its `tools:`/`date:` lines moving is how a hand edit is
-caught in review.
+`tests/oracles/html-reader-matrix.txt`: target readers, host-tool versions and
+a date, one row per feature × reader and fixture × reader, plus a separate
+browser-face source key and exact converted href/content captures. A converter
+failure is a failed capture even when removing the `<img>` would otherwise
+turn the browser's image check into `na`. This script is the matrix's only
+writer; the file has exactly a golden's exposure.
 
 Cells: `pass` — every fixture that exercises the feature holds it in that
 reader; `fail:<fixture>` — one that does not, its reason in the `#` line
@@ -70,6 +70,15 @@ def pdftotextVersion : IO String := do
     let line := (((out.stderr ++ out.stdout).splitOn "\n").headD "").trimAscii.toString
     return if line.isEmpty then "pdftotext absent" else line
   catch _ => return "pdftotext absent"
+
+/-- First version line of a host-only converter, or an explicit absence. -/
+def toolVersion (tool : String) (args : Array String) : IO String := do
+  try
+    let out ← IO.Process.output { cmd := tool, args }
+    let line := (((out.stdout ++ out.stderr).splitOn "\n").find? (!·.trimAscii.isEmpty)).getD ""
+      |>.trimAscii.toString
+    return if out.exitCode == 0 && !line.isEmpty then line else tool ++ " absent"
+  catch _ => return tool ++ " absent"
 
 -- ## The checked-in file
 
@@ -136,14 +145,19 @@ def offences (m : Matrix) : Array String := Id.run do
 def checkFile (path : String) : IO UInt32 := do
   if !(← System.FilePath.pathExists path) then
     return (← die 2 s!"html-oracle: {path} is missing; regenerate it")
-  match parseMatrix (← IO.FS.readFile path) with
+  let text ← IO.FS.readFile path
+  let keys ← match ← Scoreboard.hermeticHtmlKeys with
+    | .ok keys => pure keys
+    | .error e => return (← die 2 s!"html-oracle: cannot rebuild freshness keys: {e}")
+  match parseMatrix text with
   | .error e => die 2 s!"html-oracle: {path}: {e}"
   | .ok m =>
-    let bad := offences m
+    let bad := offences m ++ (Scoreboard.browserFaceFaults text keys.browserFaceSource).map
+      ("browser-face: " ++ ·)
     if bad.isEmpty then
-      IO.println s!"html-oracle: every target cell passes ({String.intercalate " " m.target.toList})"
+      IO.println s!"html-oracle: every target cell and browser-face capture passes ({String.intercalate " " m.target.toList})"
       return 0
-    IO.println s!"html-oracle: {bad.size} target cells not passing in {path}:"
+    IO.println s!"html-oracle: {bad.size} target or browser-face checks not passing in {path}:"
     for b in bad do IO.println s!"  {b}"
     return 1
 
@@ -614,6 +628,26 @@ def copyTree (src dst : System.FilePath) : IO Unit := do
     if let some parent := d.parent then IO.FS.createDirAll parent
     IO.FS.writeBinFile d (← IO.FS.readBinFile f)
 
+/-- Exact generated SVG bytes under the hrefs present in the pages the browser
+will open. Converter diagnostics enter as failed records, so a missing tool
+cannot silently turn a previously exercised image into a passing `na` cell. -/
+def capturedBrowserFaces (root : System.FilePath) (fixtures : Array String)
+    (failures : Array Scoreboard.BrowserFace) : IO (Array Scoreboard.BrowserFace) := do
+  let mut out := failures
+  let rootPrefix := root.toString ++ "/"
+  for fixture in fixtures do
+    let html ← IO.FS.readFile (root / (fixture ++ ".html"))
+    let assets := root / (fixture ++ ".assets")
+    if !(← assets.isDir) then continue
+    for file in (← System.FilePath.walkDir assets).qsort (·.toString < ·.toString) do
+      if (← file.isDir) || file.extension != some "svg" then continue
+      let href := (file.toString.drop rootPrefix.length).toString
+      if (html.splitOn href).length > 1 then
+        out := out.push (Scoreboard.BrowserFace.captured fixture href (← IO.FS.readBinFile file))
+      else
+        out := out.push { fixture, href, result := .failed "unlinked-svg" }
+  return out
+
 -- ## Aggregation
 
 structure Cell where
@@ -690,16 +724,21 @@ def tableLine (key : String) (cells : Array String) (tail : String := "") : Stri
   (cells.foldl (fun acc c => acc ++ pad c colW) (pad key keyW) ++ tail).trimAsciiEnd.toString
 
 def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
-    (tools date srcKey : String) : String := Id.run do
+    (tools date srcKey browserSourceKey : String)
+    (browserFaces : Array Scoreboard.BrowserFace) : String := Id.run do
   let mut out := "# generated by scripts/html-oracle.lean — do not hand-edit; regenerate: lake env lean --run scripts/html-oracle.lean\n"
   out := out ++ s!"target: {String.intercalate " " targetReaders}\n"
   out := out ++ s!"tools: {tools}\n"
   out := out ++ s!"date: {date}\n"
-  -- The freshness key of the tree this browser run measured, built
-  -- hermetically so every host computes the same one. A tier over these
-  -- counts recomputes it and faults when it differs, so the matrix cannot
-  -- keep reporting last week's verdict about this week's engine.
+  -- The HTML key is hermetic. Browser conversion is host-only: its source
+  -- key binds this report to the current vector inputs, hrefs and shared
+  -- recipe; its content key binds it to the exact converted bytes below.
   out := out ++ s!"src-key: {srcKey}\n"
+  out := out ++ s!"browser-face-src-key: {browserSourceKey}\n"
+  out := out ++ s!"browser-face-key: {Scoreboard.browserFaceKey browserFaces}\n"
+  for face in browserFaces.qsort fun a b =>
+      if a.fixture == b.fixture then a.href < b.href else a.fixture < b.fixture do
+    out := out ++ face.render ++ "\n"
   out := out ++ s!"fixtures: {fixtures.size} built"
   out := out ++ (if unbuilt.isEmpty then "\n" else s!", unbuilt: {String.intercalate " " unbuilt.toList}\n")
   out := out ++ "\n[feature]\n"
@@ -730,15 +769,12 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
 def regenerate : IO UInt32 := do
   if !(← System.FilePath.pathExists leantexBin) then
     return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
-  -- The freshness key first, and hermetically: the tier's own function, so
-  -- the number written here and the number `htmlreader --check` recomputes
-  -- cannot differ by how, or on which host, each was built. A matrix whose
-  -- key could not be computed can never be matched, so nothing is written
-  -- and the browser is not started.
-  let srcKey ← match ← Scoreboard.hermeticHtmlKey with
-    | .ok k => pure k
+  -- Both freshness keys come from the tier's functions, so the matrix and
+  -- `htmlreader --check` cannot disagree about the hermetic inputs.
+  let keys ← match ← Scoreboard.hermeticHtmlKeys with
+    | .ok keys => pure keys
     | .error e =>
-      return (← die 2 s!"html-oracle: cannot compute the corpus's freshness key ({e}), \
+      return (← die 2 s!"html-oracle: cannot compute the corpus's freshness keys ({e}), \
 so the matrix would describe pages nothing ties to this tree; nothing written")
   let date := (← IO.Process.output { cmd := "date", args := #["-u", "+%Y-%m-%d"] }).stdout.trimAscii.toString
   let haveNode ← hasCmd "node"
@@ -751,13 +787,22 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     copyTree "tests/corpus" (work / "corpus")
     let mut fixtures : Array String := #[]
     let mut unbuilt : Array String := #[]
+    let mut faceFailures : Array Scoreboard.BrowserFace := #[]
     for e in (← (work / "corpus").readDir).qsort (·.fileName < ·.fileName) do
       if e.fileName.endsWith ".tex" then
         let name := (e.fileName.dropEnd ".tex".length).toString
         let r ← IO.Process.output
           { cmd := leantexBin
             args := #["-q", "build", e.path.toString, "-o", (work / "corpus" / (name ++ ".html")).toString] }
+        let log := r.stdout ++ r.stderr
+        if (log.splitOn "warning[W0605]").length > 1 then
+          let tool := if (log.splitOn "rsvg-convert").length > 1
+            then "rsvg-convert" else "pdftocairo"
+          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name tool)
+        if (log.splitOn "warning[W0378]").length > 1 then
+          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name "pdftocairo-boundary")
         if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
+    let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
@@ -784,9 +829,13 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         | none =>
           let why := ((probe.unavailable.find? (·.1 == r)).map (·.2)).getD "no row from the probe"
           tools := tools ++ s!"  {r} untested ({why})"
-      tools := tools ++ s!"  {← pdftotextVersion}"
+    tools := tools ++ s!"  {← toolVersion "xmllint" #["--version"]}"
+    tools := tools ++ s!"  {← toolVersion "rsvg-convert" #["--version"]}"
+    tools := tools ++ s!"  {← toolVersion "pdftocairo" #["-v"]}"
+    tools := tools ++ s!"  {← pdftotextVersion}"
     IO.FS.createDirAll "tests/oracles"
-    IO.FS.writeFile matrixPath (renderMatrix probe fixtures unbuilt tools date srcKey)
+    IO.FS.writeFile matrixPath
+      (renderMatrix probe fixtures unbuilt tools date keys.html keys.browserFaceSource browserFaces)
     IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"
   finally
     IO.FS.removeDirAll work
