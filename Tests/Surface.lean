@@ -8731,8 +8731,11 @@ def convCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ConvCache.variant (.pdfPage 1) "pdftocairo 24" LeanTex.version !=
       ConvCache.variant (.pdfPage 2) "pdftocairo 24" LeanTex.version)
   t "the in-flight name never serves as output or refusal"
-    (!(ConvCache.partName srcA varA).endsWith ".out" &&
-     !(ConvCache.partName srcA varA).endsWith ".fail")
+    (!(ConvCache.partName srcA varA "n1").endsWith ".out" &&
+     !(ConvCache.partName srcA varA "n1").endsWith ".fail" &&
+     (ConvCache.partName srcA varA "n1").endsWith ".part")
+  t "distinct writers to one slot get distinct in-flight names"
+    (ConvCache.partName srcA varA "n1" != ConvCache.partName srcA varA "n2")
   -- The recipes the cache keys on are the recipes the browser oracle
   -- records: one source of truth, so a moved invocation moves both.
   t "the contract names every tool the faces run"

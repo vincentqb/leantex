@@ -176,10 +176,15 @@ def outName (srcKey variant : String) : String := stem srcKey variant ++ ".out"
 per request, whichever way the tool answered. -/
 def failName (srcKey variant : String) : String := stem srcKey variant ++ ".fail"
 
-/-- The temporary name a writer builds under before the atomic rename, so a
-killed writer never leaves a valid-looking slot behind — the `.part` never
-serves. -/
-def partName (srcKey variant : String) : String := stem srcKey variant ++ ".part"
+/-- The temporary name one writer builds under before the atomic rename.
+Every writer gets its own name — the slot stem, that writer's fresh nonce,
+and `.part` — so the output writer, the refusal writer and any concurrent
+process filling the same slot never share a temp, and a killed writer's
+half-written `.part` is named after nobody else and never renamed into
+place. The `.part` suffix also keeps it out of the served/replayed names
+(`.out`, `.fail`), so a half-written temp is never mistaken for a slot. -/
+def partName (srcKey variant nonce : String) : String :=
+  stem srcKey variant ++ "-" ++ nonce ++ ".part"
 
 /-! ## The reading
 

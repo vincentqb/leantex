@@ -103,3 +103,11 @@ globs = ["scripts.LandCore"]
 [[lean_exe]]
 name = "land"
 root = "scripts.land"
+
+
+# The conversion-cache IO oracle probe: one call into the real
+# ImageAssets.picFace, spawned many times by scripts/conv-cache-io.lean to
+# prove the concurrent atomic-publish contract with stub tools.
+[[lean_exe]]
+name = "convProbe"
+root = "scripts.convprobe"

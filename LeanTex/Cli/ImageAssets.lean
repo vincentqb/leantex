@@ -171,19 +171,50 @@ def toolVersion (dir : System.FilePath) (tool : String) : IO PicCache.Tool := do
   let stamp ← ToolProbe.witness tool
   ToolProbe.identify (dir / PicCache.versionName tool) stamp (probeConvVersion tool)
 
-/-- Write bytes to their slot atomically: build the `.part`, then rename it
-into place. A killed writer leaves only the `.part`, never a slot that
-serves. -/
+/-- A fresh temp-name nonce: the monotonic clock and a random draw. Two
+writers to one slot — the output writer and the refusal writer, or two
+concurrent builds converting the same figure — draw different nonces, so
+they never share a `.part`, and a writer killed mid-write leaves a temp
+named after nobody that no other writer renames into place. -/
+private def freshNonce : IO String := do
+  return s!"{← IO.monoNanosNow}-{← IO.rand 0 (2 ^ 31)}"
+
+/-- Read a warmed byte slot only when it holds usable bytes — a readable,
+non-empty file. An empty or unreadable slot (a truncated file, or a half-written
+byte left by a writer that died before atomic staging) is refused as `none`,
+so the caller re-runs the tool rather than serving garbage. -/
+private def readGoodOutput (p : System.FilePath) : IO (Option ByteArray) := do
+  if ← p.pathExists then
+    match ← (IO.FS.readBinFile p).toBaseIO with
+    | .ok b => return if b.isEmpty then none else some b
+    | .error _ => return none
+  else return none
+
+/-- Read a warmed text slot (a remembered refusal, or the validation
+sentinel) only when it holds non-empty, readable text; an empty or
+unreadable slot is refused as `none` and re-run. -/
+private def readGoodText (p : System.FilePath) : IO (Option String) := do
+  if ← p.pathExists then
+    match ← (IO.FS.readFile p).toBaseIO with
+    | .ok t => return if t.isEmpty then none else some t
+    | .error _ => return none
+  else return none
+
+/-- Write bytes to their slot atomically: build a per-writer `.part`, then
+rename it into place. A killed writer leaves only its uniquely-named
+`.part`, never a slot that serves; the rename is the only step that makes
+bytes visible at the served name. -/
 private def atomicWriteBin (dir : System.FilePath) (srcKey variant : String)
     (final : System.FilePath) (bytes : ByteArray) : IO Unit := do
-  let part := dir / ConvCache.partName srcKey variant
+  let part := dir / ConvCache.partName srcKey variant (← freshNonce)
   IO.FS.writeBinFile part bytes
   IO.FS.rename part final
 
-/-- Write a remembered refusal atomically, the same way. -/
+/-- Write a remembered refusal atomically, the same way, under a per-writer
+`.part`. -/
 private def atomicWriteText (dir : System.FilePath) (srcKey variant : String)
     (final : System.FilePath) (text : String) : IO Unit := do
-  let part := dir / ConvCache.partName srcKey variant
+  let part := dir / ConvCache.partName srcKey variant (← freshNonce)
   IO.FS.writeFile part text
   IO.FS.rename part final
 
@@ -235,8 +266,15 @@ def byteConv (op : ConvCache.Op) (bytes : ByteArray) (inExt outExt tool : String
       let variant := ConvCache.variant op version LeanTex.version
       let outP := dir / ConvCache.outName srcKey variant
       let failP := dir / ConvCache.failName srcKey variant
-      if ← outP.pathExists then return .ok (← IO.FS.readBinFile outP)
-      if ← failP.pathExists then return .error (← IO.FS.readFile failP)
+      -- The serve/replay/run decision is the shared `PicCache.step`, read
+      -- over usable slots only: an empty or unreadable warmed output is not
+      -- a hit, so a truncated slot re-runs rather than serving garbage.
+      let good? ← readGoodOutput outP
+      let refusal? ← readGoodText failP
+      match PicCache.step good?.isSome refusal?, good? with
+      | .serve, some b => return .ok b
+      | .replay says, _ => return .error says
+      | _, _ =>
       let (outcome, bytes?) ← runByteConv bytes inExt outExt tool args
       match outcome with
       | .drawn => match bytes? with
@@ -245,7 +283,10 @@ def byteConv (op : ConvCache.Op) (bytes : ByteArray) (inExt outExt tool : String
             return .ok b
           | none => return .error s!"{tool} produced no usable output"
       | .refused says =>
-        try atomicWriteText dir srcKey variant failP says catch _ => pure ()
+        -- `remembers` governs what is persisted: only the tool's own refusal.
+        match PicCache.remembers outcome with
+        | some _ => try atomicWriteText dir srcKey variant failP says catch _ => pure ()
+        | none => pure ()
         return .error says
       | .inconclusive says => return .error says
 
@@ -332,14 +373,20 @@ def checkSvg (bytes : ByteArray) : IO (Except String Unit) := do
       let variant := ConvCache.variant .validate version LeanTex.version
       let outP := dir / ConvCache.outName srcKey variant
       let failP := dir / ConvCache.failName srcKey variant
-      if ← outP.pathExists then return .ok ()
-      if ← failP.pathExists then return .error (← IO.FS.readFile failP)
+      let ok? ← readGoodText outP
+      let refusal? ← readGoodText failP
+      match PicCache.step ok?.isSome refusal? with
+      | .serve => return .ok ()
+      | .replay says => return .error says
+      | .run =>
       match ← runValidate bytes with
       | .drawn =>
         try atomicWriteText dir srcKey variant outP "ok" catch _ => pure ()
         return .ok ()
       | .refused says =>
-        try atomicWriteText dir srcKey variant failP says catch _ => pure ()
+        match PicCache.remembers (.refused says) with
+        | some _ => try atomicWriteText dir srcKey variant failP says catch _ => pure ()
+        | none => pure ()
         return .error says
       | .inconclusive says => return .error says
 

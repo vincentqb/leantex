@@ -102,6 +102,12 @@ would silently omit: build `leantex Tests.SvgValidation`, then run
 `lake env lean --run scripts/svg-check.lean` on a host with `xmllint` and
 `rsvg-convert`. It is separate from the hermetic test suite.
 
+The conversion-cache IO oracle proves the slot machinery's concurrent and
+crash-safety properties with local stub tools and a temporary cache, so it
+needs no installed converter: build `leantex convProbe`, then run
+`lake env lean --run scripts/conv-cache-io.lean`. It races many builds to
+fill one slot and checks that no writer ever publishes a partial file.
+
 `talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.
 `icons.tex` shows the fontawesome5 spellings
