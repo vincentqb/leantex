@@ -11103,71 +11103,79 @@ block's bar, the standout inversion, else the page), so a pair the judge
 realized is rewritten exactly where it was judged. -/
 abbrev RoleRecolor := Palette → Option Color → Option String → Color → Color
 
+/-- A declaration ends a frame's local ground even when its palette equals
+the preceding one. The epoch also prevents frame exit from restoring a
+ground whose declaration has been superseded inside the body. -/
+structure RoleRecolorState where
+  pal : Palette
+  ground : Option Color := none
+  epoch : Nat := 0
+
 mutual
 
 def recolorRolesList (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) (out : Array Block) :
-    List Block → Array Block × Palette
-  | [] => (out, pal)
+    (cx : RoleRecolorState) (out : Array Block) :
+    List Block → Array Block × RoleRecolorState
+  | [] => (out, cx)
   | b :: rest =>
-    let r := recolorRolesBlock repal recolor pal ground b
-    recolorRolesList repal recolor r.2 ground (out.push r.1) rest
+    let r := recolorRolesBlock repal recolor cx b
+    recolorRolesList repal recolor r.2 (out.push r.1) rest
 
 def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) : Block → Block × Palette
+    (cx : RoleRecolorState) : Block → Block × RoleRecolorState
   | .para content =>
-    (.para (recolorRolesInlines recolor pal ground #[] content.toList), pal)
+    (.para (recolorRolesInlines recolor cx.pal cx.ground #[] content.toList), cx)
   | .equation num content =>
-    (.equation (recolorRolesInlines recolor pal ground #[] num.toList)
-      (recolorRolesInlines recolor pal ground #[] content.toList), pal)
+    (.equation (recolorRolesInlines recolor cx.pal cx.ground #[] num.toList)
+      (recolorRolesInlines recolor cx.pal cx.ground #[] content.toList), cx)
   -- A heading's title is judged on the page wherever it stands (the
   -- judge's headingCx carries no local ground); the walk mirrors it.
   | .section l st num title =>
-    (.section l st num (recolorRolesInlines recolor pal none #[] title.toList), pal)
+    (.section l st num (recolorRolesInlines recolor cx.pal none #[] title.toList), cx)
   | .list o items =>
-    let r := recolorRolesItems repal recolor pal ground #[] items.toList
+    let r := recolorRolesItems repal recolor cx #[] items.toList
     (.list o r.1, r.2)
   | .center body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.center r.1, r.2)
   | .ragged s body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.ragged s r.1, r.2)
   | .quote body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.quote r.1, r.2)
   | .abstract body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.abstract r.1, r.2)
   -- The title sits on the bar when the palette in force declares one, on
   -- the page otherwise (`titledLook`, the one resolving site — the same
   -- ground the judge reads); the body keeps the enclosing ground.
   | .titled kind title body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.titled kind
-      (recolorRolesInlines recolor pal (titledLook pal kind).bar #[] title.toList)
+      (recolorRolesInlines recolor cx.pal (titledLook cx.pal kind).bar #[] title.toList)
       r.1, r.2)
   | .role n body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.role n r.1, r.2)
   | .spaced g body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.spaced g r.1, r.2)
   | .columns cols =>
-    let r := recolorRolesColumns repal recolor pal ground #[] cols.toList
+    let r := recolorRolesColumns repal recolor cx #[] cols.toList
     (.columns r.1, r.2)
   | .step n last body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.step n last r.1, r.2)
   | .alt n last firstPage otherPage =>
-    let ra := recolorRolesList repal recolor pal ground #[] firstPage.toList
-    let ro := recolorRolesList repal recolor ra.2 ground #[] otherPage.toList
+    let ra := recolorRolesList repal recolor cx #[] firstPage.toList
+    let ro := recolorRolesList repal recolor ra.2 #[] otherPage.toList
     (.alt n last ra.1 ro.1, ro.2)
   | .only targets body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.only targets r.1, r.2)
   | .nav spec body =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.nav spec r.1, r.2)
   -- The title sits on the frame-title bar when the palette in force
   -- declares one; a standout frame's body sits on the inversion, and a
@@ -11175,64 +11183,65 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   -- the grounds the judge reads, at the palette in force at the frame.
   | .frame title standout valign br body =>
     let bodyGround := if standout then
-        some ((pal.find? "standoutbg").getD ((pal.find? "fg").getD Color.black))
-      else (titleGroundOf pal valign).or ground
-    let r := recolorRolesList repal recolor pal bodyGround #[] body.toList
-    (.frame (recolorRolesInlines recolor pal (pal.find? "frametitlebg") #[] title.toList)
-      standout valign br r.1, r.2)
+        some ((cx.pal.find? "standoutbg").getD ((cx.pal.find? "fg").getD Color.black))
+      else (titleGroundOf cx.pal valign).or cx.ground
+    let r := recolorRolesList repal recolor { cx with ground := bodyGround } #[] body.toList
+    (.frame (recolorRolesInlines recolor cx.pal (cx.pal.find? "frametitlebg") #[] title.toList)
+      standout valign br r.1,
+      { r.2 with ground := if r.2.epoch == cx.epoch then cx.ground else none })
   | .framefoot content =>
-    (.framefoot (recolorRolesInlines recolor pal (Design.ofPalette pal).footline.bar
-      #[] content.toList), pal)
+    (.framefoot (recolorRolesInlines recolor cx.pal (Design.ofPalette cx.pal).footline.bar
+      #[] content.toList), cx)
   -- The epoch boundary: the palette is rewritten where it stands, and the
   -- walk's context switches to the declared (pre-rewrite) state, the one
   -- the judge keyed its plan by.
-  | .setPalette p => (.setPalette (repal p), p)
-  | .setTokens tk => (.setTokens tk, pal)
-  | .pagebreak => (.pagebreak, pal)
+  | .setPalette p =>
+    (.setPalette (repal p), { pal := p, ground := none, epoch := cx.epoch + 1 })
+  | .setTokens tk => (.setTokens tk, cx)
+  | .pagebreak => (.pagebreak, cx)
   -- A note is a side channel, verbatim carries no role-named runs, a logo
   -- is furniture, a rule is decorative ink: the judge reads none of them,
   -- so the walk leaves each whole.
-  | .note body => (.note body, pal)
-  | .verbatim c s sp => (.verbatim c s sp, pal)
+  | .note body => (.note body, cx)
+  | .verbatim c s sp => (.verbatim c s sp, cx)
   -- Lines are judged where they stand (`Contrast.usesBlock` descends into
   -- content and comment), so the realizer rewrites exactly there.
   | .algorithm n sm lines =>
-    (.algorithm n sm (recolorRolesAlgLines recolor pal ground #[] lines.toList), pal)
-  | .logo content => (.logo content, pal)
-  | .rule c nm th => (.rule c nm th, pal)
+    (.algorithm n sm (recolorRolesAlgLines recolor cx.pal cx.ground #[] lines.toList), cx)
+  | .logo content => (.logo content, cx)
+  | .rule c nm th => (.rule c nm th, cx)
   -- A label is a run like any other: it ships the plan's ink for its
   -- pairing on the ground under it — a node's fill, else the ground the
   -- picture stands on — so one expression on one ground is one ink,
   -- whether it is set in a paragraph or in a drawing.
   | .picture p =>
-    (.picture { p with shapes := recolorRolesShapes recolor pal ground #[] p.shapes.toList },
-      pal)
+    (.picture { p with shapes := recolorRolesShapes recolor cx.pal cx.ground #[] p.shapes.toList },
+      cx)
   | .table cols pl pr rows rules spans =>
-    (.table cols pl pr (recolorRolesTableRows recolor pal ground #[] rows.toList) rules spans, pal)
+    (.table cols pl pr (recolorRolesTableRows recolor cx.pal cx.ground #[] rows.toList) rules spans, cx)
   | .float fk num ca body caption =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
+    let r := recolorRolesList repal recolor cx #[] body.toList
     (.float fk num ca r.1
-      (recolorRolesInlines recolor pal ground #[] caption.toList), r.2)
+      (recolorRolesInlines recolor cx.pal cx.ground #[] caption.toList), r.2)
   | .bibliography src style items =>
     (.bibliography src style
-      (recolorRolesBibItems recolor pal ground #[] items.toList), pal)
+      (recolorRolesBibItems recolor cx.pal cx.ground #[] items.toList), cx)
 
 def recolorRolesItems (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block) × Palette
-  | [] => (out, pal)
+    (cx : RoleRecolorState) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block) × RoleRecolorState
+  | [] => (out, cx)
   | item :: rest =>
-    let r := recolorRolesList repal recolor pal ground #[] item.toList
-    recolorRolesItems repal recolor r.2 ground (out.push r.1) rest
+    let r := recolorRolesList repal recolor cx #[] item.toList
+    recolorRolesItems repal recolor r.2 (out.push r.1) rest
 
 def recolorRolesColumns (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color)
-    (out : Array (BoxWidth × Array Block)) :
-    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block) × Palette
-  | [] => (out, pal)
+    (cx : RoleRecolorState) (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block) × RoleRecolorState
+  | [] => (out, cx)
   | (w, body) :: rest =>
-    let r := recolorRolesList repal recolor pal ground #[] body.toList
-    recolorRolesColumns repal recolor r.2 ground (out.push (w, r.1)) rest
+    let r := recolorRolesList repal recolor cx #[] body.toList
+    recolorRolesColumns repal recolor r.2 (out.push (w, r.1)) rest
 
 def recolorRolesTableRows (recolor : RoleRecolor) (pal : Palette)
     (ground : Option Color) (out : Array (Array (Array Inline))) :
@@ -11334,7 +11343,7 @@ end
 document's own palette the opening epoch. -/
 def recolorRoles (repal : Palette → Palette) (recolor : RoleRecolor)
     (pal : Palette) (xs : Array Block) : Array Block :=
-  (recolorRolesList repal recolor pal none #[] xs.toList).1
+  (recolorRolesList repal recolor { pal } #[] xs.toList).1
 
 private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
     blockTextBibItems acc (l1 ++ l2)
@@ -11459,159 +11468,160 @@ private theorem recolorRolesAlgLines_text (recolor : RoleRecolor) (pal : Palette
 mutual
 
 theorem recolorRolesList_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) (xs : List Block)
+    (cx : RoleRecolorState) (xs : List Block)
     (out : Array Block) (acc : String) :
-    blockTextList acc (recolorRolesList repal recolor pal ground out xs).1.toList
+    blockTextList acc (recolorRolesList repal recolor cx out xs).1.toList
       = blockTextList (blockTextList acc out.toList) xs := by
   match xs with
   | [] => simp [recolorRolesList, blockTextList]
   | b :: rest =>
     rw [recolorRolesList,
       recolorRolesList_text repal recolor
-        (recolorRolesBlock repal recolor pal ground b).2 ground rest]
+        (recolorRolesBlock repal recolor cx b).2 rest]
     simp [blockTextList, blockTextList_chain,
-      recolorRolesBlock_text repal recolor pal ground b]
+      recolorRolesBlock_text repal recolor cx b]
 
 theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) (b : Block) (acc : String) :
-    blockTextOne acc (recolorRolesBlock repal recolor pal ground b).1
+    (cx : RoleRecolorState) (b : Block) (acc : String) :
+    blockTextOne acc (recolorRolesBlock repal recolor cx b).1
       = blockTextOne acc b := by
   match b with
   | .para content =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal ground content.toList #[], plainTextList]
+      recolorRolesInlines_text recolor cx.pal cx.ground content.toList #[], plainTextList]
   | .equation num content =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal ground content.toList #[],
-      recolorRolesInlines_text recolor pal ground num.toList #[], plainTextList]
+      recolorRolesInlines_text recolor cx.pal cx.ground content.toList #[],
+      recolorRolesInlines_text recolor cx.pal cx.ground num.toList #[], plainTextList]
   | .section l st num title =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal none title.toList #[], plainTextList]
+      recolorRolesInlines_text recolor cx.pal none title.toList #[], plainTextList]
   | .list o items =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesItems_text repal recolor pal ground items.toList #[] acc,
+      recolorRolesItems_text repal recolor cx items.toList #[] acc,
       blockTextItems]
   | .center body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .ragged _ body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .quote body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .abstract body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .titled kind title body =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal (titledLook pal kind).bar title.toList #[],
+      recolorRolesInlines_text recolor cx.pal (titledLook cx.pal kind).bar title.toList #[],
       plainTextList,
-      recolorRolesList_text repal recolor pal ground body.toList #[] _, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] _, blockTextList]
   | .role n body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .columns cols =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesColumns_text repal recolor pal ground cols.toList #[] acc,
+      recolorRolesColumns_text repal recolor cx cols.toList #[] acc,
       blockTextColumns]
   | .step n last body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .alt n last firstPage otherPage =>
     rw [recolorRolesBlock]
     simp [blockTextOne, recolorRolesList_text, blockTextList]
   | .only targets body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .nav spec body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesList_text repal recolor pal ground body.toList #[] acc, blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .frame title standout valign _ body =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal (pal.find? "frametitlebg") title.toList #[],
+      recolorRolesInlines_text recolor cx.pal (cx.pal.find? "frametitlebg") title.toList #[],
       plainTextList,
-      recolorRolesList_text repal recolor pal
-        (if standout then
-          some ((pal.find? "standoutbg").getD ((pal.find? "fg").getD Color.black))
-         else (titleGroundOf pal valign).or ground) body.toList #[] _,
+      recolorRolesList_text repal recolor
+        { cx with ground :=
+            if standout then
+              some ((cx.pal.find? "standoutbg").getD ((cx.pal.find? "fg").getD Color.black))
+            else (titleGroundOf cx.pal valign).or cx.ground } body.toList #[] _,
       blockTextList]
   | .framefoot content =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal (Design.ofPalette pal).footline.bar
+      recolorRolesInlines_text recolor cx.pal (Design.ofPalette cx.pal).footline.bar
         content.toList #[], plainTextList]
   | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _ _
   | .logo _ | .rule _ _ _ | .picture _ => rfl
   | .algorithm n sm lines =>
     rw [recolorRolesBlock]
     show algLineText acc
-      (recolorRolesAlgLines recolor pal ground #[] lines.toList).toList = _
-    rw [recolorRolesAlgLines_text recolor pal ground lines.toList #[] acc]
+      (recolorRolesAlgLines recolor cx.pal cx.ground #[] lines.toList).toList = _
+    rw [recolorRolesAlgLines_text recolor cx.pal cx.ground lines.toList #[] acc]
     rfl
   | .table cols pl pr rows rules spans =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesTableRows_text recolor pal ground rows.toList #[] acc,
+      recolorRolesTableRows_text recolor cx.pal cx.ground rows.toList #[] acc,
       blockTextTableRows]
   | .float fk num ca body caption =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal ground caption.toList #[], plainTextList,
-      recolorRolesList_text repal recolor pal ground body.toList #[] _, blockTextList]
+      recolorRolesInlines_text recolor cx.pal cx.ground caption.toList #[], plainTextList,
+      recolorRolesList_text repal recolor cx body.toList #[] _, blockTextList]
   | .bibliography src style items =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
-      recolorRolesBibItems_text recolor pal ground items.toList #[] acc,
+      recolorRolesBibItems_text recolor cx.pal cx.ground items.toList #[] acc,
       blockTextBibItems]
 
 theorem recolorRolesItems_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color) (items : List (Array Block))
+    (cx : RoleRecolorState) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (recolorRolesItems repal recolor pal ground out items).1.toList
+    blockTextItems acc (recolorRolesItems repal recolor cx out items).1.toList
       = blockTextItems (blockTextItems acc out.toList) items := by
   match items with
   | [] => simp [recolorRolesItems, blockTextItems]
   | item :: rest =>
     rw [recolorRolesItems,
       recolorRolesItems_text repal recolor
-        (recolorRolesList repal recolor pal ground #[] item.toList).2 ground rest]
+        (recolorRolesList repal recolor cx #[] item.toList).2 rest]
     simp [blockTextItems, blockTextItems_chain,
-      recolorRolesList_text repal recolor pal ground item.toList #[], blockTextList]
+      recolorRolesList_text repal recolor cx item.toList #[], blockTextList]
 
 theorem recolorRolesColumns_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (ground : Option Color)
+    (cx : RoleRecolorState)
     (cols : List (BoxWidth × Array Block))
     (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (recolorRolesColumns repal recolor pal ground out cols).1.toList
+    blockTextColumns acc (recolorRolesColumns repal recolor cx out cols).1.toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
   | [] => simp [recolorRolesColumns, blockTextColumns]
   | (w, body) :: rest =>
     rw [recolorRolesColumns,
       recolorRolesColumns_text repal recolor
-        (recolorRolesList repal recolor pal ground #[] body.toList).2 ground rest]
+        (recolorRolesList repal recolor cx #[] body.toList).2 rest]
     simp [blockTextColumns, blockTextColumns_chain,
-      recolorRolesList_text repal recolor pal ground body.toList #[], blockTextList]
+      recolorRolesList_text repal recolor cx body.toList #[], blockTextList]
 
 end
 
@@ -11622,7 +11632,7 @@ said. -/
 theorem recolorRoles_text (repal : Palette → Palette) (recolor : RoleRecolor)
     (pal : Palette) : Conserves blocksText (recolorRoles repal recolor pal) := fun xs => by
   simp [blocksText, recolorRoles,
-    recolorRolesList_text repal recolor pal none xs.toList #[] "", blockTextList]
+    recolorRolesList_text repal recolor { pal } xs.toList #[] "", blockTextList]
 
 -- Backend conditionals: `keepFor` is one backend's view of the document,
 -- and `keepFor_covers` is what stops a conditional from becoming a silent

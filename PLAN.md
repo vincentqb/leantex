@@ -24538,3 +24538,42 @@ R55 pins the typed-page continuation and contrast guards. They failed 21
 assertions on `2eedd96b` before the fix and pass afterwards, including nested
 declarations, ignored note declarations, explicit ground removal and a real
 minted-source repair. Existing native continuation and spill guards remain.
+
+### 2026-09-30 — SVG selection, addresses and poster canvas
+
+Extensionless image lookup retains the existing PDF and raster precedence;
+SVG is the final fallback. Animation companions try `.svg`, then `.SVG`,
+and validate the captured bytes before publication. Both typed HTML image
+addresses use the same UTF-8 path encoder while the published filenames stay
+literal. Spaces, URL punctuation and non-ASCII filenames remain reachable.
+
+Only converter-generated PDF faces disable SVG aspect-ratio preservation:
+the selected page fills the animation's declared first-page canvas, matching
+native placement. Authored SVG bytes keep their own sizing and animation.
+The conversion recipe remains part of the browser oracle's freshness key.
+Source precedence, typed addresses, CLI companions and the rendered poster
+canvas have fail-first guards. Independent review, the full suite, the SVG
+converter oracle and all 92,871 image-fuzz inputs pass.
+
+### 2026-09-30 — Role repairs follow frame palette declarations
+
+Independent review found a remaining mismatch: the contrast audit reported
+a bounded repair after a frame-body palette declaration, but the role
+realizer kept the entry ground and shipped the original ink. Its existing
+walk now carries the palette, local ground and declaration epoch together.
+A declaration clears the local ground even when its values repeat; frame
+exit restores an enclosing ground only if no declaration superseded it.
+Lists, columns and nested blocks carry the same state in one pass, while
+speaker notes remain a side channel. The text-conservation proof follows
+that state without another tree scan.
+
+R56 pins the shipped-glyph, PDF-paint and typed-HTML guards: 45 assertions
+failed on `09e4aa72` before the fix and pass afterwards. They cover title
+and standout frames, repeated and nested declarations, note isolation and
+subsequent frames. Large-text thresholds, literal ink and unrepairable
+colours retain their existing policies.
+
+The combined warning-as-failure build and full test suite pass. Chromium
+passes all 85 fixture and 16 feature checks; the reader baseline records the
+new converted-face bytes. The repository benchmark remains within its
+declared bibliography-growth bound.

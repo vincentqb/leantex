@@ -478,6 +478,93 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
      (ListingHighlight.coloredSpansList #[] codes.toList).any fun (text, style) =>
        text == "return" && hasStr style (HtmlDoc.cssColor ink))
 
+/-- A role repair must reach the run that the audit judged. Every declaration
+ends the frame-entry ground, even an identical or nested one; notes do not.
+The witnesses read shipped glyphs, PDF paint and the typed HTML spans. -/
+def listingRoleEpochChecks (ref : IO.Ref (List String))
+    (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let gray : Ir.Color := { r := 136, g := 136, b := 136 }
+  let some repaired := Contrast.realize Contrast.aaText Ir.Color.white gray |
+    failures ref "role epoch: gray-on-white bounded repair fixture no longer repairs"
+  let shipped (name : String) (doc : Ir.Doc) (inks grounds : Array Ir.Color) : IO Unit := do
+    let out := layoutOf fonts doc
+    let glyphs := (ListingHighlight.glyphColors out).filter fun (c, _) =>
+      "sample".contains c
+    let expected := inks.flatMap fun ink => "sample".toList.toArray.map (·, ink)
+    t s!"role epoch {name}: Layout.Out ships the audited ink"
+      (glyphs == expected)
+    let geom := Layout.Geom.ofPage doc.page
+    t s!"role epoch {name}: shipped pages carry the current ground"
+      (out.pages.size == grounds.size && (out.pages.zip grounds).all fun (page, ground) =>
+        page.fills.any fun fill =>
+          fill.x == -geom.bleed && fill.y == -geom.bleed &&
+          fill.w == geom.pageW + 2 * geom.bleed &&
+          fill.h == geom.pageH + 2 * geom.bleed && fill.color == ground)
+    let pdf := pdfText (Pdf.write geom fonts out.pages doc.info)
+    t s!"role epoch {name}: emitted PDF paints the audited ink"
+      (!inks.isEmpty && inks.all fun ink => bytesContain pdf ink.pdfFill)
+    let (_, html, _) := HtmlDoc.emitTree {} doc
+    let spans := (ListingHighlight.coloredSpansList #[] html.toList).filter (·.1 == "sample")
+    t s!"role epoch {name}: typed HTML carries the audited ink"
+      (spans.size == inks.size && (spans.zip inks).all fun ((_, style), ink) =>
+        hasStr style (HtmlDoc.cssColor ink))
+  let preamble := "\\theme{default}\\palette{fg=#000000,bg=#FFFFFF,accent=#888888,\
+standoutfg=#FFFFFF,standoutbg=#000000}"
+  for (name, source, ink, code) in
+      [("source", "\\textcolor{accent}{sample}", repaired, "N0022"),
+       ("large source", "\\Huge\\textcolor{accent}{sample}", Ir.Color.ofHtml 136 136 136, ""),
+       ("literal source", "\\textcolor{#888888}{sample}", Ir.Color.ofHtml 136 136 136, "W0315"),
+       ("unrepairable source", "\\textcolor{#FFFFFF}{sample}",
+         Ir.Color.ofHtml 255 255 255, "W0315")] do
+    let (doc, ds) := elabStr (dvDeck preamble
+      ("\\begin{frame}[standout]\\palette{bg=#FFFFFF}" ++ source ++ "\\end{frame}"))
+    t s!"role epoch {name}: actual audit keeps its repair or refusal policy"
+      (ds.all (·.severity != .error) &&
+       if code.isEmpty then ds.all (fun d => !hasStr d.message "'accent'")
+       else ds.any fun d =>
+         d.code == code && hasStr d.message "the page (#FFFFFF)" &&
+         (code != "N0022" || (hasStr d.message "'accent'" && hasStr d.message "#767676")))
+    shipped name doc #[ink] #[Ir.Color.white]
+  let light := ({} : Ir.Palette).declare "fg" Ir.Color.black
+    |>.declare "bg" Ir.Color.white |>.declare "accent" gray
+    |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
+    |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
+  let changed := light.declare "alert" Ir.Color.black
+  let sample : Ir.Block := .para #[.colored gray (some "accent") #[.text "sample"]]
+  let base := { (elabStr (dvDeck "\\theme{default}" "")).1 with palette := light }
+  for (frameName, standout, valign) in
+      [("title", false, Ir.VAlign.golden), ("standout", true, .center)] do
+    for (name, body, count, resets) in
+        [("entry", #[sample], 1, false),
+         ("notes", #[.note #[.setPalette light], sample], 1, false),
+         ("changed", #[.setPalette changed, sample], 1, true),
+         ("identical", #[.setPalette light, sample], 1, true),
+         ("repeated", #[.setPalette light, .setPalette light, sample], 1, true),
+         ("nested", #[.center #[.setPalette light, sample], sample], 2, true),
+         ("items", #[.list false #[#[.setPalette light, sample], #[sample]], sample], 3, true),
+         ("columns", #[.columns #[(.frac 500, #[.setPalette light, sample]),
+           (.frac 500, #[sample])], sample], 3, true),
+         ("nested notes", #[.center #[.setPalette light, .note #[.setPalette changed]],
+           sample], 1, true)] do
+      let raw := { base with body := #[.frame #[] standout valign false body] }
+      let (doc, ds) := Contrast.realizeDoc raw
+      let name := s!"{frameName}/{name}"
+      t s!"role epoch {name}: actual audit names the declared page only after a boundary"
+        (if resets then ds.any (fun d =>
+          d.code == "N0022" && hasStr d.message "'accent'" &&
+          hasStr d.message "the page (#FFFFFF)" && hasStr d.message "#767676")
+         else ds.all (fun d => !hasStr d.message "'accent'"))
+      shipped name doc (List.replicate count (if resets then repaired else gray)).toArray
+        #[if resets then Ir.Color.white else Ir.Color.black]
+    let raw := { base with body := #[
+      .frame #[] standout valign false #[sample],
+      .frame #[] false .center false #[sample]] }
+    let (doc, ds) := Contrast.realizeDoc raw
+    t s!"role epoch {frameName}/exit: later page repair does not change the entry run"
+      (ds.any fun d => d.code == "N0022" && hasStr d.message "'accent'")
+    shipped s!"{frameName}/exit" doc #[gray, repaired] #[Ir.Color.black, Ir.Color.white]
+
 /-- Artifact regression: the old pipeline preserves code but ships no syntax
 colour in either artifact. These checks must fail on that implementation. -/
 def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -490,6 +577,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingPaletteEpochChecks ref fonts
   listingPaletteContinuationChecks ref fonts
   listingPaletteAuditChecks ref
+  listingRoleEpochChecks ref fonts
   for (language, source) in [("python", ListingHighlight.pythonSource),
       ("lean4", ListingHighlight.leanSource)] do
     let doc := ListingHighlight.sourceDoc language source

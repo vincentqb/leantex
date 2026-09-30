@@ -50,7 +50,8 @@ promoted.
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
-  listingPaletteAuditChecks svgAssetChecks animatedGraphicsChecks animatedFacesChecks)
+  listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
+  animatedFacesChecks)
 
 namespace Reports
 
@@ -366,7 +367,13 @@ def reports : List Report := [
     pins := [check% listingPaletteContinuationChecks,
       check% listingPaletteAuditChecks, check% listingHighlightChecks]
     accept := ["the private presentations retain readable code across frame palette changes"]
-    state := .guarded "2eedd96b" .before .author }
+    state := .guarded "2eedd96b" .before .author },
+  { id := "R56", date := "2026-09-30"
+    what := "a contrast repair was reported after a frame palette declaration while both artifacts still painted the original role ink against the new ground"
+    pins := [check% listingRoleEpochChecks, check% listingHighlightChecks,
+      thm% Ir.recolorRoles_text]
+    accept := ["invented title and standout frames paint the audited role ink after direct and nested palette declarations"]
+    state := .guarded "09e4aa72" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
