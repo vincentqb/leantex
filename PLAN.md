@@ -472,6 +472,54 @@ values, or location entered the repository.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-30 — Phase 1 of the math-alphabet contract applied: the four fixes
+the prior entry named as owed are in, and the widened differential
+(scripts/math-alphabet-diff.lean) confirms each against LuaLaTeX on four
+faces. Before: 117 PASS / 43 DIFF + 12 MISSING of 172. After: 156 PASS / 0
+MISSING; the only 16 remaining DIFF are the out-of-scope text-sourced rows
+(mathsf/mathbf/mathit/mathtt under unicode-math's `text` default paint a
+host family — the `remaps` text-arm left for the text-slot follow-up). All
+39 owed in-scope rows are green.
+
+*Nesting is a stack, not a slot.* `resolveAlphaList` threads
+`active : List MathAlphabet`, innermost-first; `.alpha` pushes. Each scalar
+takes the first active alphabet whose range the face covers, else falls
+through to an outer one, else the source scalar (`resolveCharStack`,
+structural, no `partial`). `\mathbf{\mathcal{5}}`, `\mathbf{\mathfrak{5}}`,
+`\mathbf{\mathcal{A}}`/`\mathbb{\mathcal{A}}`/`\mathbf{\mathfrak{Z}}` on
+Fira are now the bold/double-struck the outer alphabet gives; the
+script-covered faces keep the inner scalar. The N0018 census mirrors the
+fall-through (`missingCharAlpha`): the loss named is the innermost alphabet
+that classified the scalar, did not cover it, and had no outer cover it.
+
+*bfit installs no range here.* With no bold math version declared,
+`\boldsymbol`/`\bm` are near-identity in LuaLaTeX; `MathAlphabet.rangeOf`
+returns `none` for `bfit`, so coverage never marks it and the stack falls
+it through to the source scalar — `\boldsymbol{O}`→𝑂, `{\alpha}`→𝛼,
+`{\Gamma}`→Γ, `{5}`→5, no over-bolding and no spurious N0018. `apply`'s
+bfit base-offset stays only to keep `unapply`/`alpha_apply_inj` total.
+
+*The declared ranges are complete.* `it` sets the italic uppercase Greek
+block (U+1D6E2): `\mathit{\Gamma}`→𝛤. `bf` sets upright-bold lowercase
+Greek (source-italic block into U+1D6C2) and `∇` (U+1D6C1): `\symbfup`
+reaches 𝛄/𝛁. Every scalar read off the oracle's `ref` column, not guessed.
+
+*The `\sym…` family is mapped.* `\symup`/`\symrm`→rm, `\symit`→it,
+`\symbf`/`\symbfup`→bf, `\symbfit`→bfit, `\symsf`→sf, `\symtt`→tt,
+`\symbb`→bb, `\symcal`→cal, `\symfrak`→frak, closing the three MISSING
+rows; the eight unicode-math compat-index rows move refuse→impl
+(documented-command coverage 710→718).
+
+Theorems (all proved, none staged): `resolveMathAlphas_covers` (result
+alphaFree), `resolveMathAlphas_id` (empty stack = identity on alphaFree),
+`resolveMathAlphas_fixed_point` (idempotence), `resolveCharStack_first`
+(innermost qualifying alphabet decides), `resolveCharStack_mem` (the
+applied alphabet is a stack member — the registry `_mem`),
+`resolveMathAlphas_classes` (class/spacing preservation), and
+`resolveMathAlphas_scalars_size` (scalar-count preservation over the mutual
+scalars/resolve families). Backend `.alpha` refuse-loudly and the
+text-source leave-scalar policy remain owed follow-ups, out of Phase 1.
+
 2026-09-30 — the widened alphabet differential falsifies three claims the
 prior entry made, and names the fix. The narrow 32-row matrix (one letter
 `O`, sym source, no nesting) hid every blocking finding; widening
