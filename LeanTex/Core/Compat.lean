@@ -49,7 +49,7 @@ def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate"]
+   "cancel", "animate", "markdown"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -1054,7 +1054,7 @@ private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
   return (← synth s).map (rebase pos)
 
 /-- One optional `[...]` argument, as source text. -/
-private def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
+def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
   let j := skipSpaces raws i
   match raws[j]? with
   | some (.sym '[' _) =>
@@ -6011,6 +6011,19 @@ dropped: {String.intercalate ", " unknown}" pos
           sayOnce "animate:package-options" .W0110
             s!"'animate' package options '{opts}' are not applied" pos
             (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
+      else if p == "markdown" then
+        -- premise: markdownInputChecks — the driver reads native
+        -- fragments, and unsupported package options keep their warning.
+        let opts := (opt.getD "").trimAscii.toString
+        if opts.isEmpty then
+          discard s!"\\{name}\{{p}}"
+            "native Markdown fragments are read at each '\\markdownInput' command"
+            s!"{name}:{p}" pos
+        else
+          sayOnce "markdown:package-options" .W0110
+            s!"'markdown' package options '{opts}' are not applied; \
+no package options are supported by the strict native Markdown dialect" pos
+            (help := "remove the package options")
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then

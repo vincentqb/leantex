@@ -1,0 +1,23 @@
+# source: markdown.dtx, LaTeX interface, "Typesetting Markdown": the
+# markdown, markdown*, yaml environments and markinline, markdownInput,
+# yamlInput commands; "Options" and "Snippets": markdownSetup and
+# markdownSetupSnippet. Filename and optional setup signature follow
+# markdown.sty's wrapper of the plain TeX markdownInput.
+# Only file inclusion is native here. It reads the engine's existing
+# Markdown dialect into the shared AST, not the package's Lua converter
+# or its configurable TeX renderers. Unsupported options stay W0110;
+# the remaining entry points retain their unknown-use diagnostics.
+# These rows fulfill file requests before elaboration; their invented
+# fragment is committed beside the index, with no external dependencies.
+body impl \markdownInput{fixtures/fragment.md}
+body impl \markdownInput[]{fixtures/fragment.md}
+frame impl \markdownInput{fixtures/fragment.md}
+body refuse:W0110 \markdownInput[smartEllipses]{fixtures/fragment.md}
+pre refuse:W0110 \usepackage[smartEllipses]{markdown}
+body refuse:W0301 \markinline{*emphasis*}
+body refuse:W0301 \yamlInput{example.yaml}
+body refuse:W0302 \begin{markdown}*emphasis*\end{markdown}
+body refuse:W0302 \begin{markdown*}{smartEllipses}*emphasis*\end{markdown*}
+body refuse:W0302 \begin{yaml}key: value\end{yaml}
+pre refuse:W0301 \markdownSetup{smartEllipses}
+pre refuse:W0301 \markdownSetupSnippet{example}{smartEllipses}
