@@ -1231,6 +1231,20 @@ table. -/
 private def stepFactor (name : String) : String :=
   milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
 
+/-- The strike weight the `s` rule declares, derived from the shared token
+`Ir.lineThroughThickness` and rendered as CSS points — never a second
+literal. The PDF lowers its strike segment at the same token
+(`Layout.lineThroughThickness`), so a line-through is one weight on either
+artifact. -/
+def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toPtString}pt"
+
+/-- **The HTML strike weight is the shared token, spelled in points.** The
+`s` rule's `text-decoration-thickness` is exactly `Ir.lineThroughThickness`
+rendered as CSS pt; with `Layout.lineThroughThickness_agree` (the PDF side)
+this is the agreement that both artifacts strike at one weight. -/
+theorem lineThroughThicknessCss_agree :
+    lineThroughThicknessCss = s!"{Ir.lineThroughThickness.toPtString}pt" := rfl
+
 /-- The grounds the stylesheet paints under content, each with the selector
 of the element it paints: the frame-title bar, the standout inversion, the
 title page, and each titled kind's bar — the grounds the realization walk
@@ -4047,7 +4061,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "    text-underline-position: from-font; text-decoration-skip-ink: auto; }\n" ++
   "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
   "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
-  "s { text-decoration-line: line-through; text-decoration-thickness: 0.4pt;\n" ++
+  s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {lineThroughThicknessCss};\n" ++
   "    text-decoration-skip-ink: none; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++

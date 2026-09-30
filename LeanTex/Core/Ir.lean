@@ -91,6 +91,14 @@ offset floor, so the mark survives either process. This engine reads
 `\page{ mark-thickness = ... }` overrides. -/
 def cutMarkThickness : Sp := pt 1 / 2
 
+/-- The line-through rule thickness, 0.4 pt: ulem's default `\ULthickness`
+(ulem.sty, 2019/11/18, `\def\ULthickness{0.4pt}`). The one source both
+backends read — the PDF lowers a strike segment at this weight
+(`Layout.lineThroughThickness` aliases this), and the HTML derives its
+`text-decoration-thickness` from the same value (`HtmlDoc`), so a strike
+is one weight on either artifact. -/
+def lineThroughThickness : Sp := pt 2 / 5
+
 /-- One rule a document draws on every page from a shipout hook
 (`\AddToHook{shipout/background}{\put(x,y){\rule{w}{h}}}`, the kernel's
 picture whose reference point is the page's top-left corner): its box in

@@ -327,7 +327,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
       nestedTrees.foldl (fun n tree => n + countTag "a" tree) 0 == 1 &&
       nestedTrees.foldl (fun n tree => n + countTag "em" tree) 0 == 1 &&
       nestedTrees.foldl (fun n tree => n + countTag "span" tree) 0 >= 2 &&
-      hasStr nestedHtml "s { text-decoration-line: line-through; text-decoration-thickness: 0.4pt;" &&
+      hasStr nestedHtml s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {HtmlDoc.lineThroughThicknessCss};" &&
       facts.hiddenTabStops == 0 && treeShownOccurs nestedTrees "A B C" == 1)
 
   let expectedPdf : Array (Ir.Color × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
@@ -372,3 +372,62 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   t "underline and line-through compose as two typed decoration kinds"
     (both.any (fun (kind, _, _, _, _) => kind == .underline) &&
       both.any (fun (kind, _, _, _, _) => kind == .lineThrough))
+
+  -- Drawn decoration geometry must reach every line path, not only body
+  -- paragraphs: a strike inside a footnote (body ink on a note-flagged
+  -- line) and inside a running foot (furniture) each paints its
+  -- through-line. HTML strikes the same IR node on the note (agreement);
+  -- furniture has no HTML counterpart, so its agreement is Layout.Out +
+  -- PDF. The through-line reaches the PDF as a fill on every path.
+  let throughFills (g : Layout.Geom) (o : Layout.Out) :
+      Array (Ir.Color × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+    let mut expected := #[]
+    for page in o.pages do
+      for l in page.lines do
+        let mut x := g.bleed + l.x
+        for seg in l.segs do
+          match seg with
+          | .decoration .lineThrough w thickness raise color =>
+            expected := expected.push
+              (color, x, g.bleed + g.pageH - l.y + raise, w, thickness)
+            x := x + w
+          | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
+          | .decoration .underline w _ _ _ | .rule w _ _ _ | .image _ w _ =>
+            x := x + w
+    return expected
+  let paintedInPdf (g : Layout.Geom) (o : Layout.Out) : Bool :=
+    let expected := throughFills g o
+    let fills := (Pdf.pageOps g oneFace o.pages).flatMap fun ops =>
+      pdfFillsList #[] ops.toList
+    !expected.isEmpty && expected.all fills.contains
+
+  let fnSrc := dvDoc load "Body claim.\\footnote{Note with \\sout{crossed} words.}"
+  let (fnDoc, fnDs) := elabStr fnSrc
+  let fnGeom := Layout.Geom.ofPage fnDoc.page
+  let fnOut := layoutOf oneFace fnDoc
+  let fnNoteStrike := (fnOut.pages.flatMap (·.lines.filter (·.note))).flatMap fun l =>
+    l.segs.filterMap fun s => match s with
+      | .decoration .lineThrough w _ raise color => some (w, raise, color)
+      | _ => none
+  t "a strike inside a footnote paints a through-line on the note line"
+    (!fnNoteStrike.isEmpty &&
+      fnNoteStrike.all (fun (w, raise, _) => w > 0 && raise > 0) &&
+      fnDs.all (·.severity != .error))
+  t "the footnote through-line becomes a PDF fill" (paintedInPdf fnGeom fnOut)
+  let (fnHtml, _) := HtmlDoc.emit {} fnDoc
+  t "HTML strikes the same footnote text, kept accessible (PDF and HTML agree)"
+    (hasStr fnHtml "<s>" && hasStr fnHtml "crossed")
+
+  let rfSrc := dvDoc "\\runningfoot{p. \\sout{draft} \\pagenumber}" "Body text stands here."
+  let (rfDoc, rfDs) := elabStr rfSrc
+  let rfGeom := Layout.Geom.ofPage rfDoc.page
+  let rfOut := layoutOf oneFace rfDoc
+  let rfFurnStrike := (rfOut.pages.flatMap (·.lines.filter (·.furniture))).flatMap fun l =>
+    l.segs.filterMap fun s => match s with
+      | .decoration .lineThrough w _ raise color => some (w, raise, color)
+      | _ => none
+  t "a strike inside a running foot paints a through-line on the furniture line"
+    (!rfFurnStrike.isEmpty &&
+      rfFurnStrike.all (fun (w, raise, _) => w > 0 && raise > 0) &&
+      rfDs.all (·.severity != .error))
+  t "the running-foot through-line becomes a PDF fill" (paintedInPdf rfGeom rfOut)
