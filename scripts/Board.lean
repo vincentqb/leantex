@@ -1154,9 +1154,10 @@ namespace BrowserFace
 def captured (fixture href : String) (bytes : ByteArray) : BrowserFace :=
   { fixture, href, result := .captured bytes.size (sha256Hex bytes) }
 
-/-- A conversion that produced no browser face. -/
-def failed (fixture tool : String) : BrowserFace :=
-  { fixture, href := "!" ++ tool, result := .failed tool }
+/-- A conversion that produced no browser face, named by the exact href it
+should have published and the tool that failed. -/
+def failed (fixture href tool : String) : BrowserFace :=
+  { fixture, href, result := .failed tool }
 
 def resultText : BrowserFaceResult → String
   | .captured size pin => s!"ok:{size}:{pin}"
@@ -1213,9 +1214,18 @@ def browserFaces (text : String) : Except String (Array BrowserFace) := do
 
 /-- Faults that stop committed pass cells certifying another set of browser
 faces. The source key is rebuilt hermetically; the content key is recomputed
-from the committed exact-byte digests. Host conversion itself remains an
-explicit report and a failed conversion is never a passing capture. -/
-def browserFaceFaults (text freshSourceKey : String) : Array String := Id.run do
+from the committed exact-byte digests. `expected` is the set of converted
+image-face identities the typed store projects (`HtmlDoc.browserFaceAssets`),
+each `(fixture, href)`: every one must have a committed record — captured or
+explicitly failed — and every committed image face (an `i…`/`p…` name, as
+`HtmlDoc.isImageFaceName` classifies it) must be one of them, so a missing,
+extra, or wrong-href converted image face is a fault. A boundary picture's
+hex-named SVG is a distinct publication path: it is neither expected nor an
+extra here, and keeps its own duplicate/malformed/failed checks. Host
+conversion itself remains an explicit report and a failed conversion is never
+a passing capture. -/
+def browserFaceFaults (text freshSourceKey : String)
+    (expected : Array (String × String)) : Array String := Id.run do
   let mut faults : Array String := #[]
   let sourceKeys := browserFaceField text "browser-face-src-key"
   if sourceKeys.isEmpty then
@@ -1241,6 +1251,17 @@ def browserFaceFaults (text freshSourceKey : String) : Array String := Id.run do
         faults := faults.push s!"duplicate browser face {face.fixture}/{face.href}"
       if let BrowserFaceResult.failed tool := face.result then
         faults := faults.push s!"{face.fixture}: {tool} produced no browser face"
+    -- Exact accounting against the converted image faces the typed store
+    -- projects. Only image faces (i…/p…) participate; a boundary picture's
+    -- hex-named SVG is a separate path, never missing nor extra here.
+    let imageFaces := faces.filter fun f =>
+      LeanTex.Core.HtmlDoc.isImageFaceName (LeanTex.Core.HtmlDoc.basename f.href)
+    for (fx, href) in expected do
+      unless imageFaces.any fun f => f.fixture == fx && f.href == href do
+        faults := faults.push s!"expected converted image face {fx}/{href} has no committed record"
+    for f in imageFaces do
+      unless expected.any fun e => e.1 == f.fixture && e.2 == f.href do
+        faults := faults.push s!"extra converted image face {f.fixture}/{f.href} is not an expected identity"
     if let some key := declared then
       let actual := browserFaceKey faces
       if key != actual then
@@ -1559,6 +1580,16 @@ def facedHrefs (name : String) (imgs : Image.Store) (k : Nat) : Option String ×
       s!"{name}.assets/{a.file}"
   (href false, href true)
 
+/-- The exact converted image-face identities one faced page publishes, read
+from the typed `HtmlDoc.browserFaceAssets` projection: each SVG asset as
+`(fixture, href)`, where the href is exactly what the page's `<img>`/
+`<picture>` links and what the browser oracle captures under the assets
+directory. Boundary pictures publish through their own path and are not
+here. This is the authoritative expected set the accounting matches against;
+computing it from the same projection the page emits keeps the two in step. -/
+def pageExpectedFaces (name : String) (imgs : Image.Store) : Array (String × String) :=
+  (HtmlDoc.browserFaceAssets imgs).map fun a => (name, s!"{name}.assets/{a.file}")
+
 /-- Hermetic inputs to the host-only browser-face conversion: exact vector
 source bytes, the shared plan and its deterministic stand-in output, the
 request/page identity, the hrefs read from `HtmlDoc.imageAssets`, optional
@@ -1605,6 +1636,7 @@ structure PageOutput where
   html : String
   read : Array (String × ByteArray)
   browserSources : Array (String × ByteArray)
+  expectedFaces : Array (String × String)
 
 /-- One fixture's page, or `none` where the driver would refuse to write one
 (an error its `\allow` does not accept). The sequence is `Main.frontend`'s:
@@ -1644,11 +1676,13 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
       fonts := if doc.fontPolicy == .embedded then some fs else none
       fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
   let browserSources ← browserSourceBlobs corpus name doc faced read
-  return some { html := (HtmlDoc.emit cfg doc).1, read, browserSources }
+  return some { html := (HtmlDoc.emit cfg doc).1, read, browserSources
+                expectedFaces := pageExpectedFaces name faced }
 
 structure CorpusKeys where
   html : String
   browserFaceSource : String
+  expectedFaces : Array (String × String)
 
 /-- The two freshness keys over a corpus. `html` covers every hermetic page,
 image and shipped face. `browserFaceSource` additionally covers the exact
@@ -1667,6 +1701,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   let mut browserSources : Array (String × ByteArray) :=
     #[("conversion-contract", ImageAssets.browserFaceContract.toUTF8)]
   let mut unbuilt : Array String := #[]
+  let mut expectedFaces : Array (String × String) := #[]
   for e in (← corpus.readDir).qsort (·.fileName < ·.fileName) do
     if e.fileName.endsWith ".tex" then
       let name := (e.fileName.dropEnd ".tex".length).toString
@@ -1677,6 +1712,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
         for (cand, bytes) in page.read do
           blobs := blobs.push (s!"{name}.assets/{cand}", bytes)
         browserSources := browserSources ++ page.browserSources
+        expectedFaces := expectedFaces ++ page.expectedFaces
       | none => unbuilt := unbuilt.push name
   if blobs.isEmpty then return .error "no corpus fixture built to HTML"
   for e in (← fontsDir.readDir).qsort (·.fileName < ·.fileName) do
@@ -1685,7 +1721,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   blobs := blobs.push ("unbuilt", (String.intercalate " " unbuilt.toList).toUTF8)
   let html := Scoreboard.contentKey blobs
   browserSources := browserSources.push ("html-key", html.toUTF8)
-  return .ok { html, browserFaceSource := Scoreboard.contentKey browserSources }
+  return .ok { html, browserFaceSource := Scoreboard.contentKey browserSources, expectedFaces }
 
 /-- The existing HTML-only view, retained for scoreboard probes and callers
 that do not consume the browser-face source key. -/

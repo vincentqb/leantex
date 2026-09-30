@@ -133,7 +133,7 @@ lake env lean --run scripts/html-oracle.lean"
 (src-key {recordedHtml}, this tree builds {keys.html}), so its counts are about pages this tree \
 no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean"
     return (#[], #[])
-  let faceFaults := browserFaceFaults text keys.browserFaceSource
+  let faceFaults := browserFaceFaults text keys.browserFaceSource keys.expectedFaces
   unless faceFaults.isEmpty do
     IO.eprintln s!"scoreboard: {matrixPath} does not describe this tree's browser faces:"
     for fault in faceFaults do IO.eprintln s!"  {fault}"
@@ -195,7 +195,7 @@ alpha       pass       untested\n"
   let changedBytes := BrowserFace.captured "figures" "figures.assets/i0-box.svg"
     "<svg><path/></svg>".toUTF8
   let changedHref := BrowserFace.captured "figures" "figures.assets/i1-box.svg" "<svg/>".toUTF8
-  let failed := BrowserFace.failed "figures" "pdftocairo"
+  let failed := BrowserFace.failed "figures" "figures.assets/i0-box.svg" "pdftocairo"
   no "browser face: converted bytes move the key"
     (browserFaceKey #[face] != browserFaceKey #[changedBytes])
   no "browser face: the rendered href moves the key"
@@ -204,29 +204,69 @@ alpha       pass       untested\n"
     (browserFaceKey #[face] != browserFaceKey #[failed])
   no "browser face: the committed record round-trips"
     (BrowserFace.parse face.render == some face)
-  no "browser face: a failed capture cannot certify pass cells"
-    (!(browserFaceFaults
-      ("browser-face-src-key: source\nbrowser-face-key: " ++ browserFaceKey #[failed] ++
-        "\n" ++ failed.render ++ "\n") "source").isEmpty)
-  let faceText := "browser-face-src-key: source\nbrowser-face-key: " ++
-    browserFaceKey #[face] ++ "\n" ++ face.render ++ "\n"
+  -- The expected converted-image identities the typed store projects. The
+  -- committed records must match this set exactly.
+  let exp : Array (String × String) := #[("figures", "figures.assets/i0-box.svg")]
+  let faces (fs : Array BrowserFace) : String :=
+    "browser-face-src-key: source\nbrowser-face-key: " ++ browserFaceKey fs ++ "\n" ++
+      String.intercalate "\n" (fs.map (·.render)).toList ++ "\n"
+  -- Matching set: one expected face, one exact capture, keys agree.
   no "browser face: matching source and exact capture certify the cells"
-    (browserFaceFaults faceText "source").isEmpty
-  no "browser face: moved hermetic inputs stale the capture"
-    (!(browserFaceFaults faceText "different-source").isEmpty)
-  let staleHref := "browser-face-src-key: source\nbrowser-face-key: " ++
-    browserFaceKey #[face] ++ "\n" ++ changedHref.render ++ "\n"
-  no "browser face: changed captures cannot retain the committed key"
-    (!(browserFaceFaults staleHref "source").isEmpty)
-  let duplicateFace := faceText ++ face.render ++ "\n"
+    (browserFaceFaults (faces #[face]) "source" exp).isEmpty
+  -- Fail-first: delete the one expected capture (no records at all).
+  no "browser face: a deleted expected capture is a fault (missing)"
+    (!(browserFaceFaults
+      ("browser-face-src-key: source\nbrowser-face-key: " ++ browserFaceKey #[] ++ "\n")
+      "source" exp).isEmpty)
+  -- Fail-first: add one extra converted image face not in the expected set.
+  let extra := BrowserFace.captured "figures" "figures.assets/i9-extra.svg" "<svg/>".toUTF8
+  no "browser face: an extra converted image face is a fault"
+    (!(browserFaceFaults (faces #[face, extra]) "source" exp).isEmpty)
+  -- Fail-first: rename the one capture — the expected identity is now
+  -- missing and the renamed one is an extra.
+  no "browser face: a renamed capture is a fault (missing + extra)"
+    (!(browserFaceFaults (faces #[changedHref]) "source" exp).isEmpty)
+  -- Fail-first: fail the one conversion — a failed record still names the
+  -- expected href (so it is not missing) but a failed conversion faults.
+  no "browser face: a failed conversion of an expected face is a fault"
+    (!(browserFaceFaults (faces #[failed]) "source" exp).isEmpty)
+  no "browser face: a failed record names the expected href, so it is not also missing"
+    ((browserFaceFaults (faces #[failed]) "source" exp).all fun f =>
+      !f.startsWith "expected converted image face")
+  -- Fail-first: duplicate the one capture.
   no "browser face: duplicate hrefs are a fault"
-    (!(browserFaceFaults duplicateFace "source").isEmpty)
+    (!(browserFaceFaults (faces #[face, face]) "source" exp).isEmpty)
+  -- Moved hermetic inputs stale the capture even when records match.
+  no "browser face: moved hermetic inputs stale the capture"
+    (!(browserFaceFaults (faces #[face]) "different-source" exp).isEmpty)
+  -- A boundary picture's hex-named SVG is a distinct path: captured beside
+  -- the image face, it is neither missing nor an extra.
+  let boundary := BrowserFace.captured "figures"
+    "figures.assets/0123456789abcdef0123456789abcdef.svg" "<svg/>".toUTF8
+  no "browser face: a boundary picture SVG is neither missing nor extra"
+    (browserFaceFaults (faces #[face, boundary]) "source" exp).isEmpty
+  no "browser face: the boundary SVG name is not classified as an image face"
+    (!HtmlDoc.isImageFaceName (HtmlDoc.basename boundary.href))
+  no "browser face: an image face name is classified as one"
+    (HtmlDoc.isImageFaceName (HtmlDoc.basename face.href) &&
+      HtmlDoc.isImageFaceName (HtmlDoc.basename
+        (BrowserFace.captured "f" "f.assets/p0-box.svg" "".toUTF8).href))
+  -- Real generated names run through the classifier: i…/p… are image faces,
+  -- a picHash boundary name and a raster are not.
+  no "browser face: real image-face names classify as image faces"
+    (HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "box.pdf") &&
+      HtmlDoc.isImageFaceName (HtmlDoc.imagePosterName 3 { src := "box.pdf" }))
+  no "browser face: a picHash boundary name is not an image face"
+    (!HtmlDoc.isImageFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
+      !HtmlDoc.isImageFaceName (Ir.picHash "\\node {x};" ++ ".svg"))
+  no "browser face: a raster source name is not an image face"
+    (!HtmlDoc.isImageFaceName "box.pdf")
   let malformedFace := "browser-face-src-key: source\nbrowser-face-key: deadbeef\n\
 browser-face: figures missing-fields\n"
   no "browser face: a malformed record is a fault"
-    (!(browserFaceFaults malformedFace "source").isEmpty)
+    (!(browserFaceFaults malformedFace "source" exp).isEmpty)
   no "browser face: absent records and keys are faults"
-    (!(browserFaceFaults "src-key: html\n" "source").isEmpty)
+    (!(browserFaceFaults "src-key: html\n" "source" exp).isEmpty)
   -- The behavioural source key: the shared plan's decision and its
   -- deterministic stand-in output are hashed, and no whole driver source
   -- file is, so each meaningful mutation moves the key while a

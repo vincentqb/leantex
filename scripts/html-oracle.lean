@@ -152,7 +152,8 @@ def checkFile (path : String) : IO UInt32 := do
   match parseMatrix text with
   | .error e => die 2 s!"html-oracle: {path}: {e}"
   | .ok m =>
-    let bad := offences m ++ (Scoreboard.browserFaceFaults text keys.browserFaceSource).map
+    let bad := offences m ++
+      (Scoreboard.browserFaceFaults text keys.browserFaceSource keys.expectedFaces).map
       ("browser-face: " ++ ·)
     if bad.isEmpty then
       IO.println s!"html-oracle: every target cell and browser-face capture passes ({String.intercalate " " m.target.toList})"
@@ -787,7 +788,10 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     copyTree "tests/corpus" (work / "corpus")
     let mut fixtures : Array String := #[]
     let mut unbuilt : Array String := #[]
-    let mut faceFailures : Array Scoreboard.BrowserFace := #[]
+    let mut boundaryFailures : Array Scoreboard.BrowserFace := #[]
+    -- Per fixture, the converter its W0605 log named — so a missing expected
+    -- face becomes a failed record naming that tool.
+    let mut faceTool : Array (String × String) := #[]
     for e in (← (work / "corpus").readDir).qsort (·.fileName < ·.fileName) do
       if e.fileName.endsWith ".tex" then
         let name := (e.fileName.dropEnd ".tex".length).toString
@@ -798,11 +802,20 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         if (log.splitOn "warning[W0605]").length > 1 then
           let tool := if (log.splitOn "rsvg-convert").length > 1
             then "rsvg-convert" else "pdftocairo"
-          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name tool)
+          faceTool := faceTool.push (name, tool)
         if (log.splitOn "warning[W0378]").length > 1 then
-          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name "pdftocairo-boundary")
+          boundaryFailures := boundaryFailures.push
+            (Scoreboard.BrowserFace.failed name "!pdftocairo-boundary" "pdftocairo-boundary")
         if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
-    let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
+    let captured ← capturedBrowserFaces (work / "corpus") fixtures boundaryFailures
+    -- Account every expected converted-image face that produced no file at
+    -- all (its conversion failed, so `capturedBrowserFaces` saw nothing) as a
+    -- failed record naming the expected href and the tool.
+    let mut browserFaces := captured
+    for (fx, href) in keys.expectedFaces do
+      unless browserFaces.any (fun f => f.fixture == fx && f.href == href) do
+        let tool := ((faceTool.find? (·.1 == fx)).map (·.2)).getD "pdftocairo"
+        browserFaces := browserFaces.push (Scoreboard.BrowserFace.failed fx href tool)
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
