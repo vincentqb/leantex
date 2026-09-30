@@ -34,19 +34,19 @@ def convBudgetMs : Nat := 60000
 then `SIGKILL`. -/
 def convGraceMs : Nat := 2000
 
-/-- The normalized host-tool recipe behind browser vector faces. The
-hermetic source key hashes each operation's recipe (`ConvCache.variant`),
-while the browser oracle separately records the exact output bytes. Every
-invocation below reads the same argument builders `ConvCache` keys on, so a
-recipe change invalidates both the committed report and every cached slot. -/
+/-- The normalized host-tool recipe behind browser vector faces, built from
+the same `ConvCache.Op` recipes the cache keys on — so a recipe change moves
+this record and every cached slot together, and the browser oracle can never
+record a command the runtime does not run. The trailing page conversion is
+shown with a `<page>` placeholder (the browser oracle records the template,
+not one page's slot). -/
 def browserFaceContract : String :=
   let input := System.FilePath.mk "<input>"
   let output := System.FilePath.mk "<output>"
   String.intercalate "\n" [
-    ConvCache.commandText "xmllint" (ConvCache.saxArgs input),
-    ConvCache.commandText "xmllint" (ConvCache.xpathArgs input),
-    ConvCache.commandText "rsvg-convert" (ConvCache.rsvgArgs "pdf" input output),
-    ConvCache.commandText "rsvg-convert" (ConvCache.rsvgArgs "svg" input output),
+    ConvCache.Op.recipe .validate,
+    ConvCache.Op.recipe .svgPdf,
+    ConvCache.Op.recipe .svgPoster,
     ConvCache.commandText "pdftocairo" (ConvCache.pdfSvgArgs "<page>" input output)]
 
 /-! ## The bounded process group
@@ -296,13 +296,16 @@ private def runByteConv (bytes : ByteArray)
     return (outcome, if readable then bytes? else none)
 
 /-- One byte-producing host conversion, through the cache and the budget.
+The op alone determines the tool, the extensions and the arguments through
+`ConvCache.Op.byteSpec`, so the runtime cannot key one op and run another.
 The tool's version keys the slot; if the tool cannot say who it is, the
 conversion is an error and nothing is cached. A converted output serves, a
 remembered refusal replays word for word, and an attempt that never finished
 leaves the slot untouched so the next build retries. -/
-def byteConv (op : ConvCache.Op) (bytes : ByteArray) (inExt outExt tool : String)
-    (args : System.FilePath → System.FilePath → Array String) :
-    IO (Except String ByteArray) := do
+def byteConv (op : ConvCache.Op) (bytes : ByteArray) : IO (Except String ByteArray) := do
+  match op.byteSpec with
+  | none => return .error "internal: a validation op has no byte conversion"
+  | some (tool, inExt, outExt, args) =>
   match ← convDir with
   | none =>
     -- No cache root: run uncached, still bounded.
@@ -454,7 +457,7 @@ def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .default) :
   match ← checkSvg bytes with
   | .error e => return .error e
   | .ok () =>
-    let pdf ← byteConv .svgPdf bytes "svg" "pdf" "rsvg-convert" (ConvCache.rsvgArgs "pdf")
+    let pdf ← byteConv .svgPdf bytes
     return pdf >>= fun b => Image.probe b >>= Image.plan params
 
 /-- librsvg's static vector reading of a self-contained SVG. The caller
@@ -471,7 +474,7 @@ the selected page instead when a companion PDF supplies a chosen frame. -/
 def svgPoster (bytes : ByteArray) : IO (Except String ByteArray) := do
   match ← checkSvg bytes with
   | .error e => return .error e
-  | .ok () => byteConv .svgPoster bytes "svg" "svg" "rsvg-convert" (ConvCache.rsvgArgs "svg")
+  | .ok () => byteConv .svgPoster bytes
 
 /-- Poppler reads the physical page selected by the same page-tree
 traversal as the native importer, including `last`; `/Count` is never a
@@ -481,12 +484,12 @@ def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
   match PdfRead.pageNumber bytes page with
   | .error e => return .error e
   | .ok n =>
-    byteConv (.pdfPage n) bytes "pdf" "svg" "pdftocairo" (ConvCache.pdfSvgArgs (toString n))
+    byteConv (.pdfPage n) bytes
 
 /-- The static vector face of a boundary picture's own single-page PDF: one
 `pdftocairo` conversion of its first page, through the same cache and budget
 as every other. -/
 def picFace (bytes : ByteArray) : IO (Except String ByteArray) :=
-  byteConv .picFace bytes "pdf" "svg" "pdftocairo" ConvCache.picFaceArgs
+  byteConv .picFace bytes
 
 end LeanTex.Cli.ImageAssets

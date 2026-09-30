@@ -118,25 +118,45 @@ inductive Op where
   | picFace
   deriving BEq, Repr, DecidableEq
 
-/-- The tool binary whose identity keys this operation's slots. -/
-def Op.tool : Op → String
-  | .validate => "xmllint"
-  | .svgPdf => "rsvg-convert"
-  | .svgPoster => "rsvg-convert"
-  | .pdfPage _ => "pdftocairo"
-  | .picFace => "pdftocairo"
+/-- For a byte-producing op, the single spec the runtime both keys and runs:
+its tool, input and output extensions, and argument builder. `none` for the
+two-pass validation op, which `byteConv` never runs. `Op.tool`, `Op.recipe`
+and `byteConv` all read this, so the op keyed and the command run can never
+diverge — the runtime cannot key one op and run another. -/
+def Op.byteSpec : Op →
+    Option (String × String × String × (System.FilePath → System.FilePath → Array String))
+  | .validate => none
+  | .svgPdf => some ("rsvg-convert", "svg", "pdf", rsvgArgs "pdf")
+  | .svgPoster => some ("rsvg-convert", "svg", "svg", rsvgArgs "svg")
+  | .pdfPage p => some ("pdftocairo", "pdf", "svg", pdfSvgArgs (toString p))
+  | .picFace => some ("pdftocairo", "pdf", "svg", picFaceArgs)
+
+/-- The tool binary whose identity keys this operation's slots — the byte
+op's own tool from `byteSpec`, and `xmllint` for the two-pass validation. -/
+def Op.tool (op : Op) : String :=
+  match op.byteSpec with
+  | some (tool, _, _, _) => tool
+  | none => "xmllint"
+
+/-- One byte op's normalized recipe, built from its `byteSpec` so the string
+the key hashes is the command the runtime runs. -/
+private def byteRecipe (op : Op) : String :=
+  match op.byteSpec with
+  | some (tool, _, _, args) => commandText tool (args (ph "<input>") (ph "<output>"))
+  | none => ""
 
 /-- The normalized recipe: every command this operation runs, with
-placeholder paths. The cache key hashes this, so the same edit that moves
+placeholder paths, derived from the one `byteSpec` (validation is the
+two-pass exception). The cache key hashes this, so the same edit that moves
 an argument builder moves every slot the operation ever filled. -/
 def Op.recipe : Op → String
   | .validate =>
     commandText "xmllint" (saxArgs (ph "<input>")) ++ "\n" ++
     commandText "xmllint" (xpathArgs (ph "<input>"))
-  | .svgPdf => commandText "rsvg-convert" (rsvgArgs "pdf" (ph "<input>") (ph "<output>"))
-  | .svgPoster => commandText "rsvg-convert" (rsvgArgs "svg" (ph "<input>") (ph "<output>"))
-  | .pdfPage p => commandText "pdftocairo" (pdfSvgArgs (toString p) (ph "<input>") (ph "<output>"))
-  | .picFace => commandText "pdftocairo" (picFaceArgs (ph "<input>") (ph "<output>"))
+  | .svgPdf => byteRecipe .svgPdf
+  | .svgPoster => byteRecipe .svgPoster
+  | .pdfPage p => byteRecipe (.pdfPage p)
+  | .picFace => byteRecipe .picFace
 
 /-- Every operation's recipe, in a stable order: the value the browser
 oracle records and `ImageAssets.browserFaceContract` re-exports. A recipe

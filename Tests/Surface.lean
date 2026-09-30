@@ -8741,6 +8741,20 @@ def convCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the contract names every tool the faces run"
     (hasStr ConvCache.contract "xmllint" && hasStr ConvCache.contract "rsvg-convert" &&
      hasStr ConvCache.contract "pdftocairo")
+  -- M2: the op owns tool, extensions and args through one spec, so the
+  -- runtime cannot key one op and run another.
+  t "each byte op's keyed tool is the tool its spec runs"
+    ([ConvCache.Op.svgPdf, .svgPoster, .pdfPage 1, .picFace].all fun op =>
+      (op.byteSpec.map (fun s => s.1)) == some op.tool)
+  t "the validation op has no byte conversion"
+    ((ConvCache.Op.byteSpec .validate).isNone)
+  t "each byte op's recipe is exactly its spec's command"
+    ([ConvCache.Op.svgPdf, .svgPoster, .pdfPage 1, .picFace].all fun op =>
+      match op.byteSpec with
+      | some (tool, _, _, args) =>
+        op.recipe == ConvCache.commandText tool (args (System.FilePath.mk "<input>")
+          (System.FilePath.mk "<output>"))
+      | none => false)
 
 /-- **A build whose pictures all replay starts no tool process.** The
 invariant this block holds, at the seam where the tool is asked who it is:
