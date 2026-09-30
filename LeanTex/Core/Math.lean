@@ -970,22 +970,54 @@ structure CancelGeom where
   advance : Int
   deriving Repr, BEq, Inhabited
 
+/-- A point brought inside the box `(x0, y0, x1, y1)` on each axis. The
+arrow's head and shaft are laid on the diagonal from the box's corner, so
+their wings run perpendicular to it: for an extreme aspect ratio (a wide,
+short struck subformula, or a tall, thin one) a wing's perpendicular reach
+carries it past an edge the diagonal never approaches — `\cancel{ABCDEF}`
+put a wing 22sp above a 100sp-tall box. Every vertex a mark inks is brought
+back to the box here, so no mark paints outside its reserved room whatever
+the proportions; for a box the head already fits (the ordinary near-square
+strike) this changes nothing. -/
+def clampBox (x0 y0 x1 y1 : Int) (p : Int × Int) : Int × Int :=
+  (max x0 (min x1 p.1), max y0 (min y1 p.2))
+
+/-- A clamped point lies in the box, on each axis, whenever the box is not
+inverted. -/
+theorem clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
+    (p : Int × Int) :
+    x0 ≤ (clampBox x0 y0 x1 y1 p).1 ∧ (clampBox x0 y0 x1 y1 p).1 ≤ x1 ∧
+    y0 ≤ (clampBox x0 y0 x1 y1 p).2 ∧ (clampBox x0 y0 x1 y1 p).2 ≤ y1 := by
+  simp only [clampBox]; omega
+
+/-- Every point of an array mapped through `clampBox` lies in the box. -/
+theorem mem_map_clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
+    (arr : Array (Int × Int)) :
+    ∀ p ∈ arr.map (clampBox x0 y0 x1 y1),
+      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
+  intro p hp
+  rw [Array.mem_map] at hp
+  obtain ⟨q, _, rfl⟩ := hp
+  exact clampBox_between x0 y0 x1 y1 hw hh q
+
 /-- The arrowhead of `\cancelto`: four strokes long and three wide (the
 rule is the one length every mark counts in), its tip in the mark box's
 top-right corner and its axis on the diagonal; `(tip, one wing, the
-other)`. -/
+other)`, each vertex clamped into the box so a wing never overprints a
+neighbour. -/
 def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
   let bx := x1 - 4 * rule * w / l
   let by_ := y1 - 4 * rule * h / l
-  #[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
-    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]
+  (#[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
+    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]).map (clampBox x0 y0 x1 y1)
 
 /-- The arrow's shaft: the rising band from the mark box's bottom-left
 corner to the head's base, cut square there — or nothing, when the box is
-too small for a shaft to stand before the head. -/
+too small for a shaft to stand before the head. Each vertex is clamped into
+the box, as the head's is. -/
 def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
@@ -997,8 +1029,30 @@ def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let sx := rule * h / (2 * l)
   let sy := rule * w / (2 * l)
   if (l - 4 * rule) * l ≥ dx * w && (l - 4 * rule) * l ≥ dy * h then
-    #[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy), (x0, y0 + dy)]
+    (#[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy),
+      (x0, y0 + dy)]).map (clampBox x0 y0 x1 y1)
   else #[]
+
+/-- The arrowhead never leaves its box: every vertex lies inside `(x0, y0,
+x1, y1)`, whatever the box's proportions and the rule's sign. With room
+reserved the box is the construct's own width, so the head cannot overprint
+a neighbour. -/
+theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 < x1) (hh : y0 < y1) :
+    ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
+      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 :=
+  mem_map_clampBox_between x0 y0 x1 y1 (Int.le_of_lt hw) (Int.le_of_lt hh) _
+
+/-- A drawn shaft never leaves its box: when the shaft is nonempty every
+vertex lies inside `(x0, y0, x1, y1)`. (The empty shaft has no vertices to
+place.) -/
+theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hw : x0 < x1) (hh : y0 < y1) :
+    ∀ p ∈ cancelShaft x0 y0 x1 y1 rule,
+      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
+  intro p hp
+  simp only [cancelShaft] at hp
+  split at hp
+  · exact mem_map_clampBox_between x0 y0 x1 y1 (Int.le_of_lt hw) (Int.le_of_lt hh) _ p hp
+  · simp only [Array.not_mem_empty] at hp
 
 /-- The value's baseline above the construct's, as TeX sets a superscript
 on a box (rule 18a, c): at least the superscript shift, at least the
@@ -1075,6 +1129,66 @@ theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
   rw [hv, ← Array.foldl_toList]
   obtain ⟨h1, h2⟩ := key (cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).toList b.2.2.1
   exact ⟨by omega, fun p hp => by have := h2 p (Array.mem_toList_iff.mpr hp); omega⟩
+
+/-- `\cancelto` inks exactly the arrow — its shaft then its head when the
+box holds a shaft, its head alone when it does not — and the value starts a
+clearance right of the mark box, so the arrow and the value it points at
+never touch. -/
+theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
+    let b := i.box room
+    (cancelGeom .to room i).polys =
+      (if (cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).isEmpty then
+          #[cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]
+        else
+          #[cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
+            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) ∧
+      b.2.2.1 + i.gap ≤ (cancelGeom .to room i).valueX :=
+  ⟨rfl, (cancelto_value_clears_between room i).1⟩
+
+/-- No cancel mark paints outside its box: every vertex of every polygon
+`cancelGeom` lays — each strike, or the arrow's shaft and head — lies inside
+the mark box, whatever the mark and the box's proportions. With room
+reserved (cancel.sty's `makeroom`) the box is the construct's own advance,
+so a mark cannot overprint an adjacent atom. -/
+theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
+    (hr : 0 ≤ i.rule)
+    (hw : (i.box room).1 < (i.box room).2.2.1)
+    (hh : (i.box room).2.1 < (i.box room).2.2.2) :
+    ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
+      (i.box room).1 ≤ p.1 ∧ p.1 ≤ (i.box room).2.2.1 ∧
+      (i.box room).2.1 ≤ p.2 ∧ p.2 ≤ (i.box room).2.2.2 := by
+  have band := fun rising =>
+    cancelBand_between rising (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
+      (i.box room).2.2.2 i.rule hr hw hh
+  have head :=
+    cancelHead_between (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
+      (i.box room).2.2.2 i.rule hw hh
+  have shaft :=
+    cancelShaft_between (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
+      (i.box room).2.2.2 i.rule hw hh
+  intro poly hpoly p hp
+  cases mark
+  case up =>
+    simp only [cancelGeom, Array.mem_singleton] at hpoly
+    subst hpoly; exact band true p hp
+  case down =>
+    simp only [cancelGeom, Array.mem_singleton] at hpoly
+    subst hpoly; exact band false p hp
+  case cross =>
+    simp only [cancelGeom, List.mem_toArray, List.mem_cons, List.not_mem_nil,
+      or_false] at hpoly
+    rcases hpoly with rfl | rfl
+    · exact band true p hp
+    · exact band false p hp
+  case to =>
+    simp only [cancelGeom] at hpoly
+    split at hpoly
+    · simp only [Array.mem_singleton] at hpoly
+      subst hpoly; exact head p hp
+    · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hpoly
+      rcases hpoly with rfl | rfl
+      · exact shaft p hp
+      · exact head p hp
 
 mutual
 
