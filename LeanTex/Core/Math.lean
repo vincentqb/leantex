@@ -1818,20 +1818,73 @@ theorem MRows.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
 
 end
 
+/-- Resolve one scalar under a stack of active alphabets, innermost first.
+The first alphabet that both classifies `c` into one of its ranges and has
+that range remapped by the selected face wins; an alphabet that classifies
+`c` but whose range the face does not carry is stepped over, so an outer
+alphabet can still apply — LuaLaTeX falls a nested uncovered alphabet
+through to the enclosing one. With the stack exhausted the source scalar
+stands. Structural recursion on the list, so total by construction. -/
+def resolveCharStack (coverage : MathAlphabetCoverage) :
+    List MathAlphabet → Char → Char
+  | [], c => c
+  | a :: rest, c =>
+    match a.rangeOf c with
+    | some r =>
+      if coverage.remaps a r then a.apply c
+      else resolveCharStack coverage rest c
+    | none => resolveCharStack coverage rest c
+
+/-- The first alphabet that both classifies `c` and has its range covered
+decides `c`: the innermost-first nesting order the resolver rests on. -/
+theorem resolveCharStack_first (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List MathAlphabet) (c : Char) (r : MathAlphabetRange)
+    (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = true) :
+    resolveCharStack coverage (a :: rest) c = a.apply c := by
+  simp [resolveCharStack, hr, hcov]
+
+/-- The scalar a stack applies is drawn from the stack: whenever the result
+differs from the source scalar, some active alphabet produced it. The
+registry `_mem` property for the nesting resolver. -/
+theorem resolveCharStack_mem (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (c : Char),
+      resolveCharStack coverage active c ≠ c →
+        ∃ a, a ∈ active ∧ resolveCharStack coverage active c = a.apply c
+  | [], c => by simp [resolveCharStack]
+  | a :: rest, c => by
+    intro h
+    have hstep : resolveCharStack coverage (a :: rest) c = a.apply c ∨
+        resolveCharStack coverage (a :: rest) c = resolveCharStack coverage rest c := by
+      rw [resolveCharStack]
+      cases hr : a.rangeOf c with
+      | none => exact Or.inr rfl
+      | some r =>
+        cases hc : coverage.remaps a r with
+        | true => exact Or.inl (by simp [hc])
+        | false => exact Or.inr (by simp [hc])
+    cases hstep with
+    | inl he => exact ⟨a, List.mem_cons_self .., he⟩
+    | inr he =>
+      have hne : resolveCharStack coverage rest c ≠ c := by rw [← he]; exact h
+      obtain ⟨a', ha', he'⟩ := resolveCharStack_mem coverage rest c hne
+      exact ⟨a', List.mem_cons_of_mem a ha', he.trans he'⟩
+
 mutual
 
 /-- Resolve alphabet boundaries in one structural walk. `active` is the
-innermost alphabet in force; a nested command replaces its outer one, as a
-nested TeX group does. The public entry starts with no active alphabet. -/
+stack of alphabets in force, innermost first; a nested command pushes onto
+it, as a nested TeX group nests scopes. Each scalar takes the innermost
+active alphabet whose range the face covers, falling through to an outer
+one otherwise. The public entry starts with an empty stack. -/
 def resolveAlphaList (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) : MList → MList
+    (active : List MathAlphabet) : MList → MList
   | .nil => .nil
   | .cons x rest =>
     .cons (resolveAlphaItem coverage active x)
       (resolveAlphaList coverage active rest)
 
 def resolveAlphaItem (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) : MItem → MItem
+    (active : List MathAlphabet) : MItem → MItem
   | .atom cls nuc sup sub lim =>
     .atom cls (resolveAlphaNucleus coverage active nuc)
       (resolveAlphaList coverage active sup)
@@ -1840,11 +1893,11 @@ def resolveAlphaItem (coverage : MathAlphabetCoverage)
   | .ink c n => .ink c n
 
 def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) : MNucleus → MNucleus
-  | .sym c => .sym (active.map (·.resolveChar coverage c) |>.getD c)
+    (active : List MathAlphabet) : MNucleus → MNucleus
+  | .sym c => .sym (resolveCharStack coverage active c)
   | .word s => .word s
   | .list body => .list (resolveAlphaList coverage active body)
-  | .alpha a body => .list (resolveAlphaList coverage (some a) body)
+  | .alpha a body => .list (resolveAlphaList coverage (a :: active) body)
   | .frac spec num den => .frac spec
       (resolveAlphaList coverage active num)
       (resolveAlphaList coverage active den)
@@ -1859,13 +1912,13 @@ def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
       (resolveAlphaList coverage active body)
 
 def resolveAlphaRow (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) : MRow → MRow
+    (active : List MathAlphabet) : MRow → MRow
   | .nil => .nil
   | .cons cell rest => .cons (resolveAlphaList coverage active cell)
       (resolveAlphaRow coverage active rest)
 
 def resolveAlphaRows (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) : MRows → MRows
+    (active : List MathAlphabet) : MRows → MRows
   | .nil => .nil
   | .cons row rest => .cons (resolveAlphaRow coverage active row)
       (resolveAlphaRows coverage active rest)
@@ -1875,19 +1928,34 @@ end
 /-- Resolve every typed alphabet boundary against one selected face's
 coverage. This runs before the document scalar census and both backends. -/
 def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :=
-  resolveAlphaList coverage none body
+  resolveAlphaList coverage [] body
 
-private def noteMissingAlpha (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) (c : Char) :
-    Array MathAlphabet :=
-  match active with
-  | none => out
-  | some a =>
+/-- The alphabet a stack blames for a scalar left at its source glyph, if
+any: walking innermost-first, the first alphabet that classifies `c` into a
+range decides. If it covers, `c` is applied — no loss. If it does not, and
+no outer alphabet covers `c` either (the resolver leaves the source scalar
+standing), that first classifying alphabet is the loss — provided it would
+in fact have changed the glyph (`apply c ≠ c`), so an identity remap is not
+named. Mirrors `resolveCharStack` exactly, so the N0018 census reports the
+alphabet the reader asked for and could not get. -/
+def missingCharAlpha (coverage : MathAlphabetCoverage) :
+    List MathAlphabet → Char → Option MathAlphabet
+  | [], _ => none
+  | a :: rest, c =>
     match a.rangeOf c with
     | some r =>
-      if !coverage.remaps a r && a.apply c != c && !out.contains a then out.push a
-      else out
-    | none => out
+      if coverage.remaps a r then none
+      else if resolveCharStack coverage rest c != c then none
+      else if a.apply c != c then some a
+      else none
+    | none => missingCharAlpha coverage rest c
+
+private def noteMissingAlpha (coverage : MathAlphabetCoverage)
+    (active : List MathAlphabet) (out : Array MathAlphabet) (c : Char) :
+    Array MathAlphabet :=
+  match missingCharAlpha coverage active c with
+  | some a => if out.contains a then out else out.push a
+  | none => out
 
 mutual
 
@@ -1895,14 +1963,14 @@ mutual
 alphabet whose active range stayed at its source scalar. The accumulator
 makes repetition idempotent and keeps first-use order. -/
 private def missingAlphaList (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    (active : List MathAlphabet) (out : Array MathAlphabet) :
     MList → Array MathAlphabet
   | .nil => out
   | .cons x rest => missingAlphaList coverage active
       (missingAlphaItem coverage active out x) rest
 
 private def missingAlphaItem (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    (active : List MathAlphabet) (out : Array MathAlphabet) :
     MItem → Array MathAlphabet
   | .atom _ nuc sup sub _ =>
     let out := missingAlphaNucleus coverage active out nuc
@@ -1912,12 +1980,12 @@ private def missingAlphaItem (coverage : MathAlphabetCoverage)
   | .ink _ _ => out
 
 private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    (active : List MathAlphabet) (out : Array MathAlphabet) :
     MNucleus → Array MathAlphabet
   | .sym c => noteMissingAlpha coverage active out c
   | .word _ => out
   | .list body => missingAlphaList coverage active out body
-  | .alpha a body => missingAlphaList coverage (some a) out body
+  | .alpha a body => missingAlphaList coverage (a :: active) out body
   | .frac _ num den => missingAlphaList coverage active
       (missingAlphaList coverage active out num) den
   | .rad deg body => missingAlphaList coverage active
@@ -1929,14 +1997,14 @@ private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
       (missingAlphaList coverage active out body) value
 
 private def missingAlphaRow (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    (active : List MathAlphabet) (out : Array MathAlphabet) :
     MRow → Array MathAlphabet
   | .nil => out
   | .cons cell rest => missingAlphaRow coverage active
       (missingAlphaList coverage active out cell) rest
 
 private def missingAlphaRows (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    (active : List MathAlphabet) (out : Array MathAlphabet) :
     MRows → Array MathAlphabet
   | .nil => out
   | .cons row rest => missingAlphaRows coverage active
@@ -1946,7 +2014,7 @@ end
 
 def missingMathAlphas (coverage : MathAlphabetCoverage)
     (body : MList) : Array MathAlphabet :=
-  missingAlphaList coverage none #[] body
+  missingAlphaList coverage [] #[] body
 
 mutual
 
@@ -1983,7 +2051,7 @@ end
 mutual
 
 private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) :
+    (active : List MathAlphabet) :
     ∀ body, (resolveAlphaList coverage active body).alphaFree = true
   | .nil => rfl
   | .cons x rest => by
@@ -1992,7 +2060,7 @@ private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active rest]
 
 private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) :
+    (active : List MathAlphabet) :
     ∀ item, (resolveAlphaItem coverage active item).alphaFree = true
   | .space _ => rfl
   | .ink _ _ => rfl
@@ -2003,7 +2071,7 @@ private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active sub]
 
 private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) :
+    (active : List MathAlphabet) :
     ∀ nucleus, (resolveAlphaNucleus coverage active nucleus).alphaFree = true
   | .sym _ => rfl
   | .word _ => rfl
@@ -2012,7 +2080,7 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active body
   | .alpha a body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
-      resolveAlphaList_covers coverage (some a) body
+      resolveAlphaList_covers coverage (a :: active) body
   | .frac _ num den => by
     simp [resolveAlphaNucleus, MNucleus.alphaFree,
       resolveAlphaList_covers coverage active num,
@@ -2036,7 +2104,7 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active body]
 
 private theorem resolveAlphaRow_covers (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) :
+    (active : List MathAlphabet) :
     ∀ row, (resolveAlphaRow coverage active row).alphaFree = true
   | .nil => rfl
   | .cons cell rest => by
@@ -2045,7 +2113,7 @@ private theorem resolveAlphaRow_covers (coverage : MathAlphabetCoverage)
       resolveAlphaRow_covers coverage active rest]
 
 private theorem resolveAlphaRows_covers (coverage : MathAlphabetCoverage)
-    (active : Option MathAlphabet) :
+    (active : List MathAlphabet) :
     ∀ rows, (resolveAlphaRows coverage active rows).alphaFree = true
   | .nil => rfl
   | .cons row rest => by
@@ -2058,73 +2126,73 @@ end
 /-- Every alphabet boundary is eliminated before a backend can see it. -/
 theorem resolveMathAlphas_covers (coverage : MathAlphabetCoverage) (body : MList) :
     (resolveMathAlphas coverage body).alphaFree = true :=
-  resolveAlphaList_covers coverage none body
+  resolveAlphaList_covers coverage [] body
 
 mutual
 
-private theorem resolveAlphaList_none_id (coverage : MathAlphabetCoverage) :
-    ∀ body, body.alphaFree = true → resolveAlphaList coverage none body = body
+private theorem resolveAlphaList_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ body, body.alphaFree = true → resolveAlphaList coverage [] body = body
   | .nil, _ => rfl
   | .cons x rest, h => by
     simp only [MList.alphaFree, Bool.and_eq_true] at h
-    rw [resolveAlphaList, resolveAlphaItem_none_id coverage x h.1,
-      resolveAlphaList_none_id coverage rest h.2]
+    rw [resolveAlphaList, resolveAlphaItem_nil_id coverage x h.1,
+      resolveAlphaList_nil_id coverage rest h.2]
 
-private theorem resolveAlphaItem_none_id (coverage : MathAlphabetCoverage) :
-    ∀ item, item.alphaFree = true → resolveAlphaItem coverage none item = item
+private theorem resolveAlphaItem_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ item, item.alphaFree = true → resolveAlphaItem coverage [] item = item
   | .space _, _ => rfl
   | .ink _ _, _ => rfl
   | .atom cls nuc sup sub lim, h => by
     simp only [MItem.alphaFree, Bool.and_eq_true] at h
-    rw [resolveAlphaItem, resolveAlphaNucleus_none_id coverage nuc h.1,
-      resolveAlphaList_none_id coverage sup h.2.1,
-      resolveAlphaList_none_id coverage sub h.2.2]
+    rw [resolveAlphaItem, resolveAlphaNucleus_nil_id coverage nuc h.1,
+      resolveAlphaList_nil_id coverage sup h.2.1,
+      resolveAlphaList_nil_id coverage sub h.2.2]
 
-private theorem resolveAlphaNucleus_none_id (coverage : MathAlphabetCoverage) :
+private theorem resolveAlphaNucleus_nil_id (coverage : MathAlphabetCoverage) :
     ∀ nucleus, nucleus.alphaFree = true →
-      resolveAlphaNucleus coverage none nucleus = nucleus
+      resolveAlphaNucleus coverage [] nucleus = nucleus
   | .sym _, _ => rfl
   | .word _, _ => rfl
   | .list body, h => by
-    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+    rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
   | .alpha _ _, h => by simp [MNucleus.alphaFree] at h
   | .frac spec num den, h => by
     simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
     rw [resolveAlphaNucleus,
-      resolveAlphaList_none_id coverage num h.1,
-      resolveAlphaList_none_id coverage den h.2]
+      resolveAlphaList_nil_id coverage num h.1,
+      resolveAlphaList_nil_id coverage den h.2]
   | .rad deg body, h => by
     simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
     rw [resolveAlphaNucleus,
-      resolveAlphaList_none_id coverage deg h.1,
-      resolveAlphaList_none_id coverage body h.2]
+      resolveAlphaList_nil_id coverage deg h.1,
+      resolveAlphaList_nil_id coverage body h.2]
   | .delim l r body, h => by
-    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+    rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
   | .accent mark stretch body, h => by
-    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+    rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
   | .grid kind rows, h => by
-    rw [resolveAlphaNucleus, resolveAlphaRows_none_id coverage rows h]
+    rw [resolveAlphaNucleus, resolveAlphaRows_nil_id coverage rows h]
   | .cancel mark spec value body, h => by
     simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
     rw [resolveAlphaNucleus,
-      resolveAlphaList_none_id coverage value h.1,
-      resolveAlphaList_none_id coverage body h.2]
+      resolveAlphaList_nil_id coverage value h.1,
+      resolveAlphaList_nil_id coverage body h.2]
 
-private theorem resolveAlphaRow_none_id (coverage : MathAlphabetCoverage) :
-    ∀ row, row.alphaFree = true → resolveAlphaRow coverage none row = row
+private theorem resolveAlphaRow_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ row, row.alphaFree = true → resolveAlphaRow coverage [] row = row
   | .nil, _ => rfl
   | .cons cell rest, h => by
     simp only [MRow.alphaFree, Bool.and_eq_true] at h
-    rw [resolveAlphaRow, resolveAlphaList_none_id coverage cell h.1,
-      resolveAlphaRow_none_id coverage rest h.2]
+    rw [resolveAlphaRow, resolveAlphaList_nil_id coverage cell h.1,
+      resolveAlphaRow_nil_id coverage rest h.2]
 
-private theorem resolveAlphaRows_none_id (coverage : MathAlphabetCoverage) :
-    ∀ rows, rows.alphaFree = true → resolveAlphaRows coverage none rows = rows
+private theorem resolveAlphaRows_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ rows, rows.alphaFree = true → resolveAlphaRows coverage [] rows = rows
   | .nil, _ => rfl
   | .cons row rest, h => by
     simp only [MRows.alphaFree, Bool.and_eq_true] at h
-    rw [resolveAlphaRows, resolveAlphaRow_none_id coverage row h.1,
-      resolveAlphaRows_none_id coverage rest h.2]
+    rw [resolveAlphaRows, resolveAlphaRow_nil_id coverage row h.1,
+      resolveAlphaRows_nil_id coverage rest h.2]
 
 end
 
@@ -2132,12 +2200,37 @@ end
 theorem resolveMathAlphas_id (coverage : MathAlphabetCoverage) (body : MList)
     (h : body.alphaFree = true) :
     resolveMathAlphas coverage body = body :=
-  resolveAlphaList_none_id coverage body h
+  resolveAlphaList_nil_id coverage body h
 
 /-- Resolution is idempotent: its output is already the backend form. -/
 theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : MList) :
     resolveMathAlphas coverage (resolveMathAlphas coverage body) =
       resolveMathAlphas coverage body :=
   resolveMathAlphas_id coverage _ (resolveMathAlphas_covers coverage body)
+
+/-- Resolving an alphabet stack is the identity on the classes projection,
+for any stack: `MList.classes` reads only the item-level atom class and
+never the nucleus, so rewriting a `.sym` glyph or turning an `.alpha`
+scope into a `.list` leaves the class sequence — and thus the spacing the
+walk inserts — untouched. The stack analogue of `remapList_classes_id`. -/
+theorem resolveAlphaList_classes (coverage : MathAlphabetCoverage)
+    (active : List MathAlphabet) :
+    ∀ l : MList, (resolveAlphaList coverage active l).classes = l.classes
+  | .nil => rfl
+  | .cons (.atom _ _ _ _ _) rest => by
+    simp only [resolveAlphaList, resolveAlphaItem, MList.classes,
+      resolveAlphaList_classes coverage active rest]
+  | .cons (.space _) rest => by
+    simp only [resolveAlphaList, resolveAlphaItem, MList.classes,
+      resolveAlphaList_classes coverage active rest]
+  | .cons (.ink _ _) rest => by
+    simp only [resolveAlphaList, resolveAlphaItem, MList.classes,
+      resolveAlphaList_classes coverage active rest]
+
+/-- The top-level resolver leaves the class sequence — and the spacing it
+drives — exactly as elaborated. -/
+theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MList) :
+    (resolveMathAlphas coverage body).classes = body.classes :=
+  resolveAlphaList_classes coverage [] body
 
 end LeanTex.Core.Math
