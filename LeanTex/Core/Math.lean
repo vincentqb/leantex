@@ -504,9 +504,10 @@ def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
   allAlphabetRanges.filter fun r => a.rangeOf r.anchor == some r
 
 /-- Range anchors the selected math face covers, derived once after that
-face is selected. `sources` is orthogonal policy: a text-sourced legacy
-command stays on its existing path until text-slot projection is modelled;
-symbol-sourced commands consult `covered`. -/
+face is selected. The remap decision (`remaps`) reads `covered` alone.
+`sources` is orthogonal policy retained for phase-3 text-slot projection
+(setting a text-sourced alphabet from its declared text family); it does
+not gate remap-vs-keep. -/
 structure MathAlphabetCoverage where
   sources : MathAlphabetSources := {}
   covered : Array (MathAlphabet × MathAlphabetRange) := #[]
@@ -516,12 +517,17 @@ def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.covered.contains (a, r)
 
-/-- Whether the shared-IR resolver remaps this range. Text-sourced commands
-retain their pre-existing scalar semantics; symbol-sourced commands remap
-only when the selected math face carries the range anchor. -/
+/-- Whether the shared-IR resolver remaps this range: exactly when the
+selected math face carries the range anchor. A range the face does not
+carry keeps its source scalar in that face — never a Unicode math scalar
+per-character fallback would then satisfy from an unrelated host face —
+and the whole-alphabet loss is named once (N0018) by the IR census.
+`sources` no longer gates the remap: it is retained for phase-3 text-slot
+projection (setting a text-sourced alphabet from its declared text family),
+which is orthogonal to whether the math face covers the range. -/
 def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
-  c.sources.get a == .text || c.faceCovers a r
+  c.faceCovers a r
 
 /-- The Latin letters every alphabet maps. -/
 def latinLetters : List Char :=

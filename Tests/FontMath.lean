@@ -1451,9 +1451,59 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!alphaCoverage.faceCovers .cal .latinUpper &&
       !alphaCoverage.faceCovers .cal .latinLower &&
       alphaCoverage.faceCovers .bb .latinUpper)
-  t "text-sourced mathsf remains on the pre-existing path"
-    (!alphaCoverage.faceCovers .sf .latinUpper &&
-      alphaCoverage.remaps .sf .latinUpper)
+  -- Phase 2: a text-sourced alphabet the selected face does not cover keeps
+  -- its source scalar in that face rather than remapping to a Unicode math
+  -- scalar an unrelated host face would then satisfy per-character. Fira has
+  -- no sans-serif range; `\mathsf{R}` must stay 'R' in the Fira face, never a
+  -- host face carrying the sans-serif R. A synthetic host that does carry it
+  -- would take the glyph under the old text-source remap.
+  -- The scalar `\mathsf{R}` keeps when sans-serif is unavailable is the
+  -- default math-italic R (as `\mathcal{O}` keeps math-italic O above), which
+  -- Fira's italic range covers. The synthetic host carries the sans-serif R
+  -- the old text-source remap would have selected per-character.
+  let sfKept : Char := Char.ofNat 0x1D445
+  let sansScalar : Char := Char.ofNat 0x1D5B1
+  let sansR : UInt32 := UInt32.ofNat 0x1D5B1
+  let sansGid : UInt32 := UInt32.ofNat ((serif.gid 'R').getD 0)
+  let sansHost : Font.Font := { serif with
+    family := "Synthetic Host Sans"
+    psName := "SyntheticHostSans"
+    cmap := (serif.cmap.push (sansR, sansR, sansGid)).qsort (fun a b => a.1 < b.1) }
+  let sfFs : Font.FontSet := { mfs with
+    fonts := #[serif, fira, sansHost]
+    fallback := #[(sansScalar, 2)] }
+  let sfRaw := (Elab.run "synthetic.tex" "$\\mathsf{R}$").1
+  let (sfDoc, sfDiags) := Ir.resolveMathAlphas alphaCoverage fira.family sfRaw
+  let sfOut := Layout.run geom sfFs none sfDoc
+  let sfRuns := (bodyLines sfOut).flatMap (·.segs)
+  t "text-sourced mathsf keeps its source scalar in the selected math face"
+    (sfRuns.any fun s => match s with
+      | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == sfKept)
+      | _ => false)
+  t "text-sourced mathsf never remaps to a scalar an unrelated host face carries"
+    (!(Layout.docScalars sfDoc).contains sansScalar &&
+      (Layout.docScalars sfDoc).contains sfKept &&
+      !sfRuns.any (fun s => match s with
+        | .run 2 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == sansScalar)
+        | _ => false) &&
+      !sfOut.diags.any (·.code == "W0009"))
+  let sfTree := HtmlDoc.blockNode { fonts := some sfFs } sfDoc.body[0]!
+  t "typed HTML carries the sans-serif source scalar, not the host remap"
+    (nodeTextOne "" sfTree == String.ofList [sfKept])
+  t "the unavailable sans-serif alphabet is named once by the IR owner"
+    ((sfDiags.filter (·.code == "N0018")).map (fun d => (d.subject, d.message)) ==
+      #[(some "math-alpha:sf",
+        "'Fira Math' has no sans-serif alphabet for the characters used; ordinary math source glyphs stand")])
+  -- Phase 2 contract: `remaps = faceCovers`, so a text-sourced alphabet the
+  -- face lacks no longer remaps, while the covered text-sourced alphabets
+  -- (bf/it/tt) still remap in the selected face — no regression.
+  t "text source no longer forces a remap the face cannot cover"
+    (alphaCoverage.remaps .sf .latinUpper == alphaCoverage.faceCovers .sf .latinUpper &&
+      !alphaCoverage.remaps .sf .latinUpper)
+  t "covered text-sourced alphabets still remap in the selected face"
+    (alphaCoverage.faceCovers .bf .latinUpper && alphaCoverage.remaps .bf .latinUpper &&
+      alphaCoverage.faceCovers .it .latinUpper && alphaCoverage.remaps .it .latinUpper &&
+      alphaCoverage.faceCovers .tt .latinUpper && alphaCoverage.remaps .tt .latinUpper)
 
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
