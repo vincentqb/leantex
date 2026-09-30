@@ -801,39 +801,41 @@ def picsToSvg (ui : Ui) (pics : Array PicResult) (assetsDir : String) (imgs : Im
   let mut diags : Array Diag := #[]
   let mut pubs : Array Publication := #[]
   let mut unconverted : Array String := #[]
-  let mut served := 0
   let mut converted := 0
   for r in pics do
     let svgName := Ir.picFaceName r.src
     let svgPath := r.cached.withExtension "svg"
+    -- Always route through `picFace`: it serves its own warmed slot (keyed
+    -- by the PDF's content, the recipe, the tool version and the engine
+    -- version) or runs `pdftocairo` once, and never returns a half-written
+    -- file. The `.svg` beside the PDF is only a copy source, rewritten from
+    -- the returned bytes through a unique atomic temp every build — so a
+    -- stale file keyed only by the lualatex picture key is never served, and
+    -- a killed writer never leaves a servable one behind.
     let ok ← do
-      if ← svgPath.pathExists then
-        served := served + 1
-        pure true
-      else
-        match ← (IO.FS.readBinFile r.cached).toBaseIO with
-        | .error e =>
-          diags := diags.push (DriverDiag.boundarySvgMissing (toString e))
-          pure false
-        | .ok pdfBytes =>
-          -- One `pdftocairo -svg` of the picture's first page, through the
-          -- shared budget and conversion cache: a warmed slot serves with no
-          -- tool, a refusal is remembered, an unfinished attempt retries.
-          match ← ImageAssets.picFace pdfBytes with
-          | .ok bytes =>
-            match ← (IO.FS.writeBinFile svgPath bytes).toBaseIO with
-            | .ok () => converted := converted + 1; pure true
-            | .error e => diags := diags.push (DriverDiag.boundarySvgMissing (toString e)); pure false
+      match ← (IO.FS.readBinFile r.cached).toBaseIO with
+      | .error e =>
+        diags := diags.push (DriverDiag.boundarySvgMissing (toString e))
+        pure false
+      | .ok pdfBytes =>
+        match ← ImageAssets.picFace pdfBytes with
+        | .ok bytes =>
+          let nonce := s!"{← IO.monoNanosNow}-{← IO.rand 0 (2 ^ 31)}"
+          let part := System.FilePath.mk (svgPath.toString ++ ".part-" ++ nonce)
+          match ← (do IO.FS.writeBinFile part bytes; IO.FS.rename part svgPath).toBaseIO with
+          | .ok () => converted := converted + 1; pure true
           | .error e =>
-            diags := diags.push (DriverDiag.boundarySvgMissing e)
-            pure false
+            diags := diags.push (DriverDiag.boundarySvgMissing (toString e)); pure false
+        | .error e =>
+          diags := diags.push (DriverDiag.boundarySvgMissing e)
+          pure false
     if ok then
       pubs := pubs.push { cached := svgPath, name := svgName }
       entries := entries.map fun en =>
         if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
         else en
     else unconverted := unconverted.push r.src
-  ui.phase "svg-convert" s!"{converted} converted, {served} cached" (← since t0)
+  ui.phase "svg-convert" s!"{converted} faces" (← since t0)
   return ({ entries }, pubs, diags, unconverted)
 
 /-- An image publication: captured SVG bytes when converted, or the source

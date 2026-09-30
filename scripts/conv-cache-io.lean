@@ -21,19 +21,26 @@ def writeStub (path : System.FilePath) (body : String) : IO Unit := do
   let r ← IO.Process.output { cmd := "chmod", args := #["+x", path.toString] }
   unless r.exitCode == 0 do throw <| IO.userError s!"chmod failed for {path}"
 
-/-- A stub `pdftocairo`: names a version on `-v`, else sleeps briefly (to
-widen the fill race) and writes a fixed 64-byte payload to its output
-argument. -/
-def pdftocairoStub : String :=
+/-- A stub `pdftocairo`: names the given version on `-v`, else sleeps
+briefly (to widen the fill race) and writes the given payload to its output
+argument. Version and payload are baked into the script text so that a
+different one changes the file's stat witness — an upgrade the tool-version
+memo must notice. -/
+def pdftocairoStub (version payload : String) : String :=
   "#!/bin/sh\n\
 for a in \"$@\"; do\n\
-  if [ \"$a\" = \"-v\" ]; then echo \"pdftocairo 99.0 (leantex conv-cache-io stub)\"; exit 0; fi\n\
+  if [ \"$a\" = \"-v\" ]; then echo \"" ++ version ++ "\"; exit 0; fi\n\
 done\n\
 out=\"\"\n\
 for a in \"$@\"; do out=\"$a\"; done\n\
 sleep 0.05\n\
-printf 'STUBSVG-0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789' > \"$out\"\n\
+printf '" ++ payload ++ "' > \"$out\"\n\
 exit 0\n"
+
+/-- The default stub used by the concurrency and empty-warmed checks. -/
+def defaultStub : String :=
+  pdftocairoStub "pdftocairo 99.0 (leantex conv-cache-io stub)"
+    "STUBSVG-0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
 
 private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
   unless ok do ref.modify (name :: ·)
@@ -47,7 +54,7 @@ def concurrentWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let bin := dir / "bin"
     IO.FS.createDirAll bin
-    writeStub (bin / "pdftocairo") pdftocairoStub
+    writeStub (bin / "pdftocairo") defaultStub
     let cache := dir / "cache"
     IO.FS.createDirAll cache
     let env := #[("PATH", some (bin.toString ++ ":" ++ path)),
@@ -92,7 +99,7 @@ def emptyWarmedChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let bin := dir / "bin"
     IO.FS.createDirAll bin
-    writeStub (bin / "pdftocairo") pdftocairoStub
+    writeStub (bin / "pdftocairo") defaultStub
     let cache := dir / "cache"
     IO.FS.createDirAll cache
     let env := #[("PATH", some (bin.toString ++ ":" ++ path)),
@@ -157,11 +164,49 @@ sleep 30\n"
     check ref "timeout: no TERM-ignoring grandchild survived"
       (!(← alive (marker / "grandchild.pid")))
 
+/-- **M5 — a picture face is served from its tool-versioned slot, never a
+stale sibling.** The M5 defect served the `.svg` beside the PDF whenever it
+existed, keyed only by the lualatex picture key, so an upgraded `pdftocairo`
+kept painting the old face. `picFace` keys the slot on the tool's version,
+so warming under one version and then upgrading the tool must yield fresh
+bytes, not the warm ones. -/
+def toolUpgradeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let probe ← probeBin
+  let path := (← IO.getEnv "PATH").getD ""
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"
+    IO.FS.createDirAll bin
+    let cache := dir / "cache"
+    IO.FS.createDirAll cache
+    let env := #[("PATH", some (bin.toString ++ ":" ++ path)),
+      ("XDG_CACHE_HOME", some cache.toString)]
+    -- Warm the slot under version 1.
+    writeStub (bin / "pdftocairo") (pdftocairoStub "pdftocairo 1.0" "FACE-ONE-PAYLOAD")
+    let first ← IO.Process.output { cmd := probe.toString, env }
+    let firstLine := first.stdout.trimAscii.toString
+    check ref "tool-upgrade: first version converts" (firstLine.startsWith "OK ")
+    -- Upgrade the tool: a new binary content (version and payload), so its
+    -- stat witness changes and the version memo re-probes.
+    IO.sleep 1100
+    writeStub (bin / "pdftocairo") (pdftocairoStub "pdftocairo 2.0" "FACE-TWO-PADDING!")
+    let second ← IO.Process.output { cmd := probe.toString, env }
+    let secondLine := second.stdout.trimAscii.toString
+    check ref "tool-upgrade: second version converts" (secondLine.startsWith "OK ")
+    -- The two payloads differ in length, so the reported "OK <len> <sum>"
+    -- lines must differ: the upgrade was not served the stale face.
+    check ref "tool-upgrade: an upgraded tool is not served the stale face"
+      (firstLine != secondLine)
+    -- Both slots coexist, keyed by version.
+    let convs := cache / "leantex" / "convs"
+    let outs := ((← convs.readDir).toList.map (·.fileName)).filter (·.endsWith ".out")
+    check ref "tool-upgrade: each version keeps its own slot" (outs.length == 2)
+
 def main : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
   concurrentWriteChecks ref
   emptyWarmedChecks ref
   timeoutKillChecks ref
+  toolUpgradeChecks ref
   let failed ← ref.get
   for name in failed.reverse do IO.eprintln s!"FAIL: {name}"
   IO.println s!"conversion-cache IO oracle: {failed.length} failures"
