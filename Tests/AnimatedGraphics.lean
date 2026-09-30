@@ -122,6 +122,9 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ("", 0), ("poster", 0), ("poster=first", 0), ("poster=0", 2),
     ("poster=1", 3), ("poster={1}", 3), ("poster=last", 4),
     ("poster=last,poster", 0), ("poster=none,poster=last", 4),
+    -- A repeated key keeps its last value in both directions: an earlier
+    -- invalid value must not poison a later valid one (last-wins parsing).
+    ("poster=bad,poster=last", 4), ("poster=1,poster=last", 4),
     ("every=1,type=pdf", 0), ("every=2,every=1,type=png,type=pdf", 0)]
   for (keys, idx) in posters do
     let sized := if keys.isEmpty then "width=32pt" else keys ++ ",width=32pt"
@@ -139,7 +142,9 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let pages : Array (String × Nat × Int × Int) := #[
     ("", 1, 64, 40), ("page=1", 5, 64, 40),
     ("page=2", 6, 48, 96), ("page={2}", 6, 48, 96),
-    ("page=3", 7, 80, 20), ("page=3,page=2", 6, 48, 96)]
+    ("page=3", 7, 80, 20), ("page=3,page=2", 6, 48, 96),
+    -- Last-wins: an earlier invalid page must not poison a later valid one.
+    ("page=bad,page=2", 6, 48, 96), ("page=0,page=2", 6, 48, 96)]
   for (keys, idx, w, h) in pages do
     let p := page "" ("Lead" ++ graphic keys ++ "Tail")
     t s!"graphicx '{keys}' selects its own dimensions and HTML source"

@@ -2900,7 +2900,11 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
   let mut alt : Ir.Alt := .undeclared
   let mut ignored : Array String := #[]
   let mut refused : Array (String × String) := #[]
-  let mut valid := true
+  -- Per-key deferred validation for page/poster: a repeated key keeps its
+  -- last value, so its validity and error track only the last occurrence.
+  -- An earlier invalid value must not poison a later valid one.
+  let mut pageErr : Option String := none
+  let mut posterErr : Option String := none
   if let some src := optSrc then
     for e in Decl.splitEntries (rawSrc src) do
       -- Like the package's key reader, repeated keys keep their last
@@ -2937,25 +2941,24 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           ignored := ignored.push e
         else
           match (listingVal v).toNat? with
-          | some (n + 1) => spec := { spec with page := .number (n + 1) }
+          | some (n + 1) => spec := { spec with page := .number (n + 1) }; pageErr := none
           | _ =>
-            valid := false
-            diag ctx .E0321
-              s!"'\\includegraphics' page needs a positive one-based integer, got {v.quote}" pos
+            pageErr := some
+              s!"'\\includegraphics' page needs a positive one-based integer, got {v.quote}"
       | some ("poster", v) =>
         if animated then
           match listingVal v with
-          | "first" => spec := { spec with page := .first }
-          | "last" => spec := { spec with page := .last }
+          | "first" => spec := { spec with page := .first }; posterErr := none
+          | "last" => spec := { spec with page := .last }; posterErr := none
           | "none" =>
             refused := refused.push ("poster", "'poster=none' has no static PDF poster")
+            posterErr := none
           | n =>
             match n.toNat? with
-            | some n => spec := { spec with page := .number (n + 1) }
+            | some n => spec := { spec with page := .number (n + 1) }; posterErr := none
             | none =>
-              valid := false
-              diag ctx .E0321
-                s!"'\\animategraphics' poster needs first, last, none, or a zero-based integer, got {v.quote}" pos
+              posterErr := some
+                s!"'\\animategraphics' poster needs first, last, none, or a zero-based integer, got {v.quote}"
         else
           ignored := ignored.push e
       | some ("every", v) =>
@@ -2987,6 +2990,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
         else if animated && e.trimAscii.toString == "poster" then
           refused := refused.filter (·.1 != "poster")
           spec := { spec with page := .first }
+          posterErr := none
         else if e.trimAscii.toString == "artifact" ||
             (Decl.splitEntry e).any (·.1 == "artifact") then
           -- latex-lab-graphic's key for decoration (its value is ignored):
@@ -2994,6 +2998,11 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           alt := .decorative
         else
           ignored := ignored.push e
+  -- Emit the surviving page/poster error (last occurrence only) and gate
+  -- the image on it: a later valid value clears an earlier invalid one.
+  if let some msg := pageErr then diag ctx .E0321 msg pos
+  if let some msg := posterErr then diag ctx .E0321 msg pos
+  let valid := pageErr.isNone && posterErr.isNone
   unless animated do
     for e in ignored do
       warnOnce ctx ("imgopt:" ++ e) .W0110
