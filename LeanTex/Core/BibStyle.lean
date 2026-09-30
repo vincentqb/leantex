@@ -1194,9 +1194,9 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .role nm body => out.push (.role nm (resolveInlines p find #[] body.toList))
   | .link u body => out.push (.link u (resolveInlines p find #[] body.toList))
   | .underline body => out.push (.underline (resolveInlines p find #[] body.toList))
-  | .step n last body => out.push (.step n last (resolveInlines p find #[] body.toList))
-  | .alt n last active otherwise =>
-    out.push (.alt n last (resolveInlines p find #[] active.toList)
+  | .onSteps spec body => out.push (.onSteps spec (resolveInlines p find #[] body.toList))
+  | .altSteps spec active otherwise =>
+    out.push (.altSteps spec (resolveInlines p find #[] active.toList)
       (resolveInlines p find #[] otherwise.toList))
   -- a citation inside a note resolves like any other
   | .footnote n body => out.push (.footnote n (resolveInlines p find #[] body.toList))
@@ -1237,8 +1237,8 @@ def citeFreeOne : Ir.Inline → Bool
   | .role _ body => citeFreeList body.toList
   | .link _ body => citeFreeList body.toList
   | .underline body => citeFreeList body.toList
-  | .step _ _ body => citeFreeList body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => citeFreeList body.toList
+  | .altSteps _ active otherwise =>
     citeFreeList active.toList && citeFreeList otherwise.toList
   | .footnote _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
@@ -1266,8 +1266,8 @@ where
     match x with
     | .cite _ _ => simp [resolveInline]
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-    | .underline body | .step _ _ body | .footnote _ body => simp [resolveInline]
-    | .alt _ _ _ _ => simp [resolveInline]
+    | .underline body | .onSteps _ body | .footnote _ body => simp [resolveInline]
+    | .altSteps _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
     | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -1299,10 +1299,10 @@ theorem resolveInline_id (p : CitePunct) (find : Resolver)
   | .underline body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
-  | .step n last body =>
+  | .onSteps spec body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
-  | .alt n last active otherwise =>
+  | .altSteps spec active otherwise =>
     rw [citeFreeOne, Bool.and_eq_true] at h
     rw [resolveInline, resolveInlines_id p find active.toList h.1,
       resolveInlines_id p find otherwise.toList h.2]
@@ -1366,10 +1366,10 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .role nm body => out.push (.role nm (resolveBlocks p find items #[] body.toList))
   | .spaced g body => out.push (.spaced g (resolveBlocks p find items #[] body.toList))
   | .columns cols => out.push (.columns (resolveCols p find items #[] cols.toList))
-  | .step n last body =>
-    out.push (.step n last (resolveBlocks p find items #[] body.toList))
-  | .alt n last active otherwise =>
-    out.push (.alt n last (resolveBlocks p find items #[] active.toList)
+  | .onSteps spec body =>
+    out.push (.onSteps spec (resolveBlocks p find items #[] body.toList))
+  | .altSteps spec active otherwise =>
+    out.push (.altSteps spec (resolveBlocks p find items #[] active.toList)
       (resolveBlocks p find items #[] otherwise.toList))
   | .only t body => out.push (.only t (resolveBlocks p find items #[] body.toList))
   | .nav spec body => out.push (.nav spec (resolveBlocks p find items #[] body.toList))
@@ -1712,13 +1712,13 @@ theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) 
       q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-  | .underline body | .step _ _ body | .footnote _ body =>
+  | .underline body | .onSteps _ body | .footnote _ body =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
       Array.append_empty] at h
     exact resolveInlines_pending p find body.toList acc q h
-  | .alt _ _ active otherwise =>
+  | .altSteps _ active otherwise =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
@@ -1854,11 +1854,11 @@ theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending p find title.toList _ q h
   | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
-  | .spaced _ body | .step _ _ body | .only _ body | .nav _ body | .note body =>
+  | .spaced _ body | .onSteps _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveBlocks_pending p find items body.toList #[] _ q h
-  | .alt _ _ active otherwise =>
+  | .altSteps _ active otherwise =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     rcases resolveBlocks_pending p find items otherwise.toList #[] _ q h with h' | hc
