@@ -57,6 +57,9 @@ structure Config where
   model): the frame arm then realizes its declared vertical distribution
   with flex spacers, which every other class's flow has no use for. -/
   deck : Bool := false
+  /-- The frame's numbered extent, used to project union selectors into
+  finite HTML attribute tokens. It is read from the IR, never the surface. -/
+  overlaySteps : Nat := 1
   /-- The document's page geometry, from the document at `emitTree`'s
   entry: the deck's image sizing reads the stage and its margins to state
   every dimension as a share of the stage (`deckStageMilli`), never a
@@ -455,8 +458,8 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .pageNumber :: _ => none
   | .pageCount :: _ => none
   | .linebreak _ :: _ => none
-  | .step _ _ _ :: _ => none
-  | .alt _ _ _ _ :: _ => none
+  | .onSteps _ _ :: _ => none
+  | .altSteps _ _ _ :: _ => none
   | .image _ _ _ :: _ => none
   -- a `content` string cannot carry the icon's accessible name, so an icon
   -- marker is inexpressible here and diagnosed (W0331), never defaulted
@@ -501,8 +504,8 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .pageNumber => none
   | .pageCount => none
   | .linebreak _ => none
-  | .step _ _ _ => none
-  | .alt _ _ _ _ => none
+  | .onSteps _ _ => none
+  | .altSteps _ _ _ => none
   | .image _ _ _ => none
   | .icon _ _ => none
   | .label _ => none
@@ -584,10 +587,10 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
-  | .linebreak _ | .step _ _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
+  | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
   | .cite _ _ | .footnote _ _ =>
     simp [markerCssOne] at h
-  | .alt _ _ _ _ => simp [markerCssOne] at h
+  | .altSteps _ _ _ => simp [markerCssOne] at h
 
 theorem markerCssList_text (scale : List (String × Nat)) (decls : Array String)
     (xs : List Inline)
@@ -3051,13 +3054,55 @@ def deckPrint (maxSteps : Nat) : List DeckRule :=
           part := .print } ]
      else [])
 
+/-- A numbered union dims precisely outside its emitted membership set.
+The snap is the existing deck script's state; the script-free floor remains
+fully uncovered. No extra script or body copies are needed. -/
+def stepSetPendingRule (cp k : Nat) : DeckRule :=
+  { selector := [.lit "html[data-deck-script] .slide-track[data-snapped=\"", .num k,
+      .lit "\"] .step-set:not([data-steps~=\"", .num k, .lit "\"])"]
+    decls := [("opacity", s!"{cp}%")] }
+
+def altSetShownRule (k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track[data-snapped=\"", .num k,
+      .lit "\"] .alt-set[data-steps~=\"", .num k, .lit "\"]"]
+    decls := [("display", "contents")] }
+
+def altSetHiddenRule (k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track[data-snapped=\"", .num k,
+      .lit "\"] .alt-set:not([data-steps~=\"", .num k, .lit "\"])"]
+    decls := [("display", "none")] }
+
+/-- Same specificity as pending's snap selector, emitted after it under
+reduce. Paper already excludes the screen-only pending rule. -/
+def stepSetGuard : DeckRule :=
+  { selector := [.lit "html[data-deck-script] .slide-track[data-snapped] .step-set[data-steps]"]
+    decls := [("opacity", "100%")]
+    part := .reduce }
+
+def setRules (cp ms : Nat) : List DeckRule :=
+  stepSetGuard :: (List.range ms).flatMap fun i =>
+    [stepSetPendingRule cp (i + 1), altSetShownRule (i + 1), altSetHiddenRule (i + 1)]
+
+private theorem setRules_cases {P : DeckRule → Prop} {cp ms : Nat}
+    (hg : P stepSetGuard) (hp : ∀ k, P (stepSetPendingRule cp k))
+    (hs : ∀ k, P (altSetShownRule k)) (hh : ∀ k, P (altSetHiddenRule k)) :
+    ∀ r ∈ setRules cp ms, P r := by
+  intro r hr
+  simp only [setRules, List.mem_cons, List.mem_flatMap, List.mem_range,
+    List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | ⟨i, _, rfl | rfl | rfl⟩
+  · exact hg
+  · exact hp _
+  · exact hs _
+  · exact hh _
+
 /-- Every rule of the deck's stylesheet, in emission order. The
 parameters are the whole document-dependence: the stage-ratio type size,
 the printed page's size, the design's covered fraction, and the deck's
 maximum step count. -/
 def deckRules (bodyVh pageSize : String) (coveredPct maxSteps : Nat) : List DeckRule :=
   deckBase bodyVh ++ deckReduce ++
-    (if 2 ≤ maxSteps then stepRules coveredPct maxSteps ++ altRules maxSteps else []) ++
+    (if 2 ≤ maxSteps then stepRules coveredPct maxSteps ++ altRules maxSteps ++ setRules coveredPct maxSteps else []) ++
     deckPageRule pageSize :: deckPrint maxSteps
 
 /-- The one case split over the deck's rule set: every deck theorem
@@ -3076,6 +3121,7 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v pg : String} {cp ms 
     (hrecovered : 2 ≤ ms → ∀ k, P (stepRecoverFloorRule cp ms k))
     (haltfix : 2 ≤ ms → ∀ r ∈ altReduceFixed, P r)
     (haltsnap : 2 ≤ ms → ∀ k, ∀ r ∈ altSnapRules ms k, P r)
+    (hsets : 2 ≤ ms → ∀ r ∈ setRules cp ms, P r)
     (hpage : ∀ s, P (deckPageRule s))
     (hprint : ∀ r ∈ deckPrint ms, P r) :
     ∀ r ∈ deckRules v pg cp ms, P r := by
@@ -3089,8 +3135,8 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v pg : String} {cp ms 
       simp only [stepRules, stepSnapped, stepRecovered, altRules, altSnapped,
         List.mem_append, List.mem_cons, List.mem_map, List.mem_flatMap,
         List.mem_range] at h
-      rcases h with (rfl | rfl | rfl | ((h | ⟨i, -, rfl⟩) | ⟨i, -, rfl⟩)) |
-        (h | ⟨i, -, h⟩)
+      rcases h with ((rfl | rfl | rfl | ((h | ⟨i, -, rfl⟩) | ⟨i, -, rfl⟩)) |
+        (h | ⟨i, -, h⟩)) | h
       · exact hkey hms
       · exact hrkey hms
       · exact hcov hms
@@ -3099,6 +3145,7 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v pg : String} {cp ms 
       · exact hrecovered hms _
       · exact haltfix hms r h
       · exact haltsnap hms _ r h
+      · exact hsets hms r h
     case isFalse => cases h
   · exact hpage pg
   · exact hprint r h
@@ -3141,7 +3188,7 @@ private theorem mem_deckRules_step {r : DeckRule} {v pg : String} {cp ms : Nat}
   simp only [deckRules, List.mem_append]
   refine Or.inl (Or.inr ?_)
   split
-  · exact List.mem_append_left _ h
+  · exact List.mem_append_left _ (List.mem_append_left _ h)
   · omega
 
 /-- A closed step rule's membership, through the `stepFixed` spine. -/
@@ -3177,12 +3224,13 @@ private theorem deckRules_check {p : DeckRule → Bool} (v pg : String) (cp ms :
     (hrecovered : ∀ k, p (stepRecoverFloorRule cp ms k) = true)
     (haltfix : ∀ r ∈ altReduceFixed, p r = true)
     (haltsnap : ∀ k, ∀ r ∈ altSnapRules ms k, p r = true)
+    (hsets : ∀ r ∈ setRules cp ms, p r = true)
     (hpage : ∀ s, p (deckPageRule s) = true)
     (hprint : ∀ r ∈ deckPrint 2, p r = true) :
     ∀ r ∈ deckRules v pg cp ms, p r = true :=
   deckRules_forall hbase hreduce (fun _ => hkey) (fun _ => hrkey) (fun _ => hcov)
     (fun _ => hfix) (fun _ _ => hsnapped _) (fun _ _ => hrecovered _)
-    (fun _ => haltfix) (fun _ k => haltsnap k) hpage
+    (fun _ => haltfix) (fun _ k => haltsnap k) (fun _ => hsets) hpage
     (fun r hr => hprint r (deckPrint_subset r hr))
 
 /-- Membership in the base family, for the rules with a parametric
@@ -3237,7 +3285,8 @@ theorem deck_css_partition (v pg : String) (cp ms : Nat) :
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The Baseline floor: the property names the base, the `@supports not`
 blocks, the reduced-motion partition and the print handout may use.
@@ -3293,7 +3342,8 @@ theorem floor_is_baseline (v pg : String) (cp ms : Nat) :
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- Content, as the floor theorems see it: the frame stages and the
 steps — the fragments that address what the deck *shows*. -/
@@ -3326,7 +3376,8 @@ theorem floor_hides_nothing (v pg : String) (cp ms : Nat) :
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The opacity values a rule sets. -/
 def opacityValues (r : DeckRule) : List String :=
@@ -3339,7 +3390,7 @@ drawn from the two the design allows. -/
 theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, ∀ o ∈ opacityValues r,
       o = "100%" ∨ o = s!"{cp}%" := by
-  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · exact deckBase_cases (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
@@ -3367,6 +3418,10 @@ theorem floor_opacity_mem (v pg : String) (cp ms : Nat) :
     rcases hr with rfl | rfl <;> exact fun o ho => nomatch ho
   · exact fun _ k => altSnapRules_cases (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+  · exact fun _ => setRules_cases
+      (fun o ho => Or.inl (List.mem_singleton.mp ho))
+      (fun _ o ho => Or.inr (List.mem_singleton.mp ho))
+      (fun _ o ho => nomatch ho) (fun _ o ho => nomatch ho)
   · exact fun _ o ho => nomatch ho
   · intro r hr
     have hr2 := deckPrint_subset r hr
@@ -3402,7 +3457,8 @@ theorem floor_covered_script_gated (v pg : String) (cp ms : Nat) :
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers: the base
 sheet's global reduce block strips `animation` and `transition`;
@@ -3461,7 +3517,9 @@ theorem guards_by_construction (v pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, motionGuarded (deckRules v pg cp ms) r = true := by
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
-    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) ?_
+    (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
+    (fun _ => setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl))
+    (fun _ => rfl) ?_
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
         (mem_deckRules_reduce (by decide)) (by decide))
@@ -3547,7 +3605,9 @@ theorem print_lifts_stage_bounds_covers (v pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, printLifts (deckRules v pg cp ms) r = true := by
   refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
-    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) ?_
+    (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
+    (fun _ => setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl))
+    (fun _ => rfl) ?_
   · exact deckBase_cases rfl rfl rfl rfl rfl
       (printLifts_of_lift (g := printStageRule)
         (mem_deckRules_print (List.mem_append_left _ (by decide))) (by decide))
@@ -3633,7 +3693,8 @@ theorem deck_text_path_free (v pg : String) (cp ms : Nat) :
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
-    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (fun _ => rfl) (by decide)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- A length's share of the deck stage, in milli-percent: the one
 projection every deck emission rides when it states a PDF stage length
@@ -4543,6 +4604,41 @@ def altGroupNode (tag : String) (n : Nat) (last : Option Nat) (first : Bool)
        | none => #[])) ++
       (if first then #[] else #[("hidden", "hidden")]))
 
+/-- The shared selector's finite projection, serialized as CSS whitespace
+separated tokens. No backend interprets overlay source. -/
+def overlayStepTokens (spec : Ir.OverlaySpec) (steps : Nat) : String :=
+  String.intercalate " " ((spec.selectedSteps steps).map toString)
+
+/-- A union owns one body carrier. Singletons keep the established range
+animation; a union changes at the deck's existing numbered snap state.
+Without that state the same fully uncovered handout floor applies. -/
+def overlayNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (kids : Array Node) : Node :=
+  if spec.more.isEmpty then
+    Html.elem tag (stepEndNodes tag spec.last kids) (stepAttrs spec.first spec.last)
+  else
+    Html.elem tag kids #[("class", "step-set"),
+      ("data-steps", overlayStepTokens spec steps)]
+
+/-- Both alternatives stay declared once, in page order. Their finite
+membership sets are complementary at every numbered snap. -/
+def overlayAltNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first : Bool) (kids : Array Node) : Node :=
+  if spec.more.isEmpty then altGroupNode tag spec.first spec.last first kids
+  else
+    let pages := ((List.range steps).map (· + 1)).filter fun k => spec.showsFirst k == first
+    Html.elem tag kids (#[("class", "alt alt-set"),
+      ("data-steps", String.intercalate " " (pages.map toString))] ++
+      if first then #[] else #[("hidden", "hidden")])
+
+/-- An artifact-specific projection of IR membership: matching a numbered
+HTML token selects exactly the step layout selects, within the frame. -/
+theorem overlay_membership_agree (spec : Ir.OverlaySpec) (steps k : Nat)
+    (hk : 1 ≤ k) (hsteps : k ≤ steps) :
+    (spec.selectedSteps steps).contains k = spec.selects k := by
+  apply Bool.eq_iff_iff.mpr
+  simp [Ir.OverlaySpec.selectedSteps_mem, hk, hsteps]
+
 /-- Does a string carry anything to read: a character that is not white
 space. The one blankness test for an accessible name, here and in the
 judge (`carriesName`): accname 1.2 does not take a name that is empty once
@@ -4829,7 +4925,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- skip-ink is the browser's native form of the PDF path's invariant: the
     -- rule breaks where a descender crosses it.
     acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
-  | .step n last body =>
+  | .onSteps spec body =>
     -- Every step is fully visible here — the handout state, the floor the
     -- deck's reveal degrades to. On the paged deck the class-gated
     -- stylesheet uncovers the step in place as the reader's arrow
@@ -4837,18 +4933,16 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- index names its snap point, and the range rides as data either way.
     -- A declared end rides its own nested carrier (`stepEndNodes`), which
     -- is what covers the step again past it.
-    acc.push (Html.elem "span"
-      (stepEndNodes "span" last (inlineNodesInto cfg #[] body.toList))
-      (stepAttrs n last))
-  | .alt n last firstPage otherPage =>
+    acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
+  | .altSteps spec firstPage otherPage =>
     -- One wrapper per group, each carrying the range and its side: the
     -- deck's snap rules show exactly one (`alt_backend_agree`), and with
     -- no snap state the group stored first is what shows. Both groups stay
     -- in the tree because the document declares both; selection is
     -- `display`-level, never `step`'s covering.
-    (acc.push (altGroupNode "span" n last true
+    (acc.push (overlayAltNode "span" cfg.overlaySteps spec true
         (inlineNodesInto cfg #[] firstPage.toList))).push
-      (altGroupNode "span" n last false (inlineNodesInto cfg #[] otherPage.toList))
+      (overlayAltNode "span" cfg.overlaySteps spec false (inlineNodesInto cfg #[] otherPage.toList))
   | .icon c label =>
     -- The glyph is a Private Use Area scalar assistive technology cannot
     -- read, so it is hidden (`aria-hidden`) and the accessible name rides
@@ -4943,7 +5037,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .image _ size _ => found || size.height.any fun l =>
     readsInlineMeasure l.value && !l.value.anyRef (· == .textHeight)
   | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .role _ _
-  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill
+  | .link _ _ | .underline _ | .onSteps _ _ | .altSteps _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _
   | .linebreak _ => found
@@ -5261,8 +5355,8 @@ private def Config.afterFrame (cfg : Config) : Block → Config
     } true cfg body
   | .para .. | .section .. | .list .. | .center .. | .ragged ..
   | .spaced .. | .role .. | .quote .. | .abstract .. | .titled ..
-  | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .step ..
-  | .alt .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
+  | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .onSteps ..
+  | .altSteps .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
   | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. | .picture ..
   | .table .. | .float .. | .bibliography .. => cfg
 
@@ -5737,7 +5831,7 @@ def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :
   | .role n body =>
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
   | .italicCorr _ => acc
-  | .link _ _ | .underline _ | .step _ _ _ | .alt _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .link _ _ | .underline _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))
 
@@ -6132,21 +6226,19 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           s!"justify-content: {justify}; column-gap: 0.75rem")]
-  | .step n last body =>
+  | .onSteps spec body =>
     -- The block form of the inline step arm: visible — the handout floor —
     -- with its `--step` index for the class-gated uncover, range as data,
     -- and the declared end on its own nested carrier.
-    Html.elem "div"
-      (stepEndNodes "div" last (blockNodesInto cfg.into #[] body.toList))
-      (stepAttrs n last)
-  | .alt n last firstPage otherPage =>
+    overlayNode "div" cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList)
+  | .altSteps spec firstPage otherPage =>
     -- The block form of the inline alternation arm. The groups need one
     -- carrier each so a selector can reach each range (`alt_backend_agree`);
     -- the pair rides a container of its own because a block arm ships one
     -- node, and the container carries nothing — no range, no side, no rule.
     Html.elem "div"
-      #[altGroupNode "div" n last true (blockNodesInto cfg.into #[] firstPage.toList),
-        altGroupNode "div" n last false (blockNodesInto cfg.into #[] otherPage.toList)]
+      #[overlayAltNode "div" cfg.overlaySteps spec true (blockNodesInto cfg.into #[] firstPage.toList),
+        overlayAltNode "div" cfg.overlaySteps spec false (blockNodesInto cfg.into #[] otherPage.toList)]
       #[("class", "alt-pair")]
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck
@@ -6263,6 +6355,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
     let bodyCfg := { cfg.into with
+      overlaySteps := Ir.maxStepBlocks body
       listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
     let kids := blockNodesInto bodyCfg #[] body.toList
     let kids := if cfg.deck then

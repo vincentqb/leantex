@@ -70,8 +70,8 @@ private def inlineInto (acc : String) : Inline → String
     -- A bare link prints its own URL; wrapping it as [url](url) says nothing.
     if inner == url then acc ++ url else acc ++ s!"[{inner}]({url})"
   | .underline body => inlinesInto acc body.toList
-  | .step _ _ body => inlinesInto acc body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => inlinesInto acc body.toList
+  | .altSteps _ active otherwise =>
     inlinesInto (inlinesInto acc active.toList) otherwise.toList
   -- `\hfill` separates a label from what it pushes to the far margin; text
   -- has no margin, so the separation renders as a spaced em dash. The space
@@ -205,8 +205,8 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
         Ir.plainText (Ir.AlgLine.rendered words semis Ir.Color.black l))
     acc ++ "```\n" ++ txt ++ "\n```\n\n"
   | .columns cols => columnsInto loc summary ind acc cols.toList
-  | .step _ _ body => blocksInto loc summary ind acc body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => blocksInto loc summary ind acc body.toList
+  | .altSteps _ active otherwise =>
     blocksInto loc summary ind (blocksInto loc summary ind acc active.toList)
       otherwise.toList
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
@@ -451,8 +451,8 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
     simp only [blockInto]
     exact append_chain₃ _ _ _ _
   | .columns cols => columnsInto_extends loc summary ind acc cols.toList
-  | .step _ _ body => blocksInto_extends loc summary ind acc body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => blocksInto_extends loc summary ind acc body.toList
+  | .altSteps _ active otherwise =>
     extends_comp (blocksInto_extends loc summary ind acc active.toList)
       (blocksInto_extends loc summary ind _ otherwise.toList)
   | .only _ body => blocksInto_extends loc summary ind acc body.toList
@@ -698,8 +698,8 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .role _ body, out, h => headingLevelList_mem x body.toList out h
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h
   | .columns cols, out, h => headingLevelColumns_mem x cols.toList out h
-  | .step _ _ body, out, h => headingLevelList_mem x body.toList out h
-  | .alt _ _ active otherwise, out, h =>
+  | .onSteps _ body, out, h => headingLevelList_mem x body.toList out h
+  | .altSteps _ active otherwise, out, h =>
     headingLevelList_mem x otherwise.toList (Ir.headingLevelList out active.toList)
       (headingLevelList_mem x active.toList out h)
   | .only _ body, out, h => headingLevelList_mem x body.toList out h

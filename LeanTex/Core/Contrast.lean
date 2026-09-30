@@ -636,8 +636,8 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
 /-- Pending overlay content: a step whose range starts (or ends) past the
 first step covers on some handout page — the fact that gates the covered
 judgement, recorded against the epoch it happens in. -/
-private def UseAcc.step (acc : UseAcc) (n : Nat) (last : Option Nat) : UseAcc :=
-  if max n (last.getD n) ≥ 2 then
+private def UseAcc.step (acc : UseAcc) (spec : Ir.OverlaySpec) : UseAcc :=
+  if spec.maxStep ≥ 2 then
     { acc with pendingPals := pushUnique acc.pendingPals acc.pal }
   else acc
 
@@ -704,10 +704,10 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body => usesInlines cx acc body.toList
   | .underline body => usesInlines cx acc body.toList
-  | .step n last body => usesInlines cx (acc.step n last) body.toList
+  | .onSteps spec body => usesInlines cx (acc.step spec) body.toList
   -- An alternative is never covered: it is inked at full colour or not
   -- inked at all, so no alt range makes a palette pending.
-  | .alt _ _ active otherwise =>
+  | .altSteps _ active otherwise =>
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   -- a note's body is ink like any other; it holds the contrast contract
   | .footnote _ body => usesInlines cx acc body.toList
@@ -769,8 +769,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .role _ body => usesBlocks cx acc body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
-  | .step n last body => usesBlocks cx (acc.step n last) body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps spec body => usesBlocks cx (acc.step spec) body.toList
+  | .altSteps _ active otherwise =>
     usesBlocks cx (usesBlocks cx acc active.toList) otherwise.toList
   -- Conditional content is judged whichever backend carries it: a colour
   -- pairing is wrong on the surface that shows it, so no target set

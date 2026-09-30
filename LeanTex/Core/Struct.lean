@@ -198,8 +198,8 @@ def inlineRaw (out : Array Node) : Inline → Array Node
   | .linebreak _ => out.push (.leaf 0 .linebreak)
   | .strut _ => out
   | .italicCorr _ => out
-  | .step _ _ body => inlinesRaw out body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => inlinesRaw out body.toList
+  | .altSteps _ active otherwise =>
     inlinesRaw (inlinesRaw out active.toList) otherwise.toList
   | .image src _ alt => out.push (.leaf 0 (.image src alt))
   | .icon _ label => out.push (.leaf 0 (.text label))
@@ -277,8 +277,8 @@ def blockRaw (out : Array Node) : Block → Array Node
     | none => out.push (.node .code #[.leaf 0 (.text content)])
   | .algorithm _ _ lines => out.push (.node .code (algRaw #[] lines.toList))
   | .columns cols => colsRaw out cols.toList
-  | .step _ _ body => blocksRaw out body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => blocksRaw out body.toList
+  | .altSteps _ active otherwise =>
     blocksRaw (blocksRaw out active.toList) otherwise.toList
   | .note body => out.push (.node .aside (blocksRaw #[] body.toList))
   | .only _ body => blocksRaw out body.toList
@@ -776,10 +776,10 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
     plainTextOne]
   | .strut h => simp [inlineRaw, plainTextOne]
   | .italicCorr m => simp [inlineRaw, plainTextOne]
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [inlineRaw, plainTextOne]
     rw [inlinesRaw_text acc (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_text acc out active.toList, String.append_assoc]
@@ -930,10 +930,10 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .columns cols =>
     simp only [blockRaw, blockTextOne]
     exact colsRaw_text acc out cols.toList
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [blockRaw, blockTextOne]
     exact blocksRaw_text acc out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [blockRaw, blockTextOne]
     rw [blocksRaw_text acc (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_text acc out active.toList]
@@ -1104,10 +1104,10 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
   | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
   | .strut h => rfl
   | .italicCorr m => rfl
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [inlineRaw]
     rw [inlinesRaw_headings hs (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_headings hs out active.toList]
@@ -1257,10 +1257,10 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
   | .columns cols =>
     simp only [blockRaw, headingLevelOne]
     exact colsRaw_headings hs out cols.toList
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [blockRaw, headingLevelOne]
     exact blocksRaw_headings hs out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [blockRaw, headingLevelOne]
     rw [blocksRaw_headings hs (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_headings hs out active.toList]
@@ -1423,10 +1423,10 @@ theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x
     foldInline, altPush]
   | .strut h => simp [inlineRaw, foldInline, altPush]
   | .italicCorr m => simp [inlineRaw, foldInline, altPush]
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [inlineRaw, foldInline, altPush]
     exact inlinesRaw_alts is out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [inlineRaw, foldInline, altPush]
     rw [inlinesRaw_alts is (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_alts is out active.toList]
@@ -1577,10 +1577,10 @@ theorem blockRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (b 
   | .columns cols =>
     simp only [blockRaw, foldBlock, altPicPush]
     exact colsRaw_alts is out cols.toList
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [blockRaw, foldBlock, altPicPush]
     exact blocksRaw_alts is out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [blockRaw, foldBlock, altPicPush]
     rw [blocksRaw_alts is (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_alts is out active.toList]
@@ -1815,10 +1815,10 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
   | .linebreak extra => simp [inlineRaw]
   | .strut h => simp [inlineRaw]
   | .italicCorr m => simp [inlineRaw]
-  | .step n l body =>
+  | .onSteps spec body =>
     simp only [inlineRaw]
     exact inlinesRaw_acc out body.toList
-  | .alt n l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [inlineRaw]
     rw [inlinesRaw_acc (inlinesRaw out active.toList) otherwise.toList,
       inlinesRaw_acc (inlinesRaw #[] active.toList) otherwise.toList,
@@ -1874,9 +1874,9 @@ theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .algorithm nm sm lines => simp [blockRaw]
   | .columns cols =>
     simp only [blockRaw]; exact colsRaw_acc out cols.toList
-  | .step nn l body =>
+  | .onSteps spec body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
-  | .alt nn l active otherwise =>
+  | .altSteps spec active otherwise =>
     simp only [blockRaw]
     rw [blocksRaw_acc (blocksRaw out active.toList) otherwise.toList,
       blocksRaw_acc (blocksRaw #[] active.toList) otherwise.toList,

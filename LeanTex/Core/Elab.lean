@@ -4992,7 +4992,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     match raws[j]?.bind specWord? with
     | some w =>
       match Ir.overlayRange w with
-      | some (n, last) =>
+      | some spec =>
         let j2 := skipSpaces raws (j + 1)
         have hj2ge := skipSpaces_ge raws (j + 1)
         match hj2 : raws[j2]? with
@@ -5004,7 +5004,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let inner ← elabInlines ctx gbody
           have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
-          elabInlinesFrom ctx raws (j2 + 1) (acc.push (.step n last inner)) ""
+          elabInlinesFrom ctx raws (j2 + 1) (acc.push (.onSteps spec inner)) ""
         | _ =>
           have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
               < sliceWeight raws i :=
@@ -5013,7 +5013,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let inner ← elabInlines ctx (raws.extract (j + 1) raws.size)
           have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
             sliceWeight_lt raws h h
-          elabInlinesFrom ctx raws raws.size (acc.push (.step n last inner)) ""
+          elabInlinesFrom ctx raws raws.size (acc.push (.onSteps spec inner)) ""
       | none =>
         warnOverlaySpec ctx w pos
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -5047,14 +5047,14 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           sliceWeight_lt raws h (by omega)
         let acc := flushText acc sb
         match spec with
-        | some (n, last) =>
+        | some spec =>
           let ia ← elabInlines ctx ga
           let ib ← elabInlines ctx gb
           -- Page order, not spec order (`Ir.Inline.alt`): step 1 ships the
           -- in-range group only when the range already covers it.
-          let onFirst := if Ir.stepPending n last 1 then ib else ia
-          let onOther := if Ir.stepPending n last 1 then ia else ib
-          elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alt n last onFirst onOther)) ""
+          let onFirst := if spec.pending 1 then ib else ia
+          let onOther := if spec.pending 1 then ia else ib
+          elabInlinesFrom ctx raws (j3 + 1) (acc.push (.altSteps spec onFirst onOther)) ""
         | none =>
           -- One reading, never two: the warning says the step model cannot
           -- number this spec, so the active alternative — the styled one
@@ -7501,15 +7501,15 @@ decreasing_by
 fired at the same points — explicit recursion so the split's conservation
 (no item outweighs the body) is a fact the item elaboration stands on. -/
 private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (j : Nat)
-    (items : Array (Array Raw)) (steps : Array (Option (Nat × Option Nat)))
+    (items : Array (Array Raw)) (steps : Array (Option Ir.OverlaySpec))
     (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
-    (curStep : Option (Nat × Option Nat)) (curPauses : Nat)
+    (curStep : Option Ir.OverlaySpec) (curPauses : Nat)
     (awaitSpec inOpt seen strayDiagged : Bool) (bound pbound : Nat)
     (hw : itemsW items.toList + rawWeightList curItem.toList
       + sliceWeight body j ≤ bound)
     (hp : itemsP items.toList + nestedParsList curItem.toList
       + slicePars body j ≤ pbound) :
-    EM { r : Array (Array Raw) × Array (Option (Nat × Option Nat)) × Array Nat //
+    EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × Array Nat //
       itemsW r.1.toList ≤ bound ∧ itemsP r.1.toList ≤ pbound } := do
   if h : j < body.size then
     match body[j] with
@@ -9680,7 +9680,7 @@ decreasing_by all_goals blocks_dec
 `\pause` base and wrapped in its overlay step — the item elaboration half
 of the split `itemSplitGo` carried the conservation facts for. -/
 private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
-    (steps : Array (Option (Nat × Option Nat))) (itemPauses : Array Nat)
+    (steps : Array (Option Ir.OverlaySpec)) (itemPauses : Array Nat)
     (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
     (hb : itemsW items.toList < bound) (hpb : itemsP items.toList ≤ pbound) :
     EM (Array (Array Block)) := do
@@ -9698,7 +9698,7 @@ private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
       pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
     let inner ← elabBlocksGo stepCtx it 0 #[] #[] (← get).flowGen
     let acc := acc.push (match st? with
-      | some (s, last) => #[.step s last inner]
+      | some spec => #[.onSteps spec inner]
       | none =>
         if p > 0 then #[.step (ctx.stepBase + p + 1) none inner]
         else inner)
@@ -10483,7 +10483,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let j := skipSpaces raws (i + 1)
     have hjge : i + 1 ≤ j := skipSpaces_ge raws (i + 1)
     let ⟨(spec, jg), hjg⟩ :
-        { t : Option (Nat × Option Nat) × Nat // i + 1 ≤ t.2 } ←
+        { t : Option Ir.OverlaySpec × Nat // i + 1 ≤ t.2 } ←
       match raws[j]?.bind specWord? with
       | some w => do
         let jg := skipSpaces raws (j + 1)
@@ -10528,14 +10528,14 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have h0b : sliceWeight gb 0 = rawWeightList gb.toList := sliceWeight_zero _
         have h1b : slicePars gb 0 = nestedParsList gb.toList := slicePars_zero _
         match spec with
-        | some (s, last) =>
+        | some spec =>
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
-            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlocksGo stepCtx ga 0 #[] #[] (← get).flowGen
           let ib ← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen
           blocks := blocks.push
-            (if Ir.stepPending s last 1 then .alt s last ib ia else .alt s last ia ib)
+            (if spec.pending 1 then .altSteps spec ib ia else .altSteps spec ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the
@@ -10570,13 +10570,13 @@ when it is empty — '{}'")
         have h1g : slicePars gbody 0 = nestedParsList gbody.toList :=
           slicePars_zero _
         match spec with
-        | some (s, last) =>
+        | some spec =>
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
-            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlocksGo stepCtx gbody 0 #[] #[] (← get).flowGen
           unless inner.isEmpty do
-            blocks := blocks.push (.step s last inner)
+            blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
         | none =>
           blocks := blocks ++ (← elabBlocksGo ctx gbody 0 #[] #[]
@@ -10586,7 +10586,7 @@ when it is empty — '{}'")
         -- The open form: the rest of this scope steps. Bare
         -- \onslide (no spec) ends stepping — the rest simply flows.
         match spec with
-        | some (s, last) =>
+        | some spec =>
           have hxw : rawWeightList (raws.extract jg raws.size).toList
               ≤ sliceWeight raws jg := extract_slice_le ..
           have hxp : nestedParsList (raws.extract jg raws.size).toList
@@ -10602,12 +10602,12 @@ when it is empty — '{}'")
               = nestedParsList (raws.extract jg raws.size).toList :=
             slicePars_zero _
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
-            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlocksGo stepCtx (raws.extract jg raws.size) 0
             #[] #[] (← get).flowGen
           unless inner.isEmpty do
-            blocks := blocks.push (.step s last inner)
+            blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨raws.size, by omega⟩)
         | none =>
           return (blocks, ⟨jg, by omega⟩)
@@ -14563,12 +14563,50 @@ end
 def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   settleList file 0 #[] #[] raws.toList
 
+mutual
+
+/-- A closing overlay delimiter also ends its specification when the body
+immediately follows it in the same lexer word. Split only after an overlay
+head, before compatibility rewrites and elaboration share the numbered
+selector reader. Neither part is interpreted here. -/
+-- conserves: none — these are surface words, before the IR census exists.
+private def overlayWordsList (awaitSpec : Bool) (acc : Array Raw) :
+    List Raw → Array Raw
+  | [] => acc
+  | .ctrl n p :: rest =>
+    overlayWordsList (overlayCtrls.contains n || ["alt", "alert", "item"].contains n)
+      (acc.push (.ctrl n p)) rest
+  | .space :: rest => overlayWordsList awaitSpec (acc.push .space) rest
+  | .word w p :: rest =>
+    let head := (w.takeWhile (· != '>')).toString
+    let tail := (w.drop (head.length + 1)).toString
+    let acc := if awaitSpec && w.startsWith "<" && !tail.isEmpty then
+        (acc.push (.word (head ++ ">") p)).push
+          (.word tail { p with col := p.col + head.length + 1 })
+      else acc.push (.word w p)
+    overlayWordsList false acc rest
+  | r :: rest => overlayWordsList false (acc.push (overlayWordsRaw r)) rest
+
+private def overlayWordsRaw : Raw → Raw
+  | .group body p => .group (overlayWordsList false #[] body.toList) p
+  | .env n body p => .env n (overlayWordsList false #[] body.toList) p
+  | .math d body p => .math d body p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+end
+
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
 option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
+  let raws := overlayWordsList false #[] raws.toList
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=

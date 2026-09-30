@@ -1488,13 +1488,13 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   | .underline body => flatten mathOk noteOk st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
-  | .step _ _ body => flatten mathOk noteOk st sty body
-  | .alt n last firstPage otherPage =>
+  | .onSteps _ body => flatten mathOk noteOk st sty body
+  | .altSteps spec firstPage otherPage =>
     -- One group per step page, and the leaf id is the tree's, not this
     -- walk's: the counter steps over the group the page does not ink, so the
     -- inked one lands on the id `Struct` numbered it (`alt_leaf_projects`).
     -- Page-order storage decides which side the skip stands on.
-    if Ir.altShowsFirst n last st.step then
+    if spec.showsFirst st.step then
       let inner := flatten mathOk noteOk st sty firstPage
       { inner with ctr := inner.ctr.skip (leafCount otherPage) }
     else
@@ -1738,8 +1738,8 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
       · exact flatten_attr_covers mathOk noteOk st sty body h
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .underline body => exact flatten_attr_covers mathOk noteOk st _ body h
-  | .step _ _ body => exact flatten_attr_covers mathOk noteOk st sty body h
-  | .alt _ _ firstPage otherPage =>
+  | .onSteps _ body => exact flatten_attr_covers mathOk noteOk st sty body h
+  | .altSteps _ firstPage otherPage =>
     simp only [flattenOne]
     split
     · obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk st sty firstPage h
@@ -2181,8 +2181,8 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .role _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
-  | .step _ _ body => scalarTextList out itemD enumD body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => scalarTextList out itemD enumD body.toList
+  | .altSteps _ active otherwise =>
     scalarTextList (scalarTextList out itemD enumD active.toList) itemD enumD
       otherwise.toList
   | .only _ body => scalarTextList out itemD enumD body.toList
@@ -2366,8 +2366,8 @@ private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle
   | .role _ body => weightKeysInlineList acc sty body.toList
   | .link _ body => weightKeysInlineList acc sty body.toList
   | .underline body => weightKeysInlineList acc sty body.toList
-  | .step _ _ body => weightKeysInlineList acc sty body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => weightKeysInlineList acc sty body.toList
+  | .altSteps _ active otherwise =>
     weightKeysInlineList (weightKeysInlineList acc sty active.toList) sty otherwise.toList
   -- A note body sets at the page foot in the base style, not the mark's.
   | .footnote _ body => weightKeysInlineList acc {} body.toList
@@ -2398,8 +2398,8 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .role _ body => weightKeysBlockList acc body.toList
   | .spaced _ body => weightKeysBlockList acc body.toList
   | .columns cols => weightKeysBlockCols acc cols.toList
-  | .step _ _ body => weightKeysBlockList acc body.toList
-  | .alt _ _ active otherwise =>
+  | .onSteps _ body => weightKeysBlockList acc body.toList
+  | .altSteps _ active otherwise =>
     weightKeysBlockList (weightKeysBlockList acc active.toList) otherwise.toList
   | .only _ body => weightKeysBlockList acc body.toList
   | .nav _ body => weightKeysBlockList acc body.toList
@@ -8329,16 +8329,16 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := if body.isEmpty then a.vspace (r.resolve before.value)
       else { a.vskip (r.resolve before.value) with declaredSkip := false }
     collectBlocks r a body indent
-  | .step _ _ body =>
+  | .onSteps _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks r a body indent
-  | .alt n last firstPage otherPage =>
+  | .altSteps spec firstPage otherPage =>
     -- One group per step page. The leaf ids are the tree's: it declares both
     -- groups, in page order, so the counter steps over the group this page
     -- does not ink and the inked one lands on its own id
     -- (`alt_leaf_projects`). Outside a stepped frame the step is 1, which
     -- `Ir.altShowsFirst_id` sends to the group stored first.
-    if Ir.altShowsFirst n last r.step then
+    if spec.showsFirst r.step then
       let a := collectBlocks r a firstPage indent
       (a.leafRange (blockLeafCount otherPage)).1
     else
