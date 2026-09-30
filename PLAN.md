@@ -472,6 +472,49 @@ values, or location entered the repository.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-30 — Phase 2 of the math-alphabet contract: text-source host-fallback
+stopped, N0018 accounting proved. `MathAlphabetCoverage.remaps` dropped its
+`sources.get a == .text` arm, so `remaps = faceCovers`: a text-sourced
+alphabet the selected face does not carry no longer remaps to a Unicode math
+scalar that per-character fallback then satisfies from an unrelated host
+face — it keeps the source scalar in the selected math face and the loss is
+named once by the IR census. `\mathsf{R}` under Fira (no sans range) was
+𝖱 (U+1D5B1) painted in an unrelated host face (ArsenalMath-Sans in the
+differential); it is now 𝑅 in FiraMath, N0018 `math-alpha:sf`. Symbol-sourced
+alphabets and every face-covered range (Fira's bb/bf/bfit/tt/it/rm) are
+unchanged — `remaps` was already `faceCovers` there. `sources` is retained
+for the phase-3 text-slot projection and no longer gates remap-vs-keep.
+
+*Accounting is one code, proved on the IR.* `Math.missingCharAlpha_kept`:
+if the census blames an alphabet for a scalar, the resolver kept that
+scalar (did not remap it) — so the whole-alphabet census (the N0018 owner)
+and the remapped scalars the per-character Layout path sees are over
+disjoint scalars, and the census cannot drift from what rendered.
+`Ir.resolveMathAlphas_named` (`_named` shape): the owner emits exactly one
+N0018 per missing alphabet, each carrying `math-alpha:<name>` as its
+subject, derived from the same `remaps`. N0018 stays one meaning — a
+declared math styling not honored, a plainer glyph stands — reported at
+whole-alphabet granularity by the IR owner (subject-bearing) and at
+isolated-in-range-glyph-hole granularity by Layout (which no pre-layout
+census can see); the two never name one scalar. E0405 unchanged.
+
+*The differential moved the glyph, not the count.* Parity counts are
+unchanged (16 DIFF / 4 PASS(text) / 152 PASS / 0 MISSING of 172, LuaLaTeX
+over four faces): the 16 DIFF are all the text-sourced rows where LuaLaTeX
+paints the source scalar from a text family — the phase-3 text-slot
+projection, still owed. What the fix changed is the Fira `text sf R` row's
+engine face: ArsenalMath-Sans (unrelated host) → FiraMath (selected face).
+Hermetic Lean tests in FontMath prove the containment (`\mathsf{R}` keeps
+its scalar in the selected face, no host run, no W0009) over Layout.Out and
+the typed HTML tree.
+
+*Phase-3 blocker (unchanged from Phase 1).* Project each typed `text`
+source onto its body bold/italic, sans, or mono slot in both backends so a
+text-sourced alphabet is set from its declared text family (source scalar,
+text face) rather than the math face — closing the 16 differential DIFF.
+That is backend text-slot alpha-free plumbing; not forced by this change,
+so left owed.
+
 2026-09-30 — Phase 1 of the math-alphabet contract applied: the four fixes
 the prior entry named as owed are in, and the widened differential
 (scripts/math-alphabet-diff.lean) confirms each against LuaLaTeX on four
