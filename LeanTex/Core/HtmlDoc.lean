@@ -1798,6 +1798,150 @@ itself — the file whose bytes were decoded. -/
 def resolvedSrc (en : Image.Loaded) : String :=
   if en.href.isEmpty then en.src else en.href
 
+/-! ## The shared browser-face plan
+
+One image's browser face is decided once, here, from its loaded request and
+the companion bytes the driver already read — never twice. The real driver
+(`Main.imageBrowserFaces`) runs the named host conversions; the hermetic
+scoreboard (`Scoreboard.Hermetic`) supplies deterministic stand-in bytes.
+Both feed their outcomes to `applyFacePlan`, so the success shape that
+reaches `Image.Loaded` — an original/companion moving SVG with a static
+poster, a converted selected PDF page as the primary face, or no face at
+all — is one function, and a successful real build and the hermetic build
+emit the same typed `<img>`/`<picture>`/placeholder markup and asset names. -/
+
+/-- A host conversion a browser face needs. The freshness key hashes its
+`key`, so a recipe change (the page selected, the tool) invalidates the
+committed capture. -/
+inductive FaceConv where
+  /-- librsvg's static SVG poster of the original SVG source. -/
+  | svgPoster
+  /-- pdftocairo's SVG of the selected PDF page. -/
+  | pdfPage (page : PdfRead.PageSelection)
+  deriving BEq, Repr, DecidableEq, Inhabited
+
+/-- A canonical spelling of a conversion, for the source key. -/
+def FaceConv.key : FaceConv → String
+  | .svgPoster => "svg-poster"
+  | .pdfPage p =>
+    "pdf-page:" ++ (match p with
+      | .first => "first" | .last => "last" | .number n => s!"n{n}")
+
+/-- The successful browser-face shape one loaded entry needs. `keep` leaves
+the entry untouched: a boundary picture (published through its own list), an
+entry that did not load, a raster (its own bytes are the browser face), or a
+PDF form the browser cannot decode. -/
+inductive FacePlan where
+  /-- No conversion; the entry is unchanged. -/
+  | keep
+  /-- An SVG source: its original bytes move; `poster` is a static poster. -/
+  | movingSvgWithPoster (poster : FaceConv)
+  /-- A PDF source: the converted selected page is the static primary face. -/
+  | convertedPrimary (primary : FaceConv)
+  /-- An animated PDF with a companion SVG available: the companion moves,
+  `poster` renders the selected page as the static face. -/
+  | animatedWithCompanion (poster : FaceConv)
+  deriving BEq, Repr, DecidableEq, Inhabited
+
+/-- A canonical spelling of a plan, for the source key. -/
+def FacePlan.key : FacePlan → String
+  | .keep => "keep"
+  | .movingSvgWithPoster c => "moving-svg:" ++ c.key
+  | .convertedPrimary c => "converted:" ++ c.key
+  | .animatedWithCompanion c => "animated:" ++ c.key
+
+/-- Does this plan produce a converted browser face the oracle captures?
+`keep` does not (a raster ships its own bytes, a picture publishes
+elsewhere); every other shape names at least one conversion. -/
+def FacePlan.converts : FacePlan → Bool
+  | .keep => false
+  | _ => true
+
+/-- The browser face one loaded entry needs, decided from stable request
+facts alone: the source kind, whether it loaded, its `form`, whether it is
+animated, and whether a companion was read. No conversion runs here. -/
+def facePlan (en : Image.Loaded) : FacePlan :=
+  if en.src.startsWith Ir.picSrcPrefix then .keep
+  else match en.info with
+    | none => .keep
+    | some plan =>
+      if plan.form.isNone then .keep
+      else if Image.isSvg (resolvedSrc en) then .movingSvgWithPoster .svgPoster
+      else if en.animated && en.companion.isSome then
+        .animatedWithCompanion (.pdfPage en.page)
+      else .convertedPrimary (.pdfPage en.page)
+
+/-- The outcomes an executor obtained for a face plan. The real driver fills
+these from host converters; the hermetic scoreboard from stand-ins. -/
+structure FaceOutcome where
+  /-- The plan's poster/primary conversion, or the failure that kept it off
+  the page. -/
+  bytes : Except String ByteArray := .error "browser-face conversion did not run"
+  /-- The companion SVG passed validation (the animated case only). -/
+  companionOk : Bool := false
+  deriving Inhabited
+
+/-- Apply a browser-face plan's outcomes to a loaded entry — the one place
+`webSvg`, `posterSvg`, and `webError` are set for an image. A mandatory
+conversion's failure becomes `webError`; a companion that failed validation
+degrades an animation to its static converted face without an error. -/
+def applyFacePlan (en : Image.Loaded) : FacePlan → FaceOutcome → Image.Loaded
+  | .keep, _ => en
+  | .movingSvgWithPoster _, o =>
+    match o.bytes with
+    | .ok poster => { en with posterSvg := some poster, webError := none }
+    | .error err => { en with webError := some err }
+  | .convertedPrimary _, o =>
+    match o.bytes with
+    | .ok web => { en with webSvg := some web, webError := none }
+    | .error err => { en with webError := some err }
+  | .animatedWithCompanion _, o =>
+    match o.bytes with
+    | .error err => { en with webError := some err }
+    | .ok poster =>
+      match (if o.companionOk then en.companion else none) with
+      | some svg => { en with webSvg := some svg, posterSvg := some poster, webError := none }
+      | none => { en with webSvg := some poster, webError := none }
+
+/-- Deterministic, nonempty stand-in bytes for one conversion of one entry:
+the plan and the resolved source, so the hermetic key moves whenever the
+plan's output would. Never a real conversion — only the byte identity the
+key needs and the nonemptiness `imageShips` reads. -/
+def faceStandIn (en : Image.Loaded) (plan : FacePlan) (conv : FaceConv) : ByteArray :=
+  s!"leantex-face-standin\n{plan.key}\n{conv.key}\n{resolvedSrc en}\n".toUTF8
+
+/-- The hermetic executor: apply an entry's plan with stand-in bytes and a
+valid companion, so the store carries the plan's success shape without a
+converter. The real driver's success path produces the same shape. -/
+def applyFacePlanHermetic (en : Image.Loaded) : Image.Loaded :=
+  match facePlan en with
+  | .keep => en
+  | plan =>
+    let conv := match plan with
+      | .movingSvgWithPoster c | .convertedPrimary c | .animatedWithCompanion c => c
+      | .keep => .svgPoster
+    applyFacePlan en plan { bytes := .ok (faceStandIn en plan conv), companionOk := true }
+
+/-- Apply the hermetic plan across a store, before `emit`. -/
+def facedStore (imgs : Image.Store) : Image.Store :=
+  { entries := imgs.entries.map applyFacePlanHermetic }
+
+/-- A boundary picture is never given an image browser face. -/
+theorem facePlan_picture (en : Image.Loaded) (h : en.src.startsWith Ir.picSrcPrefix = true) :
+    facePlan en = .keep := by
+  simp [facePlan, h]
+
+/-- A `keep` plan leaves the entry untouched, whatever the outcome. -/
+theorem applyFacePlan_keep (en : Image.Loaded) (o : FaceOutcome) :
+    applyFacePlan en .keep o = en := rfl
+
+/-- On its success path a converted-primary plan publishes the converted
+bytes as the browser face and clears any prior error. -/
+theorem applyFacePlan_converted_ok (en : Image.Loaded) (c : FaceConv) (b : ByteArray)
+    (ok : Bool) :
+    applyFacePlan en (.convertedPrimary c) { bytes := .ok b, companionOk := ok }
+      = { en with webSvg := some b, webError := none } := rfl
+
 /-- Which entries copy: a loaded image with a browser face. An SVG's print
 face is a PDF form, but its original bytes still belong in the browser.
 A PDF may also carry a converted SVG. Boundary pictures publish through

@@ -1612,15 +1612,19 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
   let (store, imgDiags, read) ← storeFor corpus doc
   if (Diag.resolveAll doc.allow false (elabDiags ++ bibDiags ++ imgDiags)).errors > 0 then
     return none
+  -- Execute the shared browser-face plan hermetically, before `emit`, so the
+  -- page carries the plan's success shape: the same typed <img>/<picture>/
+  -- placeholder markup and asset names a successful real build emits.
+  let faced := HtmlDoc.facedStore store
   let css : HtmlDoc.CssMode := match cssFor doc.output.css with
     | .own => .own
     | .bulma => .bulma
     | .none => .none
   let cfg : HtmlDoc.Config :=
-    { css, imgs := store
+    { css, imgs := faced
       fonts := if doc.fontPolicy == .embedded then some fs else none
       fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
-  let browserSources ← browserSourceBlobs corpus name doc store read
+  let browserSources ← browserSourceBlobs corpus name doc faced read
   return some { html := (HtmlDoc.emit cfg doc).1, read, browserSources }
 
 structure CorpusKeys where

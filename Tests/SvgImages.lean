@@ -16,10 +16,65 @@ def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .error err => hasStr err "selected poster requires a PDF frame sequence"
         | .ok _ => false)
 
+/-- The shared browser-face plan (`HtmlDoc.facePlan`/`applyFacePlan`), and
+the regression that matters most: the hermetic store the scoreboard emits
+from (`facedStore`) now carries the converted success shape, so hermetic
+`emit` links the published converted asset exactly as a successful real
+build does — where the raw store, which the hermetic builder used before,
+emitted only a placeholder. -/
+def facePlanChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let data ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let info := (Image.decode data).toOption
+  t "box.pdf decodes to a vector form" (info.any (·.form.isSome))
+  -- A PDF image plans a converted primary of its selected page; a raster
+  -- and a boundary picture plan no conversion.
+  let pdfEn : Image.Loaded := { src := "box.pdf", info, source := some data }
+  t "PDF image plans a converted primary face"
+    (HtmlDoc.facePlan pdfEn == .convertedPrimary (.pdfPage .first))
+  t "a page-2 PDF plans that page's conversion"
+    (HtmlDoc.facePlan { pdfEn with page := .number 2 }
+      == .convertedPrimary (.pdfPage (.number 2)))
+  t "an animated PDF with a companion plans the moving-companion shape"
+    (HtmlDoc.facePlan { pdfEn with animated := true, companion := some "<svg/>".toUTF8 }
+      == .animatedWithCompanion (.pdfPage .first))
+  t "a boundary picture plans no browser face"
+    (HtmlDoc.facePlan { pdfEn with src := Ir.picSrcPrefix ++ "abc" } == .keep)
+  -- Without the plan applied, the raw store links the unconverted PDF
+  -- itself and publishes no browser asset: the shape the hermetic builder
+  -- emitted before — a face no browser decodes.
+  let raw : Image.Store := { entries := #[pdfEn] }
+  let doc := (elabStr (dvDoc "" "\\includegraphics[alt={A box}]{box.pdf}")).1
+  let (_, rawTree, _) := HtmlDoc.emitTree { imgs := raw } doc
+  let rawSrcs := rawTree.foldl HtmlDoc.imgSrcsOne #[]
+  t "raw PDF store links the unconverted PDF and publishes no asset (pre-fix shape)"
+    (rawSrcs == #["box.pdf"] && (HtmlDoc.imageAssets raw).isEmpty)
+  -- The shared hermetic executor gives the store the converted success
+  -- shape, so hermetic emit links the published converted asset — exactly
+  -- the markup, src and asset name a successful real build produces.
+  let faced := HtmlDoc.facedStore raw
+  let (_, facedTree, ds) := HtmlDoc.emitTree { imgs := faced, assetsDir := "assets" } doc
+  let srcs := facedTree.foldl HtmlDoc.imgSrcsOne #[]
+  t "faced PDF store publishes the converted browser asset"
+    ((HtmlDoc.imageAssets faced).map (·.file) == #["i0-box.svg"])
+  t "faced PDF store: typed HTML links the converted asset"
+    (srcs == #["assets/i0-box.svg"])
+  t "faced PDF store: the converted face carries nonempty stand-in bytes"
+    (((faced.get? 0).bind (·.webSvg)).any (!·.isEmpty))
+  t "faced PDF store: no PDF-only placeholder diagnostic"
+    (!(ds.any (·.code == "W0605")))
+  -- applyFacePlan is the one door that sets the face: a failed mandatory
+  -- conversion becomes webError, not a published face.
+  let failed := HtmlDoc.applyFacePlan pdfEn (.convertedPrimary (.pdfPage .first))
+    { bytes := .error "pdftocairo exited 1" }
+  t "applyFacePlan records a mandatory conversion failure as webError"
+    (failed.webError == some "pdftocairo exited 1" && failed.webSvg.isNone)
+
 /-- An SVG's PDF form is its print face, not evidence that the browser
 should receive a PDF. The typed page must link a published SVG, with its
 text alternative, even though layout reads vector PDF geometry. -/
 def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  facePlanChecks ref
   svgPosterChecks ref
   let t := check ref
   t "extensionless image lookup includes SVG"

@@ -749,26 +749,26 @@ select the static poster. An absent or unusable companion leaves the PDF
 poster as the browser face. No generated script or inline XML is needed. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
   let entries ← imgs.entries.mapM fun en => do
-    if en.src.startsWith Ir.picSrcPrefix then return en
-    let some plan := en.info | return en
-    if plan.form.isNone then return en
-    if let some svg := en.webSvg then
-      match ← ImageAssets.svgPoster svg with
-      | .ok poster => return { en with posterSvg := some poster, webError := none }
-      | .error err => return { en with webError := some err }
-    -- The PDF bytes `fetchImage` already read, reused without rereading the
-    -- file (`fulfilOne_bytes`): the browser face converts exactly the bytes
-    -- the freshness key measured.
-    let some bytes := en.source | return en
-    match ← ImageAssets.pdfSvg bytes en.page with
-    | .error err => return { en with webError := some err }
-    | .ok poster =>
-      let static := { en with webSvg := some poster, webError := none }
-      if en.animated then
-        if let some svg := en.companion then
-          if (← ImageAssets.validateSvg svg).isOk then
-            return { static with webSvg := some svg, posterSvg := some poster }
-      return static
+    match HtmlDoc.facePlan en with
+    | .keep => return en
+    | plan@(.movingSvgWithPoster _) =>
+      let some svg := en.webSvg | return en
+      let bytes ← ImageAssets.svgPoster svg
+      return HtmlDoc.applyFacePlan en plan { bytes }
+    | plan@(.convertedPrimary _) =>
+      -- The PDF bytes `fetchImage` already read, reused without rereading
+      -- the file (`fulfilOne_bytes`): the browser face converts exactly the
+      -- bytes the freshness key measured.
+      let some bytes := en.source | return en
+      let out ← ImageAssets.pdfSvg bytes en.page
+      return HtmlDoc.applyFacePlan en plan { bytes := out }
+    | plan@(.animatedWithCompanion _) =>
+      let some bytes := en.source | return en
+      let out ← ImageAssets.pdfSvg bytes en.page
+      let companionOk ← match en.companion with
+        | some svg => do let r ← ImageAssets.validateSvg svg; pure r.isOk
+        | none => pure false
+      return HtmlDoc.applyFacePlan en plan { bytes := out, companionOk }
   return { entries }
 
 def countErrors (diags : Array Diag) : Nat :=
