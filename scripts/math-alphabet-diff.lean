@@ -88,7 +88,13 @@ def cases : List Case :=
     { label := "bsym alpha", body := "\\boldsymbol{\\alpha}" },
     { label := "bsym Gamma", body := "\\boldsymbol{\\Gamma}" },
     { label := "bsym(cal A)", body := "\\boldsymbol{\\mathcal{A}}" },
-    -- default (text-sourced) policy: no host glyph, scalar must survive
+    -- default (text-sourced) policy. Phase 2 keeps the source scalar in the
+    -- SELECTED MATH FACE when that face does not cover the alphabet — never a
+    -- Unicode math scalar an unrelated host face would then satisfy
+    -- per-character (Fira lacks sans: `\mathsf{R}` stays in FiraMath, not a
+    -- host). LuaLaTeX paints the source scalar from a text family the engine
+    -- does not yet model; that text-slot projection is phase 3, so these rows
+    -- stay `scalarOnly` and their font divergence is recorded, not failed.
     { label := "text sf R", body := "\\mathsf{R}", sym := false, scalarOnly := true },
     { label := "text rm d", body := "\\mathrm{d}", sym := false, scalarOnly := true },
     { label := "text bf x", body := "\\mathbf{x}", sym := false, scalarOnly := true },
@@ -219,10 +225,18 @@ def selftest : IO UInt32 := do
     "<char bbox=\"9 2 9 12\" c=\"&#xdc42;\"/>\n</span>"
   let want : Array GlyphFact :=
     #[{ scalar := "𝑂", font := "FiraMath-Regular", advance := 8, sizeMilli := 10000 }]
-  if parseGlyphs sample == want then
+  -- A single BMP scalar from a text family: the shape a text-sourced row
+  -- reads once phase 2 keeps the source letter (`\mathsf{R}` → 'R') rather
+  -- than a surrogate-pair math scalar. Exercises the non-surrogate
+  -- `scalarOfUnits`/`codeUnit` path and font-prefix normalization.
+  let bmp := "<span bbox=\"0 0 10 12\" font=\"XYZABC+LMSans10-Regular\" size=\"10.000\">\n" ++
+    "<char bbox=\"0 0 10 12\" c=\"&#x0052;\"/>\n</span>"
+  let wantBmp : Array GlyphFact :=
+    #[{ scalar := "R", font := "LMSans10-Regular", advance := 10, sizeMilli := 10000 }]
+  if parseGlyphs sample == want && parseGlyphs bmp == wantBmp then
     IO.println "math-alphabet-diff --selftest: all passed"
     return 0
-  IO.eprintln s!"math-alphabet-diff --selftest: FAIL {repr (parseGlyphs sample)}"
+  IO.eprintln s!"math-alphabet-diff --selftest: FAIL {repr (parseGlyphs sample)} {repr (parseGlyphs bmp)}"
   return 1
 
 def main (args : List String) : IO UInt32 := do
