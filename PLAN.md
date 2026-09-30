@@ -24730,6 +24730,14 @@ tries the default TeX suffix first, while Markdown inclusion honours an
 explicit extension. Both fall back to a bare filename when appropriate.
 Directory reads and malformed bytes return the existing diagnostics.
 
+The shared reader also applies LaTeX's paired-quote and filename-space
+rules before extension lookup. `quotedInputFilenameChecks` failed 105
+assertions on `62e53b79` and passes after the correction. Emitted-PDF
+readback and typed HTML preserve the selected file's text and include
+order; nested and missing-file checks preserve source locations.
+Independent LuaLaTeX probes corroborate quoted names, embedded paired
+quotes, surrounding spaces and the two surfaces' suffix precedence.
+
 R62 pins the included-page guards. On `db831892`, the final tests fail
 126 assertions covering missing content, literal code and its positioned
 spaces, empty fragments, filenames, options and source locations.
@@ -24799,6 +24807,20 @@ native PDF and browser deck pass their page and step checks, with
 LuaLaTeX as the independent selection oracle. Union membership is also
 held by `OverlaySpec.selects_exact` and `union_selects_exact`.
 
+Review found two more extent errors: HTML title and furniture selectors
+did not receive their frame's body extent, and an endpoint declared only
+in the frame title produced no extra steps in either artifact.
+`Ir.frameSteps` now resolves the title and body together; layout page
+duplication and HTML snap counts read that same value. `frameSteps_covers`
+includes both sources, while `frameSteps_body_exact` preserves the former
+count when the title adds no endpoint.
+
+The title-only guards fail 159 assertions on `bf02e77b` and pass after
+the correction. LuaLaTeX and the emitted PDF both give the discrete
+title-only probe four pages, selecting its first branch on pages 1 and 4
+and its second branch on pages 2 and 3, with the body once on every page.
+The typed HTML guard requires the same four snap points and selections.
+
 ### 2026-09-30 — Provision keeps an existing command's meaning
 
 The xparse provision family shares the existing definition scanner.
@@ -24855,3 +24877,18 @@ Before the fix, 115 assertions failed and the short rendered fixture
 split into five native pages. After it, all assertions pass and the
 fixture occupies one page. Independent LuaLaTeX probes confirm that
 metadata-only section declarations retain the same one-page raster.
+
+### 2026-09-30 — Combined inclusion and overlay validation
+
+The combined warning-as-error build and full test suite pass, as do the
+obligation ratchet and declaration-commutation oracle. The HTML reader
+oracle passes all target cells across 85 fixtures and 18 features with
+Playwright 1.62.0 and Chromium 151. Firefox remains untested on this host
+because its browser process cannot launch.
+
+An older cached Chromium intermittently stopped a few pixels short of a
+deck snap point. The same focused probe failed three of twelve runs on
+unchanged main and on the integration tree; the baseline browser passed
+all twelve integration runs. No navigation assertion was weakened.
+The final private reference-corpus PDF and HTML are byte-identical to the
+outputs already checked by rendered-page and image probes.
