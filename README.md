@@ -162,8 +162,11 @@ would silently omit, and builds both outputs from SVG sources alone: build
 `xsltproc`, `rsvg-convert` and Poppler. It is separate from the hermetic test
 suite.
 
-`talk.tex` and `deck.tex` are slide decks: each
-frame is one `<section>` of the HTML deck and one page of the PDF handout.
+`talk.tex` and `deck.tex` are slide decks: each frame is one HTML section
+with numbered reveal steps and one PDF page per step. Overlay lists select
+individual steps: `\uncover<1,4>{...}` selects steps 1 and 4, while
+`\uncover<1-4>{...}` selects every step from 1 through 4. Lists and ranges
+can be combined, as in `<1,3-5>`.
 `icons.tex` shows the fontawesome5 spellings
 (`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever
 installed or shipped face covers it, with a required text alternative.
